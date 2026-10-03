@@ -4,12 +4,15 @@
 //! entity collection is tenant-wide, so every test runs under its own private tenant
 //! and wipes broker state on entry.
 
-use crate::cursor_walk::{assert_cursor_links, ids_of, joined_links, link_target, query_string_of};
+use crate::cursor_walk::{assert_cursor_links, ids_of, joined_links, link_target, problem_type, query_string_of};
 use andromeda_test_client::{entity::results_count, test_client::TestClient};
-use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_fixtures::{
+    context::CORE_CONTEXT,
+    problem_detail::{BAD_REQUEST_DATA, INVALID_REQUEST},
+};
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use pretty_assertions::assert_eq;
-use reqwest::{StatusCode, header::HeaderMap};
+use reqwest::{Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 
 fn building(id: &str) -> Value {
@@ -560,5 +563,85 @@ async fn pagination_entities_default_scope_cursor_page_counts_the_whole_collecti
         vec![stable_id("dsc", 2), stable_id("dsc", 3)]
     );
     assert_eq!(results_count(&response.headers), Some(5), "the count is the whole collection");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.5.9.1: an empty `cursor=` starts a cursor walk from the start of
+/// the collection, which is how a client opts into the opaque pointers.
+#[tokio::test]
+async fn pagination_entities_empty_cursor_starts_a_walk() {
+    let (scope, client) = make_scope().await;
+    for index in 0..4 {
+        create_one(&client, &stable_id("ec", index)).await;
+    }
+
+    let (page, headers) = query_page(&client, "type=Building&local=true&limit=2&cursor=").await;
+    assert_eq!(page, vec![stable_id("ec", 0), stable_id("ec", 1)]);
+    let next = link_target(&headers, "next").expect("a full first page has a next");
+    assert!(next.contains("cursor="), "{next}");
+    assert_cursor_links(&headers);
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// A cursor is a position in identifier order, so it cannot walk a requested
+/// ordering: the pair is refused rather than one of them silently dropped.
+#[tokio::test]
+async fn pagination_entities_cursor_with_order_by_is_bad_request() {
+    let (scope, client) = make_scope().await;
+    for index in 0..3 {
+        create_one(&client, &stable_id("co", index)).await;
+    }
+    let (_, headers) = query_page(&client, "type=Building&local=true&limit=2").await;
+    let next = link_target(&headers, "next").expect("a full first page has a next");
+
+    let response = client
+        .query_entities(&format!("{}&orderBy=name", query_string_of(&next)), "application/ld+json", Some(CORE_CONTEXT))
+        .await
+        .expect("query entities failed");
+    assert_eq!(response.status, StatusCode::BAD_REQUEST);
+    let body = response.json_value().expect("a Problem Details body");
+    assert_eq!(problem_type(&body), Some(BAD_REQUEST_DATA.as_str()), "{body}");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Table 6.4.3.3-1 defines no pagination parameter for Purge Entities, and
+/// clause 6.3.20 answers a parameter the operation does not define with
+/// `InvalidRequest`; nothing is purged.
+#[tokio::test]
+async fn pagination_purge_with_limit_is_invalid_request() {
+    let (scope, client) = make_scope().await;
+    create_buildings(&client, 2, "purge").await;
+
+    let response = client
+        .delete_entities_by_query("type=Building&limit=5", Some(CORE_CONTEXT))
+        .await
+        .expect("purge request failed");
+    assert_eq!(response.status, StatusCode::BAD_REQUEST);
+    let body = response.json_value().expect("a Problem Details body");
+    assert_eq!(problem_type(&body), Some(INVALID_REQUEST.as_str()), "{body}");
+
+    let remaining = client
+        .query_entities("type=Building&limit=0&count=true", "application/ld+json", Some(CORE_CONTEXT))
+        .await
+        .expect("query entities failed");
+    assert_eq!(results_count(&remaining.headers), Some(2), "the refused purge deleted nothing");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// An `EntityMap` creation hands out no page pointer, so a `cursor` is a
+/// parameter it does not offer (clause 6.3.20), refused before anything runs.
+#[tokio::test]
+async fn pagination_entity_map_creation_with_a_cursor_is_invalid_request() {
+    let (scope, client) = make_scope().await;
+    create_buildings(&client, 1, "map").await;
+
+    let response = client
+        .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Building&local=true&cursor=")
+        .send()
+        .await
+        .expect("entity map request failed");
+    assert_eq!(response.status, StatusCode::BAD_REQUEST);
+    let body = response.json_value().expect("a Problem Details body");
+    assert_eq!(problem_type(&body), Some(INVALID_REQUEST.as_str()), "{body}");
     scope.finish().await.expect("cleanup failed");
 }

@@ -21,8 +21,8 @@ use crate::{
     runtime::{cached_runtime::CachedRuntime, lease::LeaseOrigin},
     state_factory::{TenantRuntime, TenantStateFactory},
     status::TenantStatus,
-    tenant_keyset::TenantKeyset,
     tenant_listing::TenantListing,
+    tenant_page_start::TenantPageStart,
     tenant_ref::TenantRef,
     tenant_view::TenantView,
     wake_schedule::TenantWakeSchedule,
@@ -210,8 +210,8 @@ impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantAdministr
         Ok(Some(TenantView::new(record, residency)))
     }
 
-    async fn list_tenants(&self, keyset: &TenantKeyset, limit: i64) -> Result<TenantListing, TenancyError> {
-        let (records, total) = self.database.list_tenant_records(keyset, limit).await?;
+    async fn list_tenants(&self, start: &TenantPageStart, limit: u32) -> Result<TenantListing, TenancyError> {
+        let (records, total) = self.database.list_tenant_records(start, limit).await?;
         let views = records
             .into_iter()
             .map(|record| {

@@ -34,7 +34,7 @@ use andromeda_tenancy::{
     error::TenancyError,
     lifecycle::TenantLifecycle,
     status::TenantStatus,
-    tenant_keyset::TenantKeyset,
+    tenant_page_start::TenantPageStart,
     tenant_record::TenantRecord,
     tenant_ref::TenantRef,
 };
@@ -211,14 +211,14 @@ impl TenantDatabase for PostgresTenantRegistry {
         row.as_ref().map(record_from_row).transpose()
     }
 
-    async fn list_tenant_records(&self, keyset: &TenantKeyset, limit: i64) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
+    async fn list_tenant_records(&self, start: &TenantPageStart, limit: u32) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
         let (count_sql, count_values) = tenant_count_query().build_sqlx(PostgresQueryBuilder);
         let total: i64 = sqlx::query_scalar_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
             .fetch_one(&self.main_pool)
             .await
             .map_err(|error| registry_unavailable(&error))?;
 
-        let (sql, values) = tenant_records_page_query(keyset, limit).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = tenant_records_page_query(start, limit).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&self.main_pool)
             .await
@@ -226,8 +226,9 @@ impl TenantDatabase for PostgresTenantRegistry {
         let mut records = rows.iter().map(record_from_row).collect::<Result<Vec<TenantRecord>, TenancyError>>()?;
         // A backward or from-end page was read descending; present it ascending
         // so a page always reads in name order regardless of its direction.
-        if matches!(keyset, TenantKeyset::Backward { .. } | TenantKeyset::FromEnd) {
-            records.reverse();
+        match start {
+            TenantPageStart::Backward { .. } | TenantPageStart::FromEnd => records.reverse(),
+            TenantPageStart::Offset(_) | TenantPageStart::Forward { .. } => {}
         }
         Ok((records, total))
     }

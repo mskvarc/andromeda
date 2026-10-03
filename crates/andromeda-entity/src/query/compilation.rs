@@ -3,7 +3,7 @@
 //! [`CompiledEntityQuery`]: andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery
 
 use crate::{
-    compiled_cache::{CompiledQueryKey, LimitCap},
+    compiled_cache::CompiledQueryKey,
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
     query::{EntityQueryService, selector_compilation::compile_entity_selectors},
@@ -25,18 +25,21 @@ use andromeda_ngsi_ld_query::{
         geometry::OrderingGeometry,
         term::{CompiledOrderTerm, OrderTarget, RawOrderTarget},
     },
-    pagination::{CountPolicy, Pagination},
     projection::{
         compiled::Projection,
         expansion::{expand_attrs, expand_projection_terms},
         projected_members::ProjectedMembers,
     },
 };
-use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::parameters::EntityQueryParameters};
+use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use std::{collections::HashSet, sync::Arc};
 
 impl EntityQueryService {
-    /// Compile an entity query with the default limit cap applied.
+    /// Compile an entity query.
+    ///
+    /// The page the query answers with is no part of the compilation: it is
+    /// handed to the store beside the compiled query, so every page of one
+    /// query shares one compilation.
     ///
     /// # Errors
     ///
@@ -45,20 +48,7 @@ impl EntityQueryService {
     /// or `orderBy` expression is not well formed, and
     /// [`EntityError::Request`] when a query parameter cannot be interpreted.
     pub async fn compile_query_public(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<CompiledEntityQuery, EntityError> {
-        let compiled = self.compile_query_cached(params, context, LimitCap::Capped).await?;
-        Ok(Arc::unwrap_or_clone(compiled))
-    }
-
-    /// Compile an entity query without applying a limit cap.
-    ///
-    /// # Errors
-    ///
-    /// Reports [`EntityError::JsonLd`] when a term of the request cannot be
-    /// expanded against `context`, [`EntityError::Query`] when the `q`, `geoQ`
-    /// or `orderBy` expression is not well formed, and
-    /// [`EntityError::Request`] when a query parameter cannot be interpreted.
-    pub async fn compile_query_uncapped(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<CompiledEntityQuery, EntityError> {
-        let compiled = self.compile_query_cached(params, context, LimitCap::Uncapped).await?;
+        let compiled = self.compile_query_cached(params, context).await?;
         Ok(Arc::unwrap_or_clone(compiled))
     }
 
@@ -66,17 +56,12 @@ impl EntityQueryService {
     ///
     /// Consults the in-memory cache keyed on the request parameters and the
     /// active JSON-LD context fingerprint; on a miss, compiles and stores.
-    pub(super) async fn compile_query_cached(
-        &self,
-        params: &EntityQueryParameters,
-        context: &ContextSpec,
-        limit_cap: LimitCap,
-    ) -> Result<Arc<CompiledEntityQuery>, EntityError> {
-        let key = CompiledQueryKey::from_params(params, context, limit_cap);
-        self.compiled_cache.get_or_compile(key, || self.compile_query(params, context, limit_cap)).await
+    pub(super) async fn compile_query_cached(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<Arc<CompiledEntityQuery>, EntityError> {
+        let key = CompiledQueryKey::from_params(params, context);
+        self.compiled_cache.get_or_compile(key, || self.compile_query(params, context)).await
     }
 
-    async fn compile_query(&self, params: &EntityQueryParameters, context: &ContextSpec, limit_cap: LimitCap) -> Result<CompiledEntityQuery, EntityError> {
+    async fn compile_query(&self, params: &EntityQueryParameters, context: &ContextSpec) -> Result<CompiledEntityQuery, EntityError> {
         let prepared_context = self.engine().prepare_term_context(context);
         let selectors = compile_entity_selectors(
             self.engine(),
@@ -92,7 +77,6 @@ impl EntityQueryService {
         let attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
         let q_expr = self.compile_q_expression(params, &prepared_context).await?;
         let geo = self.compile_geo_query(params, &prepared_context).await?;
-        let opts = params.parse_options()?;
 
         let pick = expand_projection_terms(params.pick.as_deref().unwrap_or_default(), &expander).await?;
         let omit = expand_projection_terms(params.omit.as_deref().unwrap_or_default(), &expander).await?;
@@ -106,15 +90,6 @@ impl EntityQueryService {
         if has_distance_term && geo.is_none() && ordering_geometry.is_none() {
             return Err(EntityError::Validation(EntityValidationReason::DistanceOrderingWithoutReference));
         }
-
-        let pagination = Pagination {
-            limit: match limit_cap {
-                LimitCap::Capped => params.effective_limit(),
-                LimitCap::Uncapped => params.effective_limit_uncapped(),
-            },
-            offset: params.effective_offset(),
-            count: if opts.count { CountPolicy::Emit } else { CountPolicy::Omit },
-        };
 
         let projection = Projection::builder().pick(pick).omit(omit).build();
         let compiled = CompiledEntityQuery::builder()
@@ -136,7 +111,6 @@ impl EntityQueryService {
             )
             .projection(projection)
             .ordering(ResultOrdering::builder().terms(order_by).geometry(ordering_geometry).build())
-            .pagination(pagination)
             .build();
 
         tracing::debug!("Compiled query: {:?}", compiled);

@@ -27,9 +27,10 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
-    cursor::PageCursor,
+    count_policy::CountPolicy,
     entity_selection::{ConsideredEntities, EntitySelector},
-    pagination::CountPolicy,
+    page_window::{PageStart, PageWindow},
+    read_order::ReadOrder,
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_postgresql_query::{
@@ -37,6 +38,7 @@ use andromeda_postgresql_query::{
     entity_ordering::{entity_identifier_key, ordering_collation},
     error::RenderError,
     geo_predicate::relation_expression,
+    page_window::apply_identifier_window,
     q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, projection as q_filter},
     scope_predicate::{ScopeTarget, condition as scope_condition},
     time_interval_predicate::within_interval,
@@ -55,7 +57,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
 };
 use iri_rs::IriBuf;
-use sea_query::{Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, JoinType, Order, SelectStatement};
+use sea_query::{Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, JoinType, SelectStatement};
 
 /// The Stage 1 statement and its optional count, each a statement tree the store
 /// binds and executes on its own.
@@ -69,9 +71,14 @@ pub struct Stage1Query {
     pub select: SelectStatement,
     /// The unpaginated `COUNT`, present when clause 5.5.9 asks for a total.
     pub count: Option<SelectStatement>,
+    /// The order the page's identifiers come back in, which the store presents
+    /// ascending.
+    pub read_order: ReadOrder,
 }
 
-/// Build Stage 1 query: find entity IDs matching entity-level filters.
+/// Build Stage 1 query: find the identifiers `window` selects of the entities
+/// matching entity-level filters, counting every match when `count` asks for
+/// it.
 ///
 /// # Errors
 ///
@@ -81,7 +88,13 @@ pub struct Stage1Query {
 /// combination clause 4.10 does not admit. Returns
 /// [`RenderError::ReferenceGeometryEncoding`] when the geo query's reference
 /// geometry cannot be encoded as `PostGIS` EWKB.
-pub fn build_stage1_entity_ids(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Stage1Query, RenderError> {
+pub fn build_stage1_entity_ids(
+    schema: Option<&DynIden>,
+    compiled: &CompiledTemporalQuery,
+    window: &PageWindow,
+    count: CountPolicy,
+    names: &QueryNames,
+) -> Result<Stage1Query, RenderError> {
     // Entity-level conditions, applied to `temporal_entities` under alias "e".
     let entity_conditions = build_entity_conditions_for_temporal(schema, compiled, names)?;
 
@@ -99,72 +112,45 @@ pub fn build_stage1_entity_ids(schema: Option<&DynIden>, compiled: &CompiledTemp
     // declared `COLLATE "C"`, so an unstated comparison is byte-wise and the
     // collation Table 6.18.3.2-1 says the payload "shall be ordered according
     // to" would have no effect at all.
-    match &compiled.keyset {
-        None => {
-            if let Some(ordering) = compiled.ordering.as_ref() {
-                entity_identifier_key(
-                    SeaExpr::col((E, TemporalEntities::Id)),
-                    ordering.direction,
-                    &ordering_collation(ordering.collation.as_ref()),
-                )
-                .order_by(&mut select);
-            }
-
-            // Clause 5.5.9 asks for a consistent order across pages whether or not
-            // one was requested: `LIMIT`/`OFFSET` over an otherwise unordered
-            // result can repeat and skip rows between pages.
-            select
-                .order_by((E, TemporalEntities::Id), Order::Asc)
-                .limit(u64::from(compiled.pagination.limit))
-                .offset(u64::from(compiled.pagination.offset));
+    //
+    // Clause 5.5.9 asks for a consistent order across pages whether or not one
+    // was requested, so the `id` follows as the tiebreaker of an offset page.
+    // A cursor page (clause 5.5.9.1) walks the element dimension's default
+    // `id` order alone: the pagination policy never pairs a cursor with a
+    // requested ordering, which its identifier position cannot walk. The
+    // window governs only the element dimension, never the temporal window
+    // (`Content-Range`).
+    match (&window.start, compiled.ordering.as_ref()) {
+        (PageStart::Offset(_), Some(ordering)) => {
+            entity_identifier_key(
+                SeaExpr::col((E, TemporalEntities::Id)),
+                ordering.direction,
+                &ordering_collation(ordering.collation.as_ref()),
+            )
+            .order_by(&mut select);
         }
-        // Clause 5.5.9.1: keyset over the element dimension's default `id` order.
-        // Restricted to the default order, so no requested `orderBy` is present
-        // and the `OFFSET` gives way to the direction-appropriate predicate.
-        Some(cursor) => {
-            apply_stage1_keyset(&mut select, cursor);
-            select.limit(u64::from(compiled.pagination.limit));
-        }
+        (PageStart::Offset(_), None) | (PageStart::Cursor(_), _) => {}
     }
+    let read_order = apply_identifier_window(&mut select, SeaExpr::col((E, TemporalEntities::Id)), window);
 
-    let count = if compiled.pagination.count == CountPolicy::Emit {
-        let mut count_select = SelectStatement::new();
-        count_select
-            .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
-            .from(qualified(schema, TemporalEntities::Table).alias(E))
-            .cond_where(entity_conditions)
-            .cond_where(SeaExpr::exists(temporal_match_subquery(schema, compiled)));
-        Some(count_select.take())
-    } else {
-        None
+    let count_statement = match count {
+        CountPolicy::Emit => {
+            let mut count_select = SelectStatement::new();
+            count_select
+                .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
+                .from(qualified(schema, TemporalEntities::Table).alias(E))
+                .cond_where(entity_conditions)
+                .cond_where(SeaExpr::exists(temporal_match_subquery(schema, compiled)));
+            Some(count_select.take())
+        }
+        CountPolicy::Omit => None,
     };
 
-    Ok(Stage1Query { select: select.take(), count })
-}
-
-/// Add the keyset predicate and ordering for one cursor direction over the
-/// element dimension (clause 5.5.9.1).
-///
-/// The predicate and the ordering both read `temporal_entities.id` bare, which
-/// is declared `COLLATE "C"`, so they share the byte-wise order of the implicit
-/// `id` tiebreaker in either direction. A backward or from-end page is ordered
-/// descending and reversed to ascending where the store reads the identifiers
-/// back. The count statement is built separately and never carries the keyset,
-/// so a counted cursor query still reports the whole collection's total.
-fn apply_stage1_keyset(select: &mut SelectStatement, cursor: &PageCursor) {
-    match cursor {
-        PageCursor::After(id) => {
-            select.and_where(SeaExpr::col((E, TemporalEntities::Id)).gt(SeaExpr::val(id.as_str())));
-            select.order_by((E, TemporalEntities::Id), Order::Asc);
-        }
-        PageCursor::Before(id) => {
-            select.and_where(SeaExpr::col((E, TemporalEntities::Id)).lt(SeaExpr::val(id.as_str())));
-            select.order_by((E, TemporalEntities::Id), Order::Desc);
-        }
-        PageCursor::End => {
-            select.order_by((E, TemporalEntities::Id), Order::Desc);
-        }
-    }
+    Ok(Stage1Query {
+        select: select.take(),
+        count: count_statement,
+        read_order,
+    })
 }
 
 /// Build the correlated stream/history predicate shared by result and count.
@@ -369,13 +355,14 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
         cursor::PageCursor,
         dataset::DatasetSelector,
         entity_selection::{EntitySelection, EntitySelector},
         filter::parser,
         geo::query::GeoQuery,
         ordering::{collation::IcuCollation, sort_direction::SortDirection},
-        pagination::CountPolicy,
+        page_window::{PageStart, PageWindow},
         scope::query::ScopeQuery,
         temporal::{
             compiled::CompiledTemporalQuery,
@@ -444,15 +431,30 @@ mod tests {
     /// The Stage 1 result statement, rendered with `$N` placeholders and its
     /// bound values, which is what the store hands to the driver.
     fn built(compiled: &CompiledTemporalQuery, names: &QueryNames) -> (String, Values) {
-        build_stage1_entity_ids(None, compiled, names)
+        built_windowed(compiled, &PageWindow::offset(20, 0), names)
+    }
+
+    /// The Stage 1 result statement of the page `window` selects.
+    fn built_windowed(compiled: &CompiledTemporalQuery, window: &PageWindow, names: &QueryNames) -> (String, Values) {
+        build_stage1_entity_ids(None, compiled, window, CountPolicy::Omit, names)
             .expect("valid temporal query")
             .select
             .build(PostgresQueryBuilder)
     }
 
-    /// The same for the count statement, panicking when no count was requested.
+    /// The count statement of a counted query over the page `window` selects.
+    fn built_windowed_count(compiled: &CompiledTemporalQuery, window: &PageWindow, names: &QueryNames) -> String {
+        build_stage1_entity_ids(None, compiled, window, CountPolicy::Emit, names)
+            .expect("valid temporal query")
+            .count
+            .expect("count requested")
+            .build(PostgresQueryBuilder)
+            .0
+    }
+
+    /// The count statement of a counted query.
     fn built_count(compiled: &CompiledTemporalQuery, names: &QueryNames) -> String {
-        build_stage1_entity_ids(None, compiled, names)
+        build_stage1_entity_ids(None, compiled, &PageWindow::offset(20, 0), CountPolicy::Emit, names)
             .expect("valid temporal query")
             .count
             .expect("count requested")
@@ -572,7 +574,6 @@ mod tests {
     #[test]
     fn stage1_count_reuses_the_result_predicate_bind_order() {
         let mut compiled = minimal_compiled();
-        compiled.pagination.count = CountPolicy::Emit;
         compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
 
@@ -689,7 +690,6 @@ mod tests {
     #[test]
     fn the_count_carries_the_same_two_probes() {
         let mut compiled = minimal_compiled();
-        compiled.pagination.count = CountPolicy::Emit;
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
         let count = built_count(&compiled, &speed_and_address());
@@ -718,7 +718,6 @@ mod tests {
     fn no_selection_step_narrows_by_the_dataset_parameter() {
         for selectors in [&["@none"][..], &["urn:ngsi-ld:Dataset:one"], &["@none", "urn:ngsi-ld:Dataset:one"]] {
             let mut compiled = minimal_compiled();
-            compiled.pagination.count = CountPolicy::Emit;
             compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
             compiled.instances.dataset_id_filter = selectors
                 .iter()
@@ -943,7 +942,6 @@ mod tests {
     #[test]
     fn the_count_statement_carries_no_ordering() {
         let mut compiled = minimal_compiled();
-        compiled.pagination.count = CountPolicy::Emit;
         compiled.ordering = Some(TemporalEntityOrdering::builder().direction(SortDirection::Ascending).build());
         let sql = built_count(&compiled, &QueryNames::default());
         assert!(!sql.contains("ORDER BY"), "{sql}");
@@ -953,14 +951,21 @@ mod tests {
         id.parse().expect("valid URI")
     }
 
+    /// A cursor page of 20 starting at `cursor`.
+    fn cursor_page(cursor: PageCursor) -> PageWindow {
+        PageWindow {
+            limit: 20,
+            start: PageStart::Cursor(Some(cursor)),
+        }
+    }
+
     /// Clause 5.5.9.1: a forward cursor pages the element dimension past the
     /// boundary id over the default order -- `WHERE id > $x ORDER BY id ASC` and
     /// no `OFFSET`.
     #[test]
     fn stage1_keyset_after_pages_forward_ascending_without_offset() {
-        let mut compiled = minimal_compiled();
-        compiled.keyset = Some(PageCursor::After(boundary("urn:ngsi-ld:Vehicle:001")));
-        let (sql, _) = built(&compiled, &QueryNames::default());
+        let compiled = minimal_compiled();
+        let (sql, _) = built_windowed(&compiled, &PageWindow::after(20, boundary("urn:ngsi-ld:Vehicle:001")), &QueryNames::default());
         assert!(sql.contains(r#""e"."id" > $"#), "{sql}");
         assert!(sql.contains(r#"ORDER BY "e"."id" ASC"#), "{sql}");
         assert!(!sql.contains("OFFSET"), "a keyset page never skips: {sql}");
@@ -971,9 +976,12 @@ mod tests {
     /// reverses to ascending after fetching.
     #[test]
     fn stage1_keyset_before_pages_backward_descending_without_offset() {
-        let mut compiled = minimal_compiled();
-        compiled.keyset = Some(PageCursor::Before(boundary("urn:ngsi-ld:Vehicle:042")));
-        let (sql, _) = built(&compiled, &QueryNames::default());
+        let compiled = minimal_compiled();
+        let (sql, _) = built_windowed(
+            &compiled,
+            &cursor_page(PageCursor::Before(boundary("urn:ngsi-ld:Vehicle:042"))),
+            &QueryNames::default(),
+        );
         assert!(sql.contains(r#""e"."id" < $"#), "{sql}");
         assert!(sql.contains(r#"ORDER BY "e"."id" DESC"#), "{sql}");
         assert!(!sql.contains("OFFSET"), "{sql}");
@@ -983,9 +991,8 @@ mod tests {
     /// DESC`, no boundary predicate -- which the store reverses to ascending.
     #[test]
     fn stage1_keyset_end_takes_the_final_page_descending() {
-        let mut compiled = minimal_compiled();
-        compiled.keyset = Some(PageCursor::End);
-        let (sql, _) = built(&compiled, &QueryNames::default());
+        let compiled = minimal_compiled();
+        let (sql, _) = built_windowed(&compiled, &cursor_page(PageCursor::End), &QueryNames::default());
         assert!(sql.contains(r#"ORDER BY "e"."id" DESC"#), "{sql}");
         assert!(!sql.contains(r#""e"."id" >"#) && !sql.contains(r#""e"."id" <"#), "no boundary predicate: {sql}");
         assert!(!sql.contains("OFFSET"), "{sql}");
@@ -995,10 +1002,8 @@ mod tests {
     /// reports the whole collection's total rather than the remaining tail.
     #[test]
     fn a_keyset_count_still_counts_the_whole_collection() {
-        let mut compiled = minimal_compiled();
-        compiled.pagination.count = CountPolicy::Emit;
-        compiled.keyset = Some(PageCursor::After(boundary("urn:ngsi-ld:Vehicle:001")));
-        let sql = built_count(&compiled, &QueryNames::default());
+        let compiled = minimal_compiled();
+        let sql = built_windowed_count(&compiled, &PageWindow::after(20, boundary("urn:ngsi-ld:Vehicle:001")), &QueryNames::default());
         assert!(!sql.contains(r#""e"."id" >"#), "the count is not narrowed by the cursor: {sql}");
     }
 }

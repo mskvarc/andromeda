@@ -22,7 +22,6 @@ use andromeda_http_extraction::{
     api_root::ApiRoot,
     context::ContextUrl,
     entity_batch::{BatchBody, ParsedBatch, parse_batch_entities},
-    jsonld::JsonLd,
     prefer::PreferHeader,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
@@ -38,13 +37,11 @@ use andromeda_http_response::{
 };
 use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{
-    entity_operations::{PostQueryParams, UpdateParams, UpsertParams},
+    entity_operations::{UpdateParams, UpsertParams},
     options::{OverwritePolicy as RequestOverwritePolicy, UpsertMode},
-    query::entity::parameters::EntityQueryParameters,
 };
 use axum::{
     http::{StatusCode, Uri as HttpUri},

@@ -275,8 +275,8 @@ async fn regression_hosted_context_a_relative_reference_is_resolved_and_counted(
 /// root-relative path of the entry it stored for that tenant, and a resource
 /// path names a resource of the tenant the request addresses. Echoed back as a
 /// request's `@context` in the same tenant, the path names that tenant's entry.
-/// Before, a root-relative path naming no `andromedaTenant` was read as the
-/// default tenant's, so the only tenant it worked in was the default one.
+/// Before, a root-relative path naming no tenant was read as the default
+/// tenant's, so the only tenant it worked in was the default one.
 #[tokio::test]
 async fn regression_hosted_context_a_relative_reference_names_the_requesting_tenants_entry() {
     let scope = TenantScopedEnvironment::from_suite("regression").await.expect("private tenant environment");

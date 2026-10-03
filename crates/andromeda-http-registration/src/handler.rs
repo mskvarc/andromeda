@@ -10,8 +10,10 @@ use andromeda_http_extraction::{
     api_root::ApiRoot,
     context::ContextUrl,
     jsonld::JsonLdDocument,
+    pagination_policy::RequestPagination,
     prefer::PreferHeader,
     query::ValidatedQuery,
+    response_context_request::ResponseContextRequest,
     tenant_state::{ExistingTenantState, ProvisionableTenantState},
     typed_path::TypedPath,
     via::IncomingVia,
@@ -21,17 +23,20 @@ use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     headers::with_location,
     internal_failure_summary::InternalFailureSummary,
-    pagination::{CursorPointers, PageExtent, PageLinks, append_pagination_links},
+    pagination::{PageOutcome, append_page_links},
     problem_response::ProblemResponse,
     single::NgsiLdResponse,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::cursor::PageCursor;
+use andromeda_ngsi_ld_query::count_policy::CountPolicy;
 use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, registration::RegistrationRenderer, response::ResponsePayload};
 use andromeda_ngsi_ld_request::{
     empty::EmptyParams,
-    pagination_cursor::decode_cursor,
-    query::{SharedQueryParams, csr::CsrQueryParameters},
+    pagination::{
+        page_pointers::PagePointers,
+        page_request::{CollectionOrder, PageRequest},
+    },
+    query::{QUERY_PAGE_SIZE, csr::CsrQueryParameters},
 };
 use andromeda_registration::query::DiscoveredRegistrations;
 use axum::{
@@ -85,23 +90,31 @@ pub(crate) async fn get(
 pub(crate) async fn query(
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
-    api_root: ApiRoot,
     // Clause 6.3.4: `application/geo+json` is acceptable only on Retrieve Entity
     // and Query Entities; every other operation answers 406. Query Context
     // Source Registrations is clause 5.10.2, and clause 5.10.2.5 gives its
     // output as a JSON-LD array of registrations, which has no GeoJSON form.
     accept: AcceptFormatNoGeo,
-    ContextUrl(context): ContextUrl,
+    ResponseContextRequest { context, api_root }: ResponseContextRequest,
     IncomingVia(incoming_via): IncomingVia,
+    RequestPagination(pagination): RequestPagination,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
     let options = params.parse_options().with_registration_instance(&uri)?;
-    let limit = i64::from(params.effective_limit());
-    let offset = i64::from(params.effective_offset());
-    // Clause 5.5.9.1: decode the opaque pagination cursor so a malformed one is
-    // a BadRequestData here; its mutual exclusion with offset is held by
-    // `CsrQueryParameters::validate`.
-    let incoming_cursor = decode_cursor(params.cursor.as_deref()).with_registration_instance(&uri)?;
+    // Clause 5.10.2: a discovery always reports its total, so `limit=0` asks
+    // for that total alone (Table 6.3.10-1). The registrations are paged in
+    // identifier order in either pagination mode.
+    let window = pagination
+        .window(
+            &params.page,
+            PageRequest {
+                size: QUERY_PAGE_SIZE,
+                order: CollectionOrder::Identifier,
+                count: CountPolicy::Emit,
+                pointers: PagePointers::OverRequestUri,
+            },
+        )
+        .with_registration_instance(&uri)?;
     // Clause 4.3.6.4: the `Via` chain lists the context sources the request
     // already passed through; clause 5.12 excludes their registrations.
     let encountered_sources: Vec<_> = incoming_via.iter().flat_map(Via::pseudonyms).cloned().collect(); // clone: the discovery owns the listing across the store await
@@ -109,10 +122,10 @@ pub(crate) async fn query(
         registrations,
         total,
         boundary,
-        page_full,
+        scanned,
     } = state
         .registrations
-        .query(&params, &encountered_sources, &context)
+        .query(&params, &window, &encountered_sources, &context)
         .await
         .with_registration_instance(&uri)?;
     let registrations = registrations
@@ -141,29 +154,28 @@ pub(crate) async fn query(
             &uri,
         )
     })?;
+    let pagination_total = i64::try_from(total).map_err(|error| {
+        internal_problem(
+            format!("registration count does not fit offset pagination: {error}"),
+            InternalFailureSummary::new("internal registration error"),
+            &uri,
+        )
+    })?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_total_count(total_count).into_response();
-    // Clause 5.5.9.1: a discovery in the default id order walks by opaque cursor
-    // by default; an explicit `offset` keeps the clause 5.5.9.2 offset pointers.
-    // `offset` and `cursor` are mutually exclusive (validated), so their absence
-    // together is the fresh first page of a cursor walk.
-    if params.offset.is_some() {
-        let pagination_total = i64::try_from(total).map_err(|error| {
-            internal_problem(
-                format!("registration count does not fit offset pagination: {error}"),
-                InternalFailureSummary::new("internal registration error"),
-                &uri,
-            )
-        })?;
-        let links = PageLinks::Offset {
-            offset,
-            extent: PageExtent::Total(pagination_total),
-        };
-        append_pagination_links(&mut response, &uri, limit, links, accept.media_type());
-    } else if let Some((first, last)) = boundary {
-        let neighbours = PageCursor::neighbours(incoming_cursor.as_ref(), first, last, page_full);
-        let links = PageLinks::Cursor(CursorPointers::from(neighbours));
-        append_pagination_links(&mut response, &uri, limit, links, accept.media_type());
-    }
+    // Clause 5.5.9.1: the cursor pointers and the page-fullness signal are read
+    // from the raw store page, before the clause-5.10.2.5 trim thinned it, so a
+    // walk continues past every registration the store scanned.
+    append_page_links(
+        &mut response,
+        &uri,
+        &window,
+        PageOutcome {
+            total: Some(pagination_total),
+            returned: scanned,
+            boundary,
+        },
+        accept.media_type(),
+    );
     Ok(response)
 }
 

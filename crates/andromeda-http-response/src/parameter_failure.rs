@@ -23,6 +23,8 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::AggrGroupByInvalid(_)
         | ParameterError::AggrGroupByOnAggregatedAttribute(_)
         | ParameterError::LastNWithGrouping
+        | ParameterError::CursorUnavailable
+        | ParameterError::PaginationUndefined
         | ParameterError::WildcardTypeWithLocalFalse => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
         ParameterError::IdPatternEmpty
         | ParameterError::OrderGeometryCollection
@@ -31,7 +33,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::Projection(_)
         | ParameterError::LimitZeroWithoutCount
         | ParameterError::CursorWithOffset
-        | ParameterError::CursorInvalid(_)
+        | ParameterError::CursorWithOrdering
         | ParameterError::ProjectionLinkedTermsWithoutJoin
         | ParameterError::ProjectionDepthExceedsJoinLevel { .. }
         | ParameterError::FilterTraversalWithoutJoin
@@ -46,5 +48,50 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::TemporalQueryMissing
         | ParameterError::TemporalAggregationConflict
         | ParameterError::OrderingWithParticipatingSource => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::parameter_failure::classify_parameter_error;
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use andromeda_ngsi_ld_request::error::ParameterError;
+    use pretty_assertions::assert_eq;
+
+    /// Clause 6.3.20: a cursor where the collection offers no cursor walk is a
+    /// parameter the operation does not offer.
+    #[test]
+    fn cursor_unavailable_is_invalid_request() {
+        assert_eq!(
+            classify_parameter_error(&ParameterError::CursorUnavailable).error_type(),
+            NgsiLdErrorType::InvalidRequest
+        );
+    }
+
+    /// Clause 6.3.20: Purge Entities defines no pagination parameter.
+    #[test]
+    fn pagination_undefined_is_invalid_request() {
+        assert_eq!(
+            classify_parameter_error(&ParameterError::PaginationUndefined).error_type(),
+            NgsiLdErrorType::InvalidRequest
+        );
+    }
+
+    /// A cursor over a requested ordering is input the operation cannot meet.
+    #[test]
+    fn cursor_with_ordering_is_bad_request_data() {
+        assert_eq!(
+            classify_parameter_error(&ParameterError::CursorWithOrdering).error_type(),
+            NgsiLdErrorType::BadRequestData
+        );
+    }
+
+    /// Clause 5.5.9: `cursor` beside `offset` is input the operation cannot meet.
+    #[test]
+    fn cursor_with_offset_is_bad_request_data() {
+        assert_eq!(
+            classify_parameter_error(&ParameterError::CursorWithOffset).error_type(),
+            NgsiLdErrorType::BadRequestData
+        );
     }
 }

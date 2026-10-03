@@ -3,6 +3,7 @@
 use crate::{
     attribute_selection::{AttrsAdmission, validate_attrs},
     error::ParameterError,
+    pagination::parameters::PageParameters,
     query::{deserialization::OptionalGeoQuery, entity::parameters::EntityQueryParameters, entity_selector::EntitySelectorParams},
 };
 use andromeda_http_headers::language::LanguageFilter;
@@ -39,11 +40,9 @@ impl TryFrom<Query> for EntityQueryParameters {
             attrs: query.attrs,
             q: query.q,
             geo: OptionalGeoQuery(query.geo_q),
-            limit: None,
-            offset: None,
-            // The POST query binding carries no dereferenceable pointer
-            // (clause 6.23.3.1), so it never carries an opaque cursor either.
-            cursor: None,
+            // Table 5.2.23-1 defines no pagination member: the POST binding
+            // reads its page from the URL (clause 6.23.3.1).
+            page: PageParameters::default(),
             count: None,
             options: None,
             local: None,

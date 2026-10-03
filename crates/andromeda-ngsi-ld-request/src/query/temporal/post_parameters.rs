@@ -10,7 +10,12 @@
 //! `options` and `format`. Those are exactly what the URL carries here;
 //! everything else the query says travels in the body.
 
-use crate::{options::TemporalRepresentationOptions, query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
+use crate::{
+    options::TemporalRepresentationOptions,
+    pagination::parameters::OffsetPageParameters,
+    query::temporal::TemporalQueryParameters,
+    representation_parameter::WrittenValue,
+};
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
 use serde::Deserialize;
 
@@ -22,10 +27,10 @@ use serde::Deserialize;
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TemporalPostQueryParams {
-    /// The page size (clause 6.3.10 `limit`).
-    pub limit: Option<u32>,
-    /// How many matches to skip before the page (clause 6.3.10 `offset`).
-    pub offset: Option<u32>,
+    /// The page asked for (clause 6.3.10 `limit` and `offset`). The binding
+    /// carries no dereferenceable pointer, so it declares no `cursor`.
+    #[serde(flatten)]
+    pub page: OffsetPageParameters,
     /// Whether the response reports the total number of matches
     /// (clause 6.3.13 `count`).
     pub count: Option<bool>,
@@ -48,15 +53,13 @@ impl TemporalPostQueryParams {
     /// only place they can come from.
     pub fn apply_to(self, params: &mut TemporalQueryParameters) {
         let TemporalPostQueryParams {
-            limit,
-            offset,
+            page,
             count,
             format,
             options,
             local,
         } = self;
-        params.limit = limit;
-        params.offset = offset;
+        params.page = page.into();
         params.count = count;
         params.format = format;
         params.options = options;
@@ -68,10 +71,8 @@ impl TemporalPostQueryParams {
 mod tests {
     use crate::{
         options::TemporalRepresentationOptions,
-        query::{
-            SharedQueryParams,
-            temporal::{TemporalQueryParameters, post_parameters::TemporalPostQueryParams},
-        },
+        pagination::parameters::PageParameters,
+        query::temporal::{TemporalQueryParameters, post_parameters::TemporalPostQueryParams},
         representation_parameter::WrittenValue,
     };
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
@@ -82,8 +83,8 @@ mod tests {
     #[test]
     fn the_post_binding_reads_its_page_and_count_from_the_url() {
         let params = serde_urlencoded::from_str::<TemporalPostQueryParams>("limit=5&offset=10&count=true").expect("query parses");
-        pretty_assertions::assert_eq!(params.limit, Some(5));
-        pretty_assertions::assert_eq!(params.offset, Some(10));
+        pretty_assertions::assert_eq!(params.page.limit, Some(5));
+        pretty_assertions::assert_eq!(params.page.offset, Some(10));
         pretty_assertions::assert_eq!(params.count, Some(true));
     }
 
@@ -118,8 +119,14 @@ mod tests {
 
         url.apply_to(&mut params);
 
-        pretty_assertions::assert_eq!(params.effective_limit(), 3);
-        pretty_assertions::assert_eq!(params.effective_offset(), 6);
+        pretty_assertions::assert_eq!(
+            params.page,
+            PageParameters {
+                limit: Some(3),
+                offset: Some(6),
+                cursor: None,
+            }
+        );
         pretty_assertions::assert_eq!(params.count, Some(true));
         assert!(params.is_local());
     }
@@ -133,8 +140,7 @@ mod tests {
 
         url.apply_to(&mut params);
 
-        pretty_assertions::assert_eq!(params.limit, None);
-        pretty_assertions::assert_eq!(params.offset, None);
+        pretty_assertions::assert_eq!(params.page, PageParameters::default());
         pretty_assertions::assert_eq!(params.count, None);
         assert!(!params.is_local());
     }

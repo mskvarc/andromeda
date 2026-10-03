@@ -4,6 +4,7 @@ use crate::{
     creation::{CreationRendering, MapCreation, create_map},
     error::{EntityMapResultExt, bad_request_data, internal_problem},
     forwarded_query_string::{ForwardedFilters, body_query_string, forwarded_query_string, forwarded_temporal_query_string, temporal_body_query_string},
+    membership_window::membership_window,
     state::{EntityMapRouteServices, EntityMapTenantState},
     validation::{validate_entity_map_query, validate_temporal_entity_map_query},
 };
@@ -13,10 +14,10 @@ use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     api_root::ApiRoot,
-    context::ContextUrl,
     entity_query::EntityQuery,
     json_payload::JsonPayload,
     jsonld::JsonLd,
+    pagination_policy::RequestPagination,
     prefer::PreferHeader,
     query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,
@@ -29,6 +30,7 @@ use andromeda_http_response::{internal_failure_summary::InternalFailureSummary, 
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::query::body::Query;
+use andromeda_ngsi_ld_query::page_window::PageWindow;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{
     body::entity_map::UpdateEntityMapBody,
@@ -103,21 +105,28 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// Resolve the local membership of an entity query (clause 5.14.4.4).
+/// Resolve the local membership `window` selects of an entity query (clause
+/// 5.14.4.4).
 async fn local_entity_ids(
     state: &Arc<EntityMapRouteServices>,
     query: &EntityQueryParameters,
+    window: &PageWindow,
     context: &ContextSpec,
     uri: &HttpUri,
 ) -> Result<Vec<Identifier>, ProblemResponse> {
-    let compiled = state.entity_query.compile_query_uncapped(query, context).await.with_entity_map_instance(uri)?;
-    state.entity_query.query_ids(&state.live_target, &compiled).await.with_entity_map_instance(uri)
+    let compiled = state.entity_query.compile_query_public(query, context).await.with_entity_map_instance(uri)?;
+    state
+        .entity_query
+        .query_ids(&state.live_target, &compiled, window)
+        .await
+        .with_entity_map_instance(uri)
 }
 
 /// Create the map an entity query selects, over either binding (clause 5.14.4.4).
 async fn create_from_entity_query(
     state: &Arc<EntityMapRouteServices>,
     query: &mut EntityQueryParameters,
+    window: &PageWindow,
     forwarded_query: String,
     rendering: &CreationRendering<'_>,
     triggering: TriggeringRequest<'_>,
@@ -135,7 +144,7 @@ async fn create_from_entity_query(
     if state.forwarding.split_entities(query.split_entities).is_split() && !query.is_local() {
         let _deferred = query.defer_split_filters();
     }
-    let local_ids = local_entity_ids(state, query, rendering.context, rendering.uri).await?;
+    let local_ids = local_entity_ids(state, query, window, rendering.context, rendering.uri).await?;
     create_map(
         state,
         MapCreation {
@@ -159,6 +168,7 @@ async fn create_from_entity_query(
 async fn create_from_temporal_query(
     state: &Arc<EntityMapRouteServices>,
     params: &TemporalQueryParameters,
+    window: &PageWindow,
     forwarded_query: String,
     rendering: &CreationRendering<'_>,
     triggering: TriggeringRequest<'_>,
@@ -171,7 +181,7 @@ async fn create_from_temporal_query(
         .temporal
         // Clause 5.14.5.4: the map being created fixes exactly what this
         // request matched, identifiers included.
-        .query_ids(&state.live_target, params, rendering.context, RequestedIdentifiers::Narrow)
+        .query_ids(&state.live_target, params, window, rendering.context, RequestedIdentifiers::Narrow)
         .await
         .with_entity_map_instance(rendering.uri)?;
     create_map(
@@ -198,17 +208,19 @@ pub async fn create_from_query(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
-    ContextUrl(context): ContextUrl,
-    api_root: ApiRoot,
+    ResponseContextRequest { context, api_root }: ResponseContextRequest,
     prefer: PreferHeader,
+    RequestPagination(pagination): RequestPagination,
     EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
     validate_entity_map_query(&query, &uri)?;
+    let window = membership_window(pagination, &query.page, &query.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
     let forwarded_query = forwarded_query_string(&uri, filters);
     create_from_entity_query(
         &state,
         &mut query,
+        &window,
         forwarded_query,
         &CreationRendering::builder()
             .context(&context)
@@ -232,17 +244,20 @@ pub async fn create_from_query_post(
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     api_root: ApiRoot,
     prefer: PreferHeader,
+    RequestPagination(pagination): RequestPagination,
     JsonLd { value: body, context }: JsonLd<Query>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 6.3.5: the query is read against the one context the body
     // extractor resolved.
     let mut query = EntityQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
     validate_entity_map_query(&query, &uri)?;
+    let window = membership_window(pagination, &query.page, &query.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
     let forwarded_query = body_query_string(&query, filters, &uri);
     create_from_entity_query(
         &state,
         &mut query,
+        &window,
         forwarded_query,
         &CreationRendering::builder()
             .context(&context)
@@ -264,16 +279,18 @@ pub async fn create_temporal_from_query(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
-    ContextUrl(context): ContextUrl,
-    api_root: ApiRoot,
+    ResponseContextRequest { context, api_root }: ResponseContextRequest,
     prefer: PreferHeader,
+    RequestPagination(pagination): RequestPagination,
     TemporalQuery(params): TemporalQuery,
 ) -> Result<Response, ProblemResponse> {
+    let window = membership_window(pagination, &params.page, &params.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(params.split_entities).is_split());
     let forwarded_query = forwarded_temporal_query_string(&uri, filters);
     create_from_temporal_query(
         &state,
         &params,
+        &window,
         forwarded_query,
         &CreationRendering::builder()
             .context(&context)
@@ -297,6 +314,7 @@ pub async fn create_temporal_from_query_post(
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     api_root: ApiRoot,
     prefer: PreferHeader,
+    RequestPagination(pagination): RequestPagination,
     JsonLd { value: body, context }: JsonLd<Query>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 6.3.5: the query is read against the one context the body
@@ -304,11 +322,13 @@ pub async fn create_temporal_from_query_post(
     let params = TemporalQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
     // Clause 5.14.5.4: a temporal query and one selection criterion are mandatory.
     params.validate(true).with_entity_map_instance(&uri)?;
+    let window = membership_window(pagination, &params.page, &params.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(params.split_entities).is_split());
     let forwarded_query = temporal_body_query_string(&params, filters);
     create_from_temporal_query(
         &state,
         &params,
+        &window,
         forwarded_query,
         &CreationRendering::builder()
             .context(&context)

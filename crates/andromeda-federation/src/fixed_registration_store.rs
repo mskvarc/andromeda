@@ -11,7 +11,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
@@ -101,25 +101,15 @@ impl RegistrationStore for FixedRegistrationStore {
         Box::pin(async { Ok(None) })
     }
 
-    fn list<'life0, 'async_trait>(&'life0 self, _pagination: Pagination) -> BoxFuture<'async_trait, Result<RegistrationPage, RegistrationError>>
-    where
-        'life0: 'async_trait,
-    {
-        Box::pin(async {
-            Ok(RegistrationPage {
-                registrations: Vec::new(),
-                total: 0,
-            })
-        })
-    }
-
-    fn query_compiled<'life0, 'life1, 'async_trait>(
+    fn query_compiled<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         _compiled: &'life1 CompiledCsrQuery,
+        _window: &'life2 PageWindow,
     ) -> BoxFuture<'async_trait, Result<RegistrationPage, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
+        'life2: 'async_trait,
     {
         Box::pin(async {
             Ok(RegistrationPage {

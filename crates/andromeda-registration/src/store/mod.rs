@@ -58,7 +58,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
@@ -130,20 +130,18 @@ pub trait RegistrationStore: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
-    /// List registrations using typed, backend-neutral pagination.
-    fn list<'life0, 'async_trait>(&'life0 self, pagination: Pagination) -> BoxFuture<'async_trait, Result<RegistrationPage, RegistrationError>>
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait;
-
-    /// Run a compiled registration query, returning matches and the total count.
-    fn query_compiled<'life0, 'life1, 'async_trait>(
+    /// Run a compiled registration query over the page `window` selects of the
+    /// matches in identifier order, returning the page ascending by identifier
+    /// and the total count of matches (clause 5.10.2).
+    fn query_compiled<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         compiled: &'life1 CompiledCsrQuery,
+        window: &'life2 PageWindow,
     ) -> BoxFuture<'async_trait, Result<RegistrationPage, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
+        'life2: 'async_trait,
         Self: 'async_trait;
 
     /// Replace a registration with a fully resolved value set.

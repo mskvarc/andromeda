@@ -15,6 +15,7 @@
 //! invalid base64, an unknown tag, a missing or malformed identifier -- is a
 //! [`CursorDecodeError`], which the request boundary reports as `BadRequestData`.
 
+use crate::page_fullness::PageFullness;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use thiserror::Error;
@@ -76,9 +77,9 @@ impl PageCursor {
     ///
     /// `incoming` is the cursor the page was fetched under, or `None` when the
     /// page carried neither cursor nor offset -- the first page of a cursor
-    /// walk. `full` is whether the page filled the requested limit, which is how
-    /// a cursor walk with no total decides that a further page exists (the same
-    /// clause 6.3.10 page-fullness rule the offset path uses). The boundary
+    /// walk. `fullness` is whether the page filled the requested limit, which is
+    /// how a cursor walk with no total decides that a further page exists (the
+    /// same clause 6.3.10 page-fullness rule the offset path uses). The boundary
     /// identifiers are the first and last of the page as displayed, ascending.
     ///
     /// The rules mirror the offset pointers: `prev` is absent on the first page
@@ -88,7 +89,8 @@ impl PageCursor {
     /// that came back short has reached the end and offers no `next`. `last` is
     /// the from-end anchor and is always offered.
     #[must_use]
-    pub fn neighbours(incoming: Option<&PageCursor>, first_id: Identifier, last_id: Identifier, full: bool) -> NeighbourCursors {
+    pub fn neighbours(incoming: Option<&PageCursor>, first_id: Identifier, last_id: Identifier, fullness: PageFullness) -> NeighbourCursors {
+        let full = matches!(fullness, PageFullness::Full);
         let (has_prev, has_next) = match incoming {
             // First page of the walk: nothing precedes it; a following page
             // exists only if this one filled the limit.
@@ -296,7 +298,7 @@ mod tests {
     /// limit, and the from-end anchor.
     #[test]
     fn first_page_neighbours_offer_next_and_last_only() {
-        let neighbours = PageCursor::neighbours(None, uri("urn:ngsi-ld:E:001"), uri("urn:ngsi-ld:E:020"), true);
+        let neighbours = PageCursor::neighbours(None, uri("urn:ngsi-ld:E:001"), uri("urn:ngsi-ld:E:020"), PageFullness::Full);
         assert!(neighbours.prev.is_none());
         pretty_assertions::assert_eq!(neighbours.next, Some(PageCursor::After(uri("urn:ngsi-ld:E:020"))));
         pretty_assertions::assert_eq!(neighbours.last, PageCursor::End);
@@ -305,7 +307,7 @@ mod tests {
     /// A short first page is the only page: it offers no `next`.
     #[test]
     fn a_short_first_page_offers_no_next() {
-        let neighbours = PageCursor::neighbours(None, uri("urn:ngsi-ld:E:001"), uri("urn:ngsi-ld:E:005"), false);
+        let neighbours = PageCursor::neighbours(None, uri("urn:ngsi-ld:E:001"), uri("urn:ngsi-ld:E:005"), PageFullness::Short);
         assert!(neighbours.prev.is_none());
         assert!(neighbours.next.is_none());
     }
@@ -315,7 +317,7 @@ mod tests {
     #[test]
     fn a_forward_page_offers_prev_and_next() {
         let incoming = PageCursor::After(uri("urn:ngsi-ld:E:020"));
-        let neighbours = PageCursor::neighbours(Some(&incoming), uri("urn:ngsi-ld:E:021"), uri("urn:ngsi-ld:E:040"), true);
+        let neighbours = PageCursor::neighbours(Some(&incoming), uri("urn:ngsi-ld:E:021"), uri("urn:ngsi-ld:E:040"), PageFullness::Full);
         pretty_assertions::assert_eq!(neighbours.prev, Some(PageCursor::Before(uri("urn:ngsi-ld:E:021"))));
         pretty_assertions::assert_eq!(neighbours.next, Some(PageCursor::After(uri("urn:ngsi-ld:E:040"))));
     }
@@ -325,10 +327,10 @@ mod tests {
     #[test]
     fn a_backward_page_offers_next_always_and_prev_only_when_full() {
         let incoming = PageCursor::Before(uri("urn:ngsi-ld:E:021"));
-        let full = PageCursor::neighbours(Some(&incoming), uri("urn:ngsi-ld:E:001"), uri("urn:ngsi-ld:E:020"), true);
+        let full = PageCursor::neighbours(Some(&incoming), uri("urn:ngsi-ld:E:001"), uri("urn:ngsi-ld:E:020"), PageFullness::Full);
         pretty_assertions::assert_eq!(full.prev, Some(PageCursor::Before(uri("urn:ngsi-ld:E:001"))));
         pretty_assertions::assert_eq!(full.next, Some(PageCursor::After(uri("urn:ngsi-ld:E:020"))));
-        let short = PageCursor::neighbours(Some(&incoming), uri("urn:ngsi-ld:E:001"), uri("urn:ngsi-ld:E:010"), false);
+        let short = PageCursor::neighbours(Some(&incoming), uri("urn:ngsi-ld:E:001"), uri("urn:ngsi-ld:E:010"), PageFullness::Short);
         assert!(short.prev.is_none(), "a short backward page has reached the start");
         pretty_assertions::assert_eq!(short.next, Some(PageCursor::After(uri("urn:ngsi-ld:E:010"))));
     }
@@ -337,10 +339,10 @@ mod tests {
     /// the limit.
     #[test]
     fn the_from_end_page_offers_no_next() {
-        let full = PageCursor::neighbours(Some(&PageCursor::End), uri("urn:ngsi-ld:E:081"), uri("urn:ngsi-ld:E:100"), true);
+        let full = PageCursor::neighbours(Some(&PageCursor::End), uri("urn:ngsi-ld:E:081"), uri("urn:ngsi-ld:E:100"), PageFullness::Full);
         pretty_assertions::assert_eq!(full.prev, Some(PageCursor::Before(uri("urn:ngsi-ld:E:081"))));
         assert!(full.next.is_none());
-        let short = PageCursor::neighbours(Some(&PageCursor::End), uri("urn:ngsi-ld:E:001"), uri("urn:ngsi-ld:E:005"), false);
+        let short = PageCursor::neighbours(Some(&PageCursor::End), uri("urn:ngsi-ld:E:001"), uri("urn:ngsi-ld:E:005"), PageFullness::Short);
         assert!(short.prev.is_none(), "a short from-end page is the only page");
         assert!(short.next.is_none());
     }

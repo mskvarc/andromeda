@@ -46,7 +46,7 @@ mod tests {
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
-    use andromeda_ngsi_ld_query::cursor::PageCursor;
+    use andromeda_ngsi_ld_query::page_window::PageWindow;
     use andromeda_subscription::{
         error::SubscriptionError,
         notification_slot::{NotificationSlot, NotificationSlotGate},
@@ -77,11 +77,7 @@ mod tests {
             Err(SubscriptionError::StoreSaturated)
         }
 
-        async fn list(&self, _target: &ContextTarget, _limit: Option<i64>, _offset: Option<i64>) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
-            Err(SubscriptionError::StoreSaturated)
-        }
-
-        async fn list_keyset(&self, _target: &ContextTarget, _cursor: Option<&PageCursor>, _limit: i64) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
+        async fn list(&self, _target: &ContextTarget, _window: &PageWindow) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
             Err(SubscriptionError::StoreSaturated)
         }
 

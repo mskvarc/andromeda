@@ -5,76 +5,49 @@
 //! ([`crate::hosted_context_url`]), by the same URL built on another origin
 //! (the request origin when no `apiRoot` is configured, a proxy's, the
 //! loopback a background job dials), or by the root-relative path of the
-//! resource. What makes a reference one of the broker's own is its path and its
-//! tenant, never its origin: the path is the clause 6.30 resource
+//! resource. What makes a reference one of the broker's own is its path, never
+//! its origin: the path is the clause 6.30 resource
 //! `/ngsi-ld/v1/jsonldContexts/{contextId}`, optionally below the path prefix of
 //! the configured `apiRoot` (clause 6.2), naming one `urn:ngsi-ld:JsonLdContext:`
-//! identifier, and the query is empty or names the tenant in `andromedaTenant`
-//! and nothing else. Such a reference is resolved from storage by its
-//! identifier when the tenant holds it (clause 5.13.1 serves these entries
-//! "on-demand"), never fetched over HTTP from the broker itself, and only for
-//! the tenant whose storage it reads (clause 4.14): a reference naming another
-//! tenant's entry is an ordinary URL.
+//! identifier, with no query and no fragment. Such a reference is resolved from
+//! storage by its identifier when the tenant holds it (clause 5.13.1 serves
+//! these entries "on-demand"), never fetched over HTTP from the broker itself.
 //!
-//! Which tenant a reference names is the `andromedaTenant` it carries. Without
-//! one, an absolute URL names the default tenant's entry, the one dereferencing
-//! it without an `NGSILD-Tenant` header reads. A root-relative path without one
-//! has no origin to be dereferenced at: it is the clause 6.29.3.1 `Location`
-//! Add @context answers in the scope of the tenant the request named, and like
-//! every other resource path (clause 4.14) it names an entry of the tenant that
-//! reads it.
+//! A reference names no tenant. Clauses 4.14 and 6.3.14 make the
+//! `NGSILD-Tenant` header the only way a request names a tenant, so like every
+//! other resource path the reference names an entry of the tenant whose storage
+//! reads it, whether it is absolute or root-relative.
 
-use crate::hosted_context_url::{CONTEXTS_PATH, TENANT_PARAMETER};
+use crate::hosted_context_url::CONTEXTS_PATH;
 use andromeda_jsonld::hosted_context_recognizer::{HostedContextRecognizer, HostedReference};
-use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::JsonLdContextId, tenant::TenantName};
-use andromeda_tenancy::tenant_ref::TenantRef;
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::JsonLdContextId;
 use iri_rs::IriRefBuf;
 use percent_encoding::percent_decode_str;
-use url::{Url, form_urlencoded};
+use url::Url;
 
-/// A reference to one stored `@context` of one tenant.
+/// A reference to one stored `@context`, of whichever tenant reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostedContextReference {
     /// The identifier of the stored `@context`.
     identifier: JsonLdContextId,
-    /// The tenant whose entry it is.
-    tenant: ReferencedTenant,
-}
-
-/// The tenant whose stored `@context` a reference names.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReferencedTenant {
-    /// The tenant the reference states: the one its `andromedaTenant` names,
-    /// or the default tenant for an absolute URL that names none.
-    Stated(TenantRef),
-    /// The tenant reading the reference: a root-relative path that names no
-    /// tenant, as Add @context answers it in the requesting tenant's scope
-    /// (clauses 6.29.3.1 and 4.14).
-    Reading,
 }
 
 impl HostedContextReference {
     /// The stored `@context` `reference` names, when it is shaped like one of
     /// the broker's own: an absolute hierarchical IRI on any origin, or a
     /// root-relative reference, whose path is `/ngsi-ld/v1/jsonldContexts/<identifier>`
-    /// (or the same below the path prefix of `advertised`), with no fragment,
-    /// and whose query is empty or exactly one `andromedaTenant`. `None` for
-    /// any reference that names no stored `@context`.
+    /// (or the same below the path prefix of `advertised`), with no query and
+    /// no fragment. `None` for any reference that names no stored `@context`.
     #[must_use]
     pub fn parse(reference: &IriRefBuf, advertised: Option<&Url>) -> Option<HostedContextReference> {
-        let target = ReferenceTarget::of(reference)?;
-        let identifier = identifier_below(target.path, "").or_else(|| {
+        let path = addressed_path(reference)?;
+        let identifier = identifier_below(path, "").or_else(|| {
             advertised
                 .map(|root| root.path().trim_end_matches('/'))
                 .filter(|prefix| !prefix.is_empty())
-                .and_then(|prefix| identifier_below(target.path, prefix))
+                .and_then(|prefix| identifier_below(path, prefix))
         })?;
-        let tenant = match (tenant_of(target.query)?, target.origin) {
-            (TenantQualifier::Named(named), ReferenceOrigin::Absolute | ReferenceOrigin::None) => ReferencedTenant::Stated(TenantRef::Named(named)),
-            (TenantQualifier::Absent, ReferenceOrigin::Absolute) => ReferencedTenant::Stated(TenantRef::UnnamedDefault),
-            (TenantQualifier::Absent, ReferenceOrigin::None) => ReferencedTenant::Reading,
-        };
-        Some(HostedContextReference { identifier, tenant })
+        Some(HostedContextReference { identifier })
     }
 
     /// The identifier of the stored `@context`.
@@ -82,54 +55,24 @@ impl HostedContextReference {
     pub const fn identifier(&self) -> &JsonLdContextId {
         &self.identifier
     }
-
-    /// The tenant whose entry it is.
-    #[must_use]
-    pub const fn tenant(&self) -> &ReferencedTenant {
-        &self.tenant
-    }
 }
 
-/// The path and query a reference addresses, whatever origin it names,
-/// borrowed from the reference.
-struct ReferenceTarget<'a> {
-    /// Whether the reference names an origin at all.
-    origin: ReferenceOrigin,
-    /// The path, as written (still percent-encoded).
-    path: &'a str,
-    /// The query, when there is one.
-    query: Option<&'a str>,
-}
-
-/// Whether a reference to a stored `@context` names the origin serving it.
-#[derive(Clone, Copy)]
-enum ReferenceOrigin {
-    /// An absolute hierarchical IRI, on whatever origin.
-    Absolute,
-    /// A root-relative reference.
-    None,
-}
-
-impl<'a> ReferenceTarget<'a> {
-    /// The path and query of an absolute hierarchical IRI or of a root-relative
-    /// reference; `None` for anything else -- an opaque IRI such as a bare URN,
-    /// a network-path or path-relative reference -- and for a reference with a
-    /// fragment, which names part of a document rather than the stored
-    /// `@context` itself.
-    fn of(reference: &'a IriRefBuf) -> Option<ReferenceTarget<'a>> {
-        let origin = match (reference.scheme(), reference.authority()) {
-            (Some(_), Some(_)) => Some(ReferenceOrigin::Absolute),
-            (None, None) => reference.path().starts_with('/').then_some(ReferenceOrigin::None),
-            (Some(_), None) | (None, Some(_)) => None,
-        };
-        match (origin, reference.fragment()) {
-            (Some(origin), None) => Some(ReferenceTarget {
-                origin,
-                path: reference.path(),
-                query: reference.query(),
-            }),
-            (Some(_), Some(_)) | (None, _) => None,
-        }
+/// The path, as written (still percent-encoded), of an absolute hierarchical
+/// IRI on whatever origin or of a root-relative reference; `None` for anything
+/// else -- an opaque IRI such as a bare URN, a network-path or path-relative
+/// reference -- and for a reference with a query or a fragment. A query is no
+/// part of any URL the broker mints for a stored `@context`, and a fragment
+/// names part of a document rather than the stored `@context` itself.
+fn addressed_path(reference: &IriRefBuf) -> Option<&str> {
+    let shaped = match (reference.scheme(), reference.authority()) {
+        (Some(_), Some(_)) => true,
+        (None, None) => reference.path().starts_with('/'),
+        (Some(_), None) | (None, Some(_)) => false,
+    };
+    let path: &str = reference.path();
+    match (shaped, reference.query(), reference.fragment()) {
+        (true, None, None) => Some(path),
+        (true, Some(_), _) | (true, None, Some(_)) | (false, _, _) => None,
     }
 }
 
@@ -157,74 +100,34 @@ fn stored_identifier(segment: &str) -> Option<JsonLdContextId> {
     }
 }
 
-/// The `andromedaTenant` qualifier a stored-`@context` query carries.
-enum TenantQualifier {
-    /// No query: the reference names no tenant.
-    Absent,
-    /// The tenant `andromedaTenant` names.
-    Named(TenantName),
-}
-
-/// The tenant qualifier `query` carries, or `None` -- no stored `@context` at
-/// all -- for any other parameter, a repeated one, or a value that is no tenant
-/// name.
-fn tenant_of(query: Option<&str>) -> Option<TenantQualifier> {
-    let mut named: Option<TenantName> = None;
-    for (key, value) in query.into_iter().flat_map(|query| form_urlencoded::parse(query.as_bytes())) {
-        if key != TENANT_PARAMETER || named.is_some() {
-            return None;
-        }
-        match value.parse::<TenantName>() {
-            Ok(tenant) => named = Some(tenant),
-            Err(_not_a_tenant_name) => return None,
-        }
-    }
-    Some(named.map_or(TenantQualifier::Absent, TenantQualifier::Named))
-}
-
-/// Recognises references to one tenant's own stored `@context`s.
+/// Recognises references to the stored `@context`s of the tenant whose
+/// storage the engine reads.
 #[derive(Debug, Clone)]
 pub struct TenantHostedContexts {
     /// The configured `apiRoot`, below whose path prefix references are
     /// recognised as well as at the root.
     advertised: Option<Url>,
-    /// The tenant whose storage the engine reads.
-    tenant: TenantRef,
 }
 
 impl TenantHostedContexts {
-    /// The recogniser of `tenant`'s own stored `@context`s.
+    /// The recogniser of a tenant's own stored `@context`s, below the
+    /// configured `advertised` `apiRoot` as well as at the root.
     #[must_use]
-    pub const fn new(advertised: Option<Url>, tenant: TenantRef) -> TenantHostedContexts {
-        TenantHostedContexts { advertised, tenant }
+    pub const fn new(advertised: Option<Url>) -> TenantHostedContexts {
+        TenantHostedContexts { advertised }
     }
 }
 
 impl HostedContextRecognizer for TenantHostedContexts {
     fn recognize(&self, reference: &IriRefBuf) -> HostedReference {
-        match HostedContextReference::parse(reference, self.advertised.as_ref()) {
-            Some(HostedContextReference {
-                identifier,
-                tenant: ReferencedTenant::Reading,
-            }) => HostedReference::Own(identifier),
-            Some(HostedContextReference {
-                identifier,
-                tenant: ReferencedTenant::Stated(stated),
-            }) if stated == self.tenant => HostedReference::Own(identifier),
-            Some(HostedContextReference {
-                tenant: ReferencedTenant::Stated(_),
-                ..
-            }) => HostedReference::OtherTenant,
-            None => HostedReference::Unrelated,
-        }
+        HostedContextReference::parse(reference, self.advertised.as_ref()).map_or(HostedReference::Unrelated, |parsed| HostedReference::Own(parsed.identifier))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::hosted_context_reference::{HostedContextReference, ReferencedTenant, TenantHostedContexts};
+    use crate::hosted_context_reference::{HostedContextReference, TenantHostedContexts};
     use andromeda_jsonld::hosted_context_recognizer::{HostedContextRecognizer, HostedReference};
-    use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::IriRefBuf;
     use url::Url;
 
@@ -234,40 +137,19 @@ mod tests {
         Url::parse(text).expect("a URL")
     }
 
-    fn named(name: &str) -> TenantRef {
-        TenantRef::Named(name.parse().expect("a tenant name"))
-    }
-
-    fn stated(name: &str) -> ReferencedTenant {
-        ReferencedTenant::Stated(named(name))
-    }
-
-    const DEFAULT: ReferencedTenant = ReferencedTenant::Stated(TenantRef::UnnamedDefault);
-
     fn reference(text: &str) -> IriRefBuf {
         IriRefBuf::new(text).expect("an IRI reference")
     }
 
-    fn parsed(text: &str, advertised: Option<&Url>) -> Option<(String, ReferencedTenant)> {
-        HostedContextReference::parse(&reference(text), advertised).map(|parsed| (parsed.identifier().to_string(), parsed.tenant().clone()))
+    fn parsed(text: &str, advertised: Option<&Url>) -> Option<String> {
+        HostedContextReference::parse(&reference(text), advertised).map(|parsed| parsed.identifier().to_string())
     }
 
     /// Clauses 6.29.3.1 and 4.14: the root-relative `Location` Add @context
-    /// answers names the entry in the scope of whichever tenant reads it.
+    /// answers names the entry by its identifier.
     #[test]
-    fn a_root_relative_path_without_a_tenant_names_an_entry_of_the_reading_tenant() {
-        pretty_assertions::assert_eq!(
-            parsed(&format!("/ngsi-ld/v1/jsonldContexts/{ID}"), None),
-            Some((ID.to_owned(), ReferencedTenant::Reading))
-        );
-    }
-
-    #[test]
-    fn a_tenant_parameter_names_the_tenant() {
-        pretty_assertions::assert_eq!(
-            parsed(&format!("/ngsi-ld/v1/jsonldContexts/{ID}?andromedaTenant=acme"), None),
-            Some((ID.to_owned(), stated("acme")))
-        );
+    fn a_root_relative_path_names_a_stored_entry() {
+        pretty_assertions::assert_eq!(parsed(&format!("/ngsi-ld/v1/jsonldContexts/{ID}"), None), Some(ID.to_owned()));
     }
 
     /// The origin does not decide: the broker may be named by its configured
@@ -278,7 +160,7 @@ mod tests {
         for origin in ["http://127.0.0.1:1056", "https://gateway.example.com", "http://[::1]:8080"] {
             pretty_assertions::assert_eq!(
                 parsed(&format!("{origin}/ngsi-ld/v1/jsonldContexts/{ID}"), None),
-                Some((ID.to_owned(), DEFAULT)),
+                Some(ID.to_owned()),
                 "{origin}"
             );
         }
@@ -289,18 +171,13 @@ mod tests {
     #[test]
     fn the_configured_api_root_path_prefix_is_recognised() {
         let advertised = root("https://proxy.example/broker/");
-        pretty_assertions::assert_eq!(
-            parsed(&format!("https://any.example/broker/ngsi-ld/v1/jsonldContexts/{ID}"), Some(&advertised)),
-            Some((ID.to_owned(), DEFAULT))
-        );
-        pretty_assertions::assert_eq!(
-            parsed(&format!("/broker/ngsi-ld/v1/jsonldContexts/{ID}"), Some(&advertised)),
-            Some((ID.to_owned(), ReferencedTenant::Reading))
-        );
-        pretty_assertions::assert_eq!(
-            parsed(&format!("https://any.example/ngsi-ld/v1/jsonldContexts/{ID}"), Some(&advertised)),
-            Some((ID.to_owned(), DEFAULT))
-        );
+        for reference in [
+            format!("https://any.example/broker/ngsi-ld/v1/jsonldContexts/{ID}"),
+            format!("/broker/ngsi-ld/v1/jsonldContexts/{ID}"),
+            format!("https://any.example/ngsi-ld/v1/jsonldContexts/{ID}"),
+        ] {
+            pretty_assertions::assert_eq!(parsed(&reference, Some(&advertised)), Some(ID.to_owned()), "{reference}");
+        }
     }
 
     /// Only the configured prefix counts: another path in front of the
@@ -322,12 +199,22 @@ mod tests {
         let encoded = ID.replace(':', "%3A");
         pretty_assertions::assert_eq!(
             parsed(&format!("http://127.0.0.1:1056/ngsi-ld/v1/jsonldContexts/{encoded}"), None),
-            Some((ID.to_owned(), DEFAULT))
+            Some(ID.to_owned())
         );
-        pretty_assertions::assert_eq!(
-            parsed(&format!("/ngsi-ld/v1/jsonldContexts/{encoded}?andromedaTenant=acme"), None),
-            Some((ID.to_owned(), stated("acme")))
-        );
+        pretty_assertions::assert_eq!(parsed(&format!("/ngsi-ld/v1/jsonldContexts/{encoded}"), None), Some(ID.to_owned()));
+    }
+
+    /// No URL the broker mints for a stored `@context` carries a query, so a
+    /// reference with any query, the former tenant parameter included, is not
+    /// one of the broker's own.
+    #[test]
+    fn a_reference_with_any_query_is_not_ours() {
+        for query in ["?andromedaTenant=acme", "?x=1", "?details=true", "?"] {
+            for origin in ["", "http://127.0.0.1:1056"] {
+                let reference = format!("{origin}/ngsi-ld/v1/jsonldContexts/{ID}{query}");
+                pretty_assertions::assert_eq!(parsed(&reference, None), None, "{reference}");
+            }
+        }
     }
 
     #[test]
@@ -339,9 +226,6 @@ mod tests {
             "/ngsi-ld/v1/jsonldContexts/".to_owned(),
             format!("/ngsi-ld/v1/jsonldContexts/{ID}/extra"),
             format!("http://127.0.0.1:1056/ngsi-ld/v1/jsonldContexts/{ID}/extra"),
-            format!("/ngsi-ld/v1/jsonldContexts/{ID}?details=true"),
-            format!("http://127.0.0.1:1056/ngsi-ld/v1/jsonldContexts/{ID}?details=true"),
-            format!("/ngsi-ld/v1/jsonldContexts/{ID}?andromedaTenant=a&andromedaTenant=b"),
             format!("/ngsi-ld/v1/jsonldContexts/{ID}#fragment"),
             format!("ngsi-ld/v1/jsonldContexts/{ID}"),
             format!("//other.example/ngsi-ld/v1/jsonldContexts/{ID}"),
@@ -351,51 +235,28 @@ mod tests {
         }
     }
 
-    /// Clause 4.14: only the tenant's own entries resolve from its storage; an
-    /// entry of another tenant is recognised as such, and anything else is
-    /// unrelated. An absolute URL naming no tenant is the default tenant's; a
-    /// root-relative path naming none is the reading tenant's.
+    /// Clauses 4.14 and 6.3.14: a reference names no tenant, so an absolute
+    /// reference on any origin, like a root-relative one, names an entry of the
+    /// tenant whose storage reads it, default and named tenants alike.
     #[test]
-    fn a_tenant_recognises_its_own_entries_and_tells_another_tenants_apart() {
-        let acme = TenantHostedContexts::new(None, named("acme"));
+    fn an_absolute_reference_names_the_reading_tenant() {
+        let recognizer = TenantHostedContexts::new(None);
         let own = HostedReference::Own(ID.parse().expect("an identifier"));
 
+        for text in [
+            format!("/ngsi-ld/v1/jsonldContexts/{ID}"),
+            format!("http://127.0.0.1:1056/ngsi-ld/v1/jsonldContexts/{ID}"),
+            format!("https://gateway.example.com/ngsi-ld/v1/jsonldContexts/{ID}"),
+        ] {
+            pretty_assertions::assert_eq!(recognizer.recognize(&reference(&text)), own, "{text}");
+        }
         pretty_assertions::assert_eq!(
-            acme.recognize(&reference(&format!("/ngsi-ld/v1/jsonldContexts/{ID}?andromedaTenant=acme"))),
-            own
+            recognizer.recognize(&reference(&format!("/ngsi-ld/v1/jsonldContexts/{ID}?andromedaTenant=acme"))),
+            HostedReference::Unrelated
         );
         pretty_assertions::assert_eq!(
-            acme.recognize(&reference(&format!(
-                "http://127.0.0.1:1056/ngsi-ld/v1/jsonldContexts/{ID}?andromedaTenant=acme"
-            ))),
-            own
+            recognizer.recognize(&reference("https://example.com/context.jsonld")),
+            HostedReference::Unrelated
         );
-        pretty_assertions::assert_eq!(acme.recognize(&reference(&format!("/ngsi-ld/v1/jsonldContexts/{ID}"))), own);
-        pretty_assertions::assert_eq!(
-            acme.recognize(&reference(&format!("http://127.0.0.1:1056/ngsi-ld/v1/jsonldContexts/{ID}"))),
-            HostedReference::OtherTenant
-        );
-        pretty_assertions::assert_eq!(
-            acme.recognize(&reference(&format!("/ngsi-ld/v1/jsonldContexts/{ID}?andromedaTenant=other"))),
-            HostedReference::OtherTenant
-        );
-        pretty_assertions::assert_eq!(acme.recognize(&reference("https://example.com/context.jsonld")), HostedReference::Unrelated);
-
-        let default = TenantHostedContexts::new(None, TenantRef::UnnamedDefault);
-        pretty_assertions::assert_eq!(
-            default.recognize(&reference(&format!("https://gateway.example.com/ngsi-ld/v1/jsonldContexts/{ID}"))),
-            own
-        );
-        pretty_assertions::assert_eq!(default.recognize(&reference(&format!("/ngsi-ld/v1/jsonldContexts/{ID}"))), own);
-        pretty_assertions::assert_eq!(
-            default.recognize(&reference(&format!("/ngsi-ld/v1/jsonldContexts/{ID}?andromedaTenant=acme"))),
-            HostedReference::OtherTenant
-        );
-    }
-
-    /// A tenant parameter whose value is no tenant name names no stored entry.
-    #[test]
-    fn a_tenant_parameter_that_is_no_tenant_name_names_no_stored_entry() {
-        pretty_assertions::assert_eq!(parsed(&format!("/ngsi-ld/v1/jsonldContexts/{ID}?andromedaTenant=%20"), None), None);
     }
 }

@@ -37,6 +37,7 @@ pub mod jsonb;
 pub mod location_instances;
 pub mod ltree;
 pub mod operator;
+pub mod page_window;
 pub mod projected_attribute_names;
 pub mod projected_type_names;
 pub mod q_predicate;

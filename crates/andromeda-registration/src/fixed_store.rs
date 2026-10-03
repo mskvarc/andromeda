@@ -7,7 +7,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, info::RegistrationInfo};
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
@@ -17,6 +17,9 @@ use std::sync::Mutex;
 /// A store holding a fixed registration list and recording the updates it is
 /// asked to apply.
 ///
+/// `query_compiled` answers the page a window cuts from every registration in
+/// identifier order, as a superset preselect is allowed to, leaving the
+/// clause 5.10.2.5 trim to the policy layer;
 /// `get` answers the registration carrying the requested identifier;
 /// `find_overlapping` returns every registration, as a superset preselect is
 /// allowed to; `update` records the resolved `information` it received so a
@@ -107,32 +110,21 @@ impl RegistrationStore for FixedStore {
         Box::pin(async { Ok(found) })
     }
 
-    fn list<'life0, 'async_trait>(&'life0 self, _pagination: Pagination) -> BoxFuture<'async_trait, Result<RegistrationPage, RegistrationError>>
-    where
-        'life0: 'async_trait,
-    {
-        Box::pin(async {
-            Ok(RegistrationPage {
-                registrations: Vec::new(),
-                total: 0,
-            })
-        })
-    }
-
-    fn query_compiled<'life0, 'life1, 'async_trait>(
+    fn query_compiled<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         _compiled: &'life1 CompiledCsrQuery,
+        window: &'life2 PageWindow,
     ) -> BoxFuture<'async_trait, Result<RegistrationPage, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
+        'life2: 'async_trait,
     {
-        Box::pin(async {
-            Ok(RegistrationPage {
-                registrations: Vec::new(),
-                total: 0,
-            })
-        })
+        let mut sorted = self.registrations.clone(); // clone: the page owns the registrations it hands out
+        sorted.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+        let total = u64::try_from(sorted.len()).unwrap_or(u64::MAX);
+        let registrations = window.cut(sorted, |registration| registration.id.as_str());
+        Box::pin(async move { Ok(RegistrationPage { registrations, total }) })
     }
 
     fn update<'life0, 'life1, 'life2, 'async_trait>(

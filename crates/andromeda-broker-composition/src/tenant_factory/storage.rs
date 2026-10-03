@@ -152,10 +152,9 @@ async fn bring_pattern_forms_current(pool: &PgPool) -> Result<(), TenantAssembly
 ///
 /// Clause 5.13.1: a reference to one of this tenant's own stored contexts is
 /// resolved from its storage, never fetched over HTTP from this broker.
-fn tenant_engine(config: &TenantFactoryConfig, context_repo: &Arc<JsonLdContextRepository>, tenant: &TenantRef) -> Result<JsonLdEngine, TenantAssemblyError> {
+fn tenant_engine(config: &TenantFactoryConfig, context_repo: &Arc<JsonLdContextRepository>) -> Result<JsonLdEngine, TenantAssemblyError> {
     let recognizer = Arc::new(TenantHostedContexts::new(
         config.identity.advertised_url.clone(), // clone: the recogniser owns the configured apiRoot
-        tenant.clone(),                         // clone: the recogniser names the tenant it serves
     ));
     Ok(config.jsonld.build_engine(Arc::clone(context_repo), recognizer)?)
 }
@@ -194,7 +193,7 @@ pub(super) async fn initialize_storage(
     bring_pattern_forms_current(&pool).await?;
     let live_target = resolve_live_target();
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
-    let engine = tenant_engine(config, &context_repo, tenant)?;
+    let engine = tenant_engine(config, &context_repo)?;
     let context_workers = TenantContextWorkers {
         hit_flush: engine.hit_counter().map(|hit_counter| {
             ContextHitFlushWorker::spawn(

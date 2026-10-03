@@ -3,6 +3,7 @@
 use crate::{management::ManagementRoutes, routes::ApiRoutes};
 use andromeda_http_extraction::{api_root::AdvertisedApiRoot, operation_hit_scope::scope_operation_hits, request_links::validate_request_links};
 use andromeda_http_stack::stack::HttpStack;
+use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
 use axum::{Extension, Router, middleware::from_fn};
 use tower_http::normalize_path::NormalizePath;
 
@@ -39,7 +40,10 @@ impl HttpApi {
             .merge(routes.tenancy.into_router())
             .merge(routes.health.into_router())
             .merge(routes.component_report.into_router());
-        let mut api_root = Router::new().nest("/ngsi-ld/v1", stack.apply_api(ngsi_request_layers(ngsi, routes.advertised_api_root)));
+        let mut api_root = Router::new().nest(
+            "/ngsi-ld/v1",
+            stack.apply_api(ngsi_request_layers(ngsi, routes.advertised_api_root, routes.pagination)),
+        );
         // Merged mode mounts the management endpoints as root siblings of the
         // NGSI-LD nest, outside the operation-hit scope, so a metrics scrape is
         // never counted as an NGSI-LD operation.
@@ -75,7 +79,7 @@ impl HttpApi {
 }
 
 /// The layers every NGSI-LD request passes before any route.
-fn ngsi_request_layers(ngsi: Router, advertised_api_root: Option<AdvertisedApiRoot>) -> Router {
+fn ngsi_request_layers(ngsi: Router, advertised_api_root: Option<AdvertisedApiRoot>, pagination: PaginationPolicy) -> Router {
     // Clause 5.13.3.5: one NGSI-LD request resolves the same `@context`
     // several times internally (write screening, then the write itself);
     // an operation scope makes those internal resolutions count as one use.
@@ -85,6 +89,9 @@ fn ngsi_request_layers(ngsi: Router, advertised_api_root: Option<AdvertisedApiRo
     // context links are refused for every verb and no extractor parses
     // the header again.
     let ngsi = ngsi.layer(from_fn(validate_request_links));
+    // Clauses 5.5.9.1 and 5.5.9.2: every paged collection pages by the one
+    // policy the operator configured.
+    let ngsi = ngsi.layer(Extension(pagination));
     // Clause 6.2: a configured `apiRoot`, prefix included, is the one every
     // route builds on.
     match advertised_api_root {
@@ -116,7 +123,10 @@ mod tests {
         routes::EntityMapRoutes,
         state::{EntityMapRouteServices, EntityMapStateResolver},
     };
-    use andromeda_http_extraction::api_root::{AdvertisedApiRoot, ApiRoot};
+    use andromeda_http_extraction::{
+        api_root::{AdvertisedApiRoot, ApiRoot},
+        pagination_policy::RequestPagination,
+    };
     use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
     use andromeda_http_health::routes::HealthRoutes;
     use andromeda_http_notification_receiver::{
@@ -158,6 +168,7 @@ mod tests {
     };
     use andromeda_http_tenancy::routes::{TenancyRoutes, TenantManagement};
     use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, tenant::TenantName};
+    use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
     use andromeda_telemetry::recorder::TelemetryRecorder;
     use andromeda_tenancy::{
         administration::TenantAdministration,
@@ -167,8 +178,8 @@ mod tests {
         error::TenancyError,
         residency::TenantResidency,
         status::TenantStatus,
-        tenant_keyset::TenantKeyset,
         tenant_listing::TenantListing,
+        tenant_page_start::TenantPageStart,
         tenant_record::TenantRecord,
         tenant_ref::TenantRef,
         tenant_usage::TenantUsage,
@@ -254,7 +265,7 @@ mod tests {
             Ok(Some(fake_tenant_view(name)))
         }
 
-        async fn list_tenants(&self, _keyset: &TenantKeyset, _limit: i64) -> Result<TenantListing, TenancyError> {
+        async fn list_tenants(&self, _start: &TenantPageStart, _limit: u32) -> Result<TenantListing, TenancyError> {
             Ok(TenantListing::new(Vec::new(), 0))
         }
 
@@ -304,6 +315,7 @@ mod tests {
                 version: ComponentVersion::from("16.2".to_owned()),
             }]))
             .advertised_api_root(None)
+            .pagination(PaginationPolicy::CursorDefault)
             .build())
     }
 
@@ -534,17 +546,15 @@ mod tests {
         (Method::GET, "/ngsi-ld/v1/info/sourceIdentity"),
     ];
 
-    /// Clause 6.3.20: the vendor `andromedaTenant` parameter belongs to Serve
-    /// @context alone, so every other family refuses it as undefined, before
-    /// any tenant is resolved.
+    /// Clause 6.3.20: a parameter an operation does not define is
+    /// `InvalidRequest` on every family, Serve @context included, before any
+    /// tenant is resolved.
     #[tokio::test]
-    async fn every_family_refuses_the_vendor_tenant_parameter_as_invalid_request() -> Result<(), Box<dyn Error>> {
+    async fn every_family_refuses_an_undefined_parameter_as_invalid_request() -> Result<(), Box<dyn Error>> {
         let service = test_api()?.into_service();
-        for (method, path) in FAMILY_OPERATIONS {
-            let response = service
-                .clone()
-                .oneshot(ngsi_request(&method, &format!("{path}?andromedaTenant=x"), &[])?)
-                .await?; // clone: the method labels the assertion
+        let serve = (Method::GET, "/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:1");
+        for (method, path) in FAMILY_OPERATIONS.into_iter().chain([serve]) {
+            let response = service.clone().oneshot(ngsi_request(&method, &format!("{path}?bogus=x"), &[])?).await?; // clone: the method labels the assertion
             pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{method} {path}");
             pretty_assertions::assert_eq!(problem_type(response).await?, "InvalidRequest", "{method} {path}");
         }
@@ -579,7 +589,11 @@ mod tests {
         );
         let routed = Router::new().nest(
             "/ngsi-ld/v1",
-            test_stack()?.apply_api(ngsi_request_layers(probe, Some(AdvertisedApiRoot::new(configured.clone())))), // clone: the expectation keeps the URL
+            test_stack()?.apply_api(ngsi_request_layers(
+                probe,
+                Some(AdvertisedApiRoot::new(configured.clone())),
+                PaginationPolicy::CursorDefault,
+            )), // clone: the expectation keeps the URL
         );
 
         let response = routed.oneshot(ngsi_request(&Method::GET, "/ngsi-ld/v1/probe", &[])?).await?;
@@ -587,6 +601,27 @@ mod tests {
         pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), usize::MAX).await?;
         pretty_assertions::assert_eq!(String::from_utf8(body.to_vec())?, configured.to_string());
+        Ok(())
+    }
+
+    /// Clauses 5.5.9.1 and 5.5.9.2: the policy the assembly installs is the one
+    /// every NGSI-LD route pages by.
+    #[tokio::test]
+    async fn the_installed_pagination_policy_is_the_one_a_route_reads() -> Result<(), Box<dyn Error>> {
+        let probe = Router::new().route(
+            "/probe",
+            get(|RequestPagination(policy): RequestPagination| async move { format!("{policy:?}") }),
+        );
+        let routed = Router::new().nest(
+            "/ngsi-ld/v1",
+            test_stack()?.apply_api(ngsi_request_layers(probe, None, PaginationPolicy::OffsetOnly)),
+        );
+
+        let response = routed.oneshot(ngsi_request(&Method::GET, "/ngsi-ld/v1/probe", &[])?).await?;
+
+        pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        pretty_assertions::assert_eq!(String::from_utf8(body.to_vec())?, "OffsetOnly");
         Ok(())
     }
 }

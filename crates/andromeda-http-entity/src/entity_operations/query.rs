@@ -15,23 +15,9 @@ use crate::{
         query::{EntityQueryRequest, run},
         query_binding::QueryBinding,
     },
-    entity_operations::{
-        AcceptFormat,
-        ApiRoot,
-        EntityQueryParameters,
-        EntityResultExt,
-        EntityTenantState,
-        JsonLd,
-        NgsiLdProtocolHeaders,
-        NgsiLdRequestEnvelope,
-        PostQueryParams,
-        ProblemResponse,
-        Query,
-        Response,
-        ValidatedQuery,
-    },
+    entity_operations::{AcceptFormat, ApiRoot, EntityTenantState, NgsiLdProtocolHeaders, NgsiLdRequestEnvelope, ProblemResponse, Response},
 };
-use andromeda_http_extraction::context_target;
+use andromeda_http_extraction::{context_target, entity_post_query::EntityPostQuery, pagination_policy::RequestPagination};
 
 pub(crate) async fn query(
     context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: EntityTenantState,
@@ -39,14 +25,12 @@ pub(crate) async fn query(
     NgsiLdRequestEnvelope { uri, incoming_via: _, headers }: NgsiLdRequestEnvelope,
     api_root: ApiRoot,
     protocol: NgsiLdProtocolHeaders,
-    ValidatedQuery(url_params): ValidatedQuery<PostQueryParams>,
-    JsonLd { value: request, context }: JsonLd<Query>,
-) -> Result<Response, ProblemResponse> {
+    RequestPagination(pagination): RequestPagination,
     // Clause 6.3.5: the query is read against the one context the body
     // extractor resolved -- the body's own `@context` for `application/ld+json`,
     // the `Link` context for `application/json`.
-    let mut query = EntityQueryParameters::try_from(request).with_entity_instance(&uri)?;
-    apply_url_parameters(&mut query, url_params);
+    EntityPostQuery { query, context }: EntityPostQuery,
+) -> Result<Response, ProblemResponse> {
     run(EntityQueryRequest::builder()
         .services(services)
         .target(target)
@@ -58,34 +42,7 @@ pub(crate) async fn query(
         .context(context)
         .query(query)
         .binding(QueryBinding::PostedBody)
+        .pagination(pagination)
         .build())
     .await
-}
-
-/// Fold the URL parameters over the clause 5.2.23 body the query arrived in.
-///
-/// The same parameter may be written in the URL or in the canonical body. The
-/// specification does not say which wins, so this is broker convention: the URL
-/// is the more specific of the two and takes precedence, but only where it
-/// actually carries a value -- an absent query-string parameter leaves the
-/// body's member standing rather than erasing it.
-///
-/// `limit`, `offset` and `count` are the exception, and nothing is overwritten
-/// by them: Table 5.2.23-1 defines none of the three, so the body conversion
-/// leaves each absent and the URL is the only place clauses 6.3.10 and 6.3.13
-/// can put them.
-fn apply_url_parameters(query: &mut EntityQueryParameters, url_params: PostQueryParams) {
-    query.limit = url_params.limit;
-    query.offset = url_params.offset;
-    query.count = url_params.count;
-    query.options = url_params.options.or(query.options.take());
-    query.local = url_params.local.or(query.local);
-    query.pick = url_params.pick.or(query.pick.take());
-    query.omit = url_params.omit.or(query.omit.take());
-    query.dataset_id = url_params.dataset_id.or(query.dataset_id.take());
-    query.format = url_params.format.or(query.format.take());
-    query.join = url_params.join.or(query.join);
-    query.join_level = url_params.join_level.or(query.join_level);
-    query.geometry_property = url_params.geometry_property.or(query.geometry_property.take());
-    query.lang = url_params.lang.or(query.lang.take());
 }

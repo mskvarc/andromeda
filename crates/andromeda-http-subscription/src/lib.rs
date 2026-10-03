@@ -6,6 +6,7 @@
 pub mod config;
 mod csource_subscription;
 pub mod error;
+mod listing;
 pub mod routes;
 mod sse;
 pub mod state;

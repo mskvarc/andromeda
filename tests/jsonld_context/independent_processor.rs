@@ -40,12 +40,31 @@ pub struct ReadNode {
 /// An offline JSON-LD 1.1 processor and the documents it may resolve.
 pub struct IndependentProcessor {
     documents: HashMap<IriBuf, RemoteDocument>,
+    /// The tenant the processor dereferences on behalf of, named in the
+    /// `NGSILD-Tenant` header of every fetch; `None` for the default tenant.
+    tenant: Option<String>,
 }
 
 impl IndependentProcessor {
-    /// A processor that resolves the v1.9 core `@context` and nothing else.
+    /// A processor that resolves the v1.9 core `@context` and nothing else,
+    /// dereferencing as the default tenant.
     pub fn new() -> IndependentProcessor {
-        let mut processor = IndependentProcessor { documents: HashMap::new() };
+        IndependentProcessor::with_tenant(None)
+    }
+
+    /// The same processor dereferencing on behalf of `tenant`: clauses 4.14
+    /// and 6.3.14 make the header the only way a request names a tenant, so a
+    /// processor following a link to a non-default tenant's stored `@context`
+    /// sends it.
+    pub fn for_tenant(tenant: &str) -> IndependentProcessor {
+        IndependentProcessor::with_tenant(Some(tenant.to_owned()))
+    }
+
+    fn with_tenant(tenant: Option<String>) -> IndependentProcessor {
+        let mut processor = IndependentProcessor {
+            documents: HashMap::new(),
+            tenant,
+        };
         processor.insert(core(), serde_json::from_str(CORE_V19_DOCUMENT).expect("the embedded core context is JSON"));
         processor.insert(DATA_INTEGRITY_CONTEXT_URL, serde_json::json!({ "@context": {} }));
         processor
@@ -69,8 +88,12 @@ impl IndependentProcessor {
             if self.documents.contains_key(&key) {
                 continue;
             }
-            let document: Value = client
-                .get(&next)
+            let request = client.get(&next);
+            let request = match &self.tenant {
+                Some(tenant) => request.header("NGSILD-Tenant", tenant),
+                None => request,
+            };
+            let document: Value = request
                 .send()
                 .await
                 .expect("the context document is reachable")

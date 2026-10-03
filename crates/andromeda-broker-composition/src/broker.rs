@@ -4,6 +4,7 @@ use crate::{
     component_report::{ComponentReportError, collect as collect_component_reports},
     config::{
         management::{ManagementMode, MetricsExposure},
+        pagination::resolve_pagination,
         runtime::RuntimeConfig,
     },
     listeners,
@@ -48,6 +49,7 @@ use andromeda_http_subscription::routes::SubscriptionRoutes;
 use andromeda_http_telemetry::{error::TelemetryHttpError, routes::TelemetryRoutes};
 use andromeda_http_temporal::routes::TemporalRoutes;
 use andromeda_http_tenancy::routes::{TenancyRoutes, TenantManagement};
+use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicyError;
 use andromeda_postgresql_context_store::{
     error::ContextStoreError,
     forwarded_subscription_routes::PostgresForwardedSubscriptionRouter,
@@ -127,6 +129,9 @@ enum BrokerStartupError {
     /// A fallible inbound HTTP middleware layer could not be built.
     #[error(transparent)]
     HttpStack(#[from] HttpStackBuildError),
+    /// `[pagination]` and `[extensions]` together name no pagination policy.
+    #[error(transparent)]
+    Pagination(#[from] PaginationPolicyError),
 }
 
 /// Construct the broker, serve HTTP, then close process resources in order.
@@ -316,6 +321,7 @@ async fn construct(
     // and log loudly if that override disabled a feature the operator turned on.
     let enabled_extensions = config.extensions.resolve();
     log_conformance_override(&config.extensions);
+    let pagination = resolve_pagination(&config.extensions, config.pagination)?;
 
     let entity_routes = EntityRoutes::new(Arc::new(BrokerEntityStateResolver::new(Arc::clone(&tenants))), enabled_extensions);
     let temporal_routes = TemporalRoutes::new(Arc::new(BrokerTemporalStateResolver::new(Arc::clone(&tenants))), enabled_extensions);
@@ -345,6 +351,7 @@ async fn construct(
         .health(HealthRoutes::new(health.clone())) // clone: the data plane and the management plane each own a health-route fragment over the same indicators
         .component_report(ComponentReportRoutes::new(component_reports))
         .advertised_api_root(config.identity.advertised_url.clone().map(AdvertisedApiRoot::new)) // clone: clause 6.2, the configured apiRoot every minted URL is built on
+        .pagination(pagination)
         .build();
     let stack = HttpStack::new(config.http.clone())?; // clone: the assembled stack owns its process-wide configuration
     let (api, management) = assemble_planes(config.management.mode, routes, health, telemetry_routes, &stack);

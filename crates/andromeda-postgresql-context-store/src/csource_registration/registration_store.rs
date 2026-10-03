@@ -12,7 +12,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_registration::{
     error::RegistrationError,
@@ -115,12 +115,8 @@ impl RegistrationStore for PostgresRegistrationStore {
         registration_read::get(self, id).await
     }
 
-    async fn list(&self, pagination: Pagination) -> Result<RegistrationPage, RegistrationError> {
-        registration_read::list(self, pagination).await
-    }
-
-    async fn query_compiled(&self, compiled: &CompiledCsrQuery) -> Result<RegistrationPage, RegistrationError> {
-        registration_read::query_compiled(self, compiled).await
+    async fn query_compiled(&self, compiled: &CompiledCsrQuery, window: &PageWindow) -> Result<RegistrationPage, RegistrationError> {
+        registration_read::query_compiled(self, compiled, window).await
     }
 
     async fn update(&self, id: &Identifier, values: &ResolvedCsrUpdate) -> Result<RegistrationMutation, RegistrationError> {

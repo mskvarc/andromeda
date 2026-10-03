@@ -3,21 +3,24 @@
 use crate::{
     error::{TenancyHttpError, classify},
     options::TenantOptions,
-    params::TenantListParams,
+    params::{TENANT_PAGE_SIZE, TenantListParams},
     state::TenancyRouteState,
-    tenant_response::{build_tenant, keyset_from_cursor},
+    tenant_response::{build_tenant, tenant_page_start},
 };
-use andromeda_http_extraction::query::ValidatedQuery;
+use andromeda_http_extraction::{pagination_policy::RequestPagination, query::ValidatedQuery};
 use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_results_count::NgsiLdResultsCount};
 use andromeda_http_response::{
-    pagination::{CursorPointers, PageLinks, append_pagination_links},
+    pagination::{PageOutcome, append_page_links},
     parameter_failure::classify_parameter_error,
     problem_response::ProblemResponse,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::tenant::{Tenant, tenant_id};
-use andromeda_ngsi_ld_query::cursor::PageCursor;
-use andromeda_ngsi_ld_request::pagination_cursor::decode_cursor;
+use andromeda_ngsi_ld_query::count_policy::CountPolicy;
+use andromeda_ngsi_ld_request::pagination::{
+    page_pointers::PagePointers,
+    page_request::{CollectionOrder, PageRequest},
+};
 use andromeda_tenancy::tenant_view::TenantView;
 use axum::{
     Json,
@@ -27,34 +30,46 @@ use axum::{
 };
 use headers::HeaderMapExt;
 
-/// The default tenant-collection page size.
-const DEFAULT_LIMIT: u32 = 100;
-
 /// List the named tenants as an array of `Tenant` resources.
 ///
-/// Cursor-paginated by tenant name (clause 5.5.9.1): the page carries `next`/
-/// `last` `Link`s while more pages follow and `prev`/`first` while earlier pages
-/// exist, and a single page carries no pagination `Link` at all. The
-/// `NGSILD-Results-Count` header always reports the total, and the same `options`
-/// keywords as the single-tenant read apply to every resource on the page.
+/// Paged in tenant-name order by the broker's pagination policy: by opaque
+/// cursor (clause 5.5.9.1) or by `limit`/`offset` (clause 5.5.9.2). The page
+/// carries `next`/`last` `Link`s while more pages follow and `prev`/`first`
+/// while earlier pages exist, and a single page carries no pagination `Link`
+/// at all. The `NGSILD-Results-Count` header always reports the total, and the
+/// same `options` keywords as the single-tenant read apply to every resource on
+/// the page.
 ///
 /// # Errors
 ///
-/// Returns a [`ProblemResponse`] for an unrecognised `options` keyword or
-/// pagination cursor, and when the administration or usage read fails.
+/// Returns a [`ProblemResponse`] for an unrecognised `options` keyword, a
+/// pagination parameter the policy refuses or a cursor that addresses no
+/// tenant, and when the administration or usage read fails.
 pub async fn query(
     State(state): State<TenancyRouteState>,
     OriginalUri(uri): OriginalUri,
+    RequestPagination(pagination): RequestPagination,
     ValidatedQuery(params): ValidatedQuery<TenantListParams>,
 ) -> Result<Response, ProblemResponse> {
     let options = TenantOptions::parse(params.options.as_deref()).map_err(|error| error.classify().with_instance(uri.clone()))?;
-    let incoming = decode_cursor(params.cursor.as_deref()).map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?;
-    let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
-    let keyset = keyset_from_cursor(incoming.as_ref()).map_err(|report| report.with_instance(uri.clone()))?;
+    // The collection always reports its total, so `limit=0` asks for that
+    // total alone (Table 6.3.10-1).
+    let window = pagination
+        .window(
+            &params.page,
+            PageRequest {
+                size: TENANT_PAGE_SIZE,
+                order: CollectionOrder::Identifier,
+                count: CountPolicy::Emit,
+                pointers: PagePointers::OverRequestUri,
+            },
+        )
+        .map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?;
+    let start = tenant_page_start(&window.start).map_err(|report| report.with_instance(uri.clone()))?;
 
     let listing = state
         .administration()
-        .list_tenants(&keyset, i64::from(limit))
+        .list_tenants(&start, window.limit)
         .await
         .map_err(|error| classify(&TenancyHttpError::from(error)).with_instance(uri.clone()))?;
 
@@ -73,9 +88,17 @@ pub async fn query(
 
     let mut response = Json(tenants).into_response();
     response.headers_mut().typed_insert(NgsiLdResultsCount::new(count));
-    if let Some(links) = cursor_links(incoming.as_ref(), boundary, returned, limit) {
-        append_pagination_links(&mut response, &uri, i64::from(limit), links, ResponseMediaType::Json);
-    }
+    append_page_links(
+        &mut response,
+        &uri,
+        &window,
+        PageOutcome {
+            total: Some(listing.total),
+            returned,
+            boundary,
+        },
+        ResponseMediaType::Json,
+    );
     Ok(response)
 }
 
@@ -90,17 +113,4 @@ fn collection_boundary(views: &[TenantView], uri: &RequestUri) -> Result<Option<
         }
         _ => Ok(None),
     }
-}
-
-/// The pagination pointers for the page, or `None` when the page is empty.
-///
-/// A page that filled the requested limit is treated as having a further page,
-/// which is how a keyset walk with no total decides `next` exists. Clause
-/// 5.5.9.1's self-pointing suppression is enforced downstream by
-/// [`append_pagination_links`].
-fn cursor_links(incoming: Option<&PageCursor>, boundary: Option<(Identifier, Identifier)>, returned: usize, limit: u32) -> Option<PageLinks> {
-    let (first, last) = boundary?;
-    let full = returned == usize::try_from(limit).unwrap_or(usize::MAX);
-    let neighbours = PageCursor::neighbours(incoming, first, last, full);
-    Some(PageLinks::Cursor(CursorPointers::from(neighbours)))
 }

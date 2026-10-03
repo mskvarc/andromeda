@@ -16,7 +16,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
-use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, temporal::compiled::CompiledTemporalQuery};
 use async_trait::async_trait;
 use std::{
     collections::{HashMap, HashSet},
@@ -48,7 +48,13 @@ impl TemporalHistoryReader for RefusingReader {
         panic!("query must not execute")
     }
 
-    async fn query_entity_ids(&self, _target: &ContextTarget, _compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
+    async fn query_entity_ids(
+        &self,
+        _target: &ContextTarget,
+        _compiled: &CompiledTemporalQuery,
+        _window: &PageWindow,
+        _count: CountPolicy,
+    ) -> Result<TemporalEntityIdOutcome, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         panic!("query must not execute")
     }

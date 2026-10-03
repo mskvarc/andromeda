@@ -9,7 +9,6 @@
 
 use crate::{
     broker_endpoints::broker_url,
-    broker_process::BrokerProcess,
     context_api::{JSON_LD_CONTEXT_PREFIX, dereference, extract_id},
     context_links::{context_link, single_context_link},
     core_contexts::core,
@@ -18,8 +17,10 @@ use crate::{
     unique_ids::unique_id,
     user_contexts::{UserContexts, term_definitions},
 };
-use reqwest::{Client, StatusCode, header::LOCATION};
+use andromeda_test_harness::broker_process::BrokerProcess;
+use reqwest::{StatusCode, header::LOCATION};
 use serde_json::{Value, json};
+use std::path::Path;
 
 /// The configured apiRoot, with a path prefix.
 const ADVERTISED: &str = "https://gw.example.com/broker";
@@ -60,12 +61,16 @@ async fn without_an_advertised_url_a_wrapper_is_minted_on_the_request_origin() {
 async fn with_an_advertised_url_every_minted_url_is_built_on_it() {
     let tenant = PrivateTenant::provisioned().await;
     let contexts = UserContexts::start().await;
-    let broker = BrokerProcess::start(&[("ANDROMEDA__IDENTITY__ADVERTISED_URL", ADVERTISED)]).await;
+    let broker = BrokerProcess::start(
+        Path::new(env!("CARGO_BIN_EXE_andromeda")),
+        &[("ANDROMEDA__IDENTITY__ADVERTISED_URL", ADVERTISED)],
+    )
+    .await
+    .expect("the broker starts");
     let client = tenant.client();
     let device = unique_id("urn:ngsi-ld:Device:advertised");
     create_device(client, &device, &contexts.terms).await;
     let minted_prefix = format!("{ADVERTISED}/ngsi-ld/v1/jsonldContexts/{JSON_LD_CONTEXT_PREFIX}");
-    let tenant_suffix = format!("?andromedaTenant={}", tenant.name());
 
     let answered = client
         .get(broker.url(&format!("entities/{device}")))
@@ -75,8 +80,8 @@ async fn with_an_advertised_url_every_minted_url_is_built_on_it() {
         .await
         .expect("retrieval failed");
     let wrapper = single_context_link(answered.headers());
-    assert!(wrapper.starts_with(&minted_prefix) && wrapper.ends_with(&tenant_suffix), "{wrapper}");
-    let served = dereference(&Client::new(), &broker.url(&format!("jsonldContexts/{}{tenant_suffix}", extract_id(&wrapper)))).await;
+    assert!(wrapper.starts_with(&minted_prefix) && !wrapper.contains('?'), "{wrapper}");
+    let served = dereference(client, &broker.url(&format!("jsonldContexts/{}", extract_id(&wrapper)))).await;
     assert_eq!(served.json(), json!({ "@context": [contexts.terms, core()] }));
 
     let subscribed = client
@@ -94,10 +99,7 @@ async fn with_an_advertised_url_every_minted_url_is_built_on_it() {
     assert_eq!(subscribed.status(), StatusCode::CREATED);
     let subscription = extract_id(subscribed.headers().get(LOCATION).and_then(|value| value.to_str().ok()).expect("a Location"));
     let jsonld_context = jsonld_context_of(client, &subscription).await;
-    assert!(
-        jsonld_context.starts_with(&minted_prefix) && jsonld_context.ends_with(&tenant_suffix),
-        "{jsonld_context}"
-    );
+    assert!(jsonld_context.starts_with(&minted_prefix) && !jsonld_context.contains('?'), "{jsonld_context}");
 
     let added = client
         .post(broker.url("jsonldContexts"))
@@ -127,11 +129,11 @@ async fn with_an_advertised_url_every_minted_url_is_built_on_it() {
         .await
         .expect("details");
     let serving = details["URL"].as_str().expect("a serving URL");
-    assert!(serving.starts_with(&minted_prefix) && serving.ends_with(&tenant_suffix), "{serving}");
+    assert!(serving.starts_with(&minted_prefix) && !serving.contains('?'), "{serving}");
 
     for reference in [
-        format!("{UNREACHABLE_ORIGIN}/broker/ngsi-ld/v1/jsonldContexts/{hosted}{tenant_suffix}"),
-        format!("{UNREACHABLE_ORIGIN}/ngsi-ld/v1/jsonldContexts/{hosted}{tenant_suffix}"),
+        format!("{UNREACHABLE_ORIGIN}/broker/ngsi-ld/v1/jsonldContexts/{hosted}"),
+        format!("{UNREACHABLE_ORIGIN}/ngsi-ld/v1/jsonldContexts/{hosted}"),
     ] {
         let id = unique_id("urn:ngsi-ld:Device:advertised-reference");
         let created = client

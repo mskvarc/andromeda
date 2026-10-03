@@ -6,6 +6,13 @@
 //! implemented it. The extensions are therefore configured at runtime rather
 //! than gated at build time, one [`HttpFeatureMode`] field each, defaulting off.
 //!
+//! [`ExtensionsConfig::cursor_pagination`] is the one extension that defaults
+//! on. Its feature -- opaque, keyset-backed pagination pointers -- is what
+//! clause 5.5.9.1 permits outright ("can be implemented in a completely opaque
+//! way"), so a broker serving it is still a conformant broker; it is an
+//! extension only in that the `cursor` parameter carrying the pointer is
+//! Andromeda's own spelling, which an operator may want to switch off.
+//!
 //! [`ExtensionsConfig::conformance_mode`] is the hard override the ETSI
 //! conformance runs set: when enabled it forces every extension off regardless
 //! of the individual fields, so "the shipping binary passes the suite" is a
@@ -49,8 +56,9 @@ pub enum ExtensionsConfigError {
 ///
 /// Each feature is a [`HttpFeatureMode`] rather than a bare `bool`, matching the
 /// project's enums-over-bools rule and the existing HTTP-stack feature
-/// switches. Every one defaults to [`HttpFeatureMode::Disabled`], so a broker
-/// with no `[extensions]` section is a conformant broker.
+/// switches. Every one but [`ExtensionsConfig::cursor_pagination`] defaults to
+/// [`HttpFeatureMode::Disabled`], so a broker with no `[extensions]` section is
+/// a conformant broker.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct ExtensionsConfig {
     /// The hard conformance override.
@@ -97,6 +105,16 @@ pub struct ExtensionsConfig {
     /// advertised. No API operation ever drops a tenant's physical database.
     #[toml_comment(inline)]
     pub tenant_management: HttpFeatureMode,
+    /// Opaque, keyset-backed cursor pagination (clause 5.5.9.1), on by default.
+    ///
+    /// Collections hand out `prev`/`next`/`last` pointers carrying an opaque
+    /// `cursor` token and follow them back. Clause 5.5.9.1 permits pointers
+    /// "implemented in a completely opaque way", which is why this is the one
+    /// extension that defaults on. When disabled, `[pagination] default_mode`
+    /// must be `offset`, and a `cursor` parameter is rejected with
+    /// `InvalidRequest`.
+    #[toml_comment(inline)]
+    pub cursor_pagination: HttpFeatureMode,
     /// The upper bound on the temporal history instances one delete-by-query may
     /// remove before it is refused with `TooManyResults` (403).
     ///
@@ -119,6 +137,7 @@ impl Default for ExtensionsConfig {
             purge_dataset_scope: HttpFeatureMode::Disabled,
             temporal_aggregation_grouping: HttpFeatureMode::Disabled,
             tenant_management: HttpFeatureMode::Disabled,
+            cursor_pagination: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: DEFAULT_TEMPORAL_DELETE_MAX_MATCHES,
             temporal_aggregation_grouping_max_groups: DEFAULT_TEMPORAL_AGGREGATION_MAX_GROUPS,
         }
@@ -161,6 +180,7 @@ impl ExtensionsConfig {
             || matches!(self.purge_dataset_scope, HttpFeatureMode::Enabled)
             || matches!(self.temporal_aggregation_grouping, HttpFeatureMode::Enabled)
             || matches!(self.tenant_management, HttpFeatureMode::Enabled)
+            || matches!(self.cursor_pagination, HttpFeatureMode::Enabled)
     }
 }
 
@@ -171,12 +191,20 @@ mod tests {
     use toml_comment::TomlComment;
 
     #[test]
-    fn every_extension_is_off_in_the_default_configuration() {
+    fn every_extension_but_cursor_pagination_is_off_in_the_default_configuration() {
         let config = ExtensionsConfig::default();
         pretty_assertions::assert_eq!(config.conformance_mode, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(config.temporal_delete_by_query, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(config.purge_dataset_scope, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(config.temporal_aggregation_grouping, HttpFeatureMode::Disabled);
+        pretty_assertions::assert_eq!(config.tenant_management, HttpFeatureMode::Disabled);
+    }
+
+    /// Clause 5.5.9.1 permits opaque pointers outright, so cursor pagination is
+    /// the one extension a default broker serves.
+    #[test]
+    fn cursor_pagination_is_enabled_by_default() {
+        pretty_assertions::assert_eq!(ExtensionsConfig::default().cursor_pagination, HttpFeatureMode::Enabled);
     }
 
     #[test]
@@ -210,6 +238,7 @@ mod tests {
             purge_dataset_scope: HttpFeatureMode::Enabled,
             temporal_aggregation_grouping: HttpFeatureMode::Enabled,
             tenant_management: HttpFeatureMode::Enabled,
+            cursor_pagination: HttpFeatureMode::Disabled,
             temporal_delete_by_query_max_matches: 42,
             temporal_aggregation_grouping_max_groups: 7,
         };
@@ -218,6 +247,7 @@ mod tests {
         pretty_assertions::assert_eq!(parsed.temporal_delete_by_query, HttpFeatureMode::Enabled);
         pretty_assertions::assert_eq!(parsed.purge_dataset_scope, HttpFeatureMode::Enabled);
         pretty_assertions::assert_eq!(parsed.temporal_aggregation_grouping, HttpFeatureMode::Enabled);
+        pretty_assertions::assert_eq!(parsed.cursor_pagination, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(parsed.temporal_delete_by_query_max_matches, 42);
         pretty_assertions::assert_eq!(parsed.temporal_aggregation_grouping_max_groups, 7);
     }
@@ -229,16 +259,27 @@ mod tests {
         assert!(rendered.contains("temporal_delete_by_query"), "{rendered}");
         assert!(rendered.contains("purge_dataset_scope"), "{rendered}");
         assert!(rendered.contains("temporal_aggregation_grouping"), "{rendered}");
+        assert!(rendered.contains("cursor_pagination"), "{rendered}");
     }
 
     #[test]
     fn conformance_override_and_requested_features_are_read_off_the_fields() {
-        let mut config = ExtensionsConfig::default();
+        let mut config = ExtensionsConfig {
+            cursor_pagination: HttpFeatureMode::Disabled,
+            ..ExtensionsConfig::default()
+        };
         assert!(!config.conformance_mode_enabled());
         assert!(!config.any_feature_requested());
         config.temporal_delete_by_query = HttpFeatureMode::Enabled;
         assert!(config.any_feature_requested());
         config.conformance_mode = HttpFeatureMode::Enabled;
         assert!(config.conformance_mode_enabled());
+    }
+
+    /// The default-on cursor pagination is a requested feature, so conformance
+    /// mode overriding it is reported like any other override.
+    #[test]
+    fn the_default_cursor_pagination_counts_as_a_requested_feature() {
+        assert!(ExtensionsConfig::default().any_feature_requested());
     }
 }

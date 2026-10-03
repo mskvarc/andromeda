@@ -5,7 +5,11 @@ use crate::{
     error::ParameterError,
     language_filter::deserialize_optional_language_filter,
     options::{EntityRepresentationOptions, OverwritePolicy, UpsertMode},
-    query::deserialization::{deserialize_optional_dataset_selectors, deserialize_optional_projection_terms},
+    pagination::parameters::OffsetPageParameters,
+    query::{
+        deserialization::{deserialize_optional_dataset_selectors, deserialize_optional_projection_terms},
+        entity::parameters::EntityQueryParameters,
+    },
     representation_parameter::{WrittenValue, supported_option},
 };
 use andromeda_http_headers::language::LanguageFilter;
@@ -66,10 +70,10 @@ impl UpdateParams {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostQueryParams {
-    /// The page size (clause 6.3.10 `limit`).
-    pub limit: Option<u32>,
-    /// How many matches to skip before the page (clause 6.3.10 `offset`).
-    pub offset: Option<u32>,
+    /// The page asked for (clause 6.3.10 `limit` and `offset`). The binding
+    /// carries no dereferenceable pointer, so it declares no `cursor`.
+    #[serde(flatten)]
+    pub page: OffsetPageParameters,
     /// Whether the response reports the total number of matches
     /// (clause 6.3.13 `count`).
     #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
@@ -102,4 +106,75 @@ pub struct PostQueryParams {
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
     #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub local: Option<bool>,
+}
+
+impl PostQueryParams {
+    /// Fold the URL parameters over the query the clause 5.2.23 body produced.
+    ///
+    /// The same parameter may be written in the URL or in the canonical body.
+    /// The specification does not say which wins, so this is broker
+    /// convention: the URL is the more specific of the two and takes
+    /// precedence, but only where it actually carries a value -- an absent
+    /// query-string parameter leaves the body's member standing rather than
+    /// erasing it.
+    ///
+    /// The page and `count` are the exception, and nothing is overwritten by
+    /// them: Table 5.2.23-1 defines no member for either, so the body
+    /// conversion leaves both absent and the URL is the only place clauses
+    /// 6.3.10 and 6.3.13 can put them.
+    pub fn apply_to(self, query: &mut EntityQueryParameters) {
+        query.page = self.page.into();
+        query.count = self.count;
+        query.options = self.options.or(query.options.take());
+        query.local = self.local.or(query.local);
+        query.pick = self.pick.or(query.pick.take());
+        query.omit = self.omit.or(query.omit.take());
+        query.dataset_id = self.dataset_id.or(query.dataset_id.take());
+        query.format = self.format.or(query.format.take());
+        query.join = self.join.or(query.join);
+        query.join_level = self.join_level.or(query.join_level);
+        query.geometry_property = self.geometry_property.or(query.geometry_property.take());
+        query.lang = self.lang.or(query.lang.take());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{entity_operations::PostQueryParams, pagination::parameters::PageParameters, query::entity::parameters::EntityQueryParameters};
+    use andromeda_ngsi_ld_model::query::body::Query;
+    use serde_json::json;
+
+    fn body_query() -> EntityQueryParameters {
+        let body: Query = serde_json::from_value(json!({"type": "Query", "entities": [{"type": "Vehicle"}]})).expect("a valid query body");
+        EntityQueryParameters::try_from(body).expect("a convertible body")
+    }
+
+    /// Clause 6.3.10: the POST binding reads its page off the URL, the only
+    /// place it can name one, and never a cursor.
+    #[test]
+    fn apply_url_parameters_moves_the_page() {
+        let mut query = body_query();
+        let url: PostQueryParams = serde_urlencoded::from_str("limit=3&offset=6&count=true").expect("valid URL parameters");
+        url.apply_to(&mut query);
+        pretty_assertions::assert_eq!(
+            query.page,
+            PageParameters {
+                limit: Some(3),
+                offset: Some(6),
+                cursor: None,
+            }
+        );
+        pretty_assertions::assert_eq!(query.count, Some(true));
+    }
+
+    /// An absent URL parameter leaves the body's member standing.
+    #[test]
+    fn an_absent_url_parameter_leaves_the_body_member_standing() {
+        let mut query = body_query();
+        query.local = Some(true);
+        let url: PostQueryParams = serde_urlencoded::from_str("").expect("valid URL parameters");
+        url.apply_to(&mut query);
+        pretty_assertions::assert_eq!(query.local, Some(true));
+        pretty_assertions::assert_eq!(query.page, PageParameters::default());
+    }
 }

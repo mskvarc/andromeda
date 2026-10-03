@@ -1,12 +1,6 @@
 //! The compiled, context-expanded form of an entity query.
 
-use crate::{
-    cursor::PageCursor,
-    entity_selection::EntitySelection,
-    ordering::compiled::ResultOrdering,
-    pagination::Pagination,
-    projection::compiled::Projection,
-};
+use crate::{entity_selection::EntitySelection, ordering::compiled::ResultOrdering, projection::compiled::Projection};
 use typed_builder::TypedBuilder;
 
 /// A fully compiled entity query, ready to be lowered to a store query.
@@ -18,6 +12,10 @@ use typed_builder::TypedBuilder;
 /// [`EntitySelection`] decides which rows come back, [`Projection`] and
 /// [`ResultOrdering`] decide only what is done with them, and the SQL builders
 /// read one or the other rather than the whole record.
+///
+/// The page the query answers with is no part of it: the request boundary
+/// decides the window once, and a store is handed it beside the compiled
+/// query, so one compilation serves every page of the same query.
 #[derive(Debug, Clone, TypedBuilder)]
 pub struct CompiledEntityQuery {
     /// Which entities match.
@@ -28,18 +26,4 @@ pub struct CompiledEntityQuery {
     /// How matching entities are ordered (clause 4.23).
     #[builder(default = Default::default())]
     pub ordering: ResultOrdering,
-    /// Result window: limit, offset, and the total-count policy.
-    #[builder(default = Pagination::DEFAULT)]
-    pub pagination: Pagination,
-    /// The keyset position a stable-pagination cursor resolved to, when the
-    /// request carried one (clause 5.5.9.1).
-    ///
-    /// `Some` puts the store into keyset mode: it replaces the `offset` in
-    /// [`Pagination`] with the direction-appropriate `WHERE`/`ORDER BY` over the
-    /// entity `id`, and a backward or from-end page is reversed to ascending
-    /// where the rows are read back. Held beside [`Pagination`] rather than
-    /// inside it because it is a per-request position that never participates in
-    /// compilation caching, unlike the limit and count that do.
-    #[builder(default = None)]
-    pub keyset: Option<PageCursor>,
 }

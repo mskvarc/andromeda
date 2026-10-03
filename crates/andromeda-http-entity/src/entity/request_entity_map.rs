@@ -24,7 +24,7 @@ use andromeda_entity_map::{
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
+use andromeda_ngsi_ld_query::page_window::PageWindow;
 use andromeda_ngsi_ld_request::{entity::GetEntityParams, query::entity::parameters::EntityQueryParameters};
 use axum::http::Uri as HttpUri;
 
@@ -111,14 +111,6 @@ impl LocalMapEntities for LocalEntitySource<'_> {
                 instance,
             } => {
                 let mut compiled = service.compile_query_public(query, context).await.with_entity_instance(instance)?;
-                // Clause 5.5.14: the map fixes every entity the request matched,
-                // so the identifier pass ignores the window the client asked for
-                // and runs over the whole result.
-                compiled.pagination = Pagination {
-                    limit: u32::MAX,
-                    offset: 0,
-                    count: CountPolicy::Omit,
-                };
                 match listing {
                     MapListing::Minted => {}
                     // Clause 4.3.6.7 rechecks the filters of the request the map
@@ -129,7 +121,13 @@ impl LocalMapEntities for LocalEntitySource<'_> {
                     MapListing::Rechecked => compiled.selection.without_identifier_narrowing(),
                 }
                 let compiled = compiled;
-                let mut identifiers = service.query_ids(target, &compiled).await.with_entity_instance(instance)?;
+                // Clause 5.5.14: the map fixes every entity the request matched,
+                // so the identifier pass ignores the window the client asked for
+                // and runs over the whole result.
+                let mut identifiers = service
+                    .query_ids(target, &compiled, &PageWindow::unbounded())
+                    .await
+                    .with_entity_instance(instance)?;
                 // Clause 5.5.14: the Linked Entities the join resolved belong to
                 // the same unitary request as the entities that named them.
                 if let Some(join) = join {

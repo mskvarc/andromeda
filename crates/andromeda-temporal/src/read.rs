@@ -16,10 +16,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
-use andromeda_ngsi_ld_query::{
-    pagination::{CountPolicy, Pagination},
-    temporal::compiled::CompiledTemporalQuery,
-};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, temporal::compiled::CompiledTemporalQuery};
 use andromeda_ngsi_ld_render::{
     structural_projection::{RenderedEntityMembers, rendered_entity_members},
     temporal::aggregation::TemporalAggregationRenderer,
@@ -191,12 +188,14 @@ impl TemporalService {
         Ok(Value::Object(result))
     }
 
-    /// Execute stage 1 entity ID resolution without fetching temporal history.
+    /// Execute stage 1 entity ID resolution over the page `window` selects,
+    /// without fetching temporal history.
     ///
-    /// Used to build `EntityMaps` that represent the full result set (spec 5.5.14).
-    /// Runs only the lightweight stage 1 SQL (entity ID resolution) without fetching
-    /// temporal history, ensuring the `EntityMap` captures ALL matching IDs, not just the
-    /// current page.
+    /// Used to build `EntityMaps` (clause 5.5.14). Runs only the lightweight
+    /// stage 1 statement (entity ID resolution). A map minted while a query
+    /// runs fixes the whole result set and is read with
+    /// [`PageWindow::unbounded`], whatever page the query itself answers with;
+    /// a map created by its own operation fixes the page its request asked for.
     ///
     /// # Errors
     ///
@@ -210,27 +209,23 @@ impl TemporalService {
         &self,
         target: &ContextTarget,
         params: &TemporalQueryParameters,
+        window: &PageWindow,
         context: &ContextSpec,
         identifiers: RequestedIdentifiers,
     ) -> Result<Vec<Identifier>, TemporalError> {
         let timer = temporal::start(TemporalOperation::QueryIds);
         let result = async {
             params.validate(true)?;
-            let compiled = self.compile_temporal_query(params, context).await?;
-            let mut unpaged = compiled.clone();
-            unpaged.pagination = Pagination {
-                limit: u32::MAX,
-                offset: 0,
-                count: CountPolicy::Omit,
-            };
+            let mut compiled = self.compile_temporal_query(params, context).await?;
             match identifiers {
                 RequestedIdentifiers::Narrow => {}
-                RequestedIdentifiers::Ignore => unpaged.entities.without_identifier_narrowing(),
+                RequestedIdentifiers::Ignore => compiled.entities.without_identifier_narrowing(),
             }
-            ensure_aggregation_supported(self.reader.as_ref(), &unpaged.representation.aggr_methods)?;
-            let outcome = self.reader.query_entity_ids(target, &unpaged).await?;
+            let compiled = compiled;
+            ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
+            let outcome = self.reader.query_entity_ids(target, &compiled, window, CountPolicy::Omit).await?;
             let (identifiers, _total) = outcome
-                .complete(unpaged.pagination)
+                .complete(window, CountPolicy::Omit)
                 .map_err(|error| TemporalError::from(TemporalInvariant::IncompleteOutcome(error)))?;
             Ok(identifiers)
         }

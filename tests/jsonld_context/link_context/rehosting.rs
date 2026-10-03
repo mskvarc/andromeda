@@ -53,10 +53,10 @@ async fn a_deleted_wrapper_is_hosted_again_under_the_same_identifier() {
 
     let (deleted, _) = delete_context(tenant.client(), &identifier, "").await;
     assert_eq!(deleted, StatusCode::NO_CONTENT);
-    assert_eq!(dereference(&Client::new(), &wrapper).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(dereference(tenant.client(), &wrapper).await.status, StatusCode::NOT_FOUND);
     let again = single_context_link(get(tenant.client(), &path, "application/json", Some(&contexts.terms)).await.headers());
     assert_eq!(again, wrapper, "the deleting process hosts it again at once, under the same identifier");
-    assert_eq!(dereference(&Client::new(), &again).await.json(), document);
+    assert_eq!(dereference(tenant.client(), &again).await.json(), document);
 
     let (deleted_again, _) = delete_context(tenant.client(), &identifier, "").await;
     assert_eq!(deleted_again, StatusCode::NO_CONTENT);
@@ -65,7 +65,7 @@ async fn a_deleted_wrapper_is_hosted_again_under_the_same_identifier() {
     let path = &path;
     let rehosted = eventually("the other process hosts the deleted wrapper again", move || async move {
         let linked = linked_by_second_broker(client, path, terms).await;
-        let served = dereference(&Client::new(), &linked).await;
+        let served = dereference(client, &linked).await;
         (served.status == StatusCode::OK).then_some((linked, served.json()))
     })
     .await;

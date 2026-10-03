@@ -2,6 +2,7 @@
 
 #![deny(missing_docs)]
 
+pub mod broker_process;
 pub mod configuration;
 pub mod database_access;
 pub mod database_isolation;
@@ -29,6 +30,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-tenancy",
         "andromeda-test-client",
         "andromeda-test-fixtures",
+        "andromeda-test-mocks",
     ],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: all,

@@ -1,6 +1,18 @@
 //! Query parameter types for the tenant-management reads.
 
+use andromeda_ngsi_ld_request::pagination::{
+    page_size::{PageSizeBounds, PageSizeCap},
+    parameters::PageParameters,
+};
 use serde::Deserialize;
+
+/// The page size of the tenant collection: 100 when the request names no
+/// `limit`, and whatever it names otherwise. A broker's tenants are few enough
+/// to be read whole on request.
+pub const TENANT_PAGE_SIZE: PageSizeBounds = PageSizeBounds {
+    default: 100,
+    cap: PageSizeCap::Uncapped,
+};
 
 /// Query parameters for `GET /ngsi-ld/v1/tenants` (list tenants).
 ///
@@ -9,13 +21,10 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TenantListParams {
-    /// The page size (clause 5.5.9 `limit`).
-    pub limit: Option<u32>,
-    /// The opaque, keyset-backed pagination pointer (clause 5.5.9.1).
-    ///
-    /// A broker-emitted token carried inside a `prev`/`next`/`last`/`first`
-    /// `Link`; the client only passes it back by following the link.
-    pub cursor: Option<String>,
+    /// The page asked for (clauses 5.5.9 and 6.3.10 `limit`, `offset` and
+    /// `cursor`), decided by the broker's pagination policy.
+    #[serde(flatten)]
+    pub page: PageParameters,
     /// The `options` keywords (`sysAttrs`, `usage`).
     pub options: Option<String>,
 }

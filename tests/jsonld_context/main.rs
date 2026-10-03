@@ -22,7 +22,6 @@
 
 mod body_context;
 mod broker_endpoints;
-mod broker_process;
 mod context_api;
 mod context_links;
 mod context_origin;

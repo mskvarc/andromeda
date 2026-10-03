@@ -23,7 +23,9 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::SysAttrsSnapshot};
 use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
+    page_window::PageWindow,
     projection::{compiled::Projection, term::ProjectionTerm},
     type_selection::grammar::TypeExprRaw,
 };
@@ -84,7 +86,13 @@ impl EntityQueryStore for RetrievalStore {
         &StorageProfile::POSTGIS_LTREE
     }
 
-    async fn query_compiled(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
+    async fn query_compiled(
+        &self,
+        _target: &ContextTarget,
+        _compiled: &CompiledEntityQuery,
+        _window: &PageWindow,
+        _count: CountPolicy,
+    ) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
         Ok(QueryOutcome {
             rows: vec![self.retrieved.clone()], // clone: the store hands out its row, as a real store does
             unapplied: ResidualFilter::default(),
@@ -92,7 +100,7 @@ impl EntityQueryStore for RetrievalStore {
         })
     }
 
-    async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Identifier>, EntityError> {
+    async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery, _window: &PageWindow) -> Result<QueryOutcome<Identifier>, EntityError> {
         Err(unexpected("query_ids"))
     }
 }
@@ -284,7 +292,10 @@ async fn an_entity_the_store_does_not_hold_is_not_found() {
 /// A clause 5.7.2 query over the one-entity store.
 async fn query(parameters: &str) -> Vec<Entity> {
     let parameters = serde_urlencoded::from_str(parameters).expect("valid query parameters");
-    let (entities, _) = service().query(&ContextTarget::Live, &parameters, &context()).await.expect("queried");
+    let (entities, _) = service()
+        .query(&ContextTarget::Live, &parameters, &PageWindow::offset(20, 0), CountPolicy::Omit, &context())
+        .await
+        .expect("queried");
     entities
 }
 

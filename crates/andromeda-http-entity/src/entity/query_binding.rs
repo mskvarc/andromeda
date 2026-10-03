@@ -8,7 +8,7 @@
 //! query, so they are read off this one value.
 
 use andromeda_federation::{operation::ForwardingOperation, request::QueryDelivery};
-use andromeda_http_response::pagination::PagePointers;
+use andromeda_ngsi_ld_request::pagination::page_pointers::PagePointers;
 
 /// The HTTP binding one Query Entities request arrived on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

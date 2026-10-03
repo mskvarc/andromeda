@@ -25,7 +25,7 @@ use crate::{
         query_admission::{AdmittedQuery, admit_request},
         query_binding::QueryBinding,
         query_forwarding::{ForwardedQueryResults, MergedEntities, QueryForwarding},
-        query_page::QueryPage,
+        query_page::{QueryPage, requested_window},
         query_response::{QueryCollectionMetadata, query_response},
         query_split_filters::retain_matching,
         request_entity_map::{LocalEntitySource, record_map_use},
@@ -43,14 +43,14 @@ use andromeda_federation::{
     request::{EntityMapInUse, TriggeringRequest},
 };
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
-use andromeda_http_extraction::{api_root::ApiRoot, context::ContextUrl, context_target};
+use andromeda_http_extraction::{api_root::ApiRoot, context_target, pagination_policy::RequestPagination, response_context_request::ResponseContextRequest};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_query::entity_selection::ConsideredEntities;
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selection::ConsideredEntities};
 use andromeda_ngsi_ld_request::{
     deferred_split_filters::DeferredSplitFilters,
-    pagination_cursor::decode_cursor,
+    pagination::policy::PaginationPolicy,
     query::entity::parameters::EntityQueryParameters,
 };
 use axum::http::{HeaderMap, Uri as HttpUri};
@@ -93,15 +93,17 @@ pub(crate) struct EntityQueryRequest {
     /// Which binding decoded it, which decides how the query is forwarded and
     /// whether the response can point at its neighbouring pages.
     pub(crate) binding: QueryBinding,
+    /// How the broker pages its collections (clause 5.5.9).
+    pub(crate) pagination: PaginationPolicy,
 }
 
 pub(crate) async fn query(
     context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: EntityTenantState,
     accept: AcceptFormat,
     NgsiLdRequestEnvelope { uri, incoming_via: _, headers }: NgsiLdRequestEnvelope,
-    ContextUrl(context): ContextUrl,
-    api_root: ApiRoot,
+    ResponseContextRequest { context, api_root }: ResponseContextRequest,
     protocol: NgsiLdProtocolHeaders,
+    RequestPagination(pagination): RequestPagination,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
     run(EntityQueryRequest::builder()
@@ -115,6 +117,7 @@ pub(crate) async fn query(
         .context(context)
         .query(query)
         .binding(QueryBinding::QueryString)
+        .pagination(pagination)
         .build())
     .await
 }
@@ -141,6 +144,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         context,
         mut query,
         binding,
+        pagination,
     } = request;
     Box::pin(async move {
         let service = &state.entity_query;
@@ -151,6 +155,9 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
             map_use,
             opts,
         } = admit_request(&state, &target, &context, protocol, &mut query, binding, &uri).await?;
+
+        let count = if opts.count { CountPolicy::Emit } else { CountPolicy::Omit };
+        let window = requested_window(pagination, &query, count, binding.page_pointers()).with_entity_instance(&uri)?;
 
         let is_local = !target.permits_federation() || query.is_local();
         let split = state.forwarding.split_entities(query.split_entities);
@@ -187,14 +194,13 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         // Clause 5.7.2.4: with `splitEntities`, `q`, the geoquery and `scopeQ`
         // are decided on the merged entities rather than by any one source.
         let deferred = split_entities.then(|| query.defer_split_filters());
-        // Clause 5.5.9.1: decode the opaque pagination cursor before the page is
-        // planned, so a malformed one is a BadRequestData here rather than
-        // surfacing from the store. Its mutual exclusion with offset was already
-        // held by validation.
-        let incoming_cursor = decode_cursor(query.cursor.as_deref()).with_entity_instance(&uri)?;
-        let page = QueryPage::of(&mut query, forwarded.as_ref(), binding.page_pointers(), incoming_cursor);
+        let page = QueryPage::of(window, count, forwarded.as_ref(), binding.page_pointers());
 
-        let (local_entities, local_total) = service.query(&target, &query, &context).await.with_entity_instance(&uri)?;
+        let (local_window, local_count) = page.local_read();
+        let (local_entities, local_total) = service
+            .query(&target, &query, &local_window, local_count, &context)
+            .await
+            .with_entity_instance(&uri)?;
         let MergedEntities {
             entities,
             warnings,

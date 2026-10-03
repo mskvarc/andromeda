@@ -22,7 +22,7 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
-use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, page_window::PageWindow};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use async_trait::async_trait;
 use std::{collections::HashMap, sync::Arc};
@@ -73,11 +73,17 @@ impl EntityQueryStore for UnusedStore {
         panic!("the read-path unit tests never inspect the store's profile")
     }
 
-    async fn query_compiled(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
+    async fn query_compiled(
+        &self,
+        _target: &ContextTarget,
+        _compiled: &CompiledEntityQuery,
+        _window: &PageWindow,
+        _count: CountPolicy,
+    ) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
         Err(unused("query_compiled"))
     }
 
-    async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Identifier>, EntityError> {
+    async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery, _window: &PageWindow) -> Result<QueryOutcome<Identifier>, EntityError> {
         Err(unused("query_ids"))
     }
 }

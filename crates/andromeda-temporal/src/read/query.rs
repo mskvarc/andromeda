@@ -16,13 +16,16 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
 impl TemporalService {
-    /// Query temporal entities matching the given filter and temporal parameters.
+    /// Query the page `window` selects of the temporal entities matching the
+    /// given filter and temporal parameters, counting every match when `count`
+    /// asks for it (clause 6.3.13).
     ///
     /// # Errors
     ///
@@ -35,7 +38,14 @@ impl TemporalService {
     /// predicate, and [`TemporalError::Persistence`] when the history cannot
     /// be read. A single entity that fails to render is reported as a warning
     /// on the result rather than failing the query.
-    pub async fn query(&self, target: &ContextTarget, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<TemporalQueryResult, TemporalError> {
+    pub async fn query(
+        &self,
+        target: &ContextTarget,
+        params: &TemporalQueryParameters,
+        window: &PageWindow,
+        count: CountPolicy,
+        context: &ContextSpec,
+    ) -> Result<TemporalQueryResult, TemporalError> {
         let timer = temporal::start(TemporalOperation::Query);
         let result = async {
             params.validate(true)?;
@@ -44,9 +54,9 @@ impl TemporalService {
 
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
             self.ensure_requested_attributes_aggregable(target, &compiled).await?;
-            let id_outcome = self.reader.query_entity_ids(target, &compiled).await?;
+            let id_outcome = self.reader.query_entity_ids(target, &compiled, window, count).await?;
             let (entity_ids, total_count) = id_outcome
-                .complete(compiled.pagination)
+                .complete(window, count)
                 .map_err(|error| TemporalError::from(TemporalInvariant::IncompleteOutcome(error)))?;
 
             // One batch read of the temporal catalogue, which owns the entity types

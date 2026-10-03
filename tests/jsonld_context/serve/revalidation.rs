@@ -43,7 +43,7 @@ async fn create_on_second_broker(client: &Client, context: &str) -> (StatusCode,
 async fn a_hosted_context_deleted_on_one_broker_stops_resolving_on_another_after_the_revalidation_span() {
     let tenant = PrivateTenant::provisioned().await;
     let id = add_hosted(tenant.client(), &json!({ "@context": { "capacity": "https://e.org/capacity" } })).await;
-    let serving_url = broker_url(&format!("jsonldContexts/{id}?andromedaTenant={}", tenant.name()));
+    let serving_url = broker_url(&format!("jsonldContexts/{id}"));
     let span = serve(tenant.client(), Method::GET, &id, &[]).await.max_age().expect("a max-age");
     assert!(span > 0, "a positive revalidation span");
 

@@ -5,10 +5,10 @@
 //! request, or a context document, may name such a context by the URL the
 //! broker minted for it. Fetching that URL over HTTP from the broker itself
 //! would record a "Cached" copy of the broker's own document; the loader
-//! resolves it from storage instead, and only for the tenant whose storage it
-//! reads (clause 4.14 keeps each tenant's contexts to that tenant). A URL
-//! shaped like one of the broker's own that names another tenant is never
-//! recorded as a "Cached" copy either.
+//! resolves it from storage instead. Such a reference names no tenant: like
+//! every other resource path (clause 4.14), it names an entry of the tenant
+//! whose storage reads it, so another tenant's entries are never reachable
+//! through it.
 //!
 //! Which references name a stored context is decided by the HTTP binding that
 //! owns the clause 6.30 path, so this crate declares the port and the binding
@@ -21,11 +21,9 @@ use std::fmt::Debug;
 /// What a context reference is, as seen from one tenant's storage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostedReference {
-    /// A stored `@context` of this tenant, named by its identifier.
+    /// A reference shaped like one of the broker's own stored `@context`s,
+    /// naming an entry of this tenant by its identifier.
     Own(JsonLdContextId),
-    /// A stored `@context` of another tenant: shaped like one of the broker's
-    /// own, but not this tenant's to read from storage.
-    OtherTenant,
     /// Not a reference to a stored `@context` at all.
     Unrelated,
 }

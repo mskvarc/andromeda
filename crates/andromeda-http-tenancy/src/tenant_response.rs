@@ -5,11 +5,11 @@ use andromeda_http_response::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};
 use andromeda_ngsi_ld_model::tenant::{Tenant, TenantState, TenantUsage, tenant_id, tenant_name_from_id};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_query::cursor::PageCursor;
+use andromeda_ngsi_ld_query::{cursor::PageCursor, page_window::PageStart};
 use andromeda_tenancy::{
     residency::TenantResidency,
     status::TenantStatus,
-    tenant_keyset::TenantKeyset,
+    tenant_page_start::TenantPageStart,
     tenant_view::TenantView,
     usage_probe::TenantUsageProbe,
 };
@@ -31,22 +31,23 @@ pub const fn wire_state(status: TenantStatus, residency: TenantResidency) -> Ten
     }
 }
 
-/// Map an incoming pagination cursor to the tenant keyset it addresses.
+/// The position in the tenant collection a page window starts at.
 ///
 /// # Errors
 ///
 /// Returns an `InvalidRequest` report when a forward or backward cursor's
 /// boundary identifier does not name a tenant.
-pub fn keyset_from_cursor(cursor: Option<&PageCursor>) -> Result<TenantKeyset, ClassifiedReport> {
-    match cursor {
-        None => Ok(TenantKeyset::first_page()),
-        Some(PageCursor::After(id)) => Ok(TenantKeyset::Forward {
+pub fn tenant_page_start(start: &PageStart) -> Result<TenantPageStart, ClassifiedReport> {
+    match start {
+        PageStart::Offset(offset) => Ok(TenantPageStart::Offset(*offset)),
+        PageStart::Cursor(None) => Ok(TenantPageStart::Forward { after: None }),
+        PageStart::Cursor(Some(PageCursor::After(id))) => Ok(TenantPageStart::Forward {
             after: Some(name_from_boundary(id)?),
         }),
-        Some(PageCursor::Before(id)) => Ok(TenantKeyset::Backward {
+        PageStart::Cursor(Some(PageCursor::Before(id))) => Ok(TenantPageStart::Backward {
             before: name_from_boundary(id)?,
         }),
-        Some(PageCursor::End) => Ok(TenantKeyset::FromEnd),
+        PageStart::Cursor(Some(PageCursor::End)) => Ok(TenantPageStart::FromEnd),
     }
 }
 
@@ -101,9 +102,48 @@ pub async fn build_tenant(view: &TenantView, options: TenantOptions, usage_probe
 
 #[cfg(test)]
 mod tests {
-    use crate::tenant_response::wire_state;
-    use andromeda_ngsi_ld_model::tenant::TenantState;
-    use andromeda_tenancy::{residency::TenantResidency, status::TenantStatus};
+    use crate::tenant_response::{tenant_page_start, wire_state};
+    use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+    use andromeda_ngsi_ld_model::tenant::{TenantState, tenant_id};
+    use andromeda_ngsi_ld_query::{cursor::PageCursor, page_window::PageStart};
+    use andromeda_tenancy::{residency::TenantResidency, status::TenantStatus, tenant_page_start::TenantPageStart};
+
+    fn name(raw: &str) -> TenantName {
+        TenantName::try_from(raw.to_owned()).expect("a valid tenant name")
+    }
+
+    /// Clause 5.5.9.2: an offset window pages the collection by name offset.
+    #[test]
+    fn an_offset_window_becomes_an_offset_tenant_page() {
+        pretty_assertions::assert_eq!(tenant_page_start(&PageStart::Offset(3)).ok(), Some(TenantPageStart::Offset(3)));
+    }
+
+    /// Clause 5.5.9.1: each cursor position addresses the tenant its boundary
+    /// identifier names.
+    #[test]
+    fn a_cursor_window_becomes_a_keyset_tenant_page() {
+        let acme = tenant_id(&name("acme")).expect("a tenant identifier");
+        pretty_assertions::assert_eq!(tenant_page_start(&PageStart::Cursor(None)).ok(), Some(TenantPageStart::Forward { after: None }));
+        pretty_assertions::assert_eq!(
+            tenant_page_start(&PageStart::Cursor(Some(PageCursor::After(acme.clone())))).ok(), // clone: the identifier is reused below
+            Some(TenantPageStart::Forward { after: Some(name("acme")) })
+        );
+        pretty_assertions::assert_eq!(
+            tenant_page_start(&PageStart::Cursor(Some(PageCursor::Before(acme)))).ok(),
+            Some(TenantPageStart::Backward { before: name("acme") })
+        );
+        pretty_assertions::assert_eq!(
+            tenant_page_start(&PageStart::Cursor(Some(PageCursor::End))).ok(),
+            Some(TenantPageStart::FromEnd)
+        );
+    }
+
+    /// A cursor whose boundary names no tenant is refused.
+    #[test]
+    fn a_cursor_naming_no_tenant_is_refused() {
+        let foreign = "urn:ngsi-ld:Building:1".parse().expect("valid URI");
+        assert!(tenant_page_start(&PageStart::Cursor(Some(PageCursor::After(foreign)))).is_err());
+    }
 
     #[test]
     fn the_wire_status_folds_admin_state_and_residency_totally() {

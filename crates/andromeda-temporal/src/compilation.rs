@@ -12,7 +12,6 @@ use andromeda_ngsi_ld_query::{
         json_key_attributes::JsonKeyAttributes,
     },
     geo::{compile as geo_compile, query::GeoQuery},
-    pagination::{CountPolicy, Pagination},
     projection::{
         compiled::Projection,
         expansion::{expand_attrs, expand_projection_terms},
@@ -29,11 +28,7 @@ use andromeda_ngsi_ld_query::{
     },
     term_expander::TermExpander,
 };
-use andromeda_ngsi_ld_request::{
-    error::ParameterError,
-    pagination_cursor::decode_cursor,
-    query::{SharedQueryParams, temporal::TemporalQueryParameters},
-};
+use andromeda_ngsi_ld_request::{error::ParameterError, query::temporal::TemporalQueryParameters};
 use std::collections::HashSet;
 
 impl TemporalService {
@@ -80,12 +75,6 @@ impl TemporalService {
         let page = compile_instance_page(params.last_n, format, self.limits.instance_limits);
         let grouping = compile_grouping(params, format, &expander).await?;
 
-        // Clause 5.5.9.1: the opaque pagination cursor is a per-request position
-        // decoded here; it never took part in expansion, so it is set on the
-        // compiled query rather than driving it. A malformed one is a
-        // BadRequestData, lifted from the parameter error.
-        let keyset = decode_cursor(params.cursor.as_deref())?;
-
         Ok(CompiledTemporalQuery::builder()
             .entities(
                 EntitySelection::builder()
@@ -117,7 +106,6 @@ impl TemporalService {
                     .build(),
             )
             .representation(compile_representation(params, format, grouping))
-            .pagination(compile_pagination(params))
             .projection(projection)
             // Clause 5.7.4.5: "If Entity ordering is specified (see clause
             // 4.23), then the JSON-LD array returned shall be ordered according
@@ -125,7 +113,6 @@ impl TemporalService {
             // expansion: clause 5.7.4.3 confines it to the `id` member, which
             // names no term.
             .ordering(TemporalEntityOrdering::of_parameters(&params.ordering)?)
-            .keyset(keyset)
             .build())
     }
 
@@ -233,18 +220,6 @@ async fn compile_grouping(
         expanded_terms.push(GroupingTerm { key, bucket: term.bucket });
     }
     Ok(Some(AggregationGrouping(expanded_terms)))
-}
-
-/// Compile the clause 5.5.9 page the query returns.
-fn compile_pagination(params: &TemporalQueryParameters) -> Pagination {
-    Pagination {
-        limit: params.effective_limit(),
-        offset: params.effective_offset(),
-        count: match params.count {
-            Some(true) => CountPolicy::Emit,
-            Some(false) | None => CountPolicy::Omit,
-        },
-    }
 }
 
 /// Expand `pick` / `omit` into a compiled clause 4.21 [`Projection`].

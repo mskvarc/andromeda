@@ -1,20 +1,13 @@
 //! Handlers for the `/jsonldContexts` endpoints.
 
-use crate::{
-    error::ContextRegistryResultExt,
-    hosted_context_url::hosted_context_path,
-    serve_tenant::serve_tenant,
-    served_document::served_response,
-    state::{ContextRegistryRouteState, ContextRegistryTenantState},
-};
+use crate::{error::ContextRegistryResultExt, hosted_context_url::hosted_context_path, served_document::served_response, state::ContextRegistryTenantState};
 use andromeda_context_registry::{detail_level::ContextDetailLevel, identifier::ContextIdentifier, removal::ContextRemoval};
 use andromeda_http_extraction::{
     api_root::ApiRoot,
     content_length_precondition::DeclaredBodyLength,
     query::ValidatedQuery,
     request_payload::RequestPayload,
-    tenant::TenantHeader,
-    tenant_state::{ExistingTenantState, TenantStateResolver},
+    tenant_state::ExistingTenantState,
 };
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
@@ -27,10 +20,9 @@ use andromeda_ngsi_ld_request::{
     empty::EmptyParams,
     jsonld_context::{DeleteParams, ListParams, ServeParams},
 };
-use andromeda_tenancy::creation_policy::TenantCreationPolicy;
 use axum::{
     Json,
-    extract::{OriginalUri, Path, State},
+    extract::{OriginalUri, Path},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -96,26 +88,23 @@ pub(crate) async fn query(
 
 /// Serve a stored `@context` or its metadata (clause 5.13.4).
 ///
-/// The tenant comes from `NGSILD-Tenant`, else from the `andromedaTenant`
-/// parameter a URL minted for a non-default tenant's entry carries, else the
-/// default tenant ([`serve_tenant`]); a tenant that does not exist is
-/// `NonexistentTenant` (clause 5.5.10). `If-None-Match` is evaluated only once
-/// the tenant, the identifier and the entry's kind resolved (RFC 7232 section
-/// 5). A HEAD request runs this handler and loses the body on the way out, so
-/// it answers with exactly the headers a GET does. The route marks every
-/// answer, errors included, as varying on the tenant header
-/// ([`crate::served_document::vary_on_tenant`]).
+/// The tenant comes from `NGSILD-Tenant` alone, as for every other operation
+/// (clauses 4.14 and 6.3.14), and is the default tenant without the header; a
+/// tenant that does not exist is `NonexistentTenant` (clause 5.5.10). The
+/// parameters are read before the tenant is resolved, so one the operation
+/// does not define is the clause 6.3.20 `InvalidRequest` for every tenant.
+/// `If-None-Match` is evaluated only once the tenant, the identifier and the
+/// entry's kind resolved (RFC 7232 section 5). A HEAD request runs this handler
+/// and loses the body on the way out, so it answers with exactly the headers a
+/// GET does. The route marks every answer, errors included, as varying on the
+/// tenant header ([`crate::served_document::vary_on_tenant`]).
 pub(crate) async fn get(
-    State(route_state): State<ContextRegistryRouteState>,
+    ValidatedQuery(params): ValidatedQuery<ServeParams>,
+    ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
-    TenantHeader(header): TenantHeader,
     request_headers: HeaderMap,
     Path(context_id): Path<String>,
-    ValidatedQuery(params): ValidatedQuery<ServeParams>,
 ) -> Result<Response, ProblemResponse> {
-    let tenant = serve_tenant(header, params.andromeda_tenant)
-        .map_err(|conflict| ClassifiedReport::public(NgsiLdErrorType::BadRequestData, conflict.to_string()).with_instance(uri.clone()))?;
-    let state = route_state.resolve_tenant(&tenant, TenantCreationPolicy::MustExist, &uri).await?;
     let detail_level = match params.details {
         Some(true) => ContextDetailLevel::Full,
         Some(false) | None => ContextDetailLevel::Summary,

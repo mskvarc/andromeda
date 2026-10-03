@@ -150,7 +150,7 @@ mod tests {
                 .preload_contexts(HashMap::from([(Url::parse(USER_CONTEXT)?, user_context)]))
                 .build()?;
             let contexts = Arc::new(ContextRegistryService::new(store, engine.clone())); // clone: the registry and the response each hold the engine
-            let hosting = Arc::new(TenantContextHosting::new(contexts, TenantRef::UnnamedDefault));
+            let hosting = Arc::new(TenantContextHosting::new(contexts));
             Ok(OfflineDefaultTenant {
                 engine,
                 tenancy: ResidentTenancy::new(hosting, Vec::new()),
@@ -230,12 +230,12 @@ mod tests {
         Ok(())
     }
 
-    /// Clause 6.3.20: the operation defines no parameter, so the vendor tenant
-    /// parameter of Serve @context is an `InvalidRequest` here.
+    /// Clause 6.3.20: the operation defines no parameter, so any parameter is
+    /// an `InvalidRequest` here.
     #[tokio::test]
     async fn an_undefined_parameter_is_invalid_request() -> Result<(), Box<dyn Error + Send + Sync>> {
         let response = answer(
-            Request::get("/info/sourceIdentity?andromedaTenant=x")
+            Request::get("/info/sourceIdentity?bogus=x")
                 .header("host", "broker.example")
                 .body(Body::empty())?,
         )

@@ -1,13 +1,13 @@
 //! Retrieving and listing subscriptions (ETSI GS CIM 009 clauses 5.8.3, 5.8.4,
 //! 5.11.4 and 5.11.5).
 
-use crate::{error::SubscriptionError, keyset_listing::KeysetListing, lifecycle::SubscriptionService, variant::SubscriptionVariant};
+use crate::{error::SubscriptionError, lifecycle::SubscriptionService, subscription_listing::SubscriptionListing, variant::SubscriptionVariant};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::Subscription;
-use andromeda_ngsi_ld_query::cursor::PageCursor;
+use andromeda_ngsi_ld_query::page_window::PageWindow;
 use serde_json::Value;
 
 impl<V> SubscriptionService<V>
@@ -45,7 +45,13 @@ where
         self.variant.serialize_for_response(&subscription, &self.name_compaction(context).await?).await
     }
 
-    /// List subscriptions with pagination and serialize them for an HTTP response.
+    /// List the page `window` selects of the subscriptions, serialized for an
+    /// HTTP response, with the total and the boundary the neighbouring cursors
+    /// are built from (clauses 5.5.9 and 6.3.13).
+    ///
+    /// The listing comes back in ascending identifier order, so the first and
+    /// last identifiers are the page's boundary; they are captured before the
+    /// resources are serialized, which drops the typed identifier.
     ///
     /// # Errors
     ///
@@ -55,42 +61,10 @@ where
     pub async fn list_for_response(
         &self,
         target: &ContextTarget,
-        limit: Option<i64>,
-        offset: Option<i64>,
+        window: &PageWindow,
         context: &ContextSpec,
-    ) -> Result<(Vec<Value>, i64), SubscriptionError> {
-        let (subscriptions, total) = self.repo.list(target, limit, offset).await?;
-        let names = self.name_compaction(context).await?;
-        let mut compacted = Vec::with_capacity(subscriptions.len());
-        for subscription in subscriptions {
-            compacted.push(self.variant.serialize_for_response(&subscription, &names).await?);
-        }
-        Ok((compacted, total))
-    }
-
-    /// List subscriptions by keyset for a stable-pagination response
-    /// (clause 5.5.9.1), serializing them and reporting the boundary the
-    /// neighbouring cursors are built from.
-    ///
-    /// `cursor` is the opaque position the request continued from, `None` on the
-    /// first page. The listing comes back in ascending identifier order (the
-    /// store reverses a backward or from-end page), so the first and last
-    /// identifiers are the page's boundary; they are captured before the
-    /// resources are serialized, which drops the typed identifier.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SubscriptionError::Persistence`] when the store cannot be
-    /// read, and [`SubscriptionError::JsonLd`] when `context` cannot be
-    /// resolved or one of the listed resources cannot be compacted against it.
-    pub async fn list_keyset_for_response(
-        &self,
-        target: &ContextTarget,
-        cursor: Option<&PageCursor>,
-        limit: i64,
-        context: &ContextSpec,
-    ) -> Result<KeysetListing, SubscriptionError> {
-        let (subscriptions, total) = self.repo.list_keyset(target, cursor, limit).await?;
+    ) -> Result<SubscriptionListing, SubscriptionError> {
+        let (subscriptions, total) = self.repo.list(target, window).await?;
         // clone: the boundary owns the two identifiers the cursor pointers are
         // built from, while the subscriptions themselves are consumed by the
         // serialization below.
@@ -103,7 +77,7 @@ where
         for subscription in subscriptions {
             compacted.push(self.variant.serialize_for_response(&subscription, &names).await?);
         }
-        Ok(KeysetListing {
+        Ok(SubscriptionListing {
             subscriptions: compacted,
             total,
             boundary,

@@ -14,7 +14,7 @@ use crate::{
     runtime::TenantRuntimeManager,
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
     status::TenantStatus,
-    tenant_keyset::TenantKeyset,
+    tenant_page_start::TenantPageStart,
     tenant_record::TenantRecord,
     tenant_ref::TenantRef,
     wake_schedule::{TenantWakeSchedule, WakeScheduleError},
@@ -257,23 +257,24 @@ impl TenantDatabase for FakeRegistry {
         Ok(self.all().iter().any(|held| held == name.as_str()).then(|| self.record_for(name)))
     }
 
-    async fn list_tenant_records(&self, keyset: &TenantKeyset, limit: i64) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
+    async fn list_tenant_records(&self, start: &TenantPageStart, limit: u32) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
         let mut names = self.all();
         names.sort();
         let total = i64::try_from(names.len()).unwrap_or(i64::MAX);
-        let window = usize::try_from(limit).unwrap_or(0);
-        let selected: Vec<String> = match keyset {
-            TenantKeyset::Forward { after } => names
+        let window = usize::try_from(limit).unwrap_or(usize::MAX);
+        let selected: Vec<String> = match start {
+            TenantPageStart::Offset(offset) => names.into_iter().skip(usize::try_from(*offset).unwrap_or(usize::MAX)).take(window).collect(),
+            TenantPageStart::Forward { after } => names
                 .into_iter()
                 .filter(|held| after.as_ref().is_none_or(|bound| held.as_str() > bound.as_str()))
                 .take(window)
                 .collect(),
-            TenantKeyset::Backward { before } => {
+            TenantPageStart::Backward { before } => {
                 let below: Vec<String> = names.into_iter().filter(|held| held.as_str() < before.as_str()).collect();
                 let start = below.len().saturating_sub(window);
                 below.into_iter().skip(start).collect()
             }
-            TenantKeyset::FromEnd => {
+            TenantPageStart::FromEnd => {
                 let start = names.len().saturating_sub(window);
                 names.into_iter().skip(start).collect()
             }
@@ -779,7 +780,7 @@ async fn a_registry_that_cannot_be_read_evicts_nothing_rather_than_everything() 
             )))
         }
 
-        async fn list_tenant_records(&self, _keyset: &TenantKeyset, _limit: i64) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
+        async fn list_tenant_records(&self, _start: &TenantPageStart, _limit: u32) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
             Err(TenancyError::RegistryUnavailable(PersistenceFailure::Unavailable))
         }
 

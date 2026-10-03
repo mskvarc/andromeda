@@ -13,6 +13,7 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-tenancy.workspace = true
 andromeda-test-client.workspace = true
 andromeda-test-fixtures.workspace = true
+andromeda-test-mocks.workspace = true
 async-trait = "0.1.92"
 chrono = "0.4.45"
 dashmap = { version = "6.2.1", features = ["inline"] }

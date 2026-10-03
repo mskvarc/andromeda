@@ -134,13 +134,13 @@ async fn a_single_link_to_any_core_release_is_answered_under_the_current_one() {
 
 /// Study C9: a relative context `Link` is resolved against the request's own
 /// URI (IETF RFC 8288 section 3.1): a root-relative reference to a context the
-/// tenant stores, tenant-qualified as the broker mints it, expands the
-/// request's terms.
+/// tenant stores, the `Location` Add @context answers, expands the request's
+/// terms.
 #[tokio::test]
 async fn a_relative_context_link_is_resolved_against_the_request_uri() {
     let tenant = PrivateTenant::provisioned().await;
     let hosted = add_hosted(tenant.client(), &json!({ "@context": { "speed": "https://relative.example/speed" } })).await;
-    let relative = format!("/ngsi-ld/v1/jsonldContexts/{hosted}?andromedaTenant={}", tenant.name());
+    let relative = format!("/ngsi-ld/v1/jsonldContexts/{hosted}");
     let id = unique_id("urn:ngsi-ld:Vehicle:relative");
 
     let created = tenant

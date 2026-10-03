@@ -113,7 +113,7 @@ pub(super) fn construct_services(
     let entity_query = compose_entity_query_service(config, storage, &forwarding);
     let context_store = Arc::new(JsonLdContextRepository::new(&storage.pool)) as Arc<dyn ContextRegistryStore>;
     let contexts = Arc::new(ContextRegistryService::new(context_store, storage.engine.clone()));
-    let context_hosting = TenantContextHosting::new(contexts, storage.tenant.clone()); // clone: the hosting names the tenant its URLs qualify
+    let context_hosting = TenantContextHosting::new(contexts);
     let (snapshot_preparation, snapshots) = compose_snapshot_services(
         &config.snapshot,
         storage,

@@ -11,6 +11,7 @@ use crate::{error::TemporalResultExt, history_read::TemporalHistoryRead};
 use andromeda_entity_map::recording::{LocalMapEntities, MapListing, PageFiltering};
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_query::page_window::PageWindow;
 use andromeda_temporal::requested_identifiers::RequestedIdentifiers;
 use axum::http::Uri;
 
@@ -67,9 +68,12 @@ impl LocalMapEntities for LocalHistoryEntities<'_> {
                     // them.
                     MapListing::Rechecked => RequestedIdentifiers::Ignore,
                 };
+                // Clause 5.5.14: the map fixes every entity the request matched,
+                // whatever page -- offset or cursor -- the query itself answers
+                // with, so the identifier pass reads the whole result.
                 let mut identifiers = read
                     .service
-                    .query_ids(read.target, read.params, read.context, requested)
+                    .query_ids(read.target, read.params, &PageWindow::unbounded(), read.context, requested)
                     .await
                     .with_instance(instance)?;
                 identifiers.extend(linked.iter().cloned()); // clone: the map owns its identifiers

@@ -58,9 +58,18 @@ pub fn ids_of(body: &Value) -> Vec<String> {
 }
 
 /// Assert that a response's pagination links are the opaque-cursor kind: they
-/// carry a `cursor` and never an `offset`.
+/// carry a `cursor` and never an `offset`, and a `first` link starts a walk
+/// with the empty `cursor=` (clause 5.5.9.1).
 pub fn assert_cursor_links(headers: &HeaderMap) {
     let links = joined_links(headers);
     assert!(links.contains("cursor="), "cursor-mode links carry a cursor: {links}");
     assert!(!links.contains("offset="), "cursor-mode links never carry an offset: {links}");
+    if let Some(first) = link_target(headers, "first") {
+        assert!(first.ends_with("cursor="), "a cursor-mode first link starts a walk: {first}");
+    }
+}
+
+/// The NGSI-LD error type a Problem Details body names.
+pub fn problem_type(body: &Value) -> Option<&str> {
+    body.get("type").and_then(Value::as_str)
 }

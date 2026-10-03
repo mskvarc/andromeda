@@ -52,10 +52,17 @@ async fn subscribe(client: &TestClient, id: &str) -> String {
         .to_owned()
 }
 
-/// The status dereferencing `url` without a tenant header answers, as a
-/// notification receiver's JSON-LD processor would.
-async fn dereference(url: &str) -> StatusCode {
-    reqwest::get(url).await.expect("the wrapper URL is reachable").status()
+/// The status dereferencing `url` in `tenant` answers. Clause 6.3.14 makes the
+/// `NGSILD-Tenant` header the only way a request names a tenant, so the
+/// wrapper a non-default tenant stored is dereferenced under that header.
+async fn dereference(url: &str, tenant: &str) -> StatusCode {
+    reqwest::Client::new()
+        .get(url)
+        .header("NGSILD-Tenant", tenant)
+        .send()
+        .await
+        .expect("the wrapper URL is reachable")
+        .status()
 }
 
 #[tokio::test]
@@ -71,21 +78,25 @@ async fn regression_implicit_context_a_wrapper_deleted_through_another_replica_i
     assert_eq!(seeded.status, StatusCode::CREATED, "the seed brings the tenant into being: {:?}", seeded.body);
 
     let wrapper = subscribe(first, &scope.id("Subscription:before-deletion")).await;
-    assert_eq!(dereference(&wrapper).await, StatusCode::OK, "clause 5.13.1 serves the wrapper: {wrapper}");
+    assert_eq!(
+        dereference(&wrapper, scope.tenant()).await,
+        StatusCode::OK,
+        "clause 5.13.1 serves the wrapper: {wrapper}"
+    );
 
-    let identifier = wrapper
-        .rsplit('/')
-        .next()
-        .and_then(|segment| segment.split('?').next())
-        .expect("the wrapper URL ends in its identifier");
+    let identifier = wrapper.rsplit('/').next().expect("the wrapper URL ends in its identifier");
     let deleted = second.delete_jsonld_context(identifier).await.expect("delete @context request");
     assert_eq!(deleted.status, StatusCode::NO_CONTENT, "clause 5.13.5.4 removes the entry: {:?}", deleted.body);
-    assert_eq!(dereference(&wrapper).await, StatusCode::NOT_FOUND, "the deleted wrapper is gone");
+    assert_eq!(
+        dereference(&wrapper, scope.tenant()).await,
+        StatusCode::NOT_FOUND,
+        "the deleted wrapper is gone"
+    );
 
     let renamed = subscribe(first, &scope.id("Subscription:after-deletion")).await;
     assert_eq!(renamed, wrapper, "equal wrappers share the identifier their content derives");
     assert_eq!(
-        dereference(&renamed).await,
+        dereference(&renamed, scope.tenant()).await,
         StatusCode::OK,
         "a subscription created after the deletion names a wrapper that is served: {renamed}"
     );

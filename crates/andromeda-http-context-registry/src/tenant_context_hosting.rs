@@ -9,7 +9,6 @@
 use crate::{hosted_context_url::HostedContextUrls, response_context_host::ResponseContextHost};
 use andromeda_context_registry::service::ContextRegistryService;
 use andromeda_http_extraction::api_root::ApiRoot;
-use andromeda_tenancy::tenant_ref::TenantRef;
 use std::sync::Arc;
 
 /// One tenant's stored `@context`s, as the host of the contexts its responses
@@ -18,15 +17,13 @@ use std::sync::Arc;
 pub struct TenantContextHosting {
     /// The tenant's stored `@context`s.
     contexts: Arc<ContextRegistryService>,
-    /// The tenant whose `@context`s they are.
-    tenant: TenantRef,
 }
 
 impl TenantContextHosting {
-    /// Hosting among `contexts`, which are `tenant`'s.
+    /// Hosting among `contexts`, the stored `@context`s of one tenant.
     #[must_use]
-    pub const fn new(contexts: Arc<ContextRegistryService>, tenant: TenantRef) -> TenantContextHosting {
-        TenantContextHosting { contexts, tenant }
+    pub const fn new(contexts: Arc<ContextRegistryService>) -> TenantContextHosting {
+        TenantContextHosting { contexts }
     }
 
     /// The tenant's stored `@context`s.
@@ -48,7 +45,7 @@ impl TenantContextHosting {
     /// The URLs the tenant's entries are served under for a request answered
     /// under `api_root`, or `None` when the request revealed no `apiRoot`.
     #[must_use]
-    pub fn urls<'a>(&'a self, api_root: &'a ApiRoot) -> Option<HostedContextUrls<'a>> {
-        HostedContextUrls::of_request(api_root, &self.tenant)
+    pub fn urls<'a>(&self, api_root: &'a ApiRoot) -> Option<HostedContextUrls<'a>> {
+        HostedContextUrls::of_request(api_root)
     }
 }

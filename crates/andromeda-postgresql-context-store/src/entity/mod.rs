@@ -2,6 +2,8 @@
 
 /// The discovery census the entity statements keep beside the search rows.
 pub mod census;
+/// Executing a compiled entity query: its page, its total and its identifiers.
+pub mod compiled_query;
 /// Binary COPY path for bulk entity inserts.
 pub mod copy;
 /// The reads that let a deletion skip the payload it removes.

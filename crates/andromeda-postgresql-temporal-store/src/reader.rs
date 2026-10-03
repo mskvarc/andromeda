@@ -21,7 +21,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
-use andromeda_ngsi_ld_query::{cursor::PageCursor, pagination::CountPolicy, temporal::compiled::CompiledTemporalQuery};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, temporal::compiled::CompiledTemporalQuery};
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::attribute_kind_code::attribute_type_of;
 use andromeda_postgresql_query::{
@@ -148,7 +148,13 @@ impl TemporalHistoryReader for TemporalRepository {
             .collect())
     }
 
-    async fn query_entity_ids(&self, target: &ContextTarget, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
+    async fn query_entity_ids(
+        &self,
+        target: &ContextTarget,
+        compiled: &CompiledTemporalQuery,
+        window: &PageWindow,
+        count: CountPolicy,
+    ) -> Result<TemporalEntityIdOutcome, TemporalError> {
         // Clause 5.7.4.3 confines a temporal ordering to the `id` member, which
         // is a column of the temporal catalogue and names no attribute, so the
         // dictionary lookup below has no ordering term to resolve.
@@ -179,7 +185,7 @@ impl TemporalHistoryReader for TemporalRepository {
             self.collations.ensure(collation).await.map_err(TemporalStoreError::from)?;
         }
 
-        let stage1 = build_stage1_entity_ids(schema_iden(target).as_ref(), compiled, &names).map_err(TemporalStoreError::Render)?;
+        let stage1 = build_stage1_entity_ids(schema_iden(target).as_ref(), compiled, window, count, &names).map_err(TemporalStoreError::Render)?;
 
         let entity_id_rows = self.execute_temporal_query(TemporalStatement::Stage1, stage1.select).await?;
 
@@ -193,12 +199,10 @@ impl TemporalHistoryReader for TemporalRepository {
         // Clause 5.5.9.1: a backward or from-end keyset page was read descending
         // so one index scan could serve it; present it ascending, the order every
         // element page shows.
-        if matches!(compiled.keyset, Some(PageCursor::Before(_) | PageCursor::End)) {
-            entity_ids.reverse();
-        }
+        stage1.read_order.present(&mut entity_ids);
         let entity_ids = entity_ids;
 
-        let total_count = if compiled.pagination.count == CountPolicy::Emit {
+        let total_count = if count == CountPolicy::Emit {
             let count = stage1
                 .count
                 .ok_or(TemporalStoreError::Invariant(TemporalStoreInvariant::CountStatementMissing))?;

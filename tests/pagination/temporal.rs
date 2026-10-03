@@ -5,9 +5,9 @@
 //! temporal-window dimension. The collection is broker-wide, so every test runs
 //! its own private tenant, whose collection starts empty.
 
-use crate::cursor_walk::{assert_cursor_links, ids_of, joined_links, link_target, query_string_of};
+use crate::cursor_walk::{assert_cursor_links, ids_of, joined_links, link_target, problem_type, query_string_of};
 use andromeda_test_client::{entity::results_count, test_client::TestClient};
-use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_fixtures::{context::CORE_CONTEXT, problem_detail::BAD_REQUEST_DATA};
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{StatusCode, header::HeaderMap};
@@ -227,5 +227,54 @@ async fn pagination_temporal_default_scope_cursor_page_counts_the_whole_collecti
     assert_eq!(response.status, StatusCode::OK);
     assert_eq!(ids_of(&response.json_value().expect("valid JSON body")), vec![sensor_id(2), sensor_id(3)]);
     assert_eq!(results_count(&response.headers), Some(5), "the count is the whole collection");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 6.3.10 Table 6.3.10-1: `limit=0` is only valid alongside a count,
+/// on the temporal collection as on every other.
+#[tokio::test]
+async fn pagination_temporal_limit_zero_without_count_is_bad_request() {
+    let (scope, client) = make_scope().await;
+    create_sensors(&client, 1).await;
+
+    let response = client
+        .query_temporal_entities(&format!("type=Sensor&local=true&{WINDOW}&limit=0"), Some(CORE_CONTEXT))
+        .await
+        .expect("query temporal entities failed");
+    assert_eq!(response.status, StatusCode::BAD_REQUEST);
+    let body = response.json_value().expect("a Problem Details body");
+    assert_eq!(problem_type(&body), Some(BAD_REQUEST_DATA.as_str()), "{body}");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.5.14: an `EntityMap` minted by a temporal query fixes every
+/// entity the query matched, whatever page -- here a continued cursor walk --
+/// the query itself answers with.
+#[tokio::test]
+async fn pagination_temporal_entity_map_minted_under_a_cursor_fixes_every_entity() {
+    let (scope, client) = make_scope().await;
+    create_sensors(&client, 3).await;
+    let (_, headers) = query_page(&client, &format!("type=Sensor&local=true&{WINDOW}&limit=1")).await;
+    let next = link_target(&headers, "next").expect("a full first page has a next");
+
+    let response = client
+        .query_temporal_entities(&format!("{}&entityMap=true", query_string_of(&next)), Some(CORE_CONTEXT))
+        .await
+        .expect("query temporal entities failed");
+    assert_eq!(response.status, StatusCode::CREATED, "{:?}", response.body);
+    let map_id = response
+        .headers
+        .get("ngsild-entitymap")
+        .and_then(|value| value.to_str().ok())
+        .expect("the minted map is named")
+        .to_owned();
+
+    let map = client.retrieve_entity_map(&map_id).await.expect("retrieve entity map request");
+    assert_eq!(map.status, StatusCode::OK);
+    let body = map.json_value().expect("an EntityMap body");
+    let mut fixed: Vec<String> = body["entityMap"].as_object().expect("an entityMap member").keys().cloned().collect();
+    fixed.sort();
+    let fixed = fixed;
+    assert_eq!(fixed, (0..3).map(sensor_id).collect::<Vec<_>>());
     scope.finish().await.expect("cleanup failed");
 }

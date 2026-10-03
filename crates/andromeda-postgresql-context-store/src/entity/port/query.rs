@@ -7,7 +7,7 @@ use andromeda_entity::{
     storage_profile::StorageProfile,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, page_window::PageWindow};
 use async_trait::async_trait;
 
 #[async_trait]
@@ -16,11 +16,21 @@ impl EntityQueryStore for EntityRepository {
         &EntityRepository::PROFILE
     }
 
-    async fn query_compiled(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
-        EntityRepository::query_compiled(self, target, compiled).await.map_err(|error| classify(&error))
+    async fn query_compiled(
+        &self,
+        target: &ContextTarget,
+        compiled: &CompiledEntityQuery,
+        window: &PageWindow,
+        count: CountPolicy,
+    ) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
+        EntityRepository::query_compiled(self, target, compiled, window, count)
+            .await
+            .map_err(|error| classify(&error))
     }
 
-    async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Identifier>, EntityError> {
-        EntityRepository::query_ids(self, target, compiled).await.map_err(|error| classify(&error))
+    async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery, window: &PageWindow) -> Result<QueryOutcome<Identifier>, EntityError> {
+        EntityRepository::query_ids(self, target, compiled, window)
+            .await
+            .map_err(|error| classify(&error))
     }
 }

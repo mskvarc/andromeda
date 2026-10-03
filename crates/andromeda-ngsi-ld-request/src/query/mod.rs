@@ -1,10 +1,12 @@
 //! The parameters of the NGSI-LD query endpoints, and what they have in common.
 //!
 //! Entity, temporal and registration queries each define their own parameter
-//! set, but clause 6.3.x gives all three the same selection, projection and
-//! pagination parameters with the same spellings. [`SharedQueryParams`] is that
-//! overlap, declared once with typed accessors so a new query endpoint inherits
-//! the behaviour instead of restating it.
+//! set, but clause 6.3.x gives all three the same selection and projection
+//! parameters with the same spellings. [`SharedQueryParams`] is that overlap,
+//! declared once with typed accessors so a new query endpoint inherits the
+//! behaviour instead of restating it. Their pagination parameters are the
+//! [`crate::pagination::parameters::PageParameters`] every paged collection
+//! flattens, bounded by [`QUERY_PAGE_SIZE`].
 
 pub mod csr;
 pub mod deserialization;
@@ -12,10 +14,11 @@ pub mod entity;
 pub mod entity_selector;
 pub mod temporal;
 
+use crate::pagination::page_size::{PageSizeBounds, PageSizeCap};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::grammar::RawProjectionTerm};
 
-/// The selection, projection and pagination parameters every query endpoint has.
+/// The selection and projection parameters every query endpoint has.
 ///
 /// Implementors supply typed request values.
 pub trait SharedQueryParams {
@@ -30,40 +33,15 @@ pub trait SharedQueryParams {
 
     /// The `datasetId` URI/default selectors, if present.
     fn dataset_ids(&self) -> Option<&[DatasetSelector]>;
-
-    /// The raw `limit` parameter, if present.
-    fn raw_limit(&self) -> Option<u32>;
-
-    /// The raw `offset` parameter, if present.
-    fn raw_offset(&self) -> Option<u32>;
-
-    /// The pagination limit, defaulted and capped.
-    ///
-    /// Defaults to 20 when absent. The cap of 1000 is what stops a single
-    /// request from asking for an unbounded result set.
-    fn effective_limit(&self) -> u32 {
-        self.raw_limit().unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT)
-    }
-
-    /// The pagination limit with no upper cap.
-    ///
-    /// Defaults to `u32::MAX` when absent. For callers that bound the result
-    /// set themselves and would otherwise be silently truncated at the cap.
-    fn effective_limit_uncapped(&self) -> u32 {
-        self.raw_limit().unwrap_or(u32::MAX)
-    }
-
-    /// The pagination offset, defaulting to 0.
-    fn effective_offset(&self) -> u32 {
-        self.raw_offset().unwrap_or(0)
-    }
 }
 
-/// The page size a query returns when it does not ask for one.
-const DEFAULT_LIMIT: u32 = 20;
-
-/// The largest page size a query may ask for.
-const MAX_LIMIT: u32 = 1000;
+/// The page size of the three query endpoints: 20 when the request names no
+/// `limit`, and at most 1000, which stops one request from asking for an
+/// unbounded result set (clause 5.5.6 leaves both to the broker).
+pub const QUERY_PAGE_SIZE: PageSizeBounds = PageSizeBounds {
+    default: 20,
+    cap: PageSizeCap::Capped(1000),
+};
 
 /// Implement [`SharedQueryParams`] for a query parameter struct.
 ///
@@ -75,14 +53,12 @@ macro_rules! impl_shared_query_params {
               /// Members the response is narrowed to (clause 4.21 `pick`).
               pick: $($pick:ident)?, omit: $($omit:ident)?,
               /// Dataset instances to select, comma-separated (`datasetId`).
-              dataset_id: $($ds:ident)?, limit: $lim:ident, offset: $off:ident }) => {
+              dataset_id: $($ds:ident)? }) => {
         impl SharedQueryParams for $ty {
             fn attrs(&self) -> Option<&[AttributeName]> { self.$attrs.as_deref() }
             fn pick(&self) -> Option<&[RawProjectionTerm]> { impl_shared_query_params!(@opt self $($pick)?) }
             fn omit(&self) -> Option<&[RawProjectionTerm]> { impl_shared_query_params!(@opt self $($omit)?) }
             fn dataset_ids(&self) -> Option<&[DatasetSelector]> { impl_shared_query_params!(@opt self $($ds)?) }
-            fn raw_limit(&self) -> Option<u32> { self.$lim }
-            fn raw_offset(&self) -> Option<u32> { self.$off }
         }
     };
     (@opt $self:ident) => { None };
@@ -99,4 +75,14 @@ macro_rules! params_from_query {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use crate::query::QUERY_PAGE_SIZE;
+    use pretty_assertions::assert_eq;
+
+    /// The query endpoints answer with 20 by default and at most 1000.
+    #[test]
+    fn query_page_size_is_twenty_capped_at_one_thousand() {
+        assert_eq!(QUERY_PAGE_SIZE.limit(None), 20);
+        assert_eq!(QUERY_PAGE_SIZE.limit(Some(5000)), 1000);
+    }
+}

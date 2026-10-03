@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{EntitySelector, NotificationParams, Subscription, SubscriptionStatus},
 };
-use andromeda_ngsi_ld_query::{cursor::PageCursor, dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, page_window::PageWindow, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
@@ -105,33 +105,18 @@ pub trait SubscriptionStore: Send + Sync + 'static {
         'life1: 'async_trait,
         'life2: 'async_trait,
         Self: 'async_trait;
-    /// List subscriptions with pagination, returning the items and total count.
-    fn list<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        target: &'life1 ContextTarget,
-        limit: Option<i64>,
-        offset: Option<i64>,
-    ) -> BoxFuture<'async_trait, Result<(Vec<Subscription>, i64), SubscriptionError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait;
-    /// List subscriptions by keyset over the identifier, for stable pagination
-    /// (clause 5.5.9.1).
+    /// List the page `window` selects of the subscriptions of this kind, in
+    /// identifier order, with the total number of them (clause 6.3.13).
     ///
-    /// `cursor` is the opaque position: `None` is the first page, ascending from
-    /// the start; [`PageCursor::After`]/[`PageCursor::Before`] continue the walk
-    /// and [`PageCursor::End`] jumps to the final page. The order is the
-    /// subscription identifier -- unique, unlike the `createdAt` of the
-    /// [`SubscriptionStore::list`] offset listing, and a single-key keyset needs
-    /// a unique key. A backward or from-end page is read descending and reversed
-    /// to ascending before it is returned. The total is counted as `list` counts
-    /// it.
-    fn list_keyset<'life0, 'life1, 'life2, 'async_trait>(
+    /// The collection is ordered by the subscription identifier in either
+    /// pagination mode: it is unique, so an offset page is deterministic and a
+    /// cursor (clause 5.5.9.1) has a single key to continue from. The page is
+    /// returned ascending; a store that reads a backward or from-end page
+    /// descending reverses it first.
+    fn list<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
-        cursor: Option<&'life2 PageCursor>,
-        limit: i64,
+        window: &'life2 PageWindow,
     ) -> BoxFuture<'async_trait, Result<(Vec<Subscription>, i64), SubscriptionError>>
     where
         'life0: 'async_trait,

@@ -17,11 +17,12 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 /// Assert `wrapper` is an absolute URL the broker minted for a stored
-/// `@context` of `tenant`.
-fn assert_minted_wrapper_url(wrapper: &str, tenant: &str) {
+/// `@context`: clauses 4.14 and 6.3.14 name the tenant in the header alone, so
+/// the URL carries no query.
+fn assert_minted_wrapper_url(wrapper: &str) {
     assert!(wrapper.starts_with("http://") || wrapper.starts_with("https://"), "absolute: {wrapper}");
     assert!(wrapper.contains(&format!("/ngsi-ld/v1/jsonldContexts/{JSON_LD_CONTEXT_PREFIX}")), "{wrapper}");
-    assert!(wrapper.ends_with(&format!("?andromedaTenant={tenant}")), "tenant-qualified: {wrapper}");
+    assert!(!wrapper.contains('?'), "the URL names no tenant: {wrapper}");
 }
 
 /// POST an `application/ld+json` query naming `context`, answered as
@@ -38,9 +39,10 @@ async fn post_query_as_json(client: &Client, device: &str, context: &Value) -> R
 }
 
 /// Study B3: a user context without the core `@context` is linked through one
-/// hosted wrapper holding exactly the body's value; a caller sending no tenant
-/// header dereferences it, it is listed `ImplicitlyCreated`, and a processor
-/// following the link reads the body as the broker stored it.
+/// hosted wrapper holding exactly the body's value; a caller sending the
+/// tenant's header dereferences it, it is listed `ImplicitlyCreated`, and a
+/// processor following the link on the tenant's behalf reads the body as the
+/// broker stored it.
 #[tokio::test]
 async fn a_user_context_without_the_core_is_linked_through_one_hosted_wrapper() {
     let tenant = PrivateTenant::provisioned().await;
@@ -52,10 +54,10 @@ async fn a_user_context_without_the_core_is_linked_through_one_hosted_wrapper() 
 
     assert_eq!(response.status(), StatusCode::OK);
     let wrapper = single_context_link(response.headers());
-    assert_minted_wrapper_url(&wrapper, tenant.name());
+    assert_minted_wrapper_url(&wrapper);
     let mut body: Value = response.json().await.expect("a JSON body");
     assert!(body.get("@context").is_none(), "clause 6.3.6: a json body carries no @context: {body}");
-    let dereferenced = dereference(&Client::new(), &wrapper).await;
+    let dereferenced = dereference(tenant.client(), &wrapper).await;
     assert_eq!(dereferenced.status, StatusCode::OK);
     assert_eq!(dereferenced.json(), json!({ "@context": [contexts.terms, core()] }));
     let (status, implicit) = list_contexts(tenant.client(), "kind=ImplicitlyCreated&details=true").await;
@@ -68,7 +70,7 @@ async fn a_user_context_without_the_core_is_linked_through_one_hosted_wrapper() 
     );
 
     body["@context"] = json!(wrapper);
-    let processor = IndependentProcessor::new().fetch(&wrapper).await;
+    let processor = IndependentProcessor::for_tenant(tenant.name()).fetch(&wrapper).await;
     let read = processor.read(&body).await;
     let stored = processor.read_stored(&stored_entity(tenant.client(), &device).await).await;
     assert_eq!(read[0].types, BTreeSet::from([DEVICE_IRI.to_owned()]));
@@ -95,8 +97,12 @@ async fn a_compound_or_inline_body_context_is_linked_through_a_wrapper_of_the_bo
         let response = post_query_as_json(tenant.client(), &device, &context).await;
         assert_eq!(response.status(), StatusCode::OK, "{context}");
         let wrapper = single_context_link(response.headers());
-        assert_minted_wrapper_url(&wrapper, tenant.name());
-        assert_eq!(dereference(&Client::new(), &wrapper).await.json(), json!({ "@context": expected }), "{context}");
+        assert_minted_wrapper_url(&wrapper);
+        assert_eq!(
+            dereference(tenant.client(), &wrapper).await.json(),
+            json!({ "@context": expected }),
+            "{context}"
+        );
     }
     contexts.shutdown().await;
     tenant.finish().await;
@@ -200,7 +206,7 @@ async fn geojson_with_prefer_body_json_links_the_wrapper_and_carries_no_body_con
 
     assert_eq!(response.status(), StatusCode::OK);
     let wrapper = single_context_link(response.headers());
-    assert_minted_wrapper_url(&wrapper, tenant.name());
+    assert_minted_wrapper_url(&wrapper);
     let body = ok_body(response).await;
     assert!(body.get("@context").is_none(), "no @context in the body: {body}");
     assert!(body["features"][0].get("@context").is_none(), "{body}");
@@ -210,7 +216,7 @@ async fn geojson_with_prefer_body_json_links_the_wrapper_and_carries_no_body_con
 
 /// Study B17: `/info/sourceIdentity` is answered with the default tenant's
 /// loader and store: a json request naming a user context links one wrapper
-/// hosted in the default tenant (no tenant parameter), and an ld+json one names
+/// hosted in the default tenant, and an ld+json one names
 /// the context followed by the core.
 #[tokio::test]
 async fn the_source_identity_names_its_context_through_the_default_tenant() {
@@ -221,7 +227,7 @@ async fn the_source_identity_names_its_context_through_the_default_tenant() {
     assert_eq!(plain.status(), StatusCode::OK);
     let wrapper = single_context_link(plain.headers());
     assert!(wrapper.contains(&format!("/ngsi-ld/v1/jsonldContexts/{JSON_LD_CONTEXT_PREFIX}")), "{wrapper}");
-    assert!(!wrapper.contains("andromedaTenant"), "the default tenant's URL names no tenant: {wrapper}");
+    assert!(!wrapper.contains('?'), "the default tenant's URL names no tenant: {wrapper}");
     assert_eq!(dereference(&client, &wrapper).await.json(), json!({ "@context": [contexts.terms, core()] }));
 
     let ld = ok_body(get(&client, "info/sourceIdentity", "application/ld+json", Some(&contexts.terms)).await).await;

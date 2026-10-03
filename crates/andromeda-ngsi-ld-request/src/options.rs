@@ -6,7 +6,7 @@ use crate::{
     unsupported_representation::UnsupportedRepresentation,
 };
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
-use andromeda_ngsi_ld_query::pagination::CountPolicy;
+use andromeda_ngsi_ld_query::count_policy::CountPolicy;
 use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use serde::Deserialize;
 use strum::{Display, EnumString};
@@ -300,7 +300,7 @@ mod tests {
         unsupported_representation::UnsupportedRepresentation,
     };
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
-    use andromeda_ngsi_ld_query::pagination::CountPolicy;
+    use andromeda_ngsi_ld_query::count_policy::CountPolicy;
     use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 
     #[test]

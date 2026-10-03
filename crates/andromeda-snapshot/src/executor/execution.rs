@@ -34,6 +34,10 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{query::body::Query, snapshot::ExecutionResultDetails};
+use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
+    page_window::{PageStart, PageWindow},
+};
 use andromeda_temporal::error::TemporalError;
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
@@ -48,17 +52,27 @@ impl SnapshotExecutor {
         index: usize,
         context: &ContextSpec,
     ) -> Result<ExecutionResultDetails, SnapshotError> {
-        let mut params = match temporal_parameters(query) {
+        let params = match temporal_parameters(query) {
             Ok(params) => params,
             Err(error) => return Ok(failure_detail(error.to_string())),
         };
-        let mut offset = 0_u32;
+        // The local entities are walked by keyset over their identifier, so
+        // entities written while the capture runs neither shift a later page
+        // nor appear twice (clause 5.5.9.1); the context sources are paged by
+        // the offset their own brokers understand.
+        let mut window = PageWindow {
+            limit: self.capture_page_size,
+            start: PageStart::Cursor(None),
+        };
+        let mut source_offset = 0_u32;
         let mut captured = HashSet::new();
         loop {
-            params.limit = Some(self.capture_page_size);
-            params.offset = Some(offset);
-            params.count = Some(true);
-            let result = match self.sources.temporal.query(&self.sources.live_target, &params, context).await {
+            let result = match self
+                .sources
+                .temporal
+                .query(&self.sources.live_target, &params, &window, CountPolicy::Omit, context)
+                .await
+            {
                 Ok(result) => result,
                 Err(error) => {
                     warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot temporal query failed");
@@ -69,6 +83,12 @@ impl SnapshotExecutor {
                 warn!(snapshot_id = %snapshot_id, query_index = index, entity_id = %warning.entity_id, warning = %warning.message, "Snapshot temporal query retained usable results with a warning");
             }
             let local_page_len = result.entities.len();
+            let last_local = result
+                .entities
+                .last()
+                .and_then(|entity| entity.get("id"))
+                .and_then(Value::as_str)
+                .and_then(|raw| raw.parse::<Identifier>().ok());
             let forwarded = match self
                 .sources
                 .forwarding
@@ -85,7 +105,7 @@ impl SnapshotExecutor {
                         entity_map: EntityMapInUse::None,
                         paging: SourcePaging::Page(SourcePage {
                             limit: self.capture_page_size,
-                            offset,
+                            offset: source_offset,
                         }),
                     },
                 )
@@ -120,7 +140,12 @@ impl SnapshotExecutor {
             if local_page_len < self.capture_page_size as usize && !remote_page_full {
                 break;
             }
-            offset = match offset.checked_add(self.capture_page_size) {
+            // A local walk that ran dry stays where it ended while the sources
+            // still page on.
+            if let Some(last) = last_local {
+                window = PageWindow::after(self.capture_page_size, last);
+            }
+            source_offset = match source_offset.checked_add(self.capture_page_size) {
                 Some(offset) => offset,
                 None => return Ok(failure_detail("Snapshot temporal pagination offset overflowed")),
             };

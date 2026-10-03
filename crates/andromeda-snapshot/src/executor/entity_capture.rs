@@ -40,6 +40,10 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity::Entity, query::body::Query, snapshot::ExecutionResultDetails};
+use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
+    page_window::{PageStart, PageWindow},
+};
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use chrono::{DateTime, Utc};
 use std::{collections::HashSet, sync::Arc};
@@ -114,7 +118,7 @@ impl SnapshotExecutor {
         context: &ContextSpec,
         materialized_entities: &mut HashSet<Identifier>,
     ) -> Result<ExecutionResultDetails, SnapshotError> {
-        let mut params = match entity_parameters(query) {
+        let params = match entity_parameters(query) {
             Ok(params) => params,
             Err(error) => return Ok(failure_detail(error.to_string())),
         };
@@ -140,12 +144,20 @@ impl SnapshotExecutor {
             captured: HashSet::new(),
             materialized: materialized_entities,
         };
-        let mut offset = 0_u32;
+        // The local entities are walked by keyset over their identifier rather
+        // than by offset: entities written or deleted while the capture runs
+        // then neither shift a later page nor appear twice (clause 5.5.9.1).
+        let mut window = PageWindow {
+            limit: self.capture_page_size,
+            start: PageStart::Cursor(None),
+        };
         loop {
-            params.limit = Some(self.capture_page_size);
-            params.offset = Some(offset);
-            params.count = Some(true);
-            let (rows, _) = match self.sources.entity_query.query_states(&self.sources.live_target, &params, context).await {
+            let (rows, _) = match self
+                .sources
+                .entity_query
+                .query_states(&self.sources.live_target, &params, &window, CountPolicy::Omit, context)
+                .await
+            {
                 Ok(result) => result,
                 Err(error) => {
                     warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot entity query failed");
@@ -157,7 +169,10 @@ impl SnapshotExecutor {
             // system times read beside it are not part of a captured entity.
             let mut states: Vec<EntityState> = rows.into_iter().map(|row| Arc::unwrap_or_clone(row.state)).collect();
             let local_page_len = states.len();
-            if offset == 0 && local_page_len == 0 {
+            // clone: the next page starts after the last identifier of this one,
+            // while the states themselves move into the capture below.
+            let last_captured = states.last().map(|state| state.id().clone());
+            if matches!(window.start, PageStart::Cursor(None)) && local_page_len == 0 {
                 if let Some(error) = &forwarding_failure {
                     return Ok(failure_detail(format!(
                         "No valid entity result was available because distributed execution failed: {error}"
@@ -181,13 +196,10 @@ impl SnapshotExecutor {
             if let Some(failure) = self.capture_page(target, snapshot_id, index, states, &mut ledger).await? {
                 return Ok(failure);
             }
-            if local_page_len < self.capture_page_size as usize {
-                break;
+            match last_captured {
+                Some(last) if local_page_len >= self.capture_page_size as usize => window = PageWindow::after(self.capture_page_size, last),
+                Some(_) | None => break,
             }
-            offset = match offset.checked_add(self.capture_page_size) {
-                Some(offset) => offset,
-                None => return Ok(failure_detail("Snapshot entity pagination offset overflowed")),
-            };
         }
 
         // The source entities no local page held, merged across sources.

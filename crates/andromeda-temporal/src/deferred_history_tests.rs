@@ -46,7 +46,10 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
+    cursor::PageCursor,
     entity_selection::EntitySelection,
+    page_window::{PageStart, PageWindow},
     temporal::{compiled::CompiledTemporalQuery, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -304,7 +307,13 @@ impl TemporalHistoryReader for RecordingSink {
             .collect())
     }
 
-    async fn query_entity_ids(&self, _target: &ContextTarget, _compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
+    async fn query_entity_ids(
+        &self,
+        _target: &ContextTarget,
+        _compiled: &CompiledTemporalQuery,
+        _window: &PageWindow,
+        _count: CountPolicy,
+    ) -> Result<TemporalEntityIdOutcome, TemporalError> {
         let state = self.state.lock().await;
         let mut identifiers = state
             .observations
@@ -360,6 +369,12 @@ impl TemporalHistoryReader for RecordingSink {
 
 fn fixture() -> (KeyedTemporalAppendIntent, Identifier) {
     let entity_id = "urn:ngsi-ld:Vehicle:deferred".parse::<Identifier>().expect("valid entity ID");
+    (fixture_for(&entity_id, 1), entity_id)
+}
+
+/// One pending intent recording a speed observation of `entity_id`, queued
+/// under `key`.
+fn fixture_for(entity_id: &Identifier, key: i64) -> KeyedTemporalAppendIntent {
     let record = WriteRecord::mint(instant());
     let row = TemporalHistoryRow {
         attribute_name: "https://example.com/speed".parse().expect("valid attribute name"),
@@ -374,24 +389,23 @@ fn fixture() -> (KeyedTemporalAppendIntent, Identifier) {
         metadata: None,
         partition_total: None,
     };
-    let pending = KeyedTemporalAppendIntent {
-        key: TemporalIntentKey::new(1).expect("positive key"),
+    KeyedTemporalAppendIntent {
+        key: TemporalIntentKey::new(key).expect("positive key"),
         intent: TemporalAppendIntent {
             record,
             base_ordinal: WriteOrdinal::at(0),
-            entity_id: entity_id.clone(), // clone: fixture returns the identifier separately from the intent.
+            entity_id: entity_id.clone(), // clone: the intent owns the entity it records.
             entity_types: Vec::new(),
             entries: vec![TemporalAppendEntry::Observation { row }],
             selection_value: Some(ObservedSelection::Written(Arc::new(EntityDocument::new(
-                Some(entity_id.clone()), // clone: the observed document names the entity the fixture returns too.
+                Some(entity_id.clone()), // clone: the observed document names the entity the intent records.
                 Vec::new(),
                 None,
                 None,
                 IndexMap::new(),
             )))),
         },
-    };
-    (pending, entity_id)
+    }
 }
 
 fn instant() -> DateTime<Utc> {
@@ -640,7 +654,10 @@ async fn a_snapshot_read_does_not_overlay_the_live_branchs_pending_intents() {
         .observations;
     assert!(rows.is_empty(), "the live branch's pending rows must not appear in a Snapshot: {rows:?}");
     assert!(!overlay.entity_exists(&snapshot, &entity_id).await.expect("snapshot existence"));
-    let listed = overlay.query_entity_ids(&snapshot, &query()).await.expect("snapshot entity listing");
+    let listed = overlay
+        .query_entity_ids(&snapshot, &query(), &PageWindow::unbounded(), CountPolicy::Omit)
+        .await
+        .expect("snapshot entity listing");
     assert!(listed.candidates.is_empty(), "the pending entity is the live branch's");
     assert!(
         overlay
@@ -672,4 +689,61 @@ async fn a_snapshot_mutation_barrier_neither_waits_for_nor_delivers_live_intents
 
     assert_eq!(queue.pending_count().await, 1, "the live branch's intent stays queued");
     assert_eq!(sink.logical_effect_count().await, 0, "nothing was delivered on the Snapshot's behalf");
+}
+
+/// The overlay over three stored and three pending entities, listing every
+/// one of them in identifier order.
+async fn merged_overlay() -> PendingTemporalHistoryOverlay {
+    let queue = Arc::new(RecordingQueue::default());
+    let sink = Arc::new(RecordingSink::default());
+    for (index, key) in [(1, 11), (3, 13), (5, 15)] {
+        let entity_id = format!("urn:ngsi-ld:Vehicle:{index}").parse::<Identifier>().expect("valid entity ID");
+        sink.append(&live_target(), &fixture_for(&entity_id, key).intent).await.expect("stored history");
+    }
+    for (index, key) in [(2, 12), (4, 14), (6, 16)] {
+        let entity_id = format!("urn:ngsi-ld:Vehicle:{index}").parse::<Identifier>().expect("valid entity ID");
+        queue.insert(fixture_for(&entity_id, key)).await;
+    }
+    PendingTemporalHistoryOverlay::new(sink as Arc<dyn TemporalHistoryReader>, queue as Arc<dyn PendingTemporalIntentReader>)
+}
+
+fn vehicles(indices: &[u8]) -> Vec<Identifier> {
+    indices
+        .iter()
+        .map(|index| format!("urn:ngsi-ld:Vehicle:{index}").parse().expect("valid entity ID"))
+        .collect()
+}
+
+/// Clause 5.5.9.1: a from-end cursor over stored and pending entities lands on
+/// the final entities of the merged collection, not of the stored one alone.
+#[tokio::test]
+async fn pending_ids_merged_under_a_from_end_cursor_yield_the_final_ids() {
+    let window = PageWindow {
+        limit: 2,
+        start: PageStart::Cursor(Some(PageCursor::End)),
+    };
+    let (identifiers, _) = merged_overlay()
+        .await
+        .query_entity_ids(&live_target(), &query(), &window, CountPolicy::Omit)
+        .await
+        .expect("merged listing")
+        .complete(&window, CountPolicy::Omit)
+        .expect("a deferred outcome");
+    assert_eq!(identifiers, vehicles(&[5, 6]));
+}
+
+/// Clause 6.3.13: the count of a merged listing is every stored and pending
+/// match, whatever page the window cuts.
+#[tokio::test]
+async fn the_overlay_count_is_the_whole_merged_set() {
+    let window = PageWindow::offset(2, 2);
+    let (identifiers, total) = merged_overlay()
+        .await
+        .query_entity_ids(&live_target(), &query(), &window, CountPolicy::Emit)
+        .await
+        .expect("merged listing")
+        .complete(&window, CountPolicy::Emit)
+        .expect("a deferred outcome");
+    assert_eq!(identifiers, vehicles(&[3, 4]));
+    assert_eq!(total, Some(6));
 }

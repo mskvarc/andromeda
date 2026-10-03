@@ -28,7 +28,7 @@ use crate::{
         mapper::{row_from_pg, row_to_stored_subscription, rows_to_stored_subscriptions, stored_subscription_uri},
         params::DatasetIdPresence,
         periodic_due::{due_interval_select, interval_anchors_select},
-        projection::{apply_subscription_keyset, count_of_kind, one_of, projected_select},
+        projection::{count_of_kind, listing_page, one_of, projected_select},
         status_code::{status_is, status_is_not, stored_status},
         stored_kind::{StoredKind, of_kind},
     },
@@ -36,7 +36,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
-use andromeda_ngsi_ld_query::cursor::PageCursor;
+use andromeda_ngsi_ld_query::page_window::PageWindow;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_subscription::{
@@ -46,7 +46,7 @@ use andromeda_subscription::{
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
-use sea_query::{Expr, ExprTrait, Iden, Order, PostgresQueryBuilder, Query};
+use sea_query::{Expr, ExprTrait, Iden, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::Row;
 
@@ -74,20 +74,10 @@ macro_rules! impl_subscription_store {
                 }
             }
 
-            async fn list(&self, target: &ContextTarget, limit: Option<i64>, offset: Option<i64>) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
-                let limit = limit.unwrap_or(100);
-                let offset = offset.unwrap_or(0);
+            async fn list(&self, target: &ContextTarget, window: &PageWindow) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
                 let total = count_of_kind(&self.pool, target, $kind).await?;
 
-                let mut select = projected_select($kind, target);
-                select
-                    .and_where(of_kind($kind))
-                    .order_by((Subscriptions::Table, Subscriptions::CreatedAt), Order::Asc)
-                    // A negative window bound is an absent one, not a
-                    // narrower one, so it clamps to zero rather than wrapping
-                    // into an enormous unsigned width.
-                    .limit(u64::try_from(limit).unwrap_or(0))
-                    .offset(u64::try_from(offset).unwrap_or(0));
+                let (select, read_order) = listing_page($kind, target, window);
                 let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
                 let pg_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_all(&self.pool)
@@ -95,33 +85,6 @@ macro_rules! impl_subscription_store {
                     .map_err(|error| persistence_error(error))?;
                 // A listing renders resources, so the surrogate key each row
                 // carries is dropped rather than threaded into the response.
-                let subscriptions = rows_to_stored_subscriptions(&pg_rows, $hdi)
-                    .map_err(|error| persistence_error(error))?
-                    .into_iter()
-                    .map(|stored| stored.subscription)
-                    .collect();
-                Ok((subscriptions, total))
-            }
-
-            async fn list_keyset(
-                &self,
-                target: &ContextTarget,
-                cursor: Option<&PageCursor>,
-                limit: i64,
-            ) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
-                let total = count_of_kind(&self.pool, target, $kind).await?;
-
-                let mut select = projected_select($kind, target);
-                select.and_where(of_kind($kind));
-                apply_subscription_keyset(&mut select, cursor);
-                // A negative window bound is an absent one, not a narrower one,
-                // so it clamps to zero rather than wrapping into a huge width.
-                select.limit(u64::try_from(limit).unwrap_or(0));
-                let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-                let pg_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|error| persistence_error(error))?;
                 let mut subscriptions: Vec<Subscription> = rows_to_stored_subscriptions(&pg_rows, $hdi)
                     .map_err(|error| persistence_error(error))?
                     .into_iter()
@@ -129,9 +92,7 @@ macro_rules! impl_subscription_store {
                     .collect();
                 // Clause 5.5.9.1: a backward or from-end page was read descending
                 // so a single index scan could serve it; present it ascending.
-                if matches!(cursor, Some(PageCursor::Before(_) | PageCursor::End)) {
-                    subscriptions.reverse();
-                }
+                read_order.present(&mut subscriptions);
                 Ok((subscriptions, total))
             }
 

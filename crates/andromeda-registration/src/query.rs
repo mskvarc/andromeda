@@ -24,16 +24,13 @@ use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
     filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, path::expanded_attribute_name, referenced_attributes::referenced_attributes},
     geo::compile as geo_compile,
-    pagination::{CountPolicy, Pagination},
+    page_window::PageWindow,
     projection::expansion::expand_attrs,
     temporal::window::TimeInterval,
     term_expander::TermExpander,
     type_selection::grammar::TypeExprRaw,
 };
-use andromeda_ngsi_ld_request::{
-    pagination_cursor::decode_cursor,
-    query::{SharedQueryParams, csr::CsrQueryParameters},
-};
+use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
 use iri_rs::IriBuf;
 use serde_json::Value;
 
@@ -50,14 +47,16 @@ pub struct DiscoveredRegistrations {
     /// store scanned, not only the ones the clause-5.10.2.5 trim kept. Absent on
     /// an empty page.
     pub boundary: Option<(Identifier, Identifier)>,
-    /// Whether the raw store page filled the limit -- the clause 6.3.10
-    /// page-fullness signal a cursor walk uses in place of a total.
-    pub page_full: bool,
+    /// How many registrations the raw store page held before the
+    /// clause-5.10.2.5 trim -- what the clause 6.3.10 page-fullness signal of a
+    /// cursor walk is read from, so a page the trim thinned still continues.
+    pub scanned: usize,
 }
 
 impl RegistrationService {
-    /// Discover the registrations matching `params` (clause 5.10.2), excluding
-    /// the sources the request already passed through (clause 5.12).
+    /// Discover the page `window` selects of the registrations matching
+    /// `params` (clause 5.10.2), excluding the sources the request already
+    /// passed through (clause 5.12).
     ///
     /// Each returned registration matches on at least one of its
     /// `RegistrationInfo` elements (clause 5.12) and is compacted under
@@ -77,6 +76,7 @@ impl RegistrationService {
     pub async fn query(
         &self,
         params: &CsrQueryParameters,
+        window: &PageWindow,
         encountered_sources: &[ContextSourcePseudonym],
         context: &ContextSpec,
     ) -> Result<DiscoveredRegistrations, RegistrationError> {
@@ -84,7 +84,7 @@ impl RegistrationService {
             .validate()
             .map_err(|error| RegistrationError::Validation(RegistrationValidationReason::QueryParameters(error)))?;
         let compiled = self.compile_csr_query(params, encountered_sources, context).await?;
-        let page = self.repo.query_compiled(&compiled).await?;
+        let page = self.repo.query_compiled(&compiled, window).await?;
         // Clause 5.5.9.1: the cursor pointers are read from the raw store page,
         // before the clause-5.10.2.5 trim below drops the registrations whose
         // RegistrationInfo the query does not match. clone: the boundary
@@ -94,7 +94,7 @@ impl RegistrationService {
             .first()
             .map(|registration| registration.id.clone())
             .zip(page.registrations.last().map(|registration| registration.id.clone()));
-        let page_full = page.registrations.len() >= compiled.pagination.limit as usize;
+        let scanned = page.registrations.len();
         let total = page.total;
         let names = NameCompaction::new(self.engine.compactor(context).processed_context().await?);
         let mut values = Vec::with_capacity(page.registrations.len());
@@ -119,7 +119,7 @@ impl RegistrationService {
             registrations: values,
             total,
             boundary,
-            page_full,
+            scanned,
         })
     }
 
@@ -189,16 +189,6 @@ impl RegistrationService {
             .dataset_id(params.dataset_ids().map(<[_]>::to_vec).unwrap_or_default()) // clone: same reason.
             .encountered_sources(encountered_sources.to_vec()) // clone: the compiled query owns the Via listing across the store await.
             .temporal(temporal)
-            .pagination(Pagination {
-                limit: params.effective_limit(),
-                offset: params.effective_offset(),
-                count: CountPolicy::Omit,
-            })
-            // Clause 5.5.9.1: an opaque cursor, if the discovery carried one,
-            // puts the store into keyset mode over the registration id.
-            .keyset(
-                decode_cursor(params.cursor.as_deref()).map_err(|error| RegistrationError::Validation(RegistrationValidationReason::QueryParameters(error)))?,
-            )
             .build())
     }
 }
@@ -254,4 +244,69 @@ fn registration_matching_the_query(
     let mut registration = registration;
     registration.coverage.information.retain(|info| specification.matches_information(info));
     Ok((!registration.coverage.information.is_empty()).then_some(registration))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        RegistrationService,
+        entity_probe::EntityPresence,
+        fixed_probe::FixedProbe,
+        fixed_store::{FixedStore, registration},
+        store::RegistrationStore,
+    };
+    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
+    use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
+    use andromeda_ngsi_ld_query::{page_fullness::PageFullness, page_window::PageWindow};
+    use andromeda_ngsi_ld_request::query::csr::CsrQueryParameters;
+    use serde_json::json;
+    use std::{num::NonZeroUsize, sync::Arc};
+
+    fn service(store: FixedStore) -> RegistrationService {
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+        RegistrationService::new(
+            Arc::new(store) as Arc<dyn RegistrationStore>,
+            Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
+            engine,
+            None,
+            GeometryCensusLimits {
+                positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+            },
+        )
+    }
+
+    fn of_type(id: &str, entity_type: &str) -> ContextSourceRegistration {
+        registration(id, "inclusive", &json!([{"entities": [{"type": entity_type}]}]))
+    }
+
+    /// Clause 5.10.2.5 trims the registrations whose information the query
+    /// does not match after the store paged them, so the cursor boundary and
+    /// the page-fullness signal are read from the raw page: a walk continues
+    /// past every registration the store scanned.
+    #[tokio::test]
+    async fn the_cursor_boundary_and_fullness_come_from_the_raw_page() {
+        let store = FixedStore::new(vec![
+            of_type("urn:ngsi-ld:ContextSourceRegistration:1", "https://example.org/Building"),
+            of_type("urn:ngsi-ld:ContextSourceRegistration:2", "https://example.org/Vehicle"),
+            of_type("urn:ngsi-ld:ContextSourceRegistration:3", "https://example.org/Building"),
+        ]);
+        let params: CsrQueryParameters = serde_urlencoded::from_str("type=https%3A%2F%2Fexample.org%2FVehicle&limit=3").expect("valid discovery");
+        let window = PageWindow::offset(3, 0);
+
+        let discovered = service(store).query(&params, &window, &[], &ContextSpec::none()).await.expect("discovered");
+
+        pretty_assertions::assert_eq!(discovered.registrations.len(), 1, "the trim keeps the one matching registration");
+        pretty_assertions::assert_eq!(discovered.scanned, 3);
+        pretty_assertions::assert_eq!(window.fullness(discovered.scanned), PageFullness::Full);
+        pretty_assertions::assert_eq!(
+            discovered.boundary,
+            Some((
+                "urn:ngsi-ld:ContextSourceRegistration:1".parse().expect("valid URI"),
+                "urn:ngsi-ld:ContextSourceRegistration:3".parse().expect("valid URI")
+            ))
+        );
+    }
 }

@@ -4,16 +4,18 @@ use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 
 /// One page's position within the tenant collection, ordered by tenant name.
 ///
-/// The registry lists named tenants by their unique name, which is a stable
-/// single ordering key, so the collection is walked by keyset rather than offset
-/// (clause 5.5.9.1). The HTTP layer owns the opaque wire cursor and the tenant-id
-/// URN it carries; this domain enum is what that cursor decodes to before it
-/// reaches the store, keeping the store working on the name column it orders by
-/// and free of the URN format.
+/// The registry lists named tenants by their unique name, a stable single
+/// ordering key, so the collection can be paged by offset (clause 5.5.9.2) or
+/// walked by keyset (clause 5.5.9.1) alike. The HTTP layer owns the opaque wire
+/// cursor and the tenant-id URN it carries; this domain enum is what the page
+/// window decodes to before it reaches the store, keeping the store working on
+/// the name column it orders by and free of the URN format.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TenantKeyset {
+pub enum TenantPageStart {
+    /// Skip this many tenants, ascending by name.
+    Offset(u32),
     /// A forward page: names greater than `after`, ascending. `after` is absent
-    /// on the first page.
+    /// on the first page of a walk.
     Forward {
         /// The exclusive lower bound, or `None` for the first page.
         after: Option<TenantName>,
@@ -27,12 +29,4 @@ pub enum TenantKeyset {
     /// The final page: the greatest names, read descending and presented
     /// ascending.
     FromEnd,
-}
-
-impl TenantKeyset {
-    /// The keyset for the first page of the collection.
-    #[must_use]
-    pub const fn first_page() -> TenantKeyset {
-        TenantKeyset::Forward { after: None }
-    }
 }

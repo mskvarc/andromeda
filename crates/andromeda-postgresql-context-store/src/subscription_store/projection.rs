@@ -1,6 +1,6 @@
 //! The read-side projection every subscription query shares: the column set the
-//! mapper reads, the family pin, the total count, and the keyset predicate and
-//! ordering of a cursor walk (clause 5.5.9.1).
+//! mapper reads, the family pin, the total count, and the window of a listing
+//! page (clause 5.5.9).
 
 use crate::subscription_store::{
     delivery_state::join_delivery_state,
@@ -9,13 +9,13 @@ use crate::subscription_store::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::cursor::PageCursor;
+use andromeda_ngsi_ld_query::{page_window::PageWindow, read_order::ReadOrder};
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_query::dictionary::names_in_key_order::attribute_names_of;
+use andromeda_postgresql_query::{dictionary::names_in_key_order::attribute_names_of, page_window::apply_identifier_window};
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::aggregate::count_all;
 use andromeda_subscription::error::SubscriptionError;
-use sea_query::{CaseStatement, Expr, ExprTrait, Keyword, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query::{CaseStatement, Expr, ExprTrait, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 
 /// The attribute IRIs behind one of a subscription's interned attribute lists,
@@ -100,49 +100,41 @@ pub(super) async fn count_of_kind(pool: &sqlx::PgPool, target: &ContextTarget, k
     Ok(row.0)
 }
 
-/// Add the keyset predicate and ordering for one cursor direction over the
-/// subscription identifier (clause 5.5.9.1).
+/// The page `window` selects of the subscriptions of one family, in
+/// identifier order, and the order its rows come back in (clauses 5.5.9 and
+/// 6.3.10).
 ///
-/// The keyset is over the identifier rather than the `createdAt` of the offset
-/// listing, because a single-key keyset needs a unique key. The predicate and
-/// the ordering read the same `id` column, so both stay driven by its index in
-/// either direction; a backward or from-end page is ordered descending and
-/// reversed to ascending by the caller.
-pub(super) fn apply_subscription_keyset(select: &mut SelectStatement, cursor: Option<&PageCursor>) {
-    match cursor {
-        None => {
-            select.order_by((Subscriptions::Table, Subscriptions::Id), Order::Asc);
-        }
-        Some(PageCursor::After(boundary)) => {
-            select.and_where(Expr::col((Subscriptions::Table, Subscriptions::Id)).gt(Expr::val(boundary.as_str())));
-            select.order_by((Subscriptions::Table, Subscriptions::Id), Order::Asc);
-        }
-        Some(PageCursor::Before(boundary)) => {
-            select.and_where(Expr::col((Subscriptions::Table, Subscriptions::Id)).lt(Expr::val(boundary.as_str())));
-            select.order_by((Subscriptions::Table, Subscriptions::Id), Order::Desc);
-        }
-        Some(PageCursor::End) => {
-            select.order_by((Subscriptions::Table, Subscriptions::Id), Order::Desc);
-        }
-    }
+/// The listing is ordered by the identifier in either pagination mode: it is
+/// unique, so an offset page is deterministic across executions, and a cursor
+/// has a single key to continue from. A backward or from-end page is read
+/// descending so one index scan serves it, and presented ascending by the
+/// caller.
+pub(super) fn listing_page(kind: StoredKind, target: &ContextTarget, window: &PageWindow) -> (SelectStatement, ReadOrder) {
+    let mut select = projected_select(kind, target);
+    select.and_where(of_kind(kind));
+    let read_order = apply_identifier_window(&mut select, Expr::col((Subscriptions::Table, Subscriptions::Id)), window);
+    (select, read_order)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::subscription_store::{
-        projection::{apply_subscription_keyset, projected_select},
+        projection::{listing_page, projected_select},
         stored_kind::StoredKind,
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_query::cursor::PageCursor;
+    use andromeda_ngsi_ld_query::{
+        cursor::PageCursor,
+        page_window::{PageStart, PageWindow},
+        read_order::ReadOrder,
+    };
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
-    /// The keyset SQL for one cursor direction over the subscription identifier
-    /// (clause 5.5.9.1).
-    fn keyset_sql(cursor: Option<&PageCursor>) -> String {
-        let mut select = projected_select(StoredKind::Entity, &ContextTarget::Live);
-        apply_subscription_keyset(&mut select, cursor);
+    /// The SQL of one listing page of entity subscriptions.
+    fn listing_sql(window: &PageWindow) -> String {
+        let (select, _) = listing_page(StoredKind::Entity, &ContextTarget::Live, window);
         select.to_string(PostgresQueryBuilder)
     }
 
@@ -150,11 +142,23 @@ mod tests {
         value.parse().expect("valid URI")
     }
 
+    /// Clause 5.5.9.2: an offset listing pages in the unique identifier order,
+    /// so subscriptions created in any order page deterministically.
+    #[test]
+    fn an_offset_listing_orders_by_id() {
+        let sql = listing_sql(&PageWindow::offset(5, 10));
+        assert!(sql.contains(r#"ORDER BY "subscriptions"."id" ASC LIMIT 5 OFFSET 10"#), "{sql}");
+        assert!(!sql.contains("created_at\" ASC"), "{sql}");
+    }
+
     /// The first page of a cursor walk sorts by identifier ascending with no
     /// keyset bound and no offset (clause 5.5.9.1).
     #[test]
     fn a_first_page_orders_by_id_ascending_without_a_bound() {
-        let sql = keyset_sql(None);
+        let sql = listing_sql(&PageWindow {
+            limit: 5,
+            start: PageStart::Cursor(None),
+        });
         assert!(sql.contains(r#"ORDER BY "subscriptions"."id" ASC"#), "{sql}");
         assert!(!sql.contains(r#""id" >"#) && !sql.contains(r#""id" <"#), "{sql}");
         assert!(!sql.contains("OFFSET"), "{sql}");
@@ -163,7 +167,7 @@ mod tests {
     /// A forward cursor keeps the identifiers above the boundary, ascending.
     #[test]
     fn a_forward_cursor_bounds_above_and_orders_ascending() {
-        let sql = keyset_sql(Some(&PageCursor::After(uri("urn:ngsi-ld:Subscription:001"))));
+        let sql = listing_sql(&PageWindow::after(5, uri("urn:ngsi-ld:Subscription:001")));
         assert!(sql.contains(r#""subscriptions"."id" > 'urn:ngsi-ld:Subscription:001'"#), "{sql}");
         assert!(sql.contains(r#"ORDER BY "subscriptions"."id" ASC"#), "{sql}");
         assert!(!sql.contains("OFFSET"), "{sql}");
@@ -173,16 +177,28 @@ mod tests {
     /// so a single index scan serves the page before it is reversed.
     #[test]
     fn a_backward_cursor_bounds_below_and_orders_descending() {
-        let sql = keyset_sql(Some(&PageCursor::Before(uri("urn:ngsi-ld:Subscription:050"))));
+        let (select, read_order) = listing_page(
+            StoredKind::Entity,
+            &ContextTarget::Live,
+            &PageWindow {
+                limit: 5,
+                start: PageStart::Cursor(Some(PageCursor::Before(uri("urn:ngsi-ld:Subscription:050")))),
+            },
+        );
+        let sql = select.to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""subscriptions"."id" < 'urn:ngsi-ld:Subscription:050'"#), "{sql}");
         assert!(sql.contains(r#"ORDER BY "subscriptions"."id" DESC"#), "{sql}");
         assert!(!sql.contains("OFFSET"), "{sql}");
+        assert_eq!(read_order, ReadOrder::Descending);
     }
 
     /// The from-end cursor takes the final identifiers descending with no bound.
     #[test]
     fn a_from_end_cursor_orders_descending_without_a_bound() {
-        let sql = keyset_sql(Some(&PageCursor::End));
+        let sql = listing_sql(&PageWindow {
+            limit: 5,
+            start: PageStart::Cursor(Some(PageCursor::End)),
+        });
         assert!(sql.contains(r#"ORDER BY "subscriptions"."id" DESC"#), "{sql}");
         assert!(!sql.contains(r#""id" >"#) && !sql.contains(r#""id" <"#), "{sql}");
         assert!(!sql.contains("OFFSET"), "{sql}");

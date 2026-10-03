@@ -245,15 +245,13 @@ mod tests {
     use serde_json::json;
     use url::Url;
 
-    /// Clause 6.2 lets the `apiRoot` carry a path prefix, and a non-default
-    /// tenant's entry is served with its tenant parameter: the serving URL the
-    /// HTTP binding minted is stored exactly as minted, prefix and parameter
-    /// included.
+    /// Clause 6.2 lets the `apiRoot` carry a path prefix: the serving URL the
+    /// HTTP binding minted is stored exactly as minted, prefix included, and
+    /// with no query, since the URL names no tenant.
     #[test]
-    fn a_prefixed_tenant_qualified_serving_url_is_stored_byte_for_byte() {
+    fn a_prefixed_serving_url_is_stored_byte_for_byte() {
         let identifier: JsonLdContextId = "urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b".parse().expect("an identifier");
-        let minted =
-            "https://gw.example.com/broker/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b?andromedaTenant=acme";
+        let minted = "https://gw.example.com/broker/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b";
         let serving_url = Url::parse(minted).expect("a URL");
 
         let sql = insert_statement(&identifier, &json!({ "@context": {} }), &serving_url, ContextCreationKind::ImplicitlyCreated)

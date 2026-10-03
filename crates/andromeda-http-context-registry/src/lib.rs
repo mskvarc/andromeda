@@ -9,7 +9,6 @@ pub mod hosted_context_url;
 pub mod response_context_host;
 pub mod response_rendering;
 pub mod routes;
-mod serve_tenant;
 mod served_document;
 pub mod state;
 pub mod tenant_context_hosting;

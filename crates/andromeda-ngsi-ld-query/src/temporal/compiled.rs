@@ -1,9 +1,7 @@
 //! The compiled, context-expanded form of a temporal query.
 
 use crate::{
-    cursor::PageCursor,
     entity_selection::EntitySelection,
-    pagination::Pagination,
     projection::compiled::Projection,
     temporal::{instance_selection::InstanceSelection, ordering::TemporalEntityOrdering, representation::Representation, window::TemporalWindow},
 };
@@ -20,6 +18,10 @@ use typed_builder::TypedBuilder;
 /// [`InstanceSelection`] and the window, and the renderers read only
 /// [`Representation`]. Holding them as one flat record let each of those reach
 /// whatever it happened to need.
+///
+/// The page of entities the query answers with is no part of it: the request
+/// boundary decides that window once and the reader is handed it beside the
+/// compiled query.
 #[derive(Debug, Clone, TypedBuilder)]
 pub struct CompiledTemporalQuery {
     /// Which entities qualify.
@@ -30,9 +32,6 @@ pub struct CompiledTemporalQuery {
     pub instances: InstanceSelection,
     /// How those instances are rendered.
     pub representation: Representation,
-    /// Result window: limit, offset, and the total-count policy.
-    #[builder(default = Pagination::DEFAULT)]
-    pub pagination: Pagination,
     /// Which members of a matching entity's temporal representation reach the
     /// response (clause 4.21 `pick` / `omit`).
     #[builder(default = Default::default())]
@@ -46,15 +45,4 @@ pub struct CompiledTemporalQuery {
     /// collation into the comparison.
     #[builder(default = Default::default())]
     pub ordering: Option<TemporalEntityOrdering>,
-    /// The keyset position a stable-pagination cursor resolved to, when the
-    /// request carried one (clause 5.5.9.1).
-    ///
-    /// `Some` puts stage 1 into keyset mode over the entity-`id` element order:
-    /// it replaces the `offset` in [`Pagination`] with the direction-appropriate
-    /// `WHERE`/`ORDER BY` over `temporal_entities.id`, and a backward or from-end
-    /// page is reversed to ascending where the identifiers are read back. It
-    /// governs only the element dimension of temporal pagination, never the
-    /// temporal-window (`Content-Range`) dimension.
-    #[builder(default = None)]
-    pub keyset: Option<PageCursor>,
 }

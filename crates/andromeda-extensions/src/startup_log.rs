@@ -45,6 +45,7 @@ mod tests {
                 purge_dataset_scope: HttpFeatureMode::Disabled,
                 temporal_aggregation_grouping: HttpFeatureMode::Disabled,
                 tenant_management: HttpFeatureMode::Disabled,
+                cursor_pagination: HttpFeatureMode::Disabled,
                 temporal_delete_by_query_max_matches: 100,
                 temporal_aggregation_grouping_max_groups: 100,
             };

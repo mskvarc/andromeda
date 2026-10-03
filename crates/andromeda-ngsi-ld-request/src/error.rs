@@ -13,12 +13,7 @@
 use crate::{linked_retrieval_term::LinkedRetrievalTerm, query_narrowing::LocalScopeNarrowing, unsupported_representation::UnsupportedRepresentation};
 use andromeda_http_headers::ngsild_response_format::NgsiLdResponseFormat;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, temporal_format::TemporalFormat};
-use andromeda_ngsi_ld_query::{
-    cursor::CursorDecodeError,
-    error::QueryError,
-    projection::exclusivity::ProjectionConflict,
-    temporal::grouping::GroupingParseError,
-};
+use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict, temporal::grouping::GroupingParseError};
 use andromeda_ngsi_ld_representation::merge_representation::MergeRepresentationError;
 use thiserror::Error;
 
@@ -80,12 +75,28 @@ pub enum ParameterError {
     /// `BadRequestData`.
     #[error("cursor and offset parameters are mutually exclusive")]
     CursorWithOffset,
-    /// The opaque pagination `cursor` could not be decoded (clause 5.5.9.1).
+    /// A `cursor` reached a collection that offers no cursor walk: the broker
+    /// runs with offset pagination only, or the binding carries its query in a
+    /// body no pointer can dereference (clauses 5.5.9.1 and 6.3.10).
     ///
-    /// The cursor is broker-emitted and followed unchanged, so any decode
-    /// failure means the token was corrupted or forged; it is a `BadRequestData`.
-    #[error("invalid pagination cursor: {0}")]
-    CursorInvalid(#[source] CursorDecodeError),
+    /// The parameter is one the operation does not offer, an `InvalidRequest`
+    /// (clause 6.3.20).
+    #[error("cursor pagination is not available on this request; page by limit and offset")]
+    CursorUnavailable,
+    /// A `cursor` was combined with a clause 4.23 `orderBy`.
+    ///
+    /// A cursor is a position in identifier order (clause 5.5.9.1) and cannot
+    /// walk a requested ordering, which pages by offset; dropping either
+    /// parameter silently would answer a different request than the one sent,
+    /// so the pair is a `BadRequestData`.
+    #[error("cursor cannot be combined with orderBy; page an ordered query by limit and offset")]
+    CursorWithOrdering,
+    /// A pagination parameter reached an operation that pages nothing: Purge
+    /// Entities defines no `limit`, `offset` or `cursor` (Table 6.4.3.3-1), and
+    /// clause 6.3.20 answers a parameter the operation does not define with
+    /// `InvalidRequest`.
+    #[error("limit, offset and cursor are not defined for this operation")]
+    PaginationUndefined,
     /// A `pick`/`omit` term nested a clause 4.21 sub-projection while the
     /// request asked for no join to retrieve the entity it describes.
     #[error("pick/omit select Linked Entity members but the request asks for no join to retrieve them")]

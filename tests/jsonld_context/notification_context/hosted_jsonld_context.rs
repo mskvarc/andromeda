@@ -5,7 +5,7 @@
 //! the Subscription", and Table 5.2.12-1 types it as one dereferenceable URI.
 //! A context that is one URL is stored as written; anything else is hosted as
 //! an `ImplicitlyCreated` wrapper of the value an `application/ld+json` body
-//! would carry, and the wrapper's absolute, tenant-qualified URL is stored.
+//! would carry, and the wrapper's absolute URL is stored.
 
 use crate::{
     broker_endpoints::broker_url,
@@ -17,24 +17,21 @@ use crate::{
     private_tenant::PrivateTenant,
     user_contexts::{UserContexts, term_definitions},
 };
-use reqwest::{Client, StatusCode};
+use reqwest::StatusCode;
 use serde_json::{Value, json};
 
 /// Assert `jsonld_context` is the absolute URL of a wrapper hosted for
-/// `tenant` holding exactly `expected`, dereferenceable without any tenant
-/// header.
+/// `tenant` holding exactly `expected`, dereferenceable under the tenant's
+/// header (clauses 4.14 and 6.3.14).
 async fn assert_hosted(jsonld_context: &str, tenant: &PrivateTenant, expected: &Value) {
     assert!(jsonld_context.starts_with("http"), "absolute: {jsonld_context}");
     assert!(
         jsonld_context.contains(&format!("/ngsi-ld/v1/jsonldContexts/{JSON_LD_CONTEXT_PREFIX}")),
         "{jsonld_context}"
     );
-    assert!(
-        jsonld_context.ends_with(&format!("?andromedaTenant={}", tenant.name())),
-        "tenant-qualified: {jsonld_context}"
-    );
-    let served = dereference(&Client::new(), jsonld_context).await;
-    assert_eq!(served.status, StatusCode::OK, "a receiver dereferences it without a tenant header");
+    assert!(!jsonld_context.contains('?'), "the URL names no tenant: {jsonld_context}");
+    let served = dereference(tenant.client(), jsonld_context).await;
+    assert_eq!(served.status, StatusCode::OK, "a receiver dereferences it under the tenant's header");
     assert_eq!(&served.json(), expected);
     assert!(
         implicit_context_ids(tenant.client()).await.contains(&extract_id(jsonld_context)),

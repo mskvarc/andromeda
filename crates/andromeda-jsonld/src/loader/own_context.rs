@@ -10,10 +10,9 @@
 //! Which references are shaped like the tenant's own is the loader's
 //! [`crate::hosted_context_recognizer::HostedContextRecognizer`]'s to say. A
 //! reference so shaped whose identifier the tenant does not hold may be another
-//! broker's, and one naming another tenant is not this tenant's to read, so
-//! both are resolved as the URL they are; the download is still never recorded
-//! as a "Cached" copy, so the broker holds no Cached row under a URL shaped
-//! like one of its own.
+//! broker's, so it is resolved as the URL it is; the download is still never
+//! recorded as a "Cached" copy, so the broker holds no Cached row under a URL
+//! shaped like one of its own.
 
 use crate::loader::{
     durable_cache::load_stored_context,
@@ -155,19 +154,14 @@ mod tests {
     /// The identifier the tenant holds as a "Cached" download.
     const CACHED: &str = "urn:ngsi-ld:JsonLdContext:1f2e3d4c-5b6a-4978-8a9b-cdef01234567";
 
-    /// The query that names another tenant in the tests below.
-    const OTHER_TENANT: &str = "?andromedaTenant=other";
-
     /// Recognises every reference whose path ends in the stored-context path
-    /// followed by one identifier, on any origin; one naming another tenant is
-    /// that tenant's.
+    /// followed by one identifier, on any origin.
     #[derive(Debug)]
     struct OwnPaths;
 
     impl HostedContextRecognizer for OwnPaths {
         fn recognize(&self, reference: &IriRefBuf) -> HostedReference {
             match reference.as_str().rsplit_once(CONTEXTS_PATH) {
-                Some((_, named)) if named.ends_with(OTHER_TENANT) => HostedReference::OtherTenant,
                 Some((_, identifier)) => identifier.parse().map_or(HostedReference::Unrelated, HostedReference::Own),
                 None => HostedReference::Unrelated,
             }
@@ -304,28 +298,6 @@ mod tests {
         loader.load_value(&own_shaped).await.expect("the preloaded document resolves");
 
         assert!(rows.puts().is_empty(), "no Cached row is recorded under a URL shaped like the broker's own");
-    }
-
-    /// Clause 4.14 and review 9.3: a URL shaped like one of the broker's own
-    /// that names another tenant is not this tenant's to read from storage, and
-    /// is never recorded as a "Cached" row either -- neither read from nor
-    /// written to the durable cache.
-    #[tokio::test]
-    async fn a_url_naming_another_tenants_stored_context_is_never_recorded_as_cached() {
-        let registry = Arc::new(ContextRegistry::new());
-        let other_tenant = iri(format!("http://127.0.0.1:1056{CONTEXTS_PATH}{HELD}{OTHER_TENANT}"));
-        registry.register_preloaded(other_tenant.clone(), jsonld_syntax::Value::from_serde_json(terms())); // clone: the load below names the same URL
-        let rows = Arc::new(StoredRows::default().holding(HELD, terms(), ResidualLifetime::Unbounded));
-        let loader = loader(registry, &rows);
-
-        loader.load_value(&other_tenant).await.expect("the preloaded document resolves");
-
-        assert!(rows.puts().is_empty(), "no Cached row is recorded for another tenant's stored context");
-        pretty_assertions::assert_eq!(
-            rows.reads.load(Ordering::SeqCst),
-            0,
-            "this tenant's storage is not read for another tenant's context"
-        );
     }
 
     /// A "Cached" download a request reached by its local identifier occupies

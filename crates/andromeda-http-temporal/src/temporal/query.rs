@@ -21,8 +21,7 @@ use crate::{
             complete_history::HistoryCompleteness,
             forwarding::{QueryScope, TemporalForwarding, forward_temporal_history},
             merged_history::merge_forwarded_history,
-            merged_page::{MergedPageCut, cut_merged_page, defer_split_filters, hold_page_until_merge},
-            page::QueriedPage,
+            merged_page::{MergedPageCut, cut_merged_page, defer_split_filters},
             request::TemporalQueryRequest,
             request_entity_map::record_query_map,
             response::{TemporalCollectionMetadata, query_response, simplified_collection},
@@ -33,7 +32,7 @@ use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_request::{join_traversal::RetrievingJoin, pagination_cursor::decode_cursor};
+use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
 use andromeda_temporal::{
     error::TemporalError,
     linked::candidates::TemporalLinkedCandidate,
@@ -54,7 +53,7 @@ mod merged_history;
 /// The page the query answers with, cut from the merged history.
 mod merged_page;
 /// The clause 6.3.10 element page the response points around.
-mod page;
+pub(crate) mod page;
 /// The query-string binding, and the request both bindings hand the operation.
 pub(crate) mod request;
 /// The `EntityMap` the query runs under.
@@ -83,7 +82,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         headers,
         context,
         mut params,
-        pointers,
+        page,
     } = request;
     let service = &state.temporal;
     // Clause 5.5.7: a request `@context` declaring a JSON-LD Scoped Context is
@@ -92,16 +91,6 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     admit_request_context(service.engine(), &context, &uri).await?;
     let AdmittedQuery { prefer, incoming_via, map_use } = admit_request(&state, &target, &context, protocol, &mut params, &uri).await?;
     let key_values = params.is_simplified();
-
-    // Clause 5.5.9.1: decode the opaque pagination cursor before the page is
-    // planned, so a malformed one is a BadRequestData here rather than surfacing
-    // from the store. Its mutual exclusion with offset was already held by
-    // validation.
-    let incoming_cursor = decode_cursor(params.cursor.as_deref()).with_instance(&uri)?;
-    // Clause 6.3.10: the page the client asked for, read before the merge
-    // widens the local query below, so the links point at the client's own
-    // window rather than at the widened one.
-    let page = QueriedPage::of(&params, pointers, incoming_cursor);
 
     let scope = QueryScope::of(&target, &params);
 
@@ -130,9 +119,12 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     .await?;
 
     let deferred = defer_split_filters(&mut params, filtering);
-    let merged_page_window = hold_page_until_merge(&mut params, forwarded.as_ref(), &page);
+    let local = page.local_read(forwarded.as_ref());
 
-    let local_result = service.query(&target, &params, &context).await.with_instance(&uri)?;
+    let local_result = service
+        .query(&target, &params, &local.window, local.count, &context)
+        .await
+        .with_instance(&uri)?;
     log_query_warnings(&local_result.warnings);
     let local_total = local_match_count(local_result.total_count).with_instance(&uri)?;
     let completeness = HistoryCompleteness::of(&params, local_result.range, forwarded.as_ref()).with_instance(&uri)?;
@@ -147,7 +139,8 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         MergedPageCut {
             deferred,
             filtering,
-            window: merged_page_window,
+            window: local.merged,
+            count: page.count(),
             local_total,
         },
         &params,

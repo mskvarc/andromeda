@@ -3,6 +3,7 @@
 use crate::{
     attribute_selection::{AttrsAdmission, validate_attrs},
     error::ParameterError,
+    pagination::parameters::PageParameters,
     query::{deserialization::OptionalGeoQuery, entity_selector::EntitySelectorParams, temporal::TemporalQueryParameters},
 };
 use andromeda_http_headers::language::LanguageFilter;
@@ -56,11 +57,9 @@ impl TryFrom<Query> for TemporalQueryParameters {
             aggr_methods: aggregation.0,
             aggr_period_duration: aggregation.1,
             aggr_group_by: aggregation.2,
-            limit: None,
-            offset: None,
-            // The POST temporal query binding carries no dereferenceable pointer
-            // (clause 6.24.3.1), so it never carries an opaque cursor either.
-            cursor: None,
+            // Table 5.2.23-1 defines no pagination member: the POST binding
+            // reads its page from the URL (clause 6.24.3.1).
+            page: PageParameters::default(),
             count: None,
             ordering: query.ordering.unwrap_or_default(),
             pick: query.pick,

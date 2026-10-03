@@ -3,6 +3,7 @@
 use crate::config::{
     error::ConfigurationError,
     management::{ManagementConfigError, ManagementMode},
+    pagination::resolve_pagination,
     runtime::RuntimeConfig,
 };
 use andromeda_http_server::config::ListenerTransport;
@@ -23,6 +24,7 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), Configuratio
     config.spatial.validate()?;
     config.management.validate()?;
     config.extensions.validate()?;
+    resolve_pagination(&config.extensions, config.pagination)?;
     validate_acquire_timeout_below_request_timeout(config)?;
     validate_side_effect_lease_over_acquire_timeout(config)?;
     validate_build_admission_timeout_below_request_timeout(config)?;

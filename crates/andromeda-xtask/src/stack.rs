@@ -222,6 +222,9 @@ const BASE_SUITES: &[Suite] = &[
     Suite::parallel("notification"),
     Suite::parallel("notification_join"),
     Suite::parallel("pagination"),
+    // Starts a broker process of its own per test, each under a different
+    // pagination policy; one at a time keeps the tier's connection budget.
+    Suite::serial("pagination_policy"),
     Suite::parallel("prefer"),
     Suite::parallel("profile"),
     Suite::parallel("query_access_paths"),

@@ -1,6 +1,6 @@
 //! The tenant-management view the broker exposes over HTTP.
 
-use crate::{error::TenancyError, status::TenantStatus, tenant_keyset::TenantKeyset, tenant_listing::TenantListing, tenant_view::TenantView};
+use crate::{error::TenancyError, status::TenantStatus, tenant_listing::TenantListing, tenant_page_start::TenantPageStart, tenant_view::TenantView};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use async_trait::async_trait;
 
@@ -17,9 +17,10 @@ pub trait TenantAdministration: Send + Sync + 'static {
     #[must_use = "tenant reads must be awaited"]
     async fn tenant(&self, name: &TenantName) -> Result<Option<TenantView>, TenancyError>;
 
-    /// A page of the tenant collection, ordered by name.
+    /// The page of the tenant collection `start` and `limit` select, ordered by
+    /// name.
     #[must_use = "tenant listings must be awaited"]
-    async fn list_tenants(&self, keyset: &TenantKeyset, limit: i64) -> Result<TenantListing, TenancyError>;
+    async fn list_tenants(&self, start: &TenantPageStart, limit: u32) -> Result<TenantListing, TenancyError>;
 
     /// Apply an administrative state to a tenant and return its resulting view,
     /// or `None` when no such tenant is registered.

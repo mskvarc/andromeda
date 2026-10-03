@@ -1,15 +1,16 @@
-//! Shared pagination link construction for NGSI-LD collection responses.
+//! The clause 6.3.10 pagination `Link` pointers of every NGSI-LD collection
+//! response.
 //!
-//! Builds the pagination `Link` headers for every collection endpoint -- entity
-//! query, temporal query, subscription, CSR subscription, and CSR registration.
-//! There are two ways a page points at its neighbours. The clause 5.5.9.2
-//! offset pointers carry `limit`/`offset`, plus a `first`/`last` extension when
-//! the total is known and the relation does not name the current page. The clause
-//! 5.5.9.1 opaque pointers carry a `cursor` token the client only follows, and are
-//! what a stable, keyset-backed walk emits; a handler chooses between the two per
-//! request (see `docs/conformance/stable-pagination.md`). Clause 5.5.9.1 forbids a
-//! page pointing at itself, so `first` is dropped on the first page and `last` on
-//! the last in both modes.
+//! This is the one builder of those pointers: entity, temporal, registration,
+//! subscription and tenant collections all hand it the window the pagination
+//! policy decided and what the page returned. There are two ways a page points
+//! at its neighbours. The clause 5.5.9.2 offset pointers carry `limit`/`offset`,
+//! plus a `first`/`last` extension when the total is known and the relation
+//! does not name the current page. The clause 5.5.9.1 opaque pointers carry a
+//! `cursor` token the client only follows. The window decides which (see
+//! `docs/conformance/stable-pagination.md`). Clause 5.5.9.1 forbids a page
+//! pointing at itself, so `first` is dropped on the first page and `last` on the
+//! last in both modes.
 
 use andromeda_http_headers::{
     link::{header::Link, relation_type::RelationType, value::LinkValue},
@@ -18,6 +19,7 @@ use andromeda_http_headers::{
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     cursor::{NeighbourCursors, PageCursor},
+    page_fullness::PageFullness,
     page_window::{PageStart, PageWindow},
 };
 use axum::{
@@ -28,95 +30,77 @@ use iri_rs::IriRefBuf;
 use mediatype::MediaTypeBuf;
 use url::form_urlencoded;
 
-/// How the presence of a following page is decided.
-///
-/// A collection with a known total — subscriptions, registrations, or an entity
-/// query that asked for a count — governs `next` by comparing `offset + limit`
-/// against that total. An entity query with no count has no total (computing one
-/// on every query is the cost the performance work set out to avoid), so it
-/// signals a following page by the page having come back full (clause 6.3.10).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PageExtent {
-    /// A known count of matching resources governs both `prev` and `next`.
-    Total(i64),
-    /// No total: `next` is emitted when the returned page filled the limit.
-    PageFullness {
-        /// How many resources the page returned.
-        returned: i64,
-    },
+/// What a page cut by a window returned, as far as its pointers depend on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageOutcome {
+    /// The clause 6.3.13 total of the collection, when it was counted.
+    pub total: Option<i64>,
+    /// How many elements the page returned before any trim the response
+    /// applies afterwards, so a walk continues past every element it scanned.
+    pub returned: usize,
+    /// The first and last identifiers of the page in identifier order, from
+    /// which the neighbouring cursors are computed; absent on an empty page.
+    pub boundary: Option<(Identifier, Identifier)>,
 }
 
-impl PageExtent {
-    /// The extent a page of a collection reports.
-    ///
-    /// Clause 6.3.10 needs to know whether a following page exists. A query
-    /// that asked for a count knows its total and decides from it; one that did
-    /// not carries no total, and the page having come back full is what stands
-    /// in for it. Both entity and temporal queries make the decision this way,
-    /// so it is made once here.
-    #[must_use]
-    pub fn of_page(total: Option<i64>, returned: usize) -> PageExtent {
-        match total {
-            Some(count) => PageExtent::Total(count),
-            None => PageExtent::PageFullness {
-                returned: i64::try_from(returned).unwrap_or(i64::MAX),
-            },
-        }
+/// Append the clause 6.3.10 pointers of a page cut by `window` to `response`.
+///
+/// An offset window points by `limit`/`offset` and decides `next` from the
+/// total when one is known, and from the page having filled its window
+/// otherwise. A cursor window points by the neighbouring cursors of the page's
+/// boundary identifiers and decides `next` from whether the page filled its
+/// window (clause 5.5.9.1). An empty cursor page has no boundary to point
+/// from, so it carries no pointer, just as an empty offset collection carries
+/// none; neither does a `limit=0` page, which asked for no element at all.
+///
+/// The pointers are appended rather than inserted: a response rendered with
+/// the `@context` in the headers (clause 6.3.5) already carries a `Link`
+/// header, and replacing it would drop the context the client needs.
+pub fn append_page_links(response: &mut Response, uri: &Uri, window: &PageWindow, outcome: PageOutcome, media_type: ResponseMediaType) {
+    if let Some(links) = PageLinks::of_window(window, outcome) {
+        append_pagination_links(response, uri, window, links, media_type);
     }
 }
 
-/// Whether a response can carry the clause 6.3.10 pointers to its neighbouring
-/// pages at all.
+/// How the presence of a following page is decided.
 ///
-/// Clause 6.3.10 requires of the `next` pointer that "the Link Target shall be
-/// a URI-reference that could be dereferenced by an NGSI-LD Client to retrieve
-/// the next page of NGSI-LD Elements", and clause 5.5.9.1 that "the pointers to
-/// NGSI-LD Elements shall contain all the parameters needed to allow NGSI-LD
-/// Clients to retrieve the next and previous page, without further interactions
-/// with the API". A query carried in a request body meets neither: the resource
-/// it names answers only POST, so dereferencing the pointer cannot work, and
-/// the pointer carries `limit` and `offset` without the query they page over.
-/// Such a binding emits no pointer rather than one that misleads.
+/// A collection with a known total governs `next` by comparing `offset +
+/// limit` against that total. A query with no count has no total (computing
+/// one on every query is the cost a count-less query avoids), so it signals a
+/// following page by the page having come back full (clause 6.3.10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PagePointers {
-    /// The request URI carries the whole query, so a pointer built from it is
-    /// dereferenceable and complete.
-    OverRequestUri,
-    /// The query reached the broker in the request body, which no URI-reference
-    /// can carry. Clause 4.12's requirement to "flag NGSI-LD Clients when there
-    /// are remaining NGSI-LD Elements to be traversed" is met on such a binding
-    /// by the clause 6.3.13 `NGSILD-Results-Count` a counted query asks for.
-    NotDereferenceable,
+enum PageExtent {
+    /// A known count of matching resources governs both `prev` and `next`.
+    Total(i64),
+    /// No total: `next` is emitted when the returned page filled the window.
+    Fullness(PageFullness),
 }
 
 /// The already-encoded opaque cursor tokens a keyset-backed page points at
 /// (clause 5.5.9.1).
 ///
-/// Each token is a `cursor` value the client passes back by following the link;
-/// it is computed and encoded by the handler, which owns the boundary
-/// identifiers the store returned. An absent `prev`/`next` marks a boundary of
-/// the collection (clause 5.5.9.1's "previous"/"next" pair): `prev` is absent
-/// exactly on the first page, `next` exactly on the last. `last` is the from-end
-/// anchor Andromeda adds; the rendered `first`/`last` relations track `prev`/`next`
-/// so that neither self-points on a boundary page.
+/// An absent `prev`/`next` marks a boundary of the collection (clause 5.5.9.1's
+/// "previous"/"next" pair): `prev` is absent exactly on the first page, `next`
+/// exactly on the last. `last` is the from-end anchor Andromeda adds; the
+/// rendered `first`/`last` relations track `prev`/`next` so that neither
+/// self-points on a boundary page.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct CursorPointers {
+struct CursorPointers {
     /// The opaque token of the previous page, absent on the first page.
-    pub prev: Option<String>,
+    prev: Option<String>,
     /// The opaque token of the following page, absent on the last page.
-    pub next: Option<String>,
+    next: Option<String>,
     /// The opaque token of the final page, the Andromeda from-end anchor.
-    pub last: Option<String>,
+    last: Option<String>,
 }
 
 /// Which pointer family a collection response carries.
 ///
 /// The two are mutually exclusive per response: a page walks either by
-/// `limit`/`offset` (clause 5.5.9.2) or by opaque cursor (clause 5.5.9.1), never
-/// both, and the handler decides which from the effective order and whether
-/// the request named an offset.
+/// `limit`/`offset` (clause 5.5.9.2) or by opaque cursor (clause 5.5.9.1),
+/// never both, and the window decides which.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PageLinks {
+enum PageLinks {
     /// Classic offset pointers: `limit`/`offset`, with `first`/`last` when the
     /// total is known and the relation does not name this page (clause 5.5.9.1).
     Offset {
@@ -132,31 +116,21 @@ pub enum PageLinks {
 }
 
 impl PageLinks {
-    /// The pointers of a page cut by `window` from a collection in the default
-    /// identifier order.
-    ///
-    /// An offset window points by `limit`/`offset` and decides `next` from the
-    /// total when one is known, and from the page having come back full
-    /// otherwise. A cursor window points by the neighbouring cursors of the
-    /// page's boundary identifiers, `first` and `last` as displayed, and
-    /// decides `next` from whether the page filled its limit (clause 5.5.9.1).
-    /// An empty cursor page has no boundary to point from, so it carries no
-    /// pointer, just as an empty offset collection carries none.
-    #[must_use]
-    pub fn of_window(window: &PageWindow, total: Option<i64>, returned: usize, boundary: Option<(Identifier, Identifier)>) -> Option<PageLinks> {
+    /// The pointers of a page cut by `window` that returned `outcome`.
+    fn of_window(window: &PageWindow, outcome: PageOutcome) -> Option<PageLinks> {
+        let fullness = window.fullness(outcome.returned);
         match &window.start {
             PageStart::Offset(offset) => Some(PageLinks::Offset {
                 offset: i64::from(*offset),
-                extent: PageExtent::of_page(total, returned),
+                extent: outcome.total.map_or(PageExtent::Fullness(fullness), PageExtent::Total),
             }),
             PageStart::Cursor(incoming) => {
-                let (first, last) = boundary?;
-                let full = returned >= usize::try_from(window.limit).unwrap_or(usize::MAX);
+                let (first, last) = outcome.boundary?;
                 Some(PageLinks::Cursor(CursorPointers::from(PageCursor::neighbours(
                     incoming.as_ref(),
                     first,
                     last,
-                    full,
+                    fullness,
                 ))))
             }
         }
@@ -210,7 +184,8 @@ fn build_page_link(uri: &Uri, set: &[(&str, &str)]) -> String {
     }
 }
 
-/// Append pagination `Link` headers to a response.
+/// Append the pagination `Link` header `links` describes over a page of
+/// `window`.
 ///
 /// The clause 6.3.10 `prev`/`next` pointers apply as they do today. `first`/`last`
 /// are an Andromeda extension over them, which RFC 8288 permits as additional
@@ -218,8 +193,10 @@ fn build_page_link(uri: &Uri, set: &[(&str, &str)]) -> String {
 /// cursors (cursor mode) are known. Clause 5.5.9.1 forbids a page pointing at
 /// itself, so neither is emitted where it would name the current page: `first` is
 /// dropped on the first page and `last` on the last, and a single page carries
-/// neither.
-pub fn append_pagination_links(response: &mut Response, uri: &Uri, limit: i64, links: PageLinks, media_type: ResponseMediaType) {
+/// neither. Every pointer carries the window's own `limit`, so a followed link
+/// pages by the size the page was cut by.
+fn append_pagination_links(response: &mut Response, uri: &Uri, window: &PageWindow, links: PageLinks, media_type: ResponseMediaType) {
+    let limit = i64::from(window.limit);
     if limit <= 0 {
         return;
     }
@@ -243,9 +220,6 @@ pub fn append_pagination_links(response: &mut Response, uri: &Uri, limit: i64, l
                 .map(|target| LinkValue::with_params(target, Some(relation), Some(mt.clone())))
         })
         .collect::<Vec<_>>();
-    // Appended rather than inserted: a response rendered with the `@context` in
-    // the headers (NGSI-LD 6.3.5) already carries a `Link` header, and replacing
-    // it would drop the context the client needs to expand the body.
     if let Some(value) = Link::from_values(values).and_then(|link| link.to_header_value()) {
         response.headers_mut().append(LINK, value);
     }
@@ -261,7 +235,8 @@ fn offset_targets(uri: &Uri, limit: i64, offset: i64, extent: PageExtent) -> Vec
     let has_prev = offset > 0;
     let has_next = match extent {
         PageExtent::Total(total) => offset + limit < total,
-        PageExtent::PageFullness { returned } => returned >= limit,
+        PageExtent::Fullness(PageFullness::Full) => true,
+        PageExtent::Fullness(PageFullness::Short) => false,
     };
 
     let mut links: Vec<(RelationType, String)> = Vec::new();
@@ -301,8 +276,11 @@ fn offset_targets(uri: &Uri, limit: i64, offset: i64, extent: PageExtent) -> Vec
 }
 
 /// The cursor-mode pointer targets: whichever of `first`/`prev`/`next`/`last`
-/// the page offers. `prev`/`next`/`last` each carry an opaque `cursor` token;
-/// `first` carries neither `cursor` nor `offset` (it is the bare query).
+/// the page offers, each carrying a `cursor`.
+///
+/// `prev`/`next`/`last` carry an opaque token. `first` carries the empty
+/// `cursor=` that starts a walk (clause 5.5.9.1), so a client following it
+/// stays in cursor mode whatever the broker's default for a fresh request is.
 ///
 /// Clause 5.5.9.1 forbids a page pointing at itself, so the boundary relations
 /// track the page's position: `prev` is absent exactly on the first page and
@@ -312,14 +290,10 @@ fn offset_targets(uri: &Uri, limit: i64, offset: i64, extent: PageExtent) -> Vec
 fn cursor_targets(uri: &Uri, limit: i64, cursors: &CursorPointers) -> Vec<(RelationType, String)> {
     let limit_str = limit.to_string();
     let mut links: Vec<(RelationType, String)> = Vec::new();
-    // `first` carries neither `offset` nor `cursor`: it is the bare query, whose
-    // cursor-mode first page starts at the collection's beginning. Emitting no
-    // `offset` keeps a client that follows `first` in cursor mode rather than
-    // dropping it to the offset path. Its presence tracks `prev`: only a page that
-    // has a previous page is not itself the first, so only then is `first` a
-    // pointer elsewhere rather than at the current page.
+    // Only a page that has a previous page is not itself the first, so only
+    // then is `first` a pointer elsewhere rather than at the current page.
     if cursors.prev.is_some() {
-        links.push((RelationType::First, build_page_link(uri, &[("limit", &limit_str)])));
+        links.push((RelationType::First, build_page_link(uri, &[("limit", &limit_str), ("cursor", "")])));
     }
     if let Some(token) = &cursors.prev {
         links.push((RelationType::Prev, build_page_link(uri, &[("limit", &limit_str), ("cursor", token)])));
@@ -338,11 +312,12 @@ fn cursor_targets(uri: &Uri, limit: i64, cursors: &CursorPointers) -> Vec<(Relat
 
 #[cfg(test)]
 mod tests {
-    use crate::pagination::{CursorPointers, PageExtent, PageLinks, append_pagination_links};
+    use crate::pagination::{CursorPointers, PageExtent, PageLinks, PageOutcome, append_page_links, append_pagination_links};
     use andromeda_http_headers::{link::header::Link, media_type::ResponseMediaType};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{
         cursor::{NeighbourCursors, PageCursor},
+        page_fullness::PageFullness,
         page_window::{PageStart, PageWindow},
     };
     use axum::{
@@ -382,7 +357,14 @@ mod tests {
             start: PageStart::Offset(20),
         };
         pretty_assertions::assert_eq!(
-            PageLinks::of_window(&window, Some(45), 10, None),
+            PageLinks::of_window(
+                &window,
+                PageOutcome {
+                    total: Some(45),
+                    returned: 10,
+                    boundary: None,
+                }
+            ),
             Some(PageLinks::Offset {
                 offset: 20,
                 extent: PageExtent::Total(45),
@@ -400,7 +382,14 @@ mod tests {
         };
         let boundary = Some((ngsi_ld_uri("urn:e:1"), ngsi_ld_uri("urn:e:2")));
         pretty_assertions::assert_eq!(
-            PageLinks::of_window(&window, None, 2, boundary),
+            PageLinks::of_window(
+                &window,
+                PageOutcome {
+                    total: None,
+                    returned: 2,
+                    boundary,
+                }
+            ),
             Some(PageLinks::Cursor(CursorPointers {
                 prev: None,
                 next: Some(PageCursor::After(ngsi_ld_uri("urn:e:2")).encode()),
@@ -416,7 +405,12 @@ mod tests {
             limit: 2,
             start: PageStart::Cursor(Some(PageCursor::After(ngsi_ld_uri("urn:e:9")))),
         };
-        pretty_assertions::assert_eq!(PageLinks::of_window(&window, None, 0, None), None);
+        let outcome = PageOutcome {
+            total: None,
+            returned: 0,
+            boundary: None,
+        };
+        pretty_assertions::assert_eq!(PageLinks::of_window(&window, outcome), None);
     }
 
     fn empty_response() -> Response {
@@ -441,7 +435,13 @@ mod tests {
     fn counted_first_page_adds_last_and_next_without_first_or_prev() {
         let mut response = empty_response();
         let uri = parse_uri("/subscriptions?limit=10&offset=0");
-        append_pagination_links(&mut response, &uri, 10, offset(0, PageExtent::Total(25)), ResponseMediaType::JsonLd);
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(10, 0),
+            offset(0, PageExtent::Total(25)),
+            ResponseMediaType::JsonLd,
+        );
         let link_str = link_header(&response);
         assert!(!link_str.contains("rel=\"first\""));
         assert!(link_str.contains("rel=\"last\""));
@@ -453,7 +453,13 @@ mod tests {
     fn counted_page_has_first_last_prev_next_past_the_first_page() {
         let mut response = empty_response();
         let uri = parse_uri("/subscriptions?limit=10&offset=10");
-        append_pagination_links(&mut response, &uri, 10, offset(10, PageExtent::Total(25)), ResponseMediaType::JsonLd);
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(10, 0),
+            offset(10, PageExtent::Total(25)),
+            ResponseMediaType::JsonLd,
+        );
         let link_str = link_header(&response);
         assert!(link_str.contains("rel=\"first\""));
         assert!(link_str.contains("rel=\"last\""));
@@ -469,7 +475,13 @@ mod tests {
     fn counted_single_page_emits_no_pagination_links() {
         let mut response = empty_response();
         let uri = parse_uri("/subscriptions");
-        append_pagination_links(&mut response, &uri, 10, offset(0, PageExtent::Total(5)), ResponseMediaType::JsonLd);
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(10, 0),
+            offset(0, PageExtent::Total(5)),
+            ResponseMediaType::JsonLd,
+        );
         assert!(response.headers().get("Link").is_none());
     }
 
@@ -479,7 +491,13 @@ mod tests {
     fn no_offset_pagination_link_carries_a_page_parameter() {
         let mut response = empty_response();
         let uri = parse_uri("/csourceSubscriptions?limit=10&offset=10");
-        append_pagination_links(&mut response, &uri, 10, offset(10, PageExtent::Total(50)), ResponseMediaType::JsonLd);
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(10, 0),
+            offset(10, PageExtent::Total(50)),
+            ResponseMediaType::JsonLd,
+        );
         let link_str = link_header(&response);
         assert!(!link_str.contains("page="), "{link_str}");
         assert!(link_str.contains("offset="), "{link_str}");
@@ -490,7 +508,13 @@ mod tests {
     fn offset_full_includes_first_last() {
         let mut response = empty_response();
         let uri = parse_uri("/csourceRegistrations?limit=10&offset=10");
-        append_pagination_links(&mut response, &uri, 10, offset(10, PageExtent::Total(50)), ResponseMediaType::JsonLd);
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(10, 0),
+            offset(10, PageExtent::Total(50)),
+            ResponseMediaType::JsonLd,
+        );
         let link_str = link_header(&response);
         assert!(link_str.contains("rel=\"first\""));
         assert!(link_str.contains("rel=\"last\""));
@@ -502,7 +526,13 @@ mod tests {
     fn no_links_when_total_is_zero() {
         let mut response = empty_response();
         let uri = parse_uri("/subscriptions");
-        append_pagination_links(&mut response, &uri, 10, offset(0, PageExtent::Total(0)), ResponseMediaType::JsonLd);
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(10, 0),
+            offset(0, PageExtent::Total(0)),
+            ResponseMediaType::JsonLd,
+        );
         assert!(response.headers().get("Link").is_none());
     }
 
@@ -512,7 +542,13 @@ mod tests {
         let context = IriBuf::new("https://example.com/ctx.jsonld".to_string()).expect("an absolute IRI");
         Link::insert_jsonld_context(response.headers_mut(), context);
         let uri = parse_uri("/subscriptions?limit=1&offset=1");
-        append_pagination_links(&mut response, &uri, 1, offset(1, PageExtent::Total(3)), ResponseMediaType::JsonLd);
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(1, 0),
+            offset(1, PageExtent::Total(3)),
+            ResponseMediaType::JsonLd,
+        );
 
         let values = response
             .headers()
@@ -529,7 +565,13 @@ mod tests {
     fn no_links_when_limit_is_zero() {
         let mut response = empty_response();
         let uri = parse_uri("/subscriptions");
-        append_pagination_links(&mut response, &uri, 0, offset(0, PageExtent::Total(10)), ResponseMediaType::JsonLd);
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(0, 0),
+            offset(0, PageExtent::Total(10)),
+            ResponseMediaType::JsonLd,
+        );
         assert!(response.headers().get("Link").is_none());
     }
 
@@ -539,7 +581,13 @@ mod tests {
     fn link_type_reflects_the_negotiated_media_type() {
         let mut response = empty_response();
         let uri = parse_uri("/entities?limit=10&offset=0");
-        append_pagination_links(&mut response, &uri, 10, offset(0, PageExtent::Total(25)), ResponseMediaType::Json);
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(10, 0),
+            offset(0, PageExtent::Total(25)),
+            ResponseMediaType::Json,
+        );
         let link_str = link_header(&response);
         assert!(link_str.contains("type=\"application/json\""), "{link_str}");
         assert!(!link_str.contains("ld+json"), "{link_str}");
@@ -554,8 +602,8 @@ mod tests {
         append_pagination_links(
             &mut response,
             &uri,
-            10,
-            offset(0, PageExtent::PageFullness { returned: 10 }),
+            &PageWindow::offset(10, 0),
+            offset(0, PageExtent::Fullness(PageFullness::Full)),
             ResponseMediaType::JsonLd,
         );
         let link_str = link_header(&response);
@@ -567,14 +615,30 @@ mod tests {
     /// total is what decides whether a following page exists.
     #[test]
     fn a_counted_page_reports_its_total_as_the_extent() {
-        pretty_assertions::assert_eq!(PageExtent::of_page(Some(25), 10), PageExtent::Total(25));
+        let outcome = PageOutcome {
+            total: Some(25),
+            returned: 10,
+            boundary: None,
+        };
+        pretty_assertions::assert_eq!(
+            PageLinks::of_window(&PageWindow::offset(10, 0), outcome),
+            Some(offset(0, PageExtent::Total(25)))
+        );
     }
 
     /// A query that did not ask for a count has no total, so the fullness of
     /// the page it returned stands in for one (clause 6.3.10).
     #[test]
     fn an_uncounted_page_reports_its_fullness_as_the_extent() {
-        pretty_assertions::assert_eq!(PageExtent::of_page(None, 10), PageExtent::PageFullness { returned: 10 });
+        let outcome = PageOutcome {
+            total: None,
+            returned: 10,
+            boundary: None,
+        };
+        pretty_assertions::assert_eq!(
+            PageLinks::of_window(&PageWindow::offset(10, 0), outcome),
+            Some(offset(0, PageExtent::Fullness(PageFullness::Full)))
+        );
     }
 
     /// A short final page under the page-fullness rule offers no `next`.
@@ -585,8 +649,8 @@ mod tests {
         append_pagination_links(
             &mut response,
             &uri,
-            10,
-            offset(10, PageExtent::PageFullness { returned: 4 }),
+            &PageWindow::offset(10, 0),
+            offset(10, PageExtent::Fullness(PageFullness::Short)),
             ResponseMediaType::JsonLd,
         );
         let link_str = link_header(&response);
@@ -606,13 +670,23 @@ mod tests {
             next: Some("bmV4dA".to_string()),
             last: Some("ZQ".to_string()),
         };
-        append_pagination_links(&mut response, &uri, 10, PageLinks::Cursor(cursors), ResponseMediaType::JsonLd);
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(10, 0),
+            PageLinks::Cursor(cursors),
+            ResponseMediaType::JsonLd,
+        );
         let link_str = link_header(&response);
         assert!(link_str.contains("rel=\"first\""), "{link_str}");
         assert!(link_str.contains("rel=\"prev\""), "{link_str}");
         assert!(link_str.contains("rel=\"next\""), "{link_str}");
         assert!(link_str.contains("rel=\"last\""), "{link_str}");
         assert!(link_str.contains("cursor="), "{link_str}");
+        assert!(
+            link_str.contains("cursor=&") || link_str.contains("cursor=>"),
+            "first starts a walk with an empty cursor: {link_str}"
+        );
         assert!(!link_str.contains("offset="), "cursor links never carry offset: {link_str}");
         // The incoming cursor is stripped and replaced, never duplicated.
         assert!(!link_str.contains("cursor=AURN"), "the incoming cursor is replaced: {link_str}");
@@ -629,7 +703,13 @@ mod tests {
             next: Some("bmV4dA".to_string()),
             last: Some("ZQ".to_string()),
         };
-        append_pagination_links(&mut response, &uri, 10, PageLinks::Cursor(cursors), ResponseMediaType::JsonLd);
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(10, 0),
+            PageLinks::Cursor(cursors),
+            ResponseMediaType::JsonLd,
+        );
         let link_str = link_header(&response);
         assert!(!link_str.contains("rel=\"first\""), "{link_str}");
         assert!(!link_str.contains("rel=\"prev\""), "{link_str}");
@@ -648,7 +728,13 @@ mod tests {
             next: None,
             last: Some("ZQ".to_string()),
         };
-        append_pagination_links(&mut response, &uri, 10, PageLinks::Cursor(cursors), ResponseMediaType::JsonLd);
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(10, 0),
+            PageLinks::Cursor(cursors),
+            ResponseMediaType::JsonLd,
+        );
         let link_str = link_header(&response);
         assert!(link_str.contains("rel=\"prev\""), "{link_str}");
         assert!(!link_str.contains("rel=\"next\""), "{link_str}");
@@ -667,9 +753,56 @@ mod tests {
             next: Some("bmV4dA".to_string()),
             last: Some("ZQ".to_string()),
         };
-        append_pagination_links(&mut response, &uri, 10, PageLinks::Cursor(cursors), ResponseMediaType::JsonLd);
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(10, 0),
+            PageLinks::Cursor(cursors),
+            ResponseMediaType::JsonLd,
+        );
         let link_str = link_header(&response);
         assert!(link_str.contains("type=Vehicle"), "{link_str}");
         assert!(link_str.contains("speed"), "{link_str}");
+    }
+
+    /// The `first` pointer of a cursor page starts a walk with an empty
+    /// `cursor=`, so a client following it stays in cursor mode whatever the
+    /// broker's default for a fresh request is.
+    #[test]
+    fn first_link_is_a_cursor_walk_start() {
+        let mut response = empty_response();
+        let uri = parse_uri("/entities?type=V&limit=10&cursor=AURN");
+        let cursors = CursorPointers {
+            prev: Some("cHJldg".to_string()),
+            next: Some("bmV4dA".to_string()),
+            last: Some("ZQ".to_string()),
+        };
+        append_pagination_links(
+            &mut response,
+            &uri,
+            &PageWindow::offset(10, 0),
+            PageLinks::Cursor(cursors),
+            ResponseMediaType::JsonLd,
+        );
+        let link_str = link_header(&response);
+        assert!(link_str.contains("</entities?type=V&limit=10&cursor=>; rel=\"first\""), "{link_str}");
+    }
+
+    /// Every pointer carries the limit the window was cut by, not the one the
+    /// request asked for.
+    #[test]
+    fn the_link_limit_is_the_window_limit() {
+        let mut response = empty_response();
+        let uri = parse_uri("/entities?type=V&limit=5000");
+        let window = PageWindow::offset(1000, 0);
+        let outcome = PageOutcome {
+            total: None,
+            returned: 1000,
+            boundary: None,
+        };
+        append_page_links(&mut response, &uri, &window, outcome, ResponseMediaType::JsonLd);
+        let link_str = link_header(&response);
+        assert!(link_str.contains("limit=1000&offset=1000"), "{link_str}");
+        assert!(!link_str.contains("limit=5000"), "{link_str}");
     }
 }

@@ -104,4 +104,8 @@ async fn conformance_mode_advertises_no_extension() {
         !advertised.contains("temporal-aggregation-grouping"),
         "no extension token is advertised: {advertised}"
     );
+    assert!(
+        !advertised.contains("cursor-pagination"),
+        "conformance mode forces even the default-on cursor pagination off: {advertised}"
+    );
 }

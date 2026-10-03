@@ -11,5 +11,5 @@
 mod conditional;
 mod lifetime_configuration;
 mod revalidation;
-mod tenant_parameter;
+mod tenant_header;
 mod validators;

@@ -57,6 +57,8 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
+    page_window::PageWindow,
     projection::grammar::parse_projection_list,
     temporal::{compiled::CompiledTemporalQuery, history_delete::TemporalHistoryDeleteScope},
 };
@@ -380,7 +382,13 @@ impl TemporalHistoryReader for StubBroker {
             .collect())
     }
 
-    async fn query_entity_ids(&self, _target: &ContextTarget, _compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
+    async fn query_entity_ids(
+        &self,
+        _target: &ContextTarget,
+        _compiled: &CompiledTemporalQuery,
+        _window: &PageWindow,
+        _count: CountPolicy,
+    ) -> Result<TemporalEntityIdOutcome, TemporalError> {
         Ok(TemporalEntityIdOutcome {
             candidates: Vec::new(),
             residual: TemporalResidual::default(),

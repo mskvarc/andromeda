@@ -26,6 +26,8 @@ const PURGE_DATASET_SCOPE_TOKEN: &str = "purge-dataset-scope";
 const TEMPORAL_AGGREGATION_GROUPING_TOKEN: &str = "temporal-aggregation-grouping";
 /// The advertised token for the tenant-management extension.
 const TENANT_MANAGEMENT_TOKEN: &str = "tenant-management";
+/// The advertised token for the cursor-pagination extension.
+const CURSOR_PAGINATION_TOKEN: &str = "cursor-pagination";
 
 /// Merge the enabled extension tokens into the operator's `contextSourceExtras`.
 ///
@@ -70,6 +72,9 @@ fn enabled_tokens(enabled: EnabledExtensions) -> Vec<&'static str> {
     if enabled.tenant_management_enabled() {
         tokens.push(TENANT_MANAGEMENT_TOKEN);
     }
+    if enabled.cursor_pagination_enabled() {
+        tokens.push(CURSOR_PAGINATION_TOKEN);
+    }
     tokens
 }
 
@@ -77,6 +82,7 @@ fn enabled_tokens(enabled: EnabledExtensions) -> Vec<&'static str> {
 mod tests {
     use crate::{
         advertisement::{
+            CURSOR_PAGINATION_TOKEN,
             EXTENSION_KEY,
             PURGE_DATASET_SCOPE_TOKEN,
             TEMPORAL_AGGREGATION_GROUPING_TOKEN,
@@ -97,6 +103,7 @@ mod tests {
             purge_dataset_scope: HttpFeatureMode::Enabled,
             temporal_aggregation_grouping: HttpFeatureMode::Enabled,
             tenant_management: HttpFeatureMode::Enabled,
+            cursor_pagination: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 100,
             temporal_aggregation_grouping_max_groups: 100,
         }
@@ -112,12 +119,14 @@ mod tests {
         assert!(rendered.contains(&PURGE_DATASET_SCOPE_TOKEN), "{rendered:?}");
         assert!(rendered.contains(&TEMPORAL_AGGREGATION_GROUPING_TOKEN), "{rendered:?}");
         assert!(rendered.contains(&TENANT_MANAGEMENT_TOKEN), "{rendered:?}");
+        assert!(rendered.contains(&CURSOR_PAGINATION_TOKEN), "{rendered:?}");
     }
 
     #[test]
     fn tenant_management_is_advertised_only_when_it_is_enabled() {
         let config = ExtensionsConfig {
             tenant_management: HttpFeatureMode::Enabled,
+            cursor_pagination: HttpFeatureMode::Disabled,
             ..ExtensionsConfig::default()
         };
         let extras = enabled_extension_extras(None, config.resolve()).expect("extras present");
@@ -126,12 +135,25 @@ mod tests {
         pretty_assertions::assert_eq!(rendered, vec![TENANT_MANAGEMENT_TOKEN]);
 
         // With the extension off, nothing about it is advertised.
-        assert!(enabled_extension_extras(None, ExtensionsConfig::default().resolve()).is_none());
+        let neither = ExtensionsConfig {
+            cursor_pagination: HttpFeatureMode::Disabled,
+            ..ExtensionsConfig::default()
+        };
+        assert!(enabled_extension_extras(None, neither.resolve()).is_none());
+    }
+
+    /// A default broker serves cursor pagination, and says so.
+    #[test]
+    fn the_advertisement_names_cursor_pagination_by_default() {
+        let extras = enabled_extension_extras(None, ExtensionsConfig::default().resolve()).expect("extras present");
+        let tokens = extras.get(EXTENSION_KEY).and_then(Value::as_array).expect("token array");
+        let rendered: Vec<&str> = tokens.iter().filter_map(Value::as_str).collect();
+        pretty_assertions::assert_eq!(rendered, vec![CURSOR_PAGINATION_TOKEN]);
     }
 
     #[test]
     fn no_vendor_key_is_added_when_no_extension_is_on() {
-        let enabled = ExtensionsConfig::default().resolve();
+        let enabled = EnabledExtensions::none();
         assert!(enabled_extension_extras(None, enabled).is_none());
         // The operator's own extras survive when nothing is advertised.
         let base = json!({"node": 1});

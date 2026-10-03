@@ -9,15 +9,19 @@
 //! two places, so it is answered once.
 
 use crate::error::NotificationError;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
 use andromeda_registration::store::RegistrationStore;
 use andromeda_subscription::{compiled::CompiledCsrSubscription, csource_matching::csource_subscription_selects_registration};
 
 /// How many registrations one page of the sweep reads.
 const MATCH_SET_PAGE_SIZE: u32 = 500;
 
-/// Every registration `subscription` selects, in store order.
+/// Every registration `subscription` selects, in identifier order.
+///
+/// The registrations are swept by keyset over their identifier, so a
+/// registration created or removed while the sweep runs can neither shift a
+/// later page nor make one registration appear twice.
 ///
 /// The lifecycle of the subscription is not consulted: whether an expired or
 /// paused subscription is notified at all is the caller's question
@@ -34,25 +38,16 @@ pub(crate) async fn matching_registrations(
     subscription: &CompiledCsrSubscription,
 ) -> Result<Vec<ContextSourceRegistration>, NotificationError> {
     let mut matching = Vec::new();
-    let mut offset = 0;
+    let mut after: Option<Identifier> = None;
     loop {
-        let page = csr_repo
-            .list(Pagination {
-                limit: MATCH_SET_PAGE_SIZE,
-                offset,
-                count: CountPolicy::Emit,
-            })
-            .await?;
-        if page.registrations.is_empty() {
-            break;
-        }
+        let page = csr_repo.find_all_active(after.as_ref(), MATCH_SET_PAGE_SIZE).await?;
+        let full = page.len() >= usize::try_from(MATCH_SET_PAGE_SIZE).unwrap_or(usize::MAX);
+        after = page.last().map(|registration| registration.id.clone()); // clone: the next page starts after it, while the page itself moves below
         matching.extend(
-            page.registrations
-                .into_iter()
+            page.into_iter()
                 .filter(|registration| csource_subscription_selects_registration(subscription, registration)),
         );
-        offset += MATCH_SET_PAGE_SIZE;
-        if u64::from(offset) >= page.total {
+        if !full {
             break;
         }
     }

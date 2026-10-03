@@ -330,6 +330,41 @@ async fn tenant_management_collection_paginates_by_cursor() {
     environment.finish().await;
 }
 
+/// Clause 5.5.9.2: the tenant collection pages by `limit`/`offset` in tenant
+/// name order beside its cursor walk, with offset pointers back.
+#[serial_test::serial]
+#[tokio::test]
+async fn tenant_management_collection_paginates_by_offset() {
+    let environment = reset().await;
+    let http = client();
+
+    let mut created: Vec<String> = Vec::new();
+    for index in 0..3 {
+        let tenant = unique_tenant(&format!("tmoffset{index}"));
+        let (status, _) = create_entity(&http, &tenant, &format!("urn:ngsi-ld:Device:tm-offset-{index}")).await;
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+        created.push(tenant);
+    }
+    created.sort();
+    let created = created;
+
+    let (status, headers, body) = list_tenants(&http, "?offset=1&limit=1").await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    let names: Vec<&str> = body
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|tenant| tenant["tenantName"].as_str())
+        .collect();
+    pretty_assertions::assert_eq!(names, vec![created[1].as_str()], "offset 1 is the second tenant by name");
+    let link = headers.get("Link").and_then(|value| value.to_str().ok()).unwrap_or_default();
+    assert!(link.contains("offset=0"), "the previous page is named by offset: {link}");
+    assert!(link.contains("offset=2"), "the next page is named by offset: {link}");
+    assert!(!link.contains("cursor="), "an offset page carries no cursor: {link}");
+
+    environment.finish().await;
+}
+
 #[serial_test::serial]
 #[tokio::test]
 async fn tenant_management_evict_orphans_route_is_retired() {

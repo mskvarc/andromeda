@@ -13,6 +13,7 @@ use andromeda_http_source_identity::routes::SourceIdentityRoutes;
 use andromeda_http_subscription::routes::SubscriptionRoutes;
 use andromeda_http_temporal::routes::TemporalRoutes;
 use andromeda_http_tenancy::routes::TenancyRoutes;
+use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
 use typed_builder::TypedBuilder;
 
 /// Every required state-complete route family.
@@ -52,4 +53,7 @@ pub struct ApiRoutes {
     /// The configured `apiRoot` minted URLs are built on, when one is
     /// configured; otherwise each request's origin is (clause 6.2).
     pub(crate) advertised_api_root: Option<AdvertisedApiRoot>,
+    /// How every paged collection pages, resolved from `[pagination]` and
+    /// `[extensions]` at startup (clauses 5.5.9.1 and 5.5.9.2).
+    pub(crate) pagination: PaginationPolicy,
 }

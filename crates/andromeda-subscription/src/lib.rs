@@ -44,7 +44,7 @@ pub mod geo_filter;
 
 /// The grid a periodic (`timeInterval`) subscription notifies on.
 pub mod interval_schedule;
-pub mod keyset_listing;
+
 /// Subscription lifecycle orchestration shared by both subscription kinds.
 pub mod lifecycle;
 /// In-memory subscription matching policy.
@@ -73,6 +73,7 @@ pub mod subscription_context;
 /// The invariants subscription policy relies on.
 pub mod subscription_invariant;
 /// The typed members of a `Subscription` payload.
+pub mod subscription_listing;
 pub mod subscription_member;
 /// The typed reasons a subscription request is rejected as `BadRequestData`.
 pub mod subscription_validation_reason;

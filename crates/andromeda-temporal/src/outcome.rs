@@ -3,10 +3,7 @@
 use crate::observed_selection::ObservedSelection;
 use andromeda_entity::query_residual::ResidualFilter;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{
-    entity_selection::EntitySelection,
-    pagination::{CountPolicy, Pagination},
-};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selection::EntitySelection, page_window::PageWindow};
 
 /// Entity-selection predicates a temporal reader did not apply.
 #[derive(Debug, Clone, Default)]
@@ -46,7 +43,8 @@ pub enum TemporalPaginationOutcome {
         /// Total matching entities when count was requested.
         total: Option<i64>,
     },
-    /// The reader returned all candidates so policy can filter before windowing.
+    /// The reader returned every candidate, in the query's order, so policy
+    /// filters, counts and cuts the window itself.
     Deferred,
 }
 
@@ -81,24 +79,35 @@ impl TemporalEntityIdOutcome {
         Ok(())
     }
 
-    /// Complete residual evaluation and deferred pagination, yielding identifiers and optional total count.
+    /// Complete residual evaluation and deferred pagination, yielding the
+    /// identifiers `window` selects and, when `count` asks for it, the total.
+    ///
+    /// A deferred outcome holds every candidate in the query's order, so the
+    /// clause 6.3.13 total is the count of every one that survived the residual
+    /// and the window -- offset or cursor -- is cut from all of them.
     ///
     /// # Errors
     ///
     /// Returns whatever [`TemporalEntityIdOutcome::validate`] refuses: an
     /// outcome that paginated ahead of a residual predicate, or one whose
     /// candidates cannot be evaluated against the predicate that remains.
-    pub fn complete(self, pagination: Pagination) -> Result<(Vec<Identifier>, Option<i64>), InvalidTemporalOutcome> {
+    pub fn complete(self, window: &PageWindow, count: CountPolicy) -> Result<(Vec<Identifier>, Option<i64>), InvalidTemporalOutcome> {
         self.validate()?;
         let mut candidates = self.candidates;
         if !self.residual.is_empty() {
             let residual = ResidualFilter::over(self.residual.0);
             candidates.retain(|candidate| candidate.selection.as_ref().is_some_and(|observed| observed.matches(&residual)));
         }
-        let identifiers = candidates.into_iter().map(|candidate| candidate.entity_id).collect();
+        let identifiers: Vec<Identifier> = candidates.into_iter().map(|candidate| candidate.entity_id).collect();
         match self.pagination {
             TemporalPaginationOutcome::Applied { total } => Ok((identifiers, total)),
-            TemporalPaginationOutcome::Deferred => Ok(apply_deferred_page(identifiers, pagination)),
+            TemporalPaginationOutcome::Deferred => {
+                let total = match count {
+                    CountPolicy::Emit => Some(i64::try_from(identifiers.len()).unwrap_or(i64::MAX)),
+                    CountPolicy::Omit => None,
+                };
+                Ok((window.cut(identifiers, Identifier::as_str), total))
+            }
         }
     }
 }
@@ -125,15 +134,6 @@ pub enum InvalidTemporalOutcome {
     ResidualWithoutSelectionValue,
 }
 
-/// Apply a deferred page after policy finishes residual evaluation.
-#[must_use]
-pub fn apply_deferred_page<T>(rows: Vec<T>, pagination: Pagination) -> (Vec<T>, Option<i64>) {
-    let total = (pagination.count == CountPolicy::Emit).then(|| i64::try_from(rows.len()).unwrap_or(i64::MAX));
-    let offset = usize::try_from(pagination.offset).unwrap_or(usize::MAX);
-    let limit = usize::try_from(pagination.limit).unwrap_or(usize::MAX);
-    (rows.into_iter().skip(offset).take(limit).collect(), total)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -145,10 +145,12 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
+        cursor::PageCursor,
         entity_selection::EntitySelection,
         filter::parser,
         geo::query::GeoQuery,
-        pagination::{CountPolicy, Pagination},
+        page_window::{PageStart, PageWindow},
         scope::query::ScopeQuery,
     };
     use serde_json::json;
@@ -215,11 +217,7 @@ mod tests {
         ]
         .map(|(id, temperature, longitude, scope)| (id.parse::<Identifier>().expect("valid id"), entity(id, temperature, longitude, scope)));
         let full = combined_selection();
-        let pagination = Pagination {
-            limit: 1,
-            offset: 1,
-            count: CountPolicy::Emit,
-        };
+        let window = PageWindow::offset(1, 1);
         let full_matches = candidates(&states, &full);
         let full_pushdown = TemporalEntityIdOutcome {
             candidates: vec![TemporalEntityCandidate {
@@ -229,7 +227,7 @@ mod tests {
             residual: TemporalResidual::default(),
             pagination: TemporalPaginationOutcome::Applied { total: Some(3) },
         }
-        .complete(pagination)
+        .complete(&window, CountPolicy::Emit)
         .expect("valid full-pushdown outcome");
 
         for residual in [
@@ -245,12 +243,37 @@ mod tests {
                 residual: TemporalResidual::over(residual),
                 pagination: TemporalPaginationOutcome::Deferred,
             }
-            .complete(pagination)
+            .complete(&window, CountPolicy::Emit)
             .expect("valid residual outcome");
             pretty_assertions::assert_eq!(residual_outcome, full_pushdown);
         }
 
         let selected_observations = full_pushdown.0.iter().map(|identifier| format!("observation:{identifier}")).collect::<Vec<_>>();
         pretty_assertions::assert_eq!(selected_observations, vec!["observation:urn:ngsi-ld:Entity:4"]);
+    }
+
+    /// Clause 5.5.9.1: a deferred outcome holds every candidate, so a backward
+    /// cursor takes the candidates closest before its boundary and the total
+    /// is the whole surviving set.
+    #[test]
+    fn a_deferred_backward_cursor_takes_the_rows_before_its_boundary() {
+        let identifier = |index: u32| format!("urn:ngsi-ld:Entity:{index}").parse::<Identifier>().expect("valid id");
+        let outcome = TemporalEntityIdOutcome {
+            candidates: (0..10)
+                .map(|index| TemporalEntityCandidate {
+                    entity_id: identifier(index),
+                    selection: None,
+                })
+                .collect(),
+            residual: TemporalResidual::default(),
+            pagination: TemporalPaginationOutcome::Deferred,
+        };
+        let window = PageWindow {
+            limit: 3,
+            start: PageStart::Cursor(Some(PageCursor::Before(identifier(6)))),
+        };
+        let (identifiers, total) = outcome.complete(&window, CountPolicy::Emit).expect("valid deferred outcome");
+        pretty_assertions::assert_eq!(identifiers, vec![identifier(3), identifier(4), identifier(5)]);
+        pretty_assertions::assert_eq!(total, Some(10));
     }
 }

@@ -99,7 +99,7 @@ impl ContextTail {
                         // context is appended, which a response always accepts.
                         Err(_not_an_iri) => ContextTail::Unresolvable,
                     },
-                    HostedReference::OtherTenant | HostedReference::Unrelated => ContextTail::Unresolvable,
+                    HostedReference::Unrelated => ContextTail::Unresolvable,
                 },
                 Err(_not_a_reference) => ContextTail::Unresolvable,
             },
@@ -195,7 +195,7 @@ mod tests {
     const STORED_PATH: &str = "/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b";
 
     /// Recognises the stored path of [`STORED`], root-relative or on any
-    /// origin, and the same path naming another tenant.
+    /// origin.
     #[derive(Debug)]
     struct StoredPath;
 
@@ -203,8 +203,6 @@ mod tests {
         fn recognize(&self, reference: &IriRefBuf) -> HostedReference {
             if reference.as_str().ends_with(STORED_PATH) {
                 HostedReference::Own(STORED.parse::<JsonLdContextId>().expect("a stored identifier"))
-            } else if reference.as_str().ends_with("?andromedaTenant=other") {
-                HostedReference::OtherTenant
             } else {
                 HostedReference::Unrelated
             }
@@ -222,11 +220,6 @@ mod tests {
         pretty_assertions::assert_eq!(
             ContextTail::of_request_context(&json!(STORED_PATH), &NoHostedContexts),
             ContextTail::Unresolvable
-        );
-        pretty_assertions::assert_eq!(
-            ContextTail::of_request_context(&json!(format!("{STORED_PATH}?andromedaTenant=other")), &StoredPath),
-            ContextTail::Unresolvable,
-            "another tenant's stored context cannot be followed from this tenant's storage"
         );
     }
 

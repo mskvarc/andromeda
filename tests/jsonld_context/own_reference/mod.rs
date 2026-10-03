@@ -2,12 +2,13 @@
 //!
 //! Clause 5.13.1 serves Hosted and `ImplicitlyCreated` `@context`s "on-demand"
 //! from the broker's storage. A reference whose path is
-//! `[<advertised prefix>]/ngsi-ld/v1/jsonldContexts/<JsonLdContext id>`, whose
-//! query is empty or one `andromedaTenant` naming the tenant, and whose
-//! identifier the tenant holds, is resolved from that storage whatever origin it
-//! names: the broker never fetches its own document over HTTP and never records
-//! it as a Cached copy. Any other reference is an ordinary URL (clause 4.14:
-//! another tenant's entry is not this tenant's).
+//! `[<advertised prefix>]/ngsi-ld/v1/jsonldContexts/<JsonLdContext id>`, with
+//! no query, and whose identifier the tenant holds, is resolved from that
+//! storage whatever origin it names: the broker never fetches its own document
+//! over HTTP and never records it as a Cached copy. The reference names no
+//! tenant (clauses 4.14 and 6.3.14 leave that to the header): it is read in the
+//! storage of the tenant the request addressed, so another tenant's entry is
+//! never reached through it. Any other reference is an ordinary URL.
 
 mod recognition;
 mod stored_wrapper;

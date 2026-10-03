@@ -7,7 +7,7 @@
 //! <http://www.w3.org/ns/json-ld#context> link relation". The link names the value
 //! an `application/ld+json` body would carry: one URL names itself, anything
 //! else is a wrapper the broker hosts as an `ImplicitlyCreated` `@context`
-//! (clause 5.13.1, Annex C.8) under an absolute, tenant-qualified URL. A
+//! (clause 5.13.1, Annex C.8) under an absolute URL. A
 //! response without a body, a 207 and an error name no context at all.
 
 mod advertised_url;

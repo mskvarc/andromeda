@@ -9,7 +9,6 @@
 
 use crate::{
     broker_endpoints::broker_url,
-    broker_process::BrokerProcess,
     context_api::cached_urls,
     context_links::{context_link, context_link_targets},
     ngsi_requests::create_device,
@@ -18,8 +17,10 @@ use crate::{
     unique_ids::unique_id,
     user_contexts::UserContexts,
 };
+use andromeda_test_harness::broker_process::BrokerProcess;
 use reqwest::{Client, header::HeaderMap};
 use serde_json::Value;
+use std::path::Path;
 
 /// The `@context` an `application/ld+json` retrieval of `device` at
 /// `entities_url` names, and the context link targets an `application/json`
@@ -86,7 +87,9 @@ async fn a_fresh_broker_process_reading_the_durable_cache_names_the_same_values(
     })
     .await;
     contexts.shutdown().await;
-    let fresh = BrokerProcess::start(&[]).await;
+    let fresh = BrokerProcess::start(Path::new(env!("CARGO_BIN_EXE_andromeda")), &[])
+        .await
+        .expect("the broker starts");
 
     for (shape, before) in shapes.iter().zip(first) {
         let after = named_by(tenant.client(), &fresh.url("entities"), &device, shape).await;

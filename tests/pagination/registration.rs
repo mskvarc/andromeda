@@ -173,3 +173,24 @@ async fn pagination_registrations_cursor_with_offset_is_bad_request() {
     assert_eq!(response.status, StatusCode::BAD_REQUEST);
     scope.finish().await.expect("cleanup failed");
 }
+
+/// Clause 5.5.9.1: the first page of a walk is read in the identifier order
+/// its cursors continue from, so registrations created in reverse order are
+/// walked once each, ascending -- the first page never repeats or skips one a
+/// later page holds.
+#[tokio::test]
+async fn pagination_registrations_fresh_walk_never_repeats_or_skips() {
+    let (scope, client) = make_scope().await;
+    for index in (0..7).rev() {
+        let created = client
+            .create_registration(&registration_body(&registration_id(index)))
+            .await
+            .expect("create registration request");
+        assert_eq!(created.status, StatusCode::CREATED, "create registration: {:?}", created.body);
+    }
+
+    let seen = walk_forward(&client, "type=Building&limit=3").await;
+    let expected: Vec<String> = (0..7).map(registration_id).collect();
+    assert_eq!(seen, expected, "the walk returns every registration once, ascending");
+    scope.finish().await.expect("cleanup failed");
+}

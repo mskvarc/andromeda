@@ -4,6 +4,7 @@ use crate::{
     impl_shared_query_params,
     language_filter::deserialize_optional_language_filter,
     options::EntityRepresentationOptions,
+    pagination::parameters::PageParameters,
     query::{
         SharedQueryParams,
         deserialization::{
@@ -74,18 +75,10 @@ pub struct EntityQueryParameters {
     /// Complete clause-4.10 geo-query parsed at URL extraction.
     #[serde(flatten)]
     pub geo: OptionalGeoQuery,
-    /// The page size (clause 5.5.9 `limit`).
-    pub limit: Option<u32>,
-    /// How many results to skip before the page (`offset`).
-    pub offset: Option<u32>,
-    /// The opaque, keyset-backed pagination pointer (clause 5.5.9.1).
-    ///
-    /// A broker-emitted token carried inside a `prev`/`next`/`last` `Link`; the
-    /// client only passes it back by following the link and never authors or
-    /// reads it. It is declared here so `#[serde(deny_unknown_fields)]` admits it
-    /// and so its mutual exclusion with `offset` can be validated. Its contents
-    /// are opaque (see `docs/conformance/stable-pagination.md`).
-    pub cursor: Option<String>,
+    /// The page asked for (clauses 5.5.9 and 6.3.10 `limit`, `offset` and
+    /// `cursor`), decided by the broker's pagination policy.
+    #[serde(flatten)]
+    pub page: PageParameters,
     /// Whether the response reports the total number of matches (`count`).
     pub count: Option<bool>,
     /// Typed representation and system-attribute options (`options`).
@@ -171,9 +164,7 @@ impl_shared_query_params!(EntityQueryParameters {
     attrs: attrs,
     pick: pick,
     omit: omit,
-    dataset_id: dataset_id,
-    limit: limit,
-    offset: offset
+    dataset_id: dataset_id
 });
 
 /// Parsed response shaping options from the `options` and `format` parameters.
@@ -190,7 +181,7 @@ pub struct EntityQueryParametersOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{error::ParameterError, params_from_query, query::SharedQueryParams};
+    use crate::{error::ParameterError, params_from_query};
     use andromeda_ngsi_ld_model::query::body::Query;
     use andromeda_ngsi_ld_query::{ordering::term::OrderDirection, projection::exclusivity::ProjectionConflict};
 
@@ -391,20 +382,6 @@ mod tests {
         assert!(params_from_query("type=Vehicle&orderBy=speed&local=true").validate().is_ok());
     }
 
-    /// Clause 6.3.10 Table 6.3.10-1: `limit=0` is only valid alongside `count`.
-    #[test]
-    fn validate_rejects_limit_zero_without_count() {
-        let err = params_from_query("type=Vehicle&limit=0").validate().expect_err("limit=0 needs count");
-        assert!(matches!(err, ParameterError::LimitZeroWithoutCount), "got {err:?}");
-    }
-
-    /// Clause 6.3.10 Table 6.3.10-1: `limit=0` with `count` asks for a count of
-    /// the matching entities and no entity data, which is valid.
-    #[test]
-    fn validate_accepts_limit_zero_with_count() {
-        assert!(params_from_query("type=Vehicle&limit=0&count=true").validate().is_ok());
-    }
-
     /// Clause 5.7.2.4: a query whose `pick` nests into a Linked Entity without
     /// asking for a join names members the response cannot carry.
     #[test]
@@ -458,22 +435,13 @@ mod tests {
         assert!(deep_enough.validate().is_ok());
     }
 
+    /// The query reads its page beside its selection; the policy, not the
+    /// parameter set, bounds it.
     #[test]
-    fn effective_limit_defaults_to_20() {
-        let p = params_from_query("");
-        pretty_assertions::assert_eq!(p.effective_limit(), 20);
-    }
-
-    #[test]
-    fn effective_limit_caps_at_1000() {
-        let p = params_from_query("limit=5000");
-        pretty_assertions::assert_eq!(p.effective_limit(), 1000);
-    }
-
-    #[test]
-    fn effective_offset_defaults_to_0() {
-        let p = params_from_query("");
-        pretty_assertions::assert_eq!(p.effective_offset(), 0);
+    fn the_page_is_read_beside_the_selection() {
+        let p = params_from_query("type=Vehicle&limit=5000&offset=4");
+        pretty_assertions::assert_eq!(p.page.limit, Some(5000));
+        pretty_assertions::assert_eq!(p.page.offset, Some(4));
     }
 
     #[test]

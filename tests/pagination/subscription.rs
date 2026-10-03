@@ -171,3 +171,22 @@ async fn pagination_subscriptions_cursor_with_offset_is_bad_request() {
     assert_eq!(response.status, StatusCode::BAD_REQUEST);
     scope.finish().await.expect("cleanup failed");
 }
+
+/// Clause 5.5.9.2: an offset listing pages in the unique identifier order, so
+/// subscriptions created in reverse order list ascending.
+#[tokio::test]
+async fn pagination_subscriptions_offset_listing_is_in_id_order() {
+    let (scope, client) = make_scope().await;
+    for index in (0..5).rev() {
+        let created = client
+            .create_subscription(&subscription_body(&subscription_id(index)))
+            .await
+            .expect("create subscription request");
+        assert_eq!(created.status, StatusCode::CREATED, "create subscription: {:?}", created.body);
+    }
+
+    let (page, _) = query_page(&client, "offset=0&limit=5").await;
+    let expected: Vec<String> = (0..5).map(subscription_id).collect();
+    assert_eq!(page, expected);
+    scope.finish().await.expect("cleanup failed");
+}

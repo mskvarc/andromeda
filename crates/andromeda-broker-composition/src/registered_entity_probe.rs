@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_model::entity_info::EntityInfo;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::{EntitySelection, EntitySelector as CompiledEntitySelector},
-    pagination::{CountPolicy, Pagination},
+    page_window::PageWindow,
     type_selection::expansion::expand_type_expression,
 };
 use andromeda_registration::{
@@ -74,13 +74,13 @@ impl EntityStoreRegistrationProbe {
                     .attrs(attributes.to_vec()) // clone: the compiled selection owns the attribute IRIs across the store await.
                     .build(),
             )
-            .pagination(Pagination {
-                limit: 1,
-                offset: 0,
-                count: CountPolicy::Omit,
-            })
             .build();
-        let outcome = self.query.query_ids(&self.live_target, &compiled).await.map_err(|error| probe_error(&error))?;
+        // One identifier answers whether any entity is present.
+        let outcome = self
+            .query
+            .query_ids(&self.live_target, &compiled, &PageWindow::offset(1, 0))
+            .await
+            .map_err(|error| probe_error(&error))?;
         // An identifier-only read leaves nothing to finish a declined
         // predicate against, so a store that declined one cannot answer.
         if !outcome.unapplied.is_empty() {
@@ -185,7 +185,7 @@ mod tests {
     };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
+    use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, page_window::PageWindow};
     use andromeda_registration::entity_probe::{EntityPresence, RegisteredEntityProbe};
     use futures::future::BoxFuture;
     use iri_rs::IriBuf;
@@ -201,7 +201,7 @@ mod tests {
     struct AttributeIndex {
         entity: Identifier,
         attributes: Vec<IriBuf>,
-        asked: Mutex<Vec<CompiledEntityQuery>>,
+        asked: Mutex<Vec<(CompiledEntityQuery, PageWindow)>>,
     }
 
     impl EntityQueryStore for AttributeIndex {
@@ -209,32 +209,38 @@ mod tests {
             &StorageProfile::POSTGIS_LTREE
         }
 
-        fn query_compiled<'life0, 'life1, 'life2, 'async_trait>(
+        fn query_compiled<'life0, 'life1, 'life2, 'life3, 'async_trait>(
             &'life0 self,
             _target: &'life1 ContextTarget,
             _compiled: &'life2 CompiledEntityQuery,
+            _window: &'life3 PageWindow,
+            _count: CountPolicy,
         ) -> BoxFuture<'async_trait, Result<QueryOutcome<RetrievedEntity>, EntityError>>
         where
             'life0: 'async_trait,
             'life1: 'async_trait,
             'life2: 'async_trait,
+            'life3: 'async_trait,
             Self: 'async_trait,
         {
             panic!("an admission check reads no entity payload")
         }
 
-        fn query_ids<'life0, 'life1, 'life2, 'async_trait>(
+        fn query_ids<'life0, 'life1, 'life2, 'life3, 'async_trait>(
             &'life0 self,
             _target: &'life1 ContextTarget,
             compiled: &'life2 CompiledEntityQuery,
+            window: &'life3 PageWindow,
         ) -> BoxFuture<'async_trait, Result<QueryOutcome<Identifier>, EntityError>>
         where
             'life0: 'async_trait,
             'life1: 'async_trait,
             'life2: 'async_trait,
+            'life3: 'async_trait,
             Self: 'async_trait,
         {
-            self.asked.lock().expect("the record is not poisoned").push(compiled.clone()); // clone: the test inspects what was asked after the call
+            // clone: the test inspects what was asked after the call
+            self.asked.lock().expect("the record is not poisoned").push((compiled.clone(), window.clone()));
             let admitted = compiled.selection.selectors.iter().all(|selector| selector.ids.contains(&self.entity));
             let holds = compiled.selection.attrs.is_empty() || compiled.selection.attrs.iter().any(|attribute| self.attributes.contains(attribute));
             let rows = if admitted && holds { vec![self.entity.clone()] } else { Vec::new() }; // clone: the answer owns its identifier
@@ -285,10 +291,11 @@ mod tests {
         pretty_assertions::assert_eq!(presence, EntityPresence::Present);
         let asked = store.asked.lock().expect("the record is not poisoned");
         pretty_assertions::assert_eq!(asked.len(), 1);
-        pretty_assertions::assert_eq!(asked[0].selection.selectors.len(), 1);
-        pretty_assertions::assert_eq!(asked[0].selection.selectors[0].ids, vec![vehicle()]);
-        pretty_assertions::assert_eq!(asked[0].selection.attrs, vec![iri(BRAND), iri(SPEED)]);
-        pretty_assertions::assert_eq!(asked[0].pagination.limit, 1);
+        let (compiled, window) = &asked[0];
+        pretty_assertions::assert_eq!(compiled.selection.selectors.len(), 1);
+        pretty_assertions::assert_eq!(compiled.selection.selectors[0].ids, vec![vehicle()]);
+        pretty_assertions::assert_eq!(compiled.selection.attrs, vec![iri(BRAND), iri(SPEED)]);
+        pretty_assertions::assert_eq!(window, &PageWindow::offset(1, 0));
     }
 
     #[tokio::test]

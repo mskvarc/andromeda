@@ -15,59 +15,103 @@
 //! one bounds how many entities the page carries, the other how much history
 //! each of them carries, so a response may carry either, both or neither.
 
+use crate::temporal::query::forwarding::ForwardedHistory;
 use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_http_response::pagination::{PageLinks, PagePointers, append_pagination_links};
+use andromeda_http_response::pagination::{PageOutcome, append_page_links};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{
-    cursor::PageCursor,
-    page_window::{PageStart, PageWindow},
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
+use andromeda_ngsi_ld_request::{
+    error::ParameterError,
+    pagination::{
+        page_pointers::PagePointers,
+        page_request::{CollectionOrder, PageRequest},
+        policy::PaginationPolicy,
+    },
+    query::{QUERY_PAGE_SIZE, temporal::TemporalQueryParameters},
 };
-use andromeda_ngsi_ld_request::query::{SharedQueryParams, temporal::TemporalQueryParameters};
 use axum::{http::Uri, response::Response};
+use std::borrow::Cow;
 
-/// The window of matching entities a temporal query returned.
+/// The window of matching entities a temporal query answers with.
 pub(crate) struct QueriedPage {
-    /// The clause 6.3.10 page size and where the element page starts.
+    /// The clause 6.3.10 page size and where the element page starts, as the
+    /// pagination policy decided them.
     window: PageWindow,
+    /// Whether the total is reported (clause 6.3.13 `count`).
+    count: CountPolicy,
     /// Whether the binding the query arrived on can carry a pointer to the
     /// neighbouring pages at all.
     pointers: PagePointers,
 }
 
+/// What the local temporal store reads for one query.
+pub(crate) struct LocalRead<'page> {
+    /// The element window the store reads.
+    pub(crate) window: Cow<'page, PageWindow>,
+    /// Whether the store counts its matches.
+    pub(crate) count: CountPolicy,
+    /// The client's window, withheld until the merge when context sources
+    /// contributed entities, and cut from the merged collection then.
+    pub(crate) merged: Option<&'page PageWindow>,
+}
+
 impl QueriedPage {
-    /// The page `params` asks for, on a binding whose pointers `pointers`
-    /// describes.
-    ///
-    /// Read before the merge widens the local query: clause 5.5.9 cuts the page
-    /// from the merged collection once context sources contribute, which the
-    /// local query is opened up for, and the client's own bounds are what the
-    /// links point at either way.
-    ///
-    /// Clause 5.5.9.1: the element page walks by opaque cursor when it continues
-    /// a walk (a cursor arrived) or when a fresh query in the default `id` order
-    /// asks for no offset. A merged collection is paged in that same `id` order,
-    /// so a cursor serves it as well as the local one; clause 4.23.1 withholds
-    /// only the client-requested Entity ordering from distributed operations,
-    /// and an explicit `orderBy` or offset keeps the offset pointers.
-    pub(crate) fn of(params: &TemporalQueryParameters, pointers: PagePointers, incoming: Option<PageCursor>) -> QueriedPage {
-        let start = match incoming {
-            Some(cursor) => PageStart::Cursor(Some(cursor)),
-            None if params.ordering.order_by.is_empty() && params.offset.is_none() => PageStart::Cursor(None),
-            None => PageStart::Offset(params.effective_offset()),
-        };
-        QueriedPage {
-            window: PageWindow {
-                limit: params.effective_limit(),
-                start,
-            },
-            pointers,
-        }
+    /// The element page `window` selects, counted as `count` says, on a binding
+    /// whose pointers `pointers` describes.
+    pub(crate) const fn of(window: PageWindow, count: CountPolicy, pointers: PagePointers) -> QueriedPage {
+        QueriedPage { window, count, pointers }
     }
 
-    /// The page size and start the client asked for, which a merged collection
-    /// is cut to.
-    pub(crate) const fn window(&self) -> &PageWindow {
-        &self.window
+    /// The element page `params` asks for under `pagination`, on a binding
+    /// whose pointers `pointers` describes.
+    ///
+    /// Decided before anything runs, so a pagination parameter the collection
+    /// cannot honour is refused before a single context source is contacted.
+    /// It pages the element dimension only, never the temporal window.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever the pagination policy refuses (clauses 5.5.9 and
+    /// 6.3.10).
+    pub(crate) fn requested(pagination: PaginationPolicy, params: &TemporalQueryParameters, pointers: PagePointers) -> Result<QueriedPage, ParameterError> {
+        let count = match params.count {
+            Some(true) => CountPolicy::Emit,
+            Some(false) | None => CountPolicy::Omit,
+        };
+        let request = PageRequest {
+            size: QUERY_PAGE_SIZE,
+            order: CollectionOrder::of(&params.ordering),
+            count,
+            pointers,
+        };
+        Ok(QueriedPage::of(pagination.window(&params.page, request)?, count, pointers))
+    }
+
+    /// Whether the client asked for the total (clause 6.3.13).
+    pub(crate) const fn count(&self) -> CountPolicy {
+        self.count
+    }
+
+    /// What the local store reads, given what the context sources contributed.
+    ///
+    /// Clause 5.5.9 cuts the page from the merged collection rather than from
+    /// the local rows once context sources contribute, so the local query then
+    /// reads from the first row, past no cursor, uncounted, and as many rows as
+    /// it takes to tell that the merge exceeds the request's budget (clause
+    /// 4.12). Without a merge the store reads the client's window itself.
+    pub(crate) fn local_read<'page>(&'page self, forwarded: Option<&ForwardedHistory>) -> LocalRead<'page> {
+        match forwarded.filter(|history| history.holds_remote_entities()) {
+            Some(history) => LocalRead {
+                window: Cow::Owned(PageWindow::offset(history.local_row_limit(), 0)),
+                count: CountPolicy::Omit,
+                merged: Some(&self.window),
+            },
+            None => LocalRead {
+                window: Cow::Borrowed(&self.window),
+                count: self.count,
+                merged: None,
+            },
+        }
     }
 
     /// Add the clause 6.3.10 pagination links over this element page.
@@ -100,9 +144,7 @@ impl QueriedPage {
             PagePointers::NotDereferenceable => {}
             PagePointers::OverRequestUri => {
                 let total = total.map(|count| i64::try_from(count).unwrap_or(i64::MAX));
-                if let Some(links) = PageLinks::of_window(&self.window, total, returned, boundary) {
-                    append_pagination_links(response, instance, i64::from(self.window.limit), links, media_type);
-                }
+                append_page_links(response, instance, &self.window, PageOutcome { total, returned, boundary }, media_type);
             }
         }
     }
@@ -112,10 +154,13 @@ impl QueriedPage {
 mod tests {
     use crate::temporal::query::page::QueriedPage;
     use andromeda_http_headers::media_type::ResponseMediaType;
-    use andromeda_http_response::pagination::PagePointers;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_query::cursor::PageCursor;
-    use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+    use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
+        cursor::PageCursor,
+        page_window::{PageStart, PageWindow},
+    };
+    use andromeda_ngsi_ld_request::pagination::page_pointers::PagePointers;
     use axum::{
         http::{StatusCode, Uri},
         response::{IntoResponse, Response},
@@ -132,13 +177,21 @@ mod tests {
             .join(", ")
     }
 
-    /// A temporal query bounded to `limit` matches starting at `offset`.
-    fn paged_query(limit: Option<u32>, offset: Option<u32>) -> TemporalQueryParameters {
-        TemporalQueryParameters {
-            limit,
-            offset,
-            ..TemporalQueryParameters::default()
-        }
+    /// An offset element page of `limit` matches starting at `offset`.
+    fn offset_page(limit: u32, offset: u32, pointers: PagePointers) -> QueriedPage {
+        QueriedPage::of(PageWindow::offset(limit, offset), CountPolicy::Omit, pointers)
+    }
+
+    /// A cursor element page of 2 matches starting at `cursor`.
+    fn cursor_page(cursor: Option<PageCursor>) -> QueriedPage {
+        QueriedPage::of(
+            PageWindow {
+                limit: 2,
+                start: PageStart::Cursor(cursor),
+            },
+            CountPolicy::Omit,
+            PagePointers::OverRequestUri,
+        )
     }
 
     fn instance() -> Uri {
@@ -153,7 +206,7 @@ mod tests {
     /// signal a query that did not ask for a count has.
     #[test]
     fn a_full_page_offers_the_next_page() {
-        let page = QueriedPage::of(&paged_query(Some(2), Some(0)), PagePointers::OverRequestUri, None);
+        let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
         page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 2, None);
@@ -167,7 +220,7 @@ mod tests {
     /// The last page has nothing left to traverse, so it offers no `next`.
     #[test]
     fn a_short_page_offers_no_next_page() {
-        let page = QueriedPage::of(&paged_query(Some(2), Some(0)), PagePointers::OverRequestUri, None);
+        let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
         page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 1, None);
@@ -179,7 +232,7 @@ mod tests {
     /// result set", which clause 6.3.10 binds to `rel="prev"`.
     #[test]
     fn a_page_past_the_start_offers_the_previous_page() {
-        let page = QueriedPage::of(&paged_query(Some(2), Some(4)), PagePointers::OverRequestUri, None);
+        let page = offset_page(2, 4, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
         page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 1, None);
@@ -193,7 +246,7 @@ mod tests {
     /// total rather than the fullness of the page decides `next`.
     #[test]
     fn a_counted_query_decides_the_next_page_from_its_total() {
-        let page = QueriedPage::of(&paged_query(Some(2), Some(0)), PagePointers::OverRequestUri, None);
+        let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
         page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(7), 2, None);
@@ -208,7 +261,7 @@ mod tests {
     /// `Link` header at all.
     #[test]
     fn a_counted_query_whose_total_is_exhausted_offers_no_pagination_links() {
-        let page = QueriedPage::of(&paged_query(Some(2), Some(0)), PagePointers::OverRequestUri, None);
+        let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
         page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(2), 2, None);
@@ -221,7 +274,7 @@ mod tests {
     /// pair alongside the clause 6.3.10 `prev`/`next` pointers.
     #[test]
     fn a_counted_middle_page_carries_first_last_prev_and_next() {
-        let page = QueriedPage::of(&paged_query(Some(2), Some(2)), PagePointers::OverRequestUri, None);
+        let page = offset_page(2, 2, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
         page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(7), 2, None);
@@ -241,7 +294,7 @@ mod tests {
     /// points at nothing rather than at a resource a GET cannot read.
     #[test]
     fn a_body_carried_query_offers_no_pointer_at_all() {
-        let page = QueriedPage::of(&paged_query(Some(2), Some(4)), PagePointers::NotDereferenceable, None);
+        let page = offset_page(2, 4, PagePointers::NotDereferenceable);
         let mut response = StatusCode::OK.into_response();
 
         page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(99), 2, None);
@@ -253,7 +306,7 @@ mod tests {
     /// walks the collection in the representation it asked for.
     #[test]
     fn the_links_carry_the_negotiated_media_type() {
-        let page = QueriedPage::of(&paged_query(Some(2), Some(0)), PagePointers::OverRequestUri, None);
+        let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
         page.append_links(&mut response, &instance(), ResponseMediaType::Json, None, 2, None);
@@ -262,27 +315,16 @@ mod tests {
         assert!(link.contains("type=\"application/json\""), "{link}");
     }
 
-    /// A locally-scoped, default-order query with no offset walks the element
-    /// dimension by opaque cursor (clause 5.5.9.1).
-    fn local_default_query() -> TemporalQueryParameters {
-        TemporalQueryParameters {
-            limit: Some(2),
-            offset: None,
-            local: Some(true),
-            ..TemporalQueryParameters::default()
-        }
-    }
-
     fn element_id(id: &str) -> Identifier {
         id.parse().expect("valid URI")
     }
 
-    /// Clause 5.5.9.1: the first element page of a local, default-order query
-    /// offers opaque cursor pointers -- `next`/`last` carrying a `cursor`, never
+    /// Clause 5.5.9.1: the first element page of a cursor walk offers opaque
+    /// cursor pointers -- `next`/`last` carrying a `cursor`, never
     /// an `offset`, and neither `prev` nor `first` (both would name this page).
     #[test]
     fn a_local_default_first_page_offers_opaque_cursor_pointers() {
-        let page = QueriedPage::of(&local_default_query(), PagePointers::OverRequestUri, None);
+        let page = cursor_page(None);
         let mut response = StatusCode::OK.into_response();
 
         let boundary = Some((element_id("urn:ngsi-ld:E:001"), element_id("urn:ngsi-ld:E:002")));
@@ -302,7 +344,7 @@ mod tests {
     #[test]
     fn a_forward_cursor_page_offers_prev_and_next() {
         let incoming = Some(PageCursor::After(element_id("urn:ngsi-ld:E:002")));
-        let page = QueriedPage::of(&local_default_query(), PagePointers::OverRequestUri, incoming);
+        let page = cursor_page(incoming);
         let mut response = StatusCode::OK.into_response();
 
         let boundary = Some((element_id("urn:ngsi-ld:E:003"), element_id("urn:ngsi-ld:E:004")));
@@ -319,57 +361,11 @@ mod tests {
     /// pagination links at all.
     #[test]
     fn an_empty_cursor_page_carries_no_links() {
-        let page = QueriedPage::of(&local_default_query(), PagePointers::OverRequestUri, None);
+        let page = cursor_page(None);
         let mut response = StatusCode::OK.into_response();
 
         page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 0, None);
 
         pretty_assertions::assert_eq!(links(&response), String::new());
-    }
-
-    /// A distributed query is paged in the same identifier order as a local one
-    /// (clause 4.23.1 withholds only the client-requested Entity ordering), so
-    /// with no offset given it walks by cursor too.
-    #[test]
-    fn a_distributed_query_walks_by_cursor() {
-        let params = TemporalQueryParameters {
-            limit: Some(2),
-            offset: None,
-            local: Some(false),
-            ..TemporalQueryParameters::default()
-        };
-        let page = QueriedPage::of(&params, PagePointers::OverRequestUri, None);
-        let mut response = StatusCode::OK.into_response();
-
-        let boundary = Some((element_id("urn:ngsi-ld:E:001"), element_id("urn:ngsi-ld:E:002")));
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 2, boundary);
-
-        let link = links(&response);
-        assert!(link.contains("rel=\"next\""), "{link}");
-        assert!(link.contains("cursor="), "{link}");
-        assert!(!link.contains("offset="), "{link}");
-    }
-
-    /// Clause 4.23: a client-requested Entity ordering keeps the offset
-    /// pointers, since a cursor walks the identifier order alone.
-    #[test]
-    fn an_explicit_ordering_keeps_offset_pointers() {
-        let params = TemporalQueryParameters {
-            limit: Some(2),
-            offset: None,
-            local: Some(true),
-            ordering: serde_urlencoded::from_str("orderBy=speed").expect("a valid ordering"),
-            ..TemporalQueryParameters::default()
-        };
-        let page = QueriedPage::of(&params, PagePointers::OverRequestUri, None);
-        let mut response = StatusCode::OK.into_response();
-
-        let boundary = Some((element_id("urn:ngsi-ld:E:001"), element_id("urn:ngsi-ld:E:002")));
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 2, boundary);
-
-        let link = links(&response);
-        assert!(link.contains("rel=\"next\""), "{link}");
-        assert!(link.contains("offset="), "{link}");
-        assert!(!link.contains("cursor="), "{link}");
     }
 }

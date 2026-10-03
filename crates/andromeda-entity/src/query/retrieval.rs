@@ -1,7 +1,6 @@
 //! Reading entities: clause 5.6.3 retrieval and clause 5.7.2 query.
 
 use crate::{
-    compiled_cache::LimitCap,
     entity_type_match::entity_satisfies,
     error::EntityError,
     port::retrieved_entity::RetrievedEntity,
@@ -21,15 +20,16 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::{
-    cursor::PageCursor,
+    count_policy::CountPolicy,
     dataset::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
+    page_window::PageWindow,
     projection::compiled::Projection,
     term_expander::TermExpander,
     type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::{pagination_cursor::decode_cursor, query::entity::parameters::EntityQueryParameters};
+use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
@@ -181,8 +181,9 @@ impl EntityQueryService {
         Ok(Arc::new(narrowed))
     }
 
-    /// Execute a parameterized entity query (clause 5.7.2), returning matching
-    /// entities and the optional clause 6.3.13 count.
+    /// Execute a parameterized entity query (clause 5.7.2) over the page
+    /// `window` selects, returning that page of matching entities and, when
+    /// `count` asks for it, the clause 6.3.13 count of every match.
     ///
     /// # Errors
     ///
@@ -192,10 +193,17 @@ impl EntityQueryService {
     /// [`EntityError::OperationNotSupported`] when the store cannot narrow a
     /// predicate at all (clause 5.5.2), and [`EntityError::Persistence`] when
     /// the store could not answer the query.
-    pub async fn query(&self, target: &ContextTarget, query: &EntityQueryParameters, context: &ContextSpec) -> Result<(Vec<Entity>, Option<i64>), EntityError> {
+    pub async fn query(
+        &self,
+        target: &ContextTarget,
+        query: &EntityQueryParameters,
+        window: &PageWindow,
+        count: CountPolicy,
+        context: &ContextSpec,
+    ) -> Result<(Vec<Entity>, Option<i64>), EntityError> {
         let timer = entity::start(EntityOperation::Query);
         let result: Result<(Vec<Entity>, Option<i64>), EntityError> = async {
-            let (rows, total_count) = self.query_states(target, query, context).await?;
+            let (rows, total_count) = self.query_states(target, query, window, count, context).await?;
             let sys_attrs = query.parse_options()?.sys_attrs;
 
             let compactor = self.engine().compactor(context);
@@ -229,8 +237,8 @@ impl EntityQueryService {
         result
     }
 
-    /// Select one page of a parameterized entity query (clause 5.7.2) as the
-    /// stored states it matched, each narrowed to the query's `attrs` and
+    /// Select the page `window` selects of a parameterized entity query
+    /// (clause 5.7.2) as the stored states it matched, each narrowed to the query's `attrs` and
     /// clause 4.21 projection and read with its entity-level clause 4.8 system
     /// times, with the optional clause 6.3.13 count.
     ///
@@ -245,34 +253,18 @@ impl EntityQueryService {
         &self,
         target: &ContextTarget,
         query: &EntityQueryParameters,
+        window: &PageWindow,
+        count: CountPolicy,
         context: &ContextSpec,
     ) -> Result<(Vec<RetrievedEntity>, Option<i64>), EntityError> {
-        let compiled = self.compile_query_cached(query, context, LimitCap::Capped).await?;
-        // The opaque pagination cursor (clause 5.5.9.1) is a per-request
-        // position that never took part in compilation, so it is decoded and
-        // set on an owned copy here rather than being keyed into the compiled
-        // cache. A request without one keeps sharing the cached compilation.
-        let compiled = match decode_cursor(query.cursor.as_deref())? {
-            None => compiled,
-            Some(cursor) => {
-                let mut owned = Arc::unwrap_or_clone(compiled);
-                owned.keyset = Some(cursor);
-                Arc::new(owned)
-            }
-        };
+        let compiled = self.compile_query_cached(query, context).await?;
         // The spatial index narrows only the default `location` instances;
         // the store still evaluates the geo-query, so the refusal below reads
         // the selection the store is actually handed.
         let narrowed = self.spatial_prefilter(target, &compiled).await;
         refuse_unnarrowable(*self.query_store.profile(), &narrowed.selection)?;
-        let outcome = self.query_store.query_compiled(target, &narrowed).await?;
-        let mut page = finish_page(outcome, compiled.pagination)?;
-        // Clause 5.5.9.1: a backward or from-end keyset page was read
-        // descending so a single index scan could serve it; it is reversed
-        // here to the ascending order the client sees on every page.
-        if matches!(compiled.keyset, Some(PageCursor::Before(_) | PageCursor::End)) {
-            page.rows.reverse();
-        }
+        let outcome = self.query_store.query_compiled(target, &narrowed, window, count).await?;
+        let mut page = finish_page(outcome, window, count)?;
         for row in &mut page.rows {
             // The store decoded each state into its own allocation, so this
             // borrows it mutably without a copy.
@@ -281,18 +273,19 @@ impl EntityQueryService {
         Ok((page.rows, page.total_count))
     }
 
-    /// Execute a compiled query returning only entity identifiers
-    /// (clause 5.2.39 entity maps).
+    /// Execute a compiled query returning only the identifiers of the matching
+    /// entities `window` selects (clause 5.2.39 entity maps, and the
+    /// operations that act on every match).
     ///
     /// # Errors
     ///
     /// Reports [`EntityError::OperationNotSupported`] when the store cannot
     /// narrow a predicate of `compiled` at all (clause 5.5.2), and
     /// [`EntityError::Persistence`] when the store could not answer the query.
-    pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<Vec<Identifier>, EntityError> {
+    pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery, window: &PageWindow) -> Result<Vec<Identifier>, EntityError> {
         refuse_unnarrowable(*self.query_store.profile(), &compiled.selection)?;
-        let outcome = self.query_store.query_ids(target, compiled).await?;
-        self.finish_ids(target, outcome, compiled.pagination).await
+        let outcome = self.query_store.query_ids(target, compiled, window).await?;
+        self.finish_ids(target, outcome, window).await
     }
 }
 

@@ -9,12 +9,12 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
-    cursor::PageCursor,
+    count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
     entity_selection::ConsideredEntities,
-    ordering::sort_direction::SortDirection,
-    pagination::CountPolicy,
+    page_window::{PageStart, PageWindow},
     projection::projected_members::{ProjectedMembers, ScopeRetention},
+    read_order::ReadOrder,
 };
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{
@@ -24,6 +24,7 @@ use andromeda_postgresql_query::{
     error::RenderError,
     geo_predicate as geo_sql,
     geo_predicate::GeometrySource,
+    page_window::bound_to_window,
     q_predicate::{instance_scan::InstanceScan, projection as q_filter},
     scope_predicate::{ScopeTarget, condition as scope_condition},
     sort_key::{KeyOrder, NullPlacement, SortKey},
@@ -44,6 +45,18 @@ pub struct EntityQuery {
     pub select: SelectStatement,
     /// How the clause 6.3.13 total is read, when the query asked for one.
     pub total: EntityTotal,
+    /// The order the page's rows come back in, which the store presents
+    /// ascending.
+    pub read_order: ReadOrder,
+}
+
+/// A compiled identifier-only entity query.
+pub struct EntityIdsQuery {
+    /// The paginated statement selecting the matching entity identifiers.
+    pub select: SelectStatement,
+    /// The order the page's identifiers come back in, which the store presents
+    /// ascending.
+    pub read_order: ReadOrder,
 }
 
 /// How the store reads the total a counted entity query reports (clause
@@ -65,7 +78,8 @@ pub enum EntityTotal {
     Counted(SelectStatement),
 }
 
-/// Builds a parameterized SQL query to retrieve entity payloads.
+/// Builds a parameterized SQL query to retrieve the entity payloads `window`
+/// selects, counting every match when `count` asks for it.
 ///
 /// Generates filter conditions from the compiled query (IDs, types, attrs, q expression,
 /// geo filter, scope query), ordering, and pagination clauses, joining only the
@@ -80,7 +94,13 @@ pub enum EntityTotal {
 /// naming neither `maxDistance` nor `minDistance`, which clause 4.10 requires
 /// at least one of, and an `orderBy` distance term with no reference geometry
 /// anywhere in the query to measure from (clause 4.23).
-pub fn build_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &QueryNames) -> Result<EntityQuery, RenderError> {
+pub fn build_query(
+    target: &ContextTarget,
+    query: &CompiledEntityQuery,
+    window: &PageWindow,
+    count: CountPolicy,
+    names: &QueryNames,
+) -> Result<EntityQuery, RenderError> {
     let schema = schema_iden(target);
     let relations = EntityRelations::for_query(query, &names.types, schema.as_ref());
     let rows = relations.rows(schema.clone());
@@ -93,17 +113,18 @@ pub fn build_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &
     // is the only way the condition can reference the payload, so a condition
     // rendered against this statement's rows names nothing the count lacks.
     page.cond_where(condition.clone());
-    let keys = window_and_sort_keys(&mut page, &rows, query, &names.attributes)?;
+    let (keys, read_order) = window_and_sort_keys(&mut page, &rows, query, window, &names.attributes)?;
 
-    // An offset page piggybacks a requested total on every row; a keyset page
-    // cannot, since its rows are only those past the cursor.
-    let on_page_rows = match (query.pagination.count, &query.keyset) {
-        (CountPolicy::Emit, None) => CountPolicy::Emit,
-        (CountPolicy::Emit, Some(_)) | (CountPolicy::Omit, _) => CountPolicy::Omit,
+    // An offset page, and the first page of a cursor walk, piggyback a
+    // requested total on every row; a continued cursor page cannot, since its
+    // rows are only those past the cursor.
+    let counted_on_page = match (count, &window.start) {
+        (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(None)) => CountPolicy::Emit,
+        (CountPolicy::Emit, PageStart::Cursor(Some(_))) | (CountPolicy::Omit, _) => CountPolicy::Omit,
     };
-    let select = payloads_of(page, &rows, keys, on_page_rows);
+    let select = payloads_of(page, &rows, keys, counted_on_page);
 
-    let total = match query.pagination.count {
+    let total = match count {
         CountPolicy::Omit => EntityTotal::Omitted,
         CountPolicy::Emit => {
             let mut count_select = Query::select();
@@ -111,17 +132,18 @@ pub fn build_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &
             EntityRelations::for_count(query, &names.types, schema.as_ref()).apply_from(&mut count_select, schema.as_ref());
             count_select.cond_where(condition);
             let count_select = count_select.take();
-            match query.keyset {
-                None => EntityTotal::OnPageRows { empty_page: count_select },
-                Some(_) => EntityTotal::Counted(count_select),
+            match counted_on_page {
+                CountPolicy::Emit => EntityTotal::OnPageRows { empty_page: count_select },
+                CountPolicy::Omit => EntityTotal::Counted(count_select),
             }
         }
     };
 
-    Ok(EntityQuery { select, total })
+    Ok(EntityQuery { select, total, read_order })
 }
 
-/// Builds a parameterized SQL query to retrieve only entity IDs.
+/// Builds a parameterized SQL query to retrieve only the identifiers of the
+/// entities `window` selects.
 ///
 /// Similar to [`build_query`] but selects `id` instead of `payload`, used for
 /// operations that only need to identify matching entities; the document row
@@ -134,7 +156,7 @@ pub fn build_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &
 /// geometry with no EWKB spelling, and [`RenderError::Query`] for a `near`
 /// relation naming no distance (clause 4.10) or a distance ordering with no
 /// reference geometry (clause 4.23).
-pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &QueryNames) -> Result<SelectStatement, RenderError> {
+pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, window: &PageWindow, names: &QueryNames) -> Result<EntityIdsQuery, RenderError> {
     let schema = schema_iden(target);
     let relations = EntityRelations::for_query(query, &names.types, schema.as_ref());
     let rows = relations.rows(schema.clone());
@@ -145,68 +167,48 @@ pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, name
     relations.apply_from(&mut select, schema.as_ref());
     select.cond_where(condition);
 
-    for key in window_and_sort_keys(&mut select, &rows, query, &names.attributes)? {
+    let (keys, read_order) = window_and_sort_keys(&mut select, &rows, query, window, &names.attributes)?;
+    for key in keys {
         key.order_by(&mut select);
     }
 
-    Ok(select.take())
+    Ok(EntityIdsQuery {
+        select: select.take(),
+        read_order,
+    })
 }
 
-/// Add the result window to `select` and return the keys it is ordered by, in
-/// offset mode or keyset mode.
+/// Add the result window to `select` and return the keys it is ordered by and
+/// the order its rows come back in.
 ///
-/// In offset mode (clause 5.5.9.2) the statement carries `LIMIT`/`OFFSET` over
-/// the requested `orderBy` and its `id` tiebreaker. In keyset mode
-/// (clause 5.5.9.1) the `OFFSET` is dropped for the direction-appropriate
-/// predicate and ordering over the entity `id`: the same bare, C-collation `id`
-/// expression the implicit tiebreaker sorts on, which is why keyset mode is
-/// restricted to the default order. A backward or from-end page is ordered
-/// descending and reversed to ascending where the store reads the rows back.
+/// An offset window (clause 5.5.9.2) carries `LIMIT`/`OFFSET` over the
+/// requested `orderBy` and its `id` tiebreaker. A cursor window (clause
+/// 5.5.9.1) drops the `OFFSET` for the direction-appropriate predicate and
+/// ordering over the entity `id`: the same bare, C-collation `id` expression
+/// the implicit tiebreaker sorts on, which stays driven by its unique index in
+/// either direction -- an Index Scan Backward for the descending cases. The
+/// pagination policy never pairs a cursor with a requested ordering, which a
+/// cursor's identifier position cannot walk.
 ///
 /// # Errors
 ///
 /// Propagates the [`RenderError`] a distance `orderBy` term raises when it has
-/// no reference geometry to measure from (clause 4.23); keyset mode carries no
-/// `orderBy` and so never fails here.
+/// no reference geometry to measure from (clause 4.23); a cursor window carries
+/// no `orderBy` and so never fails here.
 fn window_and_sort_keys(
     select: &mut SelectStatement,
     rows: &EntityRowRefs,
     query: &CompiledEntityQuery,
+    window: &PageWindow,
     attributes: &ResolvedNames<AttributeName>,
-) -> Result<Vec<SortKey>, RenderError> {
-    match &query.keyset {
-        None => {
-            select.limit(u64::from(query.pagination.limit)).offset(u64::from(query.pagination.offset));
-            result_ordering::sort_keys(select, rows, &query.ordering, query.selection.geo.as_ref(), attributes)
-        }
-        Some(cursor) => {
-            select.limit(u64::from(query.pagination.limit));
-            Ok(vec![keyset_key(select, rows, cursor)])
-        }
-    }
-}
-
-/// Add the keyset predicate for one cursor direction and return the key its
-/// page is ordered by (clause 5.5.9.1).
-///
-/// The predicate and the key both read `entities.id` bare, so they share the
-/// column's C collation with the implicit `id` tiebreaker and stay driven by
-/// its unique index in either direction -- an Index Scan Backward for the
-/// descending cases, no sort node and no new index.
-fn keyset_key(select: &mut SelectStatement, rows: &EntityRowRefs, cursor: &PageCursor) -> SortKey {
-    let id = rows.identity_column(Entities::Id);
-    let direction = match cursor {
-        PageCursor::After(boundary) => {
-            select.and_where(id.clone().gt(SeaExpr::val(boundary.as_str()))); // clone: the key orders on the same column
-            SortDirection::Ascending
-        }
-        PageCursor::Before(boundary) => {
-            select.and_where(id.clone().lt(SeaExpr::val(boundary.as_str()))); // clone: the key orders on the same column
-            SortDirection::Descending
-        }
-        PageCursor::End => SortDirection::Descending,
+) -> Result<(Vec<SortKey>, ReadOrder), RenderError> {
+    let identifier = rows.identity_column(Entities::Id);
+    let read_order = bound_to_window(select, &identifier, window);
+    let keys = match window.start {
+        PageStart::Offset(_) => result_ordering::sort_keys(select, rows, &query.ordering, query.selection.geo.as_ref(), attributes)?,
+        PageStart::Cursor(_) => vec![SortKey::new(identifier, KeyOrder::new(read_order.into(), NullPlacement::Unstated))],
     };
-    SortKey::new(id, KeyOrder::new(direction, NullPlacement::Unstated))
+    Ok((keys, read_order))
 }
 
 /// Builds sea-query `Condition` from compiled entity query filters.
@@ -322,6 +324,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
         cursor::PageCursor,
         entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
         filter::{
@@ -337,7 +340,7 @@ mod tests {
             geometry::OrderingGeometry,
             term::{CompiledOrderTerm, OrderDirection, OrderTarget},
         },
-        pagination::CountPolicy,
+        page_window::{PageStart, PageWindow},
         pattern::Pattern,
         projection::{compiled::Projection, projected_members::ProjectedMembers, term::ProjectionTerm},
         scope::query::ScopeQuery,
@@ -358,12 +361,27 @@ mod tests {
         bind_values: Vec<Value>,
     }
 
+    /// The first offset page of 20, the window most tests read.
+    fn first_offset_page() -> PageWindow {
+        PageWindow::offset(20, 0)
+    }
+
+    /// Render an uncounted first offset page of an entity query.
+    fn build(query: &CompiledEntityQuery, names: &QueryNames) -> Built {
+        build_paged(query, &first_offset_page(), CountPolicy::Omit, names)
+    }
+
+    /// Render a counted first offset page of an entity query.
+    fn build_counted(query: &CompiledEntityQuery, names: &QueryNames) -> Built {
+        build_paged(query, &first_offset_page(), CountPolicy::Emit, names)
+    }
+
     /// Render an entity query the way the store executes it: the paginated
     /// statement and, when requested, its separate count, each with its own
     /// placeholder sequence.
-    fn build(query: &CompiledEntityQuery, names: &QueryNames) -> Built {
+    fn build_paged(query: &CompiledEntityQuery, window: &PageWindow, count: CountPolicy, names: &QueryNames) -> Built {
         let target = ContextTarget::Live;
-        let entity_query = build_query(&target, query, names).expect("valid entity query");
+        let entity_query = build_query(&target, query, window, count, names).expect("valid entity query");
         let (sql, values) = entity_query.select.build(PostgresQueryBuilder);
         let count_sql = match entity_query.total {
             EntityTotal::Omitted => None,
@@ -448,9 +466,8 @@ mod tests {
     /// it skips.
     #[test]
     fn a_payload_query_with_no_filter_joins_nothing_and_reads_the_page_documents_by_key() {
-        let mut q = empty_query();
-        q.pagination.offset = 5000;
-        let built = build(&q, &known_types());
+        let q = empty_query();
+        let built = build_paged(&q, &PageWindow::offset(20, 5000), CountPolicy::Omit, &known_types());
         assert_eq!(
             built.sql,
             concat!(
@@ -514,9 +531,8 @@ mod tests {
     /// the window cuts it, and carried out beside each payload.
     #[test]
     fn a_counted_query_counts_inside_the_page_and_carries_the_total_out() {
-        let mut q = empty_query();
-        q.pagination.count = CountPolicy::Emit;
-        let built = build(&q, &known_types());
+        let q = empty_query();
+        let built = build_counted(&q, &known_types());
         assert!(built.sql.contains(r#"COUNT(*) OVER () AS "total_count""#), "{}", built.sql);
         assert!(built.sql.contains(r#""page"."total_count" AS "total_count" FROM ("#), "{}", built.sql);
     }
@@ -566,7 +582,6 @@ mod tests {
 
     fn projected(projection: &Projection) -> CompiledEntityQuery {
         let mut q = empty_query();
-        q.pagination.count = CountPolicy::Emit;
         q.selection.projected_members = ProjectedMembers::of(projection);
         q
     }
@@ -594,7 +609,7 @@ mod tests {
                 ])
                 .build(),
         );
-        let built = build(&q, &speed_and_scope_are_known());
+        let built = build_counted(&q, &speed_and_scope_are_known());
         assert!(built.sql.contains(r#"JOIN "entity_search" ON"#), "{}", built.sql);
         assert!(built.sql.contains(r#""entity_search"."attribute_name_keys" @> (ARRAY[11])"#), "{}", built.sql);
         let count = built.count_sql.expect("count requested");
@@ -613,7 +628,7 @@ mod tests {
                 .omit(vec![ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope, speed_term()])
                 .build(),
         );
-        let built = build(&q, &speed_and_scope_are_known());
+        let built = build_counted(&q, &speed_and_scope_are_known());
         assert!(
             built
                 .sql
@@ -628,7 +643,7 @@ mod tests {
     #[test]
     fn a_pick_of_scope_selects_the_scoped_entities() {
         let q = projected(&Projection::builder().pick(vec![ProjectionTerm::Scope]).build());
-        let built = build(&q, &speed_and_scope_are_known());
+        let built = build_counted(&q, &speed_and_scope_are_known());
         assert!(built.sql.contains(r#"cardinality("entity_search"."scope_paths") > "#), "{}", built.sql);
     }
 
@@ -636,7 +651,7 @@ mod tests {
     #[test]
     fn a_pick_of_id_selects_every_entity() {
         let q = projected(&Projection::builder().pick(vec![ProjectionTerm::Id, speed_term()]).build());
-        let built = build(&q, &speed_and_scope_are_known());
+        let built = build_counted(&q, &speed_and_scope_are_known());
         assert!(!built.sql.contains("attribute_name_keys"), "{}", built.sql);
         assert!(!built.sql.contains("entity_search"), "{}", built.sql);
     }
@@ -783,13 +798,12 @@ mod tests {
     #[test]
     fn the_count_of_a_type_page_counts_the_walk() {
         let mut q = empty_query();
-        q.pagination.count = CountPolicy::Emit;
         q.selection.selectors = vec![
             EntitySelector::builder()
                 .type_expr(Some(TypeExpr::Type(iri("https://example.com/Vehicle"))))
                 .build(),
         ];
-        let count = build(&q, &known_types()).count_sql.expect("count requested");
+        let count = build_counted(&q, &known_types()).count_sql.expect("count requested");
         assert_eq!(
             count,
             r#"SELECT COUNT(*) FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1)) AS "selected" WHERE TRUE"#
@@ -853,13 +867,12 @@ mod tests {
     #[test]
     fn build_with_count() {
         let mut q = empty_query();
-        q.pagination.count = CountPolicy::Emit;
         q.selection.selectors = vec![
             EntitySelector::builder()
                 .type_expr(Some(TypeExpr::Type(iri("https://example.com/Vehicle"))))
                 .build(),
         ];
-        let built = build(&q, &known_types());
+        let built = build_counted(&q, &known_types());
         assert!(built.count_sql.is_some());
         assert!(built.count_sql.unwrap().contains("COUNT(*)"));
     }
@@ -948,13 +961,12 @@ mod tests {
         // placeholder sequence has to be identical up to the pagination
         // parameters the count query omits.
         let mut cq = empty_query();
-        cq.pagination.count = CountPolicy::Emit;
         cq.selection.q_expr = Some(Expr::Pred(Predicate::Ordering {
             path: QueryPath::Local(AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
             op: OrderingOp::Greater,
             rhs: Scalar::Number(50.into()),
         }));
-        let built = build(&cq, &temperature_is_known());
+        let built = build_counted(&cq, &temperature_is_known());
         let count_sql = built.count_sql.expect("count sql");
         let placeholders = |sql: &str| {
             let mut found: Vec<String> = Vec::new();
@@ -977,10 +989,8 @@ mod tests {
 
     #[test]
     fn build_with_limit_offset() {
-        let mut q = empty_query();
-        q.pagination.limit = 50;
-        q.pagination.offset = 100;
-        let built = build(&q, &known_types());
+        let q = empty_query();
+        let built = build_paged(&q, &PageWindow::offset(50, 100), CountPolicy::Omit, &known_types());
         assert!(built.sql.contains("LIMIT"));
         assert!(built.sql.contains("OFFSET"));
         // sea-query parameterizes limit/offset as bind values
@@ -991,14 +1001,26 @@ mod tests {
         id.parse().expect("valid URI")
     }
 
+    /// A cursor page of 20 starting at `cursor`.
+    fn cursor_page(cursor: PageCursor) -> PageWindow {
+        PageWindow {
+            limit: 20,
+            start: PageStart::Cursor(Some(cursor)),
+        }
+    }
+
     /// Clause 5.5.9.1: a forward cursor pages past the boundary identifier over
     /// the default `id` order -- `WHERE id > $x ORDER BY id ASC LIMIT n`, and no
     /// `OFFSET`, because the keyset predicate replaces the skip.
     #[test]
     fn build_with_keyset_after_pages_forward_ascending_without_offset() {
-        let mut q = empty_query();
-        q.keyset = Some(PageCursor::After(boundary("urn:ngsi-ld:Building:001")));
-        let built = build(&q, &known_types());
+        let q = empty_query();
+        let built = build_paged(
+            &q,
+            &PageWindow::after(20, boundary("urn:ngsi-ld:Building:001")),
+            CountPolicy::Omit,
+            &known_types(),
+        );
         assert!(built.sql.contains(r#""entities"."id" > $"#), "{}", built.sql);
         assert!(built.sql.contains(r#""entities"."id" AS "sort_0""#), "{}", built.sql);
         assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC LIMIT"#), "{}", built.sql);
@@ -1019,9 +1041,13 @@ mod tests {
     /// store reverses to ascending after fetching.
     #[test]
     fn build_with_keyset_before_pages_backward_descending_without_offset() {
-        let mut q = empty_query();
-        q.keyset = Some(PageCursor::Before(boundary("urn:ngsi-ld:Building:042")));
-        let built = build(&q, &known_types());
+        let q = empty_query();
+        let built = build_paged(
+            &q,
+            &cursor_page(PageCursor::Before(boundary("urn:ngsi-ld:Building:042"))),
+            CountPolicy::Omit,
+            &known_types(),
+        );
         assert!(built.sql.contains(r#""entities"."id" < $"#), "{}", built.sql);
         assert!(built.sql.contains(r#"ORDER BY "sort_0" DESC LIMIT"#), "{}", built.sql);
         assert!(built.sql.ends_with(r#"ORDER BY "page"."sort_0" DESC"#), "{}", built.sql);
@@ -1033,9 +1059,8 @@ mod tests {
     /// ascending. This is the Andromeda `last` anchor.
     #[test]
     fn build_with_keyset_end_takes_the_final_page_descending() {
-        let mut q = empty_query();
-        q.keyset = Some(PageCursor::End);
-        let built = build(&q, &known_types());
+        let q = empty_query();
+        let built = build_paged(&q, &cursor_page(PageCursor::End), CountPolicy::Omit, &known_types());
         assert!(built.sql.contains(r#"ORDER BY "sort_0" DESC LIMIT"#), "{}", built.sql);
         assert!(built.sql.ends_with(r#"ORDER BY "page"."sort_0" DESC"#), "{}", built.sql);
         assert!(
@@ -1053,11 +1078,10 @@ mod tests {
     /// statement carries no boundary predicate.
     #[test]
     fn a_counted_keyset_page_counts_the_whole_selection_separately() {
-        let mut q = empty_query();
-        q.pagination.count = CountPolicy::Emit;
-        q.keyset = Some(PageCursor::After(boundary("urn:ngsi-ld:Building:001")));
+        let q = empty_query();
         let target = ContextTarget::Live;
-        let entity_query = build_query(&target, &q, &known_types()).expect("valid entity query");
+        let window = PageWindow::after(20, boundary("urn:ngsi-ld:Building:001"));
+        let entity_query = build_query(&target, &q, &window, CountPolicy::Emit, &known_types()).expect("valid entity query");
         let (sql, _) = entity_query.select.build(PostgresQueryBuilder);
         assert!(!sql.contains("OVER ()"), "a keyset page carries no window count: {sql}");
         let count = match entity_query.total {
@@ -1074,10 +1098,9 @@ mod tests {
     /// the separate count kept for an empty page.
     #[test]
     fn a_counted_offset_page_carries_its_total_on_the_page_rows() {
-        let mut q = empty_query();
-        q.pagination.count = CountPolicy::Emit;
+        let q = empty_query();
         let target = ContextTarget::Live;
-        let entity_query = build_query(&target, &q, &known_types()).expect("valid entity query");
+        let entity_query = build_query(&target, &q, &first_offset_page(), CountPolicy::Emit, &known_types()).expect("valid entity query");
         let (sql, _) = entity_query.select.build(PostgresQueryBuilder);
         assert!(sql.contains("COUNT(*) OVER ()"), "{sql}");
         assert!(matches!(entity_query.total, EntityTotal::OnPageRows { .. }));
@@ -1086,11 +1109,12 @@ mod tests {
     /// The ids-only statement pages by keyset the same way the payload one does.
     #[test]
     fn build_ids_query_pages_by_keyset() {
-        let mut q = empty_query();
-        q.keyset = Some(PageCursor::After(boundary("urn:ngsi-ld:Building:001")));
+        let q = empty_query();
         let target = ContextTarget::Live;
-        let (sql, _values) = build_ids_query(&target, &q, &known_types())
+        let window = PageWindow::after(20, boundary("urn:ngsi-ld:Building:001"));
+        let (sql, _values) = build_ids_query(&target, &q, &window, &known_types())
             .expect("valid ids query")
+            .select
             .build(PostgresQueryBuilder);
         assert!(sql.contains(r#""entities"."id" > $"#), "{sql}");
         assert!(sql.contains(r#"ORDER BY "entities"."id" ASC"#), "{sql}");
@@ -1206,7 +1230,7 @@ mod tests {
             collation: None,
         }];
         let target = ContextTarget::Live;
-        let result = build_query(&target, &q, &known_types());
+        let result = build_query(&target, &q, &first_offset_page(), CountPolicy::Omit, &known_types());
         assert!(result.is_err());
     }
 
@@ -1530,5 +1554,42 @@ mod tests {
         );
         assert!(built.sql.contains("o''brien"), "{}", built.sql);
         assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
+    }
+
+    /// Clause 4.23: a requested ordering keeps its own sort keys, the `id`
+    /// tiebreaker last, under an offset window.
+    #[test]
+    fn requested_ordering_keeps_its_sort_keys_under_an_offset_window() {
+        let mut q = empty_query();
+        q.ordering.terms = vec![CompiledOrderTerm {
+            target: OrderTarget::Id,
+            direction: OrderDirection::Desc,
+            collation: None,
+        }];
+        let built = build_paged(&q, &PageWindow::offset(10, 30), CountPolicy::Omit, &known_types());
+        assert!(built.sql.contains("DESC"), "the requested direction stands: {}", built.sql);
+        assert!(built.sql.contains("LIMIT $1 OFFSET $2"), "{}", built.sql);
+        assert!(
+            !built.sql.contains(r#""entities"."id" >"#),
+            "an offset window carries no keyset predicate: {}",
+            built.sql
+        );
+    }
+
+    /// The first page of a counted cursor walk reads every match, so its total
+    /// is still carried on the page rows.
+    #[test]
+    fn a_counted_fresh_cursor_page_carries_its_total_on_the_page_rows() {
+        let q = empty_query();
+        let window = PageWindow {
+            limit: 20,
+            start: PageStart::Cursor(None),
+        };
+        let entity_query = build_query(&ContextTarget::Live, &q, &window, CountPolicy::Emit, &known_types()).expect("valid entity query");
+        let (sql, _) = entity_query.select.build(PostgresQueryBuilder);
+        assert!(sql.contains("COUNT(*) OVER ()"), "{sql}");
+        assert!(!sql.contains("OFFSET"), "{sql}");
+        assert!(matches!(entity_query.total, EntityTotal::OnPageRows { .. }));
+        assert_eq!(entity_query.read_order, ReadOrder::Ascending);
     }
 }

@@ -2,13 +2,17 @@
 //!
 //! Clause 5.5.9 offers two ways of pointing at a page: the opaque pointer of
 //! clause 5.5.9.1, which Andromeda carries as a keyset [`PageCursor`], and the
-//! transparent `limit`/`offset` pair of clause 5.5.9.2. A store pages its own
-//! rows itself. A collection assembled in memory -- the local entities merged
-//! with what context sources contributed (clause 5.7.2.4) -- is sorted by
-//! identifier and cut here instead, so either pointer selects from it exactly
-//! the elements it would have selected from a store holding the same rows.
+//! transparent `limit`/`offset` pair of clause 5.5.9.2. Which one a request
+//! walks by is decided once, by the pagination policy at the request boundary,
+//! and the resulting [`PageWindow`] is what every store and every in-memory
+//! cut is driven by. A store pages its own rows itself. A collection assembled
+//! in memory -- the local entities merged with what context sources
+//! contributed (clause 5.7.2.4) -- is sorted by identifier and cut here
+//! instead, so either pointer selects from it exactly the elements it would
+//! have selected from a store holding the same rows.
 
-use crate::cursor::PageCursor;
+use crate::{cursor::PageCursor, page_fullness::PageFullness, read_order::ReadOrder};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
 /// Where a page starts in an identifier-ordered collection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +22,21 @@ pub enum PageStart {
     /// Clause 5.5.9.1: continue from the opaque cursor the page was fetched
     /// under, or begin the walk when there is none.
     Cursor(Option<PageCursor>),
+}
+
+impl PageStart {
+    /// The order a store reads the page this start selects in.
+    ///
+    /// A backward cursor's page ends at its boundary and the from-end page at
+    /// the end of the collection, so both are read descending from that end
+    /// and reversed for presentation; every other page is read as presented.
+    #[must_use]
+    pub const fn read_order(&self) -> ReadOrder {
+        match self {
+            PageStart::Cursor(Some(PageCursor::Before(_) | PageCursor::End)) => ReadOrder::Descending,
+            PageStart::Offset(_) | PageStart::Cursor(None | Some(PageCursor::After(_))) => ReadOrder::Ascending,
+        }
+    }
 }
 
 /// The page a request asks for: how many elements, and from where.
@@ -30,14 +49,57 @@ pub struct PageWindow {
 }
 
 impl PageWindow {
+    /// The clause 5.5.9.2 window of `limit` elements after skipping `offset`.
+    #[must_use]
+    pub const fn offset(limit: u32, offset: u32) -> PageWindow {
+        PageWindow {
+            limit,
+            start: PageStart::Offset(offset),
+        }
+    }
+
+    /// The whole collection, for a reader that needs every match rather than
+    /// one page of them: an identifier set a map fixes, a purge, a candidate
+    /// set a later filter thins.
+    #[must_use]
+    pub const fn unbounded() -> PageWindow {
+        PageWindow::offset(u32::MAX, 0)
+    }
+
+    /// The `limit` elements that follow `boundary` in identifier order, the
+    /// step of an internal keyset walk that must neither skip nor repeat an
+    /// element while the collection changes under it.
+    #[must_use]
+    pub const fn after(limit: u32, boundary: Identifier) -> PageWindow {
+        PageWindow {
+            limit,
+            start: PageStart::Cursor(Some(PageCursor::After(boundary))),
+        }
+    }
+
+    /// Whether a page of `returned` elements filled this window.
+    ///
+    /// The one definition of the clause 6.3.10 page-fullness signal: a page is
+    /// full when it returned at least its limit.
+    #[must_use]
+    pub fn fullness(&self, returned: usize) -> PageFullness {
+        if returned >= usize::try_from(self.limit).unwrap_or(usize::MAX) {
+            PageFullness::Full
+        } else {
+            PageFullness::Short
+        }
+    }
+
     /// Cut this window from `sorted`, a collection sorted ascending by the
     /// identifier `key` reads, compared byte-wise as the store collates
     /// identifiers.
     ///
-    /// A forward cursor takes the elements past its boundary, a backward one the
-    /// elements closest before it, and the from-end cursor the final elements:
-    /// at most `limit` of them each time, in ascending order. These are the rows
-    /// a store's keyset read returns once a descending read is reversed, so a
+    /// An offset skips that many elements; it needs no particular order, so a
+    /// collection in a requested order is cut by it as well. A forward cursor
+    /// takes the elements past its boundary, a backward one the elements
+    /// closest before it, and the from-end cursor the final elements: at most
+    /// `limit` of them each time, in ascending order. These are the rows a
+    /// store's keyset read returns once a descending read is reversed, so a
     /// walk moves between a stored and a merged collection without skipping or
     /// repeating an element.
     #[must_use]
@@ -63,7 +125,9 @@ impl PageWindow {
 mod tests {
     use crate::{
         cursor::PageCursor,
+        page_fullness::PageFullness,
         page_window::{PageStart, PageWindow},
+        read_order::ReadOrder,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use pretty_assertions::assert_eq;
@@ -167,5 +231,45 @@ mod tests {
         }
         .cut(sorted, String::as_str);
         assert_eq!(page, vec!["urn:e:10".to_string(), "urn:e:9".to_string()]);
+    }
+
+    /// Clause 6.3.10: a page that returned its whole limit is full.
+    #[test]
+    fn a_window_is_full_when_it_returns_its_limit() {
+        assert_eq!(PageWindow::offset(3, 0).fullness(3), PageFullness::Full);
+    }
+
+    /// A page that returned fewer than its limit reached the end.
+    #[test]
+    fn a_window_is_short_below_its_limit() {
+        assert_eq!(PageWindow::offset(3, 0).fullness(2), PageFullness::Short);
+    }
+
+    /// A backward cursor and the from-end cursor are read descending from the
+    /// boundary they end at.
+    #[test]
+    fn backward_and_from_end_starts_read_descending() {
+        assert_eq!(PageStart::Cursor(Some(PageCursor::Before(uri("urn:e:5")))).read_order(), ReadOrder::Descending);
+        assert_eq!(PageStart::Cursor(Some(PageCursor::End)).read_order(), ReadOrder::Descending);
+    }
+
+    /// A forward cursor, an offset and a fresh walk are read as presented.
+    #[test]
+    fn forward_offset_and_fresh_starts_read_ascending() {
+        assert_eq!(PageStart::Cursor(Some(PageCursor::After(uri("urn:e:5")))).read_order(), ReadOrder::Ascending);
+        assert_eq!(PageStart::Offset(4).read_order(), ReadOrder::Ascending);
+        assert_eq!(PageStart::Cursor(None).read_order(), ReadOrder::Ascending);
+    }
+
+    /// The unbounded window cuts nothing from the collection.
+    #[test]
+    fn unbounded_window_cuts_nothing() {
+        assert_eq!(PageWindow::unbounded().cut(collection(), String::as_str), collection());
+    }
+
+    /// An internal keyset step continues strictly after its boundary.
+    #[test]
+    fn an_after_window_continues_past_its_boundary() {
+        assert_eq!(PageWindow::after(2, uri("urn:e:6")).cut(collection(), String::as_str), ids(&[7, 8]));
     }
 }

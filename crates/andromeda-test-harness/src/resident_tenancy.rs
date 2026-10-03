@@ -19,7 +19,7 @@ use andromeda_tenancy::{
     runtime::{TenantRuntimeManager, lease::LeasedState},
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
     status::TenantStatus,
-    tenant_keyset::TenantKeyset,
+    tenant_page_start::TenantPageStart,
     tenant_record::TenantRecord,
     tenant_ref::TenantRef,
     wake_schedule::{TenantWakeSchedule, WakeScheduleError},
@@ -93,7 +93,7 @@ impl TenantDatabase for FixedRegistry {
         Ok(self.named.contains(name).then(|| FixedRegistry::record(name)))
     }
 
-    async fn list_tenant_records(&self, _keyset: &TenantKeyset, _limit: i64) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
+    async fn list_tenant_records(&self, _start: &TenantPageStart, _limit: u32) -> Result<(Vec<TenantRecord>, i64), TenancyError> {
         let records: Vec<TenantRecord> = self.named.iter().map(FixedRegistry::record).collect();
         let total = i64::try_from(records.len()).unwrap_or(i64::MAX);
         Ok((records, total))

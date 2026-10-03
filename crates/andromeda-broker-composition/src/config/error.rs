@@ -7,6 +7,7 @@ use andromeda_federation::config::FederationConfigError;
 use andromeda_http_server::config::ServerConfigError;
 use andromeda_http_stack::config::HttpStackConfigError;
 use andromeda_jsonld::config::JsonLdConfigError;
+use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicyError;
 use andromeda_postgresql_context_store::config::DatabaseConfigError;
 use andromeda_server_tls::config::TlsConfigError;
 use andromeda_snapshot::config::SnapshotConfigError;
@@ -76,6 +77,9 @@ pub(crate) enum ConfigurationError {
     /// The `[extensions]` section violated its declared invariant.
     #[error("invalid configuration: {0}")]
     Extensions(#[from] ExtensionsConfigError),
+    /// `[pagination]` and `[extensions]` together name no pagination policy.
+    #[error("invalid configuration: {0}")]
+    Pagination(#[from] PaginationPolicyError),
     /// A listener that terminates TLS has no usable `[tls]` identity.
     #[error("invalid configuration: {0}")]
     Tls(#[from] TlsConfigError),

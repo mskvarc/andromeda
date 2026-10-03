@@ -16,7 +16,7 @@
 //! the columns the page projected its keys under: clause 4.23.1 returns the
 //! entities sorted, and clause 5.5.9 pages over that order.
 
-use andromeda_ngsi_ld_query::pagination::CountPolicy;
+use andromeda_ngsi_ld_query::count_policy::CountPolicy;
 use andromeda_postgresql_query::{entity_row_refs::EntityRowRefs, sort_key::SortKey};
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments};
 use andromeda_postgresql_seaquery::{aggregate::count_over_all, branch::qualified};
@@ -129,7 +129,7 @@ fn stored_row_lookup(rows: &EntityRowRefs) -> SelectStatement {
 #[cfg(test)]
 mod tests {
     use crate::entity_page::payloads_of;
-    use andromeda_ngsi_ld_query::{ordering::sort_direction::SortDirection, pagination::CountPolicy};
+    use andromeda_ngsi_ld_query::{count_policy::CountPolicy, ordering::sort_direction::SortDirection};
     use andromeda_postgresql_query::{
         entity_row_refs::EntityRowRefs,
         sort_key::{KeyOrder, NullPlacement, SortKey},

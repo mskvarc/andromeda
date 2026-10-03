@@ -16,6 +16,7 @@ use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_http_stack::config::HttpStackConfig;
 use andromeda_http3_server::config::Http3Config;
 use andromeda_jsonld::config::JsonLdConfig;
+use andromeda_ngsi_ld_request::pagination::config::PaginationConfig;
 use andromeda_postgresql_atomic_write::config::AtomicWriteConfig;
 use andromeda_postgresql_context_store::config::DatabaseConfig;
 use andromeda_server_tls::config::TlsConfig;
@@ -127,8 +128,13 @@ pub struct RuntimeConfig {
     /// Management-plane topology and metrics-exposure configuration.
     pub management: ManagementConfig,
 
-    /// Opt-in, non-standard extension configuration (off by default).
+    /// Opt-in, non-standard extension configuration (off by default, but for
+    /// cursor pagination).
     pub extensions: ExtensionsConfig,
+
+    /// How a collection request that names neither `offset` nor `cursor` is
+    /// paged.
+    pub pagination: PaginationConfig,
 }
 
 impl RuntimeConfig {
@@ -335,6 +341,7 @@ mod tests {
     use andromeda_configuration_scalars::human_duration::HumanDuration;
     use andromeda_entity::spatial_config::SpatialConsistency;
     use andromeda_http_stack::config::{compression::CompressionQuality, cors::CorsMode};
+    use andromeda_ngsi_ld_request::pagination::paging_mode::PagingMode;
     use serial_test::serial;
     use std::{
         env,
@@ -765,5 +772,31 @@ port = 1600
         assert!(rendered.contains("mode = \"separate-port\""), "{rendered}");
         assert!(rendered.contains("port = 1086"), "{rendered}");
         assert!(rendered.contains("metrics = \"disabled\""), "{rendered}");
+    }
+
+    #[test]
+    fn generated_config_renders_the_pagination_section() {
+        let rendered = <RuntimeConfig as TomlComment>::default_toml();
+        assert!(rendered.contains("[pagination]"), "{rendered}");
+        assert!(rendered.contains("default_mode = \"cursor\""), "{rendered}");
+        assert!(rendered.contains("cursor_pagination = \"enabled\""), "{rendered}");
+    }
+
+    #[test]
+    #[serial]
+    fn env_overrides_select_offset_default() {
+        unsafe { env::set_var("ANDROMEDA__PAGINATION__DEFAULT_MODE", "offset") };
+        let config = load_env_only();
+        unsafe { env::remove_var("ANDROMEDA__PAGINATION__DEFAULT_MODE") };
+        pretty_assertions::assert_eq!(config.pagination.default_mode, PagingMode::Offset);
+    }
+
+    #[test]
+    #[serial]
+    fn env_disabling_cursor_pagination_with_the_cursor_default_is_refused_at_load() {
+        unsafe { env::set_var("ANDROMEDA__EXTENSIONS__CURSOR_PAGINATION", "disabled") };
+        let loaded = RuntimeConfig::load(None, ServerOverrides::default());
+        unsafe { env::remove_var("ANDROMEDA__EXTENSIONS__CURSOR_PAGINATION") };
+        assert!(matches!(loaded, Err(ConfigurationError::Pagination(_))));
     }
 }

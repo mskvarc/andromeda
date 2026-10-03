@@ -41,19 +41,6 @@ const DEFAULT_CAPACITY: u64 = 1024;
 /// Default idle time-to-live for cache entries.
 const DEFAULT_TTL: Duration = Duration::from_secs(300);
 
-/// Whether a compilation applies the broker's `limit` cap.
-///
-/// Part of the cache key: the capped and uncapped compilations of the same
-/// parameters differ in their pagination, so they are two entries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum LimitCap {
-    /// Apply the broker's maximum page size.
-    Capped,
-    /// Honour the requested limit unchanged, for internal callers that manage
-    /// their own result-size constraints.
-    Uncapped,
-}
-
 /// Key identifying a unique compilation output.
 ///
 /// Two compilations with identical keys produce identical [`CompiledEntityQuery`]
@@ -68,8 +55,6 @@ pub enum LimitCap {
 pub struct CompiledQueryKey {
     /// Fingerprint of the `@context` every term is expanded against.
     context_digest: u64,
-    /// Which pagination cap the compilation applies.
-    limit_cap: LimitCap,
     /// Canonical rendering of every parameter that influences compilation.
     parameters: Box<str>,
 }
@@ -77,7 +62,10 @@ pub struct CompiledQueryKey {
 impl CompiledQueryKey {
     /// Construct a cache key from the inputs to
     /// [`EntityQueryService::compile_query`](crate::query::EntityQueryService::compile_query).
-    pub fn from_params(params: &EntityQueryParameters, context: &ContextSpec, limit_cap: LimitCap) -> CompiledQueryKey {
+    ///
+    /// The page the query answers with is not part of the key: it never takes
+    /// part in compilation, so every page of one query shares one entry.
+    pub fn from_params(params: &EntityQueryParameters, context: &ContextSpec) -> CompiledQueryKey {
         let mut parameters = String::new();
         let id_pattern = params.id_pattern.as_ref().map(ToString::to_string);
         let q = params.q.as_ref().map(ToString::to_string);
@@ -109,10 +97,6 @@ impl CompiledQueryKey {
         }
         push_ordering_geometry(&mut parameters, params.ordering.geometry.as_ref());
         push_order_terms(&mut parameters, &params.ordering.order_by);
-        for field in [params.limit, params.offset] {
-            push_field(&mut parameters, field.map(|value| value.to_string()).as_deref());
-        }
-        push_field(&mut parameters, params.count.map(|value| value.to_string()).as_deref());
 
         // The structured POST selectors (clause 5.2.33) are part of the key: two
         // bodies that flatten to the same `id`/`type` summary but group their
@@ -129,7 +113,6 @@ impl CompiledQueryKey {
 
         CompiledQueryKey {
             context_digest: context_digest(context),
-            limit_cap,
             parameters: parameters.into_boxed_str(),
         }
     }
@@ -311,7 +294,7 @@ impl Default for CompiledQueryCache {
 
 #[cfg(test)]
 mod tests {
-    use crate::compiled_cache::{CompiledQueryKey, LimitCap, context_digest};
+    use crate::compiled_cache::{CompiledQueryKey, context_digest};
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
     use iri_rs::IriBuf;
@@ -322,25 +305,28 @@ mod tests {
         serde_urlencoded::from_str(query).expect("valid query string")
     }
 
-    fn key(query: &str, limit_cap: LimitCap) -> CompiledQueryKey {
-        CompiledQueryKey::from_params(&params(query), &ContextSpec::default(), limit_cap)
+    fn key(query: &str) -> CompiledQueryKey {
+        CompiledQueryKey::from_params(&params(query), &ContextSpec::default())
     }
 
     #[test]
     fn identical_parameters_produce_one_key() {
-        assert_eq!(key("q=speed>50", LimitCap::Capped), key("q=speed>50", LimitCap::Capped));
+        assert_eq!(key("q=speed>50"), key("q=speed>50"));
     }
 
+    /// The page never takes part in compilation, so two pages of one query
+    /// share one compilation.
     #[test]
-    fn the_pagination_cap_is_part_of_the_key() {
-        assert_ne!(key("q=speed>50", LimitCap::Capped), key("q=speed>50", LimitCap::Uncapped));
+    fn two_pages_of_one_query_share_one_compilation() {
+        assert_eq!(key("q=speed>50&limit=10"), key("q=speed>50&limit=20&offset=40"));
+        assert_eq!(key("q=speed>50"), key("q=speed>50&cursor="));
     }
 
     /// The rendering is length-prefixed precisely so adjacent parameter values
     /// cannot impersonate a different parameter boundary.
     #[test]
     fn a_value_containing_the_separator_cannot_impersonate_another_parameter() {
-        assert_ne!(key("attrs=ab&q=c", LimitCap::Capped), key("attrs=a&q=bc", LimitCap::Capped));
+        assert_ne!(key("attrs=ab&q=c"), key("attrs=a&q=bc"));
     }
 
     #[test]
@@ -350,19 +336,15 @@ mod tests {
 
     #[test]
     fn different_parameters_produce_different_keys() {
-        assert_ne!(key("q=speed>50", LimitCap::Capped), key("q=speed>10", LimitCap::Capped));
-        assert_ne!(key("limit=10", LimitCap::Capped), key("limit=20", LimitCap::Capped));
+        assert_ne!(key("q=speed>50"), key("q=speed>10"));
     }
 
     #[test]
     fn typed_identifier_and_dataset_values_are_part_of_the_key() {
+        assert_ne!(key("id=urn%3Angsi-ld%3AEntity%3Aa"), key("id=urn%3Angsi-ld%3AEntity%3Ab"));
         assert_ne!(
-            key("id=urn%3Angsi-ld%3AEntity%3Aa", LimitCap::Capped),
-            key("id=urn%3Angsi-ld%3AEntity%3Ab", LimitCap::Capped)
-        );
-        assert_ne!(
-            key("type=Vehicle&datasetId=urn%3Angsi-ld%3ADataset%3Aa", LimitCap::Capped),
-            key("type=Vehicle&datasetId=urn%3Angsi-ld%3ADataset%3Ab", LimitCap::Capped)
+            key("type=Vehicle&datasetId=urn%3Angsi-ld%3ADataset%3Aa"),
+            key("type=Vehicle&datasetId=urn%3Angsi-ld%3ADataset%3Ab")
         );
     }
 

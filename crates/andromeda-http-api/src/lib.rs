@@ -26,6 +26,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-telemetry",
         "andromeda-http-temporal",
         "andromeda-http-tenancy",
+        "andromeda-ngsi-ld-request",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-extensions",

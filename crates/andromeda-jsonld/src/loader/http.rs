@@ -81,7 +81,7 @@ enum Resolution {
     /// A stored `@context` of the tenant, looked for under its identifier.
     Stored(IriBuf),
     /// Any other reference, resolved as the URL it is.
-    Url(CachedCopy),
+    Url,
 }
 
 impl HttpContextLoader {
@@ -185,7 +185,7 @@ impl HttpContextLoader {
                 // as the URL it is, so its entry is under that URL.
                 Some(_) | None => self.cache.get(url).await,
             },
-            Resolution::Url(_) => self.cache.get(url).await,
+            Resolution::Url => self.cache.get(url).await,
         };
         Ok(held.map(|loaded| loaded.value))
     }
@@ -246,11 +246,7 @@ impl HttpContextLoader {
                     kind: LoaderErrorKind::StoredIdentifier(Arc::new(not_an_iri)),
                 })
             }),
-            // Clause 4.14: another tenant's stored context is not this tenant's
-            // to read, and the broker holds no Cached row for a URL shaped like
-            // its own.
-            HostedReference::OtherTenant => Ok(Resolution::Url(CachedCopy::Forbidden)),
-            HostedReference::Unrelated => Ok(Resolution::Url(CachedCopy::Recorded)),
+            HostedReference::Unrelated => Ok(Resolution::Url),
         }
     }
 
@@ -259,17 +255,16 @@ impl HttpContextLoader {
     /// A reference to one of the tenant's own stored `@context`s that the
     /// tenant holds is resolved from storage by its identifier (clause 5.13.1
     /// serves it "on-demand"), never fetched over HTTP from this broker. One
-    /// the tenant does not hold may be another broker's, and one naming another
-    /// tenant is not this tenant's to read, so both are resolved as the URL
-    /// they are, but their download is never recorded as a "Cached" copy: the
-    /// broker holds no Cached row for a URL shaped like its own.
+    /// the tenant does not hold may be another broker's, so it is resolved as
+    /// the URL it is, but its download is never recorded as a "Cached" copy:
+    /// the broker holds no Cached row for a URL shaped like its own.
     async fn load_entry(&self, requested: &IriBuf) -> Result<LoadedContext, Arc<LoaderError>> {
         let loaded = match self.resolution_of(requested)? {
             Resolution::Stored(identifier) => match self.load_stored(&identifier).await? {
                 StoredLookup::Held(loaded) => *loaded,
                 StoredLookup::NotHeld => self.load_url(requested, CachedCopy::Forbidden).await?,
             },
-            Resolution::Url(cached_copy) => self.load_url(requested, cached_copy).await?,
+            Resolution::Url => self.load_url(requested, CachedCopy::Recorded).await?,
         };
         note_source(requested, &loaded.value);
         Ok(loaded)

@@ -20,7 +20,10 @@ use andromeda_ngsi_ld_model::{
     subscription::{Subscription, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-use andromeda_ngsi_ld_query::cursor::PageCursor;
+use andromeda_ngsi_ld_query::{
+    cursor::PageCursor,
+    page_window::{PageStart, PageWindow},
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -76,12 +79,8 @@ impl SubscriptionStore for DeletingStore {
         Err(unused("get"))
     }
 
-    async fn list(&self, _target: &ContextTarget, _limit: Option<i64>, _offset: Option<i64>) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
+    async fn list(&self, _target: &ContextTarget, _window: &PageWindow) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
         Err(unused("list"))
-    }
-
-    async fn list_keyset(&self, _target: &ContextTarget, _cursor: Option<&PageCursor>, _limit: i64) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
-        Err(unused("list_keyset"))
     }
 
     async fn delete(&self, _target: &ContextTarget, _id: &Identifier) -> Result<u64, SubscriptionError> {
@@ -286,12 +285,8 @@ impl SubscriptionStore for UpdatingStore {
         }))
     }
 
-    async fn list(&self, _target: &ContextTarget, _limit: Option<i64>, _offset: Option<i64>) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
+    async fn list(&self, _target: &ContextTarget, _window: &PageWindow) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
         Err(unused("list"))
-    }
-
-    async fn list_keyset(&self, _target: &ContextTarget, _cursor: Option<&PageCursor>, _limit: i64) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
-        Err(unused("list_keyset"))
     }
 
     async fn delete(&self, _target: &ContextTarget, _id: &Identifier) -> Result<u64, SubscriptionError> {
@@ -434,4 +429,175 @@ async fn an_update_naming_a_jsonld_context_replaces_the_stored_one() {
     let written = written_context_after_update(json!({ "jsonldContext": replacement }), &ContextSpec::none()).await;
 
     assert_eq!(written.as_ref().map(IriBuf::as_str), Some(replacement));
+}
+
+/// A store holding five entity subscriptions, `urn:ngsi-ld:Subscription:1` to
+/// `:5`, which lists the page a window cuts from them in identifier order, as
+/// the PostgreSQL store does.
+struct ListingStore {
+    stored: Vec<Subscription>,
+}
+
+impl ListingStore {
+    fn of_five() -> ListingStore {
+        let stored = (1..=5)
+            .map(|index| {
+                serde_json::from_value(json!({
+                    "id": format!("urn:ngsi-ld:Subscription:{index}"),
+                    "type": "Subscription",
+                    "entities": [{ "type": "https://example.com/Vehicle" }],
+                    "notification": { "endpoint": { "uri": "http://receiver.example.com/notify" } },
+                    "status": "active",
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "modifiedAt": "2026-01-01T00:00:00Z"
+                }))
+                .expect("the fixture is a valid subscription")
+            })
+            .collect();
+        ListingStore { stored }
+    }
+}
+
+#[async_trait]
+impl SubscriptionStore for ListingStore {
+    async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
+        Err(unused("get"))
+    }
+
+    async fn list(&self, _target: &ContextTarget, window: &PageWindow) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
+        let total = i64::try_from(self.stored.len()).expect("five subscriptions");
+        // clone: every listing hands back its own copies of the stored resources.
+        Ok((window.cut(self.stored.clone(), |subscription| subscription.id.as_str()), total))
+    }
+
+    async fn delete(&self, _target: &ContextTarget, _id: &Identifier) -> Result<u64, SubscriptionError> {
+        Err(unused("delete"))
+    }
+
+    async fn exists(&self, _target: &ContextTarget, _id: &Identifier) -> Result<bool, SubscriptionError> {
+        Err(unused("exists"))
+    }
+
+    async fn list_active(&self, _target: &ContextTarget) -> Result<Vec<StoredSubscription>, SubscriptionError> {
+        Err(unused("list_active"))
+    }
+
+    async fn claim_notification_slot(
+        &self,
+        _target: &ContextTarget,
+        _id: &Identifier,
+        _gate: NotificationSlotGate,
+    ) -> Result<NotificationSlot, SubscriptionError> {
+        Err(unused("claim_notification_slot"))
+    }
+
+    async fn mark_success(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
+        Err(unused("mark_success"))
+    }
+
+    async fn mark_failure(&self, _target: &ContextTarget, _id: &Identifier) -> Result<(), SubscriptionError> {
+        Err(unused("mark_failure"))
+    }
+
+    async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Identifier>, SubscriptionError> {
+        Err(unused("expire_due"))
+    }
+
+    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Subscription>, SubscriptionError> {
+        Err(unused("find_due_interval_subscriptions"))
+    }
+
+    async fn next_interval_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Option<DateTime<Utc>>, SubscriptionError> {
+        Err(unused("next_interval_due"))
+    }
+
+    async fn advance_interval_anchor(&self, _target: &ContextTarget, _id: &Identifier, _cutoff: DateTime<Utc>) -> Result<(), SubscriptionError> {
+        Err(unused("advance_interval_anchor"))
+    }
+
+    async fn create_subscription(
+        &self,
+        _target: &ContextTarget,
+        _id: &Identifier,
+        _fields: &SubscriptionFields<'_>,
+        _status: SubscriptionStatus,
+    ) -> Result<(), SubscriptionError> {
+        Err(unused("create_subscription"))
+    }
+
+    async fn update_subscription(
+        &self,
+        _target: &ContextTarget,
+        _id: &Identifier,
+        _fields: &SubscriptionFields<'_>,
+        _status: SubscriptionStatus,
+    ) -> Result<u64, SubscriptionError> {
+        Err(unused("update_subscription"))
+    }
+}
+
+/// The identifiers, total and boundary one listing page answers with.
+async fn listed(window: &PageWindow) -> (Vec<String>, i64, Option<(Identifier, Identifier)>) {
+    let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+    let service = SubscriptionService::new(
+        Arc::new(ListingStore::of_five()),
+        // clone: the service and the variant each own an engine handle.
+        engine.clone(),
+        EntitySubscriptionVariant::new(engine),
+        None,
+        Arc::new(AcceptingEndpointValidator),
+        GeometryCensusLimits {
+            positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+            values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+        },
+    );
+    let listing = service
+        .list_for_response(&ContextTarget::Live, window, &ContextSpec::none())
+        .await
+        .expect("the store lists");
+    let ids = listing
+        .subscriptions
+        .iter()
+        .filter_map(|subscription| subscription.get("id").and_then(Value::as_str).map(str::to_owned))
+        .collect();
+    (ids, listing.total, listing.boundary)
+}
+
+fn subscription_ids(indices: &[u8]) -> Vec<String> {
+    indices.iter().map(|index| format!("urn:ngsi-ld:Subscription:{index}")).collect()
+}
+
+/// Clause 5.5.9.2: an offset listing is one page of the identifier-ordered
+/// collection, with the whole collection's total and its boundary.
+#[tokio::test]
+async fn an_offset_listing_answers_its_page_total_and_boundary() {
+    let (ids, total, boundary) = listed(&PageWindow::offset(2, 0)).await;
+    assert_eq!(ids, subscription_ids(&[1, 2]));
+    assert_eq!(total, 5);
+    assert_eq!(boundary, Some((uri("urn:ngsi-ld:Subscription:1"), uri("urn:ngsi-ld:Subscription:2"))));
+}
+
+/// Clause 5.5.9.1: the first page of a cursor walk starts the collection.
+#[tokio::test]
+async fn a_fresh_cursor_listing_starts_the_collection() {
+    let (ids, _, _) = listed(&PageWindow {
+        limit: 2,
+        start: PageStart::Cursor(None),
+    })
+    .await;
+    assert_eq!(ids, subscription_ids(&[1, 2]));
+}
+
+/// A backward cursor answers the page before its boundary, ascending, and
+/// the boundary it reports is that page's own.
+#[tokio::test]
+async fn a_backward_cursor_listing_answers_the_page_before_its_boundary() {
+    let (ids, total, boundary) = listed(&PageWindow {
+        limit: 2,
+        start: PageStart::Cursor(Some(PageCursor::Before(uri("urn:ngsi-ld:Subscription:4")))),
+    })
+    .await;
+    assert_eq!(ids, subscription_ids(&[2, 3]));
+    assert_eq!(total, 5);
+    assert_eq!(boundary, Some((uri("urn:ngsi-ld:Subscription:2"), uri("urn:ngsi-ld:Subscription:3"))));
 }

@@ -26,6 +26,8 @@ pub enum Extension {
     TemporalAggregationGrouping,
     /// Tenant management on `/tenants` (introspection and suspend/resume).
     TenantManagement,
+    /// Opaque, keyset-backed cursor pagination (clause 5.5.9.1).
+    CursorPagination,
 }
 
 /// The extensions that are actually on for this process.
@@ -55,6 +57,7 @@ impl ExtensionsConfig {
             (self.purge_dataset_scope, Extension::PurgeDatasetScope),
             (self.temporal_aggregation_grouping, Extension::TemporalAggregationGrouping),
             (self.tenant_management, Extension::TenantManagement),
+            (self.cursor_pagination, Extension::CursorPagination),
         ] {
             if matches!(mode, HttpFeatureMode::Enabled) {
                 enabled.insert(extension);
@@ -108,6 +111,12 @@ impl EnabledExtensions {
         self.enabled.contains(Extension::TenantManagement)
     }
 
+    /// Whether opaque cursor pagination is enabled.
+    #[must_use]
+    pub fn cursor_pagination_enabled(&self) -> bool {
+        self.enabled.contains(Extension::CursorPagination)
+    }
+
     /// Whether any extension at all is enabled.
     #[must_use]
     pub fn any_enabled(&self) -> bool {
@@ -127,19 +136,20 @@ mod tests {
             purge_dataset_scope: HttpFeatureMode::Enabled,
             temporal_aggregation_grouping: HttpFeatureMode::Enabled,
             tenant_management: HttpFeatureMode::Enabled,
+            cursor_pagination: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 100,
             temporal_aggregation_grouping_max_groups: 100,
         }
     }
 
     #[test]
-    fn the_default_configuration_enables_nothing() {
+    fn the_default_configuration_enables_cursor_pagination_alone() {
         let enabled = ExtensionsConfig::default().resolve();
         assert!(!enabled.temporal_delete_by_query_enabled());
         assert!(!enabled.purge_dataset_scope_enabled());
         assert!(!enabled.temporal_aggregation_grouping_enabled());
         assert!(!enabled.tenant_management_enabled());
-        assert!(!enabled.any_enabled());
+        assert!(enabled.cursor_pagination_enabled());
     }
 
     #[test]
@@ -149,6 +159,7 @@ mod tests {
         assert!(enabled.purge_dataset_scope_enabled());
         assert!(enabled.temporal_aggregation_grouping_enabled());
         assert!(enabled.tenant_management_enabled());
+        assert!(enabled.cursor_pagination_enabled());
         assert!(enabled.any_enabled());
     }
 
@@ -164,6 +175,19 @@ mod tests {
         assert!(!enabled.purge_dataset_scope_enabled());
         assert!(!enabled.temporal_aggregation_grouping_enabled());
         assert!(!enabled.tenant_management_enabled());
+        assert!(!enabled.cursor_pagination_enabled());
+    }
+
+    /// The conformance override forces the default-on cursor pagination off
+    /// like every other extension.
+    #[test]
+    fn conformance_mode_forces_cursor_pagination_off() {
+        let config = ExtensionsConfig {
+            conformance_mode: HttpFeatureMode::Enabled,
+            ..ExtensionsConfig::default()
+        };
+        assert!(!config.resolve().cursor_pagination_enabled());
+        assert!(!config.resolve().any_enabled());
     }
 
     #[test]

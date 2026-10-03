@@ -1,6 +1,6 @@
 //! The tenant registry this crate asks for and does not provide.
 
-use crate::{database_name::TenantDatabaseName, error::TenancyError, tenant_keyset::TenantKeyset, tenant_record::TenantRecord};
+use crate::{database_name::TenantDatabaseName, error::TenancyError, tenant_page_start::TenantPageStart, tenant_record::TenantRecord};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use async_trait::async_trait;
 
@@ -36,9 +36,10 @@ pub trait TenantDatabase: Send + Sync + 'static {
     async fn tenant_record(&self, name: &TenantName) -> Result<Option<TenantRecord>, TenancyError>;
 
     /// A page of named-tenant registry rows in name order, with the collection
-    /// total, positioned by `keyset` and capped at `limit`.
+    /// total, positioned by `start` and capped at `limit`. The page is returned
+    /// ascending by name whichever direction it was read in.
     #[must_use = "tenant listings must be awaited"]
-    async fn list_tenant_records(&self, keyset: &TenantKeyset, limit: i64) -> Result<(Vec<TenantRecord>, i64), TenancyError>;
+    async fn list_tenant_records(&self, start: &TenantPageStart, limit: u32) -> Result<(Vec<TenantRecord>, i64), TenancyError>;
 
     /// Register the tenant and prepare its database.
     ///

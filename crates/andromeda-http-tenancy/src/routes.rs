@@ -56,14 +56,15 @@ impl TenancyRoutes {
 mod tests {
     use crate::routes::{TenancyRoutes, TenantManagement};
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+    use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
     use andromeda_tenancy::{
         administration::TenantAdministration,
         database_name::TenantDatabaseName,
         error::TenancyError,
         residency::TenantResidency,
         status::TenantStatus,
-        tenant_keyset::TenantKeyset,
         tenant_listing::TenantListing,
+        tenant_page_start::TenantPageStart,
         tenant_record::TenantRecord,
         tenant_usage::TenantUsage,
         tenant_view::TenantView,
@@ -71,6 +72,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use axum::{
+        Extension,
         Router,
         body::Body,
         http::{Method, Request, StatusCode},
@@ -103,7 +105,7 @@ mod tests {
             Ok(Some(view(name.as_str())))
         }
 
-        async fn list_tenants(&self, _keyset: &TenantKeyset, _limit: i64) -> Result<TenantListing, TenancyError> {
+        async fn list_tenants(&self, _start: &TenantPageStart, _limit: u32) -> Result<TenantListing, TenancyError> {
             Ok(TenantListing::new(vec![view("acme")], 1))
         }
 
@@ -130,7 +132,10 @@ mod tests {
     fn routes(management: TenantManagement) -> Router {
         let administration: Arc<dyn TenantAdministration> = Arc::new(FakeAdministration);
         let usage: Arc<dyn TenantUsageProbe> = Arc::new(FakeUsage);
-        TenancyRoutes::new(administration, usage, management).into_router()
+        // The API assembly installs the pagination policy on every request.
+        TenancyRoutes::new(administration, usage, management)
+            .into_router()
+            .layer(Extension(PaginationPolicy::CursorDefault))
     }
 
     #[tokio::test]

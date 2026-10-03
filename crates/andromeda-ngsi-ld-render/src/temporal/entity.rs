@@ -256,7 +256,6 @@ mod tests {
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
-        pagination::Pagination,
         projection::{compiled::Projection, term::ProjectionTerm},
         temporal::{
             compiled::CompiledTemporalQuery,
@@ -312,7 +311,6 @@ mod tests {
                     .sys_attrs(SysAttrsInclusion::Strip)
                     .build(),
             )
-            .pagination(Pagination::DEFAULT)
             .projection(projection)
             .build()
     }

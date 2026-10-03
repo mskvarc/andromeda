@@ -56,8 +56,9 @@ async fn source_identity_returns_conformant_identity() {
 /// The deployment's configured `contextSourceExtras` is preserved byte-identically
 /// with no JSON-LD expansion (Table 5.2.40-1: "raw un-expandable JSON which
 /// shall not be interpreted as JSON-LD using the supplied @context"). The
-/// compose stack configures `{"deployment":"distop"}` on broker A. Confirms
-/// REQ-REG-48.
+/// compose stack configures `{"deployment":"distop"}` on broker A; the enabled
+/// extensions are advertised beside it under `extensions`, which by default
+/// names cursor pagination alone. Confirms REQ-REG-48.
 #[tokio::test]
 async fn source_identity_preserves_extras_verbatim() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -72,8 +73,8 @@ async fn source_identity_preserves_extras_verbatim() {
     let body = json_body(&response);
     assert_eq!(
         body["contextSourceExtras"],
-        json!({ "deployment": "distop" }),
-        "the configured extras are present verbatim in the identity document: {body}"
+        json!({ "deployment": "distop", "extensions": ["cursor-pagination"] }),
+        "the configured extras are present verbatim beside the advertised extensions: {body}"
     );
 
     topology.finish().await.expect("topology cleanup");

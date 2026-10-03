@@ -38,11 +38,13 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, scope::path::ScopePath};
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
+        cursor::PageCursor,
         entity::compiled::CompiledEntityQuery,
         entity_selection::{ConsideredEntities, EntitySelection},
         filter::{eval::evaluate, parser},
         geo::query::GeoQuery,
-        pagination::{CountPolicy, Pagination},
+        page_window::{PageStart, PageWindow},
         scope::query::ScopeQuery,
     };
     use andromeda_tenancy::tenant_ref::TenantRef;
@@ -116,7 +118,7 @@ mod tests {
 
         /// The identifiers this store's own predicates admit, and what it could
         /// not apply.
-        fn run(&self, compiled: &CompiledEntityQuery) -> QueryOutcome<Identifier> {
+        fn run(&self, compiled: &CompiledEntityQuery, window: &PageWindow) -> QueryOutcome<Identifier> {
             let unapplied = self.profile.unapplied(&compiled.selection);
             let mut pushed = compiled.selection.clone(); // clone: the store runs a narrowed copy of the caller's query
             unapplied.strip_from(&mut pushed);
@@ -128,20 +130,10 @@ mod tests {
                 .map(|entity| entity.id().clone()); // clone: the outcome owns the identifiers it returns
 
             if unapplied.is_empty() {
-                let all: Vec<Identifier> = admitted.collect();
-                let total = match compiled.pagination.count {
-                    CountPolicy::Emit => Some(i64::try_from(all.len()).unwrap_or(i64::MAX)),
-                    CountPolicy::Omit => None,
-                };
-                let rows = all
-                    .into_iter()
-                    .skip(compiled.pagination.offset as usize)
-                    .take(compiled.pagination.limit as usize)
-                    .collect();
                 QueryOutcome {
-                    rows,
+                    rows: window.cut(admitted.collect(), Identifier::as_str),
                     unapplied,
-                    pagination: PaginationOutcome::Applied { total },
+                    pagination: PaginationOutcome::Applied { total: None },
                 }
             } else {
                 QueryOutcome {
@@ -210,12 +202,23 @@ mod tests {
             &self.profile
         }
 
-        async fn query_compiled(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
+        async fn query_compiled(
+            &self,
+            _target: &ContextTarget,
+            _compiled: &CompiledEntityQuery,
+            _window: &PageWindow,
+            _count: CountPolicy,
+        ) -> Result<QueryOutcome<RetrievedEntity>, EntityError> {
             Err(unused("query_compiled"))
         }
 
-        async fn query_ids(&self, _target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Identifier>, EntityError> {
-            Ok(self.run(compiled))
+        async fn query_ids(
+            &self,
+            _target: &ContextTarget,
+            compiled: &CompiledEntityQuery,
+            window: &PageWindow,
+        ) -> Result<QueryOutcome<Identifier>, EntityError> {
+            Ok(self.run(compiled, window))
         }
     }
 
@@ -265,7 +268,7 @@ mod tests {
     }
 
     /// A query carrying every predicate the three declared axes cover.
-    fn query(limit: u32, offset: u32) -> CompiledEntityQuery {
+    fn query() -> CompiledEntityQuery {
         CompiledEntityQuery::builder()
             .selection(
                 EntitySelection::builder()
@@ -274,11 +277,6 @@ mod tests {
                     .scope_q(Some(ScopeQuery::parse("/Berlin/#").expect("valid scopeQ")))
                     .build(),
             )
-            .pagination(Pagination {
-                limit,
-                offset,
-                count: CountPolicy::Omit,
-            })
             .build()
     }
 
@@ -333,14 +331,14 @@ mod tests {
         // an implementation detail of that store, never a difference the client
         // can observe (clause 5.7.2).
         let expected = service(StorageProfile::POSTGIS_LTREE)
-            .query_ids(&live_target(), &query(100, 0))
+            .query_ids(&live_target(), &query(), &PageWindow::offset(100, 0))
             .await
             .expect("the full profile answers");
         assert!(!expected.is_empty(), "the fixtures must exercise the predicates");
 
         for (name, profile) in narrowing_profiles() {
             let actual = service(profile)
-                .query_ids(&live_target(), &query(100, 0))
+                .query_ids(&live_target(), &query(), &PageWindow::offset(100, 0))
                 .await
                 .expect("a narrowing profile answers");
             pretty_assertions::assert_eq!(actual, expected, "profile {name} disagreed with the full pushdown");
@@ -350,10 +348,33 @@ mod tests {
     #[tokio::test]
     async fn a_deferred_window_lands_on_the_same_page_the_store_would_have_returned() {
         // Clause 5.5.9: the window is over matching entities, so it must be
-        // taken after the residual rather than before it.
-        for (limit, offset) in [(1, 0), (1, 1), (2, 0), (2, 1), (10, 0), (10, 5)] {
+        // taken after the residual rather than before it, whether it is an
+        // offset or a cursor (clause 5.5.9.1).
+        let boundary = |id: &str| id.parse::<Identifier>().expect("valid URI");
+        let windows = [
+            PageWindow::offset(1, 0),
+            PageWindow::offset(1, 1),
+            PageWindow::offset(2, 0),
+            PageWindow::offset(2, 1),
+            PageWindow::offset(10, 0),
+            PageWindow::offset(10, 5),
+            PageWindow {
+                limit: 2,
+                start: PageStart::Cursor(None),
+            },
+            PageWindow::after(1, boundary("urn:ngsi-ld:Building:002")),
+            PageWindow {
+                limit: 1,
+                start: PageStart::Cursor(Some(PageCursor::Before(boundary("urn:ngsi-ld:Building:006")))),
+            },
+            PageWindow {
+                limit: 2,
+                start: PageStart::Cursor(Some(PageCursor::End)),
+            },
+        ];
+        for window in windows {
             let expected = service(StorageProfile::POSTGIS_LTREE)
-                .query_ids(&live_target(), &query(limit, offset))
+                .query_ids(&live_target(), &query(), &window)
                 .await
                 .expect("the full profile answers");
             let deferred = StorageProfile {
@@ -362,10 +383,10 @@ mod tests {
                 scope: ScopePushdown::PrefixOnly,
             };
             let actual = service(deferred)
-                .query_ids(&live_target(), &query(limit, offset))
+                .query_ids(&live_target(), &query(), &window)
                 .await
                 .expect("the deferring profile answers");
-            pretty_assertions::assert_eq!(actual, expected, "limit={limit} offset={offset}");
+            pretty_assertions::assert_eq!(actual, expected, "{window:?}");
         }
     }
 
@@ -391,7 +412,10 @@ mod tests {
             },
         ];
         for profile in refusing {
-            let error = service(profile).query_ids(&live_target(), &query(100, 0)).await.expect_err("must refuse");
+            let error = service(profile)
+                .query_ids(&live_target(), &query(), &PageWindow::offset(100, 0))
+                .await
+                .expect_err("must refuse");
             assert!(
                 error.to_string().contains("cannot evaluate"),
                 "the refusal explains itself rather than answering slowly: {error}"
@@ -413,15 +437,10 @@ mod tests {
                     .q_expr(Some(parser::parse("\"https://example.com/temperature\">15").expect("valid q filter")))
                     .build(),
             )
-            .pagination(Pagination {
-                limit: 100,
-                offset: 0,
-                count: CountPolicy::Omit,
-            })
             .build();
 
         let ids = service(no_geo_support)
-            .query_ids(&live_target(), &without_geo)
+            .query_ids(&live_target(), &without_geo, &PageWindow::offset(100, 0))
             .await
             .expect("no geo predicate, no refusal");
         pretty_assertions::assert_eq!(ids.len(), 5, "every building above 15 degrees");

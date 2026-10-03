@@ -26,6 +26,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod count_policy;
 pub mod csr;
 pub mod cursor;
 pub mod dataset;
@@ -37,13 +38,14 @@ pub mod geo;
 pub mod identifier;
 pub mod non_posix_construct;
 pub mod ordering;
+pub mod page_fullness;
 pub mod page_window;
-pub mod pagination;
 pub mod pattern;
 pub mod portable_pattern;
 pub mod posix_dialect;
 pub mod projection;
 pub mod queried_entity;
+pub mod read_order;
 pub mod scope;
 pub mod temporal;
 pub mod term_compactor;

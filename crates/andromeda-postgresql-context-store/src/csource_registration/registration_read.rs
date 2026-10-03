@@ -7,7 +7,7 @@ use crate::csource_registration::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, cursor::PageCursor, pagination::Pagination};
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
 use andromeda_postgresql_context_query::csr::{
     coverage::{entity_id_coverage, entity_type_coverage},
     expiry_predicate::not_expired,
@@ -16,7 +16,6 @@ use andromeda_postgresql_context_query::csr::{
     statement as csr_sql,
 };
 use andromeda_postgresql_schema::csr::Csr;
-use andromeda_postgresql_seaquery::aggregate::count_all;
 use andromeda_registration::{error::RegistrationError, store::page::RegistrationPage};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -78,38 +77,14 @@ pub(super) async fn get(store: &PostgresRegistrationStore, id: &Identifier) -> R
     }
 }
 
-/// One deterministic page of every registration and the total count.
-pub(super) async fn list(store: &PostgresRegistrationStore, pagination: Pagination) -> Result<RegistrationPage, RegistrationError> {
-    let count = Query::select().expr(count_all()).from(Csr::Table).cond_where(not_expired()).to_owned();
-    let (count_sql, count_values) = count.build_sqlx(PostgresQueryBuilder);
-    let count_row: (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
-        .fetch_one(&store.pool)
-        .await
-        .map_err(|error| persistence_error(error))?;
-    let mut select = registration_select();
-    select
-        .cond_where(not_expired())
-        .order_by(Csr::CreatedAt, Order::Asc)
-        .limit(u64::from(pagination.limit))
-        .offset(u64::from(pagination.offset));
-    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_all(&store.pool)
-        .await
-        .map_err(|error| persistence_error(error))?;
-    let csrs = rows
-        .iter()
-        .map(|row| row_to_csr(row).map_err(|error| persistence_error(error)))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(RegistrationPage {
-        registrations: csrs,
-        total: registration_count(count_row.0)?,
-    })
-}
-
-/// Run a compiled discovery query: its page and its total (clause 5.10.2).
-pub(super) async fn query_compiled(store: &PostgresRegistrationStore, compiled: &CompiledCsrQuery) -> Result<RegistrationPage, RegistrationError> {
-    let built = csr_sql::build_csr_query(compiled).map_err(|error| persistence_error(error))?;
+/// Run a compiled discovery query: the page `window` selects, ascending by
+/// identifier, and the total (clause 5.10.2).
+pub(super) async fn query_compiled(
+    store: &PostgresRegistrationStore,
+    compiled: &CompiledCsrQuery,
+    window: &PageWindow,
+) -> Result<RegistrationPage, RegistrationError> {
+    let built = csr_sql::build_csr_query(compiled, window).map_err(|error| persistence_error(error))?;
     let (count_sql, count_values) = built.count.build_sqlx(PostgresQueryBuilder);
     let (total,): (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
         .fetch_one(&store.pool)
@@ -127,9 +102,8 @@ pub(super) async fn query_compiled(store: &PostgresRegistrationStore, compiled: 
     // Clause 5.5.9.1: a backward or from-end keyset page was read descending so
     // a single `id` index scan could serve it; it is reversed here to the
     // ascending order the client sees on every page.
-    if matches!(compiled.keyset, Some(PageCursor::Before(_) | PageCursor::End)) {
-        csrs.reverse();
-    }
+    built.read_order.present(&mut csrs);
+    let csrs = csrs;
     Ok(RegistrationPage {
         registrations: csrs,
         total: registration_count(total)?,

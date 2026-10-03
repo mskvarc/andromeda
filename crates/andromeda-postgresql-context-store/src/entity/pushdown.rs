@@ -9,10 +9,7 @@
 //! [`StorageProfile`]: andromeda_entity::storage_profile::StorageProfile
 
 use andromeda_entity::{pagination_outcome::PaginationOutcome, query_outcome::QueryOutcome, query_residual::ResidualFilter, storage_profile::StorageProfile};
-use andromeda_ngsi_ld_query::{
-    entity::compiled::CompiledEntityQuery,
-    pagination::{CountPolicy, Pagination},
-};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, page_window::PageWindow};
 use std::borrow::Cow;
 
 /// The statement this store will issue, and the predicates it will not.
@@ -22,17 +19,25 @@ pub(super) struct Pushdown<'a> {
     /// Borrowed in the ordinary case: nothing was removed, so nothing was
     /// copied.
     pub query: Cow<'a, CompiledEntityQuery>,
+    /// The page the statement reads: the caller's window when every predicate
+    /// is sent, every match otherwise.
+    pub window: Cow<'a, PageWindow>,
+    /// Whether the statement counts: as the caller asked when every predicate
+    /// is sent, never otherwise.
+    pub count: CountPolicy,
     /// The predicates the caller must finish.
     residual: ResidualFilter,
 }
 
-/// Split a compiled query into the part this store can answer and the part it
-/// cannot.
-pub(super) fn plan(compiled: &CompiledEntityQuery, profile: StorageProfile) -> Pushdown<'_> {
+/// Split a compiled query, read over `window` and counted as `count` says,
+/// into the part this store can answer and the part it cannot.
+pub(super) fn plan<'a>(compiled: &'a CompiledEntityQuery, profile: StorageProfile, window: &'a PageWindow, count: CountPolicy) -> Pushdown<'a> {
     let residual = profile.unapplied(&compiled.selection);
     if residual.is_empty() {
         return Pushdown {
             query: Cow::Borrowed(compiled),
+            window: Cow::Borrowed(window),
+            count,
             residual,
         };
     }
@@ -42,14 +47,13 @@ pub(super) fn plan(compiled: &CompiledEntityQuery, profile: StorageProfile) -> P
     let mut narrowed = compiled.clone();
     residual.strip_from(&mut narrowed.selection);
     // Clause 5.5.9: a window over rows a later filter will thin leaves the page
-    // short and every later page misaligned, so it is not applied here at all.
-    narrowed.pagination = Pagination {
-        limit: u32::MAX,
-        offset: 0,
-        count: CountPolicy::Omit,
-    };
+    // short and every later page misaligned, so the statement reads every
+    // candidate in the query's order, counts nothing, and the caller cuts the
+    // window from what survives the residual.
     Pushdown {
         query: Cow::Owned(narrowed),
+        window: Cow::Owned(PageWindow::unbounded()),
+        count: CountPolicy::Omit,
         residual,
     }
 }
@@ -80,11 +84,12 @@ mod tests {
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
         entity_selection::EntitySelection,
         filter::parser,
         geo::query::GeoQuery,
-        pagination::{CountPolicy, Pagination},
+        page_window::PageWindow,
         scope::query::ScopeQuery,
     };
     use serde_json::json;
@@ -102,7 +107,7 @@ mod tests {
         }
     }
 
-    /// A compiled query carrying all three predicate axes plus a window.
+    /// A compiled query carrying all three predicate axes.
     fn query() -> CompiledEntityQuery {
         CompiledEntityQuery::builder()
             .selection(
@@ -112,20 +117,22 @@ mod tests {
                     .scope_q(Some(ScopeQuery::parse("/A/#").expect("valid scopeQ")))
                     .build(),
             )
-            .pagination(Pagination {
-                limit: 20,
-                offset: 5,
-                count: CountPolicy::Emit,
-            })
             .build()
+    }
+
+    /// The caller's window: the second page of five.
+    fn window() -> PageWindow {
+        PageWindow::offset(20, 5)
     }
 
     #[test]
     fn a_complete_pushdown_issues_the_query_verbatim_and_reports_the_window_as_applied() {
         // Clause 6.3.13: the count the store produced is the answer.
         let compiled = query();
-        let planned = plan(&compiled, StorageProfile::POSTGIS_LTREE);
-        pretty_assertions::assert_eq!(planned.query.pagination, compiled.pagination);
+        let window = window();
+        let planned = plan(&compiled, StorageProfile::POSTGIS_LTREE, &window, CountPolicy::Emit);
+        pretty_assertions::assert_eq!(planned.window.as_ref(), &window);
+        pretty_assertions::assert_eq!(planned.count, CountPolicy::Emit);
         assert!(planned.query.selection.geo.is_some());
         let outcome = planned.outcome(vec!["a"], Some(7));
         assert!(outcome.unapplied.is_empty());
@@ -142,7 +149,8 @@ mod tests {
             value_filter: ValueFilterPushdown::JsonPath,
             scope: ScopePushdown::LabelTree,
         };
-        let planned = plan(&compiled, profile);
+        let window = window();
+        let planned = plan(&compiled, profile, &window, CountPolicy::Emit);
         assert!(planned.query.selection.geo.is_none(), "the geo predicate is not sent");
         assert!(planned.query.selection.q_expr.is_some(), "the q filter still is");
         let outcome = planned.outcome(vec!["a"], Some(7));
@@ -174,9 +182,10 @@ mod tests {
         // already said it cannot apply it; one stripped but not named is dropped
         // from the query and never finished by anyone.
         let compiled = query();
+        let window = window();
         for profile in every_profile() {
             let residual = profile.unapplied(&compiled.selection);
-            let planned = plan(&compiled, profile);
+            let planned = plan(&compiled, profile, &window, CountPolicy::Emit);
             let kinds = residual.kinds();
 
             pretty_assertions::assert_eq!(
@@ -202,23 +211,24 @@ mod tests {
         // Clause 5.5.9: the two are mutually exclusive, and the policy layer
         // refuses the combination as a broken store rather than compensating.
         let compiled = query();
+        let window = window();
         for profile in every_profile() {
-            let planned = plan(&compiled, profile);
-            let pagination = planned.query.pagination;
+            let planned = plan(&compiled, profile, &window, CountPolicy::Emit);
+            let (issued, counted) = (planned.window.clone().into_owned(), planned.count);
             let outcome = planned.outcome(vec!["a"], Some(7));
             match outcome.pagination {
                 PaginationOutcome::Applied { total: _ } => {
                     assert!(outcome.unapplied.is_empty(), "an applied window leaves no residual, for {profile:?}");
-                    pretty_assertions::assert_eq!(pagination, compiled.pagination, "a complete plan issues the caller's window, for {profile:?}");
+                    pretty_assertions::assert_eq!(issued, window, "a complete plan issues the caller's window, for {profile:?}");
+                    pretty_assertions::assert_eq!(counted, CountPolicy::Emit, "a complete plan counts as asked, for {profile:?}");
                 }
                 PaginationOutcome::Deferred => {
                     assert!(
                         !outcome.unapplied.is_empty(),
                         "a deferred window means something was handed back, for {profile:?}"
                     );
-                    pretty_assertions::assert_eq!(pagination.offset, 0, "a deferred plan skips nothing, for {profile:?}");
-                    pretty_assertions::assert_eq!(pagination.limit, u32::MAX, "a deferred plan takes everything, for {profile:?}");
-                    pretty_assertions::assert_eq!(pagination.count, CountPolicy::Omit, "a deferred plan counts nothing, for {profile:?}");
+                    pretty_assertions::assert_eq!(issued, PageWindow::unbounded(), "a deferred plan reads everything, for {profile:?}");
+                    pretty_assertions::assert_eq!(counted, CountPolicy::Omit, "a deferred plan counts nothing, for {profile:?}");
                 }
             }
         }
@@ -234,9 +244,9 @@ mod tests {
             value_filter: ValueFilterPushdown::JsonPath,
             scope: ScopePushdown::LabelTree,
         };
-        let planned = plan(&compiled, profile);
-        pretty_assertions::assert_eq!(planned.query.pagination.offset, 0);
-        pretty_assertions::assert_eq!(planned.query.pagination.limit, u32::MAX);
-        pretty_assertions::assert_eq!(planned.query.pagination.count, CountPolicy::Omit);
+        let window = window();
+        let planned = plan(&compiled, profile, &window, CountPolicy::Emit);
+        pretty_assertions::assert_eq!(planned.window.as_ref(), &PageWindow::unbounded());
+        pretty_assertions::assert_eq!(planned.count, CountPolicy::Omit);
     }
 }

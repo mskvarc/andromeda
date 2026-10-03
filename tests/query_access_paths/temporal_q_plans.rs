@@ -16,9 +16,10 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
     entity_selection::EntitySelection,
     filter::parser,
-    pagination::CountPolicy,
+    page_window::PageWindow,
     temporal::{
         compiled::CompiledTemporalQuery,
         instance_selection::InstanceSelection,
@@ -72,8 +73,6 @@ fn stage1(corpus: &WindowedHistory) -> Stage1Query {
         to: minute(corpus.window_end_minute()),
     };
     compiled.entities.q_expr = Some(parser::parse(&format!("\"{HISTORY_ATTRIBUTE}\"=={}", corpus.value_in_effect())).expect("a valid q"));
-    compiled.pagination.limit = 1000;
-    compiled.pagination.count = CountPolicy::Emit;
     let names = QueryNames {
         attributes: ResolvedNames::from_pairs([(
             HISTORY_ATTRIBUTE.parse::<AttributeName>().expect("a valid attribute name"),
@@ -81,7 +80,7 @@ fn stage1(corpus: &WindowedHistory) -> Stage1Query {
         )]),
         types: ResolvedNames::default(),
     };
-    build_stage1_entity_ids(None, &compiled, &names).expect("a renderable stage-1 query")
+    build_stage1_entity_ids(None, &compiled, &PageWindow::offset(1000, 0), CountPolicy::Emit, &names).expect("a renderable stage-1 query")
 }
 
 /// The stage-1 page statement, with its values inline.

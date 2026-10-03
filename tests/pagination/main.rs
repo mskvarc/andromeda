@@ -2,9 +2,10 @@
 //!
 //! Naming convention: `pagination_<endpoint>_<scenario>_<expected_outcome>`.
 //!
-//! These tests assert exact `limit`/`offset` semantics against broker-wide
-//! subscription and registration collections, so every test runs under
-//! `#[serial(global)]` and wipes broker state on entry.
+//! Every test runs under a private tenant of its own, whose collections start
+//! empty, against the base tier's default pagination policy (cursor by
+//! default, offset on request). The suite of brokers started under other
+//! policies is `tests/pagination_policy`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

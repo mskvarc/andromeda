@@ -44,6 +44,9 @@ const HOSTED: &str = "urn:ngsi-ld:JsonLdContext:0b6e3b5e-6a53-5bd2-9d5c-1f7d8f3e
 /// A Cached entry the store holds.
 const CACHED: &str = "urn:ngsi-ld:JsonLdContext:1c7f4c6f-7b64-4ce3-8e6d-2a8e9f4b3b21";
 
+/// A Hosted entry only tenant `acme` holds.
+const ACME_HOSTED: &str = "urn:ngsi-ld:JsonLdContext:3e916e81-9d86-4e05-a08f-4caf116d5d43";
+
 /// An identifier the store does not hold.
 const UNKNOWN: &str = "urn:ngsi-ld:JsonLdContext:2d805d70-8c75-4df4-9f7e-3b9fa05c4c32";
 
@@ -52,14 +55,17 @@ fn hosted_document() -> Value {
     json!({ "@context": { "Spot": "https://e.org/Spot" } })
 }
 
-/// A store holding one Hosted and one Cached entry.
-struct TwoEntryStore;
+/// One tenant's store, holding one Hosted and one Cached entry.
+struct TwoEntryStore {
+    /// The identifier of the Hosted entry this tenant holds.
+    hosted: &'static str,
+}
 
 impl TwoEntryStore {
     /// The kind of the entry `identifier` names, if the store holds it.
-    fn kind(identifier: &Identifier) -> Option<ContextKind> {
+    fn kind(&self, identifier: &Identifier) -> Option<ContextKind> {
         match identifier.as_str() {
-            HOSTED => Some(ContextKind::Hosted),
+            hosted if hosted == self.hosted => Some(ContextKind::Hosted),
             CACHED => Some(ContextKind::Cached),
             _ => None,
         }
@@ -82,12 +88,12 @@ impl ContextRegistryStore for TwoEntryStore {
     }
 
     fn get<'a>(&'a self, identifier: &'a Identifier, _detail_level: ContextDetailLevel) -> ContextRegistryFuture<'a, Option<FetchedContext>> {
-        Box::pin(async move { Ok(TwoEntryStore::kind(identifier).map(|_| FetchedContext::Payload(hosted_document()))) })
+        Box::pin(async move { Ok(self.kind(identifier).map(|_| FetchedContext::Payload(hosted_document()))) })
     }
 
     fn record_access<'a>(&'a self, identifier: &'a Identifier) -> ContextRegistryFuture<'a, ContextMutation> {
         Box::pin(async move {
-            Ok(match TwoEntryStore::kind(identifier) {
+            Ok(match self.kind(identifier) {
                 Some(_) => ContextMutation::Applied,
                 None => ContextMutation::Missing,
             })
@@ -96,7 +102,7 @@ impl ContextRegistryStore for TwoEntryStore {
 
     fn lookup<'a>(&'a self, identifier: &'a Identifier) -> ContextRegistryFuture<'a, Option<StoredContext>> {
         Box::pin(async move {
-            Ok(TwoEntryStore::kind(identifier).map(|kind| StoredContext {
+            Ok(self.kind(identifier).map(|kind| StoredContext {
                 identifier: identifier.clone(), // clone: the looked-up row owns its identifier
                 kind,
                 source_url: None,
@@ -113,10 +119,13 @@ impl ContextRegistryStore for TwoEntryStore {
     }
 }
 
-/// Resolves the default tenant and `acme` through a genuine runtime cache.
+/// Resolves the default tenant and `acme` through a genuine runtime cache,
+/// each to its own store.
 struct ResidentResolver {
-    /// The cache the leases come from.
+    /// The cache the leases come from, serving the default tenant's hosting.
     tenancy: ResidentTenancy<TenantContextHosting>,
+    /// The hosting of tenant `acme`.
+    acme: TenantContextHosting,
 }
 
 impl ContextRegistryStateResolver for ResidentResolver {
@@ -127,8 +136,12 @@ impl ContextRegistryStateResolver for ResidentResolver {
     ) -> BoxFuture<'a, Result<Arc<ContextRegistryRouteServices>, TenancyError>> {
         Box::pin(async move {
             let LeasedState { state, lease } = self.tenancy.resolve(tenant, creation_policy).await?;
+            let hosting = match tenant {
+                TenantRef::Named(_) => &self.acme,
+                TenantRef::UnnamedDefault => &state,
+            };
             Ok(Arc::new(ContextRegistryRouteServices::new(
-                TenantContextHosting::clone(&state), // clone: the route services own a handle on the tenant's hosting
+                TenantContextHosting::clone(hosting), // clone: the route services own a handle on the tenant's hosting
                 lease,
             )))
         })
@@ -138,11 +151,16 @@ impl ContextRegistryStateResolver for ResidentResolver {
 /// The `/jsonldContexts` routes over the two-entry store.
 fn routes() -> Router {
     let engine = JsonLdEngine::builder().allow_remote(false).build().expect("an offline engine");
-    let contexts = Arc::new(ContextRegistryService::new(Arc::new(TwoEntryStore), engine));
-    let hosting = Arc::new(TenantContextHosting::new(contexts, TenantRef::UnnamedDefault));
+    let hosting = |hosted| {
+        TenantContextHosting::new(Arc::new(ContextRegistryService::new(
+            Arc::new(TwoEntryStore { hosted }),
+            engine.clone(), // clone: each tenant's registry holds the engine
+        )))
+    };
     let acme: TenantName = "acme".parse().expect("a tenant name");
     let resolver = ResidentResolver {
-        tenancy: ResidentTenancy::new(hosting, vec![acme]),
+        tenancy: ResidentTenancy::new(Arc::new(hosting(HOSTED)), vec![acme]),
+        acme: hosting(ACME_HOSTED),
     };
     ContextRegistryRoutes::new(Arc::new(resolver)).into_router()
 }
@@ -180,37 +198,38 @@ fn serve_path(identifier: &str) -> String {
     format!("/jsonldContexts/{identifier}")
 }
 
+/// Clauses 4.14 and 6.3.14: the `NGSILD-Tenant` header names the tenant
+/// whose entry is served.
 #[tokio::test]
-async fn a_header_and_a_parameter_naming_different_tenants_are_bad_request_data() {
-    let response = answer(
-        Method::GET,
-        &format!("{}?andromedaTenant=acme", serve_path(HOSTED)),
-        &[("NGSILD-Tenant", "other")],
-    )
-    .await;
+async fn a_header_naming_a_tenant_serves_that_tenants_entry() {
+    let response = answer(Method::GET, &serve_path(ACME_HOSTED), &[("NGSILD-Tenant", "acme")]).await;
 
-    pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
     assert!(varies_on_tenant(response.headers()));
-    pretty_assertions::assert_eq!(problem_type(response).await.as_deref(), Some("BadRequestData"));
 }
 
-/// Clause 5.5.10: the parameter addresses a tenant like the header does, and
-/// one that does not exist is `NonexistentTenant`.
+/// Without the header the default tenant is read, which does not hold a named
+/// tenant's entry.
 #[tokio::test]
-async fn an_unknown_tenant_parameter_is_nonexistent_tenant() {
-    let response = answer(Method::GET, &format!("{}?andromedaTenant=nobody", serve_path(HOSTED)), &[]).await;
+async fn without_a_header_the_default_tenant_is_read() {
+    let named = answer(Method::GET, &serve_path(ACME_HOSTED), &[]).await;
+    let default = answer(Method::GET, &serve_path(HOSTED), &[]).await;
+
+    pretty_assertions::assert_eq!(named.status(), StatusCode::NOT_FOUND);
+    assert!(varies_on_tenant(named.headers()), "RFC 9111 section 4.1: the 404 depends on the tenant");
+    pretty_assertions::assert_eq!(problem_type(named).await.as_deref(), Some("ResourceNotFound"));
+    pretty_assertions::assert_eq!(default.status(), StatusCode::OK);
+}
+
+/// Clause 5.5.10: a header naming a tenant that does not exist is
+/// `NonexistentTenant`.
+#[tokio::test]
+async fn a_header_naming_an_unknown_tenant_is_nonexistent_tenant() {
+    let response = answer(Method::GET, &serve_path(HOSTED), &[("NGSILD-Tenant", "nobody")]).await;
 
     pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert!(varies_on_tenant(response.headers()), "RFC 9111 section 4.1: the 404 depends on the tenant");
     pretty_assertions::assert_eq!(problem_type(response).await.as_deref(), Some("NonexistentTenant"));
-}
-
-#[tokio::test]
-async fn a_known_tenant_parameter_serves_the_entry() {
-    let response = answer(Method::GET, &format!("{}?andromedaTenant=acme", serve_path(HOSTED)), &[]).await;
-
-    pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
-    assert!(varies_on_tenant(response.headers()));
 }
 
 /// RFC 7232 section 5: the precondition is evaluated only for a request that
@@ -254,11 +273,15 @@ async fn head_answers_the_get_headers_without_a_body() {
     assert!(body.is_empty(), "a HEAD answer carries no content: {body:?}");
 }
 
-/// Clause 6.3.20: the vendor tenant parameter belongs to Serve alone, and
-/// every other operation refuses it as an undefined parameter.
+/// Clauses 6.3.14 and 6.3.20: the tenant is named by the header alone, so
+/// every operation, Serve included, refuses the former vendor tenant parameter
+/// as an undefined parameter, whatever tenant it names.
 #[tokio::test]
-async fn the_tenant_parameter_on_any_other_operation_is_invalid_request() {
+async fn the_former_tenant_parameter_is_invalid_request_on_every_operation() {
+    let serve = format!("{}?andromedaTenant=acme", serve_path(ACME_HOSTED));
     for (method, uri, headers) in [
+        (Method::GET, serve.as_str(), vec![]),
+        (Method::GET, serve.as_str(), vec![("NGSILD-Tenant", "acme")]),
         (
             Method::POST,
             "/jsonldContexts?andromedaTenant=acme",

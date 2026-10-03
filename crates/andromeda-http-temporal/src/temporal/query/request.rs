@@ -16,9 +16,10 @@ use crate::{
         NgsiLdRequestEnvelope,
         ProblemResponse,
         Response,
+        ResultInstanceExt,
         TemporalQueryParameters,
         TenantState,
-        query::run,
+        query::{page::QueriedPage, run},
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -26,9 +27,10 @@ use andromeda_http_extraction::{
     admitted_temporal_query::AdmittedTemporalQuery,
     api_root::ApiRoot,
     context_target,
+    pagination_policy::RequestPagination,
     response_context_request::ResponseContextRequest,
 };
-use andromeda_http_response::pagination::PagePointers;
+use andromeda_ngsi_ld_request::pagination::page_pointers::PagePointers;
 use axum::http::{HeaderMap, Uri};
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
@@ -65,10 +67,12 @@ pub(crate) struct TemporalQueryRequest {
     pub(crate) context: ContextSpec,
     /// The query itself, in the raw form the binding decoded it to.
     pub(crate) params: TemporalQueryParameters,
-    /// Whether the binding's own request URI can carry the clause 6.3.10
-    /// pointers to the neighbouring pages, which the query-string binding's
-    /// can and the POST binding's cannot.
-    pub(crate) pointers: PagePointers,
+    /// The element page the query answers with, decided by the broker's
+    /// pagination policy from the query and from whether the binding's own
+    /// request URI can carry the clause 6.3.10 pointers to the neighbouring
+    /// pages, which the query-string binding's can and the POST binding's
+    /// cannot.
+    pub(crate) page: QueriedPage,
 }
 
 /// GET /ngsi-ld/v1/temporal/entities -- Query Temporal Evolution of Entities
@@ -84,8 +88,12 @@ pub async fn query(
     NgsiLdRequestEnvelope { uri, incoming_via: _, headers }: NgsiLdRequestEnvelope,
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     protocol: NgsiLdProtocolHeaders,
+    RequestPagination(pagination): RequestPagination,
     AdmittedTemporalQuery { params, .. }: AdmittedTemporalQuery<GroupingGate>,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 6.18.3.2 carries the whole query in the request URI, so a
+    // pointer built from it retrieves the next page on its own.
+    let page = QueriedPage::requested(pagination, &params, PagePointers::OverRequestUri).with_instance(&uri)?;
     // Boxed: a temporal query parameter set is wide enough that the operation's
     // future overflows the task-local budget the `large_futures` lint guards.
     Box::pin(run(TemporalQueryRequest::builder()
@@ -98,9 +106,7 @@ pub async fn query(
         .headers(headers)
         .context(context)
         .params(params)
-        // Clause 6.18.3.2 carries the whole query in the request URI, so a
-        // pointer built from it retrieves the next page on its own.
-        .pointers(PagePointers::OverRequestUri)
+        .page(page)
         .build()))
     .await
 }

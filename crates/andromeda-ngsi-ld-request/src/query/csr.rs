@@ -5,7 +5,7 @@ use crate::{
     impl_shared_query_params,
     language_filter::deserialize_optional_language_filter,
     options::SysAttrsOptions,
-    pagination_cursor::validate_cursor_offset_exclusion,
+    pagination::parameters::PageParameters,
     query::{
         SharedQueryParams,
         deserialization::{
@@ -103,17 +103,10 @@ pub struct CsrQueryParameters {
     /// The temporal property the window applies to (clause 4.8 `timeproperty`).
     #[serde(default, deserialize_with = "crate::query::temporal::deserialization::deserialize_option_timeproperty")]
     pub timeproperty: Option<TimeProp>,
-    /// The page size (clause 5.5.9 `limit`).
-    pub limit: Option<u32>,
-    /// How many results to skip before the page (`offset`).
-    pub offset: Option<u32>,
-    /// The opaque, keyset-backed pagination pointer (clause 5.5.9.1).
-    ///
-    /// A broker-emitted token carried inside a `prev`/`next`/`last` `Link`; the
-    /// client only passes it back by following the link and never authors or
-    /// reads it. Declared so `#[serde(deny_unknown_fields)]` admits it and so its
-    /// mutual exclusion with `offset` can be validated; its contents are opaque.
-    pub cursor: Option<String>,
+    /// The page asked for (clauses 5.5.9 and 6.3.10 `limit`, `offset` and
+    /// `cursor`), decided by the broker's pagination policy.
+    #[serde(flatten)]
+    pub page: PageParameters,
     /// The legacy representation selector, comma-separated (`options`).
     pub options: Option<WrittenValue<SysAttrsOptions>>,
 }
@@ -123,9 +116,7 @@ impl_shared_query_params!(CsrQueryParameters {
     attrs: attrs,
     pick: pick,
     omit: omit,
-    dataset_id: dataset_id,
-    limit: limit,
-    offset: offset
+    dataset_id: dataset_id
 });
 
 impl CsrQueryParameters {
@@ -176,8 +167,6 @@ impl CsrQueryParameters {
         require_narrowing(&self.narrowing_inputs())?;
         // Clause 5.5.9: an opaque `cursor` (5.5.9.1) and an `offset` (5.5.9.2)
         // page a collection by different mechanisms and cannot both govern it.
-        validate_cursor_offset_exclusion(self.cursor.as_deref(), self.offset)?;
-
         // The `timerel`/`timeAt`/`endTimeAt` combination rule is owned by the
         // query crate, so the request seam asks rather than re-deriving it.
         TimeInterval::check_time_bounds(
@@ -306,33 +295,12 @@ mod tests {
         pretty_assertions::assert_eq!(p.parse_options().expect("a supported options value").sys_attrs, SysAttrsInclusion::Strip);
     }
 
-    /// Clause 5.5.9: an opaque `cursor` and an `offset` cannot both govern one
-    /// discovery request.
+    /// The discovery reads its page beside its selection.
     #[test]
-    fn validate_rejects_cursor_with_offset() {
-        let p = params_from_query("type=Vehicle&cursor=YWJj&offset=5");
-        let err = p.validate().expect_err("cursor and offset are mutually exclusive");
-        assert!(matches!(err, ParameterError::CursorWithOffset), "{err}");
-    }
-
-    /// A cursor alone (no offset) is accepted at the parameter level; its
-    /// contents are decoded later.
-    #[test]
-    fn validate_accepts_a_cursor_without_offset() {
-        assert!(params_from_query("type=Vehicle&cursor=YWJj").validate().is_ok());
-    }
-
-    #[test]
-    fn shared_params_limit_offset() {
+    fn the_page_is_read_beside_the_selection() {
         let p = params_from_query("type=Vehicle&limit=50&offset=10");
-        pretty_assertions::assert_eq!(p.effective_limit(), 50);
-        pretty_assertions::assert_eq!(p.effective_offset(), 10);
-    }
-
-    #[test]
-    fn shared_params_defaults() {
-        let p = params_from_query("type=Vehicle");
-        pretty_assertions::assert_eq!(p.effective_limit(), 20);
-        pretty_assertions::assert_eq!(p.effective_offset(), 0);
+        pretty_assertions::assert_eq!(p.page.limit, Some(50));
+        pretty_assertions::assert_eq!(p.page.offset, Some(10));
+        pretty_assertions::assert_eq!(p.page.cursor, None);
     }
 }

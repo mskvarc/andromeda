@@ -4,6 +4,7 @@ use crate::{
     impl_shared_query_params,
     language_filter::deserialize_optional_language_filter,
     options::TemporalRepresentationOptions,
+    pagination::parameters::PageParameters,
     query::{
         SharedQueryParams,
         deserialization::{
@@ -137,19 +138,12 @@ pub struct TemporalQueryParameters {
     pub aggr_group_by: Option<String>,
 
     // --- Pagination ---
-    /// The page size (clause 5.5.9 `limit`).
-    pub limit: Option<u32>,
-    /// How many results to skip before the page (`offset`).
-    pub offset: Option<u32>,
-    /// The opaque, keyset-backed pagination pointer (clause 5.5.9.1).
-    ///
-    /// A broker-emitted token carried inside a `prev`/`next`/`last` `Link` over
-    /// the element dimension of temporal pagination; the client only passes it
-    /// back by following the link and never authors or reads it. Declared here so
-    /// `#[serde(deny_unknown_fields)]` admits it and so its mutual exclusion with
-    /// `offset` can be validated. Its contents are opaque (see
-    /// `docs/conformance/stable-pagination.md`).
-    pub cursor: Option<String>,
+    /// The page of entities asked for (clauses 5.5.9 and 6.3.10 `limit`,
+    /// `offset` and `cursor`), decided by the broker's pagination policy. It
+    /// pages the element dimension only, never the temporal window
+    /// (`Content-Range`).
+    #[serde(flatten)]
+    pub page: PageParameters,
     /// Whether the response reports the total number of matches (`count`).
     pub count: Option<bool>,
     /// Typed ordering semantics shared by GET and POST query bindings.
@@ -228,20 +222,14 @@ impl_shared_query_params!(TemporalQueryParameters {
     attrs: attrs,
     pick: pick,
     omit: omit,
-    dataset_id: dataset_id,
-    limit: limit,
-    offset: offset
+    dataset_id: dataset_id
 });
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        error::ParameterError,
-        params_from_query,
-        query::{SharedQueryParams, temporal::TemporalQueryParameters},
-    };
+    use crate::{error::ParameterError, pagination::cursor_request::CursorRequest, params_from_query, query::temporal::TemporalQueryParameters};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp};
-    use andromeda_ngsi_ld_query::{error::QueryError, filter::serialize::serialize_attr_path, projection::exclusivity::ProjectionConflict};
+    use andromeda_ngsi_ld_query::{cursor::PageCursor, error::QueryError, filter::serialize::serialize_attr_path, projection::exclusivity::ProjectionConflict};
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
 
@@ -613,35 +601,13 @@ mod tests {
         assert!(serde_urlencoded::from_str::<TemporalQueryParameters>("collation=de-u-co-phonebk").is_ok());
     }
 
+    /// The temporal query reads its page of entities beside its window; a
+    /// cursor is decoded with the parameters.
     #[test]
-    fn effective_limit_defaults_to_20() {
-        let p = params_from_query("");
-        pretty_assertions::assert_eq!(p.effective_limit(), 20);
-    }
-
-    #[test]
-    fn effective_limit_caps_at_1000() {
-        let p = params_from_query("limit=5000");
-        pretty_assertions::assert_eq!(p.effective_limit(), 1000);
-    }
-
-    /// Clause 5.5.9: a keyset `cursor` (5.5.9.1) and an `offset` (5.5.9.2) cannot
-    /// both govern one temporal element page.
-    #[test]
-    fn cursor_with_offset_is_rejected() {
-        let window = "type=Vehicle&local=true&timerel=before&timeAt=2030-01-01T00:00:00Z";
-        let err = params_from_query(&format!("{window}&cursor=ZQ&offset=0"))
-            .validate(true)
-            .expect_err("cursor and offset are mutually exclusive");
-        assert!(matches!(err, ParameterError::CursorWithOffset), "got {err:?}");
-    }
-
-    /// A `cursor` without an `offset` passes validation; its opaque contents are
-    /// decoded later, during compilation.
-    #[test]
-    fn a_cursor_without_an_offset_is_admitted() {
-        let window = "type=Vehicle&local=true&timerel=before&timeAt=2030-01-01T00:00:00Z";
-        assert!(params_from_query(&format!("{window}&cursor=ZQ")).validate(true).is_ok());
+    fn the_page_is_read_beside_the_window() {
+        let p = params_from_query("type=Vehicle&local=true&timerel=before&timeAt=2030-01-01T00:00:00Z&limit=2&cursor=ZQ");
+        pretty_assertions::assert_eq!(p.page.limit, Some(2));
+        pretty_assertions::assert_eq!(p.page.cursor, Some(CursorRequest::Continue(PageCursor::End)));
     }
 
     #[test]

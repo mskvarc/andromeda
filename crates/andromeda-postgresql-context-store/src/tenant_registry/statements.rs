@@ -3,7 +3,7 @@
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_schema::tenancy::Tenants;
 use andromeda_postgresql_seaquery::{advisory_lock::advisory_xact_lock, aggregate::count_all};
-use andromeda_tenancy::tenant_keyset::TenantKeyset;
+use andromeda_tenancy::tenant_page_start::TenantPageStart;
 use sea_query::{
     Expr,
     ExprTrait,
@@ -59,37 +59,39 @@ pub(super) fn tenant_record_query(name: &str) -> SelectStatement {
         .to_owned()
 }
 
-/// One page of named-tenant registry rows, positioned by `keyset` and capped at
+/// One page of named-tenant registry rows, positioned by `start` and capped at
 /// `limit`.
 ///
-/// A forward or first page reads ascending by name; a backward or from-end page
-/// reads descending (the caller reverses it to present ascending). The unnamed
-/// default is always excluded.
-pub(super) fn tenant_records_page_query(keyset: &TenantKeyset, limit: i64) -> SelectStatement {
+/// An offset, forward or first page reads ascending by name; a backward or
+/// from-end page reads descending (the caller reverses it to present
+/// ascending). The unnamed default is always excluded.
+pub(super) fn tenant_records_page_query(start: &TenantPageStart, limit: u32) -> SelectStatement {
     let mut query = Query::select();
     record_columns(&mut query);
     query
         .from(Tenants::Table)
         .and_where(Expr::col(Tenants::IsUnnamedDefault).eq(false))
         .and_where(Expr::col(Tenants::Name).is_not_null());
-    match keyset {
-        TenantKeyset::Forward { after: None } => {
+    match start {
+        TenantPageStart::Offset(offset) => {
+            query.order_by(Tenants::Name, Order::Asc).offset(u64::from(*offset));
+        }
+        TenantPageStart::Forward { after: None } => {
             query.order_by(Tenants::Name, Order::Asc);
         }
-        TenantKeyset::Forward { after: Some(after) } => {
+        TenantPageStart::Forward { after: Some(after) } => {
             query.and_where(Expr::col(Tenants::Name).gt(after.as_str())).order_by(Tenants::Name, Order::Asc);
         }
-        TenantKeyset::Backward { before } => {
+        TenantPageStart::Backward { before } => {
             query
                 .and_where(Expr::col(Tenants::Name).lt(before.as_str()))
                 .order_by(Tenants::Name, Order::Desc);
         }
-        TenantKeyset::FromEnd => {
+        TenantPageStart::FromEnd => {
             query.order_by(Tenants::Name, Order::Desc);
         }
     }
-    // A negative window bound clamps to zero rather than wrapping.
-    query.limit(u64::try_from(limit).unwrap_or(0));
+    query.limit(u64::from(limit));
     query.clone()
 }
 
@@ -191,7 +193,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;
     use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
-    use andromeda_tenancy::tenant_keyset::TenantKeyset;
+    use andromeda_tenancy::tenant_page_start::TenantPageStart;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, SelectStatement, UpdateStatement};
 
@@ -236,7 +238,7 @@ mod tests {
 
     #[test]
     fn a_first_page_orders_by_name_ascending_with_no_bound() {
-        let sql = select_sql(&tenant_records_page_query(&TenantKeyset::first_page(), 10));
+        let sql = select_sql(&tenant_records_page_query(&TenantPageStart::Forward { after: None }, 10));
         assert!(sql.contains("ORDER BY \"name\" ASC"), "{sql}");
         assert!(sql.contains("LIMIT 10"), "{sql}");
         assert!(!sql.contains("\"name\" >"), "a first page carries no cursor bound: {sql}");
@@ -244,21 +246,21 @@ mod tests {
 
     #[test]
     fn a_forward_page_carries_the_greater_than_bound_ascending() {
-        let sql = select_sql(&tenant_records_page_query(&TenantKeyset::Forward { after: Some(named("acme")) }, 10));
+        let sql = select_sql(&tenant_records_page_query(&TenantPageStart::Forward { after: Some(named("acme")) }, 10));
         assert!(sql.contains("\"name\" > "), "a forward page bounds by name greater-than: {sql}");
         assert!(sql.contains("ORDER BY \"name\" ASC"), "{sql}");
     }
 
     #[test]
     fn a_backward_page_carries_the_less_than_bound_descending() {
-        let sql = select_sql(&tenant_records_page_query(&TenantKeyset::Backward { before: named("mango") }, 10));
+        let sql = select_sql(&tenant_records_page_query(&TenantPageStart::Backward { before: named("mango") }, 10));
         assert!(sql.contains("\"name\" < "), "a backward page bounds by name less-than: {sql}");
         assert!(sql.contains("ORDER BY \"name\" DESC"), "{sql}");
     }
 
     #[test]
     fn a_from_end_page_orders_descending_with_no_bound() {
-        let sql = select_sql(&tenant_records_page_query(&TenantKeyset::FromEnd, 10));
+        let sql = select_sql(&tenant_records_page_query(&TenantPageStart::FromEnd, 10));
         assert!(sql.contains("ORDER BY \"name\" DESC"), "{sql}");
         assert!(!sql.contains("\"name\" <"), "a from-end page carries no cursor bound: {sql}");
     }
@@ -311,5 +313,17 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("INSERT INTO \"tenants\""), "{sql}");
         assert!(!sql.contains("ON CONFLICT"), "a named tenant insert has no upsert: {sql}");
+    }
+
+    /// Clause 5.5.9.2: an offset page skips by name order and carries no bound.
+    #[test]
+    fn an_offset_page_orders_by_name_with_offset() {
+        let sql = select_sql(&tenant_records_page_query(&TenantPageStart::Offset(20), 10));
+        assert!(sql.contains("ORDER BY \"name\" ASC"), "{sql}");
+        assert!(sql.contains("LIMIT 10 OFFSET 20"), "{sql}");
+        assert!(
+            !sql.contains("\"name\" >") && !sql.contains("\"name\" <"),
+            "an offset page carries no cursor bound: {sql}"
+        );
     }
 }

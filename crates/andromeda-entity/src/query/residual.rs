@@ -3,7 +3,9 @@
 //! A store that declined a predicate returns the rows its remaining predicates
 //! admitted, plus the predicates it left behind. The clause 5.7.2 answer is the
 //! intersection, so the caller evaluates the remainder in memory and only then
-//! takes the clause 5.5.9 window.
+//! takes the clause 5.5.9 window. A store that defers the window reads the
+//! whole selection in its order, so the window -- offset or cursor -- is cut
+//! from it exactly as the store would have cut it.
 
 use crate::{
     entity_invariant::EntityInvariant,
@@ -17,7 +19,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
 
 /// The rows a query answers with, and the clause 6.3.13 count when one was
 /// asked for.
@@ -39,7 +41,7 @@ pub(super) struct FinishedPage {
 /// taken over rows a later filter will thin leaves the page short and every
 /// subsequent page misaligned, so the combination is a broken store rather than
 /// a case to compensate for.
-pub(super) fn finish_page(outcome: QueryOutcome<RetrievedEntity>, pagination: Pagination) -> Result<FinishedPage, EntityError> {
+pub(super) fn finish_page(outcome: QueryOutcome<RetrievedEntity>, window: &PageWindow, count: CountPolicy) -> Result<FinishedPage, EntityError> {
     let QueryOutcome {
         rows,
         unapplied,
@@ -55,7 +57,7 @@ pub(super) fn finish_page(outcome: QueryOutcome<RetrievedEntity>, pagination: Pa
         }
         PaginationOutcome::Deferred => {
             let admitted: Vec<RetrievedEntity> = rows.into_iter().filter(|row| residual_filter::matches(&unapplied, &row.state)).collect();
-            Ok(window(admitted, pagination))
+            Ok(cut_window(admitted, window, count))
         }
     }
 }
@@ -65,12 +67,12 @@ pub(super) fn finish_page(outcome: QueryOutcome<RetrievedEntity>, pagination: Pa
 ///
 /// Clause 6.3.13 counts matching entities rather than returned ones, so the
 /// count is taken before the window and after the filter.
-fn window(admitted: Vec<RetrievedEntity>, pagination: Pagination) -> FinishedPage {
-    let total_count = match pagination.count {
+fn cut_window(admitted: Vec<RetrievedEntity>, window: &PageWindow, count: CountPolicy) -> FinishedPage {
+    let total_count = match count {
         CountPolicy::Emit => Some(i64::try_from(admitted.len()).unwrap_or(i64::MAX)),
         CountPolicy::Omit => None,
     };
-    let rows = admitted.into_iter().skip(pagination.offset as usize).take(pagination.limit as usize).collect();
+    let rows = window.cut(admitted, |row| row.state.id().as_str());
     FinishedPage { rows, total_count }
 }
 
@@ -90,7 +92,7 @@ impl EntityQueryService {
         &self,
         target: &ContextTarget,
         outcome: QueryOutcome<Identifier>,
-        pagination: Pagination,
+        window: &PageWindow,
     ) -> Result<Vec<Identifier>, EntityError> {
         let QueryOutcome {
             rows,
@@ -108,15 +110,14 @@ impl EntityQueryService {
             }
             PaginationOutcome::Deferred => {
                 if unapplied.is_empty() {
-                    return Ok(rows.into_iter().skip(pagination.offset as usize).take(pagination.limit as usize).collect());
+                    return Ok(window.cut(rows, Identifier::as_str));
                 }
                 let states = self.reader.get_batch(target, &rows).await?;
-                Ok(rows
+                let admitted = rows
                     .into_iter()
                     .filter(|id| states.get(id).is_some_and(|retrieved| residual_filter::matches(&unapplied, &retrieved.state)))
-                    .skip(pagination.offset as usize)
-                    .take(pagination.limit as usize)
-                    .collect())
+                    .collect();
+                Ok(window.cut(admitted, Identifier::as_str))
             }
         }
     }
@@ -134,9 +135,11 @@ mod tests {
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
+        cursor::PageCursor,
         entity_selection::EntitySelection,
         filter::parser,
-        pagination::{CountPolicy, Pagination},
+        page_window::{PageStart, PageWindow},
     };
     use chrono::{DateTime, Utc};
     use serde_json::json;
@@ -182,8 +185,8 @@ mod tests {
         )
     }
 
-    fn page(limit: u32, offset: u32, count: CountPolicy) -> Pagination {
-        Pagination { limit, offset, count }
+    fn page(limit: u32, offset: u32) -> PageWindow {
+        PageWindow::offset(limit, offset)
     }
 
     #[test]
@@ -193,7 +196,7 @@ mod tests {
             unapplied: ResidualFilter::default(),
             pagination: PaginationOutcome::Applied { total: Some(5) },
         };
-        let finished = finish_page(outcome, page(20, 0, CountPolicy::Emit)).expect("coherent outcome");
+        let finished = finish_page(outcome, &page(20, 0), CountPolicy::Emit).expect("coherent outcome");
         pretty_assertions::assert_eq!(finished.rows.len(), 5);
         pretty_assertions::assert_eq!(finished.total_count, Some(5));
     }
@@ -207,7 +210,7 @@ mod tests {
             unapplied: above_25(),
             pagination: PaginationOutcome::Applied { total: Some(5) },
         };
-        let error = finish_page(outcome, page(20, 0, CountPolicy::Emit)).expect_err("must refuse");
+        let error = finish_page(outcome, &page(20, 0), CountPolicy::Emit).expect_err("must refuse");
         assert!(error.to_string().contains('q'), "the message names the outstanding predicate: {error}");
     }
 
@@ -220,7 +223,7 @@ mod tests {
             unapplied: above_25(),
             pagination: PaginationOutcome::Deferred,
         };
-        let finished = finish_page(outcome, page(2, 1, CountPolicy::Omit)).expect("coherent outcome");
+        let finished = finish_page(outcome, &page(2, 1), CountPolicy::Omit).expect("coherent outcome");
         pretty_assertions::assert_eq!(states(&finished), vec![&entity(40.0), &entity(50.0)]);
     }
 
@@ -233,7 +236,7 @@ mod tests {
             unapplied: above_25(),
             pagination: PaginationOutcome::Deferred,
         };
-        let finished = finish_page(outcome, page(2, 0, CountPolicy::Emit)).expect("coherent outcome");
+        let finished = finish_page(outcome, &page(2, 0), CountPolicy::Emit).expect("coherent outcome");
         pretty_assertions::assert_eq!(finished.rows.len(), 2);
         pretty_assertions::assert_eq!(finished.total_count, Some(3));
     }
@@ -245,7 +248,7 @@ mod tests {
             unapplied: above_25(),
             pagination: PaginationOutcome::Deferred,
         };
-        let finished = finish_page(outcome, page(2, 0, CountPolicy::Omit)).expect("coherent outcome");
+        let finished = finish_page(outcome, &page(2, 0), CountPolicy::Omit).expect("coherent outcome");
         pretty_assertions::assert_eq!(finished.total_count, None);
     }
 
@@ -258,7 +261,7 @@ mod tests {
             unapplied: above_25(),
             pagination: PaginationOutcome::Deferred,
         };
-        let finished = finish_page(outcome, page(20, 10, CountPolicy::Emit)).expect("coherent outcome");
+        let finished = finish_page(outcome, &page(20, 10), CountPolicy::Emit).expect("coherent outcome");
         assert!(finished.rows.is_empty(), "the page holds {} rows", finished.rows.len());
         pretty_assertions::assert_eq!(finished.total_count, Some(3));
     }
@@ -272,8 +275,42 @@ mod tests {
             unapplied: ResidualFilter::default(),
             pagination: PaginationOutcome::Deferred,
         };
-        let finished = finish_page(outcome, page(2, 0, CountPolicy::Emit)).expect("coherent outcome");
+        let finished = finish_page(outcome, &page(2, 0), CountPolicy::Emit).expect("coherent outcome");
         pretty_assertions::assert_eq!(states(&finished), vec![&entity(10.0), &entity(20.0)]);
         pretty_assertions::assert_eq!(finished.total_count, Some(5));
+    }
+
+    /// Ten entities at 0 to 9 degrees, as a store reads them in identifier
+    /// order (`urn:ngsi-ld:Building:0` to `urn:ngsi-ld:Building:9`).
+    fn ten() -> Vec<RetrievedEntity> {
+        (0..10)
+            .map(|temperature| RetrievedEntity {
+                state: Arc::new(entity(f64::from(temperature))),
+                sys_attrs: SysAttrsSnapshot {
+                    created_at: DateTime::<Utc>::UNIX_EPOCH,
+                    modified_at: DateTime::<Utc>::UNIX_EPOCH,
+                    expires_at: None,
+                },
+            })
+            .collect()
+    }
+
+    /// Clause 5.5.9.1: a deferred backward cursor page is cut from the whole
+    /// selection the residual left, the rows closest before its boundary, and
+    /// the count is still the whole selection's.
+    #[test]
+    fn a_deferred_backward_cursor_page_is_cut_from_the_whole_selection() {
+        let outcome = QueryOutcome {
+            rows: ten(),
+            unapplied: ResidualFilter::default(),
+            pagination: PaginationOutcome::Deferred,
+        };
+        let window = PageWindow {
+            limit: 3,
+            start: PageStart::Cursor(Some(PageCursor::Before("urn:ngsi-ld:Building:6".parse().expect("valid URI")))),
+        };
+        let finished = finish_page(outcome, &window, CountPolicy::Emit).expect("coherent outcome");
+        pretty_assertions::assert_eq!(states(&finished), vec![&entity(3.0), &entity(4.0), &entity(5.0)]);
+        pretty_assertions::assert_eq!(finished.total_count, Some(10));
     }
 }

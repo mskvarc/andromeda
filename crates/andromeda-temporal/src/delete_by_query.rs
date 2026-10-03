@@ -15,8 +15,9 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
     dataset::DatasetFilter,
-    pagination::{CountPolicy, Pagination},
+    page_window::PageWindow,
     temporal::{
         compiled::CompiledTemporalQuery,
         history_delete::{AttributeDeleteScope, TemporalHistoryDeleteScope},
@@ -66,15 +67,10 @@ impl TemporalService {
         // Stage 1 entity resolution, unpaged: the delete addresses every
         // matching entity, not one page of them. A cheap guard first — no entity
         // matched means nothing to count or delete.
-        let mut unpaged = compiled.clone();
-        unpaged.pagination = Pagination {
-            limit: u32::MAX,
-            offset: 0,
-            count: CountPolicy::Omit,
-        };
-        let outcome = self.reader.query_entity_ids(target, &unpaged).await?;
+        let unpaged = PageWindow::unbounded();
+        let outcome = self.reader.query_entity_ids(target, &compiled, &unpaged, CountPolicy::Omit).await?;
         let (entity_ids, _total) = outcome
-            .complete(unpaged.pagination)
+            .complete(&unpaged, CountPolicy::Omit)
             .map_err(|error| TemporalError::from(TemporalInvariant::IncompleteOutcome(error)))?;
         if entity_ids.is_empty() {
             return Ok(empty_outcome(params));

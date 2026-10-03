@@ -26,8 +26,9 @@ use andromeda_entity::query_residual::ResidualFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, instance_family::InstanceFamily};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
     ordering::sort_direction::SortDirection,
-    pagination::{CountPolicy, Pagination},
+    page_window::PageWindow,
     temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, ordering::TemporalEntityOrdering, window::TimeInterval},
 };
 use async_trait::async_trait;
@@ -225,17 +226,22 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
         Ok(types_by_entity)
     }
 
-    async fn query_entity_ids(&self, target: &ContextTarget, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
+    /// The stored and the pending identifiers form one collection, so neither
+    /// can be paged on its own: every stored match is read, the pending ones
+    /// merged in, and the whole set handed back in the query's order for the
+    /// caller to count and cut `_window` from (clauses 5.5.9 and 6.3.13).
+    async fn query_entity_ids(
+        &self,
+        target: &ContextTarget,
+        compiled: &CompiledTemporalQuery,
+        _window: &PageWindow,
+        _count: CountPolicy,
+    ) -> Result<TemporalEntityIdOutcome, TemporalError> {
         let pending = pending_on_branch(target, || self.pending.pending_intents()).await?;
-        let mut unpaged = compiled.clone();
-        unpaged.pagination = Pagination {
-            limit: u32::MAX,
-            offset: 0,
-            count: CountPolicy::Omit,
-        };
-        let stored = self.stored.query_entity_ids(target, &unpaged).await?;
+        let unpaged = PageWindow::unbounded();
+        let stored = self.stored.query_entity_ids(target, compiled, &unpaged, CountPolicy::Omit).await?;
         let (stored_ids, _) = stored
-            .complete(unpaged.pagination)
+            .complete(&unpaged, CountPolicy::Omit)
             .map_err(|error| TemporalError::from(TemporalInvariant::IncompleteOutcome(error)))?;
         let mut identifiers = stored_ids;
         let mut seen: HashSet<Identifier> = identifiers.iter().cloned().collect();

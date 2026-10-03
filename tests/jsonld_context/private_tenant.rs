@@ -70,7 +70,7 @@ impl PrivateTenant {
         &self.client
     }
 
-    /// The tenant's name, as `NGSILD-Tenant` and `andromedaTenant` carry it.
+    /// The tenant's name, as `NGSILD-Tenant` carries it.
     pub fn name(&self) -> &str {
         self.environment.tenant()
     }

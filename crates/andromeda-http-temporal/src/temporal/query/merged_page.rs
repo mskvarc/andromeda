@@ -18,11 +18,10 @@ use crate::temporal::{
     evaluate,
     expand_attribute_names,
     expand_q_expr,
-    query::{forwarding::ForwardedHistory, page::QueriedPage},
 };
 use andromeda_federation::{config::SplitEntities, temporal_last_n::truncate_to_last_n};
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
-use andromeda_ngsi_ld_query::page_window::PageWindow;
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
 use andromeda_temporal::service::TemporalService;
 use axum::http::Uri;
 use serde_json::Value;
@@ -129,7 +128,7 @@ async fn retain_split_matches(
 /// identifiers. No other order reaches this point, because clause 5.7.4.4
 /// refuses an ordering on a query not limited to the local scope. The window
 /// is the one the client asked for, by offset or by cursor alike.
-fn merged_page(entities: Vec<Value>, params: &TemporalQueryParameters, window: &PageWindow) -> (Vec<Value>, Option<usize>) {
+fn merged_page(entities: Vec<Value>, params: &TemporalQueryParameters, window: &PageWindow, count: CountPolicy) -> (Vec<Value>, Option<usize>) {
     let mut bounded = entities;
     if let Some(last_n) = params.last_n {
         let timeproperty = params.timeproperty_or_default();
@@ -139,7 +138,10 @@ fn merged_page(entities: Vec<Value>, params: &TemporalQueryParameters, window: &
     }
     bounded.sort_by(|left, right| identifier_key(left).cmp(identifier_key(right)));
     let bounded = bounded;
-    let total = params.count.unwrap_or(false).then_some(bounded.len());
+    let total = match count {
+        CountPolicy::Emit => Some(bounded.len()),
+        CountPolicy::Omit => None,
+    };
     (window.cut(bounded, identifier_key), total)
 }
 
@@ -147,25 +149,6 @@ fn merged_page(entities: Vec<Value>, params: &TemporalQueryParameters, window: &
 /// readable `id` has the empty key and sorts first.
 fn identifier_key(entity: &Value) -> &str {
     entity.get("id").and_then(Value::as_str).unwrap_or_default()
-}
-
-/// Hold the requested page back until after the merge when context sources
-/// contributed entities, returning the window the merged collection is cut to.
-///
-/// Clause 5.5.9 cuts the page from the merged collection rather than from the
-/// local rows, so the local query reads from the first row, past no cursor, and
-/// as many rows as it takes to tell that the merge exceeds the request's budget
-/// (clause 4.12).
-pub(crate) fn hold_page_until_merge<'page>(
-    params: &mut TemporalQueryParameters,
-    forwarded: Option<&ForwardedHistory>,
-    page: &'page QueriedPage,
-) -> Option<&'page PageWindow> {
-    let history = forwarded.filter(|history| history.holds_remote_entities())?;
-    params.limit = Some(history.local_row_limit());
-    params.offset = Some(0);
-    params.cursor = None;
-    Some(page.window())
 }
 
 /// What the local query held back until the context sources had answered.
@@ -183,6 +166,9 @@ pub(crate) struct MergedPageCut<'page> {
     /// The page window withheld while the merge was pending, absent when no
     /// source contributed and the local query already cut the page.
     pub(crate) window: Option<&'page PageWindow>,
+    /// Whether the client asked for the total of the merged collection
+    /// (clause 6.3.13).
+    pub(crate) count: CountPolicy,
     /// The match count the local read reported, which stands when no page was
     /// withheld.
     pub(crate) local_total: Option<usize>,
@@ -207,6 +193,7 @@ pub(crate) async fn cut_merged_page(
         deferred,
         filtering,
         window,
+        count,
         local_total,
     } = cut;
     let entities = match filtering {
@@ -214,7 +201,7 @@ pub(crate) async fn cut_merged_page(
         SplitEntities::Complete => merged_entities,
     };
     match window {
-        Some(window) => Ok(merged_page(entities, params, window)),
+        Some(window) => Ok(merged_page(entities, params, window, count)),
         None => Ok((entities, local_total)),
     }
 }
