@@ -551,6 +551,58 @@ async fn regression_seal_reification_the_temporal_write_path_keeps_the_seals_bar
     scope.finish().await.expect("cleanup failed");
 }
 
+/// Clause 5.7.4.4 admits a temporal query limited to the local scope with no
+/// other narrowing (input e), and clause 5.7.4.3 says that then "no further
+/// restrictions have to be provided". A sealed instance is compacted through
+/// the JSON-LD processor rather than the term walk, and the processor's
+/// recursion once overflowed a Tokio worker's stack and aborted the broker on
+/// exactly this query, taking every tenant down.
+#[tokio::test]
+async fn regression_r58_a_local_temporal_query_renders_a_sealed_instance() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Building:local-query-proof");
+
+    let created = client
+        .create_temporal_entity(&json!({
+            "id": id,
+            "type": SEALED_TYPE,
+            "temperature": [{
+                "type": "Property",
+                "value": 21.5,
+                "observedAt": "2025-01-01T00:00:00Z",
+                "ngsildproof": ngsildproof(&id)
+            }],
+            "@context": [TEST_SUITE_CONTEXT]
+        }))
+        .await
+        .expect("create temporal entity request");
+    assert_eq!(created.status, StatusCode::CREATED, "create temporal entity: {:?}", created.body);
+
+    let response = client
+        .query_temporal_entities(
+            &scope.scope_query("timerel=after&timeAt=2024-01-01T00:00:00Z&local=true"),
+            Some(TEST_SUITE_CONTEXT),
+        )
+        .await
+        .expect("query temporal entities request");
+    assert_eq!(response.status, StatusCode::OK, "query temporal entities: {:?}", response.body);
+    let rendered = response.json_value().expect("a temporal query answers with an entity array");
+
+    let entities = rendered.as_array().expect("clause 5.7.4 answers with an array of entities");
+    assert_eq!(entities.len(), 1, "only the sealed entity this run wrote matches: {rendered}");
+    let entity = entities.first().expect("the sealed entity is there");
+    assert_eq!(entity["id"], json!(id), "{entity}");
+    let instance = entity["temperature"]
+        .as_array()
+        .and_then(|instances| instances.first())
+        .expect("clause 4.5.8 renders the written instance");
+    assert_seals_are_bare(&instance["ngsildproof"], &id, "local temporal query");
+    assert_no_prefixed_seal_spelling(entity, "local temporal query");
+
+    scope.finish().await.expect("cleanup failed");
+}
+
 /// Clause 4.5.4 keeps only each attribute's value in the simplified
 /// representation, discarding every sub-attribute. `ngsildproof` is a
 /// sub-attribute, so it goes with the rest — and taking it with them is what

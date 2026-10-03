@@ -22,8 +22,8 @@ chrono = "0.4.45"
 dashmap = { version = "6.2.1", features = ["inline"] }
 indexmap = "2.14.2"
 iri-rs = "3.4.1"
-jsonld = { version = "0.23.4", features = ["serde-json"] }
-jsonld-syntax = { version = "0.23.4", features = ["serde-json"] }
+jsonld = { version = "0.23.5", features = ["serde-json"] }
+jsonld-syntax = { version = "0.23.5", features = ["serde-json"] }
 serde = "1.0.229"
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 thiserror = "2.0.21"
