@@ -44,7 +44,13 @@ use crate::{
     write_kind::{AttributeWriteKind, EntityWriteKind},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, scoped_context_admission::reject_scoped_user_contexts};
-use andromeda_ngsi_ld_entity::{admission::null_sentinel_admission::NullSentinelAdmission, document::EntityDocument};
+use andromeda_ngsi_ld_entity::{
+    admission::{
+        attribute_nesting_admission::{admit_document_nesting, admit_instance_nesting},
+        null_sentinel_admission::NullSentinelAdmission,
+    },
+    document::EntityDocument,
+};
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::attribute_strip::AttributeStrip;
@@ -152,18 +158,21 @@ impl BatchWrite {
     }
 }
 
-/// Screen one written entity document under clause 5.5.4 and the payload
-/// budget.
+/// Screen one written entity document under clause 5.5.4, the payload budget
+/// and the attribute nesting.
 ///
 /// # Errors
 ///
-/// Reports [`EntityError::PayloadBudget`] for a document past `budget`, and
+/// Reports [`EntityError::PayloadBudget`] for a document past `budget`,
+/// [`EntityError::AttributeNesting`] for an attribute nesting deeper than it
+/// admits, and
 /// the [`EntityError::Validation`] of an NGSI-LD Null the operation does not
 /// admit, an instance its family does not admit, or a `scope` member outside
 /// clause 4.18; the HTTP binding answers it with the `BadRequestData` of
 /// clause 5.5.4.
 pub(crate) fn admit_written_entity(budget: EntityPayloadBudget, document: &EntityDocument, admission: NullSentinelAdmission) -> Result<(), EntityError> {
     admit_entity_document(budget, document)?;
+    admit_document_nesting(budget.attribute_nesting, document)?;
     document.admit(admission)?;
     Ok(())
 }
@@ -283,8 +292,9 @@ impl EntityService {
     /// Reports the refusal of [`EntityService::admit_write_context`],
     /// [`EntityError::JsonLd`] when the fragment cannot be expanded against
     /// `context`, [`EntityError::PayloadBudget`] when it is past the budget,
-    /// and the [`EntityError::Validation`] of a fragment clause 5.5.4 refuses
-    /// for `W`.
+    /// [`EntityError::AttributeNesting`] when it nests deeper than the budget
+    /// admits, and the [`EntityError::Validation`] of a fragment clause 5.5.4
+    /// refuses for `W`.
     pub async fn admit_attribute_write<'a, W: AttributeWriteKind>(
         &self,
         attribute: &'a AttributeName,
@@ -295,6 +305,7 @@ impl EntityService {
         let expansion = EntityExpansion::prepare(&self.engine, context).await?;
         let fragment = expansion.attribute_fragment(attribute, payload).await?;
         admit_instance_document(self.payload_budget, fragment.name(), fragment.instance())?;
+        admit_instance_nesting(self.payload_budget.attribute_nesting, fragment.name(), fragment.instance())?;
         fragment.instance().admit_fragment(fragment.name(), W::WRITE.null_sentinel_admission())?;
         Ok(AdmittedAttribute::new(attribute, fragment))
     }

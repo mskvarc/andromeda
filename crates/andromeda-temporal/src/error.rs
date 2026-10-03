@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_entity::{history::current_state_fold::CurrentStateFoldErro
 use andromeda_ngsi_ld_expansion::error::ExpansionError;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::temporal::values::TemporalValuesError;
-use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
+use andromeda_ngsi_ld_representation::{attribute_nesting::AttributeNestingExceeded, payload_budget::PayloadBudgetExceeded};
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use thiserror::Error;
@@ -51,6 +51,10 @@ pub enum TemporalError {
     /// before it is expanded (clause 6.3.2, "Request Entity too large").
     #[error(transparent)]
     PayloadBudget(#[from] PayloadBudgetExceeded),
+    /// A written attribute nests deeper than the broker reads back what it
+    /// stores; the HTTP binding answers it with `BadRequestData`.
+    #[error(transparent)]
+    AttributeNesting(#[from] AttributeNestingExceeded),
     /// JSON-LD processing failed.
     #[error(transparent)]
     JsonLd(#[from] JsonLdError),
@@ -283,6 +287,7 @@ impl TemporalError {
             | EntityError::Contention { .. }
             | EntityError::OperationNotSupported(_)
             | EntityError::PayloadBudget(_)
+            | EntityError::AttributeNesting(_)
             | EntityError::JsonLd(_)
             | EntityError::Query(_)
             | EntityError::Request(_)

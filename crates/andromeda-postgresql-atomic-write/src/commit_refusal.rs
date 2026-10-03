@@ -135,6 +135,7 @@ pub(crate) fn temporal(error: TemporalError) -> CommitError {
         | TemporalError::OperationNotSupported(_)
         | TemporalError::TooManyResults { .. }
         | TemporalError::PayloadBudget(_)
+        | TemporalError::AttributeNesting(_)
         | TemporalError::JsonLd(_)
         | TemporalError::Query(_)
         | TemporalError::Request(_)

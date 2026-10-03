@@ -529,4 +529,31 @@ mod tests {
             vec!["urn:ngsi-ld:Vehicle:2"]
         );
     }
+
+    /// Clause 5.6.7.4 again: an entity nesting an attribute past the limit is
+    /// refused against its own identifier, as the `BadRequestData` a single
+    /// write answers it with, and its neighbour is admitted.
+    #[tokio::test]
+    async fn the_batch_admission_refuses_only_the_entity_nesting_too_deeply() {
+        let (service, _recorded) = recording_service().await;
+        let deep = (0..33).fold(json!("leaf"), |inner, _| json!({"k": inner}));
+        let nested = entity(&json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "reading": {"type": "Property", "value": deep}}));
+        let entities = vec![nested, vehicle("urn:ngsi-ld:Vehicle:2")];
+
+        let (admitted, refused) = service.admit_batch_write(BatchCreate, submitted(entities, &ContextSpec::core_only())).await;
+
+        let [(id, refusal)] = refused.as_slice() else {
+            panic!("exactly the nesting entity is refused: {refused:?}");
+        };
+        pretty_assertions::assert_eq!(id.as_str(), "urn:ngsi-ld:Vehicle:1");
+        let EntityError::AttributeNesting(exceeded) = refusal else {
+            panic!("refused for its nesting: {refusal:?}");
+        };
+        pretty_assertions::assert_eq!(exceeded.attribute.as_str(), "https://uri.etsi.org/ngsi-ld/default-context/reading");
+        pretty_assertions::assert_eq!(exceeded.limit.get(), 32);
+        pretty_assertions::assert_eq!(
+            admitted.entities().map(|(entity, _)| entity.id.to_string()).collect::<Vec<_>>(),
+            vec!["urn:ngsi-ld:Vehicle:2"]
+        );
+    }
 }

@@ -52,6 +52,7 @@ pub mod time_interval;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-native-stack",
         "andromeda-ngsi-ld-entity",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
@@ -62,6 +63,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-test-fixtures",
     ],
     allow_production_dependencies: [],
 }

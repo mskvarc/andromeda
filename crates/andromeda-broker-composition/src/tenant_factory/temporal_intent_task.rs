@@ -139,6 +139,7 @@ const fn classify_temporal_drain_failure(error: TemporalError) -> TaskFailure<Te
         | TemporalError::OperationNotSupported(_)
         | TemporalError::TooManyResults { .. }
         | TemporalError::PayloadBudget(_)
+        | TemporalError::AttributeNesting(_)
         | TemporalError::JsonLd(_)
         | TemporalError::Query(_)
         | TemporalError::Request(_)

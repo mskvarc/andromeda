@@ -75,6 +75,7 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-test-allocator",
+        "andromeda-test-fixtures",
     ],
     allow_production_dependencies: [],
 }

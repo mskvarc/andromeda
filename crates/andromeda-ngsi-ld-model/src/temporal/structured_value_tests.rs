@@ -301,3 +301,30 @@ fn a_geometry_observation_keeps_its_members_through_the_intent() {
     };
     assert!(geometry.members().is_none());
 }
+
+/// Every structured value and every metadata object a write is admitted with
+/// reads back from its history row: at the deepest nesting any limit may
+/// admit, the value of each nesting family and the metadata of a chain of
+/// sub-attributes decode and write back unchanged.
+#[test]
+fn values_and_metadata_at_the_decodable_ceiling_read_back() {
+    use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
+    use andromeda_test_fixtures::nesting_fixture::{NestingShape, list_chain, nested_instance, node_chain, object_chain};
+
+    let ceiling = AttributeNestingLimit::DECODABLE_CEILING.get();
+    pretty_assertions::assert_eq!(round_trip(AttributeType::Property, &node_chain(ceiling)), node_chain(ceiling));
+    let list_body = list_chain(ceiling)["@list"].clone(); // clone: the body is compared against its own round trip
+    pretty_assertions::assert_eq!(round_trip(AttributeType::ListProperty, &list_body), list_body);
+    pretty_assertions::assert_eq!(round_trip(AttributeType::JsonProperty, &object_chain(ceiling)), object_chain(ceiling));
+
+    let mut members = nested_instance(NestingShape::SubAttributeChain, ceiling);
+    if let Some(members) = members.as_object_mut() {
+        members.retain(|name, _| name != "@type" && !name.starts_with("https://uri.etsi.org/ngsi-ld/"));
+    }
+    let metadata = ObservationMetadata::from_stored(AttributeType::Property, &attribute(), &members.to_string())
+        .expect("the stored metadata reads")
+        .expect("the sub-attributes are metadata");
+    let stored = metadata.to_stored_json().expect("the metadata writes");
+    let reread = ObservationMetadata::from_stored(AttributeType::Property, &attribute(), stored.get()).expect("the written metadata reads");
+    pretty_assertions::assert_eq!(reread, Some(metadata));
+}

@@ -5,7 +5,9 @@
 //! text, list objects and JSON literals -- is read straight into the expanded
 //! tree the walk would have produced, then through the same assembly. Nothing
 //! passes through `serde_json::Value` on the way; only a JSON literal becomes
-//! the `serde_json::Value` the model carries it as.
+//! the `serde_json::Value` the model carries it as. The reading recurses once
+//! per level of the document, which a nested value or sub-attribute deepens,
+//! so every level runs on sufficient stack.
 
 use crate::{
     assembly::{attribute_fragment, entity_document, member_value::malformed},
@@ -14,6 +16,7 @@ use crate::{
     expanded_tree::{ExpandedItem, ExpandedNode, Scalar, ValueObject},
     term_scope::id_text,
 };
+use andromeda_native_stack::on_sufficient_stack;
 use andromeda_ngsi_ld_entity::{document::EntityDocument, member_shape::MemberShape, refusal::EntityRefusal};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::IriBuf;
@@ -68,6 +71,11 @@ fn top_level_node(document: ExpandedDocument<IriBuf, BlankIdBuf>) -> Result<Opti
 /// Read one expanded object, refusing a shape no NGSI-LD document holds (a
 /// graph, an `@included` or `@reverse` member, an `@index`, a `null` literal).
 fn item(object: IndexedObject<IriBuf, BlankIdBuf>) -> Result<ExpandedItem, EntityRefusal> {
+    on_sufficient_stack(|| object_item(object))
+}
+
+/// Read one expanded object on the stack the caller left.
+fn object_item(object: IndexedObject<IriBuf, BlankIdBuf>) -> Result<ExpandedItem, EntityRefusal> {
     let (object, index) = object.into_parts();
     if index.is_some() {
         return Err(unsupported());

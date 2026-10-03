@@ -5,8 +5,11 @@
 //! The budget is taken per request: it bounds what one write makes the broker
 //! hold, not what an entity grows to over many writes. It is counted on the
 //! written document the typed expansion produced, by the layer that admits
-//! the write.
+//! the write. The same walk holds each attribute to the nesting its stored
+//! expansion can be read back at, which is refused on its own terms (see
+//! [`crate::attribute_nesting`]).
 
+use crate::attribute_nesting::AttributeNestingLimit;
 use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
@@ -24,6 +27,8 @@ pub struct EntityPayloadBudget {
     pub json_values: JsonValueLimit,
     /// The most positions any one geometry of the payload may hold.
     pub geometry_positions: GeometryPositionLimit,
+    /// The deepest nesting any one attribute of the payload may have.
+    pub attribute_nesting: AttributeNestingLimit,
 }
 
 /// What a payload's census found over its budget.

@@ -17,6 +17,9 @@ pub trait ValueMode: Debug + Clone + PartialEq + private::Sealed {
     type Member: Debug + Clone + PartialEq;
     /// The text one language-map entry holds.
     type Text: Debug + Clone + PartialEq;
+
+    /// The values `member` holds; none for a member a fragment deletes.
+    fn held_values(member: &Self::Member) -> &[ExpandedValue<Self>];
 }
 
 /// Entity state: no deletion anywhere.
@@ -26,6 +29,10 @@ pub enum Stored {}
 impl ValueMode for Stored {
     type Member = Vec<ExpandedValue<Stored>>;
     type Text = CompactString;
+
+    fn held_values(member: &Vec<ExpandedValue<Stored>>) -> &[ExpandedValue<Stored>] {
+        member
+    }
 }
 
 /// A written fragment: a structured member or a language entry may be the
@@ -36,6 +43,13 @@ pub enum Fragment {}
 impl ValueMode for Fragment {
     type Member = FragmentMember;
     type Text = FragmentText;
+
+    fn held_values(member: &FragmentMember) -> &[ExpandedValue<Fragment>] {
+        match member {
+            FragmentMember::Values(values) => values,
+            FragmentMember::Remove => &[],
+        }
+    }
 }
 
 /// One member of a structured value in a written fragment.

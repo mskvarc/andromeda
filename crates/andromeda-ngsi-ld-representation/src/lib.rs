@@ -32,7 +32,8 @@
 //!
 //! [`payload_budget`] counts what a written compact payload will cost once
 //! expanded, before the expansion is attempted: what a representation costs is
-//! read off the representation alone.
+//! read off the representation alone. [`attribute_nesting`] bounds how deeply
+//! one attribute of it may nest, so that its stored expansion reads back.
 //!
 //! [`embedded_context_admission`] is the fourth of those representation rules
 //! and the only one about where a member may stand rather than which members
@@ -48,6 +49,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod attribute_nesting;
 pub mod attribute_type_validation;
 pub mod embedded_context_admission;
 pub mod entity_members;

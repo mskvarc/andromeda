@@ -8,6 +8,7 @@
 //! only through the validating conversion.
 
 pub mod attribute_member;
+pub mod attribute_nesting;
 pub mod instance_document;
 pub mod slot;
 pub mod value_carrier;

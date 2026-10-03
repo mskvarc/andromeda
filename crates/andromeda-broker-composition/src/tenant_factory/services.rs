@@ -40,7 +40,6 @@ use andromeda_http_context_registry::tenant_context_hosting::TenantContextHostin
 use andromeda_postgresql_context_store::jsonld_context::repo::JsonLdContextRepository;
 use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook};
 use andromeda_snapshot::{
-    config::SnapshotConfig,
     executor::{SnapshotPreparation, SnapshotPreparationConfig, capture_sources::SnapshotCaptureSources},
     service::{SnapshotService, SnapshotServiceConfig},
     status_delivery_signal::StatusDeliverySignal,
@@ -114,15 +113,7 @@ pub(super) fn construct_services(
     let context_store = Arc::new(JsonLdContextRepository::new(&storage.pool)) as Arc<dyn ContextRegistryStore>;
     let contexts = Arc::new(ContextRegistryService::new(context_store, storage.engine.clone()));
     let context_hosting = TenantContextHosting::new(contexts);
-    let (snapshot_preparation, snapshots) = compose_snapshot_services(
-        &config.snapshot,
-        storage,
-        writes,
-        &entity_query,
-        &temporal,
-        &forwarding,
-        snapshot_delivery_signal,
-    );
+    let (snapshot_preparation, snapshots) = compose_snapshot_services(config, storage, writes, &entity_query, &temporal, &forwarding, snapshot_delivery_signal);
     let edge = DistributedSubscriptionEdge::resolve(&config.identity, subscription_router, &forwarding, &storage.tenant);
     let subscriptions = compose_subscription_services(storage, signals, transports, edge, &entity_query, &config.entity);
     let state = AndromedaState {
@@ -267,7 +258,7 @@ fn compose_entity_query_service(config: &TenantFactoryConfig, storage: &TenantSt
 
 /// Compose the snapshot preparation operation and the service scheduling it.
 fn compose_snapshot_services(
-    config: &SnapshotConfig,
+    config: &TenantFactoryConfig,
     storage: &TenantStorage,
     writes: &Arc<dyn ContextCommitter>,
     entity_query: &Arc<EntityQueryService>,
@@ -275,6 +266,7 @@ fn compose_snapshot_services(
     forwarding: &Arc<FederationService>,
     delivery_signal: Arc<dyn StatusDeliverySignal>,
 ) -> (Arc<SnapshotPreparation>, Arc<SnapshotService>) {
+    let snapshot = &config.snapshot;
     let preparation = Arc::new(SnapshotPreparation::new(
         SnapshotCaptureSources {
             live_target: storage.live_target.clone(), // clone: capture queries execute against the tenant's ordinary live branch.
@@ -285,11 +277,12 @@ fn compose_snapshot_services(
         Arc::clone(&storage.snapshot_store),
         Arc::clone(writes),
         SnapshotPreparationConfig {
-            capture_page_size: config.capture_page_size,
-            max_per_pass: config.preparation_concurrency,
-            lease_duration: config.preparation_lease.duration(),
-            tenant_count_quota: config.tenant_count_quota,
-            tenant_byte_quota: config.tenant_storage_quota.map(HumanByteSize::as_u64),
+            capture_page_size: snapshot.capture_page_size,
+            max_per_pass: snapshot.preparation_concurrency,
+            lease_duration: snapshot.preparation_lease.duration(),
+            tenant_count_quota: snapshot.tenant_count_quota,
+            tenant_byte_quota: snapshot.tenant_storage_quota.map(HumanByteSize::as_u64),
+            attribute_nesting: config.entity.payload_budget().attribute_nesting,
         },
     ));
     let service = Arc::new(SnapshotService::new(
@@ -297,11 +290,11 @@ fn compose_snapshot_services(
         Some(Arc::clone(&preparation)), // clone: the service schedules the same preparation the worker drives.
         Some(delivery_signal),
         SnapshotServiceConfig {
-            default_lifetime: config.default_lifetime.duration(),
-            maximum_lifetime: config.maximum_lifetime.duration(),
-            scoped_operation_wait: config.scoped_operation_wait.duration(),
-            tenant_count_quota: config.tenant_count_quota,
-            tenant_byte_quota: config.tenant_storage_quota.map(HumanByteSize::as_u64),
+            default_lifetime: snapshot.default_lifetime.duration(),
+            maximum_lifetime: snapshot.maximum_lifetime.duration(),
+            scoped_operation_wait: snapshot.scoped_operation_wait.duration(),
+            tenant_count_quota: snapshot.tenant_count_quota,
+            tenant_byte_quota: snapshot.tenant_storage_quota.map(HumanByteSize::as_u64),
         },
     ));
     (preparation, service)

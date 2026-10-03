@@ -45,7 +45,7 @@ impl<'a, M: QueriedMode> QueriedValueNode<'a> for &'a ValueNode<M> {
     fn first_member_value(self, member: &AttributeName) -> Option<value_item::ValueItem<'a, &'a ValueNode<M>>> {
         self.members()
             .get(member.as_str())
-            .and_then(|values| M::member_values(values).first())
+            .and_then(|values| M::held_values(values).first())
             .map(item_of)
     }
 }

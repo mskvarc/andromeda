@@ -31,6 +31,7 @@ use andromeda_context_commit::{committer::ContextCommitter, lease_holder::LeaseH
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::snapshot::Snapshot;
+use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
 use chrono::Utc;
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -43,6 +44,9 @@ pub struct SnapshotExecutor {
     snapshot_repo: Arc<dyn SnapshotStore>,
     writes: Arc<dyn ContextCommitter>,
     capture_page_size: u32,
+    /// The deepest nesting an attribute a Context Source answered may have to
+    /// be captured.
+    attribute_nesting: AttributeNestingLimit,
 }
 
 impl SnapshotExecutor {
@@ -52,12 +56,14 @@ impl SnapshotExecutor {
         snapshot_repo: Arc<dyn SnapshotStore>,
         writes: Arc<dyn ContextCommitter>,
         capture_page_size: usize,
+        attribute_nesting: AttributeNestingLimit,
     ) -> SnapshotExecutor {
         SnapshotExecutor {
             sources,
             snapshot_repo,
             writes,
             capture_page_size: u32::try_from(capture_page_size).unwrap_or(u32::MAX),
+            attribute_nesting,
         }
     }
 
@@ -156,6 +162,9 @@ pub struct SnapshotPreparationConfig {
     pub tenant_count_quota: Option<usize>,
     /// Optional per-tenant Snapshot byte quota.
     pub tenant_byte_quota: Option<u64>,
+    /// The deepest nesting an attribute a Context Source answered may have to
+    /// be captured; the one every write is held to.
+    pub attribute_nesting: AttributeNestingLimit,
 }
 
 impl SnapshotPreparation {
@@ -172,6 +181,7 @@ impl SnapshotPreparation {
                 Arc::clone(&store), // clone: the preparation claims the jobs its executor promotes through the same store.
                 writes,
                 config.capture_page_size,
+                config.attribute_nesting,
             ),
             store,
             max_per_pass: config.max_per_pass.max(1),

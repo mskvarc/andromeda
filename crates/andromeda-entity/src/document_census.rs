@@ -173,7 +173,10 @@ mod tests {
     use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_representation::payload_budget::{EntityPayloadBudget, GeometryOwner, PayloadBudgetExceeded};
+    use andromeda_ngsi_ld_representation::{
+        attribute_nesting::AttributeNestingLimit,
+        payload_budget::{EntityPayloadBudget, GeometryOwner, PayloadBudgetExceeded},
+    };
     use serde_json::{Value, json};
     use std::num::NonZeroUsize;
 
@@ -181,6 +184,7 @@ mod tests {
         EntityPayloadBudget {
             json_values: JsonValueLimit::new(NonZeroUsize::new(values).expect("a positive value limit")),
             geometry_positions: GeometryPositionLimit::new(NonZeroUsize::new(positions).expect("a positive position limit")),
+            attribute_nesting: AttributeNestingLimit::DECODABLE_CEILING,
         }
     }
 

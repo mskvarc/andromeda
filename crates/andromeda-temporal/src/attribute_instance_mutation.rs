@@ -17,7 +17,10 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::document_census::admit_instance_document;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
+use andromeda_ngsi_ld_entity::{
+    admission::attribute_nesting_admission::admit_instance_nesting,
+    document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument},
+};
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_telemetry::temporal::{self, TemporalOperation};
@@ -91,6 +94,7 @@ impl TemporalService {
         let document = expansion.entity_fragment(fragment, Normalization::Entity).await?;
         let replacement = fragment_instance(document, &attr_iri)?;
         admit_instance_document(self.limits.payload_budget, &attr_iri, &replacement)?;
+        admit_instance_nesting(self.limits.payload_budget.attribute_nesting, &attr_iri, &replacement)?;
         admit_instance_unit_code(&attr_iri, &replacement)?;
         // Clause 5.6.14 replaces the instance with the one the Fragment
         // carries, so a replacement recording no value replaces it with none.

@@ -3,7 +3,7 @@
 use andromeda_configuration_scalars::human_duration::HumanDuration;
 use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
+use andromeda_ngsi_ld_representation::{attribute_nesting::AttributeNestingLimit, payload_budget::EntityPayloadBudget};
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroUsize, time::Duration};
 use thiserror::Error;
@@ -28,6 +28,11 @@ const DEFAULT_MAX_ENTITY_JSON_VALUES: NonZeroUsize = NonZeroUsize::MIN.saturatin
 
 /// The default most positions one geometry may hold.
 const DEFAULT_MAX_GEOMETRY_POSITIONS: NonZeroUsize = NonZeroUsize::MIN.saturating_add(99_999);
+
+/// The default deepest nesting one attribute may have: far deeper than the
+/// NGSI-LD data models nest, and well within the depth every stored document
+/// reads back at.
+const DEFAULT_MAX_ATTRIBUTE_NESTING: NonZeroUsize = NonZeroUsize::MIN.saturating_add(31);
 
 /// Invalid entity execution configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -56,6 +61,15 @@ pub enum EntityConfigError {
     /// The expiry batch size cannot be represented by the expiry source port.
     #[error("entity.expiry_batch_size must fit in an unsigned 32-bit integer")]
     ExpiryBatchSizeOutOfRange,
+    /// The attribute nesting limit admits attributes deeper than every stored
+    /// and queued document holding one can be read back at.
+    #[error("entity.max_attribute_nesting ({configured}) must not exceed {ceiling}, the deepest nesting every stored document reads back at")]
+    AttributeNestingAboveDecodable {
+        /// The configured limit.
+        configured: usize,
+        /// The deepest nesting every stored document reads back at.
+        ceiling: usize,
+    },
     /// Pending side-effect polling cadence was configured as zero.
     #[error("entity.pending_side_effects_poll must be greater than zero")]
     ZeroPendingSideEffectsPollCadence,
@@ -165,6 +179,14 @@ pub struct EntityConfig {
     /// `TooComplexQuery`. Every replica of a deployment runs the same value.
     #[toml_comment(inline)]
     pub max_geometry_positions: NonZeroUsize,
+    /// Deepest nesting one written attribute may have, counted in levels:
+    /// each sub-attribute, each JSON object or list of a value, and each
+    /// object or array inside a JSON literal is one. An attribute nesting
+    /// deeper is answered 400 `BadRequestData`. At most 59, the deepest every
+    /// stored document reads back at. Every replica of a deployment runs the
+    /// same value.
+    #[toml_comment(inline)]
+    pub max_attribute_nesting: NonZeroUsize,
 }
 
 impl Default for EntityConfig {
@@ -187,6 +209,7 @@ impl Default for EntityConfig {
             pending_side_effects_cleanup_interval: HumanDuration::from_secs(300),
             max_entity_json_values: DEFAULT_MAX_ENTITY_JSON_VALUES,
             max_geometry_positions: DEFAULT_MAX_GEOMETRY_POSITIONS,
+            max_attribute_nesting: DEFAULT_MAX_ATTRIBUTE_NESTING,
         }
     }
 }
@@ -198,6 +221,7 @@ impl EntityConfig {
         EntityPayloadBudget {
             json_values: JsonValueLimit::new(self.max_entity_json_values),
             geometry_positions: GeometryPositionLimit::new(self.max_geometry_positions),
+            attribute_nesting: AttributeNestingLimit::new(self.max_attribute_nesting),
         }
     }
 
@@ -214,9 +238,11 @@ impl EntityConfig {
     /// # Errors
     ///
     /// Reports the matching [`EntityConfigError`] variant for the first limit
-    /// that is zero, and [`EntityConfigError::ExpiryBatchSizeOutOfRange`] when
-    /// the expiry batch size does not fit the unsigned 32-bit width the expiry
-    /// source port accepts.
+    /// that is zero, [`EntityConfigError::ExpiryBatchSizeOutOfRange`] when the
+    /// expiry batch size does not fit the unsigned 32-bit width the expiry
+    /// source port accepts, and
+    /// [`EntityConfigError::AttributeNestingAboveDecodable`] when the attribute
+    /// nesting limit passes the depth every stored document reads back at.
     pub fn validate(&self) -> Result<(), EntityConfigError> {
         if self.batch_chunk_concurrency == Some(0) {
             return Err(EntityConfigError::ZeroBatchChunkConcurrency);
@@ -265,6 +291,13 @@ impl EntityConfig {
         }
         if u32::try_from(self.expiry_batch_size).is_err() {
             return Err(EntityConfigError::ExpiryBatchSizeOutOfRange);
+        }
+        let ceiling = AttributeNestingLimit::DECODABLE_CEILING;
+        if AttributeNestingLimit::new(self.max_attribute_nesting) > ceiling {
+            return Err(EntityConfigError::AttributeNestingAboveDecodable {
+                configured: self.max_attribute_nesting.get(),
+                ceiling: ceiling.get(),
+            });
         }
         Ok(())
     }
@@ -318,6 +351,7 @@ mod tests {
             pending_side_effects_cleanup_interval: HumanDuration::from_secs(300),
             max_entity_json_values: NonZeroUsize::MIN.saturating_add(99_999),
             max_geometry_positions: NonZeroUsize::MIN.saturating_add(99_999),
+            max_attribute_nesting: NonZeroUsize::MIN.saturating_add(31),
         }
     }
 
@@ -334,6 +368,23 @@ mod tests {
         let parsed: EntityConfig = toml::from_str(&rendered.replace("max_geometry_positions = 100000", "max_geometry_positions = 250000")).expect("parses");
         assert_eq!(parsed.max_geometry_positions.get(), 250_000);
         assert!(toml::from_str::<EntityConfig>(&rendered.replace("max_entity_json_values = 1000000", "max_entity_json_values = 0")).is_err());
+    }
+
+    /// An attribute nesting past the depth every stored document reads back
+    /// at would admit writes no read can decode; the limit defaults to 32 and
+    /// may be raised to that ceiling, not past it.
+    #[test]
+    fn the_attribute_nesting_defaults_to_32_and_is_refused_past_the_decodable_ceiling() {
+        let rendered = toml::to_string(&EntityConfig::default()).expect("the defaults render");
+        assert_eq!(EntityConfig::default().payload_budget().attribute_nesting.get(), 32);
+        let at_ceiling: EntityConfig = toml::from_str(&rendered.replace("max_attribute_nesting = 32", "max_attribute_nesting = 59")).expect("parses");
+        assert_eq!(at_ceiling.validate(), Ok(()));
+        let past_ceiling: EntityConfig = toml::from_str(&rendered.replace("max_attribute_nesting = 32", "max_attribute_nesting = 60")).expect("parses");
+        assert_eq!(
+            past_ceiling.validate(),
+            Err(EntityConfigError::AttributeNestingAboveDecodable { configured: 60, ceiling: 59 })
+        );
+        assert!(toml::from_str::<EntityConfig>(&rendered.replace("max_attribute_nesting = 32", "max_attribute_nesting = 0")).is_err());
     }
 
     #[test]

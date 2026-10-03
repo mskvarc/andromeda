@@ -7,12 +7,18 @@
 //! as written. This is the reading a decoded document's members get
 //! ([`AttributeValue::from_member`]) and the one a compacted entity's members
 //! get, so the two cannot disagree on which members are typed.
+//!
+//! An instance's sub-attributes are members too (clause 4.5.2), read by the
+//! reading of the instance, so the reading recurses once per level of nesting,
+//! about 40 KiB of stack per level in an unoptimized build. Every level runs on
+//! sufficient stack.
 
 use crate::{
     attribute::instance::{Attribute, AttributeValue},
     compact_node::{CompactNode, NodeShape},
     node_refusal::NodeReadError,
 };
+use andromeda_native_stack::on_sufficient_stack;
 
 /// What an attribute member reads as.
 #[derive(Debug)]
@@ -32,6 +38,11 @@ pub(crate) enum MemberForm {
 /// Returns the node's [`CompactNode::Unreadable`] when a node of the member
 /// has no JSON form.
 pub(crate) fn read_member<N: CompactNode>(member: &N) -> Result<MemberForm, N::Unreadable> {
+    on_sufficient_stack(|| member_form(member))
+}
+
+/// Read one attribute member on the stack the caller left.
+fn member_form<N: CompactNode>(member: &N) -> Result<MemberForm, N::Unreadable> {
     match member.shape() {
         NodeShape::Object(_) => Ok(match instance(member)? {
             Some(instance) => MemberForm::Single(Box::new(instance)),

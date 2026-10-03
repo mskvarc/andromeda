@@ -298,4 +298,35 @@ mod tests {
         let decoded = PersistedBatchSideEffectJob::decode(&stored(&job)).expect("payload decodes");
         pretty_assertions::assert_eq!(decoded, job);
     }
+
+    /// A job holds entity states three containers deeper than their row, the
+    /// deepest any queue holds one, so it is what the attribute nesting ceiling
+    /// is computed from: a job carrying an attribute at the ceiling in every
+    /// state it holds reads back, and one level deeper is past the reader.
+    #[test]
+    fn a_job_carrying_attributes_at_the_decodable_ceiling_reads_back_and_one_level_deeper_does_not() {
+        use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
+        use andromeda_test_fixtures::nesting_fixture::{NestingShape, nested_instance, stored_entity};
+
+        let job_nesting = |levels: usize| {
+            let stored = serde_json::to_vec(&stored_entity("urn:ngsi-ld:NestingProbe:1", nested_instance(NestingShape::ObjectChain, levels))).expect("JSON");
+            let state = Arc::new(EntityState::from_slice(&stored).expect("the state decodes"));
+            let mut job = persisted_job();
+            job.change_events.truncate(1);
+            job.temporal_entities.truncate(1);
+            job.temporal_entities[0].expanded = Arc::clone(&state);
+            job.change_events[0].entity_snapshot = Some(Arc::clone(&state));
+            job.change_events[0].previous_attributes = Some(Arc::clone(&state));
+            job.change_events[0].current_payload = Some(state);
+            job
+        };
+        let ceiling = AttributeNestingLimit::DECODABLE_CEILING.get();
+        let at_ceiling = job_nesting(ceiling);
+        let decoded = PersistedBatchSideEffectJob::decode(&stored(&at_ceiling)).expect("a job at the ceiling decodes");
+        pretty_assertions::assert_eq!(decoded, at_ceiling);
+        assert!(matches!(
+            PersistedBatchSideEffectJob::decode(&stored(&job_nesting(ceiling + 1))),
+            Err(PendingSideEffectPayloadError::InvalidStoredPayload(_))
+        ));
+    }
 }

@@ -111,6 +111,7 @@ fn probe_error(error: &EntityError) -> RegistrationError {
         | EntityError::Contention { .. }
         | EntityError::OperationNotSupported(_)
         | EntityError::PayloadBudget(_)
+        | EntityError::AttributeNesting(_)
         | EntityError::JsonLd(_)
         | EntityError::Query(_)
         | EntityError::Request(_)

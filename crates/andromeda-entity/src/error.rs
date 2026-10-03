@@ -8,7 +8,7 @@ use andromeda_ngsi_ld_entity::{operation::mutation_error::MutationError, refusal
 use andromeda_ngsi_ld_expansion::error::ExpansionError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::error::QueryError;
-use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
+use andromeda_ngsi_ld_representation::{attribute_nesting::AttributeNestingExceeded, payload_budget::PayloadBudgetExceeded};
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use derive_more::IsVariant;
@@ -66,6 +66,10 @@ pub enum EntityError {
     /// before it is expanded (clause 6.3.2, "Request Entity too large").
     #[error(transparent)]
     PayloadBudget(#[from] PayloadBudgetExceeded),
+    /// A written attribute nests deeper than the broker reads back what it
+    /// stores; the HTTP binding answers it with `BadRequestData`.
+    #[error(transparent)]
+    AttributeNesting(#[from] AttributeNestingExceeded),
     /// JSON-LD processing failed.
     #[error(transparent)]
     JsonLd(#[from] JsonLdError),

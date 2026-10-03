@@ -144,7 +144,7 @@ impl SnapshotExecutor {
         }
         let every_source_failed = !collect_warnings(&pending.answers).is_empty() && !pending.holds_entities();
 
-        let capture = ForwardedCapture::new(self.sources.entity_query.engine(), context);
+        let capture = ForwardedCapture::new(self.sources.entity_query.engine(), context, self.attribute_nesting);
         let mut ledger = CaptureLedger {
             captured: HashSet::new(),
             materialized: materialized_entities,

@@ -31,6 +31,9 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         // large to process; the budget is counted in values and positions
         // rather than bytes, and the client's remedy is the same.
         EntityError::PayloadBudget(source) => ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, source.to_string()),
+        // A depth, not a size: clause 6.3.2 keeps 413 for too many bytes, and
+        // clauses 5.7.1 and 5.7.2 answer a too deep query with `BadRequestData`.
+        EntityError::AttributeNesting(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         EntityError::JsonLd(source) => classify_jsonld_error(source),
         EntityError::Query(source) => classify_query_error(source),
         EntityError::Request(source) => classify_parameter_error(source),
@@ -252,5 +255,27 @@ mod tests {
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::TooComplexQuery);
         pretty_assertions::assert_eq!(report.classification().status_code(), StatusCode::FORBIDDEN);
         assert!(report.detail().contains("1000000"), "{}", report.detail());
+    }
+
+    /// Clauses 5.7.1 and 5.7.2 answer a too deep query with `BadRequestData`,
+    /// and clause 6.3.2 keeps 413 for too many bytes: an attribute nesting
+    /// past the limit is a 400 `BadRequestData` naming the attribute and the
+    /// limit.
+    #[test]
+    fn an_attribute_nesting_past_the_limit_is_a_400_bad_request_data() {
+        use andromeda_ngsi_ld_representation::attribute_nesting::{AttributeNestingExceeded, AttributeNestingLimit};
+
+        let exceeded = AttributeNestingExceeded {
+            attribute: "https://example.org/reading".parse().expect("an attribute name"),
+            limit: AttributeNestingLimit::new(NonZeroUsize::MIN.saturating_add(31)),
+        };
+        let report = classify_entity_error(&EntityError::AttributeNesting(exceeded));
+        pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::BadRequestData);
+        pretty_assertions::assert_eq!(report.classification().status_code(), StatusCode::BAD_REQUEST);
+        assert!(
+            report.detail().contains("'https://example.org/reading'") && report.detail().contains("32 levels"),
+            "{}",
+            report.detail()
+        );
     }
 }

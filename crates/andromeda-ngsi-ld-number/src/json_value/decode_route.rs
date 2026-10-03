@@ -13,12 +13,8 @@
 //! A value clear of every one of those differences decodes identically either
 //! way; any other value has to be decoded from its serialization.
 
-use crate::number_token::NumberToken;
+use crate::{json_value::READER_NESTING_LIMIT, number_token::NumberToken};
 use serde_json::{Map, Number, Value};
-
-/// The deepest container nesting `serde_json`'s reader accepts: its recursion
-/// budget of 128 is spent on entering each container, and refused at zero.
-const READER_NESTING_LIMIT: usize = 127;
 
 /// The prefix of the member names `serde_json`'s value visitor reserves for its
 /// arbitrary-precision number and raw-value tokens.
@@ -117,7 +113,10 @@ fn route_of_all<'a>(values: impl IntoIterator<Item = &'a Value>, criteria: Crite
 
 #[cfg(test)]
 mod tests {
-    use crate::json_value::decode_route::{DecodeRoute, READER_NESTING_LIMIT, document_decode_route, typed_decode_route};
+    use crate::json_value::{
+        READER_NESTING_LIMIT,
+        decode_route::{DecodeRoute, document_decode_route, typed_decode_route},
+    };
     use serde_json::{Map, Number, Value, json};
 
     /// `depth` arrays nested inside one another.

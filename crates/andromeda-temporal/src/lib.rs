@@ -75,6 +75,8 @@ pub mod write_purpose;
 mod written_evolution;
 
 #[cfg(test)]
+mod append_intent_ceiling_tests;
+#[cfg(test)]
 mod deferred_history_tests;
 
 #[cfg(test)]
@@ -101,7 +103,9 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-telemetry",
         "andromeda-unit-catalog",
     ],
-    allow_workspace_dev_dependencies: [],
+    allow_workspace_dev_dependencies: [
+        "andromeda-test-fixtures",
+    ],
     allow_production_dependencies: [],
 }
 

@@ -22,12 +22,13 @@ use crate::{
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_entity::document_census::admit_entity_document;
 use andromeda_ngsi_ld_entity::{
+    admission::attribute_nesting_admission::admit_document_nesting,
     document::{EntityDocument, EntityDocumentParts, attribute_member::AttributeMember},
     refusal::EntityRefusal,
 };
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_representation::payload_budget::{EntityPayloadBudget, PayloadBudgetExceeded};
+use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, expanded::properties as expanded_properties};
 use indexmap::IndexMap;
 use serde_json::Value;
@@ -74,14 +75,19 @@ impl WrittenEvolution {
     }
 
     /// Hold the written evolution to the budget an entity is admitted under
-    /// (clause 6.3.2, "Request Entity too large"), the Scope it dates included.
+    /// (clause 6.3.2, "Request Entity too large"), the Scope it dates included,
+    /// and each of its attributes to the nesting the budget admits.
     ///
     /// # Errors
     ///
-    /// Returns [`PayloadBudgetExceeded`] when either document exceeds it.
-    pub(crate) fn admit_budget(&self, budget: EntityPayloadBudget) -> Result<(), PayloadBudgetExceeded> {
+    /// Returns [`TemporalError::PayloadBudget`] when either document exceeds
+    /// the budget, and [`TemporalError::AttributeNesting`] when an attribute
+    /// nests deeper than it admits.
+    pub(crate) fn admit_budget(&self, budget: EntityPayloadBudget) -> Result<(), TemporalError> {
         admit_entity_document(budget, &self.document)?;
-        self.reified_scope.iter().try_for_each(|scope| admit_entity_document(budget, scope))
+        self.reified_scope.iter().try_for_each(|scope| admit_entity_document(budget, scope))?;
+        admit_document_nesting(budget.attribute_nesting, &self.document)?;
+        Ok(())
     }
 
     /// The evolution addressed to `entity_id`, of the `recorded_types` its
@@ -252,5 +258,28 @@ mod tests {
         let mut paths = json!({"id": "urn:ngsi-ld:V:1", "scope": ["/Madrid", "/Company"]});
         pretty_assertions::assert_eq!(take_reified_scope(&mut paths), None);
         pretty_assertions::assert_eq!(paths["scope"], json!(["/Madrid", "/Company"]));
+    }
+
+    /// A Temporal Evolution is held to the attribute nesting a Core write is:
+    /// an attribute at the limit is admitted, one level deeper is refused
+    /// naming the attribute.
+    #[test]
+    fn an_evolution_is_admitted_at_the_nesting_limit_and_refused_one_level_past_it() {
+        use crate::error::TemporalError;
+        use andromeda_entity::config::EntityConfig;
+        use andromeda_test_fixtures::nesting_fixture::{NESTED_ATTRIBUTE, NestingShape, nested_instance, stored_entity};
+
+        let evolution = |levels| {
+            let stored = stored_entity("urn:ngsi-ld:NestingProbe:1", nested_instance(NestingShape::SubAttributeChain, levels));
+            let document = EntityDocument::from_slice(&serde_json::to_vec(&stored).expect("JSON")).expect("a written document");
+            WrittenEvolution::new(Arc::new(document), None)
+        };
+        let budget = EntityConfig::default().payload_budget();
+        assert!(evolution(32).admit_budget(budget).is_ok());
+        let refused = evolution(33).admit_budget(budget).expect_err("33 levels pass the default limit of 32");
+        let TemporalError::AttributeNesting(exceeded) = refused else {
+            panic!("refused for its nesting: {refused}");
+        };
+        pretty_assertions::assert_eq!(exceeded.attribute.as_str(), NESTED_ATTRIBUTE);
     }
 }

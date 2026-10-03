@@ -4,7 +4,9 @@
 //! value member, the members every family shares (clause 5.2.5 and its
 //! siblings), the two data-integrity seals of clause 4.5.2.2, the output-only
 //! members a write never stores, and every other member, which is a
-//! sub-attribute.
+//! sub-attribute. A sub-attribute is read by this same reading, once per level
+//! of nesting and about 30 KiB of stack per level in an unoptimized build, so
+//! every level runs on sufficient stack.
 
 use crate::{
     assembly::{
@@ -15,6 +17,7 @@ use crate::{
     },
     expanded_tree::{ExpandedItem, ExpandedNode},
 };
+use andromeda_native_stack::on_sufficient_stack;
 use andromeda_ngsi_ld_entity::{
     date_time_text::DateTimeText,
     document::{attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot, value_carrier::ValueCarrier, written_value::ValueSlot},
@@ -36,6 +39,11 @@ use indexmap::IndexMap;
 /// Returns the refusal of the first member that is not what its expanded IRI
 /// names.
 pub fn instance_document(attribute: &AttributeName, node: ExpandedNode) -> Result<InstanceDocument, EntityRefusal> {
+    on_sufficient_stack(|| read_instance(attribute, node))
+}
+
+/// Read one expanded instance of `attribute` on the stack the caller left.
+fn read_instance(attribute: &AttributeName, node: ExpandedNode) -> Result<InstanceDocument, EntityRefusal> {
     if node.id.is_some() {
         return Err(malformed(attribute, MemberShape::Attribute));
     }

@@ -156,10 +156,15 @@ impl<'de> Visitor<'de> for InstanceFamilyVisitor {
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute::instance::{Attribute, AttributeValue};
+    use crate::{
+        attribute::instance::{Attribute, AttributeValue},
+        entity::Entity,
+        request_body::RequestBody,
+    };
     use pretty_assertions::assert_eq;
     use serde::{Deserialize, Serialize};
     use serde_json::{Value, json, value::RawValue};
+    use std::thread;
 
     /// The decoding `AttributeValue` derived before it was written by hand:
     /// each variant tried in order over a buffered copy of the member. Every
@@ -309,5 +314,44 @@ mod tests {
         ] {
             assert_eq!(decoded_alike(text), "raw");
         }
+    }
+
+    /// A Property carrying a chain of `levels` sub-attributes, each a Property
+    /// of a scalar.
+    fn sub_attribute_chain(levels: usize) -> Value {
+        (0..levels).fold(
+            json!({"type": "Property", "value": 1}),
+            |inner, _| json!({"type": "Property", "value": 1, "s": inner}),
+        )
+    }
+
+    /// How many sub-attributes `member` nests.
+    fn chain_length(member: &AttributeValue) -> usize {
+        let AttributeValue::Single(instance) = member else {
+            panic!("one instance: {member:?}");
+        };
+        instance.common().sub_attributes.get("s").map_or(0, |inner| 1 + chain_length(inner))
+    }
+
+    /// The reading recurses once per sub-attribute, about 40 KiB of stack a
+    /// level unoptimized. A chain as long as `serde_json`'s reader admits in
+    /// one attribute (124 sub-attributes inside the entity and the attribute)
+    /// is read from request text, and from its tree, on a 512 KiB thread: far
+    /// less than a Tokio worker has left inside a request handler.
+    #[test]
+    fn a_chain_of_sub_attributes_as_long_as_the_reader_admits_is_read_on_a_small_stack() {
+        let text = json!({"id": "urn:ngsi-ld:Probe:1", "type": "Probe", "p": sub_attribute_chain(124)}).to_string();
+        let lengths = thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || {
+                let entity = Entity::from_request_text(text.as_bytes()).expect("the entity is read");
+                let from_text = chain_length(entity.attrs.get("p").expect("the attribute is read"));
+                let from_tree = chain_length(&AttributeValue::from_member(sub_attribute_chain(124)));
+                (from_text, from_tree)
+            })
+            .expect("the thread starts")
+            .join()
+            .expect("the reading stays within the stack");
+        assert_eq!(lengths, (124, 124));
     }
 }
