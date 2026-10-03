@@ -189,7 +189,12 @@ impl FederationService {
     }
 
     /// Walk one source's answer from `first` to its last page.
-    async fn walk_source<A: WalkedAnswer>(
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityBudgetExceeded`] once everything gathered under
+    /// `budget` exceeds it.
+    pub(crate) async fn walk_source<A: WalkedAnswer>(
         &self,
         registration: &ContextSourceRegistration,
         first: ForwardedRead,
@@ -359,7 +364,7 @@ fn pointer_continuation(registration: &ContextSourceRegistration, outcome: &Forw
 
 /// The clause 6.3.17 warning of a source whose answer the walk could not read
 /// to its end, saying `what` the source did.
-fn incomplete_answer(registration: &ContextSourceRegistration, what: &str) -> NgsiLdWarning {
+pub(crate) fn incomplete_answer(registration: &ContextSourceRegistration, what: &str) -> NgsiLdWarning {
     NgsiLdWarning::MiscellaneousWarning(format!("Context source {} {what}; its answer is incomplete", registration.id))
 }
 
@@ -371,10 +376,20 @@ mod tests {
         entity_budget::{EntityBudget, EntityBudgetExceeded},
         fixed_registration_store::{FixedRegistrationStore, NoLocalEntities},
         forwarded_query::client_query::ClientQuery,
+        instance_budget::{InstanceBudget, InstanceBudgetExceeded},
         operation::ForwardingOperation,
         outcome::{ForwardReadOutcome, ForwardedEntities, ForwardedTemporalEntities},
         query_forwarding_error::QueryForwardingError,
-        request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, ForwardTemporalQueryRequest, QueryDelivery, SourcePaging, TriggeringRequest},
+        request::{
+            CsrModeFilter,
+            EntityMapInUse,
+            ForwardQueryRequest,
+            ForwardTemporalQueryRequest,
+            HistoryBudget,
+            QueryDelivery,
+            SourcePaging,
+            TriggeringRequest,
+        },
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
@@ -696,6 +711,7 @@ mod tests {
         match refused {
             Err(QueryForwardingError::TooManyResults(EntityBudgetExceeded { maximum })) => pretty_assertions::assert_eq!(maximum.get(), 3),
             Err(QueryForwardingError::Federation(error)) => panic!("the walk must be refused for its budget, not fail: {error}"),
+            Err(QueryForwardingError::TooManyInstances(exceeded)) => panic!("an entity query has no instance budget: {exceeded}"),
             Ok(outcome) => panic!("the walk must be refused, it gathered {:?}", gathered(&outcome)),
         }
         source.shutdown().await.expect("the mock source stops");
@@ -877,6 +893,7 @@ mod tests {
         match refused {
             Err(QueryForwardingError::TooManyResults(EntityBudgetExceeded { maximum })) => pretty_assertions::assert_eq!(maximum.get(), 3),
             Err(QueryForwardingError::Federation(error)) => panic!("the walk must be refused for its budget, not fail: {error}"),
+            Err(QueryForwardingError::TooManyInstances(exceeded)) => panic!("the walk must be refused for its entities: {exceeded}"),
             Ok(outcome) => panic!("the walk must be refused, it gathered {:?}", temporal_gathered(&outcome)),
         }
         source.shutdown().await.expect("the mock source stops");
@@ -899,6 +916,169 @@ mod tests {
         let requests = source.drain_requests().await;
         let queries: Vec<Option<&str>> = requests.iter().map(|request| request.uri.query()).collect();
         pretty_assertions::assert_eq!(queries, vec![Some("limit=1000"), Some("limit=1000&offset=2"), Some("limit=1000&offset=3")]);
+        source.shutdown().await.expect("the mock source stops");
+    }
+
+    /// One temporal page holding `urn:ngsi-ld:Vehicle:0000` with one `speed`
+    /// instance per `(value, observedAt)`, each identified by its value,
+    /// answered with `status` and carrying `content_range` when given.
+    fn history_page(instances: &[(i64, &str)], status: StatusCode, content_range: Option<&str>) -> MockResponse {
+        let speed: Vec<serde_json::Value> = instances
+            .iter()
+            .map(|(value, at)| json!({"type": "Property", "value": value, "observedAt": at, "instanceId": format!("urn:ngsi-ld:instance:{value}")}))
+            .collect();
+        let entities = json!([{"id": "urn:ngsi-ld:Vehicle:0000", "type": "Vehicle", "speed": speed}]);
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", HeaderValue::from_static("application/json"));
+        if let Some(content_range) = content_range {
+            headers.insert("content-range", HeaderValue::from_str(content_range).expect("a valid Content-Range header"));
+        }
+        MockResponse::builder()
+            .status(status)
+            .headers(headers)
+            .body(Bytes::from(serde_json::to_vec(&entities).expect("the page serializes")))
+            .build()
+    }
+
+    /// Forward an aggregated temporal `type=Vehicle` query reading the sources'
+    /// history to the end, under an instance budget of `instances`.
+    async fn history_walk(service: &FederationService, instances: u32) -> Result<ForwardReadOutcome<ForwardedTemporalEntities>, QueryForwardingError> {
+        let query: TemporalQueryParameters =
+            serde_urlencoded::from_str("type=Vehicle&timerel=after&timeAt=2019-01-01T00:00:00Z&format=aggregatedValues&aggrMethods=avg")
+                .expect("a valid temporal query");
+        let entities = EntityBudget::new(NonZeroU32::new(100).expect("a positive budget"));
+        let instances = InstanceBudget::new(NonZeroU32::new(instances).expect("a positive budget"));
+        let context = ContextSpec::none();
+        service
+            .forward_temporal_query(
+                &ContextTarget::Live,
+                ForwardTemporalQueryRequest {
+                    client_query: &query,
+                    split: SplitEntities::Split,
+                    context: &context,
+                    operation: ForwardingOperation::QueryTemporalEntity,
+                    triggering: TriggeringRequest::default(),
+                    csf_expr: None,
+                    mode_filter: CsrModeFilter::All,
+                    entity_map: EntityMapInUse::None,
+                    paging: SourcePaging::WalkHistory(HistoryBudget {
+                        entities: &entities,
+                        instances: &instances,
+                    }),
+                },
+            )
+            .await
+    }
+
+    /// The `speed` values a history walk gathered for the one entity.
+    fn speed_values(outcome: &ForwardReadOutcome<ForwardedTemporalEntities>) -> Vec<i64> {
+        outcome
+            .results
+            .iter()
+            .flat_map(|answer| answer.entities.iter())
+            .flat_map(|entity| entity["speed"].as_array().cloned().unwrap_or_default())
+            .filter_map(|instance| instance["value"].as_i64())
+            .collect()
+    }
+
+    /// Clause 6.3.10: a 206 says up to which instant the source answered, so
+    /// the walk asks again from there and folds the rest of the history into
+    /// the entity, each instance once; the source is asked for instances, not
+    /// for its own aggregate.
+    #[tokio::test]
+    async fn a_partial_answer_is_resumed_at_its_range_end() {
+        let source = source().await;
+        source
+            .enqueue(
+                Method::GET,
+                path(TEMPORAL_PATH),
+                history_page(
+                    &[(1, "2020-01-01T00:00:00Z"), (2, "2020-01-02T00:00:00Z")],
+                    StatusCode::PARTIAL_CONTENT,
+                    Some("DateTime 2020-01-01T00:00:00Z-2020-01-02T00:00:00Z/4"),
+                ),
+            )
+            .await;
+        source
+            .enqueue(
+                Method::GET,
+                path(TEMPORAL_PATH),
+                history_page(
+                    &[(2, "2020-01-02T00:00:00Z"), (3, "2020-01-03T00:00:00Z"), (4, "2020-01-04T00:00:00Z")],
+                    StatusCode::OK,
+                    None,
+                ),
+            )
+            .await;
+        let service = service(registration(&source, &["queryTemporal"]));
+
+        let outcome = history_walk(&service, 100).await.expect("the walk completes");
+
+        pretty_assertions::assert_eq!(speed_values(&outcome), vec![1, 2, 3, 4]);
+        assert!(outcome.results.iter().all(|answer| answer.partial_ranges.is_empty()));
+        let requests = source.drain_requests().await;
+        let queries: Vec<&str> = requests.iter().filter_map(|request| request.uri.query()).collect();
+        pretty_assertions::assert_eq!(queries.len(), 2, "{queries:?}");
+        for query in &queries {
+            assert!(!query.contains("aggrMethods") && !query.contains("format"), "{query}");
+        }
+        assert!(queries[1].contains("timerel=after&timeAt=2020-01-02T00%3A00%3A00Z"), "{queries:?}");
+        source.shutdown().await.expect("the mock source stops");
+    }
+
+    /// A source cut short at the instant it was resumed at makes no progress,
+    /// so the walk stops with a warning rather than asking forever.
+    #[tokio::test]
+    async fn a_range_that_does_not_advance_stops_with_a_warning() {
+        let source = source().await;
+        let stuck = "DateTime 2020-01-01T00:00:00Z-2020-01-02T00:00:00Z/*";
+        for _ in 0..3 {
+            source
+                .enqueue(
+                    Method::GET,
+                    path(TEMPORAL_PATH),
+                    history_page(&[(2, "2020-01-02T00:00:00Z")], StatusCode::PARTIAL_CONTENT, Some(stuck)),
+                )
+                .await;
+        }
+        let service = service(registration(&source, &["queryTemporal"]));
+
+        let outcome = history_walk(&service, 100).await.expect("the walk completes");
+
+        pretty_assertions::assert_eq!(source.total_request_count(), 2);
+        let warnings: Vec<String> = outcome
+            .results
+            .iter()
+            .flat_map(|answer| answer.warnings.iter().map(ToString::to_string))
+            .collect();
+        assert!(warnings.iter().any(|warning| warning.contains("cannot be resumed past")), "{warnings:?}");
+        source.shutdown().await.expect("the mock source stops");
+    }
+
+    /// Clause 4.12: once the sources' history holds more instances than the
+    /// instance budget, the query is refused with `TooManyResults`.
+    #[tokio::test]
+    async fn instances_beyond_the_budget_are_too_many_results() {
+        let source = source().await;
+        source
+            .enqueue(
+                Method::GET,
+                path(TEMPORAL_PATH),
+                history_page(
+                    &[(1, "2020-01-01T00:00:00Z"), (2, "2020-01-02T00:00:00Z"), (3, "2020-01-03T00:00:00Z")],
+                    StatusCode::OK,
+                    None,
+                ),
+            )
+            .await;
+        let service = service(registration(&source, &["queryTemporal"]));
+
+        match history_walk(&service, 2).await {
+            Err(QueryForwardingError::TooManyInstances(InstanceBudgetExceeded { maximum })) => pretty_assertions::assert_eq!(maximum.get(), 2),
+            Err(QueryForwardingError::TooManyResults(exceeded)) => panic!("the entities fit their budget: {exceeded}"),
+            Err(QueryForwardingError::Federation(error)) => panic!("the walk must be refused for its instances, not fail: {error}"),
+            Ok(outcome) => panic!("the walk must be refused, it gathered {:?}", speed_values(&outcome)),
+        }
         source.shutdown().await.expect("the mock source stops");
     }
 }

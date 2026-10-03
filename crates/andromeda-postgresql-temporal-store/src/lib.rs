@@ -15,6 +15,8 @@
 /// Decoding `PgRow` into the backend-neutral aggregation row and its group span.
 pub(crate) mod aggregation_group_key_decode;
 pub(crate) mod aggregation_row_decode;
+/// Reading one entity's aggregation rows as the aggregates they compute.
+pub(crate) mod aggregation_rows_read;
 /// One row of the rebuilt `attribute_history` hypertable.
 pub mod attribute_history_row;
 /// The value one attribute-history row carries, and the column it occupies.
@@ -46,6 +48,8 @@ mod instance_mutation;
 mod instance_statements;
 /// Idempotent PostgreSQL implementation of deferred temporal appends.
 pub mod intent_sink;
+/// Aggregating one entity over its local and answered instances (clause 5.7.4.4).
+pub(crate) mod merged_aggregation;
 /// `andromeda-temporal` mutation-port implementation on [`TemporalRepository`](repo::TemporalRepository).
 pub mod mutator;
 /// `andromeda-temporal` history-reader implementation on [`TemporalRepository`](repo::TemporalRepository).
@@ -69,6 +73,8 @@ pub mod scope_history_value;
 pub mod scope_history_write;
 /// The NGSI-LD time axes a stored temporal row carries besides its write clock.
 pub mod semantic_time_axes;
+/// Reading the leaves of a split temporal query's filters (clause 5.7.4.4).
+pub(crate) mod split_filter_leaf_read;
 /// Reconciling the temporal hypertables' storage policy with configuration.
 pub mod storage_policy;
 /// What an aggregation row that does not read back looks like.

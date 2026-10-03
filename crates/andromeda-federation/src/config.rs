@@ -77,6 +77,10 @@ pub enum FederationConfigError {
 /// federated collection of that size.
 pub const DEFAULT_MAX_QUERY_ENTITIES: NonZeroU32 = NonZeroU32::MIN.saturating_add(9_999);
 
+/// The default of [`FederationConfig::max_query_instances`]: ten instances per
+/// entity of the default entity budget.
+pub const DEFAULT_MAX_QUERY_INSTANCES: NonZeroU32 = NonZeroU32::MIN.saturating_add(99_999);
+
 /// Distributed Context Source forwarding limits.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]
 pub struct FederationConfig {
@@ -103,6 +107,13 @@ pub struct FederationConfig {
     /// answered with a truncated collection.
     #[toml_comment(inline)]
     pub max_query_entities: NonZeroU32,
+    /// Most attribute instances one federated temporal query gathers from the
+    /// Context Sources whose history it reads to the end, which an aggregated
+    /// representation of an entity held in several parts needs (clause
+    /// 5.7.4.4); a query whose sources exceed it is refused with
+    /// `TooManyResults` (403, clause 4.12).
+    #[toml_comment(inline)]
+    pub max_query_instances: NonZeroU32,
 }
 
 impl Default for FederationConfig {
@@ -114,6 +125,7 @@ impl Default for FederationConfig {
             cache_max_entries: 1024,
             split_entities_default: SplitEntitiesDefault::Complete,
             max_query_entities: DEFAULT_MAX_QUERY_ENTITIES,
+            max_query_instances: DEFAULT_MAX_QUERY_INSTANCES,
         }
     }
 }
@@ -156,7 +168,14 @@ impl FederationConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{DEFAULT_MAX_QUERY_ENTITIES, FederationConfig, FederationConfigError, SplitEntities, SplitEntitiesDefault};
+    use crate::config::{
+        DEFAULT_MAX_QUERY_ENTITIES,
+        DEFAULT_MAX_QUERY_INSTANCES,
+        FederationConfig,
+        FederationConfigError,
+        SplitEntities,
+        SplitEntitiesDefault,
+    };
     use andromeda_configuration_scalars::human_duration::HumanDuration;
 
     fn config() -> FederationConfig {
@@ -167,6 +186,7 @@ mod tests {
             cache_max_entries: 1024,
             split_entities_default: SplitEntitiesDefault::Complete,
             max_query_entities: DEFAULT_MAX_QUERY_ENTITIES,
+            max_query_instances: DEFAULT_MAX_QUERY_INSTANCES,
         }
     }
 
@@ -174,6 +194,13 @@ mod tests {
     #[test]
     fn the_query_budget_defaults_to_ten_thousand_entities() {
         pretty_assertions::assert_eq!(FederationConfig::default().max_query_entities.get(), 10_000);
+    }
+
+    /// The federated temporal instance budget defaults to one hundred thousand
+    /// instances.
+    #[test]
+    fn the_instance_budget_defaults_to_one_hundred_thousand_instances() {
+        pretty_assertions::assert_eq!(FederationConfig::default().max_query_instances.get(), 100_000);
     }
 
     #[test]

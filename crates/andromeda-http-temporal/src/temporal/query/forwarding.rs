@@ -19,10 +19,12 @@ use andromeda_federation::{
     FederationService,
     config::SplitEntities,
     entity_budget::{EntityBudget, EntityBudgetExceeded},
+    instance_budget::InstanceBudget,
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
     query_forwarding_error::QueryForwardingError,
-    request::{EntityMapInUse, SourcePaging, TriggeringRequest},
+    request::{EntityMapInUse, HistoryBudget, SourcePaging, TriggeringRequest},
 };
+use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
     declined_representation::single_source_declined,
@@ -30,7 +32,7 @@ use andromeda_http_response::{
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use axum::http::Uri;
+use axum::http::{HeaderMap, Uri};
 use tracing::warn;
 
 /// How far a temporal query reaches (clause 5.5.13 `local`).
@@ -68,6 +70,18 @@ impl QueryScope {
     }
 }
 
+/// How much of each source's history a temporal query reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HistoryReach {
+    /// Each source's answer as it is, in the representation the client asked
+    /// for.
+    AsAnswered,
+    /// Each source's instances of the whole window, whatever representation
+    /// the client asked for: an aggregate of an entity held in several parts
+    /// is one of its merged instances (clause 5.7.4.4).
+    Complete,
+}
+
 /// How a temporal query reaches the context sources that hold the rest of the
 /// history: the federation service that contacts them, the triggering request
 /// every forwarded copy replays (clause 6.3.18), the `splitEntities` mode they
@@ -83,6 +97,30 @@ pub(crate) struct TemporalForwarding<'a> {
     pub(crate) split: SplitEntities,
     /// The Entity Map the query runs under.
     pub(crate) map_use: &'a EntityMapUse,
+    /// How much of each source's history is read.
+    pub(crate) reach: HistoryReach,
+}
+
+impl<'a> TemporalForwarding<'a> {
+    /// The forwarding of a query that arrived through `via` with `headers`,
+    /// asked under `split` and `map_use`, reading `reach` of each source's
+    /// history.
+    pub(crate) const fn new(
+        forwarding: &'a FederationService,
+        via: Option<&'a Via>,
+        headers: &'a HeaderMap,
+        split: SplitEntities,
+        map_use: &'a EntityMapUse,
+        reach: HistoryReach,
+    ) -> TemporalForwarding<'a> {
+        TemporalForwarding {
+            forwarding,
+            triggering: TriggeringRequest { via, headers: Some(headers) },
+            split,
+            map_use,
+            reach,
+        }
+    }
 }
 
 /// What the context sources answered for their part of a queried history, and
@@ -148,6 +186,7 @@ pub(crate) async fn forward_temporal_history(
         triggering,
         split,
         map_use,
+        reach,
     } = sources;
     if scope == QueryScope::Local {
         return Ok(None);
@@ -168,6 +207,14 @@ pub(crate) async fn forward_temporal_history(
         None => None,
     };
     let budget = EntityBudget::new(forwarding.max_query_entities());
+    let instances = InstanceBudget::new(forwarding.max_query_instances());
+    let paging = match reach {
+        HistoryReach::AsAnswered => SourcePaging::Walk(&budget),
+        HistoryReach::Complete => SourcePaging::WalkHistory(HistoryBudget {
+            entities: &budget,
+            instances: &instances,
+        }),
+    };
     let forwarded = forwarding
         .forward_temporal_query(
             target,
@@ -180,7 +227,7 @@ pub(crate) async fn forward_temporal_history(
                 csf_expr: csf_expr.as_ref(),
                 mode_filter: CsrModeFilter::All,
                 entity_map: EntityMapInUse::from(map_use),
-                paging: SourcePaging::Walk(&budget),
+                paging,
             },
         )
         .await;
@@ -193,6 +240,9 @@ pub(crate) async fn forward_temporal_history(
     let outcome = match forwarded {
         Ok(outcome) => outcome,
         Err(QueryForwardingError::TooManyResults(exceeded)) => return Err(too_many_results(exceeded, instance)),
+        Err(QueryForwardingError::TooManyInstances(exceeded)) => {
+            return Err(ClassifiedReport::public(NgsiLdErrorType::TooManyResults, exceeded.to_string()).with_instance(instance.clone())); // clone: the problem response owns the request URI it names
+        }
         Err(QueryForwardingError::Federation(error)) => {
             if let Some(report) = local_federation_failure(&error) {
                 // clone: the problem response owns the request URI it names

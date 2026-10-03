@@ -39,25 +39,13 @@ use andromeda_ngsi_ld_lexicon::{
     time_rel::TimeRel,
 };
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
-use andromeda_ngsi_ld_query::{
-    filter::{
-        eval::evaluate,
-        expansion::{expand_attribute_names, expand_q_expr},
-        json_key_attributes::JsonKeyAttributes,
-    },
-    geo::compile::compile_geo_query,
-};
+use andromeda_ngsi_ld_query::filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes};
 use andromeda_ngsi_ld_render::{
     response::ResponsePayload,
     temporal::simplify::{TemporalSimplifyPayload, TemporalSimplifyRenderer},
 };
 use andromeda_ngsi_ld_representation::entity_members::ENTITY_MEMBERS;
-use andromeda_ngsi_ld_request::{
-    attribute_deletion::DeleteAttrParams,
-    deferred_split_filters::DeferredSplitFilters,
-    local::LocalOnlyParams,
-    query::temporal::TemporalQueryParameters,
-};
+use andromeda_ngsi_ld_request::{attribute_deletion::DeleteAttrParams, local::LocalOnlyParams, query::temporal::TemporalQueryParameters};
 use andromeda_temporal::{error::TemporalError, port::mutator::TemporalDeleteScope as DeleteScope, service::CreateOrUpdateResult};
 use axum::{
     extract::OriginalUri,

@@ -3,7 +3,13 @@
 use crate::{
     entity_selection::EntitySelection,
     projection::compiled::Projection,
-    temporal::{instance_selection::InstanceSelection, ordering::TemporalEntityOrdering, representation::Representation, window::TemporalWindow},
+    temporal::{
+        contributed_entities::ContributedEntities,
+        instance_selection::InstanceSelection,
+        ordering::TemporalEntityOrdering,
+        representation::Representation,
+        window::TemporalWindow,
+    },
 };
 use typed_builder::TypedBuilder;
 
@@ -45,4 +51,9 @@ pub struct CompiledTemporalQuery {
     /// collation into the comparison.
     #[builder(default = Default::default())]
     pub ordering: Option<TemporalEntityOrdering>,
+    /// The entities a Context Source contributed a part of under
+    /// `splitEntities` (clause 5.7.4.4), which the local read exempts from the
+    /// value, geo and scope filters; empty for every other query.
+    #[builder(default = Default::default())]
+    pub contributed: ContributedEntities,
 }

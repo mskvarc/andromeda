@@ -32,6 +32,7 @@ use andromeda_federation::{
     entity_result::collect_warnings,
     error::FederationError,
     forwarded_query::client_query::ClientQuery,
+    instance_budget::InstanceBudgetExceeded,
     outcome::ForwardedEntities,
     query_forwarding_error::QueryForwardingError,
     request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, QueryDelivery, TriggeringRequest},
@@ -57,6 +58,9 @@ enum WalkedSources {
     Unreachable(FederationError),
     /// The sources answered with more entities than one query gathers.
     TooManyResults(EntityBudgetExceeded),
+    /// The sources answered with more attribute instances than one query
+    /// gathers.
+    TooManyInstances(InstanceBudgetExceeded),
 }
 
 /// What every matching Context Source answered, not yet captured.
@@ -133,6 +137,7 @@ impl SnapshotExecutor {
                 (PendingSources { answers: Vec::new() }, Some(error))
             }
             WalkedSources::TooManyResults(exceeded) => return Ok(failure_detail(exceeded.to_string())),
+            WalkedSources::TooManyInstances(exceeded) => return Ok(failure_detail(exceeded.to_string())),
         };
         for warning in pending.answers.iter().flat_map(|answer| answer.warnings.iter()) {
             warn!(snapshot_id = %snapshot_id, query_index = index, warning = %warning, "Snapshot entity query retained a distributed warning");
@@ -245,6 +250,7 @@ impl SnapshotExecutor {
         match forwarded {
             Ok(outcome) => WalkedSources::Answered(PendingSources { answers: outcome.results }),
             Err(QueryForwardingError::TooManyResults(exceeded)) => WalkedSources::TooManyResults(exceeded),
+            Err(QueryForwardingError::TooManyInstances(exceeded)) => WalkedSources::TooManyInstances(exceeded),
             Err(QueryForwardingError::Federation(error)) => WalkedSources::Unreachable(error),
         }
     }

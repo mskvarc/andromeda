@@ -296,7 +296,12 @@ fn resolve_stream(
 }
 
 /// Build one history row from a neutral observation.
-fn observation_row(
+///
+/// # Errors
+///
+/// Returns [`TemporalStoreError`] when the observation's unit code, metadata
+/// or value does not read as a stored row.
+pub(crate) fn observation_row(
     stream_key: StreamKey,
     row: &TemporalHistoryRow,
     recorded_at: DateTime<Utc>,

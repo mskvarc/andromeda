@@ -62,16 +62,10 @@ impl WrittenEvolution {
     /// processor refuses the payload, and [`TemporalError::Validation`] when
     /// the payload is no Temporal Evolution the model admits or puts a
     /// `unitCode` on a family defined without one.
-    pub(crate) async fn expand(expansion: &EntityExpansion<'_>, mut payload: Value, budget: EntityPayloadBudget) -> Result<WrittenEvolution, TemporalError> {
-        unfold_plural_members(&mut payload, budget.json_values)?;
-        let reified = take_reified_scope(&mut payload);
-        let document = expansion.entity_fragment(payload, Normalization::Entity).await?;
+    pub(crate) async fn expand(expansion: &EntityExpansion<'_>, payload: Value, budget: EntityPayloadBudget) -> Result<WrittenEvolution, TemporalError> {
+        let EvolutionDocuments { document, reified_scope } = read_evolution_document(expansion, payload, budget).await?;
         admit_document_unit_codes(&document)?;
-        let reified_scope = match reified {
-            Some(instances) => Some(Arc::new(expand_reified_scope(expansion, instances).await?)),
-            None => None,
-        };
-        Ok(WrittenEvolution::new(Arc::new(document), reified_scope))
+        Ok(WrittenEvolution::new(Arc::new(document), reified_scope.map(Arc::new)))
     }
 
     /// The instances the evolution adds.
@@ -119,6 +113,47 @@ impl WrittenEvolution {
         history.extend(self.reified_scope.iter().map(|scope| HistoryRecord::EvolutionInstances(Arc::clone(scope)))); // clone: Arc ref-count bump
         history
     }
+}
+
+/// One compact Temporal Evolution, read as the documents it stands for.
+#[derive(Debug)]
+pub(crate) struct EvolutionDocuments {
+    /// The instances the evolution carries, with its identifier, types and any
+    /// non-reified Scope.
+    pub(crate) document: EntityDocument,
+    /// The reified Scope instances the evolution dates, keyed by the scope
+    /// IRI; absent when it dates none.
+    pub(crate) reified_scope: Option<EntityDocument>,
+}
+
+/// Read the compact Temporal Evolution `payload` under `expansion`: its plural
+/// members unfolded within `budget` (clause 4.5.9), its reified Scope taken out
+/// and expanded on its own (clause 4.5.6), and the rest expanded as the entity
+/// document it is.
+///
+/// A Temporal Evolution a client writes and one a Context Source answers with
+/// are the same representation, so both are read through here.
+///
+/// # Errors
+///
+/// Returns [`TemporalError::PayloadBudget`] when the observations of its plural
+/// members inherit more values than `budget` admits, [`TemporalError::JsonLd`]
+/// when the context does not resolve or the processor refuses the payload, and
+/// [`TemporalError::Validation`] when the payload is no Temporal Evolution the
+/// model admits.
+pub(crate) async fn read_evolution_document(
+    expansion: &EntityExpansion<'_>,
+    mut payload: Value,
+    budget: EntityPayloadBudget,
+) -> Result<EvolutionDocuments, TemporalError> {
+    unfold_plural_members(&mut payload, budget.json_values)?;
+    let reified = take_reified_scope(&mut payload);
+    let document = expansion.entity_fragment(payload, Normalization::Entity).await?;
+    let reified_scope = match reified {
+        Some(instances) => Some(expand_reified_scope(expansion, instances).await?),
+        None => None,
+    };
+    Ok(EvolutionDocuments { document, reified_scope })
 }
 
 /// Expand each reified Scope instance as the attribute instance it is, into a

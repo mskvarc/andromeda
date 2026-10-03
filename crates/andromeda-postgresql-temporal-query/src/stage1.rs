@@ -21,9 +21,10 @@
 //! leaves it a member depends on the instances S8 kept.
 
 use crate::{
-    alias::{Ah, Ahg, An, Ang, EntityIdColumn, S, Sg},
+    alias::{Ah, An, EntityIdColumn, S},
     axis::axis_column,
     projected_members::projected_member_condition,
+    value_filters::value_filter_condition,
 };
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
@@ -37,10 +38,7 @@ use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     entity_ordering::{entity_identifier_key, ordering_collation},
     error::RenderError,
-    geo_predicate::relation_expression,
     page_window::apply_identifier_window,
-    q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, projection as q_filter},
-    scope_predicate::{ScopeTarget, condition as scope_condition},
     time_interval_predicate::within_interval,
     type_predicate::condition as type_condition,
 };
@@ -51,10 +49,8 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{
     branch::qualified,
-    cast::cast,
     literal::{false_literal, int_literal},
     operator::regex_match,
-    pg_type::PostgresType,
 };
 use iri_rs::IriBuf;
 use sea_query::{Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, JoinType, SelectStatement};
@@ -155,7 +151,7 @@ pub fn build_stage1_entity_ids(
 
 /// Build the correlated stream/history predicate shared by result and count.
 fn temporal_match_subquery(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> SelectStatement {
-    let temporal_conditions = build_temporal_stage1_conditions(schema, compiled);
+    let temporal_conditions = build_temporal_stage1_conditions(compiled);
     let mut select = SelectStatement::new();
     select
         .expr(int_literal(1))
@@ -206,12 +202,10 @@ fn build_entity_conditions_for_temporal(schema: Option<&DynIden>, compiled: &Com
         ConsideredEntities::NoEntity => condition = condition.add(false_literal()),
     }
 
-    if let Some(q_expr) = compiled.entities.q_expr.as_ref() {
-        condition = condition.add(q_filter::compile(q_expr, &InstanceScan::History(&windowed_instances(schema, compiled)), names));
-    }
-
-    if let Some(probe) = temporal_geo_existential(schema, compiled)? {
-        condition = condition.add(SeaExpr::exists(probe));
+    // Clause 5.7.4.4 S5 to S7: the value, geo and scope filters, from which
+    // the entities a Context Source contributed to a split query are exempt.
+    if let Some(filters) = value_filter_condition(schema, compiled, names)? {
+        condition = condition.add(filters);
     }
 
     // Clauses 5.7.4.5 and 6.3.13: an entity the `pick` / `omit` projection
@@ -222,80 +216,6 @@ fn build_entity_conditions_for_temporal(schema: Option<&DynIden>, compiled: &Com
     }
 
     Ok(condition)
-}
-
-/// The Attribute instances a temporal `q` is checked against (clause 5.7.4.4
-/// step S2): the entity's history rows valid within the window on the
-/// requested Temporal Property, of every `datasetId`.
-fn windowed_instances(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> HistoryWindow {
-    HistoryWindow::builder()
-        .schema(schema.cloned())
-        .temporal_entity_key(SeaExpr::col((E, TemporalEntities::TemporalEntityKey)))
-        .axis(axis_column(compiled.window.timeproperty))
-        .interval(compiled.window.interval)
-        .build()
-}
-
-/// The correlated `EXISTS` over the `attribute_history` rows a temporal geo
-/// query (clause 4.10) filters, restricted to the temporal window.
-///
-/// Clause 5.7.4.4 step S3: the geospatial restriction "shall be checked against
-/// the `GeoProperty` instances that are within the interval defined by the
-/// temporal query". Every instance of the target `GeoProperty` - the default
-/// `location` and any named one alike - is an `attribute_history` row carrying a
-/// `value_geometry`, so the probe reaches them uniformly through the stream rather
-/// than through the single hoisted current-state `location` column, which holds
-/// only one instant and answers a different question. Clause 4.10 makes one
-/// in-window instance meeting the restriction enough, which is exactly this
-/// existential. `None` when the query carries no geo restriction.
-///
-/// # Errors
-///
-/// Returns [`RenderError::ReferenceGeometryEncoding`] or [`RenderError::Query`]
-/// exactly as the shared relation rendering does.
-fn temporal_geo_existential(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> Result<Option<SelectStatement>, RenderError> {
-    let Some(geo) = &compiled.entities.geo else {
-        return Ok(None);
-    };
-
-    let planar = SeaExpr::col((Ahg, AttributeHistory::ValueGeometry));
-    let geographic = cast(SeaExpr::col((Ahg, AttributeHistory::ValueGeometry)), PostgresType::Geography);
-    let spatial = relation_expression(&geo.georel, planar, geographic, &geo.geometry)?;
-
-    let mut probe = SelectStatement::new();
-    probe
-        .expr(int_literal(1))
-        .from(qualified(schema, TemporalAttributeStreams::Table).alias(Sg))
-        .join_as(
-            JoinType::Join,
-            AttributeNames::Table,
-            Ang,
-            SeaExpr::col((Ang, AttributeNames::AttributeNameKey)).equals((Sg, TemporalAttributeStreams::AttributeNameKey)),
-        )
-        .join_as(
-            JoinType::Join,
-            qualified(schema, AttributeHistory::Table),
-            Ahg,
-            SeaExpr::col((Ahg, AttributeHistory::StreamKey)).equals((Sg, TemporalAttributeStreams::StreamKey)),
-        )
-        .cond_where(SeaExpr::col((Sg, TemporalAttributeStreams::TemporalEntityKey)).equals((E, TemporalEntities::TemporalEntityKey)))
-        .cond_where(SeaExpr::col((Ang, AttributeNames::Name)).eq(geo.geoproperty.as_str()))
-        .cond_where(SeaExpr::col((Ahg, AttributeHistory::ValueGeometry)).is_not_null())
-        .cond_where(geo_window_condition(compiled))
-        .cond_where(spatial);
-    Ok(Some(probe.take()))
-}
-
-/// The temporal window as a predicate on the geo existential's own
-/// `attribute_history` axis column.
-///
-/// The same interval the stream match applies (clause 5.2.21), restated against
-/// the `ahg` alias so a `GeoProperty` instance counts only when it falls within
-/// the window (clause 5.7.4.4 S3). The axis is the query's `timeproperty`,
-/// defaulting to `observedAt` (clause 4.11).
-fn geo_window_condition(compiled: &CompiledTemporalQuery) -> Condition {
-    let axis = axis_column(compiled.window.timeproperty);
-    within_interval(&SeaExpr::col((Ahg, axis)), &compiled.window.interval)
 }
 
 /// Render one selector's identifier, pattern and type predicates against the
@@ -319,9 +239,9 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
     condition
 }
 
-/// Build the clause 5.7.4.4 step S1 conditions of Stage 1 (the concerned
-/// attributes and the window), plus the `scopeQ` of step S4.
-fn build_temporal_stage1_conditions(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery) -> Condition {
+/// Build the clause 5.7.4.4 step S1 conditions of Stage 1: the concerned
+/// attributes and the window.
+fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Condition {
     let mut condition = Condition::all();
 
     // Attribute filter: an.name IN (...).
@@ -332,21 +252,7 @@ fn build_temporal_stage1_conditions(schema: Option<&DynIden>, compiled: &Compile
 
     // Temporal filters (timerel + time_at), on the requested axis alone.
     let axis = axis_column(compiled.window.timeproperty);
-    condition = condition.add(within_interval(&SeaExpr::col((Ah, axis)), &compiled.window.interval));
-
-    // Historical scope filtering via EXISTS subquery against scope_history,
-    // which hangs off the temporal entity grain rather than off `entities`.
-    if let Some(scope_q) = &compiled.entities.scope_q {
-        let target = ScopeTarget::history(
-            (E, TemporalEntities::TemporalEntityKey),
-            compiled.window.timeproperty,
-            compiled.window.interval,
-            schema.cloned(),
-        );
-        condition = condition.add(scope_condition(scope_q, &target));
-    }
-
-    condition
+    condition.add(within_interval(&SeaExpr::col((Ah, axis)), &compiled.window.interval))
 }
 
 #[cfg(test)]
@@ -366,6 +272,7 @@ mod tests {
         scope::query::ScopeQuery,
         temporal::{
             compiled::CompiledTemporalQuery,
+            contributed_entities::{ContributedEntities, ContributedRendering},
             instance_selection::InstanceSelection,
             ordering::TemporalEntityOrdering,
             representation::Representation,
@@ -643,10 +550,73 @@ mod tests {
         // /A;/B -> AND, ,/C -> OR
         assert!(sql.contains("AND"), "Semicolon scopes produce AND: {sql}");
         assert!(sql.contains("OR"), "Comma scopes produce OR: {sql}");
-        // Each scope term has its own EXISTS subquery, inside the stream
-        // catalogue EXISTS predicate.
+        // Each scope term has its own EXISTS subquery among the entity
+        // conditions, beside the stream catalogue EXISTS predicate rather than
+        // inside it: the scope probe correlates on the temporal entity alone.
         let exists_count = sql.matches("EXISTS").count();
-        pretty_assertions::assert_eq!(exists_count, 4, "The catalogue predicate wraps three scope predicates: {sql}");
+        pretty_assertions::assert_eq!(exists_count, 4, "The catalogue predicate beside three scope predicates: {sql}");
+        let catalogue = sql.find(r#"FROM "temporal_attribute_streams" AS "s""#).expect("the catalogue predicate");
+        let scope = sql.find("scope_history").expect("a scope predicate");
+        assert!(scope < catalogue, "the scope predicates precede the catalogue predicate: {sql}");
+    }
+
+    /// Two identifiers a Context Source contributed to a split query (clause
+    /// 5.7.4.4).
+    fn two_contributed() -> ContributedEntities {
+        ContributedEntities::new(ids(&["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]), ContributedRendering::Local)
+    }
+
+    /// A query carrying all three of the filters clause 5.7.4.4 applies after
+    /// aggregation, with an identifier selector and a bounded window.
+    fn filtered_compiled() -> CompiledTemporalQuery {
+        let mut compiled = minimal_compiled();
+        compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:9"])).build()];
+        compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
+        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
+        compiled.entities.geo = Some(GeoQuery {
+            georel: GeoRel::Within,
+            geometry: point(&serde_json::json!([1.0, 2.0])),
+            geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
+        });
+        compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid").expect("valid scope query"));
+        compiled
+    }
+
+    /// Clause 5.7.4.4: the value, geo and scope filters of a split query apply
+    /// after aggregation, so an entity a source contributed a part of is exempt
+    /// from them locally -- and only from them: the identifier selector and the
+    /// window still select it.
+    #[test]
+    fn contributed_identifiers_exempt_only_the_value_filters() {
+        let mut compiled = filtered_compiled();
+        compiled.contributed = two_contributed();
+        let (sql, values) = built(&compiled, &speed_and_address());
+        let exemption = sql.find(r#" OR "e"."id" IN ("#).expect("the contributed identifiers are exempt");
+        let selector = sql.find(r#""e"."id" IN ("#).expect("the selector");
+        let q = sql.find(r#"AS "qh""#).expect("the q probe");
+        let geo = sql.find(r#"AS "ahg""#).expect("the geo probe");
+        let scope = sql.find("scope_history").expect("the scope probe");
+        let catalogue = sql.find(r#"FROM "temporal_attribute_streams" AS "s""#).expect("the window match");
+        assert!(selector < q && q < exemption && geo < exemption && scope < exemption, "{sql}");
+        assert!(catalogue > exemption, "the window match stays outside the exemption: {sql}");
+        let bound = values
+            .0
+            .iter()
+            .filter(|value| matches!(value, Value::String(Some(text)) if text.starts_with("urn:ngsi-ld:Vehicle:")))
+            .count();
+        pretty_assertions::assert_eq!(bound, 3, "the selector id and the two contributed ids: {values:?}");
+    }
+
+    /// Without a contributed entity the statement is exactly the one a query
+    /// that was never split renders.
+    #[test]
+    fn no_contributed_identifier_leaves_the_statement_as_it_was() {
+        let compiled = filtered_compiled();
+        let (sql, _) = built(&compiled, &speed_and_address());
+        assert!(!sql.contains(r#" OR "e"."id" IN ("#), "{sql}");
+        let mut contributed_elsewhere = filtered_compiled();
+        contributed_elsewhere.contributed = ContributedEntities::default();
+        pretty_assertions::assert_eq!(built(&contributed_elsewhere, &speed_and_address()).0, sql);
     }
 
     /// The names the `q` tests below resolve: `speed` at key 7, `address` at 9.

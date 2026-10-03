@@ -76,6 +76,7 @@ mod tests {
         forwarded_parameter::ForwardedParameter,
         forwarded_query::{ForwardedQuery, client_query::ClientQuery},
         forwarding_context::Rewording,
+        request::TemporalAnswer,
         term_resolver::TermResolver,
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -109,9 +110,16 @@ mod tests {
         let names = ForwardedNames::prepare(&engine, &resolver, &context, Rewording::AsInbound)
             .await
             .expect("the forwarding context processes");
-        let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&params), &by_type, SplitEntities::Complete, None, &names)
-            .await
-            .expect("narrowing succeeds");
+        let forwarded = ForwardedQuery::for_registration(
+            ClientQuery::EntityQuery(&params),
+            &by_type,
+            SplitEntities::Complete,
+            None,
+            TemporalAnswer::AsRequested,
+            &names,
+        )
+        .await
+        .expect("narrowing succeeds");
         let forwarded = forwarded.first().expect("covered");
         let selectors = selectors_from_query(forwarded);
         let body = build_batch_query_body(&selectors, forwarded.value_of(ForwardedParameter::Attrs));

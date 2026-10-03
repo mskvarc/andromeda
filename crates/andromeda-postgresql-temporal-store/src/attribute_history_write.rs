@@ -25,9 +25,9 @@ use andromeda_telemetry::statement::{StatementName, observe_statement};
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use sea_query::{CaseStatement, Expr, ExprTrait, Iden, Keyword, OnConflict, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query::{CaseStatement, Expr, ExprTrait, Iden, Keyword, OnConflict, PostgresQueryBuilder, Query, SimpleExpr, TableRef};
 use serde_json::value::RawValue;
-use sqlx::{AssertSqlSafe, Postgres, Transaction, types::Json};
+use sqlx::{AssertSqlSafe, PgConnection, Postgres, Transaction, types::Json};
 use uuid::Uuid;
 
 /// The statement name the history batch insert is observed under, in either
@@ -110,7 +110,7 @@ impl TemporalRepository {
         run_history_dedup_deletes(tx, target, &targets).await?;
         claim_verbatim_instances(tx, target, &targets).await?;
         match self.bulk_write_mode {
-            BulkWriteMode::Unnest => observe_statement(HISTORY_INSERT, insert_history_batch_unnest_in_tx(tx, target, rows)).await?,
+            BulkWriteMode::Unnest => observe_statement(HISTORY_INSERT, insert_history_rows_unnest(tx, table_of(target, AttributeHistory::Table), rows)).await?,
             BulkWriteMode::CopyStaging => observe_statement(HISTORY_INSERT, insert_history_batch_via_copy_in_tx(tx, target, rows)).await?,
         }
         Ok(())
@@ -254,14 +254,14 @@ fn staged(column: HistoryStaged) -> SimpleExpr {
     Expr::col((D, column))
 }
 
-/// The bulk attribute-history insert.
+/// The bulk attribute-history insert into `table`.
 ///
 /// The value number reaches the arbitrary-precision column through a native
 /// `numeric[]` bind, never widened to a double; the geometry is
 /// validated from its embedded-SRID EWKB, with a NULL EWKB projecting to a NULL
 /// geometry. The conflict target names the columns `uq_attribute_history_write_identity`
 /// covers, so a row replayed under its original write identity is a no-op.
-fn attribute_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalStoreError> {
+fn attribute_history_insert_sql(table: TableRef) -> Result<String, TemporalStoreError> {
     let columns = history_staging_columns();
     let call = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))));
 
@@ -301,7 +301,7 @@ fn attribute_history_insert_sql(target: &ContextTarget) -> Result<String, Tempor
     let select = select;
 
     let mut insert = Query::insert();
-    insert.into_table(table_of(target, AttributeHistory::Table)).columns([
+    insert.into_table(table).columns([
         AttributeHistory::RecordedAt,
         AttributeHistory::WriteId,
         AttributeHistory::StreamKey,
@@ -335,14 +335,16 @@ fn attribute_history_insert_sql(target: &ContextTarget) -> Result<String, Tempor
     Ok(apply_column_alias(sql, &D, &columns))
 }
 
-/// Insert one batch by binding parallel arrays and expanding them with `UNNEST`.
-async fn insert_history_batch_unnest_in_tx(
-    tx: &mut Transaction<'_, Postgres>,
-    target: &ContextTarget,
-    rows: &[AttributeHistoryRow],
-) -> Result<(), TemporalStoreError> {
+/// Insert one batch into `table` by binding parallel arrays and expanding them
+/// with `UNNEST`.
+///
+/// # Errors
+///
+/// Returns [`TemporalStoreError`] when a row does not bind or the statement
+/// fails.
+pub(crate) async fn insert_history_rows_unnest(connection: &mut PgConnection, table: TableRef, rows: &[AttributeHistoryRow]) -> Result<(), TemporalStoreError> {
     let binds = attribute_history_binds(rows)?;
-    let sql = attribute_history_insert_sql(target)?;
+    let sql = attribute_history_insert_sql(table)?;
     sqlx::query(AssertSqlSafe(sql))
         .bind(&binds.recorded_ats)
         .bind(&binds.write_ids)
@@ -366,7 +368,7 @@ async fn insert_history_batch_unnest_in_tx(
         .bind(&binds.value_objects)
         .bind(&binds.value_uris)
         .bind(&binds.metadatas)
-        .execute(&mut **tx)
+        .execute(connection)
         .await?;
     Ok(())
 }
@@ -375,22 +377,24 @@ async fn insert_history_batch_unnest_in_tx(
 mod tests {
     use crate::attribute_history_write::attribute_history_insert_sql;
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_postgresql_branch::table_of;
+    use andromeda_postgresql_schema::temporal::AttributeHistory;
 
     #[test]
     fn the_insert_carries_the_partition_column_and_the_whole_write_identity() {
-        let sql = attribute_history_insert_sql(&ContextTarget::Live).expect("the fixed attribute-history insert builds");
+        let sql = attribute_history_insert_sql(table_of(&ContextTarget::Live, AttributeHistory::Table)).expect("the fixed attribute-history insert builds");
         assert!(sql.contains(r#"("recorded_at", "write_id", "stream_key", "write_ordinal""#), "{sql}");
     }
 
     #[test]
     fn a_row_replayed_under_its_original_write_identity_is_not_duplicated() {
-        let sql = attribute_history_insert_sql(&ContextTarget::Live).expect("the fixed attribute-history insert builds");
+        let sql = attribute_history_insert_sql(table_of(&ContextTarget::Live, AttributeHistory::Table)).expect("the fixed attribute-history insert builds");
         assert!(sql.contains(r#"ON CONFLICT ("recorded_at", "write_id", "write_ordinal") DO NOTHING"#), "{sql}");
     }
 
     #[test]
     fn the_numeric_value_reaches_storage_through_a_numeric_array_bind() {
-        let sql = attribute_history_insert_sql(&ContextTarget::Live).expect("the fixed attribute-history insert builds");
+        let sql = attribute_history_insert_sql(table_of(&ContextTarget::Live, AttributeHistory::Table)).expect("the fixed attribute-history insert builds");
         assert!(sql.contains(r"$16::numeric[]"), "{sql}");
         assert!(!sql.contains(r#""d"."value_number"::numeric"#), "{sql}");
         assert!(!sql.contains("double precision"), "{sql}");

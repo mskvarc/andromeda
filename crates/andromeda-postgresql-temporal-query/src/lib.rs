@@ -23,8 +23,10 @@ pub mod history;
 pub mod projected_members;
 pub mod recorded_shape;
 pub mod scope_history;
+pub mod split_filter_leaves;
 pub mod stage1;
 pub mod structured_json;
+mod value_filters;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

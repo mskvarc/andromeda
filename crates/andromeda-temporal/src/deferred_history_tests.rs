@@ -50,7 +50,14 @@ use andromeda_ngsi_ld_query::{
     cursor::PageCursor,
     entity_selection::EntitySelection,
     page_window::{PageStart, PageWindow},
-    temporal::{compiled::CompiledTemporalQuery, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
+    split_filter::LeafTruths,
+    temporal::{
+        compiled::CompiledTemporalQuery,
+        contributed_entities::{ContributedEntities, ContributedRendering},
+        instance_selection::InstanceSelection,
+        representation::Representation,
+        window::TemporalWindow,
+    },
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -332,6 +339,17 @@ impl TemporalHistoryReader for RecordingSink {
         })
     }
 
+    /// The recording sink holds rows, not the documents a filter reads, so
+    /// its stored part holds no leaf of any filter.
+    async fn filter_leaf_truths(
+        &self,
+        _target: &ContextTarget,
+        _compiled: &CompiledTemporalQuery,
+        _entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError> {
+        Ok(HashMap::new())
+    }
+
     async fn query_entity_history(
         &self,
         _target: &ContextTarget,
@@ -358,6 +376,17 @@ impl TemporalHistoryReader for RecordingSink {
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         Err(TemporalError::OperationNotSupported(TemporalOperationUnsupported::RecordingSinkNoAggregation))
     }
+    async fn query_merged_entity_aggregation(
+        &self,
+        _target: &ContextTarget,
+        _entity_id: &Identifier,
+        _entity_types: &[EntityTypeName],
+        _compiled: &CompiledTemporalQuery,
+        _answered: &[TemporalHistoryRow],
+    ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
+        Err(TemporalError::OperationNotSupported(TemporalOperationUnsupported::RecordingSinkNoAggregation))
+    }
+
     async fn recorded_attribute_shapes(
         &self,
         _target: &ContextTarget,
@@ -746,4 +775,27 @@ async fn the_overlay_count_is_the_whole_merged_set() {
         .expect("a deferred outcome");
     assert_eq!(identifiers, vehicles(&[3, 4]));
     assert_eq!(total, Some(6));
+}
+
+/// Clause 5.7.4.4: an entity a Context Source contributed a part of to a split
+/// query is judged on its gathered parts, so its pending part passes the value
+/// filters the other pending entities are still held to.
+#[tokio::test]
+async fn a_contributed_pending_entity_passes_the_value_filters() {
+    let mut filtered = query();
+    filtered.entities.q_expr = Some("\"https://example.com/speed\">50".parse().expect("a valid q"));
+    filtered.contributed = ContributedEntities::new(vehicles(&[4]), ContributedRendering::Local);
+    let window = PageWindow::unbounded();
+    let (identifiers, _) = merged_overlay()
+        .await
+        .query_entity_ids(&live_target(), &filtered, &window, CountPolicy::Omit)
+        .await
+        .expect("merged listing")
+        .complete(&window, CountPolicy::Omit)
+        .expect("a deferred outcome");
+    assert_eq!(
+        identifiers,
+        vehicles(&[1, 3, 4, 5]),
+        "the stored entities, and of the pending ones only the contributed one"
+    );
 }

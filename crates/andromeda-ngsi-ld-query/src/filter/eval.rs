@@ -27,6 +27,16 @@ pub fn evaluate<'a, E: QueriedEntity<'a>>(expr: &Expr, entity: E) -> bool {
     expression_holds(expr, &|path| resolve_targets(entity, path), &|path| addresses_element(entity, path))
 }
 
+/// Evaluate one Query Term (clause 4.9) against an entity, on its own.
+///
+/// Every Query Term is existential over the targets its attribute path
+/// resolves to, which is what lets a filter over an entity held in several
+/// parts be decided term by term (clause 5.7.4.4 `splitEntities`): the term
+/// holds over the whole entity when it holds over any one part.
+pub fn predicate_holds_in<'a, E: QueriedEntity<'a>>(pred: &Predicate, entity: E) -> bool {
+    predicate_holds(pred, &|path| resolve_targets(entity, path), &|path| addresses_element(entity, path))
+}
+
 /// Evaluate the boolean structure of an expression over the targets
 /// `targets_of` resolves each Query Term's attribute axis to, with
 /// `element_exists` answering a bare attribute path.
@@ -210,7 +220,13 @@ const fn cmp_op(ord: Ordering, op: CmpOp) -> bool {
 mod tests {
     use crate::{
         error::QueryError,
-        filter::{eval::evaluate, expansion::expand_q_expression, expression::Expr, json_key_attributes::JsonKeyAttributes, parser::parse},
+        filter::{
+            eval::{evaluate, predicate_holds_in},
+            expansion::expand_q_expression,
+            expression::Expr,
+            json_key_attributes::JsonKeyAttributes,
+            parser::parse,
+        },
         queried_entity::expanded_fixture::FixtureEntity,
         term_expander::TermExpander,
     };
@@ -254,6 +270,30 @@ mod tests {
                 }]
             }]
         }])
+    }
+
+    /// A Query Term evaluated on its own answers exactly what the expression
+    /// made of that one term answers, for every operator kind.
+    #[test]
+    fn a_single_predicate_is_evaluated_as_its_own_expression() {
+        let fixture = FixtureEntity::from_expanded(&vehicle_entity());
+        let terms = [
+            "\"https://example.com/speed\"",
+            "\"https://example.com/nonexistent\"",
+            "\"https://example.com/speed\">50",
+            "\"https://example.com/speed\">100",
+            "\"https://example.com/brandName\"==\"BMW\",\"Mercedes\"",
+            "\"https://example.com/brandName\"~=\"Merc.*\"",
+            "\"https://example.com/brandName\"!~=\"Merc.*\"",
+            "\"https://example.com/isParked\">\"a\"",
+        ];
+        for raw in terms {
+            let expr = parse(raw).expect("parses");
+            let Expr::Pred(pred) = &expr else {
+                panic!("{raw} is a single Query Term");
+            };
+            pretty_assertions::assert_eq!(predicate_holds_in(pred, &fixture), evaluate(&expr, &fixture), "term {raw}");
+        }
     }
 
     #[test]

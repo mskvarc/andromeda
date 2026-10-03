@@ -1,0 +1,240 @@
+//! Reading each context source's temporal history to the end of the queried
+//! window (clauses 5.7.4.4 and 6.3.10).
+//!
+//! A source answers a temporal query in pages along two dimensions. The
+//! entities it holds are paged by its `next` pointers, which the source walk
+//! follows; the instances of each entity are cut at the clause 6.3.10 page
+//! size, which the source says with a 206 and a `Content-Range` naming the
+//! instants it did answer for. An aggregate of the merged instances (clause
+//! 5.7.4.4) needs every instance of the window, so the walk asks the source
+//! again with the window resumed at the instant the answer stopped at, until
+//! no answer is partial. The resumed instant must advance, or a source whose
+//! instances share one instant beyond its page size would be asked forever.
+
+use crate::{
+    FederationService,
+    entity_budget::EntityBudget,
+    outcome::ForwardedTemporalEntities,
+    query_forwarding_error::QueryForwardingError,
+    read_fan_out::{ForwardedGetConditions, ForwardedRead, SourceAnswer},
+    request::HistoryBudget,
+    source_walk::incomplete_answer,
+    temporal_instances::instance_count,
+    temporal_result::merge_temporal_entity_attributes,
+};
+use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, rfc3339::sub_second};
+use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use chrono::{DateTime, Utc};
+use futures::{StreamExt, stream};
+use serde_json::Value;
+use url::Url;
+
+/// The window parameters a resumed request rewrites.
+const WINDOW_PARAMETERS: [&str; 3] = ["timerel", "timeAt", "endTimeAt"];
+
+impl FederationService {
+    /// Walk every target's answer to its last page and its history to the end
+    /// of the window, all targets concurrently.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryForwardingError::TooManyResults`] once the targets
+    /// together answer with more entities than the entity budget allows, and
+    /// [`QueryForwardingError::TooManyInstances`] once they answer with more
+    /// instances than the instance budget allows (clause 4.12).
+    pub(crate) async fn fan_out_history_walk(
+        &self,
+        targets: Vec<(ContextSourceRegistration, ForwardedRead)>,
+        conditions: ForwardedGetConditions<'_>,
+        budget: HistoryBudget<'_>,
+    ) -> Result<Vec<SourceAnswer<ForwardedTemporalEntities>>, QueryForwardingError> {
+        stream::iter(targets)
+            .map(|(registration, first)| async move { self.walk_history(&registration, first, conditions, budget).await })
+            .buffer_unordered(self.csr_concurrency)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect()
+    }
+
+    /// Walk one target's answer, then resume it past every partial answer
+    /// until the window is exhausted.
+    async fn walk_history(
+        &self,
+        registration: &ContextSourceRegistration,
+        first: ForwardedRead,
+        conditions: ForwardedGetConditions<'_>,
+        budget: HistoryBudget<'_>,
+    ) -> Result<SourceAnswer<ForwardedTemporalEntities>, QueryForwardingError> {
+        let first_url = match &first {
+            ForwardedRead::Get(Ok(url)) => Some(url.clone()), // clone: every resumed request rewrites the first request's window
+            ForwardedRead::Get(Err(_)) | ForwardedRead::PostQuery { .. } => None,
+        };
+        let mut answer = self
+            .walk_source::<ForwardedTemporalEntities>(registration, first, conditions, budget.entities)
+            .await?;
+        let Some(gathered) = answer.entry.as_mut() else {
+            return Ok(answer);
+        };
+        budget.instances.charge(gathered.entities.iter().map(instance_count).sum())?;
+        let mut resumed_at: Option<DateTime<Utc>> = None;
+        while let Some(stopped_at) = least_range_end(&gathered.partial_ranges) {
+            gathered.partial_ranges.clear();
+            let resumed = first_url
+                .as_ref()
+                .filter(|_| resumed_at.is_none_or(|previous| stopped_at > previous))
+                .and_then(|url| resumed_window(url, stopped_at));
+            let Some(resumed) = resumed else {
+                gathered
+                    .warnings
+                    .push(incomplete_answer(registration, "cut its history short at an instant it cannot be resumed past"));
+                break;
+            };
+            // The resumed walk gathers entities the first one already counted,
+            // so it is bounded on its own rather than charged to the request's
+            // entity budget a second time.
+            let resumed_budget = EntityBudget::new(budget.entities.maximum());
+            let page = self
+                .walk_source::<ForwardedTemporalEntities>(registration, ForwardedRead::Get(Ok(resumed)), conditions, &resumed_budget)
+                .await?;
+            let Some(page) = page.entry else {
+                break;
+            };
+            let before: usize = gathered.entities.iter().map(instance_count).sum();
+            fold_entities(&mut gathered.entities, page.entities);
+            let after: usize = gathered.entities.iter().map(instance_count).sum();
+            budget.instances.charge(after.saturating_sub(before))?;
+            gathered.warnings.extend(page.warnings);
+            gathered.partial_ranges = page.partial_ranges;
+            resumed_at = Some(stopped_at);
+        }
+        Ok(answer)
+    }
+}
+
+/// The earliest instant any partial answer stopped at: every instance up to it
+/// has been answered on every page.
+fn least_range_end(ranges: &[NgsiLdContentRange]) -> Option<DateTime<Utc>> {
+    ranges.iter().map(NgsiLdContentRange::end).min()
+}
+
+/// `first` with its window resumed at `stopped_at`: what remained of a `before`
+/// or `between` window, or an `after` window opening there; `None` when the
+/// first request carried no window to resume.
+///
+/// The resumed window includes `stopped_at` itself: instances sharing that
+/// instant may lie on both sides of the cut, and an instance answered twice is
+/// the same instance, which the merge recognises by its `instanceId`.
+fn resumed_window(first: &Url, stopped_at: DateTime<Utc>) -> Option<Url> {
+    let pairs: Vec<(String, String)> = first.query_pairs().map(|(name, value)| (name.into_owned(), value.into_owned())).collect();
+    let value_of = |name: &str| pairs.iter().find(|(key, _)| key == name).map(|(_, value)| value.as_str());
+    let resumed: Vec<(&str, String)> = match value_of("timerel")? {
+        "before" => vec![
+            ("timerel", "between".to_owned()),
+            ("timeAt", sub_second(stopped_at)),
+            ("endTimeAt", value_of("timeAt")?.to_owned()),
+        ],
+        "between" => vec![
+            ("timerel", "between".to_owned()),
+            ("timeAt", sub_second(stopped_at)),
+            ("endTimeAt", value_of("endTimeAt")?.to_owned()),
+        ],
+        "after" => vec![("timerel", "after".to_owned()), ("timeAt", sub_second(stopped_at))],
+        _other => return None,
+    };
+    let mut url = first.clone(); // clone: the resumed request is the first one with another window
+    {
+        let mut query = url.query_pairs_mut();
+        query.clear();
+        for (name, value) in pairs.iter().filter(|(name, _)| !WINDOW_PARAMETERS.contains(&name.as_str())) {
+            query.append_pair(name, value);
+        }
+        for (name, value) in &resumed {
+            query.append_pair(name, value);
+        }
+    }
+    Some(url)
+}
+
+/// Fold the entities of a resumed answer into those already gathered, by
+/// identifier, each instance once.
+fn fold_entities(gathered: &mut Vec<Value>, resumed: Vec<Value>) {
+    for entity in resumed {
+        let id = entity_id(&entity);
+        let held = id.and_then(|id| gathered.iter_mut().find(|held| entity_id(held).is_some_and(|held_id| held_id == id)));
+        match held {
+            Some(held) => merge_temporal_entity_attributes(held, &entity),
+            None => gathered.push(entity),
+        }
+    }
+}
+
+/// The identifier a temporal entity names, when it names a valid one.
+fn entity_id(entity: &Value) -> Option<Identifier> {
+    entity.get("id").and_then(Value::as_str).and_then(|raw| raw.parse().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::temporal_history_walk::{fold_entities, resumed_window};
+    use chrono::{DateTime, Utc};
+    use serde_json::json;
+    use url::Url;
+
+    fn at(raw: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(raw).expect("a valid instant").with_timezone(&Utc)
+    }
+
+    /// Clause 6.3.10: what remains of a `before` window after the instant the
+    /// answer stopped at is the `between` window from there to its end.
+    #[test]
+    fn a_before_window_resumes_as_between() {
+        let first =
+            Url::parse("http://source/ngsi-ld/v1/temporal/entities?type=Vehicle&timerel=before&timeAt=2030-01-01T00:00:00Z&limit=1000").expect("a valid URL");
+        let resumed = resumed_window(&first, at("2020-01-02T00:00:00Z")).expect("a window to resume");
+        pretty_assertions::assert_eq!(
+            resumed.query(),
+            Some("type=Vehicle&limit=1000&timerel=between&timeAt=2020-01-02T00%3A00%3A00Z&endTimeAt=2030-01-01T00%3A00%3A00Z")
+        );
+    }
+
+    /// An `after` window resumes as an `after` window opening where the answer
+    /// stopped.
+    #[test]
+    fn an_after_window_resumes_where_the_answer_stopped() {
+        let first = Url::parse("http://source/t?timerel=after&timeAt=2019-01-01T00:00:00Z").expect("a valid URL");
+        let resumed = resumed_window(&first, at("2020-01-02T00:00:00Z")).expect("a window to resume");
+        pretty_assertions::assert_eq!(resumed.query(), Some("timerel=after&timeAt=2020-01-02T00%3A00%3A00Z"));
+    }
+
+    /// A request carrying no window has nothing to resume.
+    #[test]
+    fn a_request_without_a_window_is_not_resumed() {
+        let first = Url::parse("http://source/t?type=Vehicle").expect("a valid URL");
+        assert!(resumed_window(&first, at("2020-01-02T00:00:00Z")).is_none());
+    }
+
+    /// A resumed answer's instances join the entity already gathered, each
+    /// instance once.
+    #[test]
+    fn a_resumed_answer_folds_into_the_gathered_entity() {
+        let first = json!({"type": "Property", "value": 1, "instanceId": "urn:ngsi-ld:i:1"});
+        let second = json!({"type": "Property", "value": 2, "instanceId": "urn:ngsi-ld:i:2"});
+        let mut gathered = vec![json!({"id": "urn:ngsi-ld:V:1", "type": "V", "speed": [first]})];
+        fold_entities(
+            &mut gathered,
+            vec![
+                json!({"id": "urn:ngsi-ld:V:1", "type": "V", "speed": [first, second]}),
+                json!({"id": "urn:ngsi-ld:V:2", "type": "V", "speed": [first]}),
+            ],
+        );
+        pretty_assertions::assert_eq!(
+            gathered,
+            vec![
+                json!({"id": "urn:ngsi-ld:V:1", "type": "V", "speed": [first, second]}),
+                json!({"id": "urn:ngsi-ld:V:2", "type": "V", "speed": [first]}),
+            ]
+        );
+    }
+}

@@ -23,6 +23,9 @@ pub(crate) enum TemporalStatement {
     ScopeHistory,
     /// Stage 2: the aggregated history of one selected entity.
     Aggregation,
+    /// The truth of every leaf of a split query's filters over the entities a
+    /// Context Source contributed to (clause 5.7.4.4).
+    SplitFilterLeaves,
 }
 
 impl TemporalStatement {
@@ -34,6 +37,7 @@ impl TemporalStatement {
             TemporalStatement::History => StatementName("temporal-history"),
             TemporalStatement::ScopeHistory => StatementName("temporal-scope-history"),
             TemporalStatement::Aggregation => StatementName("temporal-aggregation"),
+            TemporalStatement::SplitFilterLeaves => StatementName("temporal-split-filter-leaves"),
         }
     }
 }

@@ -20,15 +20,14 @@ use crate::{
             admission::{AdmittedQuery, admit_request},
             complete_history::HistoryCompleteness,
             forwarding::{QueryScope, TemporalForwarding, forward_temporal_history},
-            merged_history::merge_forwarded_history,
-            merged_page::{MergedPageCut, cut_merged_page, defer_split_filters},
+            merged_page::{MergedPageCut, cut_merged_page},
             request::TemporalQueryRequest,
             request_entity_map::record_query_map,
             response::{TemporalCollectionMetadata, query_response, simplified_collection},
+            split_contribution::{ContributionMerge, ContributionShape, contributed_entities, merge_with_contributions},
         },
     },
 };
-use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -60,6 +59,8 @@ pub(crate) mod request;
 mod request_entity_map;
 /// Rendering the collection the query answers with.
 mod response;
+/// The entities a source contributed to a split query, and the filters decided over them.
+mod split_contribution;
 
 /// Run "Query Temporal Evolution of Entities" (clause 5.7.4) over a decoded
 /// request, whichever binding decoded it.
@@ -96,57 +97,46 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
 
     let split = state.forwarding.split_entities(params.split_entities);
     let filtering = scope.splitting(split);
+    let shape = ContributionShape::of(filtering, &params);
 
-    // Forwarding reads the query as the client wrote it, so it runs before the
-    // split-entities filters are held back from the local query below.
-    let forwarded = forward_temporal_history(
-        TemporalForwarding {
-            forwarding: &state.forwarding,
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
-            },
-            split,
-            map_use: &map_use,
-        },
-        scope,
-        service.engine(),
-        &target,
-        &params,
-        &context,
-        &uri,
-    )
-    .await?;
+    // Forwarding runs before the local read, because under `splitEntities`
+    // what the sources answered decides which entities the local read exempts
+    // from the value, geo and scope filters (clause 5.7.4.4).
+    let sources = TemporalForwarding::new(&state.forwarding, incoming_via.as_ref(), &headers, split, &map_use, shape.reach());
+    let forwarded = forward_temporal_history(sources, scope, service.engine(), &target, &params, &context, &uri).await?;
 
-    let deferred = defer_split_filters(&mut params, filtering);
+    let contributed = contributed_entities(filtering, &params, forwarded.as_ref(), shape.rendering());
     let local = page.local_read(forwarded.as_ref());
 
     let local_result = service
-        .query(&target, &params, &local.window, local.count, &context)
+        // clone: the settlement below reads the same contributed entities the local read is exempting
+        .query(&target, &params, &local.window, local.count, &context, contributed.clone())
         .await
         .with_instance(&uri)?;
     log_query_warnings(&local_result.warnings);
     let local_total = local_match_count(local_result.total_count).with_instance(&uri)?;
     let completeness = HistoryCompleteness::of(&params, local_result.range, forwarded.as_ref()).with_instance(&uri)?;
-    let mut merged = merge_forwarded_history(local_result.entities, forwarded, filtering, &uri)?;
+    let contribution = ContributionMerge {
+        target: &target,
+        params: &params,
+        context: &context,
+        filtering,
+        shape,
+        contributed: &contributed,
+    };
+    let mut merged = merge_with_contributions(service, contribution, local_result.entities, forwarded, &uri).await?;
     let timeproperty = params.timeproperty_or_default();
     completeness.trim(&mut merged.entities, timeproperty);
 
     let (mut entities, total_count) = cut_merged_page(
-        service,
-        &context,
         merged.entities,
         MergedPageCut {
-            deferred,
-            filtering,
             window: local.merged,
             count: page.count(),
             local_total,
         },
         &params,
-        &uri,
-    )
-    .await?;
+    );
     // Clause 6.3.10: the `Content-Range` describes the history the page's own
     // entities carry, read before a flat join appends the linked ones.
     let range = completeness.range(&entities, timeproperty);
@@ -160,9 +150,9 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
 
     // Join mode (clause 4.5.23) is parsed at the query boundary. `@none` and an
     // absent `join` retrieve no linked entity at all, so neither reaches the
-    // traversal. The join runs after forwarding and after the deferred
-    // `splitEntities` filtering, so the roots it walks are the ones the client
-    // will actually be shown.
+    // traversal. The join runs after forwarding and after the `splitEntities`
+    // filters were decided over the merge, so the roots it walks are the ones
+    // the client will actually be shown.
     // Clause 6.3.13 counts the matches the query returned, which the linked
     // entities are not: they accompany the result set rather than belonging to
     // it. Counting before the flat join appends is what keeps `count` and the

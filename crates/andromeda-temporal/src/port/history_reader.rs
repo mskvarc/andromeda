@@ -10,7 +10,7 @@ use andromeda_ngsi_ld_lexicon::{
     identifier::Identifier,
 };
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, temporal::compiled::CompiledTemporalQuery};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, split_filter::LeafTruths, temporal::compiled::CompiledTemporalQuery};
 use async_trait::async_trait;
 use std::{
     collections::{HashMap, HashSet},
@@ -174,6 +174,26 @@ pub trait TemporalHistoryReader: Send + Sync {
         count: CountPolicy,
     ) -> Result<TemporalEntityIdOutcome, TemporalError>;
 
+    /// The truth of every leaf of the query's value, geo and scope filters
+    /// over the part of each of `entity_ids` this view holds, in the order
+    /// [`SplitFilter::leaves`](andromeda_ngsi_ld_query::split_filter::SplitFilter::leaves)
+    /// yields the leaves.
+    ///
+    /// Clause 5.7.4.4 applies those filters to an entity held in several parts
+    /// once the parts are aggregated, and every leaf is existential over the
+    /// instances it reads, so the part held here is judged leaf by leaf, over
+    /// the instances of the window and the clause 4.11 instance in effect when
+    /// it opens, exactly as a query that is not split would read them. An
+    /// entity this view holds no Temporal Evolution of is absent from the
+    /// result.
+    #[must_use = "filter leaf reads must be awaited"]
+    async fn filter_leaf_truths(
+        &self,
+        target: &ContextTarget,
+        compiled: &CompiledTemporalQuery,
+        entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError>;
+
     /// Read neutral temporal observations for one entity.
     #[must_use = "temporal history reads must be awaited"]
     async fn query_entity_history(
@@ -190,6 +210,26 @@ pub trait TemporalHistoryReader: Send + Sync {
         target: &ContextTarget,
         entity_id: &Identifier,
         compiled: &CompiledTemporalQuery,
+    ) -> Result<Vec<TemporalAggregationRow>, TemporalError>;
+
+    /// Read the aggregation buckets of one entity over its instances held in
+    /// this view together with `answered`, the instances Context Sources
+    /// answered for the rest of it.
+    ///
+    /// Clause 5.7.4.4 renders an entity held in several parts with the
+    /// "aggregated values of Attribute instances" of the aggregated entity,
+    /// which is one aggregation over the union of the parts, never a union of
+    /// per-part aggregates. An instance a local one already carries the
+    /// `instanceId` of is the same instance and counts once (clause 4.5.7).
+    /// `entity_types` names the entity when this view holds none of it.
+    #[must_use = "temporal aggregation reads must be awaited"]
+    async fn query_merged_entity_aggregation(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Identifier,
+        entity_types: &[EntityTypeName],
+        compiled: &CompiledTemporalQuery,
+        answered: &[TemporalHistoryRow],
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError>;
 
     /// The family-and-value-shape combinations each named attribute has ever

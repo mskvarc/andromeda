@@ -124,15 +124,21 @@ pub fn condition(scope_q: &ScopeQuery, target: &ScopeTarget) -> Condition {
     for alternative in scope_q.alternatives() {
         let mut conjunction = Condition::all();
         for pattern in alternative {
-            conjunction = conjunction.add(pattern_predicate(pattern, target));
+            conjunction = conjunction.add(pattern_condition(pattern, target));
         }
         disjunction = disjunction.add(conjunction);
     }
     disjunction
 }
 
-/// Render one scope pattern against the target.
-fn pattern_predicate(pattern: &ScopePattern, target: &ScopeTarget) -> SimpleExpr {
+/// Render one scope pattern -- one requirement of one alternative (clause
+/// 4.19) -- against the target.
+///
+/// A split temporal query reads every requirement on its own (clause 5.7.4.4),
+/// so the requirement is a rendering of its own as well as a term of
+/// [`condition`].
+#[must_use]
+pub fn pattern_condition(pattern: &ScopePattern, target: &ScopeTarget) -> SimpleExpr {
     let lquery = pattern_to_lquery(pattern);
     match target {
         ScopeTarget::CurrentPaths { column } => ltree_matches(column.column_expr(), SeaExpr::val(lquery)),

@@ -23,7 +23,7 @@ use crate::{
         block_footprint::{AttrCoverage, BlockSelection, block_attrs, block_covers_id, covered_type},
         client_query::ClientQuery,
     },
-    request::SourcePage,
+    request::{SourcePage, TemporalAnswer},
     source_walk::SOURCE_PAGE_SIZE,
 };
 use andromeda_http_headers::language::LanguageFilter;
@@ -59,7 +59,8 @@ impl ForwardedQuery {
     /// covers any of the types, identifiers or attributes the client asked for,
     /// in which case the registration has nothing to answer. `source_page` is
     /// requested when a durable range consumer must walk the complete source
-    /// result set. Identical block queries are collapsed so a source is
+    /// result set, and `answer` is the representation a temporal source is
+    /// asked for. Identical block queries are collapsed so a source is
     /// contacted once for the same request.
     ///
     /// # Errors
@@ -71,11 +72,12 @@ impl ForwardedQuery {
         registration: &ContextSourceRegistration,
         split: SplitEntities,
         source_page: Option<SourcePage>,
+        answer: TemporalAnswer,
         names: &ForwardedNames<'_>,
     ) -> Result<Vec<ForwardedQuery>, FederationError> {
         let mut queries: Vec<ForwardedQuery> = Vec::new();
         for block in &registration.coverage.information {
-            if let Some(query) = Self::for_block(client, block, split, source_page, names).await?
+            if let Some(query) = Self::for_block(client, block, split, source_page, answer, names).await?
                 && !queries.contains(&query)
             {
                 queries.push(query);
@@ -97,6 +99,7 @@ impl ForwardedQuery {
         block: &RegistrationInfo,
         split: SplitEntities,
         source_page: Option<SourcePage>,
+        answer: TemporalAnswer,
         names: &ForwardedNames<'_>,
     ) -> Result<Option<ForwardedQuery>, FederationError> {
         let mut query = ForwardedQuery::default();
@@ -184,7 +187,7 @@ impl ForwardedQuery {
                 query.push_csf(params.csf.as_ref(), names).await?;
                 query.push_dataset_ids(params.dataset_id.as_deref());
                 query.push_lang(params.lang.as_ref());
-                query.push_temporal_parameters(params);
+                query.push_temporal_parameters(params, answer);
             }
         }
         Ok(Some(query))
@@ -307,7 +310,7 @@ mod tests {
         forwarded_parameter::ForwardedParameter,
         forwarded_query::{ForwardedQuery, client_query::ClientQuery},
         forwarding_context::Rewording,
-        request::SourcePage,
+        request::{SourcePage, TemporalAnswer},
         term_resolver::TermResolver,
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -363,7 +366,7 @@ mod tests {
         let names = ForwardedNames::prepare(&engine, &resolver, &context, Rewording::AsInbound)
             .await
             .expect("the forwarding context processes");
-        ForwardedQuery::for_registration(client, registration, split, None, &names)
+        ForwardedQuery::for_registration(client, registration, split, None, TemporalAnswer::AsRequested, &names)
             .await
             .expect("narrowing succeeds")
     }
@@ -376,7 +379,7 @@ mod tests {
         let names = ForwardedNames::prepare(&engine, &resolver, &context, Rewording::AsInbound)
             .await
             .expect("the forwarding context processes");
-        ForwardedQuery::for_registration(client, registration, split, Some(page), &names)
+        ForwardedQuery::for_registration(client, registration, split, Some(page), TemporalAnswer::AsRequested, &names)
             .await
             .expect("narrowing succeeds")
     }
@@ -395,7 +398,7 @@ mod tests {
         let names = ForwardedNames::prepare(&engine, &resolver, &context, Rewording::AsInbound)
             .await
             .expect("the forwarding context processes");
-        ForwardedQuery::for_registration(client, registration, split, None, &names)
+        ForwardedQuery::for_registration(client, registration, split, None, TemporalAnswer::AsRequested, &names)
             .await
             .expect("narrowing succeeds")
     }
@@ -758,9 +761,16 @@ mod tests {
 
         let block = registration(&json!([{"entities": [{"type": ALIASED_VEHICLE}], "propertyNames": [ALIASED_SPEED]}]));
         let query = entity_query("type=Veh&attrs=spd&q=spd%3E1&jsonKeys=spd&csf=spd%3D%3D1");
-        let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&query), &block, SplitEntities::Complete, None, &names)
-            .await
-            .expect("narrowing succeeds");
+        let forwarded = ForwardedQuery::for_registration(
+            ClientQuery::EntityQuery(&query),
+            &block,
+            SplitEntities::Complete,
+            None,
+            TemporalAnswer::AsRequested,
+            &names,
+        )
+        .await
+        .expect("narrowing succeeds");
         pretty_assertions::assert_eq!(forwarded.len(), 1);
         pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Type), Some("Car"));
         pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Attrs), Some("velocity"));
@@ -768,9 +778,16 @@ mod tests {
         pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::JsonKeys), Some("velocity"));
         pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Csf), Some("velocity==1"));
 
-        let supplied = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&entity_query("")), &block, SplitEntities::Complete, None, &names)
-            .await
-            .expect("narrowing succeeds");
+        let supplied = ForwardedQuery::for_registration(
+            ClientQuery::EntityQuery(&entity_query("")),
+            &block,
+            SplitEntities::Complete,
+            None,
+            TemporalAnswer::AsRequested,
+            &names,
+        )
+        .await
+        .expect("narrowing succeeds");
         pretty_assertions::assert_eq!(supplied[0].value_of(ForwardedParameter::Type), Some("Car"));
         pretty_assertions::assert_eq!(supplied[0].value_of(ForwardedParameter::Attrs), Some("velocity"));
     }

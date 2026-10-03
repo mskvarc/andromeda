@@ -273,6 +273,8 @@ fn ensure_aggregation_supported(reader: &dyn TemporalHistoryReader, requested: &
 
 /// Whether a temporal read carries the `datasetId` step.
 mod dataset_step;
+/// Rendering the contributed entities of a split query over their merged instances.
+pub mod merged_rendering;
 /// Query Temporal Evolution of Entities (clause 5.7.4).
 mod query;
 /// Rendering the temporal evolution of one entity over a compiled window.

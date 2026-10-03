@@ -7,8 +7,7 @@
 //! [`TemporalHistoryRow`].
 
 use crate::{
-    aggregation_group_key_decode::decode_group_keys,
-    aggregation_row_decode::{decode_aggregation_group_span, decode_aggregation_row},
+    aggregation_rows_read::decode_aggregation_rows,
     error::TemporalStoreError,
     history_row_decode::decode_history_row,
     repo::TemporalRepository,
@@ -20,8 +19,8 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, temporal::compiled::CompiledTemporalQuery};
+use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, split_filter::LeafTruths, temporal::compiled::CompiledTemporalQuery};
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::attribute_kind_code::attribute_type_of;
 use andromeda_postgresql_query::{
@@ -30,8 +29,6 @@ use andromeda_postgresql_query::{
     projected_type_names::projected_type_names,
 };
 use andromeda_postgresql_temporal_query::{
-    aggregation_group::{PromotedGroupFacets, ensure_uniform_aggregation_groups},
-    aggregation_grouping::promoted_facets,
     history::build_temporal_history_query,
     recorded_shape::RecordedShape,
     scope_history::{build_scope_history_query, scope_is_selected},
@@ -91,6 +88,36 @@ const fn neutral_attribute_shape(stored: StoredAttributeShape) -> RecordedAttrib
 }
 
 impl TemporalRepository {
+    /// Resolve the attribute and type names a compiled query's selection reads
+    /// through the dictionaries the write path minted their keys in.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError`] when a dictionary lookup fails.
+    pub(crate) async fn resolve_query_names(&self, compiled: &CompiledTemporalQuery) -> Result<QueryNames, TemporalError> {
+        // Clause 5.7.4.3 confines a temporal ordering to the `id` member, which
+        // is a column of the temporal catalogue and names no attribute, so the
+        // dictionary lookup below has no ordering term to resolve.
+        let attribute_names = projected_attribute_names([], compiled.entities.q_expr.as_ref(), compiled.entities.geo.as_ref(), &[]);
+        // The projection is written inside the transaction that writes the
+        // entity, so a dictionary hit is already backed by committed projection
+        // rows and there is nothing to wait for.
+        let attributes = if attribute_names.is_empty() {
+            ResolvedNames::default()
+        } else {
+            self.attribute_names.lookup(&attribute_names).await.map_err(TemporalStoreError::from)?
+        };
+        // The catalogue carries type keys, so a type selection resolves through
+        // the same dictionary the write path minted them in.
+        let type_names = projected_type_names(&compiled.entities);
+        let types = if type_names.is_empty() {
+            ResolvedNames::default()
+        } else {
+            self.entity_type_names.lookup(&type_names).await.map_err(TemporalStoreError::from)?
+        };
+        Ok(QueryNames { attributes, types })
+    }
+
     /// Read the reified temporal scope of one entity over the compiled window.
     ///
     /// Clause 4.18 makes the Scope "a special scope Property that is
@@ -155,27 +182,7 @@ impl TemporalHistoryReader for TemporalRepository {
         window: &PageWindow,
         count: CountPolicy,
     ) -> Result<TemporalEntityIdOutcome, TemporalError> {
-        // Clause 5.7.4.3 confines a temporal ordering to the `id` member, which
-        // is a column of the temporal catalogue and names no attribute, so the
-        // dictionary lookup below has no ordering term to resolve.
-        let attribute_names = projected_attribute_names([], compiled.entities.q_expr.as_ref(), compiled.entities.geo.as_ref(), &[]);
-        // The projection is written inside the transaction that writes the
-        // entity, so a dictionary hit is already backed by committed projection
-        // rows and there is nothing to wait for.
-        let attributes = if attribute_names.is_empty() {
-            ResolvedNames::default()
-        } else {
-            self.attribute_names.lookup(&attribute_names).await.map_err(TemporalStoreError::from)?
-        };
-        // The catalogue carries type keys, so a type selection resolves through
-        // the same dictionary the write path minted them in.
-        let type_names = projected_type_names(&compiled.entities);
-        let types = if type_names.is_empty() {
-            ResolvedNames::default()
-        } else {
-            self.entity_type_names.lookup(&type_names).await.map_err(TemporalStoreError::from)?
-        };
-        let names = QueryNames { attributes, types };
+        let names = self.resolve_query_names(compiled).await?;
 
         // The statement compares identifiers under the collation the ordering
         // names, and PostgreSQL pre-imports only the `<locale>-x-icu` forms; a
@@ -222,6 +229,15 @@ impl TemporalHistoryReader for TemporalRepository {
         })
     }
 
+    async fn filter_leaf_truths(
+        &self,
+        target: &ContextTarget,
+        compiled: &CompiledTemporalQuery,
+        entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError> {
+        self.read_filter_leaf_truths(target, compiled, entity_ids).await
+    }
+
     async fn query_entity_history(
         &self,
         target: &ContextTarget,
@@ -245,6 +261,17 @@ impl TemporalHistoryReader for TemporalRepository {
         Ok(TemporalHistoryOutcome { observations })
     }
 
+    async fn query_merged_entity_aggregation(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Identifier,
+        entity_types: &[EntityTypeName],
+        compiled: &CompiledTemporalQuery,
+        answered: &[TemporalHistoryRow],
+    ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
+        self.merged_entity_aggregation(target, entity_id, entity_types, compiled, answered).await
+    }
+
     async fn query_entity_aggregation(
         &self,
         target: &ContextTarget,
@@ -254,39 +281,6 @@ impl TemporalHistoryReader for TemporalRepository {
         let stage2 = build_temporal_history_query(schema_iden(target).as_ref(), entity_id, compiled);
         let pg_rows = self.execute_temporal_query(TemporalStatement::Aggregation, stage2).await?;
 
-        // Clause 4.5.19 gives one aggregate value per attribute, `datasetId` and
-        // period, so the statement groups on exactly those and each row is one
-        // rendered period. What the rows underneath a group disagreed about is
-        // read first: a unit-sensitive aggregate over values that do not share a
-        // unit, a family or a shape has no meaning, and the broker converts
-        // nothing, so the request is refused before any aggregate of it is
-        // decoded.
-        let mut spans = Vec::with_capacity(pg_rows.len());
-        for pg_row in &pg_rows {
-            spans.push(decode_aggregation_group_span(pg_row).map_err(TemporalError::from)?);
-        }
-        // A facet promoted to an `aggrGroupBy` key splits the groups rather than
-        // contradicting them, so the guard skips its uniformity check (study
-        // §4).
-        let promoted = compiled
-            .representation
-            .grouping
-            .as_ref()
-            .map_or(PromotedGroupFacets::default(), promoted_facets);
-        ensure_uniform_aggregation_groups(&spans, &compiled.representation.aggr_methods, promoted)
-            .map_err(TemporalStoreError::from)
-            .map_err(TemporalError::from)?;
-
-        let mut rows = Vec::with_capacity(pg_rows.len());
-        for (pg_row, span) in pg_rows.iter().zip(&spans) {
-            let mut row = decode_aggregation_row(pg_row, span).map_err(TemporalError::from)?;
-            if let Some(grouping) = &compiled.representation.grouping {
-                row.group_keys =
-                    decode_group_keys(pg_row, grouping, entity_id, row.dataset_id.as_ref(), row.attribute_type, span.units).map_err(TemporalError::from)?;
-            }
-            rows.push(row);
-        }
-
-        Ok(rows)
+        decode_aggregation_rows(&pg_rows, entity_id, compiled)
     }
 }

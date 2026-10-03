@@ -16,7 +16,14 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
+    page_window::PageWindow,
+    temporal::{
+        compiled::CompiledTemporalQuery,
+        contributed_entities::{ContributedEntities, ContributedRendering},
+    },
+};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use chrono::{DateTime, Utc};
@@ -38,6 +45,12 @@ impl TemporalService {
     /// predicate, and [`TemporalError::Persistence`] when the history cannot
     /// be read. A single entity that fails to render is reported as a warning
     /// on the result rather than failing the query.
+    ///
+    /// `contributed` names the entities a Context Source contributed a part of
+    /// to a split query (clause 5.7.4.4): they are exempt from the value, geo
+    /// and scope filters here, and their parts are judged together by
+    /// [`TemporalService::settle_split_filters`]. One whose rendering is
+    /// [`ContributedRendering::Merged`] is selected but not rendered.
     pub async fn query(
         &self,
         target: &ContextTarget,
@@ -45,12 +58,16 @@ impl TemporalService {
         window: &PageWindow,
         count: CountPolicy,
         context: &ContextSpec,
+        contributed: ContributedEntities,
     ) -> Result<TemporalQueryResult, TemporalError> {
         let timer = temporal::start(TemporalOperation::Query);
         let result = async {
             params.validate(true)?;
 
-            let compiled = self.compile_temporal_query(params, context).await?;
+            let mut compiled = self.compile_temporal_query(params, context).await?;
+            compiled.contributed = contributed;
+            let compiled = compiled;
+            let contributed_reading = ContributedReading::of(&compiled);
 
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
             self.ensure_requested_attributes_aggregable(target, &compiled).await?;
@@ -58,6 +75,7 @@ impl TemporalService {
             let (entity_ids, total_count) = id_outcome
                 .complete(window, count)
                 .map_err(|error| TemporalError::from(TemporalInvariant::IncompleteOutcome(error)))?;
+            let entity_ids: Vec<Identifier> = entity_ids.into_iter().filter(|entity_id| contributed_reading.renders(entity_id)).collect();
 
             // One batch read of the temporal catalogue, which owns the entity types
             // (clauses 4.5.1 and 4.5.6) and answers for entities whose current
@@ -72,7 +90,10 @@ impl TemporalService {
                 let mut rendered = Vec::with_capacity(entity_ids.len());
                 for entity_id in entity_ids {
                     let entity_types = entity_types_map.get(&entity_id).map(Vec::as_slice).unwrap_or_default();
-                    let outcome = self.render_one_temporal_entity(target, &entity_id, entity_types, &compiled, &compaction).await;
+                    let entity_compiled = contributed_reading.query_for(&entity_id);
+                    let outcome = self
+                        .render_one_temporal_entity(target, &entity_id, entity_types, entity_compiled, &compaction)
+                        .await;
                     rendered.extend(settle_entity(entity_id, outcome, &mut warnings)?);
                 }
                 rendered
@@ -82,7 +103,7 @@ impl TemporalService {
                 // before any is rendered, because the cut depends on all of them.
                 let mut pages = Vec::with_capacity(entity_ids.len());
                 for entity_id in entity_ids {
-                    match self.read_history_page(target, &entity_id, &compiled).await {
+                    match self.read_history_page(target, &entity_id, contributed_reading.query_for(&entity_id)).await {
                         Ok(page) => pages.push(page),
                         Err(error) => {
                             settle_entity(entity_id, Err(error), &mut warnings)?;
@@ -151,6 +172,50 @@ impl TemporalService {
         .await;
         timer.finish_result(&result);
         result
+    }
+}
+
+/// How stage two reads an entity a Context Source contributed a part of.
+struct ContributedReading<'q> {
+    /// The query every other entity is read with.
+    compiled: &'q CompiledTemporalQuery,
+    /// The query a contributed entity is read with: the scope query cleared,
+    /// when the query carries one and some entity was contributed.
+    scope_unbounded: Option<CompiledTemporalQuery>,
+}
+
+impl<'q> ContributedReading<'q> {
+    /// The readings of `compiled`.
+    ///
+    /// Annex C clause C.5.16 admits an instance only while the scope query
+    /// held, and the Scope events of a contributed entity may be held by a
+    /// source, so the local events alone cannot bound its instances: they are
+    /// read unbounded by scope, and the gathered entity is judged on its
+    /// gathered Scope instead (clause 5.7.4.4).
+    fn of(compiled: &'q CompiledTemporalQuery) -> ContributedReading<'q> {
+        let scope_unbounded = (!compiled.contributed.is_empty() && compiled.entities.scope_q.is_some()).then(|| {
+            let mut unbounded = compiled.clone(); // clone: the contributed entities read a variant of the query the others read
+            unbounded.entities.scope_q = None;
+            unbounded
+        });
+        ContributedReading { compiled, scope_unbounded }
+    }
+
+    /// The query `entity_id` is read with in stage two.
+    fn query_for(&self, entity_id: &Identifier) -> &CompiledTemporalQuery {
+        match &self.scope_unbounded {
+            Some(unbounded) if self.compiled.contributed.contains(entity_id) => unbounded,
+            Some(_) | None => self.compiled,
+        }
+    }
+
+    /// Whether the local read renders `entity_id`: every entity, except a
+    /// contributed one rendered from its merged instances instead.
+    fn renders(&self, entity_id: &Identifier) -> bool {
+        match self.compiled.contributed.rendering() {
+            ContributedRendering::Local => true,
+            ContributedRendering::Merged => !self.compiled.contributed.contains(entity_id),
+        }
     }
 }
 

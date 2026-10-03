@@ -3,6 +3,7 @@
 
 pub mod aggregation_period;
 pub mod compiled;
+pub mod contributed_entities;
 pub mod grouping;
 pub mod history_delete;
 pub mod instance_page;

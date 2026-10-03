@@ -4,6 +4,7 @@ use crate::{
     config::SplitEntities,
     entity_budget::EntityBudget,
     forwarded_query::client_query::ClientQuery,
+    instance_budget::InstanceBudget,
     operation::{ForwardingOperation, ProvisionResource},
 };
 use andromeda_entity_map::reuse::EntityMapUse;
@@ -40,6 +41,37 @@ pub enum SourcePaging<'a> {
     /// One explicit page from every source, for a consumer that pages through
     /// the sources itself.
     Page(SourcePage),
+    /// Every page each source links with `next`, each asked for the
+    /// normalized instances of its history and read to the end of the window
+    /// past every clause 6.3.10 partial answer, under the request's entity and
+    /// instance budgets (clause 4.12).
+    ///
+    /// Clause 5.7.4.4 makes the aggregated representation of an entity held in
+    /// several parts an aggregate "of Attribute instances" of the aggregated
+    /// entity, which no source's own aggregate is, so the instances are what
+    /// the broker gathers and aggregates itself.
+    WalkHistory(HistoryBudget<'a>),
+}
+
+/// The budgets a forwarded temporal query reads its sources' history to the
+/// end under.
+#[derive(Debug, Clone, Copy)]
+pub struct HistoryBudget<'a> {
+    /// The most entities the sources may answer with together.
+    pub entities: &'a EntityBudget,
+    /// The most attribute instances the sources may answer with together.
+    pub instances: &'a InstanceBudget,
+}
+
+/// Which representation a source is asked to answer a temporal query in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TemporalAnswer {
+    /// The representation the client asked for, so the source's answer merges
+    /// with the local one as it is.
+    AsRequested,
+    /// The normalized instances of the window, each carrying the instant it is
+    /// positioned on, whatever the client asked for.
+    Instances,
 }
 
 impl SourcePaging<'_> {
@@ -47,8 +79,16 @@ impl SourcePaging<'_> {
     #[must_use]
     pub const fn explicit_page(&self) -> Option<SourcePage> {
         match self {
-            SourcePaging::Walk(_) => None,
+            SourcePaging::Walk(_) | SourcePaging::WalkHistory(_) => None,
             SourcePaging::Page(page) => Some(*page),
+        }
+    }
+
+    /// The representation each source is asked to answer in.
+    pub(crate) const fn temporal_answer(&self) -> TemporalAnswer {
+        match self {
+            SourcePaging::Walk(_) | SourcePaging::Page(_) => TemporalAnswer::AsRequested,
+            SourcePaging::WalkHistory(_) => TemporalAnswer::Instances,
         }
     }
 }

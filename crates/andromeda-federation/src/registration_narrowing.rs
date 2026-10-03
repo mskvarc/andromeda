@@ -16,7 +16,7 @@ use crate::{
     forwarding_context::BodyPresence,
     read_fan_out::ForwardedRead,
     registration_payload::forwarding_decision,
-    request::SourcePage,
+    request::{SourcePage, TemporalAnswer},
     term_resolver::TermResolver,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -39,6 +39,9 @@ pub(crate) struct Narrowing<'a> {
     /// walks every page itself.
     #[builder(default = None)]
     pub(crate) source_page: Option<SourcePage>,
+    /// The representation a temporal source is asked to answer in.
+    #[builder(default = TemporalAnswer::AsRequested)]
+    pub(crate) temporal_answer: TemporalAnswer,
     /// Whether the request carrying the query has a body, which decides how
     /// its context travels (clause 6.3.5).
     pub(crate) presence: BodyPresence,
@@ -90,7 +93,15 @@ impl FederationService {
             Ok(names) => names,
             Err(error) => return Ok(RegistrationQueries::Unprepared(error)),
         };
-        let queries = ForwardedQuery::for_registration(narrowing.client, registration, narrowing.split, narrowing.source_page, &names).await?;
+        let queries = ForwardedQuery::for_registration(
+            narrowing.client,
+            registration,
+            narrowing.split,
+            narrowing.source_page,
+            narrowing.temporal_answer,
+            &names,
+        )
+        .await?;
         Ok(RegistrationQueries::Narrowed(queries))
     }
 

@@ -233,6 +233,7 @@ impl QueryForwarding<'_> {
         match forwarded {
             Ok(outcome) => Ok(outcome),
             Err(QueryForwardingError::TooManyResults(exceeded)) => Err(public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), self.uri)),
+            Err(QueryForwardingError::TooManyInstances(exceeded)) => Err(public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), self.uri)),
             Err(QueryForwardingError::Federation(error)) => {
                 if let Some(report) = local_federation_failure(&error) {
                     // clone: the problem response owns the request URI it names

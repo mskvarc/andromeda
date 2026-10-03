@@ -34,3 +34,4 @@ mod retrieve_temporal;
 mod retrieve_temporal_filters;
 mod split_entities;
 mod split_temporal;
+mod split_temporal_settlement;

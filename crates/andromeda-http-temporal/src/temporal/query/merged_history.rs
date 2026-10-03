@@ -18,6 +18,17 @@ use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use axum::http::Uri;
 use serde_json::Value;
 
+/// Whether the entities the sources answered with join the local ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RemoteParts {
+    /// They are folded into the local rows by identifier.
+    Merged,
+    /// They were rendered apart, over the merged instances, and only their
+    /// warnings and contributions are taken: a source answered with instances
+    /// the client did not ask for (clause 5.7.4.4).
+    RenderedApart,
+}
+
 /// The merged history of a temporal query, and what the sources contributed to it.
 pub(crate) struct MergedTemporalHistory {
     /// The local rows folded together with what every contacted source returned.
@@ -45,6 +56,7 @@ pub(crate) fn merge_forwarded_history(
     local_entities: Vec<Value>,
     forwarded: Option<ForwardedHistory>,
     filtering: SplitEntities,
+    remote: RemoteParts,
     instance: &Uri,
 ) -> Result<MergedTemporalHistory, ProblemResponse> {
     let Some(history) = forwarded else {
@@ -70,7 +82,10 @@ pub(crate) fn merge_forwarded_history(
             .collect(),
         SplitEntities::Complete => sources,
     };
-    let entities = merge_temporal_query_results(local_entities, sources);
+    let entities = match remote {
+        RemoteParts::Merged => merge_temporal_query_results(local_entities, sources),
+        RemoteParts::RenderedApart => local_entities,
+    };
     if contributed {
         budget
             .admits(u64::try_from(entities.len()).unwrap_or(u64::MAX))

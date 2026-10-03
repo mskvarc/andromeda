@@ -203,6 +203,7 @@ impl FederationService {
             .resolver(&resolver)
             .split(split)
             .source_page(paging.explicit_page())
+            .temporal_answer(paging.temporal_answer())
             .presence(BodyPresence::Absent)
             .build();
         for registration in registrations {
@@ -226,6 +227,7 @@ impl FederationService {
         };
         let answers = match paging {
             SourcePaging::Walk(budget) => self.fan_out_walk(targets, conditions, budget).await?,
+            SourcePaging::WalkHistory(budget) => self.fan_out_history_walk(targets, conditions, budget).await?,
             SourcePaging::Page(_) => self.fan_out_read(targets, FederationService::temporal_entities_of, conditions).await,
         };
         Ok(read_outcome(answers, matched))

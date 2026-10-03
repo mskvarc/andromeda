@@ -98,6 +98,14 @@ fn for_each_instance_list(entity: &Value, mut visit: impl FnMut(&[Value], Instan
     }
 }
 
+/// How many attribute instances `entity` carries, a `temporalValues` pair
+/// counting as the instance it stands for (clause 4.5.9).
+pub(crate) fn instance_count(entity: &Value) -> usize {
+    let mut count = 0_usize;
+    for_each_instance_list(entity, |items, _| count = count.saturating_add(items.len()));
+    count
+}
+
 /// Keep, in every instance list of `entity`, only the instances whose instant
 /// on `timeproperty` `keep` admits; an instance with no readable instant is
 /// kept, since nothing places it outside.
@@ -146,8 +154,14 @@ fn pair_lists(attribute: &Value, visit: &mut impl FnMut(&[Value], InstanceShape)
 /// Whether `item` is a `temporalValues` attribute object rather than a
 /// normalized instance.
 fn holds_pairs(item: &Value) -> bool {
-    item.as_object()
-        .is_some_and(|members| PAIR_MEMBERS.iter().any(|member| members.contains_key(*member)))
+    pair_member(item).is_some()
+}
+
+/// The clause 4.5.9 member a `temporalValues` attribute object holds its
+/// pairs in; `None` for a normalized instance.
+pub(crate) fn pair_member(item: &Value) -> Option<&'static str> {
+    let members = item.as_object()?;
+    PAIR_MEMBERS.into_iter().find(|member| members.contains_key(*member))
 }
 
 #[cfg(test)]

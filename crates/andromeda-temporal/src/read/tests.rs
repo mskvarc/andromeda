@@ -15,8 +15,8 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, temporal::compiled::CompiledTemporalQuery};
+use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, split_filter::LeafTruths, temporal::compiled::CompiledTemporalQuery};
 use async_trait::async_trait;
 use std::{
     collections::{HashMap, HashSet},
@@ -59,6 +59,16 @@ impl TemporalHistoryReader for RefusingReader {
         panic!("query must not execute")
     }
 
+    async fn filter_leaf_truths(
+        &self,
+        _target: &ContextTarget,
+        _compiled: &CompiledTemporalQuery,
+        _entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError> {
+        self.query_calls.fetch_add(1, Ordering::Relaxed);
+        panic!("query must not execute")
+    }
+
     async fn query_entity_history(
         &self,
         _target: &ContextTarget,
@@ -74,6 +84,18 @@ impl TemporalHistoryReader for RefusingReader {
         _target: &ContextTarget,
         _entity_id: &Identifier,
         _compiled: &CompiledTemporalQuery,
+    ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
+        self.query_calls.fetch_add(1, Ordering::Relaxed);
+        panic!("query must not execute")
+    }
+
+    async fn query_merged_entity_aggregation(
+        &self,
+        _target: &ContextTarget,
+        _entity_id: &Identifier,
+        _entity_types: &[EntityTypeName],
+        _compiled: &CompiledTemporalQuery,
+        _answered: &[TemporalHistoryRow],
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         panic!("query must not execute")

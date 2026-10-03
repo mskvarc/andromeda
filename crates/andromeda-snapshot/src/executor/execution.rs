@@ -37,13 +37,32 @@ use andromeda_ngsi_ld_model::{query::body::Query, snapshot::ExecutionResultDetai
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     page_window::{PageStart, PageWindow},
+    temporal::contributed_entities::ContributedEntities,
 };
-use andromeda_temporal::error::TemporalError;
+use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_temporal::{error::TemporalError, service::TemporalQueryResult};
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
 use tracing::{error, warn};
 
 impl SnapshotExecutor {
+    /// One keyset page of the local temporal entities a snapshot query
+    /// captures; no Context Source contributes to the local read.
+    ///
+    /// The read is boxed: it is the largest future of the capture loop, which
+    /// would otherwise carry it inline across every await.
+    async fn local_page(&self, params: &TemporalQueryParameters, window: &PageWindow, context: &ContextSpec) -> Result<TemporalQueryResult, TemporalError> {
+        Box::pin(self.sources.temporal.query(
+            &self.sources.live_target,
+            params,
+            window,
+            CountPolicy::Omit,
+            context,
+            ContributedEntities::default(),
+        ))
+        .await
+    }
+
     pub(crate) async fn run_temporal_query(
         &self,
         target: &ContextTarget,
@@ -67,12 +86,7 @@ impl SnapshotExecutor {
         let mut source_offset = 0_u32;
         let mut captured = HashSet::new();
         loop {
-            let result = match self
-                .sources
-                .temporal
-                .query(&self.sources.live_target, &params, &window, CountPolicy::Omit, context)
-                .await
-            {
+            let result = match self.local_page(&params, &window, context).await {
                 Ok(result) => result,
                 Err(error) => {
                     warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot temporal query failed");

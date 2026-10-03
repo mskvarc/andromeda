@@ -62,6 +62,8 @@ mod forwarding_context;
 pub mod forwarding_url;
 /// Why a single forwarded request failed as a bad gateway.
 pub mod gateway_failure;
+/// The most attribute instances one forwarded temporal query may gather.
+pub mod instance_budget;
 /// Resolving a locally-held entity's type for federated-write coverage.
 pub mod local_entity_type;
 /// NGSI-LD operation capability matching.
@@ -106,6 +108,8 @@ pub mod source_walk;
 pub mod subscription;
 /// Temporal query and retrieve execution.
 pub mod temporal;
+/// Reading a source's temporal history to the end of its clause 6.3.10 pages.
+mod temporal_history_walk;
 /// The attribute instances of a merged temporal representation.
 pub mod temporal_instances;
 /// Post-aggregation `lastN` truncation of temporal representations.
@@ -222,6 +226,9 @@ pub struct FederationService {
     split_entities_default: SplitEntitiesDefault,
     /// Most entities one federated query gathers (clause 4.12).
     max_query_entities: NonZeroU32,
+    /// Most attribute instances one federated temporal query gathers when it
+    /// reads its sources' history to the end (clause 4.12).
+    max_query_instances: NonZeroU32,
 }
 
 impl FederationService {
@@ -262,6 +269,7 @@ impl FederationService {
             cache: ForwardedGetCache::new(config.cache_max_entries),
             split_entities_default: config.split_entities_default,
             max_query_entities: config.max_query_entities,
+            max_query_instances: config.max_query_instances,
         })
     }
 
@@ -271,6 +279,14 @@ impl FederationService {
     #[must_use]
     pub const fn max_query_entities(&self) -> NonZeroU32 {
         self.max_query_entities
+    }
+
+    /// Most attribute instances one federated temporal query gathers from the
+    /// context sources whose history it reads to the end, before it is refused
+    /// with `TooManyResults` (clause 4.12).
+    #[must_use]
+    pub const fn max_query_instances(&self) -> NonZeroU32 {
+        self.max_query_instances
     }
 
     /// Resolve a request's or subscription's `splitEntities` against the

@@ -60,6 +60,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     page_window::PageWindow,
     projection::grammar::parse_projection_list,
+    split_filter::LeafTruths,
     temporal::{compiled::CompiledTemporalQuery, history_delete::TemporalHistoryDeleteScope},
 };
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
@@ -396,6 +397,15 @@ impl TemporalHistoryReader for StubBroker {
         })
     }
 
+    async fn filter_leaf_truths(
+        &self,
+        _target: &ContextTarget,
+        _compiled: &CompiledTemporalQuery,
+        _entity_ids: &[Identifier],
+    ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError> {
+        Err(unsupported("filter_leaf_truths"))
+    }
+
     async fn query_entity_history(
         &self,
         _target: &ContextTarget,
@@ -419,6 +429,17 @@ impl TemporalHistoryReader for StubBroker {
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         Err(unsupported("query_entity_aggregation"))
     }
+    async fn query_merged_entity_aggregation(
+        &self,
+        _target: &ContextTarget,
+        _entity_id: &Identifier,
+        _entity_types: &[EntityTypeName],
+        _compiled: &CompiledTemporalQuery,
+        _answered: &[TemporalHistoryRow],
+    ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
+        Err(unsupported("query_merged_entity_aggregation"))
+    }
+
     async fn recorded_attribute_shapes(
         &self,
         _target: &ContextTarget,

@@ -7,6 +7,12 @@
 pub mod aggregation_conflict;
 /// Eligibility of attributes for aggregation methods (clause 5.7.4.4).
 pub mod aggregation_eligibility;
+/// A Context Source's temporal answer, narrowed to the members a split query's filters read.
+mod answer_narrowing;
+/// The part of an entity a Context Source answered a split temporal query with.
+mod answered_evolution;
+/// The instances a Context Source answered a temporal query with, as history rows.
+mod answered_history;
 /// Typed, durable consequences for deferred temporal append.
 pub mod append_intent;
 mod attribute_instance_mutation;
@@ -50,6 +56,8 @@ pub mod scope_observation;
 pub mod service;
 /// The bounds one temporal service applies to what a request may ask of it.
 pub mod service_limits;
+/// Deciding a split temporal query's filters over the gathered parts of an entity.
+pub mod split_settlement;
 /// The physical storage policy an operator sets for temporal history.
 pub mod storage_policy;
 /// Compacting what one temporal read renders against its request context.
