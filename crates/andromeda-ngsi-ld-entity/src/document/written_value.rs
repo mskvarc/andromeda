@@ -22,7 +22,11 @@ use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
 #[derive(Clone, Debug, PartialEq)]
 pub enum WrittenValue {
     /// `value` of a Property, or of a fragment that declares no family.
-    Value(NonEmpty<ExpandedValue<Fragment>>),
+    ///
+    /// No value is the empty array, which clause 3.1 makes an NGSI-LD Value
+    /// like any other array; a fragment carrying no `value` member at all is
+    /// [`ValueSlot::Absent`] instead.
+    Value(Vec<ExpandedValue<Fragment>>),
     /// `value` of an instance declaring itself a `GeoProperty`.
     Geometry(GeoValue),
     /// `object`.

@@ -82,7 +82,7 @@ fn a_merge_fragment_with_every_deletion_round_trips() {
     let ValueSlot::Set(WrittenValue::Value(values)) = address.value() else {
         panic!("a written value");
     };
-    let ExpandedValue::Node(node) = values.head() else {
+    let [ExpandedValue::Node(node)] = values.as_slice() else {
         panic!("a structured value");
     };
     assert!(matches!(node.members().get("https://ex.org/country"), Some(FragmentMember::Remove)));
@@ -221,4 +221,17 @@ fn a_repeated_null_scope_is_refused() {
     let document = json!([{properties::SCOPE.as_str(): [{"@value": NULL}, {"@value": NULL}]}]);
     let error = EntityDocument::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect_err("two deletions");
     assert!(error.to_string().contains("more than once"), "{error}");
+}
+
+/// Clause 3.1: a written `hasValue: []` is the empty array, set rather than
+/// absent, and is written back as it was read.
+#[test]
+fn a_written_empty_array_value_is_set_and_round_trips() {
+    let document = json!([{"https://ex.org/tags": [{"@type": [ngsi("Property")], ngsi("hasValue"): []}]}]);
+    let written = decode(&document);
+    pretty_assertions::assert_eq!(
+        instance(&written, "https://ex.org/tags").value(),
+        &ValueSlot::Set(WrittenValue::Value(Vec::new()))
+    );
+    pretty_assertions::assert_eq!(round_trip(&document), document);
 }

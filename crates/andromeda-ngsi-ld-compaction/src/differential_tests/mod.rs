@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, TimeZone, Utc};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// An engine that resolves only what is embedded, never the network.
 fn offline_engine() -> JsonLdEngine {
@@ -78,6 +78,42 @@ async fn every_stored_document_compacts_as_the_processor_compacts_it_under_every
     }
     assert!(compared > 500, "only {compared} comparisons ran");
     assert!(compacted > 400, "only {compacted} of {compared} comparisons compacted an entity");
+}
+
+/// Clause 3.1: a Property holding the empty array, stored as `hasValue: []`,
+/// renders `"value": []` (JSON-LD 1.1 compaction keeps an empty array), at
+/// the top level and inside a structured value.
+#[tokio::test]
+async fn a_property_holding_the_empty_array_renders_the_empty_array() {
+    let engine = offline_engine();
+    let core = ContextSpec::core_only();
+    let compactor = engine.compactor(&core);
+    let typed = EntityCompactor::new(&compactor);
+    let read = EntityRead {
+        id_override: None,
+        sys_attrs: SysAttrsInclusion::Strip,
+        now: now(),
+    };
+    let corpus = corpus::stored_documents(&engine).await;
+    let entity = |name: &str| {
+        corpus
+            .iter()
+            .find(|document| document.name == name)
+            .unwrap_or_else(|| panic!("the corpus holds {name}"))
+    };
+    let every_family = typed
+        .entity(&state_of(&entity("every-family").expanded), &read)
+        .await
+        .expect("the entity compacts");
+    let structured = typed
+        .entity(&state_of(&entity("structured-values").expanded), &read)
+        .await
+        .expect("the entity compacts");
+
+    let every_family = serde_json::to_value(&every_family).expect("the compact entity renders");
+    let structured = serde_json::to_value(&structured).expect("the compact entity renders");
+    pretty_assertions::assert_eq!(every_family["untagged"], json!({"type": "Property", "value": []}));
+    pretty_assertions::assert_eq!(structured["address"]["value"]["flats"], json!([]));
 }
 
 /// How many geometries `node` keeps typed.

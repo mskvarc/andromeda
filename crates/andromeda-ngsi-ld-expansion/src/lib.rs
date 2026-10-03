@@ -39,6 +39,8 @@ mod context_tests;
 #[cfg(test)]
 mod differential_tests;
 #[cfg(test)]
+mod empty_value_tests;
+#[cfg(test)]
 mod expansion_fixture;
 #[cfg(test)]
 mod family_tests;

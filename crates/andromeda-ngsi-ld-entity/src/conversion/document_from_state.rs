@@ -83,7 +83,7 @@ fn instance_members(instances: &AttributeInstances) -> AttributeMember {
 fn written_value(value: &FamilyValue) -> WrittenValue {
     // clone: every arm copies the stored value into the document, which owns it
     match value {
-        FamilyValue::Property { values, .. } => WrittenValue::Value(values.map_ref(ExpandedValue::to_fragment)),
+        FamilyValue::Property { values, .. } => WrittenValue::Value(values.iter().map(ExpandedValue::to_fragment).collect()),
         FamilyValue::GeoProperty { geometry, .. } => WrittenValue::Geometry(geometry.clone()),
         FamilyValue::Relationship { objects, .. } => WrittenValue::Object(objects.clone()),
         FamilyValue::LanguageProperty { entries, .. } => WrittenValue::LanguageMap(entries.to_fragment()),

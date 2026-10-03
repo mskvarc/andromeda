@@ -205,9 +205,7 @@ mod tests {
     /// writes names its family (clause 4.5.2).
     #[test]
     fn a_typeless_fragment_takes_the_family_its_value_member_names() {
-        let typeless_value = InstanceDocument::builder()
-            .value(ValueSlot::Set(WrittenValue::Value(NonEmpty::one(number(1)))))
-            .build();
+        let typeless_value = InstanceDocument::builder().value(ValueSlot::Set(WrittenValue::Value(vec![number(1)]))).build();
         pretty_assertions::assert_eq!(written_family(&typeless_value, Some(AttributeType::GeoProperty)), AttributeType::GeoProperty);
         pretty_assertions::assert_eq!(written_family(&typeless_value, None), AttributeType::Property);
         pretty_assertions::assert_eq!(written_family(&typeless_value, Some(AttributeType::Relationship)), AttributeType::Property);

@@ -37,6 +37,12 @@ use langtag::LangTagBuf;
 
 /// Read the values of the value member `carrier` of an instance of `family`.
 ///
+/// The member is present: expansion drops a member whose value is `null`
+/// altogether, but keeps one written as an empty array with no item (JSON-LD
+/// 1.1 expansion, step 13.14). No item is the empty array, which clause 3.1
+/// makes a Property value like any other; every other member holds at least
+/// one target, term, string or geometry, so no item there is malformed.
+///
 /// # Errors
 ///
 /// Returns the refusal of a value that is not what its member holds.
@@ -46,18 +52,17 @@ pub fn value_slot(
     carrier: ValueCarrier,
     items: Vec<ExpandedItem>,
 ) -> Result<ValueSlot, EntityRefusal> {
-    if items.is_empty() {
-        return Ok(ValueSlot::Absent);
-    }
     if is_deletion(carrier, &items) {
         return Ok(ValueSlot::Remove(carrier));
     }
     let shape = carrier_shape(carrier);
     let written = match carrier {
         ValueCarrier::Value if family == Some(AttributeType::GeoProperty) => WrittenValue::Geometry(geo_value(attribute, items)?),
-        ValueCarrier::Value => WrittenValue::Value(non_empty(attribute, shape, expanded_values(attribute, items)?)?),
+        ValueCarrier::Value => WrittenValue::Value(expanded_values(attribute, items)?),
         ValueCarrier::Object => WrittenValue::Object(non_empty(attribute, shape, each(items, |item| object(attribute, &item))?)?),
-        ValueCarrier::LanguageMap => WrittenValue::LanguageMap(LanguageEntries::new(each(items, |item| language_entry(attribute, item))?)),
+        ValueCarrier::LanguageMap => WrittenValue::LanguageMap(LanguageEntries::new(
+            non_empty(attribute, shape, each(items, |item| language_entry(attribute, item))?)?.into_vec(),
+        )),
         ValueCarrier::Vocab => WrittenValue::Vocab(non_empty(attribute, shape, each(items, |item| vocab(attribute, &item))?)?),
         ValueCarrier::Json => WrittenValue::Json(non_empty(attribute, shape, each(items, |item| json(attribute, item))?)?),
         ValueCarrier::ValueList => WrittenValue::ValueList(expanded_values(attribute, single_list(attribute, shape, items)?)?),
@@ -90,7 +95,8 @@ fn data_item(attribute: &AttributeName, item: &ExpandedItem) -> Result<(), Entit
     if is_null(item) { Err(null_beside_data(attribute)) } else { Ok(()) }
 }
 
-/// The values, refused when there is none.
+/// The values, refused when there is none: a member holding no target, term,
+/// string or literal (clauses 4.5.3.2, 4.5.18.2, 4.5.20.2, 4.5.24.2).
 fn non_empty<T>(attribute: &AttributeName, shape: MemberShape, values: Vec<T>) -> Result<NonEmpty<T>, EntityRefusal> {
     NonEmpty::try_from_vec(values).map_err(|_| malformed(attribute, shape))
 }
@@ -217,5 +223,54 @@ fn list_object(attribute: &AttributeName, item: &ExpandedItem) -> Result<ListObj
             .map_or_else(|| Err(malformed(attribute, MemberShape::ObjectList)), target)
             .map(ListObject::Literal),
         ExpandedItem::Node(_) | ExpandedItem::Json(_) | ExpandedItem::List(_) | ExpandedItem::Geometry(_) => Err(malformed(attribute, MemberShape::ObjectList)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::assembly::written_value::value_slot;
+    use andromeda_ngsi_ld_entity::{
+        document::{
+            value_carrier::ValueCarrier,
+            written_value::{ValueSlot, WrittenValue},
+        },
+        member_shape::MemberShape,
+        refusal::EntityRefusal,
+    };
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
+
+    fn tags() -> AttributeName {
+        "https://example.org/tags".parse().expect("an attribute name")
+    }
+
+    /// Clause 3.1: a present `value` member holding no item is the empty array,
+    /// whether or not the instance declares its family (clause 5.6.4).
+    #[test]
+    fn a_value_member_holding_no_item_is_the_empty_array() {
+        for family in [Some(AttributeType::Property), None] {
+            let slot = value_slot(&tags(), family, ValueCarrier::Value, Vec::new()).expect("the empty array is a value");
+            pretty_assertions::assert_eq!(slot, ValueSlot::Set(WrittenValue::Value(Vec::new())), "{family:?}");
+        }
+    }
+
+    /// Every other member names at least one target, term, string or geometry.
+    #[test]
+    fn any_other_member_holding_no_item_is_malformed() {
+        let cases = [
+            (Some(AttributeType::GeoProperty), ValueCarrier::Value, MemberShape::Geometry),
+            (None, ValueCarrier::Object, MemberShape::Object),
+            (None, ValueCarrier::Vocab, MemberShape::Vocab),
+            (None, ValueCarrier::LanguageMap, MemberShape::LanguageMap),
+            (None, ValueCarrier::Json, MemberShape::Json),
+            (None, ValueCarrier::ValueList, MemberShape::ValueList),
+            (None, ValueCarrier::ObjectList, MemberShape::ObjectList),
+        ];
+        for (family, carrier, member) in cases {
+            let refusal = value_slot(&tags(), family, carrier, Vec::new()).expect_err("an empty member names nothing");
+            assert!(
+                matches!(&refusal, EntityRefusal::Malformed { attribute: Some(attribute), member: refused } if *attribute == tags() && *refused == member),
+                "{carrier:?}: {refusal:?}"
+            );
+        }
     }
 }

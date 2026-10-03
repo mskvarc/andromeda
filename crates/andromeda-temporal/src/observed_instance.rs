@@ -234,15 +234,13 @@ fn target(uri: Uri) -> Uri {
 /// Clause 4.9 makes an array-valued Property's target value the whole array
 /// ("is included in the target value, if the latter is an array"), and JSON-LD
 /// expands `"value": ["a","b"]` into one value per element, so several values
-/// are kept together.
-fn property_value(values: NonEmpty<ExpandedValue<Fragment>>) -> Result<TemporalValue, TemporalError> {
-    if values.len() > 1 {
-        return Ok(TemporalValue::Structured(StructuredValue::Values(values)));
-    }
-    let scalar = match values.head() {
-        ExpandedValue::Literal(literal) => Some(scalar_value(literal)),
-        ExpandedValue::Json(literal) => json_scalar_value(literal.get()),
-        ExpandedValue::Node(_) | ExpandedValue::List(_) => None,
+/// are kept together, and the empty array, which expands to none, is kept as
+/// the empty array.
+fn property_value(values: Vec<ExpandedValue<Fragment>>) -> Result<TemporalValue, TemporalError> {
+    let scalar = match values.as_slice() {
+        [ExpandedValue::Literal(literal)] => Some(scalar_value(literal)),
+        [ExpandedValue::Json(literal)] => json_scalar_value(literal.get()),
+        [ExpandedValue::Node(_) | ExpandedValue::List(_)] | [] | [_, _, ..] => None,
     };
     match scalar {
         Some(column) => column,

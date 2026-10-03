@@ -30,9 +30,10 @@ use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
 pub enum StructuredValue {
     /// The value of a Property (or of a `GeoProperty` recorded before its
     /// value had to be a geometry) that no typed column holds: the value node
-    /// of an object-valued one, or the several values of an array-valued one,
-    /// whose target value clause 4.9 makes the whole array.
-    Values(NonEmpty<ExpandedValue<Fragment>>),
+    /// of an object-valued one, or the values of an array-valued one, whose
+    /// target value clause 4.9 makes the whole array. No value is the empty
+    /// array (clause 3.1).
+    Values(Vec<ExpandedValue<Fragment>>),
     /// The targets of a Relationship naming several (clause 4.5.3.2: "a URI or
     /// array of URIs"), in order.
     Objects(NonEmpty<Uri>),

@@ -22,8 +22,9 @@ use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, reference::NgsiLd
 pub enum FamilyValue {
     /// A Property (clause 4.5.2): `hasValue` may hold several values.
     Property {
-        /// The values of `hasValue`, in order.
-        values: NonEmpty<ExpandedValue>,
+        /// The values of `hasValue`, in order; none is the empty array, an
+        /// NGSI-LD Value like any other array (clause 3.1, Table 5.2.5-1).
+        values: Vec<ExpandedValue>,
         /// The `unitCode`.
         unit_code: Option<UnitCode>,
         /// The `valueType`.

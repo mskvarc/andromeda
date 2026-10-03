@@ -64,7 +64,7 @@ pub(crate) fn written_value(
                 GeoDecoded::Null => return Ok(ValueSlot::Remove(carrier)),
             }
         }
-        ValueCarrier::Value => WrittenValue::Value(non_empty(values(elements, attribute)?, attribute, shape)?),
+        ValueCarrier::Value => WrittenValue::Value(values(elements, attribute)?),
         ValueCarrier::Object => WrittenValue::Object(non_empty(uris(elements, attribute, shape)?, attribute, shape)?),
         ValueCarrier::LanguageMap => WrittenValue::LanguageMap(language_entries(elements, attribute)?),
         ValueCarrier::Vocab => WrittenValue::Vocab(non_empty(names(elements, attribute, shape)?, attribute, shape)?),

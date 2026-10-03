@@ -71,7 +71,6 @@ mod tests {
         geo_value::GeoValue,
         geometry_value::GeometryValue,
         instance::Instance,
-        non_empty::NonEmpty,
         operation::speed_entity::{SPEED, dataset_ids, entity, fragment, instances, name, number, property, property_deletion, property_document, values},
         reads::member_name::MemberName,
         scopes::Scopes,
@@ -118,7 +117,7 @@ mod tests {
         // than carried forward.
         let existing = Instance::builder()
             .value(FamilyValue::Property {
-                values: NonEmpty::one(number(25)),
+                values: vec![number(25)],
                 unit_code: Some(UnitCode::resolve("CEL").expect("a registered code")),
                 value_type: None,
             })

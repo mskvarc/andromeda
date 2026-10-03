@@ -256,12 +256,12 @@ mod tests {
         let FamilyValue::Property { values, .. } = instance.value() else {
             return None;
         };
-        match values.head() {
-            ExpandedValue::Literal(literal) => match literal.value() {
+        match values.as_slice() {
+            [ExpandedValue::Literal(literal)] => match literal.value() {
                 LiteralValue::Number(number) => Some(number.clone()), // clone: the assertion owns the number
                 LiteralValue::String(_) | LiteralValue::Boolean(_) => None,
             },
-            ExpandedValue::Json(_) | ExpandedValue::Node(_) | ExpandedValue::List(_) => None,
+            [ExpandedValue::Json(_) | ExpandedValue::Node(_) | ExpandedValue::List(_)] | [] | [_, _, ..] => None,
         }
     }
 

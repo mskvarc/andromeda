@@ -158,7 +158,7 @@ mod tests {
         let FamilyValue::Property { values, .. } = instance.value() else {
             panic!("a Property");
         };
-        let ExpandedValue::Node(node) = values.head() else {
+        let [ExpandedValue::Node(node)] = values.as_slice() else {
             panic!("a structured value");
         };
         node.members().iter().map(|(member, values)| (member.to_string(), values[0].clone())).collect()
@@ -529,7 +529,7 @@ mod tests {
         let unit = UnitCode::resolve("KMH").expect("a registered code");
         let patch = InstanceDocument::builder()
             .dataset_id(Some(dataset("urn:ngsi-ld:Dataset:A")))
-            .value(ValueSlot::Set(WrittenValue::Value(NonEmpty::one(number(20)))))
+            .value(ValueSlot::Set(WrittenValue::Value(vec![number(20)])))
             .unit_code(Some(Slot::Set(unit)))
             .build();
 
@@ -762,9 +762,7 @@ mod tests {
 
     /// A written `value` instance that declares no family.
     fn property_document_without_family(value: ExpandedValue<Fragment>) -> InstanceDocument {
-        InstanceDocument::builder()
-            .value(ValueSlot::Set(WrittenValue::Value(NonEmpty::one(value))))
-            .build()
+        InstanceDocument::builder().value(ValueSlot::Set(WrittenValue::Value(vec![value]))).build()
     }
 
     /// A merged `ListRelationship` takes the written list whole.

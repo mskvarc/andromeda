@@ -265,6 +265,15 @@ mod tests {
         pretty_assertions::assert_eq!(value, json!(["a", "b", "c"]));
     }
 
+    /// Clause 4.9: the empty array includes no operand, so a Property holding it
+    /// resolves no target value and no `==` term matches it; existence reads
+    /// the attribute, not its target value.
+    #[test]
+    fn an_empty_array_valued_property_resolves_no_target() {
+        let instance = FixtureInstance::from_expanded(&json!({"https://uri.etsi.org/ngsi-ld/hasValue": []}));
+        assert!(family_target(&instance).is_none());
+    }
+
     /// A scalar Property value stays a scalar: only a client-written array
     /// expands to several value nodes.
     #[test]

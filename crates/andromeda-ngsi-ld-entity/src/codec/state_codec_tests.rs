@@ -8,6 +8,7 @@ use crate::{
         LIST_RELATIONSHIP,
         PROPERTY,
         RELATIONSHIP,
+        VOCAB_PROPERTY,
         date_time,
         entity,
         every_family_document,
@@ -255,6 +256,48 @@ fn a_geometry_collection_is_refused_as_a_geoproperty_value() {
         ),
         "{error:?}"
     );
+}
+
+/// Clause 3.1 makes the empty array a Property value: the stored `hasValue: []`
+/// reads as a Property holding no value and is written back as it was.
+#[test]
+fn a_property_holding_the_empty_array_round_trips() {
+    let document = entity(&json!({"https://ex.org/tags": [property(&json!([]))]}));
+    let bytes = serde_json::to_vec(&document).expect("JSON");
+    let state = EntityState::from_slice(&bytes).expect("a stored entity");
+    let value = state
+        .attributes()
+        .get("https://ex.org/tags")
+        .and_then(|instances| instances.get(None))
+        .map(|instance| instance.value().clone());
+    pretty_assertions::assert_eq!(
+        value,
+        Some(FamilyValue::Property {
+            values: Vec::new(),
+            unit_code: None,
+            value_type: None,
+        })
+    );
+    pretty_assertions::assert_eq!(round_trip(&document), document);
+}
+
+/// A Relationship names at least one target (clause 4.5.3.2), a
+/// `VocabProperty` at least one term (clause 4.5.20.2) and a `GeoProperty` one
+/// geometry (clause 4.7.1), so none of their members is read empty the way a
+/// Property value is.
+#[test]
+fn an_empty_member_of_a_family_naming_at_least_one_item_is_refused() {
+    for (family, member, shape) in [
+        (RELATIONSHIP, "hasObject", MemberShape::Object),
+        (VOCAB_PROPERTY, "hasVocab", MemberShape::Vocab),
+        (GEO_PROPERTY, "hasValue", MemberShape::Value),
+    ] {
+        let error = refusal(&entity(&json!({"https://ex.org/a": [stamped(json!({"@type": [family], ngsi(member): []}))]})));
+        assert!(
+            matches!(error, EntityRefusal::Malformed { member: refused, .. } if refused == shape),
+            "{member}: {error:?}"
+        );
+    }
 }
 
 #[test]

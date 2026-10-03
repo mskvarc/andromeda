@@ -41,9 +41,6 @@ const OBSERVED_AT: &str = "2024-01-01T00:00:00Z";
 /// The window every temporal read of this module asks for.
 const WINDOW: &str = "timerel=after&timeAt=2000-01-01T00:00:00Z";
 
-/// The problem type clause 5.2.5 gives a Property carrying no value at all.
-const BAD_REQUEST_DATA: &str = "https://uri.etsi.org/ngsi-ld/errors/BadRequestData";
-
 /// One Temporal Evolution carrying a single observation of one Attribute.
 fn evolution(id: &str, name: &str, instance: &Value) -> Value {
     json!({"id": id, "type": "ArrayProbe", name: [instance], "@context": CORE_CONTEXT})
@@ -189,41 +186,14 @@ async fn regression_array_valued_property_history_an_object_valued_property_roun
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.2.5 makes `value` mandatory, and an empty array expands to no value
-/// node at all, so both write paths refuse it and neither stores anything.
+/// Clause 3.1 lists "an array" among the NGSI-LD Values, and the empty array
+/// is one: JSON-LD expansion keeps the `value` member with no value node, the
+/// Temporal Evolution records it, and every reading answers `[]` (finding R05).
 #[tokio::test]
-async fn regression_array_valued_property_history_an_empty_array_is_refused_by_both_write_paths() {
+async fn regression_array_valued_property_history_an_empty_array_round_trips() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
-    let client = scope.client();
 
-    let temporal_id = scope.id("ArrayProbe:empty-temporal");
-    let refused_temporal = client
-        .create_temporal_entity(&evolution(&temporal_id, "tags", &property(&json!([]))))
-        .await
-        .expect("create temporal entity request");
-    assert_eq!(refused_temporal.status, StatusCode::BAD_REQUEST, "{:?}", refused_temporal.body);
-    let problem = refused_temporal.json_value().expect("a refusal carries a problem details body");
-    assert_eq!(problem["type"], json!(BAD_REQUEST_DATA), "{problem}");
-
-    let entity_id = scope.id("ArrayProbe:empty-entity");
-    let refused_entity = client
-        .post_entity(&json!({"id": entity_id, "type": "ArrayProbe", "tags": {"type": "Property", "value": []}, "@context": CORE_CONTEXT}))
-        .with_ld_json()
-        .send()
-        .await
-        .expect("create entity request");
-    assert_eq!(
-        refused_entity.status,
-        StatusCode::BAD_REQUEST,
-        "the two write paths refuse it alike: {:?}",
-        refused_entity.body
-    );
-
-    let missing = client
-        .get_temporal_entity(&temporal_id, WINDOW, Some(CORE_CONTEXT))
-        .await
-        .expect("retrieve temporal entity request");
-    assert_eq!(missing.status, StatusCode::NOT_FOUND, "a refused write stores nothing: {:?}", missing.body);
+    assert_value_round_trips(&scope, "ArrayProbe:empty", "tags", json!([]), &json!([])).await;
 
     scope.finish().await.expect("cleanup failed");
 }

@@ -148,13 +148,13 @@ fn rendered_value(value: TemporalValue, attribute_type: AttributeType) -> Result
         TemporalValue::Boolean(flag) => literal(LiteralValue::Boolean(flag)),
         TemporalValue::Geometry(geometry) => WrittenValue::Geometry(GeoValue::Geometry(geometry)),
         TemporalValue::Structured(structured) => structured.into_written(),
-        TemporalValue::DateTime(instant) => WrittenValue::Value(NonEmpty::one(ExpandedValue::Literal(Literal::typed(
+        TemporalValue::DateTime(instant) => WrittenValue::Value(vec![ExpandedValue::Literal(Literal::typed(
             LiteralValue::String(rendered_instant(instant).into()),
             expanded_classes::DATE_TIME
                 .as_str()
                 .parse::<NgsiLdReference>()
                 .map_err(HistoryRowRenderError::DateTimeDatatype)?,
-        )))),
+        ))]),
         TemporalValue::Uri(uri) => WrittenValue::Object(NonEmpty::one(uri)),
         // Clause 4.18: "The value of scope is represented as a JSON array in
         // case there is more than one Scope". Several Scopes are several value
@@ -168,7 +168,8 @@ fn rendered_value(value: TemporalValue, attribute_type: AttributeType) -> Result
                     .map(|path| ExpandedValue::Literal(Literal::plain(LiteralValue::String(path.as_str().into()))))
                     .collect(),
             )
-            .map_err(HistoryRowRenderError::EmptyScope)?,
+            .map_err(HistoryRowRenderError::EmptyScope)?
+            .into_vec(),
         ),
         TemporalValue::Tombstone { .. } => return Ok(ValueSlot::Remove(ValueCarrier::of(attribute_type))),
     }))
@@ -176,7 +177,7 @@ fn rendered_value(value: TemporalValue, attribute_type: AttributeType) -> Result
 
 /// A value member holding one plain value object.
 fn literal(value: LiteralValue) -> WrittenValue {
-    WrittenValue::Value(NonEmpty::one(ExpandedValue::Literal(Literal::plain(value))))
+    WrittenValue::Value(vec![ExpandedValue::Literal(Literal::plain(value))])
 }
 
 /// An instant rendered in exactly the sub-second precision it carries.

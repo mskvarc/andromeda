@@ -20,7 +20,6 @@ use crate::{
     family_value::FamilyValue,
     instance::Instance,
     literal::{Literal, LiteralValue},
-    non_empty::NonEmpty,
     value_mode::{Fragment, ValueMode},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
@@ -59,7 +58,7 @@ pub(crate) fn text<M: ValueMode>(value: &str) -> ExpandedValue<M> {
 pub(crate) fn property(value: ExpandedValue) -> Instance {
     Instance::builder()
         .value(FamilyValue::Property {
-            values: NonEmpty::one(value),
+            values: vec![value],
             unit_code: None,
             value_type: None,
         })
@@ -72,7 +71,7 @@ pub(crate) fn property_document(value: ExpandedValue<Fragment>, dataset_id: Opti
     InstanceDocument::builder()
         .family(Some(AttributeType::Property))
         .dataset_id(dataset_id.map(dataset))
-        .value(ValueSlot::Set(WrittenValue::Value(NonEmpty::one(value))))
+        .value(ValueSlot::Set(WrittenValue::Value(vec![value])))
         .build()
 }
 
@@ -147,12 +146,12 @@ pub(crate) fn values(entity: &EntityState, attribute: &str) -> Vec<i64> {
 /// The integer a Property instance holds.
 pub(crate) fn integer_of(instance: &Instance) -> Option<i64> {
     match instance.value() {
-        FamilyValue::Property { values, .. } => match values.head() {
-            ExpandedValue::Literal(literal) => match literal.value() {
+        FamilyValue::Property { values, .. } => match values.as_slice() {
+            [ExpandedValue::Literal(literal)] => match literal.value() {
                 LiteralValue::Number(number) => number.to_json_value().as_i64(),
                 LiteralValue::String(_) | LiteralValue::Boolean(_) => None,
             },
-            ExpandedValue::Json(_) | ExpandedValue::Node(_) | ExpandedValue::List(_) => None,
+            [ExpandedValue::Json(_) | ExpandedValue::Node(_) | ExpandedValue::List(_)] | [] | [_, _, ..] => None,
         },
         FamilyValue::GeoProperty { .. }
         | FamilyValue::Relationship { .. }

@@ -11,7 +11,6 @@
 use crate::{
     codec::geometry_decode::{GeoDecoded, geo_value_of},
     document::{instance_document::InstanceDocument, slot::Slot, value_carrier::ValueCarrier, written_value::WrittenValue},
-    expanded_value::ExpandedValue,
     family_value::FamilyValue,
     geo_value::GeoValue,
     json_literal::JsonLiteral,
@@ -21,7 +20,6 @@ use crate::{
         value_merge::{MemberMerge, merge_json, merge_language_entries, merge_values, settled_entries, settled_json, settled_values},
     },
     refusal::EntityRefusal,
-    value_mode::Fragment,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
@@ -51,7 +49,7 @@ pub(crate) fn fresh_family_value(attribute: &AttributeName, family: AttributeTyp
         AttributeType::Property => {
             let WrittenValue::Value(values) = written else { return Err(missing()) };
             FamilyValue::Property {
-                values: settled_non_empty(attribute, family, values.as_slice())?,
+                values: settled_values(values),
                 unit_code: None,
                 value_type: None,
             }
@@ -125,11 +123,11 @@ pub(crate) fn write_family_value(attribute: &AttributeName, value: &mut FamilyVa
                 return Err(missing());
             };
             let merged = match depth {
-                ValueDepth::Merge => merge_values(values.as_mut_slice(), written_values.as_slice()),
+                ValueDepth::Merge => merge_values(values, written_values),
                 ValueDepth::Replace => MemberMerge::Replace,
             };
             if merged == MemberMerge::Replace {
-                *values = settled_non_empty(attribute, family, written_values.as_slice())?;
+                *values = settled_values(written_values);
             }
         }
         FamilyValue::GeoProperty { geometry, .. } => *geometry = written_geometry(attribute, written)?,
@@ -282,11 +280,6 @@ fn written_geometry(attribute: &AttributeName, written: &WrittenValue) -> Result
     }
 }
 
-/// Written values settled into the non-empty values of a Property.
-fn settled_non_empty(attribute: &AttributeName, family: AttributeType, values: &[ExpandedValue<Fragment>]) -> Result<NonEmpty<ExpandedValue>, MutationError> {
-    NonEmpty::try_from_vec(settled_values(values)).map_err(|_| MutationError::from(EntityRefusal::missing_value(attribute, family)))
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -296,6 +289,7 @@ mod tests {
             written_value::{ValueSlot, WrittenValue},
         },
         family_value::FamilyValue,
+        geo_value::{EncodedGeometry, GeoValue},
         non_empty::NonEmpty,
         operation::{
             family_write::{ValueDepth, apply_companion_members, fresh_family_value, write_family_value},
@@ -341,7 +335,7 @@ mod tests {
     /// family.
     #[test]
     fn a_value_under_another_familys_member_is_the_missing_value_refusal() {
-        let written = WrittenValue::Value(NonEmpty::one(number(1)));
+        let written = WrittenValue::Value(vec![number(1)]);
         let refused = fresh_family_value(&name("https://example.org/r"), AttributeType::Relationship, &written).expect_err("not an object");
         assert!(
             matches!(refused, MutationError::Refused(ref refusal) if matches!(**refusal, EntityRefusal::MissingObject { .. })),
@@ -356,13 +350,11 @@ mod tests {
     #[test]
     fn a_replaced_property_value_takes_the_written_one() {
         let mut value = FamilyValue::Property {
-            values: NonEmpty::one(number(1)),
+            values: vec![number(1)],
             unit_code: None,
             value_type: None,
         };
-        let written = InstanceDocument::builder()
-            .value(ValueSlot::Set(WrittenValue::Value(NonEmpty::one(number(2)))))
-            .build();
+        let written = InstanceDocument::builder().value(ValueSlot::Set(WrittenValue::Value(vec![number(2)]))).build();
         let ValueSlot::Set(written) = written.value() else {
             panic!("a set value");
         };
@@ -370,10 +362,59 @@ mod tests {
         pretty_assertions::assert_eq!(
             value,
             FamilyValue::Property {
-                values: NonEmpty::one(number(2)),
+                values: vec![number(2)],
                 unit_code: None,
                 value_type: None,
             }
         );
+    }
+
+    /// Clause 3.1: the empty array is a Property value, so it replaces the held
+    /// value whether the write replaces it (clause 5.5.8) or merges into it
+    /// (clause 5.5.12 merges objects, and an array is no object).
+    #[test]
+    fn the_empty_array_replaces_a_held_property_value_at_either_depth() {
+        let emptied = FamilyValue::Property {
+            values: Vec::new(),
+            unit_code: None,
+            value_type: None,
+        };
+        for depth in [ValueDepth::Replace, ValueDepth::Merge] {
+            let mut value = FamilyValue::Property {
+                values: vec![number(1)],
+                unit_code: None,
+                value_type: None,
+            };
+            write_family_value(&name("https://example.org/p"), &mut value, &WrittenValue::Value(Vec::new()), depth).expect("a Property value");
+            pretty_assertions::assert_eq!(value, emptied, "{depth:?}");
+        }
+        pretty_assertions::assert_eq!(
+            fresh_family_value(&name("https://example.org/p"), AttributeType::Property, &WrittenValue::Value(Vec::new())).expect("a Property value"),
+            emptied
+        );
+    }
+
+    /// Clause 4.7.1: a `GeoProperty` holds one geometry, which no value is not.
+    #[test]
+    fn the_empty_array_is_no_geometry_for_a_held_geo_property() {
+        let point = fresh_family_value(
+            &name("https://example.org/location"),
+            AttributeType::GeoProperty,
+            &WrittenValue::Geometry(GeoValue::Encoded(
+                EncodedGeometry::parse(r#"{"type":"Point","coordinates":[1,2]}"#.to_owned()).expect("a Point"),
+            )),
+        )
+        .expect("a GeoProperty");
+        let mut value = point.clone(); // clone: the held value is compared with the original after the refused write
+        assert!(
+            write_family_value(
+                &name("https://example.org/location"),
+                &mut value,
+                &WrittenValue::Value(Vec::new()),
+                ValueDepth::Replace
+            )
+            .is_err()
+        );
+        pretty_assertions::assert_eq!(value, point);
     }
 }

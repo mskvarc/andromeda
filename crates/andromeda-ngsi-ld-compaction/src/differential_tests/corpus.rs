@@ -114,6 +114,7 @@ fn every_family() -> Value {
         "readings": {"type": "ListProperty", "valueList": [1, 2.5, "three"]},
         "category": {"type": "VocabProperty", "vocab": "commercial"},
         "tags": {"type": "Property", "value": ["a", "b"]},
+        "untagged": {"type": "Property", "value": []},
         "flag": {"type": "Property", "value": false}
     })
 }
@@ -124,7 +125,7 @@ fn structured_values() -> Value {
     json!({
         "id": "urn:ngsi-ld:Building:structured",
         "type": "Building",
-        "address": {"type": "Property", "value": {"street": "Main", "number": 5, "tags": ["a", "b"], "inner": {"deep": {"deeper": true}}}},
+        "address": {"type": "Property", "value": {"street": "Main", "number": 5, "tags": ["a", "b"], "flats": [], "inner": {"deep": {"deeper": true}}}},
         "owner": {"type": "Property", "value": {"id": "urn:ngsi-ld:Person:owner", "name": "Owner"}},
         "pointer": {"type": "Property", "value": {"id": "urn:ngsi-ld:Thing:pointed"}},
         "shape": {"type": "Property", "value": {"type": "Point", "coordinates": [1, 2]}},

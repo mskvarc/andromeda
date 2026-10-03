@@ -244,7 +244,7 @@ mod tests {
     fn measured(value: i64, observed_at: &str) -> Instance {
         let mut instance = Instance::builder()
             .value(FamilyValue::Property {
-                values: NonEmpty::one(number(value)),
+                values: vec![number(value)],
                 unit_code: Some(UnitCode::resolve("CEL").expect("a registered code")),
                 value_type: None,
             })

@@ -159,7 +159,10 @@ fn family_value(attribute: &AttributeName, family: AttributeType, value: ValueSl
             GeoDecoded::Null => return Err(EntityRefusal::ReservedNullValue { attribute: attribute.clone() }),
         },
         WrittenValue::Value(values) => FamilyValue::Property {
-            values: values.try_map(|value| value.into_stored().ok_or_else(nested_null))?,
+            values: values
+                .into_iter()
+                .map(|value| value.into_stored().ok_or_else(nested_null))
+                .collect::<Result<_, _>>()?,
             unit_code,
             value_type,
         },

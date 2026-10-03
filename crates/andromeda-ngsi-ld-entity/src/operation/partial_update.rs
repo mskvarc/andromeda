@@ -126,7 +126,7 @@ mod tests {
         sub_attributes.insert(name(WEATHER), instances(vec![(None, relationship)]));
         Instance::builder()
             .value(FamilyValue::Property {
-                values: NonEmpty::one(number(4)),
+                values: vec![number(4)],
                 unit_code: Some(UnitCode::resolve("C62").expect("a registered code")),
                 value_type: None,
             })
@@ -269,7 +269,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             instance.value(),
             &FamilyValue::Property {
-                values: NonEmpty::one(node(vec![("https://example.org/street", "c")])),
+                values: vec![node(vec![("https://example.org/street", "c")])],
                 unit_code: None,
                 value_type: None,
             }

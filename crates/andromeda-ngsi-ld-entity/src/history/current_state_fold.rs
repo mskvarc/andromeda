@@ -237,7 +237,6 @@ mod tests {
         entity_state::EntityState,
         history::current_state_fold::fold_into_current_state,
         instance::Instance,
-        non_empty::NonEmpty,
         operation::speed_entity::{dataset, date_time, entity, instances, integer_of, name, number, observed_document, property, property_document},
         system_instant::SystemInstant,
     };
@@ -362,7 +361,7 @@ mod tests {
     fn an_expired_instance_never_stands() {
         let expired = InstanceDocument::builder()
             .family(Some(AttributeType::Property))
-            .value(ValueSlot::Set(WrittenValue::Value(NonEmpty::one(number(99)))))
+            .value(ValueSlot::Set(WrittenValue::Value(vec![number(99)])))
             .observed_at(Some(Slot::Set(date_time("2025-01-01T00:00:00Z"))))
             .expires_at(Some(Slot::Set(date_time("2025-06-01T00:00:00Z"))))
             .build();

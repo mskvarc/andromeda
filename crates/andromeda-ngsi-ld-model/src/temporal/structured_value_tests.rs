@@ -40,6 +40,7 @@ fn round_trip(family: AttributeType, stored: &Value) -> Value {
 fn every_stored_shape_reads_and_writes_back_unchanged() {
     let cases = [
         (AttributeType::Property, json!(["a", "b"])),
+        (AttributeType::Property, json!([])),
         (AttributeType::Property, json!([1, 2.5, true])),
         (
             AttributeType::Property,
@@ -260,7 +261,19 @@ fn a_single_json_literal_reads_back_as_the_literal() {
     let StructuredValue::Values(values) = value else {
         panic!("a Property reads as its values: {value:?}");
     };
-    assert!(matches!(values.head(), ExpandedValue::Json(_)), "{values:?}");
+    assert!(matches!(values.as_slice(), [ExpandedValue::Json(_)]), "{values:?}");
+}
+
+/// Clause 3.1 makes the empty array a Property value: it is stored as `[]`
+/// and reads back as a Property holding no value, not as a broken row.
+#[test]
+fn an_empty_array_valued_property_is_stored_as_the_empty_array() {
+    let written = StructuredValue::Values(Vec::new()).to_stored_json().expect("the value writes");
+    pretty_assertions::assert_eq!(written.get(), "[]");
+    pretty_assertions::assert_eq!(
+        StructuredValue::from_stored(AttributeType::Property, &attribute(), "[]").expect("a stored empty array"),
+        StructuredValue::Values(Vec::new())
+    );
 }
 
 /// IETF RFC 7946 sections 5 and 6.1, clause 4.6.4: a geometry observation

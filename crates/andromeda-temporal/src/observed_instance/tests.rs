@@ -467,3 +467,11 @@ fn a_recorded_geo_observation_keeps_its_members() {
         vec!["https://ex.org/plotName"]
     );
 }
+
+/// Clause 3.1: the empty array is a Property value, recorded as the empty
+/// array rather than refused as an instance carrying none.
+#[test]
+fn an_empty_array_valued_property_is_recorded_as_the_empty_array() {
+    let value = recorded(&property(&json!([])));
+    pretty_assertions::assert_eq!(stored(&value), json!([]));
+}
