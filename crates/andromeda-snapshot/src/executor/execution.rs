@@ -146,7 +146,7 @@ impl SnapshotExecutor {
                     }
                 })
                 .unzip();
-            let detail = self.persist_temporal_results(target, snapshot_id, index, values).await?;
+            let detail = self.persist_temporal_results(target, snapshot_id, index, values, context).await?;
             if detail.problem_details.is_some() {
                 return Ok(detail);
             }
@@ -214,16 +214,23 @@ impl SnapshotExecutor {
         Ok(success_detail(captured))
     }
 
+    /// Write captured temporal evolutions into the Snapshot's branch.
+    ///
+    /// The evolutions arrive compacted under the Snapshot's query `context`, so
+    /// they are expanded under that same context: any other would give their
+    /// terms other IRIs than the ones the query retrieved, and the stored
+    /// information would not be what clause 5.16.1.4 says to store.
     async fn persist_temporal_results(
         &self,
         target: &ContextTarget,
         snapshot_id: &Identifier,
         index: usize,
         values: Vec<Value>,
+        context: &ContextSpec,
     ) -> Result<ExecutionResultDetails, SnapshotError> {
         let captured = values.len();
         for data in values {
-            if let Err(error) = self.sources.temporal.create_or_update(target, data, &ContextSpec::core_only()).await {
+            if let Err(error) = self.sources.temporal.create_or_update(target, data, context).await {
                 error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to materialize temporal Snapshot results");
                 return temporal_failure(error, "Failed to store temporal results: ");
             }

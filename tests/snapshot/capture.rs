@@ -255,6 +255,72 @@ async fn snapshot_capture_integrates_distributed_temporal_evolutions() {
     pretty_assertions::assert_eq!(response.json::<Value>().await.expect("temporal capture").as_array().map(Vec::len), Some(2));
 }
 
+/// Clause 5.16.1.4: the temporal evolutions a Snapshot's temporal query
+/// retrieved under its user `@context` are stored under the IRIs that context
+/// gave them, so a branch query by those IRIs finds them.
+#[tokio::test]
+#[serial(snapshot)]
+async fn snapshot_temporal_capture_stores_history_under_the_user_context_iris() {
+    let _serialized_environment = clean_database().await;
+    let context = json!([CORE_CONTEXT, {"Vehicle": "https://example.org/Vehicle", "speed": "https://example.org/speed"}]);
+    let entity_id = "urn:ngsi-ld:Vehicle:temporal-user-context";
+    create_temporal_at(
+        &broker_url(""),
+        &json!({
+            "id": entity_id,
+            "type": "Vehicle",
+            "speed": [
+                {"type": "Property", "value": 30, "observedAt": "2025-01-01T00:00:00Z"},
+                {"type": "Property", "value": 40, "observedAt": "2025-01-01T01:00:00Z"}
+            ],
+            "@context": context
+        }),
+    )
+    .await;
+    let id = "urn:ngsi-ld:Snapshot:temporal-user-context";
+    let body = json!({
+        "id": id,
+        "type": "Snapshot",
+        "snapshotTemporalQueries": [{"type": "Query", "entities": [{"type": "Vehicle"}], "temporalQ": {"timerel": "after", "timeAt": "2024-01-01T00:00:00Z"}}],
+        "@context": context
+    });
+    let response = client()
+        .post(broker_url("/snapshots"))
+        .header("Content-Type", "application/ld+json")
+        .json(&body)
+        .send()
+        .await
+        .expect("contextual temporal Snapshot create");
+    pretty_assertions::assert_eq!(response.status(), StatusCode::CREATED);
+    pretty_assertions::assert_eq!(
+        wait_for_snapshot_terminal(&client(), id, Duration::from_secs(30)).await["snapshotStatus"],
+        "success"
+    );
+    let response = client()
+        .get(broker_url(&format!(
+            "/temporal/entities?type={}&attrs={}&timerel=after&timeAt=2024-01-01T00%3A00%3A00Z",
+            urlencoding::encode("https://example.org/Vehicle"),
+            urlencoding::encode("https://example.org/speed")
+        )))
+        .header("NGSILD-Snapshot", id)
+        .send()
+        .await
+        .expect("query temporal capture by the user context IRIs");
+    pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
+    let rows = response.json::<Value>().await.expect("temporal capture");
+    let rows = rows.as_array().expect("temporal capture array");
+    pretty_assertions::assert_eq!(rows.len(), 1);
+    pretty_assertions::assert_eq!(rows[0]["id"], entity_id);
+    pretty_assertions::assert_eq!(rows[0]["type"], "https://example.org/Vehicle");
+    let values = rows[0]["https://example.org/speed"]
+        .as_array()
+        .expect("speed history under its user context IRI")
+        .iter()
+        .filter_map(|instance| instance["value"].as_i64())
+        .collect::<BTreeSet<_>>();
+    pretty_assertions::assert_eq!(values, BTreeSet::from([30, 40]));
+}
+
 #[tokio::test]
 #[serial(snapshot)]
 async fn snapshot_capture_retrieves_every_temporal_entity_and_range_page() {
