@@ -41,6 +41,7 @@ mod discovery_name_compaction;
 mod embedded_user_context;
 mod empty_property_value;
 mod empty_property_value_temporal;
+mod entity_deletion_language_null;
 mod entity_map_pruning;
 mod entity_map_scoping;
 mod entity_map_source_declined;

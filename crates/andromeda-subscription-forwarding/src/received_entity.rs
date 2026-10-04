@@ -7,6 +7,12 @@
 //! subscription's context for delivery (clause 5.8.6). A written document,
 //! unlike an entity state, holds the `urn:ngsi-ld:null` a source notifies a
 //! deleted attribute with (clause 5.8.6), so the deletion travels on.
+//!
+//! The entity is read as a notification spells it: "only the name of the
+//! attribute as key and the URI "urn:ngsi-ld:null" as value" report a deleted
+//! attribute of any family (clause 5.8.6), so a first-level Null stays the
+//! deletion of the member rather than becoming the concise value of a
+//! Property, and is relayed as the bare Null it arrived as.
 
 use andromeda_ngsi_ld_compaction::{compaction_error::CompactionError, entity_compactor::EntityCompactor};
 use andromeda_ngsi_ld_entity::document::EntityDocument;
@@ -81,7 +87,7 @@ impl ReceivedEntity {
     pub(crate) async fn read(value: &Value, inbound: &EntityExpansion<'_>) -> Result<ReceivedEntity, ReceivedEntityRefusal> {
         let received: Entity = deserialize_exact(value).map_err(ReceivedEntityRefusal::Decode)?;
         let document = inbound
-            .entity(&received, Normalization::Entity)
+            .entity(&received, Normalization::MemberDeletions)
             .await
             .map_err(ReceivedEntityRefusal::Expansion)?;
         Ok(ReceivedEntity {
@@ -103,5 +109,56 @@ impl ReceivedEntity {
         let mut entity: Entity = deserialize_exact(&compacted).map_err(ReceivedEntityRefusal::Decode)?;
         self.system_times.restore(&mut entity);
         Ok(entity)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::received_entity::ReceivedEntity;
+    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
+    use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
+    use andromeda_ngsi_ld_render::entity::EntityRenderer;
+    use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
+    use serde_json::{Value, json};
+
+    /// An engine that resolves only what is embedded, never the network.
+    fn offline_engine() -> JsonLdEngine {
+        JsonLdEngine::builder().allow_remote(false).build().expect("engine builds")
+    }
+
+    /// `entity` read as a source notified it and rendered for a local
+    /// subscriber in `format`, both under the core context alone.
+    async fn relayed(entity: &Value, format: ResponseFormat) -> Value {
+        let engine = offline_engine();
+        let context = ContextSpec::core_only();
+        let inbound = EntityExpansion::prepare(&engine, &context).await.expect("the core context processes");
+        let received = ReceivedEntity::read(entity, &inbound).await.expect("the notified entity reads");
+        let context_compactor = engine.compactor(&context);
+        let respelled = received
+            .respelled(&EntityCompactor::new(&context_compactor))
+            .await
+            .expect("the entity compacts");
+        EntityRenderer::new(&respelled).with_mode(format).render().expect("the entity renders")
+    }
+
+    /// Clause 5.8.6: a source reports a deleted attribute of any family as
+    /// "only the name of the attribute as key and the URI "urn:ngsi-ld:null"
+    /// as value", and the relayed copy reports it the same way in every
+    /// representation, never as a Property whose value is the Null.
+    #[tokio::test]
+    async fn a_notified_deletion_is_relayed_as_the_bare_null() {
+        let notified = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "owner": "urn:ngsi-ld:null",
+            "speed": {"type": "Property", "value": 5}
+        });
+        for format in [ResponseFormat::Normalized, ResponseFormat::Concise, ResponseFormat::Simplified] {
+            let relayed = relayed(&notified, format).await;
+            pretty_assertions::assert_eq!(relayed["owner"], json!("urn:ngsi-ld:null"), "{format:?}: {relayed}");
+        }
+        let normalized = relayed(&notified, ResponseFormat::Normalized).await;
+        pretty_assertions::assert_eq!(normalized["speed"], json!({"type": "Property", "value": 5}));
     }
 }

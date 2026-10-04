@@ -87,7 +87,7 @@ async fn every_deletion_encoding_reads_as_the_removal_of_its_value() {
         let body = deleting_entity(&cases);
         let typed = entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").agreed(); // clone: the body is expanded three ways
         assert_removed(&typed, &cases);
-        let merged = patch(&engine, body.clone(), Normalization::MergeFragment).await.expect("expands").agreed(); // clone: the body is expanded three ways
+        let merged = patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").agreed(); // clone: the body is expanded three ways
         assert_removed(&merged, &cases);
         let appended = fragment(&engine, body, Normalization::Entity).await.expect("expands").agreed();
         assert_removed(&appended, &cases);
@@ -102,7 +102,7 @@ async fn every_deletion_encoding_reads_as_the_removal_of_its_value() {
 async fn a_merge_fragment_entity_keeps_a_first_level_null_member_as_the_deletion_of_the_member() {
     let engine = engine();
     let body = json!({"id": "urn:ngsi-ld:Vehicle:null", "type": "Vehicle", "speed": "urn:ngsi-ld:null"});
-    let merged = entity(&engine, body.clone(), Normalization::MergeFragment) // clone: the body is expanded twice
+    let merged = entity(&engine, body.clone(), Normalization::MemberDeletions) // clone: the body is expanded twice
         .await
         .expect("expands")
         .agreed();
@@ -121,12 +121,12 @@ async fn a_merge_fragment_entity_keeps_a_first_level_null_member_as_the_deletion
 async fn a_first_level_null_removes_the_member_of_a_merge_only() {
     let engine = engine();
     let [urn, iri] = SPELLINGS;
-    let merged = patch(&engine, json!({"speed": urn}), Normalization::MergeFragment)
+    let merged = patch(&engine, json!({"speed": urn}), Normalization::MemberDeletions)
         .await
         .expect("expands")
         .agreed();
     pretty_assertions::assert_eq!(merged.attributes()[term("speed").as_str()], AttributeMember::Remove);
-    let merged = patch(&engine, json!({"speed": iri}), Normalization::MergeFragment)
+    let merged = patch(&engine, json!({"speed": iri}), Normalization::MemberDeletions)
         .await
         .expect("expands")
         .agreed();
@@ -155,7 +155,7 @@ async fn members_beside_the_value_are_deleted_by_the_null() {
         let document = fragment(
             &engine,
             json!({"scope": sentinel, "expiresAt": sentinel, "speed": {"value": 1, "observedAt": sentinel, "unitCode": sentinel, "valueType": sentinel}}),
-            Normalization::MergeFragment,
+            Normalization::MemberDeletions,
         )
         .await
         .expect("expands")
@@ -178,7 +178,7 @@ async fn a_nested_null_in_a_merged_structured_value_deletes_that_member() {
         let document = patch(
             &engine,
             json!({"address": {"type": "Property", "value": {"street": sentinel, "city": "x"}}}),
-            Normalization::MergeFragment,
+            Normalization::MemberDeletions,
         )
         .await
         .expect("expands")
@@ -243,7 +243,7 @@ async fn the_null_beside_data_is_refused_by_every_write_kind() {
             let body = json!({"id": "urn:ngsi-ld:Device:null", "type": "Device", name: instance});
             let refusals = [
                 entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").refused(), // clone: the body is expanded four ways
-                patch(&engine, body.clone(), Normalization::MergeFragment).await.expect("expands").refused(), // clone: the body is expanded four ways
+                patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").refused(), // clone: the body is expanded four ways
                 fragment(&engine, body, Normalization::Entity).await.expect("expands").refused(),
                 attribute(&engine, name, instance).await.expect("expands").refused(),
             ];

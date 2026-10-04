@@ -59,9 +59,9 @@ fn entity_deletion(previous: Option<&Entity>) -> NotifiedChanges<'_> {
 
 /// Clauses 4.5.0, 4.5.18, 4.5.21.2 and 4.5.22.2: every family takes the Null
 /// it is deleted by in its own value member, every other member of the
-/// instance stays, and the entity's own members are left alone. A single
-/// `LanguageProperty` takes the bare Null, an instance of a multi-attribute a
-/// language map holding it.
+/// instance stays, and the entity's own members are left alone. A
+/// `LanguageProperty`, single or an instance of a multi-attribute, takes a
+/// language map holding the Null (clause 4.5.18.2).
 #[test]
 fn an_entity_deletion_nullifies_every_attribute_in_its_own_value_member() {
     let notified = every_family();
@@ -69,7 +69,7 @@ fn an_entity_deletion_nullifies_every_attribute_in_its_own_value_member() {
     assert_eq!(document["speed"], json!({"type": "Property", "value": "urn:ngsi-ld:null", "unitCode": "KMH"}));
     assert_eq!(document["location"]["value"], json!("urn:ngsi-ld:null"));
     assert_eq!(document["parkedIn"]["object"], json!("urn:ngsi-ld:null"));
-    assert_eq!(document["name"]["languageMap"], json!("urn:ngsi-ld:null"));
+    assert_eq!(document["name"]["languageMap"], json!({"@none": "urn:ngsi-ld:null"}));
     assert_eq!(document["labels"][0]["languageMap"], json!({"@none": "urn:ngsi-ld:null"}));
     assert_eq!(document["labels"][1]["languageMap"], json!({"@none": "urn:ngsi-ld:null"}));
     assert_eq!(document["category"]["vocab"], json!("urn:ngsi-ld:null"));
@@ -104,7 +104,7 @@ fn an_entity_deletion_simplifies_to_the_nulls() {
     assert_eq!(document["speed"], json!("urn:ngsi-ld:null"));
     assert_eq!(document["location"], json!("urn:ngsi-ld:null"));
     assert_eq!(document["parkedIn"], json!("urn:ngsi-ld:null"));
-    assert_eq!(document["name"], json!({"languageMap": "urn:ngsi-ld:null"}));
+    assert_eq!(document["name"], json!({"languageMap": {"@none": "urn:ngsi-ld:null"}}));
     assert_eq!(
         document["labels"],
         json!({"dataset": {"@none": {"languageMap": {"@none": "urn:ngsi-ld:null"}}, "urn:ngsi-ld:Dataset:b": {"languageMap": {"@none": "urn:ngsi-ld:null"}}}})
@@ -124,6 +124,7 @@ fn a_concise_deletion_collapses_only_a_bare_property() {
     assert_eq!(document["location"], json!("urn:ngsi-ld:null"));
     assert_eq!(document["speed"], json!({"value": "urn:ngsi-ld:null", "unitCode": "KMH"}));
     assert_eq!(document["parkedIn"], json!({"object": "urn:ngsi-ld:null"}));
+    assert_eq!(document["name"], json!({"languageMap": {"@none": "urn:ngsi-ld:null"}}));
 }
 
 /// Clause 5.8.6 with clause 5.5.11.0: one change that deleted two instances of

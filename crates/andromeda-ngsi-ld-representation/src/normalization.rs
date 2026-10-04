@@ -51,13 +51,14 @@ pub fn normalize_entity_attributes(payload: &mut Value) {
     }
 }
 
-/// Normalize an entity merge fragment while preserving first-level NGSI-LD Null members.
+/// Normalize an entity while preserving first-level NGSI-LD Null members.
 ///
-/// Clause 5.5.12 assigns a first-level `"urn:ngsi-ld:null"` a different
-/// meaning from a concise Property value: it removes the complete target
-/// member. Keeping that scalar intact lets JSON-LD expansion retain the
-/// distinction for the merge algorithm.
-pub fn normalize_merge_fragment(payload: &mut Value) {
+/// A first-level `"urn:ngsi-ld:null"` means something other than a concise
+/// Property value: in a merge fragment it removes the complete target member
+/// (clause 5.5.12), and in a notified entity it reports the member deleted
+/// (clause 5.8.6), whatever family the member was. Keeping that scalar intact
+/// lets JSON-LD expansion retain the distinction.
+pub fn normalize_keeping_member_deletions(payload: &mut Value) {
     let Some(entity) = payload.as_object_mut() else {
         return;
     };
@@ -207,7 +208,7 @@ fn as_typed_value(attribute_type: AttributeType, value: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use crate::normalization::{normalize_attribute_node, normalize_entity_attributes, normalize_merge_fragment};
+    use crate::normalization::{normalize_attribute_node, normalize_entity_attributes, normalize_keeping_member_deletions};
     use serde_json::json;
 
     #[test]
@@ -223,7 +224,7 @@ mod tests {
     fn a_merge_fragment_preserves_a_first_level_null_sentinel() {
         let mut payload = json!({ "name": "urn:ngsi-ld:null", "speed": 42 });
 
-        normalize_merge_fragment(&mut payload);
+        normalize_keeping_member_deletions(&mut payload);
 
         pretty_assertions::assert_eq!(payload["name"], json!("urn:ngsi-ld:null"));
         pretty_assertions::assert_eq!(payload["speed"], json!({ "type": "Property", "value": 42 }));
@@ -647,7 +648,7 @@ mod tests {
             }
         });
 
-        normalize_merge_fragment(&mut payload);
+        normalize_keeping_member_deletions(&mut payload);
 
         pretty_assertions::assert_eq!(payload["address"]["ngsildproof"]["entityIdSealed"], json!("urn:ngsi-ld:Store:002"));
     }

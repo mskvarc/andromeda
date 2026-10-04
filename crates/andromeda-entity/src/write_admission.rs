@@ -118,7 +118,7 @@ impl EntityWrite {
     pub(crate) const fn normalization(self) -> Normalization {
         match self {
             EntityWrite::Create | EntityWrite::AppendAttributes | EntityWrite::UpdateAttributes | EntityWrite::ReplaceEntity => Normalization::Entity,
-            EntityWrite::MergeEntity => Normalization::MergeFragment,
+            EntityWrite::MergeEntity => Normalization::MemberDeletions,
         }
     }
 }
@@ -171,7 +171,7 @@ impl BatchWrite {
     pub(crate) const fn normalization(self) -> Normalization {
         match self {
             BatchWrite::Create | BatchWrite::Update | BatchWrite::Upsert(_) => Normalization::Entity,
-            BatchWrite::Merge => Normalization::MergeFragment,
+            BatchWrite::Merge => Normalization::MemberDeletions,
         }
     }
 }
@@ -448,7 +448,7 @@ mod tests {
             (BatchWrite::Update, Normalization::Entity),
             (BatchWrite::Upsert(UpsertPolicy::Replace), Normalization::Entity),
             (BatchWrite::Upsert(UpsertPolicy::Update), Normalization::Entity),
-            (BatchWrite::Merge, Normalization::MergeFragment),
+            (BatchWrite::Merge, Normalization::MemberDeletions),
         ] {
             pretty_assertions::assert_eq!(write.normalization(), normalization, "{write:?}");
         }

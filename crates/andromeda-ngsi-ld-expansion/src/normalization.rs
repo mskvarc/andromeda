@@ -1,13 +1,16 @@
-//! Which concise-to-normalized rewrite a write runs before expansion.
+//! Which concise-to-normalized rewrite an entity goes through before
+//! expansion.
 //!
-//! A request may write attributes in the concise representation (clause
-//! 4.5.2.3 and siblings), which expansion reads only after they are rewritten
-//! into the normalized one. The rewrite is the representation crate's; the
-//! write kind decides which of its two entity forms applies, because a merge
-//! (clause 5.5.12) keeps a first-level NGSI-LD Null member as the deletion of
-//! the whole member rather than reading it as a concise Property value.
+//! A request or a notification may carry attributes in the concise
+//! representation (clause 4.5.2.3 and siblings), which expansion reads only
+//! after they are rewritten into the normalized one. The rewrite is the
+//! representation crate's; what the entity is decides which of its two entity
+//! forms applies, because a
+//! merge (clause 5.5.12) and a notification (clause 5.8.6) keep a first-level
+//! NGSI-LD Null member as the deletion of the whole member rather than reading
+//! it as a concise Property value.
 
-use andromeda_ngsi_ld_representation::normalization::{normalize_entity_attributes, normalize_merge_fragment};
+use andromeda_ngsi_ld_representation::normalization::{normalize_entity_attributes, normalize_keeping_member_deletions};
 use serde_json::{Map, Value};
 
 /// The rewrite an entity fragment goes through before expansion.
@@ -18,8 +21,10 @@ pub enum Normalization {
     #[default]
     Entity,
     /// As [`Normalization::Entity`], except that a first-level NGSI-LD Null
-    /// member stays as written (merge, clause 5.5.12).
-    MergeFragment,
+    /// member stays as written, the deletion of the whole member: a merge
+    /// removes the member by it (clause 5.5.12), and a notification reports
+    /// the member deleted by it (clause 5.8.6).
+    MemberDeletions,
 }
 
 impl Normalization {
@@ -27,7 +32,7 @@ impl Normalization {
     pub fn apply(self, fragment: &mut Value) {
         match self {
             Normalization::Entity => normalize_entity_attributes(fragment),
-            Normalization::MergeFragment => normalize_merge_fragment(fragment),
+            Normalization::MemberDeletions => normalize_keeping_member_deletions(fragment),
         }
     }
 
@@ -62,7 +67,7 @@ mod tests {
     #[test]
     fn a_merge_keeps_a_first_level_null_member_as_written() {
         pretty_assertions::assert_eq!(
-            Normalization::MergeFragment.apply_to_member("speed", json!("urn:ngsi-ld:null")),
+            Normalization::MemberDeletions.apply_to_member("speed", json!("urn:ngsi-ld:null")),
             json!("urn:ngsi-ld:null")
         );
         pretty_assertions::assert_eq!(

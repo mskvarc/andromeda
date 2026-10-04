@@ -75,7 +75,7 @@ async fn the_concise_empty_array_is_a_property_value() {
         .await
         .expect("the fixture expands")
         .agreed();
-    let merged = patch(&engine(), json!({"tags": []}), Normalization::MergeFragment)
+    let merged = patch(&engine(), json!({"tags": []}), Normalization::MemberDeletions)
         .await
         .expect("the fixture expands")
         .agreed();

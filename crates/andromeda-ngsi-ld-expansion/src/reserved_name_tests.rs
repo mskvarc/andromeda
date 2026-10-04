@@ -37,10 +37,14 @@ async fn an_append_fragment_attribute_named_value_is_refused_on_both_paths() {
 
 #[tokio::test]
 async fn a_merge_patch_attribute_named_dataset_id_is_refused_on_both_paths() {
-    let refusal = patch(&engine(), json!({"datasetId": {"type": "Property", "value": 1}}), Normalization::MergeFragment)
-        .await
-        .expect("the fixture expands")
-        .refused();
+    let refusal = patch(
+        &engine(),
+        json!({"datasetId": {"type": "Property", "value": 1}}),
+        Normalization::MemberDeletions,
+    )
+    .await
+    .expect("the fixture expands")
+    .refused();
     pretty_assertions::assert_eq!(
         refusal,
         "'datasetId' (https://uri.etsi.org/ngsi-ld/datasetId) is a member the NGSI-LD core @context defines for itself and cannot be used as an attribute name"

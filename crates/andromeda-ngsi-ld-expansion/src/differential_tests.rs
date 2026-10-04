@@ -94,14 +94,20 @@ async fn typed_expansion_equals_processor_expansion_over_the_suite_bodies() {
         if item.kind == "entity" {
             tally.record(&format!("{label} entity"), entity(&engine, item.body.clone(), Normalization::Entity).await); // clone: the body is expanded every way
         }
-        tally.record(&format!("{label} merge"), patch(&engine, item.body.clone(), Normalization::MergeFragment).await); // clone: the body is expanded every way
+        tally.record(
+            &format!("{label} merge"),
+            patch(&engine, item.body.clone(), Normalization::MemberDeletions).await,
+        ); // clone: the body is expanded every way
         tally.record(&format!("{label} update"), fragment(&engine, item.body.clone(), Normalization::Entity).await); // clone: the body is expanded every way
         for context in [TERMS, VOCAB_AND_LANGUAGE] {
             if let Some(body) = under(context, &item.body) {
                 tally.record(&format!("{label} update under {context}"), fragment(&engine, body, Normalization::Entity).await);
             }
         }
-        tally.record(&format!("{label} merge-json"), fragment(&engine, item.body, Normalization::MergeFragment).await);
+        tally.record(
+            &format!("{label} merge-json"),
+            fragment(&engine, item.body, Normalization::MemberDeletions).await,
+        );
     }
     println!(
         "agreed {}, refused alike {}, declined {}, skipped {}",

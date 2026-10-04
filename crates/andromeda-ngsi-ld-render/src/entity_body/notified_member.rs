@@ -82,22 +82,18 @@ pub(crate) enum NullValue {
 }
 
 impl NullValue {
-    /// The Null `family` is deleted by. An entity deletion reports a single
-    /// `LanguageProperty` with the bare Null rather than a language map holding
-    /// it (clause 4.5.18).
-    const fn of(family: AttributeType, language: LanguageNull) -> NullValue {
-        match (family, language) {
-            (AttributeType::ListProperty | AttributeType::ListRelationship, LanguageNull::Bare | LanguageNull::Mapped) => NullValue::List,
-            (AttributeType::LanguageProperty, LanguageNull::Mapped) => NullValue::LanguageMap,
-            (
-                AttributeType::LanguageProperty
-                | AttributeType::Property
-                | AttributeType::GeoProperty
-                | AttributeType::Relationship
-                | AttributeType::VocabProperty
-                | AttributeType::JsonProperty,
-                LanguageNull::Bare | LanguageNull::Mapped,
-            ) => NullValue::Uri,
+    /// The Null `family` is deleted by. A deleted `LanguageProperty` keeps the
+    /// language map holding the Null however it came to be deleted: clause
+    /// 4.5.18.2 uses "the same representation" "to indicate a deletion in
+    /// notifications", and clause 5.8.6 sets "the languageMap" to it whenever
+    /// a deleted attribute is notified as an object.
+    const fn of(family: AttributeType) -> NullValue {
+        match family {
+            AttributeType::ListProperty | AttributeType::ListRelationship => NullValue::List,
+            AttributeType::LanguageProperty => NullValue::LanguageMap,
+            AttributeType::Property | AttributeType::GeoProperty | AttributeType::Relationship | AttributeType::VocabProperty | AttributeType::JsonProperty => {
+                NullValue::Uri
+            }
         }
     }
 
@@ -126,15 +122,6 @@ impl Serialize for NullValue {
     }
 }
 
-/// How a deleted `LanguageProperty` spells its Null.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LanguageNull {
-    /// The bare Null, as an entity deletion reports a single one.
-    Bare,
-    /// A language map holding the Null.
-    Mapped,
-}
-
 impl<'a> NotifiedMember<'a> {
     /// The member named `name` as `changes` report it: the instances `held`
     /// holds, then those the change deleted. `None` when neither holds one.
@@ -142,16 +129,11 @@ impl<'a> NotifiedMember<'a> {
         let previous = changes.previous.and_then(|previous| previous.attribute_member(name)).map(sources);
         let previous = previous.as_deref().unwrap_or_default();
         let held_sources = held.map(sources).unwrap_or_default();
-        let language = if matches!(held, Some(AttributeValue::Single(_))) {
-            LanguageNull::Bare
-        } else {
-            LanguageNull::Mapped
-        };
         let held_instances = held_sources.iter().map(|&source| NotifiedInstance {
             source,
             report: InstanceReport {
                 null: match changes.held {
-                    HeldAttributes::Deleted => null_of(source, language),
+                    HeldAttributes::Deleted => null_of(source),
                     HeldAttributes::Current => None,
                 },
                 deleted_at: None,
@@ -165,7 +147,7 @@ impl<'a> NotifiedMember<'a> {
             sources.iter().map(|&source| NotifiedInstance {
                 source,
                 report: InstanceReport {
-                    null: null_of(source, LanguageNull::Mapped),
+                    null: null_of(source),
                     deleted_at: *deleted_at,
                     previous: previous_of(source, previous),
                 },
@@ -207,10 +189,10 @@ fn sources(member: &AttributeValue) -> Vec<InstanceSource<'_>> {
 
 /// The Null a reported deletion of `source` writes, `None` for a bare
 /// verbatim value, which has no value member to hold it.
-fn null_of(source: InstanceSource<'_>, language: LanguageNull) -> Option<NullValue> {
+fn null_of(source: InstanceSource<'_>) -> Option<NullValue> {
     match source {
-        InstanceSource::Typed(attribute) => Some(NullValue::of(attribute.attribute_type(), language)),
-        InstanceSource::Verbatim(Value::Object(members)) => Some(NullValue::of(verbatim_family(members), language)),
+        InstanceSource::Typed(attribute) => Some(NullValue::of(attribute.attribute_type())),
+        InstanceSource::Verbatim(Value::Object(members)) => Some(NullValue::of(verbatim_family(members))),
         InstanceSource::Verbatim(Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => None,
     }
 }

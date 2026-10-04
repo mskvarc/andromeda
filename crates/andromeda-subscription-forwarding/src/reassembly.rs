@@ -150,8 +150,10 @@ impl SubscriptionForwardingService {
             Completion::Complete => Ok(Some(part)),
             Completion::Split(local_expansion) => {
                 let merged = self.reassemble_entity(part, sender, reading.local_context).await?;
+                // The completed entity still carries the deletions the sender
+                // notified, which stay deletions (clause 5.8.6).
                 let document = local_expansion
-                    .entity(&merged, Normalization::Entity)
+                    .entity(&merged, Normalization::MemberDeletions)
                     .await
                     .map_err(ForwardingInvariant::LocalExpansion)?;
                 Ok(self.admits(reading.compiled, &document).await?.then_some(merged))

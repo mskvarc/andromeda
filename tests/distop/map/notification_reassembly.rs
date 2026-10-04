@@ -6,6 +6,7 @@
 //! `T-SPLIT` (A -> B, C), seeded `UNKNOWN`.
 
 use crate::{
+    context_source_adapter::ContextSourceAdapter,
     entity::{entity, property},
     map::{
         notification_inspection::{notified_entities, notifies_entity},
@@ -19,11 +20,18 @@ use crate::{
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use pretty_assertions::assert_eq;
+use reqwest::Method;
 use serde_json::{Value, json};
 use std::time::Duration;
 
 /// Delivery poll budget for a re-assembled notification.
 const DELIVER: Duration = Duration::from_secs(12);
+
+/// The resource a forwarded subscription copy is created on at a source.
+const FORWARDED_SUBSCRIPTIONS_PATH: &str = "/ngsi-ld/v1/subscriptions";
+
+/// The resource a source notifies the front broker's forwarded copy at.
+const RECEIVER_PATH: &str = "/ngsi-ld/v1/notifications";
 
 /// Register an inclusive `Vehicle` source on the front broker pointing at `role`.
 async fn register_source(topology: &MultiBrokerTopology<BrokerRole>, role: BrokerRole, entity_type: &str, registration_local: &str) {
@@ -250,6 +258,75 @@ async fn reassembly_removes_non_matching_after_merge() {
     );
     receiver.shutdown().await;
     topology.finish().await.expect("topology cleanup");
+}
+
+/// The identifier of the subscription copy the front broker placed at
+/// `source`: the `id` of the first copy created there.
+async fn placed_copy_id(source: &ContextSourceAdapter) -> String {
+    loop {
+        let request = source.next_request(DELIVER).await;
+        if request.method == Method::POST && request.uri.path() == FORWARDED_SUBSCRIPTIONS_PATH {
+            let copy: Value = request.json().expect("the copy is a JSON subscription");
+            return copy["id"].as_str().expect("the copy names its identifier").to_owned();
+        }
+    }
+}
+
+/// Clause 5.8.6: a source notifies a deleted attribute with "only the name of
+/// the attribute as key and the URI "urn:ngsi-ld:null" as value", whatever
+/// family it was, and the copy relayed to the local subscriber reports the
+/// deletion the same way. Reading the sender's entity as concise Properties
+/// turned the Null into `{"type": "Property", "value": "urn:ngsi-ld:null"}`,
+/// which names a deleted Relationship a Property.
+#[tokio::test]
+async fn regression_r56_a_notified_deletion_is_relayed_as_the_bare_null() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let receiver = NotificationAdapter::start().await;
+    let source = ContextSourceAdapter::start().await;
+    source.set_stub(Method::POST, FORWARDED_SUBSCRIPTIONS_PATH, 201).await;
+    let vtype = topology.id("Vehicle");
+    let entity_id = topology.id("Vehicle:relayed-deletion");
+    let subscription_id = topology.id("Subscription:relayed-deletion");
+    let front = topology.broker(BrokerRole::A).expect("topology broker A").client();
+    let registration = CsrBuilder::new(&topology.id("registration:relayed-deletion"), &source.url("/"))
+        .tenant(topology.tenant())
+        .mode("inclusive")
+        .entity_type(&vtype)
+        .operations(&["federationOps"])
+        .build();
+    assert_status(&front.create_registration(&registration).await.expect("register source"), 201);
+    let mut local = subscription(&subscription_id, &receiver.endpoint_url());
+    set_entity_type(&mut local, &vtype);
+    assert_status(&front.create_subscription(&local).await.expect("create subscription"), 201);
+    let copy_id = placed_copy_id(&source).await;
+
+    let notified = front
+        .raw(Method::POST, RECEIVER_PATH)
+        .header("Content-Type", "application/ld+json")
+        .json(&json!({
+            "id": "urn:ngsi-ld:Notification:relayed-deletion",
+            "type": "Notification",
+            "subscriptionId": copy_id,
+            "notifiedAt": "2026-10-04T12:00:00Z",
+            "data": [{"id": entity_id, "type": vtype, "owner": "urn:ngsi-ld:null", "speed": property(json!(40))}],
+            "@context": COMPOUND_CONTEXT.as_str()
+        }))
+        .send()
+        .await
+        .expect("notify the front broker");
+    let relayed = receiver.wait_for_subscription_notification(&subscription_id, DELIVER).await;
+    receiver.shutdown().await;
+    source.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+
+    assert_status(&notified, 200);
+    let entities = notified_entities(&relayed);
+    let relayed_entity = entities
+        .iter()
+        .find(|entity| entity["id"].as_str() == Some(entity_id.as_str()))
+        .unwrap_or(&Value::Null);
+    assert_eq!(relayed_entity["owner"], json!("urn:ngsi-ld:null"), "{relayed_entity}");
+    assert_eq!(relayed_entity["speed"], json!({"type": "Property", "value": 40}), "{relayed_entity}");
 }
 
 /// A non-empty re-assembly copy is forwarded to the local endpoint under the

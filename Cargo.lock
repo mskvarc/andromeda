@@ -2052,6 +2052,7 @@ dependencies = [
  "pretty_assertions",
  "serde_json",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
  "typed-builder",
  "url",

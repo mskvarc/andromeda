@@ -351,7 +351,7 @@ async fn a_merge_fragment_names_no_entity() {
     let document = patch(
         &engine(),
         json!({"speed": {"type": "Property", "value": 1}, "label": {"type": "LanguageProperty", "languageMap": {"en": "urn:ngsi-ld:null"}}}),
-        Normalization::MergeFragment,
+        Normalization::MemberDeletions,
     )
     .await
     .expect("the fixture expands")
