@@ -1,9 +1,7 @@
 name: clippy
 
 on:
-  push:
-    branches: [master]
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: clippy-${{ github.ref }}

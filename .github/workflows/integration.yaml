@@ -1,19 +1,6 @@
 name: integration
 
 on:
-  schedule:
-    - cron: "3 3 * * 0"
-  pull_request:
-    paths: &harness
-      - .github/actions/itest/**
-      - .github/actions/free-disk-space/**
-      - .github/workflows/integration.yaml
-      - docker/images/andromeda/**
-      - docker/compose/test/**
-      - crates/andromeda-xtask/**
-  push:
-    branches: [master]
-    paths: *harness
   workflow_dispatch:
 
 concurrency:

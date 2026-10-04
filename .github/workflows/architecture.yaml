@@ -1,9 +1,7 @@
 name: architecture
 
 on:
-  push:
-    branches: [master]
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: architecture-${{ github.ref }}

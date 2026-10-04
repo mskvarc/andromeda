@@ -1,17 +1,7 @@
 name: taplo
 
 on:
-  push:
-    branches: [master]
-    paths:
-      - "**/*.toml"
-      - ".taplo.toml"
-      - ".github/workflows/taplo.yaml"
-  pull_request:
-    paths:
-      - "**/*.toml"
-      - ".taplo.toml"
-      - ".github/workflows/taplo.yaml"
+  workflow_dispatch:
 
 concurrency:
   group: taplo-${{ github.ref }}
