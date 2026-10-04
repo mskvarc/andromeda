@@ -257,6 +257,82 @@ async fn regression_scoped_user_context_a_nested_remote_reference_is_followed() 
     scope.finish().await.expect("cleanup failed");
 }
 
+/// JSON-LD 1.1 section 4.1.10 merges an `@import`ed context into the
+/// definition that imports it, scoped term definitions included, so a scoped
+/// context reached through `@import` reshapes terms exactly as an inline one
+/// does. The scan skipped every keyword member of a definition and never
+/// followed the import, so both forms below used to be admitted.
+#[tokio::test]
+async fn regression_scoped_user_context_an_imported_scoped_context_is_refused() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let server = JsonLdContextServer::start(MockServerConfig::from_environment().expect("callback host"))
+        .await
+        .expect("context server starts");
+
+    let scoped = serve_context(&server, "import-scoped", &json!({"@context": {"gear": scoped_definition()}})).await;
+    let plain = serve_context(&server, "import-plain", &json!({"@context": {"gear": "https://example.org/gear"}})).await;
+    let importing = serve_context(
+        &server,
+        "import-linked",
+        &json!({"@context": {"@import": scoped.clone(), "axle": "https://example.org/axle"}}),
+    )
+    .await;
+
+    let inline_id = scope.id("Device:import-inline");
+    let inline = send_ld_json(
+        client,
+        Method::POST,
+        "/ngsi-ld/v1/entities",
+        &device(
+            &inline_id,
+            &json!([CORE_CONTEXT, {"@import": scoped.clone(), "axle": "https://example.org/axle"}]),
+        ),
+    )
+    .await;
+    assert_scoped_context_refused(&inline, "an inline body @context importing a scoped @context");
+
+    let linked_id = scope.id("Device:import-linked");
+    let linked = send_json_with_link_context(
+        client,
+        Method::POST,
+        "/ngsi-ld/v1/entities",
+        &json!({"id": linked_id, "type": "Device", "axle": {"type": "Property", "value": 2}}),
+        &importing,
+    )
+    .await;
+    assert_scoped_context_refused(&linked, "a Link header @context importing a scoped @context");
+
+    // Control: importing a context that declares only plain terms is used, so
+    // the refusals above are about what the import brings in.
+    let admitted_id = scope.id("Device:import-plain");
+    let admitted = send_ld_json(
+        client,
+        Method::POST,
+        "/ngsi-ld/v1/entities",
+        &device(
+            &admitted_id,
+            &json!([CORE_CONTEXT, {"@import": plain.clone(), "axle": "https://example.org/axle"}]),
+        ),
+    )
+    .await;
+    assert_eq!(admitted.status, StatusCode::CREATED, "importing a plain context is used: {:?}", admitted.body);
+    let stored = client
+        .get_entity(&admitted_id, "", "application/ld+json", None)
+        .await
+        .expect("retrieve entity request");
+    let entity = stored.json_value().expect("an entity is JSON");
+    assert_eq!(
+        entity["https://example.org/gear"]["value"],
+        json!(3),
+        "the imported term expanded to its IRI: {entity}"
+    );
+
+    forget_cached(scope.database_pool(), &[scoped, plain, importing]).await;
+    server.shutdown().await.expect("context server shuts down");
+    scope.finish().await.expect("cleanup failed");
+}
+
 /// Every entity write path runs the same admission before it forwards
 /// anything, so none of them may take a scoped user `@context`.
 #[tokio::test]

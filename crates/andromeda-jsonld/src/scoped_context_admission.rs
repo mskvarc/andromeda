@@ -271,6 +271,48 @@ mod tests {
         pretty_assertions::assert_eq!(refused_term(&error), "gear");
     }
 
+    /// JSON-LD 1.1 section 4.1.10 merges an `@import`ed context into the
+    /// importing definition, scoped term definitions included, so an inline
+    /// body context importing a scoped one is refused like the scoped one.
+    #[tokio::test]
+    async fn an_inline_body_context_importing_a_scoped_context_is_refused() {
+        let engine = engine_serving(&[(
+            "https://example.org/scoped.jsonld",
+            json!({"@context": {"gear": {"@id": "https://example.org/gear", "@context": {}}}}),
+        )]);
+        let context = ContextSpec::from_body(json!({"@import": "https://example.org/scoped.jsonld", "speed": "https://example.org/speed"}));
+        let error = reject_scoped_user_contexts(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
+        pretty_assertions::assert_eq!(refused_term(&error), "gear");
+    }
+
+    /// The same `@import` written inside a remote document one hop away.
+    #[tokio::test]
+    async fn a_link_header_context_importing_a_scoped_context_is_refused() {
+        let engine = engine_serving(&[
+            (
+                "https://example.org/importing.jsonld",
+                json!({"@context": {"@import": "https://example.org/scoped.jsonld", "speed": "https://example.org/speed"}}),
+            ),
+            (
+                "https://example.org/scoped.jsonld",
+                json!({"@context": {"gear": {"@id": "https://example.org/gear", "@context": {}}}}),
+            ),
+        ]);
+        let error = reject_scoped_user_contexts(&engine, &link_spec("https://example.org/importing.jsonld"))
+            .await
+            .expect_err("clause 5.5.7 refuses it");
+        pretty_assertions::assert_eq!(refused_term(&error), "gear");
+    }
+
+    /// An `@import` of the Core `@context` stays exempt: the reference is
+    /// followed, and every core reference is skipped by name.
+    #[tokio::test]
+    async fn an_import_of_the_core_context_is_admitted() {
+        let engine = engine_serving(&[]);
+        let context = ContextSpec::from_body(json!({"@import": NGSI_LD_CORE_CONTEXT_URL.as_str(), "speed": "https://example.org/speed"}));
+        assert!(reject_scoped_user_contexts(&engine, &context).await.is_ok());
+    }
+
     /// A context whose references form a cycle is an invalid `@context`
     /// (clause 5.5.6), refused before any of its documents is inspected.
     #[tokio::test]

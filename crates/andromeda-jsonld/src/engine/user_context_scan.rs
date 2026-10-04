@@ -7,7 +7,7 @@
 //! follows. The scan of a context named by URL is kept per URL, for as long as
 //! the loader holds the document it was taken from.
 
-use crate::{context_term::ContextTerm, error::JsonLdError, loader::http::HttpContextLoader};
+use crate::{context_term::ContextTerm, core_context_precedence::IMPORT_KEYWORD, error::JsonLdError, loader::http::HttpContextLoader};
 use dashmap::DashMap;
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -111,6 +111,12 @@ fn scan_into(value: &Value, scan: &mut UserContextScan) {
             if let Some(inner) = map.get("@context") {
                 scan_into(inner, scan);
                 return;
+            }
+            // JSON-LD 1.1 section 4.1.10 merges an `@import`ed context into
+            // this definition, scoped term definitions included, so the
+            // document it names is followed like any other remote reference.
+            if let Some(imported) = map.get(IMPORT_KEYWORD) {
+                scan_into(imported, scan);
             }
             map.iter()
                 .filter(|(key, _)| !key.starts_with('@'))
@@ -263,6 +269,29 @@ mod tests {
             vec!["https://example.org/other.jsonld"]
         );
         pretty_assertions::assert_eq!(scan.scoped_context_term.as_ref().map(ContextTerm::as_str), Some("speed"));
+    }
+
+    /// An `@import` merges the named context into the definition beside it
+    /// (JSON-LD 1.1 section 4.1.10), so the reference is recorded for the
+    /// clause 5.5.7 walk exactly as a bare remote reference is.
+    #[test]
+    fn an_import_is_recorded_as_a_nested_reference() {
+        let scan = scan_user_context(&json!({"@import": "https://example.org/scoped.jsonld", "speed": "https://example.org/speed"}));
+        pretty_assertions::assert_eq!(
+            scan.nested_references.iter().map(IriBuf::as_str).collect::<Vec<_>>(),
+            vec!["https://example.org/scoped.jsonld"]
+        );
+        assert!(scan.scoped_context_term.is_none(), "{:?}", scan.scoped_context_term);
+    }
+
+    /// The same `@import` inside a loaded document's `@context` wrapper.
+    #[test]
+    fn an_import_inside_a_context_wrapper_is_recorded() {
+        let scan = scan_user_context(&json!({"@context": {"@import": "https://example.org/scoped.jsonld"}}));
+        pretty_assertions::assert_eq!(
+            scan.nested_references.iter().map(IriBuf::as_str).collect::<Vec<_>>(),
+            vec!["https://example.org/scoped.jsonld"]
+        );
     }
 
     /// A reference the IRI parser rejects names no document to resolve.
