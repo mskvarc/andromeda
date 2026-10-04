@@ -410,3 +410,29 @@ async fn a_multi_instance_member_keeps_its_instances_in_order() {
         vec![false, true]
     );
 }
+
+/// Clause 4.5.24.2: `json` is "a raw JSON object (or array of objects)" that
+/// is "never subject to JSON-LD term expansion or compaction", and the core
+/// context types it `@json`, so an array of any length is one JSON literal
+/// holding the array as written.
+#[tokio::test]
+async fn a_json_array_expands_to_one_literal_holding_the_array() {
+    for written in [json!([{"id": "a"}]), json!([{"id": "a"}, {"id": "b"}]), json!([1, "two"]), json!([])] {
+        let document = entity(
+            &engine(),
+            json!({"id": "urn:ngsi-ld:Thing:j", "type": "Thing", "tickets": {"type": "JsonProperty", "json": written}}),
+            Normalization::Entity,
+        )
+        .await
+        .expect("the fixture expands")
+        .agreed();
+        let ValueSlot::Set(WrittenValue::Json(literals)) = instance(&document, &term("tickets")).value() else {
+            panic!("a JSON value for {written}");
+        };
+        pretty_assertions::assert_eq!(
+            literals.as_slice().iter().map(|literal| literal.get().clone()).collect::<Vec<_>>(),
+            vec![written.clone()],
+            "{written}"
+        );
+    }
+}

@@ -49,7 +49,7 @@ fn simplified_attributes() -> Value {
         "period": {"type": "ListProperty", "valueLists": [[["First", "Second"], FIRST], [["1st", "2nd"], SECOND]]},
         "parkingTickets": {"type": "JsonProperty", "jsons": [
             [{"json": [{"id": "85a6cc52-0589-45f9", "value": "Overstay 60 minutes"}, {"id": "x5c56s-0589-45f9", "value": "Overstay 45 minutes"}]}, FIRST],
-            [{"json": [{"id": "x5c56s-0589-45f9", "value": "Overstay 45 minutes"}, {"id": "y7d21t-0589-45f9", "value": "Overstay 30 minutes"}]}, SECOND]
+            [{"json": [{"id": "y7d21t-0589-45f9", "value": "Overstay 30 minutes"}]}, SECOND]
         ]},
         "gender": {"type": "VocabProperty", "vocabs": [[{"vocab": "Male"}, FIRST], [{"vocab": "Female"}, SECOND]]},
         "spouse": {"type": "Relationship", "objects": [["urn:ngsi-ld:Person:123455", FIRST], ["urn:ngsi-ld:Person:999999", SECOND]]},

@@ -11,7 +11,7 @@ use crate::{
     compacted::{Compacted, CompactedObject},
     compacted_mode::CompactedMode,
     expanded_item::{ExpandedItem, scalar_of},
-    member_insertion::add_value,
+    member_insertion::{add_value, add_whole_value},
     undecidable::Undecidable,
     walk::Walk,
 };
@@ -21,6 +21,7 @@ use jsonld::{
     ContainerKind,
     IriBuf,
     Term,
+    Value,
     compaction::{ValueHint, ValueKind},
     syntax::Keyword,
 };
@@ -90,7 +91,11 @@ impl Walk<'_> {
         }
         let compacted = self.compact_item(item, key)?;
         if !container.contains(ContainerKind::Language) {
-            add_value(result, key, compacted, as_array);
+            if is_json_literal(item) {
+                add_whole_value(result, key, compacted, as_array);
+            } else {
+                add_value(result, key, compacted, as_array);
+            }
             return Ok(());
         }
         // Under a `@language` container a value object is written as its bare
@@ -110,7 +115,11 @@ impl Walk<'_> {
             result.insert(key, Compacted::Object(CompactedObject::new()));
         }
         let map = result.get_mut(key).and_then(Compacted::as_object_mut).ok_or(Undecidable::CollidingEntry)?;
-        add_value(map, &map_key, compacted, as_array);
+        if is_json_literal(item) {
+            add_whole_value(map, &map_key, compacted, as_array);
+        } else {
+            add_value(map, &map_key, compacted, as_array);
+        }
         Ok(())
     }
 
@@ -173,4 +182,10 @@ impl Walk<'_> {
         self.compact_property(&mut result, &Term::Keyword(Keyword::List), items)?;
         Ok(Compacted::Object(result))
     }
+}
+
+/// Whether `item` is a `@json` literal, whose compacted document is added
+/// whole.
+const fn is_json_literal<M: CompactedMode>(item: &ExpandedItem<'_, M>) -> bool {
+    matches!(item, ExpandedItem::Value(Value::Json(_)))
 }

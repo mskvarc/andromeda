@@ -116,6 +116,33 @@ async fn a_property_holding_the_empty_array_renders_the_empty_array() {
     pretty_assertions::assert_eq!(structured["address"]["value"]["flats"], json!([]));
 }
 
+/// Clause 4.5.24.2: `json` is "a raw JSON object (or array of objects)"
+/// "never subject to JSON-LD term expansion or compaction", so the walk
+/// returns an array literal as written -- one element, nested arrays and the
+/// empty array included -- where the JSON-LD 1.1 add-value rule the processor
+/// follows would add its elements one by one. The processor is therefore no
+/// oracle for an array literal, and the corpus holds none.
+#[tokio::test]
+async fn a_json_property_array_is_returned_as_written() {
+    let engine = offline_engine();
+    let core = ContextSpec::core_only();
+    let compactor = engine.compactor(&core);
+    let typed = EntityCompactor::new(&compactor);
+    let read = EntityRead {
+        id_override: None,
+        sys_attrs: SysAttrsInclusion::Strip,
+        now: now(),
+    };
+    for written in [json!([{"id": "a"}]), json!([{"a": 1}, [1, 2], "text"]), json!([])] {
+        let entity = json!({"id": "urn:ngsi-ld:Thing:tickets", "type": "Thing", "tickets": {"type": "JsonProperty", "json": written}});
+        let expanded = engine.expand(entity, &ContextSpec::none()).await.expect("the entity expands");
+        let state = state_of(&serde_json::to_value(&expanded).expect("the expansion renders"));
+        let compacted = typed.entity(&state, &read).await.expect("the entity compacts");
+        let compacted = serde_json::to_value(&compacted).expect("the compact entity renders");
+        pretty_assertions::assert_eq!(compacted["tickets"], json!({"type": "JsonProperty", "json": written}), "{written}");
+    }
+}
+
 /// How many geometries `node` keeps typed.
 fn typed_geometries(node: &Compacted<'_>) -> usize {
     match node {

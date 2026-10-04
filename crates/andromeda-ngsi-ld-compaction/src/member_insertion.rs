@@ -6,6 +6,9 @@
 //! array starts as one. The library applies the same rule inside its own
 //! compaction; it is reproduced here because the walk writes its objects
 //! itself.
+//!
+//! The JSON document of a `@json` literal is the one exception: it is added
+//! whole (see [`add_whole_value`]).
 
 use crate::compacted::{Compacted, CompactedObject};
 use std::mem;
@@ -35,22 +38,37 @@ pub(crate) fn add_value<'a>(object: &mut CompactedObject<'a>, key: &str, value: 
             }
         }
         scalar @ (Compacted::Null | Compacted::Boolean(_) | Compacted::Number(_) | Compacted::String(_) | Compacted::Object(_) | Compacted::Geometry(_)) => {
-            match object.get_mut(key) {
-                Some(Compacted::Array(items)) => items.push(scalar),
-                Some(existing) => {
-                    let previous = mem::replace(existing, Compacted::Array(Vec::new()));
-                    if let Compacted::Array(items) = existing {
-                        items.push(previous);
-                        items.push(scalar);
-                    }
-                }
-                None if as_array => {
-                    object.insert(key, Compacted::Array(vec![scalar]));
-                }
-                None => {
-                    object.insert(key, scalar);
-                }
+            add_whole_value(object, key, scalar, as_array);
+        }
+    }
+}
+
+/// Add `value` under `key` in `object` as one value, an array included, as an
+/// array of values when `as_array` holds.
+///
+/// The JSON document a `@json` literal compacts to is one value, whatever its
+/// shape: an array there is the data, not a set of values to add one by one.
+/// Adding it element by element, as the add-value rule does, would write a
+/// one-element array as its element and lose what NGSI-LD keeps out of JSON-LD
+/// processing altogether -- clause 4.5.24.2 makes the `json` of a
+/// `JsonProperty` "a raw JSON object (or array of objects)" that is "never
+/// subject to JSON-LD term expansion or compaction", and clause 4.6.4 returns
+/// "the original content".
+pub(crate) fn add_whole_value<'a>(object: &mut CompactedObject<'a>, key: &str, value: Compacted<'a>, as_array: bool) {
+    match object.get_mut(key) {
+        Some(Compacted::Array(items)) => items.push(value),
+        Some(existing) => {
+            let previous = mem::replace(existing, Compacted::Array(Vec::new()));
+            if let Compacted::Array(items) = existing {
+                items.push(previous);
+                items.push(value);
             }
+        }
+        None if as_array => {
+            object.insert(key, Compacted::Array(vec![value]));
+        }
+        None => {
+            object.insert(key, value);
         }
     }
 }
@@ -59,7 +77,7 @@ pub(crate) fn add_value<'a>(object: &mut CompactedObject<'a>, key: &str, value: 
 mod tests {
     use crate::{
         compacted::{Compacted, CompactedObject},
-        member_insertion::add_value,
+        member_insertion::{add_value, add_whole_value},
     };
 
     fn text(value: &str) -> Compacted<'static> {
@@ -109,5 +127,23 @@ mod tests {
 
         pretty_assertions::assert_eq!(rendered(kept), serde_json::json!({"a": []}));
         pretty_assertions::assert_eq!(rendered(bare), serde_json::json!({}));
+    }
+
+    #[test]
+    fn a_whole_value_keeps_its_array_as_one_value() {
+        let mut bare = CompactedObject::new();
+        add_whole_value(&mut bare, "a", Compacted::Array(vec![text("x")]), false);
+        let mut empty = CompactedObject::new();
+        add_whole_value(&mut empty, "a", Compacted::Array(Vec::new()), false);
+        let mut kept = CompactedObject::new();
+        add_whole_value(&mut kept, "a", Compacted::Array(vec![text("x")]), true);
+        let mut second = CompactedObject::new();
+        add_whole_value(&mut second, "a", text("x"), false);
+        add_whole_value(&mut second, "a", Compacted::Array(vec![text("y")]), false);
+
+        pretty_assertions::assert_eq!(rendered(bare), serde_json::json!({"a": ["x"]}));
+        pretty_assertions::assert_eq!(rendered(empty), serde_json::json!({"a": []}));
+        pretty_assertions::assert_eq!(rendered(kept), serde_json::json!({"a": [["x"]]}));
+        pretty_assertions::assert_eq!(rendered(second), serde_json::json!({"a": ["x", ["y"]]}));
     }
 }

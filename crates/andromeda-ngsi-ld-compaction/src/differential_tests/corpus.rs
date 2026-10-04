@@ -215,7 +215,7 @@ fn language_vocab_json() -> Value {
         "label": {"type": "LanguageProperty", "languageMap": {"de": "Hallo"}},
         "category": {"type": "VocabProperty", "vocab": ["commercial", "https://schema.org/Place"]},
         "kind": {"type": "VocabProperty", "vocab": "Building"},
-        "payload": {"type": "JsonProperty", "json": [{"a": 1}, [1, 2], "text"]},
+        "payload": {"type": "JsonProperty", "json": {"items": [{"a": 1}, [1, 2], "text"]}},
         "scalarJson": {"type": "JsonProperty", "json": 12.50}
     })
 }

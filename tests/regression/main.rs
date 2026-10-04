@@ -60,6 +60,7 @@ mod http_precondition_details;
 mod implicit_context_replicas;
 mod inline_join_multi_target_relationship;
 mod invalid_parameter_values;
+mod json_property_array;
 mod large_entity_budget;
 mod large_entity_replicas;
 mod list_attribute_families;
