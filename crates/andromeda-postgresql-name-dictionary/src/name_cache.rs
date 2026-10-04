@@ -11,15 +11,16 @@
 //! and one set of statements.
 
 use crate::{
-    dictionary_growth::DictionaryNameLimit,
+    bounded_keys::{bounded_keys, preload_row_limit},
     dictionary_relation::DictionaryRelation,
     dictionary_rows::{CachePublication, decode, held_publication},
-    dictionary_statements::{held_select_query, name_insert_query, name_select_query, preload_query, size_query},
+    dictionary_statements::{held_select_query, name_insert_query, name_select_query, preload_query},
+    name_cache_config::NameCacheConfig,
     name_lookup::{NameLookup, NameLookupError},
     schema_epoch::{EPOCH_CHECK_INTERVAL, UNKNOWN_EPOCH, now_millis, read_schema_epoch},
 };
 use andromeda_postgresql_query::dictionary::{interned_name::InternedName, resolved_names::ResolvedNames};
-use dashmap::DashMap;
+use moka::sync::Cache;
 use sea_query::PostgresQueryBuilder;
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{AssertSqlSafe, Executor, PgConnection, Postgres, postgres::PgPool};
@@ -31,6 +32,11 @@ use std::{
 };
 
 /// Cache of expanded IRI to dictionary key for one dictionary.
+///
+/// The cache is bounded by the byte budget and idle timeout of its
+/// [`NameCacheConfig`]; the dictionary behind it is not. A name the cache has
+/// dropped is a miss like any other and is read back from the table, so the
+/// budget bounds this process's memory without ever refusing a name.
 ///
 /// Only *committed hits* are ever stored. A miss is deliberately not memoised:
 /// the read path resolves per query execution, and caching "this name does not
@@ -45,10 +51,11 @@ pub struct NameCache<N: DictionaryRelation> {
     /// The tenant database pool, used only by reads that need a committed
     /// snapshot. Minting runs on the caller's own connection.
     pool: PgPool,
-    /// Cached mappings from expanded IRI text to dictionary key.
-    keys: DashMap<N, N::Key>,
-    /// Bound on how far this tenant's dictionary may grow.
-    growth_limit: DictionaryNameLimit,
+    /// Cached mappings from expanded IRI text to dictionary key, bounded by
+    /// the configured byte budget and idle timeout.
+    keys: Cache<N, N::Key>,
+    /// How many rows a preload reads at most, derived from the byte budget.
+    preload_rows: u64,
     /// The tenant schema stamp (`schema_metadata.applied_at`, microseconds) this
     /// cache was warmed against, or [`UNKNOWN_EPOCH`] before it has been
     /// established. A fresh migration re-stamps it, so it advances whenever the
@@ -62,14 +69,14 @@ pub struct NameCache<N: DictionaryRelation> {
 }
 
 impl<N: DictionaryRelation> NameCache<N> {
-    /// Create a cache backed by the given tenant pool, bounded by
-    /// [`DictionaryNameLimit::DEFAULT`].
+    /// Create a cache backed by the given tenant pool, holding as much of the
+    /// dictionary as `config` budgets for.
     #[must_use]
-    pub fn new(pool: &PgPool) -> NameCache<N> {
+    pub fn new(pool: &PgPool, config: &NameCacheConfig) -> NameCache<N> {
         NameCache {
             pool: pool.clone(), // clone: Arc ref-count bump
-            keys: DashMap::new(),
-            growth_limit: DictionaryNameLimit::DEFAULT,
+            keys: bounded_keys(config),
+            preload_rows: preload_row_limit(config),
             schema_epoch: AtomicI64::new(UNKNOWN_EPOCH),
             // Seeded to now, not zero: a cache is inside its check interval the
             // moment it is built, so its first resolutions serve cached hits
@@ -78,32 +85,20 @@ impl<N: DictionaryRelation> NameCache<N> {
         }
     }
 
-    /// Bound this tenant's dictionary at `limit` instead of the default.
-    ///
-    /// Taken per cache rather than per process because the dictionary is
-    /// per-tenant: one tenant modelling a large domain is not a reason to let
-    /// every other tenant's dictionary grow with it.
-    #[must_use = "the bound applies to the returned cache"]
-    pub fn with_growth_limit(self, limit: DictionaryNameLimit) -> NameCache<N> {
-        NameCache { growth_limit: limit, ..self }
-    }
-
-    /// The bound on how far this tenant's dictionary may grow.
-    pub const fn growth_limit(&self) -> DictionaryNameLimit {
-        self.growth_limit
-    }
-
-    /// Load the whole dictionary into the cache.
+    /// Load as much of the dictionary as the budget holds into the cache,
+    /// oldest names first.
     ///
     /// Removes the cold-miss round trip otherwise paid on first use of each
-    /// IRI, on both the write and the read path.
+    /// IRI, on both the write and the read path. A dictionary larger than the
+    /// budget is read only up to what could fit; the rest is resolved from the
+    /// table on first use, as any miss is.
     ///
     /// # Errors
     ///
     /// Returns [`NameLookupError::Statement`] when the read fails and one of
     /// the `Stored*` variants when a stored row is unreadable.
     pub async fn preload(&self) -> Result<(), NameLookupError> {
-        let (sql, values) = preload_query::<N>().build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = preload_query::<N>(self.preload_rows).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         self.absorb(&decode::<N>(&rows)?, CachePublication::Publish);
         Ok(())
@@ -114,9 +109,9 @@ impl<N: DictionaryRelation> NameCache<N> {
         let mut resolved = Vec::with_capacity(names.len());
         let mut missing = Vec::new();
         for name in names {
-            match self.keys.get::<N>(name) {
+            match self.keys.get(name) {
                 // clone: the answer owns its keys; the name is a `CompactString`
-                Some(id) => resolved.push((name.clone(), *id)),
+                Some(id) => resolved.push((name.clone(), id)),
                 None => missing.push(name),
             }
         }
@@ -188,7 +183,7 @@ impl<N: DictionaryRelation> NameCache<N> {
         };
         let previous = self.schema_epoch.swap(observed, Ordering::Relaxed);
         if previous != UNKNOWN_EPOCH && previous != observed {
-            self.keys.clear();
+            self.keys.invalidate_all();
         }
         Ok(())
     }
@@ -221,22 +216,17 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
     /// Resolve every name in the caller's transaction, minting the new ones.
     ///
     /// Every statement runs on `connection`, which is the connection the
-    /// caller's transaction holds. Three consequences follow, and all three are
-    /// the point of the method taking it: the dictionary rows commit and roll
-    /// back with the write that needed them; the size the bound is decided
-    /// against is the size that transaction sees, so a rollback hands the budget
-    /// back; and no phase of a commit reaches into the pool for a second
-    /// connection while already holding one.
+    /// caller's transaction holds. Two consequences follow, and both are the
+    /// point of the method taking it: the dictionary rows commit and roll back
+    /// with the write that needed them, and no phase of a commit reaches into
+    /// the pool for a second connection while already holding one.
     ///
     /// A cache miss is not evidence that a name is new. The cache only ever
-    /// holds what a *committed* read published, so every name minted inside a
-    /// transaction — and every name minted before this process started, until
-    /// something reads it back — misses. The dictionary is therefore asked
-    /// which of the missing names it already holds *before* the growth bound is
-    /// consulted, and the bound is decided against the names that genuinely
-    /// remain to be created. Deciding it against every miss would refuse a write
-    /// that reuses nothing but names the dictionary already holds, which is
-    /// precisely the write a tenant at its bound must keep serving.
+    /// holds what a *committed* read published, and only as much of that as
+    /// its budget allows, so every name minted inside a transaction, every name
+    /// minted before this process started and every name the cache has since
+    /// dropped misses. The dictionary is therefore asked which of the missing
+    /// names it already holds, and only the rest are minted.
     async fn resolve_or_create(&self, connection: &mut PgConnection, names: &[N]) -> Result<HashMap<N, N::Key>, NameLookupError> {
         // On the caller's own connection, never the pool: a minting resolution
         // must not hold a second connection while its transaction holds one.
@@ -269,19 +259,6 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
             return Ok(resolved.into_iter().collect());
         }
 
-        // The dictionary size is read from the table rather than from `keys`,
-        // which only ever holds what this process has seen: a cache that was
-        // never preloaded would otherwise report a size of nearly zero and let
-        // the bound be crossed silently. The read is paid only when a name is
-        // genuinely new, which is once per distinct IRI per process.
-        let (size_sql, size_values) = size_query::<N>().build_sqlx(PostgresQueryBuilder);
-        let existing: i64 = sqlx::query_scalar_with(AssertSqlSafe(size_sql), size_values)
-            .fetch_one(&mut *connection)
-            .await?;
-        // `COUNT(*)` is never negative; saturating to `u64::MAX` on a value
-        // that says otherwise refuses the write rather than admitting it.
-        self.growth_limit.admit(N::KIND, u64::try_from(existing).unwrap_or(u64::MAX), unheld.len())?;
-
         let (insert_sql, insert_values) = name_insert_query::<N>(&unheld)
             .map_err(NameLookupError::StatementBuild)?
             .build_sqlx(PostgresQueryBuilder);
@@ -299,7 +276,7 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
 /// Sorted, so that two transactions minting overlapping sets of new names take
 /// the unique index's conflict waits in the same order and neither can hold what
 /// the other is waiting for. Deduplicated, so that one name repeated across an
-/// entity's members is counted once against the growth bound.
+/// entity's members is asked for and minted once.
 fn distinct_text<'a, N: InternedName>(missing: &[&'a N]) -> Vec<&'a str> {
     let mut text: Vec<&'a str> = missing.iter().map(|name| InternedName::as_str(*name)).collect();
     text.sort_unstable();
@@ -310,7 +287,7 @@ fn distinct_text<'a, N: InternedName>(missing: &[&'a N]) -> Vec<&'a str> {
 /// The names of a batch the dictionary does not hold yet, in the order the
 /// batch was sorted into.
 ///
-/// This is the count the growth bound is decided against: a name the dictionary
+/// These are the names a minting resolution inserts: a name the dictionary
 /// already holds creates nothing, whether or not this process had it cached.
 fn names_not_yet_held<'a, N: InternedName>(wanted: &[&'a str], held: &[(N, N::Key)]) -> Vec<&'a str> {
     let held: HashSet<&str> = held.iter().map(|(name, _)| InternedName::as_str(name)).collect();
@@ -320,11 +297,11 @@ fn names_not_yet_held<'a, N: InternedName>(wanted: &[&'a str], held: &[(N, N::Ke
 #[cfg(test)]
 mod tests {
     use crate::{
-        dictionary_growth::DictionaryNameLimit,
         dictionary_relation::DictionaryRelation,
         dictionary_rows::CachePublication,
-        dictionary_statements::{SNAPSHOT_IS_COMMITTED_COLUMN, held_select_query, name_insert_query, name_select_query, size_query},
+        dictionary_statements::{SNAPSHOT_IS_COMMITTED_COLUMN, held_select_query, name_insert_query, name_select_query, preload_query},
         name_cache::{NameCache, distinct_text, names_not_yet_held},
+        name_cache_config::NameCacheConfig,
         name_lookup::NameLookup,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
@@ -332,7 +309,6 @@ mod tests {
     use sea_query::PostgresQueryBuilder;
     use sea_query_sqlx::SqlxBinder;
     use sqlx::postgres::{PgConnectOptions, PgPool};
-    use std::num::NonZeroU32;
 
     /// A cache over a pool that can never connect.
     ///
@@ -342,7 +318,10 @@ mod tests {
     /// `connect_lazy_with` does not dial on construction, so building it is
     /// infallible.
     fn cache<N: DictionaryRelation>() -> NameCache<N> {
-        NameCache::new(&PgPool::connect_lazy_with(PgConnectOptions::new().host("invalid.invalid").port(1)))
+        NameCache::new(
+            &PgPool::connect_lazy_with(PgConnectOptions::new().host("invalid.invalid").port(1)),
+            &NameCacheConfig::default(),
+        )
     }
 
     /// The behaviour every dictionary shares, stated once and instantiated per
@@ -407,7 +386,7 @@ mod tests {
                     let (resolved, missing) = cache.probe(&asked);
                     assert!(resolved.is_empty());
                     assert_eq!(missing.len(), 1);
-                    assert!(cache.keys.is_empty(), "a failed lookup must not populate the cache");
+                    assert!(!cache.keys.contains_key(&asked[0]), "a failed lookup must not populate the cache");
                 }
 
                 /// The rule the transaction-aware write path depends on: a name minted
@@ -419,7 +398,7 @@ mod tests {
                     let minted = [(first(), <$key>::from(7))];
                     cache.absorb(&minted, CachePublication::Withhold);
                     assert!(
-                        cache.keys.is_empty(),
+                        !cache.keys.contains_key(&first()),
                         "an uncommitted mapping must not answer any later resolution in this process"
                     );
                 }
@@ -430,12 +409,26 @@ mod tests {
                 async fn a_committed_read_publishes_what_it_resolved_to_the_cache() {
                     let cache = cache::<$name>();
                     cache.absorb(&[(first(), <$key>::from(7))], CachePublication::Publish);
-                    assert_eq!(cache.keys.get(&first()).map(|id| *id), Some(<$key>::from(7)));
+                    assert_eq!(cache.keys.get(&first()), Some(<$key>::from(7)));
+                }
+
+                /// Eviction is safe because a dropped name is a miss like any
+                /// other: it is asked of the dictionary again rather than
+                /// answered wrongly or refused.
+                #[tokio::test]
+                async fn a_name_the_cache_has_dropped_is_asked_of_the_dictionary_again() {
+                    let cache = cache::<$name>();
+                    cache.absorb(&[(first(), <$key>::from(7))], CachePublication::Publish);
+                    cache.keys.invalidate(&first());
+                    let asked = [first()];
+                    let (resolved, missing) = cache.probe(&asked);
+                    assert!(resolved.is_empty(), "a dropped name has no cached key to answer with");
+                    assert_eq!(missing, vec![&first()]);
                 }
 
                 /// Ordering is what keeps two concurrent writers from deadlocking on the
                 /// unique index, and deduplication is what keeps one name repeated across
-                /// an entity's members from being counted twice against the bound.
+                /// an entity's members from being asked for and minted twice.
                 #[test]
                 fn names_are_minted_as_one_sorted_distinct_batch() {
                     let (first, second) = (first(), second());
@@ -458,15 +451,14 @@ mod tests {
                     assert_eq!(values.0.0.len(), 1, "{sql}");
                 }
 
-                /// The bound is decided against the dictionary itself, read on the
-                /// caller's connection, so a rolled-back write releases the budget it
-                /// took.
+                /// A preload reads the oldest names first and stops at what the
+                /// budget could hold, so a dictionary far larger than the cache is
+                /// never read whole at tenant startup.
                 #[test]
-                fn the_bound_is_decided_against_the_dictionarys_own_size() {
-                    assert_eq!(
-                        size_query::<$name>().to_string(PostgresQueryBuilder),
-                        concat!("SELECT COUNT(*) FROM \"", $table, "\"")
-                    );
+                fn a_preload_reads_the_oldest_names_up_to_the_row_limit() {
+                    let sql = preload_query::<$name>(100).to_string(PostgresQueryBuilder);
+                    assert!(sql.contains(concat!("FROM \"", $table, "\" ORDER BY")), "{sql}");
+                    assert!(sql.ends_with("ASC LIMIT 100"), "{sql}");
                 }
 
                 /// One array bind rather than a placeholder per name, which is what
@@ -493,13 +485,11 @@ mod tests {
                     assert_eq!(SNAPSHOT_IS_COMMITTED_COLUMN, "snapshot_is_committed");
                 }
 
-                /// The growth bound is decided against the names that genuinely have to
-                /// be created, not against every name this process happened not to have
-                /// cached. A dictionary at its bound must keep serving a write that
-                /// reuses only names it already holds, and a cache miss says nothing
-                /// about whether it holds them.
+                /// Only the names the dictionary does not hold are minted, not every
+                /// name this process happened not to have cached: a cache miss says
+                /// nothing about whether the dictionary holds the name.
                 #[test]
-                fn only_the_names_the_dictionary_does_not_hold_count_against_the_growth_bound() {
+                fn only_the_names_the_dictionary_does_not_hold_are_minted() {
                     let asked = [second(), first()];
                     let wanted: Vec<&str> = asked.iter().map(InternedName::as_str).collect();
                     let holds_first = [(first(), <$key>::from(7))];
@@ -510,15 +500,6 @@ mod tests {
                         names_not_yet_held(&wanted, &holds_both).is_empty(),
                         "a batch the dictionary holds in full creates nothing"
                     );
-                }
-
-                /// A tenant given its own bound keeps it; the default is only the
-                /// fallback for a tenant that was configured with none.
-                #[tokio::test]
-                async fn a_configured_growth_bound_replaces_the_default_one() {
-                    let configured = DictionaryNameLimit::new(NonZeroU32::new(64).expect("a non-zero test bound"));
-                    assert_eq!(cache::<$name>().growth_limit(), DictionaryNameLimit::DEFAULT);
-                    assert_eq!(cache::<$name>().with_growth_limit(configured).growth_limit(), configured);
                 }
 
                 /// A freshly warmed cache is inside its check interval, so a

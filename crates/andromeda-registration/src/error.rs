@@ -93,7 +93,6 @@ impl From<PersistenceFailure> for RegistrationError {
             | PersistenceFailure::Undecodable
             | PersistenceFailure::Unencodable
             | PersistenceFailure::StatementUnbuildable
-            | PersistenceFailure::CapacityExceeded
             | PersistenceFailure::SchemaMismatch
             | PersistenceFailure::ContractBroken) => RegistrationError::Persistence(fault),
         }

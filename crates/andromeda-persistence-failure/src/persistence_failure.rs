@@ -61,9 +61,6 @@ pub enum PersistenceFailure {
     /// The adapter could not build the statement it needed.
     #[error("a store statement could not be built")]
     StatementUnbuildable,
-    /// The store refused to grow past a bound it is configured with.
-    #[error("the store refused to grow past its configured bound")]
-    CapacityExceeded,
     /// The store's schema is not the one this broker was built against.
     #[error("the store schema does not match this broker")]
     SchemaMismatch,
@@ -131,7 +128,6 @@ impl PersistenceFailure {
             | PersistenceFailure::Undecodable
             | PersistenceFailure::Unencodable
             | PersistenceFailure::StatementUnbuildable
-            | PersistenceFailure::CapacityExceeded
             | PersistenceFailure::SchemaMismatch
             | PersistenceFailure::ContractBroken => Retryability::Fault,
         }
@@ -163,7 +159,6 @@ mod tests {
             PersistenceFailure::Undecodable,
             PersistenceFailure::Unencodable,
             PersistenceFailure::StatementUnbuildable,
-            PersistenceFailure::CapacityExceeded,
             PersistenceFailure::SchemaMismatch,
             PersistenceFailure::ContractBroken,
         ] {
@@ -188,7 +183,6 @@ mod tests {
             PersistenceFailure::Undecodable,
             PersistenceFailure::Unencodable,
             PersistenceFailure::StatementUnbuildable,
-            PersistenceFailure::CapacityExceeded,
             PersistenceFailure::SchemaMismatch,
             PersistenceFailure::ContractBroken,
         ] {

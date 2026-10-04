@@ -161,7 +161,6 @@ impl From<PersistenceFailure> for EntityError {
             | PersistenceFailure::Undecodable
             | PersistenceFailure::Unencodable
             | PersistenceFailure::StatementUnbuildable
-            | PersistenceFailure::CapacityExceeded
             | PersistenceFailure::SchemaMismatch
             | PersistenceFailure::ContractBroken) => EntityError::Persistence(fault),
         }

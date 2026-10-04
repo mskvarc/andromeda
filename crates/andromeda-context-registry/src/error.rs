@@ -96,7 +96,6 @@ impl From<PersistenceFailure> for ContextRegistryError {
             | PersistenceFailure::Undecodable
             | PersistenceFailure::Unencodable
             | PersistenceFailure::StatementUnbuildable
-            | PersistenceFailure::CapacityExceeded
             | PersistenceFailure::SchemaMismatch
             | PersistenceFailure::ContractBroken) => ContextRegistryError::Persistence(fault),
         }

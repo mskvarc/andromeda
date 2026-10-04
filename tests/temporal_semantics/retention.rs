@@ -20,7 +20,7 @@ use crate::{
     unique_id,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use andromeda_postgresql_name_dictionary::name_cache::NameCache;
+use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig};
 use andromeda_postgresql_temporal_store::{
     bulk_write_mode::BulkWriteMode,
     columnstore_capability::ColumnstoreSupport,
@@ -114,8 +114,8 @@ async fn temporal_semantics_operator_retention_ages_storage_out_without_deletion
     let repository = TemporalRepository::new(
         &pool,
         BulkWriteMode::Unnest,
-        Arc::new(NameCache::<AttributeName>::new(&pool)),
-        Arc::new(NameCache::<EntityTypeName>::new(&pool)),
+        Arc::new(NameCache::<AttributeName>::new(&pool, &NameCacheConfig::default())),
+        Arc::new(NameCache::<EntityTypeName>::new(&pool, &NameCacheConfig::default())),
         columnstore,
     );
     let horizon = TemporalRetentionHorizon::new(TimeDelta::days(RETENTION_DAYS)).expect("a positive retention horizon");
@@ -178,8 +178,8 @@ async fn temporal_semantics_operator_retention_is_off_until_a_horizon_is_configu
     let repository = TemporalRepository::new(
         &pool,
         BulkWriteMode::Unnest,
-        Arc::new(NameCache::<AttributeName>::new(&pool)),
-        Arc::new(NameCache::<EntityTypeName>::new(&pool)),
+        Arc::new(NameCache::<AttributeName>::new(&pool, &NameCacheConfig::default())),
+        Arc::new(NameCache::<EntityTypeName>::new(&pool, &NameCacheConfig::default())),
         columnstore,
     );
     let outcome = repository

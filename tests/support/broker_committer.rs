@@ -11,7 +11,7 @@ use andromeda_postgresql_atomic_write::{
     committer::{EntityInsertMode, PostgresAtomicCommitter},
     history_mode::TemporalHistoryCommitMode,
 };
-use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_lookup::NameLookup};
+use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig, name_lookup::NameLookup};
 use andromeda_postgresql_temporal_store::{
     bulk_write_mode::BulkWriteMode,
     columnstore_capability::ColumnstoreSupport,
@@ -25,8 +25,8 @@ use std::sync::Arc;
 /// The broker's own committer over `pool`, recording history natively and every
 /// Core write in it.
 pub fn committer(pool: &PgPool) -> PostgresAtomicCommitter {
-    let attribute_names = Arc::new(NameCache::<AttributeName>::new(pool)) as Arc<dyn NameLookup<AttributeName>>;
-    let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(pool)) as Arc<dyn NameLookup<EntityTypeName>>;
+    let attribute_names = Arc::new(NameCache::<AttributeName>::new(pool, &NameCacheConfig::default())) as Arc<dyn NameLookup<AttributeName>>;
+    let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(pool, &NameCacheConfig::default())) as Arc<dyn NameLookup<EntityTypeName>>;
     let repository = Arc::new(TemporalRepository::new(
         pool,
         BulkWriteMode::default(),

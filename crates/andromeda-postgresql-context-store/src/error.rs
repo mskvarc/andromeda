@@ -174,8 +174,7 @@ impl From<NameLookupError> for ContextStoreError {
             NameLookupError::Statement(_)
             | NameLookupError::StatementBuild(_)
             | NameLookupError::StoredAttributeName(_)
-            | NameLookupError::StoredEntityTypeName(_)
-            | NameLookupError::Growth(_) => ContextStoreError::NameLookup(error),
+            | NameLookupError::StoredEntityTypeName(_) => ContextStoreError::NameLookup(error),
         }
     }
 }

@@ -110,7 +110,6 @@ impl From<PersistenceFailure> for SnapshotError {
             | PersistenceFailure::Undecodable
             | PersistenceFailure::Unencodable
             | PersistenceFailure::StatementUnbuildable
-            | PersistenceFailure::CapacityExceeded
             | PersistenceFailure::SchemaMismatch
             | PersistenceFailure::ContractBroken) => SnapshotError::Persistence(fault),
         }

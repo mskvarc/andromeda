@@ -76,7 +76,6 @@ impl From<PersistenceFailure> for SubscriptionForwardingError {
             | PersistenceFailure::Undecodable
             | PersistenceFailure::Unencodable
             | PersistenceFailure::StatementUnbuildable
-            | PersistenceFailure::CapacityExceeded
             | PersistenceFailure::SchemaMismatch
             | PersistenceFailure::ContractBroken) => SubscriptionForwardingError::Persistence(fault),
         }

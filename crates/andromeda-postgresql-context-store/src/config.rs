@@ -2,6 +2,7 @@
 
 use crate::maintenance_config::MaintenanceConfig;
 use andromeda_configuration_scalars::human_duration::HumanDuration;
+use andromeda_postgresql_name_dictionary::name_cache_config::{NameCacheConfig, NameCacheConfigError};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use strum::{Display, EnumString};
@@ -25,6 +26,9 @@ pub enum DatabaseConfigError {
     /// The pooled per-tenant serving pool requires at least one connection.
     #[error("database.pooler.tenant_max_connections must be at least 1")]
     ZeroPoolerTenantMaxConnections,
+    /// The name dictionary cache budget or idle timeout is unusable.
+    #[error(transparent)]
+    NameCache(#[from] NameCacheConfigError),
 }
 
 /// A transaction-pooling proxy (pgbouncer) fronting PostgreSQL on the request path.
@@ -148,6 +152,10 @@ pub struct DatabaseConfig {
     /// Populate the attribute-name and entity-type-name caches at tenant
     /// startup.
     pub preload_name_dictionaries: bool,
+    /// Memory budget and idle timeout of each tenant's attribute-name and
+    /// entity-type-name caches. The dictionaries themselves are unbounded; a
+    /// name the cache does not hold is read from its table.
+    pub name_cache: NameCacheConfig,
     /// Interval between JSON-LD hit-counter flushes, in human-readable form
     /// (`"5s"`).
     #[toml_comment(inline)]
@@ -167,6 +175,7 @@ impl Default for DatabaseConfig {
             acquire_timeout: HumanDuration::from_secs(5),
             synchronous_commit: SynchronousCommit::Off,
             preload_name_dictionaries: true,
+            name_cache: NameCacheConfig::default(),
             context_hit_flush: HumanDuration::from_secs(5),
             maintenance: MaintenanceConfig::default(),
         }
@@ -181,9 +190,10 @@ impl DatabaseConfig {
     /// Returns [`DatabaseConfigError::ZeroMaxConnections`] when the pool is
     /// configured without a single connection,
     /// [`DatabaseConfigError::ZeroContextHitFlushCadence`] when the JSON-LD
-    /// hit-counter flush interval is zero, and
+    /// hit-counter flush interval is zero,
     /// [`DatabaseConfigError::ZeroAcquireTimeout`] when the connection acquire
-    /// deadline is zero.
+    /// deadline is zero, and [`DatabaseConfigError::NameCache`] when the name
+    /// dictionary cache has no capacity or a zero idle timeout.
     pub const fn validate(&self) -> Result<(), DatabaseConfigError> {
         if self.max_connections == 0 {
             return Err(DatabaseConfigError::ZeroMaxConnections);
@@ -199,7 +209,10 @@ impl DatabaseConfig {
         {
             return Err(DatabaseConfigError::ZeroPoolerTenantMaxConnections);
         }
-        Ok(())
+        match self.name_cache.validate() {
+            Ok(()) => Ok(()),
+            Err(error) => Err(DatabaseConfigError::NameCache(error)),
+        }
     }
 
     /// The request-path connection acquire deadline as a [`Duration`].
@@ -252,9 +265,12 @@ impl DatabaseConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{DatabaseConfig, DatabaseConfigError, PoolerConfig, SynchronousCommit};
-    use crate::maintenance_config::MaintenanceConfig;
-    use andromeda_configuration_scalars::human_duration::HumanDuration;
+    use crate::{
+        config::{DatabaseConfig, DatabaseConfigError, PoolerConfig, SynchronousCommit},
+        maintenance_config::MaintenanceConfig,
+    };
+    use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
+    use andromeda_postgresql_name_dictionary::name_cache_config::{NameCacheConfig, NameCacheConfigError};
     use std::str::FromStr;
 
     #[test]
@@ -273,6 +289,7 @@ mod tests {
             acquire_timeout: HumanDuration::from_secs(5),
             synchronous_commit: SynchronousCommit::Off,
             preload_name_dictionaries: true,
+            name_cache: NameCacheConfig::default(),
             context_hit_flush: HumanDuration::from_secs(60),
             maintenance: MaintenanceConfig::default(),
         }
@@ -320,6 +337,7 @@ mod tests {
             acquire_timeout: HumanDuration::from_secs(5),
             synchronous_commit: SynchronousCommit::Off,
             preload_name_dictionaries: true,
+            name_cache: NameCacheConfig::default(),
             context_hit_flush: HumanDuration::from_secs(0),
             maintenance: MaintenanceConfig::default(),
         };
@@ -333,6 +351,19 @@ mod tests {
             ..DatabaseConfig::default()
         };
         assert_eq!(config.validate(), Err(DatabaseConfigError::ZeroAcquireTimeout));
+    }
+
+    #[test]
+    fn an_unusable_name_cache_budget_fails_database_validation() {
+        let config = DatabaseConfig {
+            name_cache: NameCacheConfig {
+                capacity_per_dictionary: HumanByteSize::b(0),
+                ..NameCacheConfig::default()
+            },
+            ..DatabaseConfig::default()
+        };
+        assert_eq!(config.validate(), Err(DatabaseConfigError::NameCache(NameCacheConfigError::ZeroCapacity)));
+        assert_eq!(DatabaseConfig::default().validate(), Ok(()));
     }
 
     #[test]

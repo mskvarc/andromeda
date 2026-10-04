@@ -83,6 +83,7 @@ name = "andromeda"
 version = "0.1.0"
 dependencies = [
  "andromeda-broker-composition",
+ "andromeda-configuration-scalars",
  "andromeda-context-commit",
  "andromeda-context-space",
  "andromeda-entity",
@@ -1737,6 +1738,7 @@ name = "andromeda-postgresql-name-dictionary"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-configuration-scalars",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-persistence-failure",
  "andromeda-postgresql-pool",
@@ -1745,7 +1747,7 @@ dependencies = [
  "andromeda-postgresql-seaquery",
  "async-trait",
  "chrono",
- "dashmap",
+ "moka",
  "pretty_assertions",
  "sea-query",
  "sea-query-sqlx",
@@ -1754,6 +1756,8 @@ dependencies = [
  "strum",
  "thiserror 2.0.21",
  "tokio",
+ "toml",
+ "toml-comment",
 ]
 
 [[package]]

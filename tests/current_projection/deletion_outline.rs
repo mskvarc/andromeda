@@ -17,7 +17,7 @@ use andromeda_entity::deletion_outline::{DeletionOutline, DeletionWatchers};
 use andromeda_ngsi_ld_entity::reads::attribute_instance_key::AttributeInstanceKey;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_postgresql_context_store::entity::repo::EntityRepository;
-use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_lookup::NameLookup};
+use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig, name_lookup::NameLookup};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use pretty_assertions::assert_eq;
@@ -35,8 +35,8 @@ const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
 /// The broker's own entity store over the private tenant's database.
 async fn store(scope: &TenantScopedEnvironment) -> EntityRepository {
     let pool = scope.tenant_database().await.expect("the tenant database exists once an entity was written");
-    let attribute_names = Arc::new(NameCache::<AttributeName>::new(&pool)) as Arc<dyn NameLookup<AttributeName>>;
-    let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(&pool)) as Arc<dyn NameLookup<EntityTypeName>>;
+    let attribute_names = Arc::new(NameCache::<AttributeName>::new(&pool, &NameCacheConfig::default())) as Arc<dyn NameLookup<AttributeName>>;
+    let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(&pool, &NameCacheConfig::default())) as Arc<dyn NameLookup<EntityTypeName>>;
     EntityRepository::new(&pool, attribute_names, entity_type_names)
 }
 

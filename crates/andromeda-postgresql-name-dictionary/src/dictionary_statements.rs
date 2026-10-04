@@ -11,20 +11,24 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     unnest::{UnnestColumn, unnest_call},
 };
-use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, InsertStatement, OnConflict, Query, SelectStatement, error::Error as SeaQueryError};
+use sea_query::{Alias, Expr, ExprTrait, InsertStatement, OnConflict, Order, Query, SelectStatement, error::Error as SeaQueryError};
 
 /// The column that reports whether the transaction reading the dictionary has
 /// written anything yet.
 pub(crate) const SNAPSHOT_IS_COMMITTED_COLUMN: &str = "snapshot_is_committed";
 
-/// Every mapping the dictionary holds, for warming the cache.
-pub(crate) fn preload_query<N: DictionaryRelation>() -> SelectStatement {
-    Query::select().columns([N::key_column(), N::name_column()]).from(N::table()).to_owned()
-}
-
-/// The dictionary's size, as the growth bound is decided against it.
-pub(crate) fn size_query<N: DictionaryRelation>() -> SelectStatement {
-    Query::select().expr(Func::count(Expr::col(Asterisk))).from(N::table()).to_owned()
+/// At most `rows` mappings of the dictionary, for warming the cache.
+///
+/// Oldest key first: the names a tenant minted first are its core vocabulary,
+/// the ones nearly every request resolves, so they are the ones worth holding
+/// when the dictionary is larger than the cache.
+pub(crate) fn preload_query<N: DictionaryRelation>(rows: u64) -> SelectStatement {
+    Query::select()
+        .columns([N::key_column(), N::name_column()])
+        .from(N::table())
+        .order_by(N::key_column(), Order::Asc)
+        .limit(rows)
+        .to_owned()
 }
 
 /// The read a minting resolution starts with: the keys of the names the

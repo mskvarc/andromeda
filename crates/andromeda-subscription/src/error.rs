@@ -86,7 +86,6 @@ impl From<PersistenceFailure> for SubscriptionError {
             | PersistenceFailure::Undecodable
             | PersistenceFailure::Unencodable
             | PersistenceFailure::StatementUnbuildable
-            | PersistenceFailure::CapacityExceeded
             | PersistenceFailure::SchemaMismatch
             | PersistenceFailure::ContractBroken) => SubscriptionError::Persistence(fault),
         }

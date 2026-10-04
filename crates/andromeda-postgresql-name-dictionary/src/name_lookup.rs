@@ -15,7 +15,6 @@
 //! connection and runs on the dictionary's own pool, where it sees a committed
 //! snapshot.
 
-use crate::dictionary_growth::DictionaryGrowthExceeded;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_pool::{persistence_classification::classify, saturation::is_pool_saturated};
@@ -47,10 +46,6 @@ pub enum NameLookupError {
     /// 4.6.2 rejects as an entity type name.
     #[error("a stored entity_type_names.name is not a valid entity type name: {0}")]
     StoredEntityTypeName(#[source] NgsiLdReferenceError),
-    /// The names the caller asked for would take the tenant's dictionary past
-    /// its configured bound.
-    #[error(transparent)]
-    Growth(#[from] DictionaryGrowthExceeded),
 }
 
 impl NameLookupError {
@@ -63,7 +58,6 @@ impl NameLookupError {
             NameLookupError::Statement(error) => classify(error),
             NameLookupError::StatementBuild(_) => PersistenceFailure::StatementUnbuildable,
             NameLookupError::StoredAttributeName(_) | NameLookupError::StoredEntityTypeName(_) => PersistenceFailure::Undecodable,
-            NameLookupError::Growth(_) => PersistenceFailure::CapacityExceeded,
         }
     }
 }
@@ -100,15 +94,12 @@ pub trait NameLookup<N: InternedName>: Send + Sync + Debug {
     ///
     /// The caller passes the connection its own transaction holds, so the rows
     /// this creates are part of that transaction: they become visible when it
-    /// commits and are gone when it rolls back, and the bound they were admitted
-    /// against is likewise released by a rollback.
+    /// commits and are gone when it rolls back.
     ///
     /// # Errors
     ///
-    /// Returns [`NameLookupError::Growth`] when the new names would take the
-    /// dictionary past its bound, [`NameLookupError::Statement`] when a
-    /// statement fails, and one of the `Stored*` variants when a stored row is
-    /// unreadable.
+    /// Returns [`NameLookupError::Statement`] when a statement fails and one of
+    /// the `Stored*` variants when a stored row is unreadable.
     #[must_use = "name resolution must be awaited"]
     async fn resolve_or_create(&self, connection: &mut PgConnection, names: &[N]) -> Result<HashMap<N, N::Key>, NameLookupError>;
 }

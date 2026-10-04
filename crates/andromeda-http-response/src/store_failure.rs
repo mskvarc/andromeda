@@ -24,7 +24,6 @@ pub fn classify_store_failure(failure: PersistenceFailure, error: &impl Display,
         | PersistenceFailure::Undecodable
         | PersistenceFailure::Unencodable
         | PersistenceFailure::StatementUnbuildable
-        | PersistenceFailure::CapacityExceeded
         | PersistenceFailure::SchemaMismatch
         | PersistenceFailure::ContractBroken => ClassifiedReport::internal(error, summary),
     }

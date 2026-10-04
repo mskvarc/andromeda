@@ -1,11 +1,9 @@
-//! Entity type dictionary growth limit: minting new type names is bounded.
+//! Entity type dictionary growth: minting new type names is never refused.
 //!
-//! `entity_type_names` is append-only and entity type IRIs are open-world
-//! (clause 4.5.1), so any client can inflate the dictionary indefinitely
-//! exactly as it can the attribute dictionary. The bound is enforced above the
-//! database by the same cache that bounds attribute names, and it bounds
-//! creation only: a tenant whose type dictionary is already at its bound must
-//! keep serving writes of the types it already holds.
+//! Entity type IRIs are open-world (clause 4.5.1) exactly as attribute IRIs
+//! are, and the type dictionary's cache is the same implementation as the
+//! attribute dictionary's, so a write that brings a new type is accepted at any
+//! dictionary size and a write of an existing type keeps resolving it.
 
 use crate::{GENERATED_NAME_PREFIX, SUITE};
 use andromeda_test_client::test_client::TestClient;
@@ -17,12 +15,11 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-/// Types interned to push the dictionary past the bound the broker enforces.
+/// Types interned before the write under test.
 ///
-/// `DictionaryNameLimit::DEFAULT` is 10,000 entries per dictionary, and the
-/// guard refuses a batch that would cross it, so a dictionary this size refuses
-/// every further type whatever else the tenant already holds.
-const TYPES_PAST_THE_BOUND: i32 = 11_000;
+/// Past the 10,000-entry cap the broker used to enforce per dictionary, so the
+/// check fails if any such cap comes back.
+const TYPES_INTERNED_FIRST: i32 = 11_000;
 
 /// An entity of one type under the core context's default vocabulary.
 fn entity_of_type(id: &str, entity_type: &str) -> Value {
@@ -48,7 +45,7 @@ async fn discard(client: &TestClient, id: &str) {
 }
 
 #[tokio::test]
-async fn a_type_dictionary_at_its_bound_refuses_new_types_and_still_serves_the_types_it_holds() {
+async fn a_type_dictionary_past_ten_thousand_types_still_mints_new_types_and_serves_existing_ones() {
     let configuration = TestRunConfiguration::from_environment().expect("integration test configuration");
     let environment = SerializedEnvironment::acquire(&configuration)
         .await
@@ -56,7 +53,7 @@ async fn a_type_dictionary_at_its_bound_refuses_new_types_and_still_serves_the_t
     let client = environment.client();
     let pool = connect_test_database().await.expect("test database connection");
     let run = Uuid::new_v4();
-    let established_type = format!("TypeBound{}", run.simple());
+    let established_type = format!("TypeEstablished{}", run.simple());
     let novel_type = format!("TypeNovel{}", run.simple());
     let established_entity = format!("urn:ngsi-ld:test:{SUITE}:Type:established:{run}");
     let novel_entity = format!("urn:ngsi-ld:test:{SUITE}:Type:novel:{run}");
@@ -64,8 +61,6 @@ async fn a_type_dictionary_at_its_bound_refuses_new_types_and_still_serves_the_t
 
     remove_generated_types(&pool).await;
 
-    // The type has to exist before the bound is reached, because reaching the
-    // bound is exactly what stops it from being minted later.
     let established = client
         .post_entity(&entity_of_type(&established_entity, &established_type))
         .send()
@@ -75,17 +70,16 @@ async fn a_type_dictionary_at_its_bound_refuses_new_types_and_still_serves_the_t
 
     sqlx::query("INSERT INTO entity_type_names (name) SELECT $1 || generated::TEXT FROM generate_series(1, $2) AS generated ON CONFLICT (name) DO NOTHING")
         .bind(GENERATED_NAME_PREFIX)
-        .bind(TYPES_PAST_THE_BOUND)
+        .bind(TYPES_INTERNED_FIRST)
         .execute(&pool)
         .await
         .expect("interning distinct type names must not fail");
-
     let size: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entity_type_names")
         .fetch_one(&pool)
         .await
         .expect("the dictionary size must be observable");
 
-    let refused = client
+    let novel = client
         .post_entity(&entity_of_type(&novel_entity, &novel_type))
         .send()
         .await
@@ -95,9 +89,6 @@ async fn a_type_dictionary_at_its_bound_refuses_new_types_and_still_serves_the_t
         .fetch_one(&pool)
         .await
         .expect("the dictionary must be readable");
-
-    // A write that resolves only types the dictionary already holds creates
-    // nothing, so the bound does not apply to it.
     let repeated = client
         .post_entity(&entity_of_type(&repeat_entity, &established_type))
         .send()
@@ -105,8 +96,8 @@ async fn a_type_dictionary_at_its_bound_refuses_new_types_and_still_serves_the_t
         .expect("create entity request failed");
 
     // Every observation is taken before the dictionary is put back and
-    // asserted afterwards, so a failed assertion cannot leave every later
-    // write on this tenant refused for a type it was entitled to mint.
+    // asserted afterwards, so a failed assertion cannot leave eleven thousand
+    // generated types behind in the shared dictionary.
     discard(client, &established_entity).await;
     discard(client, &novel_entity).await;
     discard(client, &repeat_entity).await;
@@ -114,22 +105,12 @@ async fn a_type_dictionary_at_its_bound_refuses_new_types_and_still_serves_the_t
     pool.close().await;
 
     assert!(
-        size > i64::from(TYPES_PAST_THE_BOUND),
-        "the dictionary must be past the bound for this check to mean anything, size was {size}"
+        size > i64::from(TYPES_INTERNED_FIRST),
+        "the dictionary must be past ten thousand types for this check to mean anything, size was {size}"
     );
-    assert_ne!(
-        refused.status,
-        StatusCode::CREATED,
-        "a type minted past the bound must be refused: {:?}",
-        refused.body
-    );
-    assert_eq!(novel_types, 0, "a refused request must mint no part of its batch");
-    assert_eq!(
-        repeated.status,
-        StatusCode::CREATED,
-        "an existing type stays usable at the bound: {:?}",
-        repeated.body
-    );
+    assert_eq!(novel.status, StatusCode::CREATED, "a new type is minted at any size: {:?}", novel.body);
+    assert_eq!(novel_types, 1, "the new type is recorded exactly once");
+    assert_eq!(repeated.status, StatusCode::CREATED, "an existing type stays usable: {:?}", repeated.body);
 
     environment.finish().await.expect("releasing exclusive ownership failed");
 }

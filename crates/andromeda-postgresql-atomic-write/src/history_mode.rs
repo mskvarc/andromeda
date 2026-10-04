@@ -59,7 +59,7 @@ mod tests {
     use crate::history_mode::{HistoryPlacement, TemporalHistoryCommitMode};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-    use andromeda_postgresql_name_dictionary::name_cache::NameCache;
+    use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig};
     use andromeda_postgresql_temporal_store::{
         bulk_write_mode::BulkWriteMode,
         columnstore_capability::ColumnstoreSupport,
@@ -79,8 +79,8 @@ mod tests {
         Arc::new(TemporalRecorder::new(Arc::new(TemporalRepository::new(
             &pool,
             BulkWriteMode::default(),
-            Arc::new(NameCache::<AttributeName>::new(&pool)),
-            Arc::new(NameCache::<EntityTypeName>::new(&pool)),
+            Arc::new(NameCache::<AttributeName>::new(&pool, &NameCacheConfig::default())),
+            Arc::new(NameCache::<EntityTypeName>::new(&pool, &NameCacheConfig::default())),
             ColumnstoreSupport::Absent,
         ))))
     }

@@ -210,8 +210,8 @@ pub(super) async fn initialize_storage(
     // clone: the pass and every other Context capability share one repository.
     let cached_context_invalidation = Arc::clone(&context_repo) as Arc<dyn CachedContextInvalidation>;
 
-    let attribute_names = Arc::new(NameCache::<AttributeName>::new(&pool));
-    let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(&pool));
+    let attribute_names = Arc::new(NameCache::<AttributeName>::new(&pool, &config.database.name_cache));
+    let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(&pool, &config.database.name_cache));
     // Read the schema stamp once and hand it to both dictionaries as their
     // baseline, so a later out-of-band drop and recreate of this tenant is
     // detected as a change from a known baseline rather than adopted silently,

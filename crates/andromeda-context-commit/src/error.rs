@@ -96,7 +96,6 @@ impl From<PersistenceFailure> for CommitError {
             | PersistenceFailure::Undecodable
             | PersistenceFailure::Unencodable
             | PersistenceFailure::StatementUnbuildable
-            | PersistenceFailure::CapacityExceeded
             | PersistenceFailure::SchemaMismatch
             | PersistenceFailure::ContractBroken) => CommitError::Persistence(fault),
         }

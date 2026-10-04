@@ -60,6 +60,7 @@ tokio = { version = "1.53.2", features = ["full"] }
 shadow-rs = "2.0.0"
 
 [dev-dependencies]
+andromeda-configuration-scalars.workspace = true
 andromeda-context-commit.workspace = true
 andromeda-context-space.workspace = true
 andromeda-entity.workspace = true

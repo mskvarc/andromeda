@@ -6,8 +6,8 @@
 //! the attribute's `INTEGER` dictionary key rather than its IRI, and every
 //! relation that records an entity's types (`entities`, `temporal_entities`)
 //! stores an `INTEGER[]` of type keys. This crate owns those dictionaries: the
-//! table access, the per-tenant cache in front of each, the bound on how far
-//! one may grow, and the port the stores hold them by.
+//! table access, the bounded per-tenant cache in front of each, that cache's
+//! configuration, and the port the stores hold them by.
 //!
 //! It is a crate of its own because the dictionaries are shared substrate. The
 //! current-state store, the temporal store and the atomic committer all
@@ -18,18 +18,20 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod attribute_names;
-pub mod dictionary_growth;
+mod bounded_keys;
 pub mod dictionary_relation;
 mod dictionary_rows;
 mod dictionary_statements;
 pub mod entity_type_names;
 pub mod name_cache;
+pub mod name_cache_config;
 pub mod name_lookup;
 pub mod schema_epoch;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-configuration-scalars",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-persistence-failure",
         "andromeda-postgresql-pool",
