@@ -27,15 +27,18 @@ pub(crate) struct SelectionRule<'r> {
 }
 
 impl SelectionRule<'_> {
-    /// Whether the entity's own members -- `scope`, its `expiresAt` and the
-    /// clause 4.8 system attributes -- travel with the selected attributes.
+    /// Which of the entity's own members -- `scope` and its `expiresAt` --
+    /// travel with the selected attributes.
     ///
-    /// A `notification.attributes` list names the members a notification
-    /// carries beside `id` and `type`, and none of the entity's own members is
-    /// an attribute it can list.
+    /// Table 5.2.14.1-1 makes `notification.attributes` "a synonym for pick,
+    /// except that id, type, scope are not allowed": like a `pick` that does
+    /// not list the `scope` keyword (clause 4.21), it leaves `scope` out. The
+    /// entity's `expiresAt` is no member a `pick` decides, so it stays, as a
+    /// query's `pick` leaves it; and the clause 4.8 system attributes are
+    /// `sysAttrs`'s alone to decide, whatever the selection.
     pub(crate) const fn entity_members(self) -> EntityMembers {
         match self.attributes {
-            Some(_) => EntityMembers::Dropped,
+            Some(_) => EntityMembers::Unscoped,
             None => EntityMembers::Kept,
         }
     }
@@ -67,11 +70,14 @@ fn is_dataset_selectable(name: &AttributeName) -> bool {
     !name.as_str().starts_with(core) || coined
 }
 
-/// Whether the entity's own members are carried.
+/// Which of the entity's own members are carried.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum EntityMembers {
-    /// `scope`, `expiresAt` and the system attributes travel with the entity.
+    /// `scope` and `expiresAt` travel with the entity.
     Kept,
+    /// `expiresAt` travels and `scope` does not: the selection of a
+    /// `notification.attributes` list.
+    Unscoped,
     /// Only `id`, `type` and the selected attributes travel.
     Dropped,
 }
@@ -93,7 +99,7 @@ pub(crate) enum Selection {
 impl Selection {
     /// What `rule` selects of `state`.
     pub(crate) fn of(state: &EntityState, rule: SelectionRule<'_>) -> Selection {
-        let mut narrowed = rule.entity_members() == EntityMembers::Dropped;
+        let mut narrowed = rule.entity_members() != EntityMembers::Kept;
         let mut instances = Vec::new();
         for (name, held) in state.attributes().iter() {
             let attribute_kept = rule.keeps_attribute(name);
@@ -201,8 +207,10 @@ impl Selection {
                 }
             }
         }
+        // clone: the narrowed state owns the entity's own members it keeps
         let (scope, expires_at) = match members {
-            EntityMembers::Kept => (source.scope().cloned(), source.expires_at().cloned()), // clone: the narrowed state owns the entity's own members
+            EntityMembers::Kept => (source.scope().cloned(), source.expires_at().cloned()),
+            EntityMembers::Unscoped => (None, source.expires_at().cloned()),
             EntityMembers::Dropped => (None, None),
         };
         // clone: the narrowed state is named and typed as its source
@@ -272,12 +280,13 @@ mod tests {
     }
 
     /// A Vehicle whose `speed` holds a default and a named instance, with a
-    /// `name`, a two-instance `location` and a scope.
+    /// `name`, a two-instance `location`, a scope and an expiry.
     fn vehicle() -> EntityState {
         let document = json!([{
             "@id": "urn:ngsi-ld:Vehicle:1",
             "@type": ["https://example.com/Vehicle"],
             "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid"}],
+            "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2030-01-01T00:00:00Z"}],
             SPEED: [property(&json!(1), None), property(&json!(2), Some(NAMED))],
             NAME: [property(&json!("bus"), None)],
             LOCATION: [point(None), point(Some(NAMED))]
@@ -367,10 +376,11 @@ mod tests {
         assert!(selected.attributes().get(SPEED).is_none());
     }
 
-    /// `notification.attributes` keeps the attributes it lists, `id` and the
-    /// types, and none of the entity's own members.
+    /// Table 5.2.14.1-1 with clause 4.21: `notification.attributes`, a
+    /// synonym for a `pick` that cannot list `scope`, keeps the attributes it
+    /// lists, `id`, the types and the entity's expiry, and leaves `scope` out.
     #[test]
-    fn the_listed_attributes_travel_without_the_entity_members() {
+    fn the_listed_attributes_travel_with_the_expiry_and_without_the_scope() {
         let state = vehicle();
         let projection = Projection::default();
         let listed: Vec<AttributeName> = vec![SPEED.parse().expect("valid attribute name")];
@@ -378,14 +388,55 @@ mod tests {
         assert!(matches!(
             selection,
             Selection::Narrowed {
-                members: EntityMembers::Dropped,
+                members: EntityMembers::Unscoped,
                 ..
             }
         ));
         let selected = selection.apply(&state);
         assert_eq!(selected.attributes().names().map(AttributeName::as_str).collect::<Vec<_>>(), vec![SPEED]);
         assert!(selected.scope().is_none());
+        assert!(state.expires_at().is_some());
+        assert_eq!(selected.expires_at(), state.expires_at());
         assert_eq!(selected.id(), state.id());
+    }
+
+    /// A rule listing every attribute still narrows the entity's own members.
+    #[test]
+    fn a_list_naming_every_attribute_is_no_whole_selection() {
+        let state = vehicle();
+        let projection = Projection::default();
+        let listed: Vec<AttributeName> = [SPEED, NAME, LOCATION].iter().map(|name| name.parse().expect("valid attribute name")).collect();
+        let selection = Selection::of(&state, rule(Some(&listed), None, &projection));
+        assert!(matches!(
+            selection,
+            Selection::Narrowed {
+                members: EntityMembers::Unscoped,
+                ..
+            }
+        ));
+    }
+
+    /// The identity selection carries neither the scope nor the expiry.
+    #[test]
+    fn the_identity_carries_no_entity_member() {
+        let state = vehicle();
+        let selected = Selection::identity().apply(&state);
+        assert!(selected.attributes().is_empty());
+        assert!(selected.scope().is_none());
+        assert!(selected.expires_at().is_none());
+        assert_eq!(selected.id(), state.id());
+    }
+
+    /// Without a `notification.attributes` list the entity keeps its scope
+    /// and expiry beside the selected instances.
+    #[test]
+    fn a_dataset_selection_keeps_the_scope_and_the_expiry() {
+        let state = vehicle();
+        let projection = Projection::default();
+        let none = selectors(&["@none"]);
+        let selected = Selection::of(&state, rule(None, Some(&none), &projection)).apply(&state).into_owned();
+        assert!(selected.scope().is_some());
+        assert_eq!(selected.expires_at(), state.expires_at());
     }
 
     /// An attribute kept whole is shared with the source, not copied.

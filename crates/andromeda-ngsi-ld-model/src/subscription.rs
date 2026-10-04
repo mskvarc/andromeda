@@ -196,6 +196,15 @@ pub struct NotificationParams {
     pub status: Option<NotificationStatus>,
 }
 
+impl NotificationParams {
+    /// The depth a `join` follows: `joinLevel` when given, otherwise the
+    /// default of one hop (Table 5.2.14.1-1: "Default is 1").
+    #[must_use]
+    pub fn effective_join_level(&self) -> NonZeroU32 {
+        self.join_level.unwrap_or(NonZeroU32::MIN)
+    }
+}
+
 /// The entities and attributes whose changes a subscription reacts to
 /// (ETSI GS CIM 009 clause 5.2.12, `entities` / `watchedAttributes` /
 /// `notificationTrigger`).
@@ -413,6 +422,17 @@ mod tests {
         let parsed = serde_json::from_value::<NotificationParams>(raw).expect("parses");
 
         assert_eq!(parsed.join_level.map(NonZeroU32::get), Some(7));
+        assert_eq!(parsed.effective_join_level().get(), 7);
+    }
+
+    /// Table 5.2.14.1-1: an absent `joinLevel` follows one hop.
+    #[test]
+    fn an_absent_notification_join_level_follows_one_hop() {
+        let raw = serde_json::json!({"endpoint": {"uri": "https://example.com/notify"}, "join": "flat"});
+
+        let parsed = serde_json::from_value::<NotificationParams>(raw).expect("parses");
+
+        assert_eq!(parsed.effective_join_level().get(), 1);
     }
 
     #[test]

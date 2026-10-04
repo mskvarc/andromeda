@@ -47,6 +47,8 @@ pub mod interval;
 mod interval_candidates;
 /// Matching an entity state against an interval subscription.
 mod interval_match;
+/// What one periodic notification carries of the entities it matched.
+mod interval_payload;
 /// The immutable notification event a write produces.
 pub mod notification_event;
 /// The invariants notification delivery relies on.

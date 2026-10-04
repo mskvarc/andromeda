@@ -35,7 +35,7 @@ use andromeda_federation::FederationService;
 use andromeda_jsonld::operation_hit_scope::run_in_operation_scope;
 use andromeda_notification::{
     delivery_config::DeliveryConfig,
-    interval::IntervalNotificationOperation,
+    interval::{IntervalNotificationDeps, IntervalNotificationOperation},
     processor::{NotificationProcessor, NotificationProcessorDeps},
 };
 use andromeda_subscription::{change::SubscriptionChange, store::SubscriptionStore};
@@ -56,19 +56,17 @@ use tokio::sync::{
     broadcast::error::{RecvError, TryRecvError},
 };
 
-/// Compose the notification policy operation one tenant evaluates its
-/// subscriptions with.
+/// Compose the query service one tenant's notifications resolve the Linked
+/// Entities of their `join` with, change-driven and periodic alike.
 ///
 /// A notification's join resolves Linked Entities exactly as a request's does,
-/// so the operation owns a query service composed like the request-facing one.
-pub(super) fn compose_notification_processor(
+/// so the service is composed like the request-facing one.
+pub(super) fn compose_notification_query(
     storage: &TenantStorage,
     forwarding: &Arc<FederationService>,
-    transport: &Arc<TransportDispatcher>,
-    subscriptions: &Arc<dyn SubscriptionStore>,
     entity_config: &EntityConfig,
-) -> Arc<NotificationProcessor> {
-    let notification_query = Arc::new(EntityQueryService::new(
+) -> Arc<EntityQueryService> {
+    Arc::new(EntityQueryService::new(
         Arc::clone(&storage.entity_ports.reader),
         Arc::clone(&storage.entity_ports.query),
         storage.engine.clone(),  // clone: the notification query owns its engine handle.
@@ -85,7 +83,17 @@ pub(super) fn compose_notification_processor(
         // memory from its stored form, admitted once when it was written, so a
         // lower limit configured since never refuses a stored subscription.
         entity_config.geometry_census_limits(),
-    ));
+    ))
+}
+
+/// Compose the notification policy operation one tenant evaluates its
+/// subscriptions with.
+pub(super) fn compose_notification_processor(
+    storage: &TenantStorage,
+    notification_query: Arc<EntityQueryService>,
+    transport: &Arc<TransportDispatcher>,
+    subscriptions: &Arc<dyn SubscriptionStore>,
+) -> Arc<NotificationProcessor> {
     Arc::new(NotificationProcessor::new(NotificationProcessorDeps {
         live_target: storage.live_target.clone(), // clone: worker startup reloads the durable live-branch cache.
         sub_repo: Arc::clone(subscriptions),      // clone: the processor and the interval worker share one store.
@@ -139,6 +147,17 @@ pub(super) fn register_notification_workers(
     register_notification_delivery(supervisor, pool, config, processor, drive)
 }
 
+/// What the periodic sweep reads and delivers through beside the tenant's
+/// storage.
+pub(super) struct IntervalDelivery {
+    /// The tenant's entity subscriptions.
+    pub(super) subscriptions: Arc<dyn SubscriptionStore>,
+    /// The query service the sweep resolves `join` Linked Entities with.
+    pub(super) notification_query: Arc<EntityQueryService>,
+    /// The dispatcher every worker delivers through.
+    pub(super) transport: Arc<TransportDispatcher>,
+}
+
 /// Register the sweep delivering one tenant's `timeInterval` entity
 /// subscriptions.
 ///
@@ -148,21 +167,21 @@ pub(super) fn register_notification_workers(
 pub(super) fn register_interval_notification(
     supervisor: &TaskSupervisor,
     storage: &TenantStorage,
-    transport: &Arc<TransportDispatcher>,
-    subscriptions: Arc<dyn SubscriptionStore>,
+    delivery: IntervalDelivery,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
     interval_max_sleep: Duration,
     pacer: Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
-    let operation = Arc::new(IntervalNotificationOperation::new(
-        storage.live_target.clone(), // clone: interval delivery and expiry both operate on the tenant's live branch.
-        subscriptions,
-        Arc::clone(&storage.entity_ports.reader),
-        Arc::clone(&storage.entity_ports.payload_pages),
-        storage.engine.clone(), // clone: interval policy owns its engine handle.
-        Arc::clone(transport),  // clone: every worker delivers through one dispatcher.
-        storage.tenant.clone(), // clone: interval policy owns its tenant partition.
-    ));
+    let operation = Arc::new(IntervalNotificationOperation::new(IntervalNotificationDeps {
+        target: storage.live_target.clone(), // clone: interval delivery and expiry both operate on the tenant's live branch.
+        sub_repo: delivery.subscriptions,
+        entity_reader: Arc::clone(&storage.entity_ports.reader),
+        entity_pages: Arc::clone(&storage.entity_ports.payload_pages),
+        entity_query: delivery.notification_query,
+        engine: storage.engine.clone(), // clone: interval policy owns its engine handle.
+        transport: delivery.transport,
+        tenant: storage.tenant.clone(), // clone: interval policy owns its tenant partition.
+    }));
     let (interval_wake, receiver) = wake_channel();
     register_periodic_wake(
         supervisor,

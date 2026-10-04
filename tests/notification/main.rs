@@ -13,5 +13,8 @@ mod delivery_after_commit;
 mod expired_instances;
 mod helpers;
 mod join;
+mod join_per_subscription;
 mod mqtt;
+mod notified_entity_members;
+mod periodic_payload;
 mod show_changes;

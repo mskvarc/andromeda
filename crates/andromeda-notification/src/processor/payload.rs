@@ -7,11 +7,12 @@ use crate::{
     error::NotificationError,
     processor::payload::{
         cache::{NotificationCompactionCache, NotifiedSource, Reading, RenderingKey},
+        carried_entities::{CarriedShape, carried_entities},
         compaction::compact_notified_state,
         entity_instants::{ExpiryStamp, notified_instants},
         join::resolve_join_targets,
-        notified_entity::{DeletedRendering, NotifiedEntity, rendered_entity},
-        selection::{EntityMembers, Selection, SelectionRule},
+        notified_entity::{DeletedRendering, NotifiedEntity},
+        selection::{Selection, SelectionRule},
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -24,19 +25,13 @@ use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
     notification::SysAttrsSnapshot,
 };
-use andromeda_ngsi_ld_render::{
-    entity_response::InlineJoin,
-    notification_conformance::amend_notification_entities,
-    notification_entity::{StampedInstants, TargetSpelling},
-    notified_changes::HeldAttributes,
-    structural_projection::StructuralProjection,
-};
+use andromeda_ngsi_ld_render::{notification_entity::TargetSpelling, notified_changes::HeldAttributes, structural_projection::StructuralProjection};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, sys_attrs::SysAttrsInclusion};
 use andromeda_subscription::compiled::CompiledSubscription;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde_json::Value;
-use std::{iter::once, sync::Arc};
+use std::{slice::from_ref, sync::Arc};
 use tracing::debug;
 
 /// Everything one subscription's notification of one change is built from.
@@ -111,42 +106,43 @@ pub(super) async fn build_notification_data(params: &NotificationBuildParams<'_>
 }
 
 /// The entities a notification carries: the notified entity, with the Linked
-/// Entities of a `join` nested into it for `inline` or written beside it for
-/// `flat` (clause 4.5.23), each in the subscription's format.
+/// Entities of a `join` (clause 4.5.23), written as [`carried_entities`]
+/// writes every notification's entities.
 ///
-/// Clause 4.21, the `id` / `type` / `scope` half of the subscription's
-/// projection, narrows the notified entity's `type` and `scope`; clause 5.8.6
-/// holds `id` back from that rule, since a notification carries Entities and
-/// an Entity is only actionable with its `id` (clause 4.5.1). Clause 5.8.6
-/// puts the `ngsildConformance` amendment last, after the format rendering and
-/// after `pick`, `omit` and `join`, so the fallback tables of clause 4.3.6.8 run
-/// over the representation the subscriber will actually receive.
-///
-/// An entity deletion that reports every Attribute deleted names no target to
-/// join: each Relationship it carries is reported as the NGSI-LD Null.
-async fn notification_payload(notified: &NotifiedEntity, params: &NotificationBuildParams<'_>, context: &ContextSpec) -> Result<Vec<Value>, NotificationError> {
+/// An entity deletion resolves no join. Without `showChanges` clause 5.8.6
+/// provides "only the deletedAt system property" of the deleted entity, and
+/// with it every Attribute, each Relationship among them, is reported as the
+/// NGSI-LD Null, which names no target.
+async fn notification_payload(
+    rooted: &RootedNotification,
+    params: &NotificationBuildParams<'_>,
+    context: &ContextSpec,
+) -> Result<Vec<Value>, NotificationError> {
     let sub = params.sub;
-    let format = sub.notification_format.unwrap_or_default();
-    let projection = StructuralProjection::from(&sub.notification_projection);
-    let linked = match (sub.notification_join, notified.held) {
-        (Some(JoinMode::Flat | JoinMode::Inline), HeldAttributes::Current) => resolve_join_targets(&notified.entity, params, context).await,
-        (Some(JoinMode::Flat | JoinMode::Inline | JoinMode::None) | None, HeldAttributes::Current | HeldAttributes::Deleted) => None,
-    };
-    let payload = match (sub.notification_join, &linked) {
-        (Some(JoinMode::Inline), Some(linked)) => {
-            let join = InlineJoin { linked, projection: None };
-            vec![notified.render(format, TargetSpelling::Decoded, Some(join), projection)?]
+    let linked = match (sub.notification_join, params.change.lifecycle) {
+        (Some(JoinMode::Flat | JoinMode::Inline), EntityLifecycle::Created | EntityLifecycle::Modified) => {
+            resolve_join_targets(&rooted.notified.entity, &rooted.root, params, context).await
         }
-        (Some(JoinMode::Flat), Some(linked)) => once(notified.render(format, TargetSpelling::Decoded, None, projection))
-            .chain(
-                linked
-                    .values()
-                    .map(|entity| rendered_entity(entity, &StampedInstants::default(), format, TargetSpelling::Decoded)),
-            )
-            .collect::<Result<_, _>>()?,
-        (Some(JoinMode::Flat | JoinMode::Inline | JoinMode::None) | None, _) => vec![notified.render(format, TargetSpelling::Decoded, None, projection)?],
+        (Some(JoinMode::Flat | JoinMode::Inline), EntityLifecycle::Deleted)
+        | (Some(JoinMode::None) | None, EntityLifecycle::Created | EntityLifecycle::Modified | EntityLifecycle::Deleted) => None,
     };
-    Ok(amend_notification_entities(payload, sub.ngsild_conformance, format))
+    let shape = CarriedShape {
+        format: sub.notification_format.unwrap_or_default(),
+        join: sub.notification_join,
+        targets: TargetSpelling::Decoded,
+        projection: StructuralProjection::from(&sub.notification_projection),
+        conformance: sub.ngsild_conformance,
+    };
+    carried_entities(from_ref(&rooted.notified), linked.as_deref(), shape)
+}
+
+/// The notified entity, and the key of the rendering it was written from,
+/// which the Linked Entities of its `join` are resolved for.
+struct RootedNotification {
+    /// The notified entity.
+    notified: NotifiedEntity,
+    /// The key of its rendering.
+    root: RenderingKey,
 }
 
 /// One subscription's compaction of the states of one change.
@@ -162,29 +158,27 @@ struct Rendering<'r, 'c> {
 }
 
 impl Rendering<'_, '_> {
-    /// The compact rendering of `selection` of `state`, shared with every
+    /// The key of compacting `selection` of the `source` state under the
+    /// subscription's context.
+    fn key(&self, source: NotifiedSource, selection: Selection, reading: Reading, sys_attrs: SysAttrsInclusion) -> RenderingKey {
+        RenderingKey::new(source, selection, self.context, sys_attrs, reading)
+    }
+
+    /// The compact rendering `key` names of `state`, shared with every
     /// notification of the change asking for the same.
-    async fn render(
-        &self,
-        source: NotifiedSource,
-        state: &EntityState,
-        selection: Selection,
-        reading: Reading,
-        sys_attrs: SysAttrsInclusion,
-    ) -> Result<Arc<Entity>, NotificationError> {
-        // clone: the cache key owns the selection the compaction also reads
-        let key = RenderingKey::new(source, selection.clone(), self.context, sys_attrs, reading);
-        let (selection, compactor, engine) = (&selection, self.compactor, self.engine);
+    async fn render(&self, key: &RenderingKey, state: &EntityState) -> Result<Arc<Entity>, NotificationError> {
+        let (compactor, engine) = (self.compactor, self.engine);
+        // clone: the cache owns the key of every rendering it holds, and the caller keeps its own
         self.cache
-            .rendering(key, move || async move {
-                let selected = selection.apply(state);
-                let now = match reading {
+            .rendering(key.clone(), move || async move {
+                let selected = key.selection().apply(state);
+                let now = match key.reading() {
                     Reading::StandingAt(now) => now,
                     Reading::AsRecorded => DateTime::<Utc>::MIN_UTC,
                 };
                 let read = EntityRead {
                     id_override: None,
-                    sys_attrs,
+                    sys_attrs: key.sys_attrs(),
                     now,
                 };
                 compact_notified_state(compactor, engine, &selected, &read).await
@@ -201,72 +195,68 @@ impl Rendering<'_, '_> {
 /// whichever clause 5.2.12 trigger matched the subscription, since an entity
 /// deletion reaches an `attributeDeleted` subscriber too and owes it the same
 /// `deletedAt`-only document. The Attribute instances a surviving entity lost
-/// are reported beside the ones it holds. A subscription asking for `sysAttrs`
-/// has the entity's own system times written on it.
-async fn notified_entity(params: &NotificationBuildParams<'_>, rendering: &Rendering<'_, '_>) -> Result<NotifiedEntity, NotificationError> {
+/// are reported beside the ones it holds.
+///
+/// Clause 5.8.6 stamps every entity deletion with `deletedAt`, and Table
+/// 5.2.14.1-1 gives a subscription asking for `sysAttrs` the entity's own
+/// `createdAt` and `modifiedAt`; neither depends on which attributes the
+/// subscription selects, so a `notification.attributes` list changes neither.
+async fn notified_entity(params: &NotificationBuildParams<'_>, rendering: &Rendering<'_, '_>) -> Result<RootedNotification, NotificationError> {
     let sub = params.sub;
     let rule = subscription_rule(sub);
     let standing = Reading::StandingAt(params.now);
-    let (instants, deleted_at) = match rule.entity_members() {
-        EntityMembers::Kept => {
-            let instants = match sub.notification_sys_attrs {
-                SysAttrsInclusion::Include => params.sys_attrs,
-                SysAttrsInclusion::Strip => None,
-            };
-            (instants, Some(params.occurred_at))
-        }
-        EntityMembers::Dropped => (None, None),
+    let instants = match sub.notification_sys_attrs {
+        SysAttrsInclusion::Include => params.sys_attrs,
+        SysAttrsInclusion::Strip => None,
     };
     Ok(match params.change.lifecycle {
-        EntityLifecycle::Deleted if !sub.notification_show_changes => NotifiedEntity {
-            entity: rendering
-                .render(
-                    NotifiedSource::Notified,
-                    params.notified,
-                    Selection::identity(),
-                    standing,
-                    SysAttrsInclusion::Strip,
-                )
-                .await?,
-            stamped: notified_instants(instants, ExpiryStamp::Omitted, deleted_at),
-            held: HeldAttributes::Current,
-            deleted: None,
-            previous: None,
-        },
-        EntityLifecycle::Deleted => NotifiedEntity {
-            entity: rendering
-                .render(
-                    NotifiedSource::Notified,
-                    params.notified,
-                    Selection::of(params.notified, rule),
-                    standing,
-                    sub.notification_sys_attrs,
-                )
-                .await?,
-            stamped: notified_instants(instants, ExpiryStamp::Written, deleted_at),
-            held: HeldAttributes::Deleted,
-            deleted: None,
-            previous: previous_rendering(params, rendering).await,
-        },
-        EntityLifecycle::Created | EntityLifecycle::Modified => NotifiedEntity {
-            entity: rendering
-                .render(
-                    NotifiedSource::Notified,
-                    params.notified,
-                    Selection::of(params.notified, rule),
-                    standing,
-                    sub.notification_sys_attrs,
-                )
-                .await?,
-            stamped: notified_instants(instants, ExpiryStamp::Written, None),
-            held: HeldAttributes::Current,
-            deleted: if params.change.deletes_instances() {
-                deleted_rendering(params, rendering, rule).await?
-            } else {
-                None
-            },
-            previous: previous_rendering(params, rendering).await,
-        },
+        EntityLifecycle::Deleted if !sub.notification_show_changes => {
+            let root = rendering.key(NotifiedSource::Notified, Selection::identity(), standing, SysAttrsInclusion::Strip);
+            let notified = NotifiedEntity {
+                entity: rendering.render(&root, params.notified).await?,
+                stamped: notified_instants(instants, ExpiryStamp::Omitted, Some(params.occurred_at)),
+                held: HeldAttributes::Current,
+                deleted: None,
+                previous: None,
+            };
+            RootedNotification { notified, root }
+        }
+        EntityLifecycle::Deleted => {
+            let root = rendering.key(
+                NotifiedSource::Notified,
+                Selection::of(params.notified, rule),
+                standing,
+                sub.notification_sys_attrs,
+            );
+            let notified = NotifiedEntity {
+                entity: rendering.render(&root, params.notified).await?,
+                stamped: notified_instants(instants, ExpiryStamp::Written, Some(params.occurred_at)),
+                held: HeldAttributes::Deleted,
+                deleted: None,
+                previous: previous_rendering(params, rendering).await,
+            };
+            RootedNotification { notified, root }
+        }
+        EntityLifecycle::Created | EntityLifecycle::Modified => {
+            let root = rendering.key(
+                NotifiedSource::Notified,
+                Selection::of(params.notified, rule),
+                standing,
+                sub.notification_sys_attrs,
+            );
+            let notified = NotifiedEntity {
+                entity: rendering.render(&root, params.notified).await?,
+                stamped: notified_instants(instants, ExpiryStamp::Written, None),
+                held: HeldAttributes::Current,
+                deleted: if params.change.deletes_instances() {
+                    deleted_rendering(params, rendering, rule).await?
+                } else {
+                    None
+                },
+                previous: previous_rendering(params, rendering).await,
+            };
+            RootedNotification { notified, root }
+        }
     })
 }
 
@@ -295,9 +285,8 @@ async fn deleted_rendering(
     let Some(selection) = Selection::deleted(previous, params.notified, deleted, rule) else {
         return Ok(None);
     };
-    let instances = rendering
-        .render(NotifiedSource::Previous, previous, selection, Reading::AsRecorded, sub.notification_sys_attrs)
-        .await?;
+    let key = rendering.key(NotifiedSource::Previous, selection, Reading::AsRecorded, sub.notification_sys_attrs);
+    let instances = rendering.render(&key, previous).await?;
     let deleted_at = match sub.notification_sys_attrs {
         SysAttrsInclusion::Include => Some(params.occurred_at),
         SysAttrsInclusion::Strip => None,
@@ -320,10 +309,8 @@ async fn previous_rendering(params: &NotificationBuildParams<'_>, rendering: &Re
         EntityLifecycle::Deleted => Selection::Whole,
         EntityLifecycle::Created | EntityLifecycle::Modified => Selection::touched(previous, params.change),
     };
-    match rendering
-        .render(NotifiedSource::Previous, previous, selection, Reading::AsRecorded, SysAttrsInclusion::Strip)
-        .await
-    {
+    let key = rendering.key(NotifiedSource::Previous, selection, Reading::AsRecorded, SysAttrsInclusion::Strip);
+    match rendering.render(&key, previous).await {
         Ok(previous) => Some(previous),
         Err(error) => {
             debug!(%error, "the previous state of a showChanges notification could not be compacted");
@@ -377,15 +364,14 @@ mod tests {
 
         let first_context = engine.compactor(&core);
         let first_compactor = EntityCompactor::new(&first_context);
-        let first = Rendering {
+        let first_rendering = Rendering {
             cache: &cache,
             engine: &engine,
             context: None,
             compactor: &first_compactor,
-        }
-        .render(NotifiedSource::Notified, &state, Selection::Whole, reading, SysAttrsInclusion::Strip)
-        .await
-        .expect("the first subscription's rendering");
+        };
+        let whole = first_rendering.key(NotifiedSource::Notified, Selection::Whole, reading, SysAttrsInclusion::Strip);
+        let first = first_rendering.render(&whole, &state).await.expect("the first subscription's rendering");
 
         let second_context = engine.compactor(&core);
         let second_compactor = EntityCompactor::new(&second_context);
@@ -395,10 +381,7 @@ mod tests {
             context: None,
             compactor: &second_compactor,
         };
-        let second = second_rendering
-            .render(NotifiedSource::Notified, &state, Selection::Whole, reading, SysAttrsInclusion::Strip)
-            .await
-            .expect("the second subscription's rendering");
+        let second = second_rendering.render(&whole, &state).await.expect("the second subscription's rendering");
         assert!(Arc::ptr_eq(&first, &second), "one rendering serves both subscriptions");
         // No term names the attribute under the core context, so it keeps its IRI.
         let Some(AttributeValue::Single(speed)) = first.attrs.get("https://example.com/speed") else {
@@ -409,10 +392,8 @@ mod tests {
         };
         pretty_assertions::assert_eq!(speed.value, NgsiLdValue::Json(json!(80)));
 
-        let identity = second_rendering
-            .render(NotifiedSource::Notified, &state, Selection::identity(), reading, SysAttrsInclusion::Strip)
-            .await
-            .expect("another selection's rendering");
+        let identity_key = second_rendering.key(NotifiedSource::Notified, Selection::identity(), reading, SysAttrsInclusion::Strip);
+        let identity = second_rendering.render(&identity_key, &state).await.expect("another selection's rendering");
         assert!(!Arc::ptr_eq(&first, &identity), "another selection is rendered on its own");
         assert!(identity.attrs.is_empty(), "{identity:?}");
         pretty_assertions::assert_eq!(identity.id.as_str(), "urn:ngsi-ld:Vehicle:1");
@@ -428,12 +409,14 @@ mod tests {
 
 /// Per-event memoization of renderings and linked-entity resolutions.
 pub(super) mod cache;
+/// The entities one notification carries, joined and amended.
+pub(crate) mod carried_entities;
 /// Compaction shared by both notification paths.
 pub(crate) mod compaction;
 /// The entity's own clause 4.8 system attributes in a notified entity.
 pub(crate) mod entity_instants;
 /// The Linked Entities a subscription's `join` reaches.
-mod join;
+pub(crate) mod join;
 /// A notified entity on its way into the subscription's format.
 pub(crate) mod notified_entity;
 /// What a notification reports of each kind of change, as the typed walk writes it.

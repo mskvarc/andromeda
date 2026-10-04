@@ -7,7 +7,10 @@
 //! computed once per change and shared, which is why a key names everything a
 //! rendering depends on and nothing else.
 
-use crate::{error::NotificationError, processor::payload::selection::Selection};
+use crate::{
+    error::NotificationError,
+    processor::payload::{join::report_unresolved, selection::Selection},
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -25,7 +28,6 @@ use std::{
     slice::from_ref,
     sync::Arc,
 };
-use tracing::warn;
 
 /// The Linked Entities one notified entity reaches, keyed by identifier in the
 /// traversal's first-encounter order (clause 4.5.23.3).
@@ -95,19 +97,51 @@ impl RenderingKey {
             reading,
         }
     }
+
+    /// What of the state is compacted.
+    pub(crate) const fn selection(&self) -> &Selection {
+        &self.selection
+    }
+
+    /// Whether the instances' system attributes are written.
+    pub(crate) const fn sys_attrs(&self) -> SysAttrsInclusion {
+        self.instants.0
+    }
+
+    /// The instant the state is read at.
+    pub(crate) const fn reading(&self) -> Reading {
+        self.reading
+    }
 }
 
 /// Everything one linked-entity resolution depends on.
+///
+/// Clause 5.7.1.5 follows the Relationships among the "returned Attributes",
+/// and what a notification returns of an entity is its subscription's
+/// selection (clause 5.8.6: `notification.attributes`, `pick`, `omit` and the
+/// `datasetId` instances), so the traversal is keyed on the rendering it
+/// starts from rather than on the entity alone: two subscriptions selecting
+/// the same instances share one traversal, and two selecting differently
+/// never read each other's.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct LinkedKey {
-    /// The entity whose links are followed.
-    entity: Identifier,
+pub(crate) struct LinkedKey {
+    /// The rendering of the notified entity whose links are followed.
+    root: RenderingKey,
     /// How many levels are followed (clause 4.5.23).
     join_level: NonZeroU32,
     /// Whether the linked entities carry their system attributes.
     instants: InstantsKey,
-    /// The subscription's `jsonldContext`, `None` for the core context.
-    context: Option<IriBuf>,
+}
+
+impl LinkedKey {
+    /// The key of following the links of the rendering `root` names.
+    pub(crate) const fn new(root: RenderingKey, join_level: NonZeroU32, sys_attrs: SysAttrsInclusion) -> LinkedKey {
+        LinkedKey {
+            root,
+            join_level,
+            instants: InstantsKey(sys_attrs),
+        }
+    }
 }
 
 /// Cache shared across every notification produced for one change event.
@@ -140,42 +174,25 @@ impl NotificationCompactionCache {
     }
 }
 
-/// The entities `main_entity` links to, resolved once per change for every
-/// notification asking for the same join.
+/// The entities `main_entity`, the rendering `key` starts from, links to,
+/// resolved once per change for every notification asking for the same join
+/// of the same rendering.
 pub(super) async fn resolve_linked_cached(
     target: &ContextTarget,
     entity_query: &EntityQueryService,
     main_entity: &Entity,
-    join_level: NonZeroU32,
-    sys_attrs: SysAttrsInclusion,
-    context: (&ContextSpec, Option<&IriBuf>),
+    key: LinkedKey,
+    context: &ContextSpec,
     cache: &NotificationCompactionCache,
 ) -> Result<LinkedEntities, NotificationError> {
-    let (spec, context_iri) = context;
-    let key = LinkedKey {
-        entity: main_entity.id.clone(), // clone: the key owns the identifier it names
-        join_level,
-        instants: InstantsKey(sys_attrs),
-        context: context_iri.cloned(), // clone: the key owns the context it names
-    };
     if let Some(hit) = cache.linked_entities.get(&key) {
         return Ok(Arc::clone(&hit));
     }
     let resolution = entity_query
-        .resolve_linked_entities(target, from_ref(main_entity), join_level, sys_attrs, spec, &HashSet::new())
+        .resolve_linked_entities(target, from_ref(main_entity), key.join_level, key.instants.0, context, &HashSet::new())
         .await
         .map_err(NotificationError::from)?;
-    // A notification has no response to carry a clause 6.3.17 warning on, so an
-    // unresolvable Linked Entity is reported to the operator instead of the
-    // subscriber, and the notification goes out with the entity simply absent.
-    for failure in &resolution.failures {
-        warn!(
-            entity = %failure.id,
-            condition = %failure.kind,
-            detail = %failure.detail,
-            "linked entity left unresolved in a notification payload"
-        );
-    }
+    report_unresolved(&resolution.failures);
     let linked = Arc::new(resolution.entities);
     Ok(Arc::clone(&cache.linked_entities.entry(key).or_insert(linked)))
 }
@@ -183,13 +200,14 @@ pub(super) async fn resolve_linked_cached(
 #[cfg(test)]
 mod tests {
     use crate::processor::payload::{
-        cache::{NotificationCompactionCache, NotifiedSource, Reading, RenderingKey},
-        selection::Selection,
+        cache::{LinkedKey, NotificationCompactionCache, NotifiedSource, Reading, RenderingKey},
+        selection::{EntityMembers, Selection},
     };
+    use andromeda_ngsi_ld_entity::reads::attribute_instance_key::AttributeInstanceKey;
     use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use serde_json::json;
-    use std::sync::Arc;
+    use std::{num::NonZeroU32, sync::Arc};
 
     fn entity(id: &str) -> Entity {
         serde_json::from_value(json!({"id": id, "type": "Thing"})).expect("entity")
@@ -220,5 +238,34 @@ mod tests {
             .await
             .expect("another rendering");
         pretty_assertions::assert_eq!(other.id.as_str(), "urn:ngsi-ld:T:2");
+    }
+
+    /// The rendering of one attribute of the notified entity, as a
+    /// `notification.attributes` list selects it.
+    fn listed(attribute: &str) -> RenderingKey {
+        let selection = Selection::Narrowed {
+            instances: vec![AttributeInstanceKey {
+                attr: attribute.parse().expect("valid attribute name"),
+                dataset_id: None,
+            }],
+            members: EntityMembers::Unscoped,
+        };
+        RenderingKey::new(NotifiedSource::Notified, selection, None, SysAttrsInclusion::Strip, Reading::AsRecorded)
+    }
+
+    /// Clause 5.7.1.5 with clause 5.8.6: the Linked Entities follow the
+    /// Relationships a subscription's selection returned, so two subscriptions
+    /// selecting different attributes of one entity resolve apart, and two
+    /// selecting the same share one resolution.
+    #[test]
+    fn a_linked_resolution_is_keyed_by_the_rendering_it_starts_from() {
+        let one = NonZeroU32::MIN;
+        let owner = LinkedKey::new(listed("https://example.com/owner"), one, SysAttrsInclusion::Strip);
+        let speed = LinkedKey::new(listed("https://example.com/speed"), one, SysAttrsInclusion::Strip);
+        assert_ne!(owner, speed);
+        assert_eq!(owner, LinkedKey::new(listed("https://example.com/owner"), one, SysAttrsInclusion::Strip));
+        let deeper = NonZeroU32::new(2).expect("a positive depth");
+        assert_ne!(owner, LinkedKey::new(listed("https://example.com/owner"), deeper, SysAttrsInclusion::Strip));
+        assert_ne!(owner, LinkedKey::new(listed("https://example.com/owner"), one, SysAttrsInclusion::Include));
     }
 }

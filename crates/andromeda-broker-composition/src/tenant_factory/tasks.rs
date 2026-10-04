@@ -23,7 +23,13 @@ use crate::tenant_factory::{
     tasks::{
         csource_notification::{CsourceNotificationStreams, register_csource_notification_workers},
         discovery_census::register_discovery_census_fold,
-        entity_notification::{compose_notification_processor, register_interval_notification, register_notification_workers},
+        entity_notification::{
+            IntervalDelivery,
+            compose_notification_processor,
+            compose_notification_query,
+            register_interval_notification,
+            register_notification_workers,
+        },
         expiry::register_expiry_workers,
         maintenance::{register_entity_side_effects, register_spatial_workers},
         notification_delivery::DeliveryDrainDrive,
@@ -163,7 +169,13 @@ pub(super) fn supervise_tasks(
     // clone: both subscription stores intern attribute lists through the tenant's one dictionary.
     let entity_subscriptions = Arc::new(SubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
     let csource_subscriptions = Arc::new(CsourceSubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
-    let notification_processor = compose_notification_processor(storage, &services.state.forwarding, transport, &entity_subscriptions, &config.entity);
+    let notification_query = compose_notification_query(storage, &services.state.forwarding, &config.entity);
+    let notification_processor = compose_notification_processor(
+        storage,
+        Arc::clone(&notification_query), // clone: change-driven and periodic notifications resolve their joins through one service.
+        transport,
+        &entity_subscriptions,
+    );
     // clone: the periodic sweep subscribes to the same change stream so a new or
     // amended timeInterval subscription wakes it, while the event-driven workers
     // own the sender.
@@ -184,8 +196,11 @@ pub(super) fn supervise_tasks(
     register_interval_notification(
         &task_supervisor,
         storage,
-        transport,
-        entity_subscriptions,
+        IntervalDelivery {
+            subscriptions: entity_subscriptions,
+            notification_query,
+            transport: Arc::clone(transport), // clone: every worker delivers through one dispatcher.
+        },
         interval_subscription_changes,
         config.notifications.interval_max_sleep.duration(),
         Arc::clone(&pacer), // clone: every background pass of the tenant consults its one pacer.

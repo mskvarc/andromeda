@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
-use std::{collections::HashSet, num::NonZeroU32};
+use std::collections::HashSet;
 use tracing::debug;
 
 /// Compile a stored subscription into a pre-compiled form for fast matching.
@@ -63,10 +63,7 @@ pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription
         compiled_scope_q: sub.filters.scope_q.clone(), // clone: compiled state owns its scope AST.
         dataset_id: sub.filters.dataset_id.clone(),    // clone: compiled state owns dataset identifiers.
         notification_join: sub.notification.join,
-        // Clause 4.5.23: `joinLevel` defaults to one hop and is otherwise
-        // honoured exactly. Zero never reaches here -- the model rejects it at
-        // deserialization.
-        notification_join_level: sub.notification.join_level.unwrap_or(NonZeroU32::MIN),
+        notification_join_level: sub.notification.effective_join_level(),
         compiled_csf: sub.filters.csf.clone(), // clone: compiled state owns its filter AST.
         local_only: sub.delivery.local_only.unwrap_or(false),
         ngsild_conformance: sub.delivery.ngsild_conformance,
