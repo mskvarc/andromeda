@@ -523,10 +523,10 @@ async fn regression_ngsild_conformance_a_concise_notification_is_amended_in_its_
     // the bare language map.
     assert_eq!(amended["name"], json!({"en": "Tower", "de": "Turm"}), "{amended}");
     assert_eq!(amended["category"], json!("commercial"), "{amended}");
-    // Clause 4.5.5 would read a bare array as several instances, so the
-    // reformatted ListProperty keeps the object form clause 4.5.2.3 gives a
-    // Property that carries one.
-    assert_eq!(amended["tags"], json!({"value": ["a", "b"]}), "{amended}");
+    // The reformatted ListProperty is a Property holding an array of values;
+    // clause 4.5.5 writes several instances as attribute objects, so the bare
+    // array reads back as that value and collapses (clause 4.5.2.3).
+    assert_eq!(amended["tags"], json!(["a", "b"]), "{amended}");
     assert_eq!(amended["refBuilding"], json!({"object": scope.id("Building:conformance-concise")}), "{amended}");
     assert_eq!(amended["refRooms"], json!({"object": scope.id("Room:conformance-concise")}), "{amended}");
     assert_eq!(amended["temperature"], json!(30), "{amended}");

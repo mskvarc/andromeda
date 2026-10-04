@@ -287,7 +287,7 @@ mod tests {
     use andromeda_http_extraction::entity_batch::BatchItem;
     use andromeda_jsonld::{batch_contexts::BatchContexts, context_spec::ContextSpec, context_term::ContextTerm, error::JsonLdError};
     use andromeda_ngsi_ld_model::entity::Entity;
-    use andromeda_ngsi_ld_representation::attribute_type_validation::AttributeTypeError;
+    use andromeda_ngsi_ld_representation::attribute_type_validation::{AttributeNodeFault, AttributeTypeError};
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
 
@@ -489,7 +489,13 @@ mod tests {
         });
         let refusal = screen_compact_entity(&entity(&payload)).expect_err("an unknown attribute type is refused");
         assert!(
-            matches!(refusal, CompactRefusal::AttributeType(AttributeTypeError::NotAnAttributeType { .. })),
+            matches!(
+                refusal,
+                CompactRefusal::AttributeType(AttributeTypeError {
+                    fault: AttributeNodeFault::NotAnAttributeType(_),
+                    ..
+                })
+            ),
             "{refusal:?}"
         );
         assert!(refusal.to_string().contains("/temperature"), "{refusal}");

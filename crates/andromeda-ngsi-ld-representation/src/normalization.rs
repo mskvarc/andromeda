@@ -10,10 +10,13 @@
 //! It is deliberately conservative: an attribute that already declares one of
 //! the clause 5.2.4 types is left alone except for its own sub-attributes, and
 //! the reserved members of that type are never mistaken for sub-attributes.
-//! Where clause 4.5 allows the type to be omitted, it is inferred rather than
-//! assumed: an `object` member makes a Relationship, `languageMap` a
-//! `LanguageProperty`, a bare `GeoJSON` geometry a `GeoProperty`, and so on — only a
-//! value with no such marker becomes an implicit Property.
+//! Where clause 4.5 allows the type to be omitted, it is inferred the way
+//! [`crate::concise_reading`] reads the node: an `object` member makes a
+//! Relationship, `languageMap` a `LanguageProperty`, `value` a Property, a bare
+//! `GeoJSON` geometry a `GeoProperty`, and so on — only a value with no such
+//! marker becomes an implicit Property. A node that reading refuses has been
+//! refused by [`crate::attribute_type_validation`] before the rewrite runs, and
+//! is left as written.
 //!
 //! The attribute's own name travels with it through the descent, because one
 //! of the reserved-member decisions is not a statement about the family alone:
@@ -22,7 +25,12 @@
 //! are envelope members and under every other name they are not members at
 //! all. [`crate::proof_seal_admission`] owns both halves of that rule.
 
-use crate::{entity_members::ENTITY_MEMBERS, output_only_member::discard_output_only_member, proof_seal_admission::is_admitted_proof_seal};
+use crate::{
+    concise_reading::{ArrayReading, ObjectReading, read_array, read_object, value_member_family},
+    entity_members::ENTITY_MEMBERS,
+    output_only_member::discard_output_only_member,
+    proof_seal_admission::is_admitted_proof_seal,
+};
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use serde_json::{Map, Value};
 use std::{mem::take, str::FromStr};
@@ -90,179 +98,72 @@ pub fn normalize_attribute_node(attribute_name: &str, value: &mut Value) {
 }
 
 /// Rewrite one attribute slot named `attribute_name`: one instance, several, or
-/// a concise value.
+/// a concise value, as [`crate::concise_reading`] reads it.
 fn normalize_attribute(attribute_name: &str, value: &mut Value) {
-    if let Value::Object(instance) = value {
-        // A declared type, or one clause 4.5 infers from a distinguishing
-        // member (`object`, `languageMap`, ...), is an attribute instance:
-        // name the type where it was omitted, then normalize its
-        // sub-attributes.
-        if declares_an_attribute_type(instance) || distinguishing_member_type(instance).is_some() {
-            normalize_concise_instance(attribute_name, instance);
-            return;
-        }
-        // The geospatial exception (clause 4.5.2.3): a bare GeoJSON geometry is
-        // the value of a GeoProperty, not of a Property.
-        if is_geojson_geometry(instance) {
-            let geometry = take(value);
-            *value = as_typed_value(AttributeType::GeoProperty, geometry);
-            return;
-        }
-        // A typeless object carrying a `value` member alongside other members is
-        // a concise attribute with sub-attributes (clause 4.5.2.3): its value is
-        // `value`, and every sibling is its own concise sub-attribute or a
-        // reserved member such as `unitCode`. Naming the type turns it into an
-        // ordinary instance, so `normalize_instance` keeps the reserved members
-        // in the envelope and normalizes the rest. Without this the catch-all
-        // below wrapped the whole object as one Property value, burying the
-        // siblings inside `value`.
-        //
-        // Clause 4.5.2.3's geospatial exception applies to the inferred type:
-        // when the `value` member itself resolves to a GeoJSON geometry, the
-        // GeoProperty sub-type is inferred instead of Property (see clause 4.7).
-        if instance.contains_key("value") && has_member_beyond_value_and_type(instance) {
-            let inferred = if instance.get("value").and_then(Value::as_object).is_some_and(is_geojson_geometry) {
-                AttributeType::GeoProperty
-            } else {
-                AttributeType::Property
-            };
-            instance.insert("type".to_string(), Value::String(inferred.to_string()));
-            normalize_instance(attribute_name, instance);
-            return;
-        }
-        // Any other object carries no type to infer, so it is the value of an
-        // implicit Property.
-        let concise = take(value);
-        *value = as_typed_value(AttributeType::Property, concise);
-        return;
-    }
-
-    if let Value::Array(instances) = value
-        && all_are_instances(instances)
-    {
-        for instance in instances {
-            if let Value::Object(instance) = instance {
-                normalize_concise_instance(attribute_name, instance);
+    match value {
+        Value::Object(instance) => match read_object(instance) {
+            // A declared type, or one clause 4.5 infers from the value member
+            // it carries, is an attribute instance: name the type where it was
+            // omitted, then normalize its sub-attributes, so the reserved
+            // members such as `unitCode` stay in the envelope.
+            Ok(ObjectReading::Instance(family)) => normalize_inferred_instance(attribute_name, instance, family),
+            // The geospatial exception (clause 4.5.2.3): a bare GeoJSON
+            // geometry is the value of a GeoProperty, not of a Property.
+            Ok(ObjectReading::GeoPropertyValue) => wrap_as_value(value, AttributeType::GeoProperty),
+            Ok(ObjectReading::PropertyValue) => wrap_as_value(value, AttributeType::Property),
+            Err(_) => {}
+        },
+        Value::Array(items) => match read_array(items) {
+            Ok(ArrayReading::Instances) => {
+                for item in items {
+                    if let Value::Object(instance) = item
+                        && let Ok(ObjectReading::Instance(family)) = read_object(instance)
+                    {
+                        normalize_inferred_instance(attribute_name, instance, family);
+                    }
+                }
             }
-        }
-        return;
+            Ok(ArrayReading::PropertyValue) => wrap_as_value(value, AttributeType::Property),
+            Err(_) => {}
+        },
+        // A bare scalar is the value of an implicit Property (clause 4.5.2.3).
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => wrap_as_value(value, AttributeType::Property),
     }
+}
 
-    // A bare scalar, or an array that is not entirely instances, is the value
-    // of an implicit Property (clause 4.5.2.3).
-    let concise = take(value);
-    *value = as_typed_value(AttributeType::Property, concise);
+/// Normalize one instance of `family`, naming the family first where the
+/// instance left it to be inferred.
+fn normalize_inferred_instance(attribute_name: &str, instance: &mut Map<String, Value>, family: AttributeType) {
+    if !instance.contains_key("type") {
+        instance.insert("type".to_string(), Value::String(family.to_string()));
+    }
+    normalize_instance(attribute_name, instance);
 }
 
 /// Normalize one instance of the attribute named `attribute_name`, naming its
-/// type first if it was left to be inferred from a distinguishing member
-/// (clause 4.5.3.3 and siblings).
+/// type first if it was left to be inferred from the value member of one of
+/// the six families clauses 4.5.3.3 and its siblings let omit it.
+///
+/// A fragment carrying `value` without a `type` is left untyped: clause 5.6.17
+/// gives it the family of the attribute it updates.
 fn normalize_concise_instance(attribute_name: &str, instance: &mut Map<String, Value>) {
-    if !declares_an_attribute_type(instance)
-        && let Some(inferred) = distinguishing_member_type(instance)
+    if attribute_type_of(instance).is_none()
+        && let Ok(Some(inferred)) = value_member_family(instance)
     {
         instance.insert("type".to_string(), Value::String(inferred.to_string()));
     }
     normalize_instance(attribute_name, instance);
 }
 
-/// Whether an array holds nothing but attribute instances.
-///
-/// An instance either declares its type or lets one be inferred from a
-/// distinguishing member. An empty array is not a list of instances: it
-/// carries nothing to normalize against, and treating it as a concise value is
-/// what preserves it verbatim.
-fn all_are_instances(instances: &[Value]) -> bool {
-    !instances.is_empty()
-        && instances.iter().all(|instance| {
-            instance
-                .as_object()
-                .is_some_and(|instance| declares_an_attribute_type(instance) || distinguishing_member_type(instance).is_some())
-        })
-}
-
-/// Whether an object declares one of the clause 5.2.4 attribute types.
-fn declares_an_attribute_type(instance: &Map<String, Value>) -> bool {
-    attribute_type_of(instance).is_some()
+/// Replace a concise value by the attribute of `family` it abbreviates.
+fn wrap_as_value(value: &mut Value, family: AttributeType) {
+    let concise = take(value);
+    *value = as_typed_value(family, concise);
 }
 
 /// The attribute type an instance declares, if it declares one.
 fn attribute_type_of(instance: &Map<String, Value>) -> Option<AttributeType> {
     AttributeType::from_str(instance.get("type")?.as_str()?).ok()
-}
-
-/// The attribute type a typeless concise instance's distinguishing member
-/// implies (ETSI GS CIM 009 v1.9.1 clauses 4.5.3.3, 4.5.18.3, 4.5.20.3,
-/// 4.5.21.3, 4.5.22.3, 4.5.24.3): `object` a Relationship, `languageMap` a
-/// `LanguageProperty`, `vocab` a `VocabProperty`, `valueList` a `ListProperty`,
-/// `objectList` a `ListRelationship`, `json` a `JsonProperty`.
-///
-/// The member table is [`AttributeType::compact_value_key`], the same one the
-/// rendering inverts, iterated so a ninth attribute type cannot be added to
-/// the lexicon and forgotten here. `value` is not a distinguishing member: a
-/// bare value is an implicit Property, and a `GeoProperty` is inferred from its
-/// geometry shape. More than one distinguishing member is ambiguous, so no
-/// type is inferred and the object falls through to an implicit Property.
-#[must_use]
-pub fn distinguishing_member_type(instance: &Map<String, Value>) -> Option<AttributeType> {
-    let mut inferred = None;
-    for candidate in AttributeType::ALL {
-        let member = candidate.compact_value_key();
-        if member == AttributeType::Property.compact_value_key() {
-            continue;
-        }
-        if instance.contains_key(member) {
-            if inferred.is_some() {
-                return None;
-            }
-            inferred = Some(candidate);
-        }
-    }
-    inferred
-}
-
-/// Whether a typeless object holds a member other than `value` and `type`.
-///
-/// This is what distinguishes a concise Property carrying sub-attributes
-/// (`{"value": 42, "accuracy": 0.5}`) from the opaque object value clause 4.5.2.3
-/// keeps verbatim (`{"value": 42}`, or an object with no `value` member at all).
-fn has_member_beyond_value_and_type(instance: &Map<String, Value>) -> bool {
-    instance.keys().any(|member| member != "value" && member != "type")
-}
-
-/// The `GeoJSON` geometry type tokens, per RFC 7946 clause 1.4.
-///
-/// Kept as a local token set rather than pulling in the geometry crate: this
-/// crate is a low-layer leaf, and inference needs only to recognise the shape,
-/// not decode it.
-///
-/// `GeometryCollection` is listed even though ETSI GS CIM 009 v1.9.1 clause
-/// 4.7.1 excludes it from `GeoProperty` geometries. Recognising it is what routes
-/// a concise collection value to the `GeoProperty` write-side validator, which
-/// refuses it as `BadRequestData`; dropping it here would instead let a
-/// collection pass silently as an ordinary Property value.
-const GEOJSON_GEOMETRY_TYPES: &[&str] = &[
-    "Point",
-    "MultiPoint",
-    "LineString",
-    "MultiLineString",
-    "Polygon",
-    "MultiPolygon",
-    "GeometryCollection",
-];
-
-/// Whether an object is a `GeoJSON` geometry: a known geometry `type` alongside
-/// its coordinate member (`coordinates`, or `geometries` for a
-/// `GeometryCollection`).
-fn is_geojson_geometry(instance: &Map<String, Value>) -> bool {
-    let Some(type_name) = instance.get("type").and_then(Value::as_str) else {
-        return false;
-    };
-    if !GEOJSON_GEOMETRY_TYPES.contains(&type_name) {
-        return false;
-    }
-    let coordinate_member = if type_name == "GeometryCollection" { "geometries" } else { "coordinates" };
-    instance.contains_key(coordinate_member)
 }
 
 /// Rewrite the sub-attributes of one instance, leaving its reserved members
@@ -754,20 +655,54 @@ mod tests {
         pretty_assertions::assert_eq!(payload["address"]["ngsildproof"]["entityIdSealed"], json!("urn:ngsi-ld:Store:002"));
     }
 
+    /// Two value members name no single family. The validation refuses the
+    /// node, so the rewrite neither guesses a family nor buries the node in an
+    /// implicit Property value.
     #[test]
-    fn an_object_with_two_distinguishing_members_is_ambiguous_and_stays_a_property() {
-        // Two markers name no single type, so nothing is inferred; the object
-        // becomes an implicit Property value rather than a guessed type.
+    fn an_object_with_two_value_members_is_left_for_the_validation_to_refuse() {
+        let ambiguous = json!({ "object": "urn:ngsi-ld:X:1", "languageMap": { "en": "x" } });
+        let mut payload = json!({ "id": "urn:ngsi-ld:Device:1", "type": "Device", "ambiguous": ambiguous });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(payload["ambiguous"], ambiguous);
+    }
+
+    /// Clause 4.5.5 writes the instances of a multi-attribute as an array, and
+    /// clause 4.5.2.3 infers a Property from the `value` each one carries, so a
+    /// concise multi-attribute is two instances rather than one array value.
+    #[test]
+    fn typeless_instances_in_an_array_are_normalized_one_by_one() {
         let mut payload = json!({
             "id": "urn:ngsi-ld:Device:1",
             "type": "Device",
-            "ambiguous": { "object": "urn:ngsi-ld:X:1", "languageMap": { "en": "x" } }
+            "speed": [
+                { "value": 25, "datasetId": "urn:ngsi-ld:Dataset:a" },
+                { "value": 30, "datasetId": "urn:ngsi-ld:Dataset:b", "accuracy": 0.5 }
+            ]
         });
 
         normalize_entity_attributes(&mut payload);
 
-        pretty_assertions::assert_eq!(payload["ambiguous"]["type"], json!("Property"));
-        assert!(payload["ambiguous"]["value"].is_object());
+        pretty_assertions::assert_eq!(
+            payload["speed"],
+            json!([
+                { "type": "Property", "value": 25, "datasetId": "urn:ngsi-ld:Dataset:a" },
+                { "type": "Property", "value": 30, "datasetId": "urn:ngsi-ld:Dataset:b", "accuracy": { "type": "Property", "value": 0.5 } }
+            ])
+        );
+    }
+
+    /// An array mixing instances with values is neither, and the validation
+    /// refuses it; the rewrite leaves it as written.
+    #[test]
+    fn an_array_mixing_instances_and_values_is_left_for_the_validation_to_refuse() {
+        let mixed = json!([{ "value": 25, "datasetId": "urn:ngsi-ld:Dataset:a" }, 30]);
+        let mut payload = json!({ "id": "urn:ngsi-ld:Device:1", "type": "Device", "speed": mixed });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(payload["speed"], mixed);
     }
 
     /// Clause 4.5.2.3: a concise Property may carry sub-attributes beside its
@@ -880,11 +815,12 @@ mod tests {
         );
     }
 
-    /// The regression guards: without a sibling, a `value`-bearing object is
-    /// still the opaque Property value clause 4.5.2.3 keeps verbatim, and a
-    /// `value` nested inside the value object is not a top-level sibling.
+    /// Clause 4.5.2.3, "type": "If missing, "Property" can be inferred by the
+    /// presence of the "value" attribute" -- with or without a sibling, so a
+    /// lone `value` is the Property's value and a `value` nested inside it is
+    /// part of that value.
     #[test]
-    fn a_value_object_without_a_sibling_stays_an_opaque_property_value() {
+    fn a_lone_value_member_is_the_property_value() {
         let mut payload = json!({
             "id": "urn:ngsi-ld:Device:1",
             "type": "Device",
@@ -894,7 +830,24 @@ mod tests {
 
         normalize_entity_attributes(&mut payload);
 
-        pretty_assertions::assert_eq!(payload["lone"], json!({ "type": "Property", "value": { "value": 42 } }));
-        pretty_assertions::assert_eq!(payload["nested"], json!({ "type": "Property", "value": { "value": { "value": 5 } } }));
+        pretty_assertions::assert_eq!(payload["lone"], json!({ "type": "Property", "value": 42 }));
+        pretty_assertions::assert_eq!(payload["nested"], json!({ "type": "Property", "value": { "value": 5 } }));
+    }
+
+    /// The geospatial exception of the same clause holds for a lone `value`.
+    #[test]
+    fn a_lone_geometry_value_member_is_a_geo_property() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Device:1",
+            "type": "Device",
+            "location": { "value": {"type": "Point", "coordinates": [13.4, 52.5]} }
+        });
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(
+            payload["location"],
+            json!({ "type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.5]} })
+        );
     }
 }

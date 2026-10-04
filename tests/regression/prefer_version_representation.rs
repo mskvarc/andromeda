@@ -286,8 +286,9 @@ async fn regression_prefer_version_simplified_reduces_a_dataset_map_to_its_defau
 /// the Property name and whose value is the Property Value." Removing the
 /// members Table 4.3.6.8-2 names, or reformatting a `VocabProperty` into a
 /// Property, leaves exactly that shape, so the collapse applies again after the
-/// amendment. An array value does not collapse, because clause 4.5.5 would read
-/// it back as several instances of the attribute.
+/// amendment. An array of values collapses too: clause 4.5.5 writes several
+/// instances as an array of attribute objects, so a bare array of strings reads
+/// back as one value, as the concise rendering of a Property holding it does.
 #[tokio::test]
 async fn regression_prefer_version_concise_collapses_a_reduced_property_to_its_bare_value() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -308,9 +309,9 @@ async fn regression_prefer_version_concise_collapses_a_reduced_property_to_its_b
     assert_eq!(body["category"], json!("Building"), "{body}");
     assert_eq!(body["config"], json!({"a": 1}), "{body}");
     assert_eq!(body["label"], json!({"en": "Store", "de": "Laden"}), "{body}");
-    // Clause 4.5.5 reads a bare array as several instances, so the object form
-    // whose `value` member clause 4.5.2.3 makes mandatory is kept.
-    assert_eq!(body["tags"], json!({"value": ["a", "b"]}), "{body}");
+    // The reformatted ListProperty is a Property holding an array of values,
+    // which reads back bare as that value (clauses 4.5.2.3 and 4.5.5).
+    assert_eq!(body["tags"], json!(["a", "b"]), "{body}");
     // Clause 4.5.3.3 keeps a concise Relationship's `object` member, and Table
     // 4.3.6.8-1 reformats the `ListRelationship` into one.
     assert_eq!(body["refBuilding"], json!({"object": BUILDING}), "{body}");

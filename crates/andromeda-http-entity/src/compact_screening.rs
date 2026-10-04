@@ -40,7 +40,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, JsonPointerSegment};
 use andromeda_ngsi_ld_representation::{
-    attribute_type_validation::{AttributeTypeError, validate_attribute_node},
+    attribute_type_validation::{AttributeNodeFault, AttributeTypeError, validate_attribute_node},
     embedded_context_admission::{EmbeddedContextError, is_native_json_member, reject_embedded_contexts_in_attribute},
     family_member_admission::MemberAdmission,
     proof_seal_admission::{ProofSealMember, proof_seal_admission},
@@ -128,17 +128,17 @@ fn extended(prefix: &[JsonPointerSegment], next: JsonPointerSegment) -> Vec<Json
 fn screen_attribute_types(name: &str, member: &AttributeValue) -> Result<(), AttributeTypeError> {
     match member {
         AttributeValue::Raw(raw) => validate_attribute_node(name, raw),
-        AttributeValue::Single(instance) => seals_of_instance(name, instance, &[segment(name)]),
+        AttributeValue::Single(instance) => screen_instance(name, instance, &[segment(name)]),
         AttributeValue::Multiple(instances) => instances
             .iter()
             .enumerate()
-            .try_for_each(|(index, instance)| seals_of_instance(name, instance, &[segment(name), JsonPointerSegment::Index(index)])),
+            .try_for_each(|(index, instance)| screen_instance(name, instance, &[segment(name), JsonPointerSegment::Index(index)])),
     }
 }
 
 /// The clause 4.5.2.2 seal rule over one typed instance of the attribute
-/// `name`, standing at `at`, and over everything nested below it.
-fn seals_of_instance(name: &str, instance: &Attribute, at: &[JsonPointerSegment]) -> Result<(), AttributeTypeError> {
+/// `name`, standing at `at`, and both rules over everything nested below it.
+fn screen_instance(name: &str, instance: &Attribute, at: &[JsonPointerSegment]) -> Result<(), AttributeTypeError> {
     let sub_attributes = &instance.common().sub_attributes;
     let family = instance.attribute_type();
     let forbidden = sub_attributes
@@ -148,9 +148,9 @@ fn seals_of_instance(name: &str, instance: &Attribute, at: &[JsonPointerSegment]
         .filter_map(|member| ProofSealMember::of(member).map(|seal| (member, seal)))
         .min_by(|(left, _), (right, _)| left.cmp(right));
     if let Some((_, member)) = forbidden {
-        return Err(AttributeTypeError::ProofSealOutsideNgsildproof {
+        return Err(AttributeTypeError {
             attribute: JsonPointer::from_segments(at.to_vec()),
-            member,
+            fault: AttributeNodeFault::ProofSealOutsideNgsildproof(member),
         });
     }
     // The family's own members are its envelope, not attributes nested in it.
@@ -162,42 +162,31 @@ fn seals_of_instance(name: &str, instance: &Attribute, at: &[JsonPointerSegment]
     nested.sort_unstable_by_key(|(name, _)| *name);
     nested
         .into_iter()
-        .try_for_each(|(member, value)| seals_of_member(member.as_str(), value, &extended(at, segment(member.as_str()))))
+        .try_for_each(|(member, value)| screen_member(member.as_str(), value, &extended(at, segment(member.as_str()))))
 }
 
-/// The clause 4.5.2.2 seal rule over one nested member, standing at `at`.
-fn seals_of_member(name: &str, member: &AttributeValue, at: &[JsonPointerSegment]) -> Result<(), AttributeTypeError> {
+/// Both rules over one nested member, standing at `at`.
+fn screen_member(name: &str, member: &AttributeValue, at: &[JsonPointerSegment]) -> Result<(), AttributeTypeError> {
     match member {
-        AttributeValue::Single(instance) => seals_of_instance(name, instance, at),
+        AttributeValue::Single(instance) => screen_instance(name, instance, at),
         AttributeValue::Multiple(instances) => instances
             .iter()
             .enumerate()
-            .try_for_each(|(index, instance)| seals_of_instance(name, instance, &extended(at, JsonPointerSegment::Index(index)))),
-        AttributeValue::Raw(Value::Array(items)) => items
-            .iter()
-            .enumerate()
-            .try_for_each(|(index, item)| seals_of_written_node(name, item, &extended(at, JsonPointerSegment::Index(index)))),
-        AttributeValue::Raw(node) => seals_of_written_node(name, node, at),
+            .try_for_each(|(index, instance)| screen_instance(name, instance, &extended(at, JsonPointerSegment::Index(index)))),
+        AttributeValue::Raw(node) => screen_written_node(name, node, at),
     }
 }
 
-/// The clause 4.5.2.2 seal rule over one nested node carried as written.
+/// Both rules over one nested node carried as written.
 ///
-/// The representation crate's walk reads a node as a top-level attribute, and
-/// so also checks the `type` it declares; below the top level only the seals
-/// are the rule, so the type finding of the node itself is set aside, and a
-/// seal finding is located from the top of the entity.
-fn seals_of_written_node(name: &str, node: &Value, at: &[JsonPointerSegment]) -> Result<(), AttributeTypeError> {
-    if !node.is_object() {
-        return Ok(());
-    }
-    match validate_attribute_node(name, node) {
-        Ok(()) | Err(AttributeTypeError::NotAnAttributeType { .. }) => Ok(()),
-        Err(AttributeTypeError::ProofSealOutsideNgsildproof { attribute, member }) => Err(AttributeTypeError::ProofSealOutsideNgsildproof {
-            attribute: rerooted(at, &attribute),
-            member,
-        }),
-    }
+/// A sub-attribute is an attribute (clause 4.5.2.2), so the representation
+/// crate's walk reads it exactly as it reads a top-level one, and its finding
+/// is located from the top of the entity.
+fn screen_written_node(name: &str, node: &Value, at: &[JsonPointerSegment]) -> Result<(), AttributeTypeError> {
+    validate_attribute_node(name, node).map_err(|error| AttributeTypeError {
+        attribute: rerooted(at, &error.attribute),
+        fault: error.fault,
+    })
 }
 
 /// The clause 5.5.7 rule over one attribute member standing at `at`.
@@ -395,6 +384,12 @@ mod tests {
             entity(json!({"speed": [{"type": "Property", "value": 1}, {"type": "Property", "value": 2, "datasetId": "urn:ds:1", "entityTypeSealed": "x"}]})),
             entity(json!({"speed": {"type": "Property", "value": 1, "entityTypeSealed": "x", "entityIdSealed": "y"}})),
             entity(json!({"speed": {"type": "Property", "value": 1, "name": {"type": "Property", "value": 1, "entityIdSealed": "x"}}})),
+            entity(json!({"speed": {"type": "Property", "value": 1, "accuracy": {"type": "Propertyy", "value": 0.5}}})),
+            entity(json!({"speed": {"type": "Property", "value": 1, "accuracy": {"type": 7, "value": 0.5}}})),
+            entity(json!({"speed": {"type": "Property", "value": 1, "spot": {"type": "Point"}}})),
+            entity(json!({"speed": {"type": "Property", "value": 1, "both": {"object": "urn:x:1", "vocab": "x"}}})),
+            entity(json!({"speed": {"type": "Property", "value": 1, "readings": [{"value": 1, "datasetId": "urn:ds:1"}, 7]}})),
+            entity(json!({"speed": {"type": "Property", "value": 1, "accuracy": {"type": "Property", "value": {"type": "Feature"}}}})),
             entity(json!({"p": {"type": "Property", "value": {"a": {"@context": {}}}}})),
             entity(json!({"p": {"value": 1, "@context": "https://example.org/ctx.jsonld"}})),
             entity(json!({"p": [{"value": 1}, {"value": 2, "nested": {"@context": {}}}]})),
@@ -432,6 +427,25 @@ mod tests {
             let patch: EntityPatch = serde_json::from_value(written.clone()).expect("the corpus fragment decodes"); // clone: the expectation names the payload
             let rendered = serde_json::to_value(&patch).expect("the fragment renders");
             pretty_assertions::assert_eq!(typed(screen_compact_patch(&patch)), over_rendered_json(&rendered), "{written}");
+        }
+    }
+
+    /// A sub-attribute is an attribute (clause 4.5.2.2): one the decode carried
+    /// as written because its `type` names no attribute type is refused where
+    /// it stands, in an Entity and in a Fragment alike.
+    #[test]
+    fn a_misspelt_type_on_a_written_sub_attribute_is_refused_where_it_stands() {
+        let written = json!({
+            "id": "urn:ngsi-ld:Building:1",
+            "type": "Building",
+            "speed": {"type": "Property", "value": 1, "accuracy": {"type": "Propertyy", "value": 0.5}}
+        });
+        let entity: Entity = serde_json::from_value(written.clone()).expect("the entity decodes"); // clone: the fragment is decoded from the same payload
+        let patch: EntityPatch = serde_json::from_value(written).expect("the fragment decodes");
+        for refusal in [screen_compact_entity(&entity), screen_compact_patch(&patch)] {
+            let refusal = typed(refusal).expect_err("a misspelt sub-attribute type is refused");
+            assert!(refusal.contains("/speed/accuracy"), "{refusal}");
+            assert!(refusal.contains("not an NGSI-LD attribute type"), "{refusal}");
         }
     }
 

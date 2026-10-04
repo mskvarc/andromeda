@@ -1,4 +1,4 @@
-//! Rejecting attribute nodes that are not valid for the type they declare.
+//! Rejecting compact attribute nodes the specification does not admit.
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 5.5.4: data that is not syntactically correct
 //! according to the API data type definitions is an error of type
@@ -7,10 +7,17 @@
 //! where none was declared and before JSON-LD expansion rewrites the member
 //! names:
 //!
-//! - Clause 5.2.4 fixes the attribute types to the eight of
-//!   [`AttributeType`], so a node that declares any other token --
-//!   `"Propertyy"`, `"NotAnAttributeType"` -- is not an attribute and must not
-//!   reach the store as one.
+//! - Every node standing where an attribute or a sub-attribute stands must be
+//!   one [`crate::concise_reading`] reads: clause 5.2.4 fixes the attribute
+//!   types to the eight of [`AttributeType`], clause 4.5.2.3 treats an object
+//!   carrying a `type` as a normalized attribute, and clause 4.5.5 writes the
+//!   instances of a multi-attribute as an array of instances. So a node that
+//!   declares any other token -- `"Propertyy"`, `"Feature"`, `7` -- names a
+//!   geometry without its coordinates, carries the value members of two
+//!   families, or mixes instances with values in one array is not an attribute
+//!   and must not reach the store as one. A sub-attribute is an attribute
+//!   (clause 4.5.2.2), so the rule holds at every depth; a value is data and is
+//!   never walked into.
 //! - Clause 4.5.2.2 admits the `entityIdSealed` and `entityTypeSealed` members
 //!   only on the `ngsildproof` Property. That one has to be decided here:
 //!   [`crate::proof_seal_admission`] explains why the expanded payload no
@@ -21,49 +28,63 @@
 //! decided there instead, against [`crate::family_member_admission`].
 
 use crate::{
+    concise_reading::{ArrayRefusal, ObjectReading, ObjectRefusal, read_array, read_object},
     entity_members::ENTITY_MEMBERS,
     family_member_admission::MemberAdmission,
-    normalization::distinguishing_member_type,
     proof_seal_admission::{ProofSealMember, is_proof_seal, proof_seal_admission},
 };
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, PathSegment};
 use serde_json::{Map, Value};
-use std::str::FromStr;
 use thiserror::Error;
 
-/// An attribute node that is not valid for the type it declares.
+/// A compact attribute node the specification does not admit, and where it
+/// stands.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum AttributeTypeError {
-    /// The attribute node declared a `type` token that is not an attribute type.
-    #[error("the attribute at {attribute} declares a type that is not an NGSI-LD attribute type")]
-    NotAnAttributeType {
-        /// Where the attribute node stands in the payload.
-        attribute: JsonPointer,
-        /// Why the declared token is not an attribute type.
-        #[source]
-        source: strum::ParseError,
-    },
-    /// The attribute node carried a data-integrity seal outside `ngsildproof` (ETSI GS CIM 009 clause 4.5.2.2).
-    #[error("the attribute at {attribute} carries the member {member}, which is admitted only on the ngsildproof Property")]
-    ProofSealOutsideNgsildproof {
-        /// Where the attribute node carrying the seal stands in the payload.
-        attribute: JsonPointer,
-        /// The seal member the attribute carried.
-        member: ProofSealMember,
-    },
+#[error("the attribute at {attribute} {fault}")]
+pub struct AttributeTypeError {
+    /// Where the attribute node stands in the payload.
+    pub attribute: JsonPointer,
+    /// Why the node is not admitted.
+    pub fault: AttributeNodeFault,
+}
+
+/// Why a compact attribute node is not admitted.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum AttributeNodeFault {
+    /// The node declared a `type` token that is neither an attribute type
+    /// (clause 5.2.4) nor a geometry type.
+    #[error("declares a type that is not an NGSI-LD attribute type")]
+    NotAnAttributeType(#[source] strum::ParseError),
+    /// The node declared a `type` that is not a string.
+    #[error("declares a type that is not a string")]
+    TypeNotAString,
+    /// The node named a `GeoJSON` geometry type without the member holding the
+    /// geometry's coordinates (clause 4.7.1).
+    #[error("names a GeoJSON geometry type without the member holding its coordinates")]
+    GeometryWithoutCoordinates,
+    /// The node declared no `type` and carried the value members of several
+    /// attribute types.
+    #[error("declares no type and carries the value members of several attribute types")]
+    SeveralValueMembers,
+    /// The node is an array holding both attribute instances and values
+    /// (clause 4.5.5).
+    #[error("mixes attribute instances with values in one array")]
+    MixedInstancesAndValues,
+    /// The node carried a data-integrity seal outside `ngsildproof` (clause
+    /// 4.5.2.2).
+    #[error("carries the member {0}, which is admitted only on the ngsildproof Property")]
+    ProofSealOutsideNgsildproof(ProofSealMember),
 }
 
 /// Check every attribute node of an entity or entity fragment.
 ///
-/// Entity members (`id`, `type`, `scope`, ...) are skipped, as is anything that
-/// is not an object: a concise value declares no type. A multi-instance array
-/// is checked instance by instance. A payload that is not an object is left to
-/// whoever validates its shape.
+/// Entity members (`id`, `type`, `scope`, ...) are skipped. A payload that is
+/// not an object is left to whoever validates its shape.
 ///
 /// # Errors
 ///
-/// The first node declaring a token outside clause 5.2.4.
+/// The first node the specification does not admit.
 pub fn validate_fragment_attribute_types(fragment: &Value) -> Result<(), AttributeTypeError> {
     let Some(members) = fragment.as_object() else {
         return Ok(());
@@ -75,88 +96,66 @@ pub fn validate_fragment_attribute_types(fragment: &Value) -> Result<(), Attribu
 }
 
 /// Check one attribute node, as a single-attribute payload carries it
-/// (clause 5.6.4: an Attribute Fragment is the node itself).
+/// (clause 5.6.4: an Attribute Fragment is the node itself), together with
+/// every attribute nested in it.
 ///
 /// # Errors
 ///
-/// The node declares a token outside clause 5.2.4.
+/// The first node the specification does not admit.
 pub fn validate_attribute_node(attribute: &str, node: &Value) -> Result<(), AttributeTypeError> {
     let mut path = vec![PathSegment::Member(attribute)];
-    validate_attribute_slot(attribute, node, &mut path, validate_instance)
+    validate_slot(attribute, node, &mut path)
 }
 
-/// The check one attribute instance undergoes, given the attribute's name and
-/// the location of the instance.
-type InstanceCheck = for<'a> fn(&'a str, &'a Map<String, Value>, &mut Vec<PathSegment<'a>>) -> Result<(), AttributeTypeError>;
-
-/// Run `check` over one attribute slot: a single node, or every instance of a
-/// multi-instance array. A concise value is no node and is left alone.
-fn validate_attribute_slot<'a>(attribute: &'a str, node: &'a Value, path: &mut Vec<PathSegment<'a>>, check: InstanceCheck) -> Result<(), AttributeTypeError> {
+/// Check one attribute slot: a single node, the instances of a multi-attribute,
+/// or a value.
+fn validate_slot<'a>(attribute: &'a str, node: &'a Value, path: &mut Vec<PathSegment<'a>>) -> Result<(), AttributeTypeError> {
     match node {
-        Value::Object(instance) => check(attribute, instance, path),
-        Value::Array(instances) => instances.iter().enumerate().try_for_each(|(index, instance)| {
-            let Some(instance) = instance.as_object() else {
-                return Ok(());
-            };
-            path.push(PathSegment::Index(index));
-            let outcome = check(attribute, instance, path);
-            path.pop();
-            outcome
-        }),
+        Value::Object(object) => validate_object(attribute, object, path),
+        Value::Array(items) => {
+            read_array(items).map_err(|refusal| refused_array(refusal, path))?;
+            items.iter().enumerate().try_for_each(|(index, item)| {
+                let Value::Object(object) = item else {
+                    return Ok(());
+                };
+                path.push(PathSegment::Index(index));
+                let outcome = validate_object(attribute, object, path);
+                path.pop();
+                outcome
+            })
+        }
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Ok(()),
     }
 }
 
-/// Check one attribute instance: the `type` it declares, and the seals it and
-/// its sub-attributes carry.
-///
-/// A `type` that is not a string is the `type` of a concise value object, not a
-/// declaration, and is left alone.
-fn validate_instance<'a>(attribute: &'a str, instance: &'a Map<String, Value>, path: &mut Vec<PathSegment<'a>>) -> Result<(), AttributeTypeError> {
-    validate_proof_seals(attribute, instance, path)?;
-    let Some(token) = instance.get("type").and_then(Value::as_str) else {
-        return Ok(());
-    };
-    if is_geojson_geometry_type(token) {
-        return Ok(());
+/// Check one object standing in an attribute slot, and, when it is an
+/// instance, everything nested in it.
+fn validate_object<'a>(attribute: &'a str, object: &'a Map<String, Value>, path: &mut Vec<PathSegment<'a>>) -> Result<(), AttributeTypeError> {
+    match read_object(object).map_err(|refusal| refused(path, object_fault(refusal)))? {
+        ObjectReading::Instance(family) => validate_instance(attribute, family, object, path),
+        ObjectReading::GeoPropertyValue | ObjectReading::PropertyValue => Ok(()),
     }
-    AttributeType::from_str(token)
-        .map(|_| ())
-        .map_err(|source| AttributeTypeError::NotAnAttributeType {
-            attribute: JsonPointer::from_walk(path),
-            source,
-        })
 }
 
-/// Reject a data-integrity seal on an attribute that is not `ngsildproof`,
-/// here or on any attribute nested under it (clause 4.5.2.2).
+/// Check one instance of `family`: the seals it carries, and every
+/// sub-attribute.
 ///
-/// The descent needs the family, because only
-/// [`AttributeType::reserved_fields`] says which members belong to the envelope
-/// rather than to a sub-attribute: without it a Property's value object would
-/// be walked as if it were a nested attribute. An instance that declares no
-/// family is checked for its own seals and left at that.
-fn validate_proof_seals<'a>(attribute: &'a str, instance: &'a Map<String, Value>, path: &mut Vec<PathSegment<'a>>) -> Result<(), AttributeTypeError> {
-    // A concise instance declares no `type` (clause 4.5.2.3), so the family is
-    // inferred from its distinguishing member the way normalization infers it.
-    // Stopping the walk where no `type` is written would leave a seal forged
-    // under a concise sub-attribute unexamined, which is the one place it could
-    // still reach the store.
-    let family = instance
-        .get("type")
-        .and_then(Value::as_str)
-        .and_then(|token| AttributeType::from_str(token).ok())
-        .or_else(|| distinguishing_member_type(instance))
-        .unwrap_or(AttributeType::Property);
+/// Only [`AttributeType::reserved_fields`] says which members belong to the
+/// envelope rather than to a sub-attribute, which is why the family is needed:
+/// without it a Property's value object would be walked as if it were a nested
+/// attribute.
+fn validate_instance<'a>(
+    attribute: &'a str,
+    family: AttributeType,
+    instance: &'a Map<String, Value>,
+    path: &mut Vec<PathSegment<'a>>,
+) -> Result<(), AttributeTypeError> {
     if let Some(member) = instance
         .keys()
         .filter(|member| proof_seal_admission(attribute, family, member) == MemberAdmission::Forbidden)
         .find_map(|member| ProofSealMember::of(member))
     {
-        return Err(AttributeTypeError::ProofSealOutsideNgsildproof {
-            attribute: JsonPointer::from_walk(path),
-            member,
-        });
+        return Err(refused(path, AttributeNodeFault::ProofSealOutsideNgsildproof(member)));
     }
     let reserved = family.reserved_fields();
     instance
@@ -164,40 +163,71 @@ fn validate_proof_seals<'a>(attribute: &'a str, instance: &'a Map<String, Value>
         .filter(|(member, _)| member.as_str() != "type" && !reserved.contains(&member.as_str()) && !is_proof_seal(member))
         .try_for_each(|(member, node)| {
             path.push(PathSegment::Member(member));
-            let outcome = validate_attribute_slot(member, node, path, validate_proof_seals);
+            let outcome = validate_slot(member, node, path);
             path.pop();
             outcome
         })
 }
 
-/// The RFC 7946 geometry tokens a bare `GeoJSON` geometry value declares as its
-/// `type` (clause 4.5.2.3 geospatial exception): such an object is the value
-/// of a `GeoProperty`, not an attribute node, and is not a declaration to check.
-fn is_geojson_geometry_type(token: &str) -> bool {
-    matches!(
-        token,
-        "Point" | "MultiPoint" | "LineString" | "MultiLineString" | "Polygon" | "MultiPolygon" | "GeometryCollection"
-    )
+/// The refusal of the node standing at `path`.
+fn refused(path: &[PathSegment<'_>], fault: AttributeNodeFault) -> AttributeTypeError {
+    AttributeTypeError {
+        attribute: JsonPointer::from_walk(path),
+        fault,
+    }
+}
+
+/// The refusal of the array standing at `path`, located at the element it
+/// names when it names one.
+fn refused_array(refusal: ArrayRefusal, path: &mut Vec<PathSegment<'_>>) -> AttributeTypeError {
+    match refusal {
+        ArrayRefusal::Element { index, refusal } => {
+            path.push(PathSegment::Index(index));
+            let error = refused(path, object_fault(refusal));
+            path.pop();
+            error
+        }
+        ArrayRefusal::MixedInstancesAndValues => refused(path, AttributeNodeFault::MixedInstancesAndValues),
+    }
+}
+
+/// The fault an object the reading refuses is reported with.
+const fn object_fault(refusal: ObjectRefusal) -> AttributeNodeFault {
+    match refusal {
+        ObjectRefusal::NotAnAttributeType(source) => AttributeNodeFault::NotAnAttributeType(source),
+        ObjectRefusal::TypeNotAString => AttributeNodeFault::TypeNotAString,
+        ObjectRefusal::GeometryWithoutCoordinates => AttributeNodeFault::GeometryWithoutCoordinates,
+        ObjectRefusal::SeveralValueMembers => AttributeNodeFault::SeveralValueMembers,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_type_validation::{AttributeTypeError, validate_attribute_node, validate_fragment_attribute_types},
+        attribute_type_validation::{AttributeNodeFault, AttributeTypeError, validate_attribute_node, validate_fragment_attribute_types},
         proof_seal_admission::ProofSealMember,
     };
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
     use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, PathSegment};
     use serde_json::json;
 
-    /// The pointer a walk reports for the given member names and array indexes.
-    fn at(segments: &[PathSegment<'_>]) -> JsonPointer {
-        JsonPointer::from_walk(segments)
+    /// The refusal a walk reports for the given member names and array
+    /// indexes.
+    fn refusal(segments: &[PathSegment<'_>], fault: AttributeNodeFault) -> AttributeTypeError {
+        AttributeTypeError {
+            attribute: JsonPointer::from_walk(segments),
+            fault,
+        }
+    }
+
+    /// The fault of a `type` token outside clause 5.2.4.
+    const fn not_an_attribute_type() -> AttributeNodeFault {
+        AttributeNodeFault::NotAnAttributeType(strum::ParseError::VariantNotFound)
     }
 
     /// The seal a test fixture wrote, as the error reports it.
-    fn seal(member: &str) -> ProofSealMember {
-        ProofSealMember::of(member).unwrap_or_else(|| panic!("{member} is a seal"))
+    fn seal(member: &str) -> AttributeNodeFault {
+        AttributeNodeFault::ProofSealOutsideNgsildproof(ProofSealMember::of(member).unwrap_or_else(|| panic!("{member} is a seal")))
     }
 
     #[test]
@@ -213,10 +243,7 @@ mod tests {
         let fragment = json!({ "id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "odd": { "type": "NotAnAttributeType", "value": 1 } });
         pretty_assertions::assert_eq!(
             validate_fragment_attribute_types(&fragment),
-            Err(AttributeTypeError::NotAnAttributeType {
-                attribute: at(&[PathSegment::Member("odd")]),
-                source: strum::ParseError::VariantNotFound,
-            })
+            Err(refusal(&[PathSegment::Member("odd")], not_an_attribute_type()))
         );
     }
 
@@ -228,7 +255,7 @@ mod tests {
             "scope": "/a",
             "speed": 42,
             "location": { "type": "Point", "coordinates": [1.0, 2.0] },
-            "raw": { "type": 7, "value": 1 }
+            "raw": { "other": 7, "value": 1 }
         });
         assert!(validate_fragment_attribute_types(&fragment).is_ok());
         assert!(validate_fragment_attribute_types(&json!("not an object")).is_ok());
@@ -242,11 +269,104 @@ mod tests {
         ]);
         pretty_assertions::assert_eq!(
             validate_attribute_node("speed", &instances),
-            Err(AttributeTypeError::NotAnAttributeType {
-                attribute: at(&[PathSegment::Member("speed"), PathSegment::Index(1)]),
-                source: strum::ParseError::VariantNotFound,
-            })
+            Err(refusal(&[PathSegment::Member("speed"), PathSegment::Index(1)], not_an_attribute_type()))
         );
+    }
+
+    /// Clause 4.5.2.2 makes a sub-attribute "the result of serializing a
+    /// Property", so its `type` is held to clause 5.2.4 where it stands.
+    #[test]
+    fn a_misspelt_sub_attribute_type_is_rejected_where_it_stands() {
+        let fragment = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": { "type": "Property", "value": 1, "accuracy": { "type": "Propertyy", "value": 0.5 } }
+        });
+        pretty_assertions::assert_eq!(
+            validate_fragment_attribute_types(&fragment),
+            Err(refusal(
+                &[PathSegment::Member("speed"), PathSegment::Member("accuracy")],
+                not_an_attribute_type()
+            ))
+        );
+    }
+
+    /// A concise instance -- one whose family `value` implies -- has its
+    /// sub-attributes checked as a declared one does.
+    #[test]
+    fn a_sub_attribute_of_a_concise_instance_is_checked_too() {
+        let node = json!({ "value": 1, "accuracy": { "type": "Feature", "x": 1 } });
+        pretty_assertions::assert_eq!(
+            validate_attribute_node("speed", &node),
+            Err(refusal(
+                &[PathSegment::Member("speed"), PathSegment::Member("accuracy")],
+                not_an_attribute_type()
+            ))
+        );
+    }
+
+    /// Clause 4.5.2.3 reads an object carrying a `type` as a normalized
+    /// attribute, whose `type` Table 5.2.5-1 makes a String.
+    #[test]
+    fn a_type_that_is_not_a_string_is_rejected() {
+        pretty_assertions::assert_eq!(
+            validate_attribute_node("raw", &json!({ "type": 7, "value": 1 })),
+            Err(refusal(&[PathSegment::Member("raw")], AttributeNodeFault::TypeNotAString))
+        );
+        pretty_assertions::assert_eq!(
+            validate_attribute_node(
+                "speed",
+                &json!({ "type": "Property", "value": 1, "accuracy": { "type": ["Property"], "value": 0.5 } })
+            ),
+            Err(refusal(
+                &[PathSegment::Member("speed"), PathSegment::Member("accuracy")],
+                AttributeNodeFault::TypeNotAString
+            ))
+        );
+    }
+
+    #[test]
+    fn a_geometry_type_without_coordinates_is_rejected() {
+        pretty_assertions::assert_eq!(
+            validate_attribute_node("location", &json!({ "type": "Point" })),
+            Err(refusal(&[PathSegment::Member("location")], AttributeNodeFault::GeometryWithoutCoordinates))
+        );
+    }
+
+    #[test]
+    fn two_value_members_on_a_typeless_attribute_are_rejected() {
+        pretty_assertions::assert_eq!(
+            validate_attribute_node("ambiguous", &json!({ "object": "urn:ngsi-ld:X:1", "languageMap": { "en": "x" } })),
+            Err(refusal(&[PathSegment::Member("ambiguous")], AttributeNodeFault::SeveralValueMembers))
+        );
+    }
+
+    /// Clause 4.5.5 writes several instances as an array of instances; an array
+    /// holding instances and values as well is neither that nor one value.
+    #[test]
+    fn an_array_mixing_instances_and_values_is_rejected() {
+        pretty_assertions::assert_eq!(
+            validate_attribute_node("speed", &json!([{ "value": 25, "datasetId": "urn:ngsi-ld:Dataset:a" }, 30])),
+            Err(refusal(&[PathSegment::Member("speed")], AttributeNodeFault::MixedInstancesAndValues))
+        );
+        pretty_assertions::assert_eq!(
+            validate_attribute_node("speed", &json!([{ "type": "Feature" }, 30])),
+            Err(refusal(&[PathSegment::Member("speed"), PathSegment::Index(0)], not_an_attribute_type()))
+        );
+    }
+
+    /// A value is data: a `type` member inside a Property's `value`, or inside
+    /// an object that is itself an implicit Property value, declares nothing.
+    #[test]
+    fn a_type_member_inside_a_value_is_data() {
+        let fragment = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "declared": { "type": "Property", "value": { "type": "Feature", "x": 1 } },
+            "implicit": { "a": { "type": "Feature", "x": 1 } },
+            "values": [{ "a": { "type": "Feature" } }, 1]
+        });
+        assert!(validate_fragment_attribute_types(&fragment).is_ok());
     }
 
     /// Clause 4.5.2.2: `entityIdSealed` and `entityTypeSealed` "shall never be
@@ -261,10 +381,7 @@ mod tests {
             });
             pretty_assertions::assert_eq!(
                 validate_fragment_attribute_types(&fragment),
-                Err(AttributeTypeError::ProofSealOutsideNgsildproof {
-                    attribute: at(&[PathSegment::Member("speed")]),
-                    member: seal(member),
-                }),
+                Err(refusal(&[PathSegment::Member("speed")], seal(member))),
                 "{member}"
             );
         }
@@ -285,10 +402,7 @@ mod tests {
             });
             pretty_assertions::assert_eq!(
                 validate_fragment_attribute_types(&fragment),
-                Err(AttributeTypeError::ProofSealOutsideNgsildproof {
-                    attribute: at(&[PathSegment::Member("belongsTo")]),
-                    member: seal(member),
-                }),
+                Err(refusal(&[PathSegment::Member("belongsTo")], seal(member))),
                 "{member}"
             );
         }
@@ -297,10 +411,9 @@ mod tests {
     /// Clause 4.5.3.3 repeats the same prohibition for the concise
     /// representation, where a Relationship declares no `type` at all. The
     /// family the rule needs comes from
-    /// [`distinguishing_member_type`](crate::normalization::distinguishing_member_type),
-    /// which reads the `object` member the clause makes the Relationship's
-    /// distinguishing one -- so the seal rule is reached on a node that names
-    /// no family of its own.
+    /// [`read_object`](crate::concise_reading::read_object), which reads the
+    /// `object` member the clause makes the Relationship's value member -- so
+    /// the seal rule is reached on a node that names no family of its own.
     #[test]
     fn a_data_integrity_seal_on_a_concise_relationship_is_rejected_through_family_inference() {
         for member in ["entityIdSealed", "entityTypeSealed"] {
@@ -311,10 +424,7 @@ mod tests {
             });
             pretty_assertions::assert_eq!(
                 validate_fragment_attribute_types(&fragment),
-                Err(AttributeTypeError::ProofSealOutsideNgsildproof {
-                    attribute: at(&[PathSegment::Member("belongsTo")]),
-                    member: seal(member),
-                }),
+                Err(refusal(&[PathSegment::Member("belongsTo")], seal(member))),
                 "{member}"
             );
         }
@@ -334,10 +444,7 @@ mod tests {
             let fragment = json!({ "id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "ngsildproof": node });
             pretty_assertions::assert_eq!(
                 validate_fragment_attribute_types(&fragment),
-                Err(AttributeTypeError::ProofSealOutsideNgsildproof {
-                    attribute: at(&[PathSegment::Member("ngsildproof")]),
-                    member: ProofSealMember::EntityIdSealed,
-                })
+                Err(refusal(&[PathSegment::Member("ngsildproof")], seal("entityIdSealed")))
             );
         }
     }
@@ -354,10 +461,10 @@ mod tests {
         });
         pretty_assertions::assert_eq!(
             validate_fragment_attribute_types(&fragment),
-            Err(AttributeTypeError::ProofSealOutsideNgsildproof {
-                attribute: at(&[PathSegment::Member("speed"), PathSegment::Member("providedBy")]),
-                member: ProofSealMember::EntityTypeSealed,
-            })
+            Err(refusal(
+                &[PathSegment::Member("speed"), PathSegment::Member("providedBy")],
+                seal("entityTypeSealed")
+            ))
         );
     }
 
@@ -393,10 +500,10 @@ mod tests {
         });
         pretty_assertions::assert_eq!(
             validate_fragment_attribute_types(&fragment),
-            Err(AttributeTypeError::ProofSealOutsideNgsildproof {
-                attribute: at(&[PathSegment::Member("speed"), PathSegment::Member("accuracy")]),
-                member: ProofSealMember::EntityIdSealed,
-            })
+            Err(refusal(
+                &[PathSegment::Member("speed"), PathSegment::Member("accuracy")],
+                seal("entityIdSealed")
+            ))
         );
     }
 

@@ -7,6 +7,7 @@
 //! a top-level `LanguageProperty` into the `Property` it negotiates.
 
 use crate::{
+    concise::InstanceStanding,
     entity_body::{
         family_value::FamilyValue,
         geometry_body::GeometryBody,
@@ -40,18 +41,31 @@ pub(crate) struct ReifiedInstance<'a> {
     pub(crate) walk: MemberWalk<'a>,
     /// What a notification reports of the instance.
     pub(crate) report: InstanceReport<'a>,
+    /// Where it stands in the member it is written in.
+    pub(crate) standing: InstanceStanding,
 }
 
 impl<'a> ReifiedInstance<'a> {
     /// The bare value clause 4.5.2.3 collapses the instance to: a Property or
-    /// `GeoProperty` that carries nothing beside its value.
+    /// `GeoProperty` standing alone that carries nothing beside its value, and
+    /// whose value, written bare, reads back as the value of its own family --
+    /// the clause calls the representation "lossless". Among the instances of a
+    /// multi-attribute every instance stays an object, as the same clause
+    /// writes them. The NGSI-LD Null a reported deletion writes in place of the
+    /// value is the value of no family.
     fn bare_value(&self) -> Option<BareValue<'a>> {
-        if self.report.deleted_at.is_some() || self.previous_member().is_some() {
+        if self.standing == InstanceStanding::AmongInstances || self.report.deleted_at.is_some() || self.previous_member().is_some() {
             return None;
         }
         let bare = |value| Some(self.report.null.map_or(value, BareValue::Null));
+        let reads_back = |value: ValueBody<'_>| self.report.null.is_some() || value.bare_family() == Some(AttributeType::Property);
         match self.attribute {
-            Attribute::Property(property) if property.unit_code.is_none() && property.value_type.is_none() && carries_nothing(&property.common) => {
+            Attribute::Property(property)
+                if property.unit_code.is_none()
+                    && property.value_type.is_none()
+                    && carries_nothing(&property.common)
+                    && reads_back(ValueBody(&property.value)) =>
+            {
                 bare(BareValue::Value(ValueBody(&property.value)))
             }
             Attribute::GeoProperty(geo_property) if geo_property.value_type.is_none() && carries_nothing(&geo_property.common) => {
@@ -89,6 +103,36 @@ impl<'a> ReifiedInstance<'a> {
         }
     }
 
+    /// Whether the instance names its family in `type`: always in the
+    /// normalized representation, and in the concise one when the typeless
+    /// object would be read back as another family -- a Property holding a
+    /// geometry would be taken for a `GeoProperty` (clause 5.2.5). Clause
+    /// 4.5.2.3 lists `type` among the Optional members of the concise object
+    /// form. The NGSI-LD Null a reported deletion writes in place of the value
+    /// is the value of no family and leaves the concise form typeless.
+    fn declares_type(&self) -> bool {
+        match self.reification {
+            Reification::Normalized => true,
+            Reification::Concise => self.report.null.is_none() && self.typeless_family() != self.attribute.attribute_type(),
+        }
+    }
+
+    /// The family the instance's typeless object reads back as. Every family
+    /// but a Property is named by its own value member; a Property's `value`
+    /// names a `GeoProperty` when it holds a geometry.
+    fn typeless_family(&self) -> AttributeType {
+        match self.attribute {
+            Attribute::Property(property) => ValueBody(&property.value).typeless_family(),
+            Attribute::GeoProperty(_)
+            | Attribute::Relationship(_)
+            | Attribute::VocabProperty(_)
+            | Attribute::LanguageProperty(_)
+            | Attribute::JsonProperty(_)
+            | Attribute::ListProperty(_)
+            | Attribute::ListRelationship(_) => self.attribute.attribute_type(),
+        }
+    }
+
     /// The walk the instance's sub-attributes are written under: the same,
     /// except that clause 4.15 negotiates, and clause 4.5.23 nests the targets
     /// of, top-level attributes only.
@@ -116,7 +160,7 @@ impl Serialize for ReifiedInstance<'_> {
             return bare.serialize(serializer);
         }
         let mut object = serializer.serialize_map(None)?;
-        if self.reification == Reification::Normalized {
+        if self.declares_type() {
             object.serialize_entry("type", &self.attribute.attribute_type())?;
         }
         self.serialize_family_members(&mut object)?;

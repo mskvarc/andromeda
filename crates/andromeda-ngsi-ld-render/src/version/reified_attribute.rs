@@ -8,14 +8,17 @@
 //! is adapted by [`crate::version::simplified_attribute`] instead.
 
 use crate::{
+    concise::{InstanceStanding, collapses_to_bare_value, keeps_family_type},
     object_list::object_list_member_target,
     version::{adapted_payload::AdaptedPayload, family_introduction::family_introduced},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, spec_version::SpecVersion};
-use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
+use andromeda_ngsi_ld_representation::{
+    concise_reading::{ArrayReading, ObjectReading, read_array, read_object},
+    response_format::ResponseFormat,
+};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde_json::{Map, Value};
-use std::str::FromStr;
 
 /// Adapt a reified attribute value, which may be a single instance or an array
 /// of instances.
@@ -26,11 +29,10 @@ use std::str::FromStr;
 /// time. [`AdaptedPayload`] carries that reading.
 pub(crate) fn adapt_reified_attribute(value: &mut Value, target: SpecVersion, format: ResponseFormat, adapted_payload: AdaptedPayload) {
     match value {
-        // An array of bare values is the value of one attribute, not several
-        // instances of it: clause 4.5.5 separates instances by `datasetId`, and
-        // a bare concise or simplified value has nowhere to carry one. Only an
-        // array holding an instance object is read as the multi-instance form.
-        Value::Array(instances) if instances.iter().any(Value::is_object) => {
+        // Only an array the clause 4.5.2.3 reading takes for instances is the
+        // multi-instance form: an array of values is the value of one
+        // attribute, written bare.
+        Value::Array(instances) if read_array(instances) == Ok(ArrayReading::Instances) => {
             // Notes 2 and 3 of Table 4.3.6.8-1: multi-instance attributes exist
             // from 1.3 onwards; an older target receives the default instance
             // alone, as the bare object a 1.0 attribute is. The default instance
@@ -40,10 +42,7 @@ pub(crate) fn adapt_reified_attribute(value: &mut Value, target: SpecVersion, fo
             // reach one.
             if target < SpecVersion::V1_3 && adapted_payload.collapses_instances() {
                 // Clause 4.5.5 makes the default instance the one carrying no
-                // `datasetId`, which includes an instance that has nowhere to
-                // carry one: a concise Property with nothing but a value is the
-                // bare value (clause 4.5.2.3), and that is a default instance
-                // just as much as an object without the member is.
+                // `datasetId`.
                 let default_idx = instances
                     .iter()
                     .position(|instance| !instance.as_object().is_some_and(|members| members.contains_key("datasetId")))
@@ -53,51 +52,33 @@ pub(crate) fn adapt_reified_attribute(value: &mut Value, target: SpecVersion, fo
                 } else {
                     instances.swap_remove(default_idx)
                 };
-                adapt_attribute_instance(&mut default_instance, target, format, adapted_payload);
+                adapt_attribute_instance(&mut default_instance, target, format, adapted_payload, InstanceStanding::Alone);
                 *value = default_instance;
                 return;
             }
             for instance in instances.iter_mut() {
-                adapt_attribute_instance(instance, target, format, adapted_payload);
+                adapt_attribute_instance(instance, target, format, adapted_payload, InstanceStanding::AmongInstances);
             }
         }
         Value::Object(_) => {
-            adapt_attribute_instance(value, target, format, adapted_payload);
+            adapt_attribute_instance(value, target, format, adapted_payload, InstanceStanding::Alone);
         }
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {}
     }
 }
 
-/// The order the family of a reified instance is inferred in when the instance
-/// names no `type`.
-///
-/// Clause 4.5.2.3 makes `type` optional in the concise representation -- "If
-/// missing, `Property` can be inferred by the presence of the `value`
-/// attribute" -- and each family reserves a distinct value member, so the
-/// member that is present names the family. `Property` comes last because it
-/// shares `value` with a `GeoProperty`; the two are indistinguishable without
-/// resolving the value as a `GeoJSON` geometry, and Table 4.3.6.8-2 gives them
-/// identical fallbacks, so the distinction cannot change the outcome.
-const INFERENCE_ORDER: [AttributeType; 7] = [
-    AttributeType::LanguageProperty,
-    AttributeType::VocabProperty,
-    AttributeType::JsonProperty,
-    AttributeType::ListProperty,
-    AttributeType::ListRelationship,
-    AttributeType::Relationship,
-    AttributeType::Property,
-];
-
 /// The attribute family one reified instance belongs to.
 ///
-/// A declared `type` wins; without one the family is inferred from the value
-/// member the instance carries. An instance that names neither is not an
-/// attribute this rendering understands, and is left alone.
+/// A declared `type` wins; without one the family is the one the clause
+/// 4.5.2.3 reading infers from the value member the instance carries, which
+/// tells a `GeoProperty` from a Property by its geometry. An instance that
+/// names neither is not an attribute this rendering understands, and is left
+/// alone.
 fn reified_family(obj: &Map<String, Value>) -> Option<AttributeType> {
-    if let Some(declared) = obj.get("type").and_then(Value::as_str).and_then(|raw| AttributeType::from_str(raw).ok()) {
-        return Some(declared);
+    match read_object(obj) {
+        Ok(ObjectReading::Instance(family)) => Some(family),
+        Ok(ObjectReading::GeoPropertyValue | ObjectReading::PropertyValue) | Err(_) => None,
     }
-    INFERENCE_ORDER.into_iter().find(|family| obj.contains_key(family.compact_value_key()))
 }
 
 /// Rewrite the `type` of an instance a fallback reformatted -- but only when
@@ -136,7 +117,7 @@ fn collapse_object_list(obj: &mut Map<String, Value>) {
 }
 
 /// Adapt a single attribute instance based on its family.
-fn adapt_attribute_instance(instance: &mut Value, target: SpecVersion, format: ResponseFormat, adapted_payload: AdaptedPayload) {
+fn adapt_attribute_instance(instance: &mut Value, target: SpecVersion, format: ResponseFormat, adapted_payload: AdaptedPayload, standing: InstanceStanding) {
     let Some(obj) = instance.as_object_mut() else {
         return;
     };
@@ -145,74 +126,77 @@ fn adapt_attribute_instance(instance: &mut Value, target: SpecVersion, format: R
     };
     let reformats = target < family_introduced(family);
 
-    match family {
-        AttributeType::Property | AttributeType::GeoProperty => adapt_property_fields(obj, target, adapted_payload),
-        AttributeType::Relationship => adapt_relationship_fields(obj, target, adapted_payload),
+    let adapted_family = match family {
+        AttributeType::Property | AttributeType::GeoProperty => {
+            adapt_property_fields(obj, target, adapted_payload);
+            family
+        }
+        AttributeType::Relationship => {
+            adapt_relationship_fields(obj, target, adapted_payload);
+            family
+        }
         AttributeType::LanguageProperty | AttributeType::VocabProperty | AttributeType::JsonProperty | AttributeType::ListProperty => {
-            if reformats {
+            let adapted_family = if reformats {
                 move_value_member(obj, family, AttributeType::Property);
                 retype(obj, AttributeType::Property);
-            }
+                AttributeType::Property
+            } else {
+                family
+            };
             adapt_property_fields(obj, target, adapted_payload);
+            adapted_family
         }
         AttributeType::ListRelationship => {
-            if reformats {
+            let adapted_family = if reformats {
                 collapse_object_list(obj);
                 retype(obj, AttributeType::Relationship);
-            }
+                AttributeType::Relationship
+            } else {
+                family
+            };
             adapt_relationship_fields(obj, target, adapted_payload);
+            adapted_family
         }
-    }
+    };
 
     if format == ResponseFormat::Concise {
-        collapse_concise_property(instance);
+        conclude_concise_instance(instance, adapted_family, standing);
     }
 }
 
-/// Whether a bare value reads back as the value that went in (clause 4.5.2.3).
-///
-/// Two shapes do not survive the collapse. Clause 4.5.5 reads a bare JSON array
-/// as the multiple instances of one attribute, and clause 4.5.2.3 says that "if
-/// the provided value is a JSON object and contains a `type` field, the whole
-/// Attribute shall be treated as a normalized representation". Either would come
-/// back as something other than the value it stands for, so those keep the
-/// object form -- whose `value` member the same clause makes Mandatory and
-/// whose `type` it makes optional.
-fn collapses_to_bare_value(value: &Value) -> bool {
-    match value {
-        Value::Array(_) => false,
-        Value::Object(members) => !members.contains_key("type"),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
-    }
-}
-
-/// Restore the clause 4.5.2.3 collapse to an instance the fallback tables
-/// reduced to a bare Property.
+/// Restore the clause 4.5.2.3 concise shape to an instance the fallback tables
+/// changed.
 ///
 /// Clause 4.5.2.3: "An NGSI-LD Property without sub-attributes shall be
 /// represented in a concise but lossless representation by a member whose key
 /// is the Property name and whose value is the Property Value." Removing
 /// `observedAt` from a concise Property, or reformatting a `VocabProperty` into
-/// one, leaves exactly that shape, so the collapse the concise rendering would
-/// have made is made again here. Only a Property collapses: clause 4.5.3.3 and
-/// its siblings keep every other family's distinguishing member, and a bare
-/// value would read back as a Property.
-fn collapse_concise_property(instance: &mut Value) {
+/// one, can leave a Property or `GeoProperty` carrying nothing but its value,
+/// so the collapse the concise rendering would have made is made again here,
+/// on the same terms ([`collapses_to_bare_value`]). Where it is not made, a
+/// reformatted value that would leave the family misread names it in `type`
+/// ([`keeps_family_type`]). Clause 4.5.3.3 and its siblings keep every other
+/// family's value member, which names the family.
+fn conclude_concise_instance(instance: &mut Value, family: AttributeType, standing: InstanceStanding) {
+    if !matches!(family, AttributeType::Property | AttributeType::GeoProperty) {
+        return;
+    }
     let Some(obj) = instance.as_object_mut() else {
         return;
     };
-    let value_key = AttributeType::Property.compact_value_key();
-    if obj.len() != 1 || !obj.contains_key(value_key) {
-        return;
-    }
+    let value_key = family.compact_value_key();
     let Some(value) = obj.get(value_key) else {
         return;
     };
-    if !collapses_to_bare_value(value) {
+    let carries_only_its_value = obj.keys().all(|member| member == value_key || member == "type");
+    if carries_only_its_value && collapses_to_bare_value(family, value, standing) {
+        if let Some(value) = obj.remove(value_key) {
+            *instance = value;
+        }
         return;
     }
-    if let Some(value) = obj.remove(value_key) {
-        *instance = value;
+    if keeps_family_type(family, value) && !obj.contains_key("type") {
+        obj.insert("type".to_string(), Value::String(family.as_ref().to_owned()));
     }
 }
 
@@ -516,17 +500,70 @@ mod tests {
         pretty_assertions::assert_eq!(adapted, json!(25.0));
     }
 
-    /// Clause 4.5.5 reads a bare JSON array as several instances of one
-    /// attribute, and clause 4.5.2.3 reads a bare object carrying a `type`
-    /// member as a normalized attribute, so neither collapses: both keep the
-    /// object form whose `value` member clause 4.5.2.3 makes Mandatory.
+    /// Clause 4.5.2.3 reads a bare object carrying a `type` member as a
+    /// normalized attribute, and one carrying another family's value member as
+    /// that family, so neither collapses: both keep the object form whose
+    /// `value` member clause 4.5.2.3 makes Mandatory. An array of values reads
+    /// back as one value and collapses.
     #[test]
     fn a_concise_value_that_would_be_misread_bare_keeps_its_object_form() {
-        pretty_assertions::assert_eq!(concise(SpecVersion::V1_4, json!({"valueList": ["a", "b"]})), json!({"value": ["a", "b"]}));
+        pretty_assertions::assert_eq!(concise(SpecVersion::V1_4, json!({"valueList": ["a", "b"]})), json!(["a", "b"]));
         pretty_assertions::assert_eq!(
             concise(SpecVersion::V1_4, json!({"json": {"type": "config", "level": 3}})),
             json!({"value": {"type": "config", "level": 3}})
         );
+        pretty_assertions::assert_eq!(
+            concise(SpecVersion::V1_4, json!({"json": {"object": "urn:ngsi-ld:X:1"}})),
+            json!({"value": {"object": "urn:ngsi-ld:X:1"}})
+        );
+    }
+
+    /// Clause 5.2.5: a concise Property's "value member cannot be a `GeoJSON`
+    /// Object ... as it would be interpreted as a `GeoProperty`", so a value a
+    /// reformat moved under `value` that is a geometry names the Property in
+    /// `type`.
+    #[test]
+    fn a_reformatted_value_holding_a_geometry_keeps_the_property_type() {
+        let geometry = json!({"type": "Point", "coordinates": [1.0, 2.0]});
+        pretty_assertions::assert_eq!(
+            concise(SpecVersion::V1_4, json!({"json": geometry})),
+            json!({"type": "Property", "value": geometry})
+        );
+    }
+
+    /// A concise `GeoProperty` left with nothing but its geometry collapses to
+    /// it, as the concise rendering collapses one that never carried more.
+    #[test]
+    fn a_concise_geo_property_collapses_to_its_geometry_once_its_metadata_is_gone() {
+        let geometry = json!({"type": "Point", "coordinates": [1.0, 2.0]});
+        pretty_assertions::assert_eq!(
+            concise(SpecVersion::V1_0, json!({"value": geometry, "observedAt": "2025-01-01T00:00:00Z"})),
+            geometry
+        );
+    }
+
+    /// Clause 4.5.2.3 writes several instances as "a JSON-LD array with such
+    /// JSON-LD objects", so an instance among several keeps its object form
+    /// when the fallbacks leave it nothing but its value.
+    #[test]
+    fn a_concise_instance_among_several_keeps_its_object_form() {
+        pretty_assertions::assert_eq!(
+            concise(
+                SpecVersion::V1_4,
+                json!([
+                    {"value": 25.0, "datasetId": "urn:ds:1", "expiresAt": "2025-01-01T00:00:00Z"},
+                    {"value": 30.0, "expiresAt": "2025-01-01T00:00:00Z"}
+                ])
+            ),
+            json!([{"value": 25.0, "datasetId": "urn:ds:1"}, {"value": 30.0}])
+        );
+    }
+
+    /// An array of plain objects is the value of one attribute, written bare,
+    /// not instances of it.
+    #[test]
+    fn an_array_of_plain_objects_is_a_value_not_instances() {
+        pretty_assertions::assert_eq!(concise(SpecVersion::V1_0, json!([{"a": 1}, {"a": 2}])), json!([{"a": 1}, {"a": 2}]));
     }
 
     /// A concise Relationship keeps its `object` member (clause 4.5.3.3) but
@@ -542,12 +579,14 @@ mod tests {
 
     /// A concise multi-instance attribute is an array of instances (clause
     /// 4.5.5), which Table 4.3.6.8-1 note 2 reduces to the default instance for
-    /// a target below 1.3. The concise rendering collapses the default instance
-    /// to its bare value (clause 4.5.2.3), so the instance that carries no
-    /// `datasetId` is the one that is not an object at all.
+    /// a target below 1.3: the instance that carries no `datasetId`, which,
+    /// standing alone now, collapses to its bare value (clause 4.5.2.3).
     #[test]
     fn a_concise_multi_instance_attribute_collapses_to_its_default_instance() {
-        pretty_assertions::assert_eq!(concise(SpecVersion::V1_0, json!([{"value": 25.0, "datasetId": "urn:ds:1"}, 30.0])), json!(30.0));
+        pretty_assertions::assert_eq!(
+            concise(SpecVersion::V1_0, json!([{"value": 25.0, "datasetId": "urn:ds:1"}, {"value": 30.0}])),
+            json!(30.0)
+        );
         pretty_assertions::assert_eq!(
             concise(
                 SpecVersion::V1_0,

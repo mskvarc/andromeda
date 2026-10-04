@@ -7,7 +7,8 @@
 //! - the normalized representation names each instance's family in `type`,
 //!   and the concise one leaves it to be inferred;
 //! - the concise representation collapses a Property or `GeoProperty` that
-//!   carries nothing but its value down to the bare value (clause 4.5.2.3);
+//!   stands alone and carries nothing but its value down to the bare value,
+//!   when that value reads back as its own (clause 4.5.2.3);
 //! - the concise `objectList` holds bare URIs where the normalized one holds
 //!   `object`-keyed Relationship Objects (Table 5.2.37-1).
 //!
@@ -16,7 +17,7 @@
 //! [`crate::entity_body::reified_instance`].
 
 use crate::{
-    concise::concise_attr_value,
+    concise::{InstanceStanding, concise_attr_value, concise_instance},
     entity_body::{
         member_walk::MemberWalk,
         notified_member::{InstanceReport, InstanceSource, MemberInstances, NotifiedInstance, NotifiedMember, reported_verbatim},
@@ -68,25 +69,28 @@ impl<'a> ReifiedMember<'a> {
         ReifiedMember { value, reification, walk }
     }
 
-    /// One typed instance of the member, with what is reported of it.
-    const fn instance(&self, attribute: &'a Attribute, report: InstanceReport<'a>) -> ReifiedInstance<'a> {
+    /// One typed instance of the member, with what is reported of it and
+    /// where it stands.
+    const fn instance(&self, attribute: &'a Attribute, report: InstanceReport<'a>, standing: InstanceStanding) -> ReifiedInstance<'a> {
         ReifiedInstance {
             attribute,
             reification: self.reification,
             walk: self.walk,
             report,
+            standing,
         }
     }
 
-    /// One instance a notification reports.
-    const fn notified(&self, instance: NotifiedInstance<'a>) -> ReifiedNotified<'a> {
+    /// One instance a notification reports, standing as `standing` says.
+    const fn notified(&self, instance: NotifiedInstance<'a>, standing: InstanceStanding) -> ReifiedNotified<'a> {
         match instance.source {
-            InstanceSource::Typed(attribute) => ReifiedNotified::Typed(self.instance(attribute, instance.report)),
+            InstanceSource::Typed(attribute) => ReifiedNotified::Typed(self.instance(attribute, instance.report, standing)),
             InstanceSource::Verbatim(value) => ReifiedNotified::Verbatim(VerbatimInstance {
                 value,
                 report: instance.report,
                 reification: self.reification,
                 decoding: self.walk.decoding,
+                extent: VerbatimExtent::Instance(standing),
             }),
         }
     }
@@ -95,19 +99,26 @@ impl<'a> ReifiedMember<'a> {
 impl Serialize for ReifiedMember<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self.value {
-            MemberInstances::Held(AttributeValue::Single(attribute)) => self.instance(attribute, InstanceReport::default()).serialize(serializer),
-            MemberInstances::Held(AttributeValue::Multiple(instances)) => {
-                serializer.collect_seq(instances.iter().map(|attribute| self.instance(attribute, InstanceReport::default())))
-            }
+            MemberInstances::Held(AttributeValue::Single(attribute)) => self
+                .instance(attribute, InstanceReport::default(), InstanceStanding::Alone)
+                .serialize(serializer),
+            MemberInstances::Held(AttributeValue::Multiple(instances)) => serializer.collect_seq(
+                instances
+                    .iter()
+                    .map(|attribute| self.instance(attribute, InstanceReport::default(), InstanceStanding::AmongInstances)),
+            ),
             MemberInstances::Held(AttributeValue::Raw(raw)) => VerbatimInstance {
                 value: raw,
                 report: InstanceReport::default(),
                 reification: self.reification,
                 decoding: self.walk.decoding,
+                extent: VerbatimExtent::Member,
             }
             .serialize(serializer),
-            MemberInstances::Notified(NotifiedMember::One(instance)) => self.notified(*instance).serialize(serializer),
-            MemberInstances::Notified(NotifiedMember::Many(instances)) => serializer.collect_seq(instances.iter().map(|instance| self.notified(*instance))),
+            MemberInstances::Notified(NotifiedMember::One(instance)) => self.notified(*instance, InstanceStanding::Alone).serialize(serializer),
+            MemberInstances::Notified(NotifiedMember::Many(instances)) => {
+                serializer.collect_seq(instances.iter().map(|instance| self.notified(*instance, InstanceStanding::AmongInstances)))
+            }
         }
     }
 }
@@ -139,17 +150,29 @@ struct VerbatimInstance<'a> {
     reification: Reification,
     /// Whether its Relationship targets are decoded.
     decoding: UriDecoding,
+    /// Whether the value is the whole member or one instance of it.
+    extent: VerbatimExtent,
+}
+
+/// How much of a member a value carried verbatim is.
+#[derive(Debug, Clone, Copy)]
+enum VerbatimExtent {
+    /// The whole member: one instance, or the array of a multi-attribute.
+    Member,
+    /// One instance of the member, standing as the variant says.
+    Instance(InstanceStanding),
 }
 
 impl Serialize for VerbatimInstance<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let reported = reported_verbatim(self.value, &self.report);
         let decoded = decoded_attribute(&reported, self.decoding);
-        match self.reification {
-            Reification::Normalized => normalized_verbatim_member(decoded).serialize(serializer),
+        match (self.reification, self.extent) {
+            (Reification::Normalized, VerbatimExtent::Member | VerbatimExtent::Instance(_)) => normalized_verbatim_member(decoded).serialize(serializer),
             // The document reading of clause 4.5.2.3 takes the member owned;
             // one carried verbatim is small and rare.
-            Reification::Concise => concise_attr_value(decoded.into_owned()).serialize(serializer),
+            (Reification::Concise, VerbatimExtent::Member) => concise_attr_value(decoded.into_owned()).serialize(serializer),
+            (Reification::Concise, VerbatimExtent::Instance(standing)) => concise_instance(decoded.into_owned(), standing).serialize(serializer),
         }
     }
 }

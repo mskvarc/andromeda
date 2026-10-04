@@ -5,13 +5,59 @@
 //! a type and a value down to the value alone. Which member carries the value
 //! is the same eight-way table the model owns, so it is read from
 //! `AttributeType` rather than restated here.
+//!
+//! The clause calls the representation "concise but lossless", so both
+//! abbreviations are made only where the result reads back as the attribute
+//! that was written, by the reading of
+//! [`andromeda_ngsi_ld_representation::concise_reading`]: a Property or
+//! `GeoProperty` collapses only when its bare value reads back as the value of
+//! its own family and it is not one of several instances, and keeps its
+//! `type` when the typeless object would be read as the other of the two.
 
 use crate::object_list::bare_uri_object_list;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-use andromeda_ngsi_ld_representation::entity_members::ENTITY_MEMBERS;
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use andromeda_ngsi_ld_representation::{
+    concise_reading::{bare_value_family, typeless_value_family},
+    entity_members::ENTITY_MEMBERS,
+};
+use andromeda_ngsi_ld_vocabulary::{NULL_URI, compact::properties as compact_properties};
 use serde_json::{Map, Value};
 use std::str::FromStr;
+
+/// Where an attribute instance stands in the member it is written in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InstanceStanding {
+    /// The member's one instance.
+    Alone,
+    /// One of the instances of a multi-attribute, which clause 4.5.2.3 writes
+    /// as "a JSON-LD array with such JSON-LD objects": each stays an object.
+    AmongInstances,
+}
+
+/// Whether a Property or `GeoProperty` of `family` carrying nothing beside
+/// `value` collapses to it (clause 4.5.2.3).
+///
+/// It does when it stands alone and the bare value reads back as the value of
+/// its own family. The NGSI-LD Null a deletion writes in place of the value is
+/// the value of no family, and collapses whenever the instance stands alone.
+pub(crate) fn collapses_to_bare_value(family: AttributeType, value: &Value, standing: InstanceStanding) -> bool {
+    standing == InstanceStanding::Alone && (is_ngsi_ld_null(value) || bare_value_family(value) == Some(family))
+}
+
+/// Whether a concise Property or `GeoProperty` of `family` whose value member
+/// holds `value` names its family in `type`: when the typeless object would be
+/// read as the other of the two (clause 5.2.5: a concise Property's "value
+/// member cannot be a `GeoJSON` Object ... as it would be interpreted as a
+/// `GeoProperty`"). Clause 4.5.2.3 lists `type` among the Optional members of the
+/// concise object form.
+pub(crate) fn keeps_family_type(family: AttributeType, value: &Value) -> bool {
+    !is_ngsi_ld_null(value) && typeless_value_family(value) != family
+}
+
+/// Whether a value is the NGSI-LD Null (clause 4.5.0).
+fn is_ngsi_ld_null(value: &Value) -> bool {
+    value.as_str() == Some(NULL_URI.as_str())
+}
 
 /// Attribute members that are metadata rather than sub-attributes.
 ///
@@ -47,17 +93,17 @@ pub fn concise_value(val: Value) -> Value {
 /// Apply concise transformation to an attribute value (single instance or multi-attribute array).
 pub(crate) fn concise_attr_value(value: Value) -> Value {
     match value {
-        Value::Object(attr_obj) => concise_single_instance(attr_obj),
-        Value::Array(items) => Value::Array(
-            items
-                .into_iter()
-                .map(|item| match item {
-                    Value::Object(attr_obj) => concise_single_instance(attr_obj),
-                    other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => other,
-                })
-                .collect(),
-        ),
-        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => other,
+        Value::Array(items) => Value::Array(items.into_iter().map(|item| concise_instance(item, InstanceStanding::AmongInstances)).collect()),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => concise_instance(other, InstanceStanding::Alone),
+    }
+}
+
+/// Apply concise transformation to one attribute instance standing as
+/// `standing` says; a value that is no instance object is left as it is.
+pub(crate) fn concise_instance(value: Value, standing: InstanceStanding) -> Value {
+    match value {
+        Value::Object(attr_obj) => concise_single_instance(attr_obj, standing),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => other,
     }
 }
 
@@ -70,29 +116,35 @@ pub(crate) fn concise_attr_value(value: Value) -> Value {
 /// is dropped but a Relationship stays `{"object": …}`, a `LanguageProperty`
 /// `{"languageMap": …}`, and so on — collapsing them to a bare value would read
 /// back as a different attribute type. An instance carrying sub-attributes or
-/// metadata always keeps its object shape, whatever its family.
-fn concise_single_instance(mut attr_obj: Map<String, Value>) -> Value {
+/// metadata always keeps its object shape, whatever its family, and so does a
+/// Property or `GeoProperty` whose bare value would not read back as its own.
+fn concise_single_instance(mut attr_obj: Map<String, Value>, standing: InstanceStanding) -> Value {
     // The `type` member of a rendered attribute is unvalidated JSON, so it is
     // read through `AttributeType`'s own parser; anything it rejects is not an
     // attribute this rendering understands and keeps its envelope.
     let attr_type = attr_obj.get("type").and_then(Value::as_str).and_then(|raw| AttributeType::from_str(raw).ok());
     let Some(attr_type) = attr_type else { return Value::Object(attr_obj) };
     let value_key = attr_type.compact_value_key();
+    let reads_by_value = matches!(attr_type, AttributeType::Property | AttributeType::GeoProperty);
 
-    let collapses_to_bare_value = matches!(attr_type, AttributeType::Property | AttributeType::GeoProperty);
-    let is_bare = attr_obj.len() == 2 && attr_obj.contains_key("type") && attr_obj.contains_key(value_key);
-
-    if is_bare && collapses_to_bare_value {
-        if let Some(value) = attr_obj.remove(value_key) {
-            return value;
-        }
-        return Value::Object(attr_obj);
+    let is_bare = attr_obj.len() == 2 && attr_obj.contains_key(value_key);
+    if reads_by_value
+        && is_bare
+        && attr_obj.get(value_key).is_some_and(|value| collapses_to_bare_value(attr_type, value, standing))
+        && let Some(value) = attr_obj.remove(value_key)
+    {
+        return value;
     }
 
-    // Drop `type` and keep the value member; recursively concise sub-attributes.
-    attr_obj.remove("type");
+    // Drop `type` unless the value would leave the family misread, keep the
+    // value member, and recursively concise the sub-attributes.
+    let declared = attr_obj.remove("type");
+    let keeps_type = reads_by_value && attr_obj.get(value_key).is_some_and(|value| keeps_family_type(attr_type, value));
     let previous_key = attr_type.previous_key();
-    let mut result = Map::with_capacity(attr_obj.len());
+    let mut result = Map::with_capacity(attr_obj.len() + 1);
+    if keeps_type && let Some(declared) = declared {
+        result.insert("type".to_string(), declared);
+    }
     for (k, v) in attr_obj {
         if k == value_key || k == previous_key {
             result.insert(k, concise_family_value(attr_type, v));
@@ -397,5 +449,122 @@ mod tests {
         }));
         let result = EntityRenderer::new(&entity).with_mode(ResponseFormat::Concise).render().expect("concise");
         pretty_assertions::assert_eq!(result["name"], "Tower");
+    }
+
+    /// One entity carrying `attributes`, rendered concisely from its typed
+    /// form.
+    fn rendered(attributes: Value) -> Value {
+        let mut written = json!({"id": "urn:ngsi-ld:Building:1", "type": "Building"});
+        if let (Some(target), Value::Object(attributes)) = (written.as_object_mut(), attributes) {
+            target.extend(attributes);
+        }
+        EntityRenderer::new(&parse_entity(written))
+            .with_mode(ResponseFormat::Concise)
+            .render()
+            .expect("concise")
+    }
+
+    /// Clause 5.2.5: a concise Property's "value member cannot be a `GeoJSON`
+    /// Object ... as it would be interpreted as a `GeoProperty`", so a Property
+    /// holding a geometry keeps `type`, which clause 4.5.2.3 lists among the
+    /// Optional members of the concise object form.
+    #[test]
+    fn concise_keeps_the_type_of_a_property_holding_a_geometry() {
+        let geometry = json!({"type": "Point", "coordinates": [13.4, 52.5]});
+        let result = rendered(json!({
+            "pin": {"type": "Property", "value": geometry},
+            "seen": {"type": "Property", "value": geometry, "observedAt": "2025-01-01T00:00:00Z"}
+        }));
+        pretty_assertions::assert_eq!(result["pin"], json!({"type": "Property", "value": geometry}));
+        pretty_assertions::assert_eq!(
+            result["seen"],
+            json!({"type": "Property", "value": geometry, "observedAt": "2025-01-01T00:00:00Z"})
+        );
+
+        let document = concise_value(json!({"id": "urn:x", "type": "T", "pin": {"type": "Property", "value": geometry}}));
+        pretty_assertions::assert_eq!(document["pin"], json!({"type": "Property", "value": geometry}));
+    }
+
+    /// Clause 4.5.2.3 reads a bare object carrying a `type`, another family's
+    /// value member or `value` as an attribute, and an array of such objects as
+    /// instances, so a Property holding one keeps the object form.
+    #[test]
+    fn concise_writes_a_value_that_would_read_as_an_attribute_under_value() {
+        let values = [
+            json!({"type": "Feature", "x": 1}),
+            json!({"object": "urn:ngsi-ld:Thing:1"}),
+            json!({"value": 1, "unit": "x"}),
+            json!([{"object": "urn:ngsi-ld:Thing:1"}]),
+        ];
+        for value in values {
+            let result = rendered(json!({"a": {"type": "Property", "value": value.clone()}}));
+            pretty_assertions::assert_eq!(result["a"], json!({"value": value.clone()}), "{value}");
+            let document = concise_value(json!({"id": "urn:x", "type": "T", "a": {"type": "Property", "value": value.clone()}}));
+            pretty_assertions::assert_eq!(document["a"], json!({"value": value.clone()}), "{value}");
+        }
+    }
+
+    /// A value the reading takes for a value still collapses.
+    #[test]
+    fn concise_still_collapses_a_plain_value() {
+        for value in [json!(42), json!({"a": 1}), json!(["a", "b"])] {
+            let result = rendered(json!({"a": {"type": "Property", "value": value.clone()}}));
+            pretty_assertions::assert_eq!(result["a"], value.clone(), "{value}");
+        }
+    }
+
+    /// Clause 4.5.2.3 writes several instances as "a JSON-LD array with such
+    /// JSON-LD objects", so the default instance stays an object as well.
+    #[test]
+    fn concise_writes_every_instance_of_a_multi_attribute_as_an_object() {
+        let result = rendered(json!({
+            "speed": [
+                {"type": "Property", "value": 25, "datasetId": "urn:ngsi-ld:Dataset:a"},
+                {"type": "Property", "value": 30}
+            ],
+            "location": [
+                {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}, "datasetId": "urn:ngsi-ld:Dataset:a"},
+                {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [3.0, 4.0]}}
+            ]
+        }));
+        pretty_assertions::assert_eq!(result["speed"], json!([{"value": 25, "datasetId": "urn:ngsi-ld:Dataset:a"}, {"value": 30}]));
+        pretty_assertions::assert_eq!(
+            result["location"],
+            json!([
+                {"value": {"type": "Point", "coordinates": [1.0, 2.0]}, "datasetId": "urn:ngsi-ld:Dataset:a"},
+                {"value": {"type": "Point", "coordinates": [3.0, 4.0]}}
+            ])
+        );
+    }
+
+    /// The same holds for a multi-attribute carried verbatim.
+    #[test]
+    fn concise_multi_attribute_array_keeps_every_instance_an_object() {
+        let result = concise_value(json!({
+            "id": "urn:x", "type": "T",
+            "temp": [
+                {"type": "Property", "value": 25, "datasetId": "urn:ds:1"},
+                {"type": "Property", "value": 30}
+            ]
+        }));
+        pretty_assertions::assert_eq!(result["temp"], json!([{"value": 25, "datasetId": "urn:ds:1"}, {"value": 30}]));
+    }
+
+    /// A lone `GeoProperty` collapses to its geometry, which reads back as one.
+    #[test]
+    fn concise_keeps_a_lone_geo_property_bare() {
+        let geometry = json!({"type": "Point", "coordinates": [1.0, 2.0]});
+        let result = rendered(json!({"location": {"type": "GeoProperty", "value": geometry}}));
+        pretty_assertions::assert_eq!(result["location"], geometry);
+    }
+
+    /// A clause 4.7.2 geometry carried as a JSON string is no geometry object,
+    /// so a typeless `GeoProperty` holding one would read back as a Property:
+    /// it keeps `type`, and does not collapse.
+    #[test]
+    fn concise_keeps_the_type_of_a_geo_property_whose_value_is_no_geometry_object() {
+        let encoded = json!(r#"{"type": "Point", "coordinates": [1.0, 2.0]}"#);
+        let result = concise_value(json!({"id": "urn:x", "type": "T", "location": {"type": "GeoProperty", "value": encoded}}));
+        pretty_assertions::assert_eq!(result["location"], json!({"type": "GeoProperty", "value": encoded}));
     }
 }

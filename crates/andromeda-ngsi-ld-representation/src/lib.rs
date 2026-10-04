@@ -13,12 +13,15 @@
 //! It sits below both: a representation option is expressible in terms of the
 //! lexical layer alone, so nothing here names a resource, a query or a store.
 //!
-//! [`normalization`] is the one transformation that belongs here rather than
-//! with a renderer: clause 4.5.2.3 lets a *request* abbreviate an attribute, and
-//! rewriting that into the normalized form of clause 4.5.1 happens before any
-//! resource type exists to hold it. [`attribute_type_validation`] is its
-//! gatekeeper: a node that declares a `type` outside clause 5.2.4 is rejected
-//! before normalization could mistake it for a value.
+//! [`concise_reading`] says what a compact node written where an attribute
+//! stands is under clause 4.5.2.3 and its siblings: an instance of which
+//! family, a bare value, or a node they do not admit. [`normalization`] is the
+//! one transformation that belongs here rather than with a renderer: clause
+//! 4.5.2.3 lets a *request* abbreviate an attribute, and rewriting that into
+//! the normalized form of clause 4.5.1 happens before any resource type exists
+//! to hold it. [`attribute_type_validation`] is its gatekeeper: a node the
+//! reading refuses is rejected before normalization could mistake it for a
+//! value. The concise rendering writes only nodes the same reading reads back.
 //!
 //! The three member rules beside them say which members an attribute of a given
 //! family may carry at all. [`family_member_admission`] holds the fourteen
@@ -51,6 +54,7 @@
 
 pub mod attribute_nesting;
 pub mod attribute_type_validation;
+pub mod concise_reading;
 pub mod embedded_context_admission;
 pub mod entity_members;
 pub mod family_member_admission;
