@@ -66,6 +66,7 @@ fn written_entities() -> Vec<Written> {
         core("language-vocab-json", language_vocab_json()),
         core("relationships", relationships()),
         core("deep-sub-attributes", deep_sub_attributes()),
+        core("unrestricted-value-names", unrestricted_value_names()),
         core("minimal", json!({"id": "urn:ngsi-ld:Thing:minimal", "type": "Thing"})),
         core(
             "http-identifiers",
@@ -135,6 +136,19 @@ fn structured_values() -> Value {
         "arabic": {"type": "Property", "value": {"@value": "مرحبا", "@language": "ar", "@direction": "rtl"}},
         "count": {"type": "Property", "value": {"@value": "7", "@type": "http://www.w3.org/2001/XMLSchema#integer"}, "valueType": "Integer"},
         "nothing": {"type": "Property", "value": {"nested": null, "kept": 1}}
+    })
+}
+
+/// Structured values and foreign members whose keys, `@id` and `@type` are no
+/// NGSI-LD names (clauses 3.1 and 4.6.3 admit any JSON object as a value):
+/// expansion keeps each as text that is no well-formed IRI.
+fn unrestricted_value_names() -> Value {
+    json!({
+        "id": "urn:ngsi-ld:Shop:unrestricted",
+        "type": "Shop",
+        "hours": {"type": "Property", "value": {"opening hours": "9-5", "nested": {"a b": [{"c d": 1}]}}},
+        "address": {"type": "Property", "value": {"id": "abc", "type": "Postal Address", "street": "x"}},
+        "parcel": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2], "plot name": "7"}}
     })
 }
 

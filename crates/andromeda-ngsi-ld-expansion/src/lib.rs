@@ -52,6 +52,8 @@ mod nesting_stack_tests;
 mod null_sentinel_tests;
 #[cfg(test)]
 mod reserved_name_tests;
+#[cfg(test)]
+mod structured_value_name_tests;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

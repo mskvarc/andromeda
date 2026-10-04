@@ -8,11 +8,11 @@
 use crate::{
     codec::element::JSON_DATATYPE,
     expanded_value::{ExpandedValue, ValueNode},
+    expanded_value_name::ExpandedValueName,
     json_literal::JsonLiteral,
     literal::{Literal, LiteralValue},
     value_mode::{Fragment, FragmentMember, FragmentText, Stored, ValueMode},
 };
-use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use andromeda_ngsi_ld_vocabulary::NULL_URI;
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
@@ -132,11 +132,11 @@ impl<M: ModeEncoding> Serialize for NodeOut<'_, M> {
 }
 
 /// The `@type` array of a node.
-struct TypesOut<'a>(&'a [NgsiLdReference]);
+struct TypesOut<'a>(&'a [ExpandedValueName]);
 
 impl Serialize for TypesOut<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(self.0.iter().map(NgsiLdReference::as_str))
+        serializer.collect_seq(self.0.iter().map(ExpandedValueName::as_str))
     }
 }
 

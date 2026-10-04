@@ -17,6 +17,7 @@ use crate::{
     entity_state::EntityState,
     entity_types::EntityTypes,
     expanded_value::ExpandedValue,
+    expanded_value_name::ExpandedValueName,
     family_value::FamilyValue,
     instance::Instance,
     literal::{Literal, LiteralValue},
@@ -32,6 +33,11 @@ pub(crate) const SPEED: &str = "https://example.com/speed";
 /// An expanded attribute name.
 pub(crate) fn name(raw: &str) -> AttributeName {
     raw.parse().expect("a valid attribute name")
+}
+
+/// The expanded name of a member of a structured value.
+pub(crate) fn member_name(raw: &str) -> ExpandedValueName {
+    raw.parse().expect("a valid member name")
 }
 
 /// A `datasetId`.

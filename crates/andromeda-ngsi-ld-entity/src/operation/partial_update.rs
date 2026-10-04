@@ -91,6 +91,7 @@ mod tests {
                 instance_rows,
                 instances,
                 integer_of,
+                member_name,
                 name,
                 number,
                 property,
@@ -243,7 +244,7 @@ mod tests {
             ExpandedValue::Node(ValueNode::new(
                 None,
                 Vec::new(),
-                members.into_iter().map(|(member, value)| (name(member), vec![text(value)])).collect(),
+                members.into_iter().map(|(member, value)| (member_name(member), vec![text(value)])).collect(),
             ))
         };
         let mut target = entity(vec![(
@@ -256,7 +257,7 @@ mod tests {
         let written = ExpandedValue::Node(ValueNode::new(
             None,
             Vec::new(),
-            [(name("https://example.org/street"), FragmentMember::Values(vec![text("c")]))]
+            [(member_name("https://example.org/street"), FragmentMember::Values(vec![text("c")]))]
                 .into_iter()
                 .collect(),
         ));

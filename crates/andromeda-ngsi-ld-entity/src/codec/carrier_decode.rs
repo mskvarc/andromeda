@@ -130,7 +130,7 @@ fn reference_uri(value: &ExpandedValue<Fragment>) -> Option<Uri> {
     };
     match node.id() {
         Some(NodeId::Uri(uri)) if node.is_reference() => Some(uri.clone()),
-        Some(NodeId::Uri(_) | NodeId::Blank(_)) | None => None,
+        Some(NodeId::Uri(_) | NodeId::Blank(_) | NodeId::Verbatim(_)) | None => None,
     }
 }
 

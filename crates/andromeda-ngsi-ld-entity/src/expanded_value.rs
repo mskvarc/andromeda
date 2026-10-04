@@ -2,17 +2,18 @@
 //! of a structured value.
 //!
 //! JSON-LD expansion turns a scalar into a value object, a JSON object into a
-//! node whose members are expanded IRIs, an array under a `@list` container
+//! node whose members are expanded names (see
+//! [`crate::expanded_value_name`]), an array under a `@list` container
 //! into a list object, and a value coerced to `@json` into a JSON literal. The
 //! four are the variants here; nothing else can stand in a value position.
 
 use crate::{
+    expanded_value_name::ExpandedValueName,
     json_literal::JsonLiteral,
     literal::Literal,
     node_id::NodeId,
     value_mode::{Stored, ValueMode},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
 use indexmap::IndexMap;
 
 /// One expanded value.
@@ -36,15 +37,15 @@ pub struct ValueNode<M: ValueMode = Stored> {
     /// The node's `@id`.
     id: Option<NodeId>,
     /// The node's `@type` entries, in order.
-    types: Vec<NgsiLdReference>,
+    types: Vec<ExpandedValueName>,
     /// The node's members by expanded name, in written order.
-    members: IndexMap<AttributeName, M::Member>,
+    members: IndexMap<ExpandedValueName, M::Member>,
 }
 
 impl<M: ValueMode> ValueNode<M> {
     /// Assemble a node from its parts.
     #[must_use]
-    pub const fn new(id: Option<NodeId>, types: Vec<NgsiLdReference>, members: IndexMap<AttributeName, M::Member>) -> ValueNode<M> {
+    pub const fn new(id: Option<NodeId>, types: Vec<ExpandedValueName>, members: IndexMap<ExpandedValueName, M::Member>) -> ValueNode<M> {
         ValueNode { id, types, members }
     }
 
@@ -56,18 +57,18 @@ impl<M: ValueMode> ValueNode<M> {
 
     /// The node's `@type` entries.
     #[must_use]
-    pub fn types(&self) -> &[NgsiLdReference] {
+    pub fn types(&self) -> &[ExpandedValueName] {
         &self.types
     }
 
     /// The node's members by expanded name.
     #[must_use]
-    pub const fn members(&self) -> &IndexMap<AttributeName, M::Member> {
+    pub const fn members(&self) -> &IndexMap<ExpandedValueName, M::Member> {
         &self.members
     }
 
     /// The node's members, for a mutation.
-    pub const fn members_mut(&mut self) -> &mut IndexMap<AttributeName, M::Member> {
+    pub const fn members_mut(&mut self) -> &mut IndexMap<ExpandedValueName, M::Member> {
         &mut self.members
     }
 
@@ -79,7 +80,7 @@ impl<M: ValueMode> ValueNode<M> {
 
     /// Give the node up as its parts.
     #[must_use]
-    pub fn into_parts(self) -> (Option<NodeId>, Vec<NgsiLdReference>, IndexMap<AttributeName, M::Member>) {
+    pub fn into_parts(self) -> (Option<NodeId>, Vec<ExpandedValueName>, IndexMap<ExpandedValueName, M::Member>) {
         (self.id, self.types, self.members)
     }
 }

@@ -18,6 +18,7 @@ use crate::{
         stored_order_document,
     },
     entity_state::EntityState,
+    expanded_value_name::ExpandedValueName,
     family_value::FamilyValue,
     geo_value::GeoValue,
     list_object::ListObject,
@@ -416,7 +417,7 @@ fn a_stored_geometry_node_with_a_box_and_foreign_members_round_trips() {
     let members = geometry.members().expect("the members are kept");
     pretty_assertions::assert_eq!(members.bbox().map(|bbox| bbox.ordinates().collect::<Vec<_>>()), Some(vec![1.0, 2.0, 1.0, 2.0]));
     pretty_assertions::assert_eq!(
-        members.foreign().keys().map(AttributeName::as_str).collect::<Vec<_>>(),
+        members.foreign().keys().map(ExpandedValueName::as_str).collect::<Vec<_>>(),
         vec!["https://uri.etsi.org/ngsi-ld/default-context/title"]
     );
 }

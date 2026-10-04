@@ -11,9 +11,8 @@
 //! JSON-LD representation"). The model keeps both in their expanded form, as it
 //! keeps the members of a structured Property value.
 
-use crate::expanded_value::ExpandedValue;
+use crate::{expanded_value::ExpandedValue, expanded_value_name::ExpandedValueName};
 use andromeda_ngsi_ld_geometry::{bounding_box::BoundingBox, form::GeometryForm};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use indexmap::IndexMap;
 
 /// A geometry: its positions, and its `bbox` and foreign members when either
@@ -69,13 +68,13 @@ pub struct ExpandedGeoJsonMembers {
     /// The bounding box, when one was written.
     bbox: Option<BoundingBox>,
     /// The foreign members by expanded name, in the order they were read.
-    foreign: IndexMap<AttributeName, Vec<ExpandedValue>>,
+    foreign: IndexMap<ExpandedValueName, Vec<ExpandedValue>>,
 }
 
 impl ExpandedGeoJsonMembers {
     /// The members `bbox` and `foreign` make, or `None` when there is neither.
     #[must_use]
-    pub fn non_empty(bbox: Option<BoundingBox>, foreign: IndexMap<AttributeName, Vec<ExpandedValue>>) -> Option<ExpandedGeoJsonMembers> {
+    pub fn non_empty(bbox: Option<BoundingBox>, foreign: IndexMap<ExpandedValueName, Vec<ExpandedValue>>) -> Option<ExpandedGeoJsonMembers> {
         (bbox.is_some() || !foreign.is_empty()).then_some(ExpandedGeoJsonMembers { bbox, foreign })
     }
 
@@ -87,7 +86,7 @@ impl ExpandedGeoJsonMembers {
 
     /// The foreign members by expanded name.
     #[must_use]
-    pub const fn foreign(&self) -> &IndexMap<AttributeName, Vec<ExpandedValue>> {
+    pub const fn foreign(&self) -> &IndexMap<ExpandedValueName, Vec<ExpandedValue>> {
         &self.foreign
     }
 }

@@ -33,6 +33,7 @@ pub mod document;
 pub mod entity_state;
 pub mod entity_types;
 pub mod expanded_value;
+pub mod expanded_value_name;
 pub mod family_value;
 pub mod geo_value;
 pub mod geometry_value;

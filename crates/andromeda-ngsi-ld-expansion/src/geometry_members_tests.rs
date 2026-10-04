@@ -14,10 +14,10 @@ use andromeda_ngsi_ld_entity::{
         written_value::{ValueSlot, WrittenValue},
     },
     expanded_value::ExpandedValue,
+    expanded_value_name::ExpandedValueName,
     geo_value::GeoValue,
     literal::LiteralValue,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use serde_json::{Value, json};
 
 /// The core context's default vocabulary (clause 5.5.7).
@@ -91,7 +91,10 @@ async fn a_foreign_member_named_by_a_user_term_expands_to_that_term() {
         panic!("a geometry");
     };
     let foreign = area.members().expect("the members are kept").foreign();
-    pretty_assertions::assert_eq!(foreign.keys().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["https://ex.org/plotName"]);
+    pretty_assertions::assert_eq!(
+        foreign.keys().map(ExpandedValueName::as_str).collect::<Vec<_>>(),
+        vec!["https://ex.org/plotName"]
+    );
 }
 
 /// Clause 4.6.4: a Property whose value is a geometry keeps the box and the
@@ -113,7 +116,7 @@ async fn a_property_valued_geometry_keeps_its_box_and_foreign_members() {
     let [ExpandedValue::Node(node)] = values.as_slice() else {
         panic!("one node");
     };
-    let mut names: Vec<&str> = node.members().keys().map(AttributeName::as_str).collect();
+    let mut names: Vec<&str> = node.members().keys().map(ExpandedValueName::as_str).collect();
     names.sort_unstable();
     let title = format!("{DEFAULT}plotName");
     pretty_assertions::assert_eq!(

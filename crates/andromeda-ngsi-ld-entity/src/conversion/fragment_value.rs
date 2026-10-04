@@ -50,16 +50,17 @@ impl LanguageEntries {
 mod tests {
     use crate::{
         expanded_value::{ExpandedValue, ValueNode},
+        expanded_value_name::ExpandedValueName,
         json_literal::JsonLiteral,
         language_entries::{LanguageEntries, LanguageEntry},
         literal::{Literal, LiteralValue},
         value_mode::{Fragment, FragmentMember, FragmentText},
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+
     use indexmap::IndexMap;
     use serde_json::json;
 
-    fn name(raw: &str) -> AttributeName {
+    fn name(raw: &str) -> ExpandedValueName {
         raw.parse().expect("a valid name")
     }
 

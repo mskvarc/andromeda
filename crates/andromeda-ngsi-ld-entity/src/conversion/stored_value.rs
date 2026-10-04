@@ -60,14 +60,15 @@ impl LanguageEntries<Fragment> {
 mod tests {
     use crate::{
         expanded_value::{ExpandedValue, ValueNode},
+        expanded_value_name::ExpandedValueName,
         json_literal::JsonLiteral,
         value_mode::{Fragment, FragmentMember},
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+
     use indexmap::IndexMap;
     use serde_json::json;
 
-    fn name(raw: &str) -> AttributeName {
+    fn name(raw: &str) -> ExpandedValueName {
         raw.parse().expect("a valid name")
     }
 

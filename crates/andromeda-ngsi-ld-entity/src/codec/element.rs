@@ -13,6 +13,7 @@
 use crate::{
     codec::{decode_context::DecodeContext, object_key::ObjectKey, raw_scalar::RawScalar},
     expanded_value::{ExpandedValue, ValueNode},
+    expanded_value_name::ExpandedValueName,
     json_literal::JsonLiteral,
     literal::{Direction, Literal, LiteralValue},
     member_shape::MemberShape,
@@ -137,7 +138,7 @@ impl<'de> Visitor<'de> for ElementSeed<'_> {
                     parts.members.insert(name, values);
                 }
                 ObjectKey::OtherKeyword => return Err(self.context.refuse(self.refusal())),
-                ObjectKey::InvalidName(source) => return Err(self.context.refuse(EntityRefusal::ExpandedAttributeName(source))),
+                ObjectKey::InvalidName(source) => return Err(self.context.refuse(EntityRefusal::ExpandedMemberName(source))),
             }
         }
         parts.decide(self.owner).map_err(|refusal| self.context.refuse(refusal))
@@ -198,7 +199,7 @@ struct ElementParts {
     /// `@id`.
     id: Option<String>,
     /// The expanded members of a node.
-    members: IndexMap<AttributeName, Vec<Decoded>>,
+    members: IndexMap<ExpandedValueName, Vec<Decoded>>,
 }
 
 impl ElementParts {
@@ -281,7 +282,7 @@ impl ElementParts {
             None => Vec::new(),
             Some(TypeEntries::Array(types)) => types
                 .into_iter()
-                .map(|entry| entry.parse::<NgsiLdReference>().map_err(|_| malformed(owner)))
+                .map(|entry| entry.parse::<ExpandedValueName>().map_err(EntityRefusal::ExpandedMemberName))
                 .collect::<Result<Vec<_>, _>>()?,
             Some(TypeEntries::Single(_)) => return Err(malformed(owner)),
         };
@@ -293,7 +294,7 @@ impl ElementParts {
                     Err(EntityRefusal::NullBesideData { attribute: owner.cloned() })
                 };
             }
-            Some(id) => Some(id.parse::<NodeId>().map_err(|_| malformed(owner))?),
+            Some(id) => Some(NodeId::from(id.as_str())),
             None => None,
         };
         let members = self

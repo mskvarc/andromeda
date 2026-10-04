@@ -38,10 +38,11 @@
 //! read off the representation alone. [`attribute_nesting`] bounds how deeply
 //! one attribute of it may nest, so that its stored expansion reads back.
 //!
-//! [`embedded_context_admission`] is the fourth of those representation rules
-//! and the only one about where a member may stand rather than which members
-//! there may be: clause 5.5.7 admits a user `@context` at the top level of an
-//! NGSI-LD document and nowhere else.
+//! [`compact_key_admission`] is the fourth of those representation rules and
+//! the only one about the keys a document is written with rather than which
+//! members an attribute may carry: clause 5.5.7 admits a user `@context` at
+//! the top level of an NGSI-LD document and nowhere else, and clause 4.6.4
+//! refuses a key JSON-LD expansion would drop or rewrite past recovery.
 //!
 //! How a client *asks* for one is not here. Media-type negotiation, version
 //! conformance and language ranges arrive as HTTP headers and are spelled by
@@ -54,8 +55,8 @@
 
 pub mod attribute_nesting;
 pub mod attribute_type_validation;
+pub mod compact_key_admission;
 pub mod concise_reading;
-pub mod embedded_context_admission;
 pub mod entity_members;
 pub mod family_member_admission;
 pub mod join_mode;

@@ -96,6 +96,7 @@ mod tests {
                 instance_rows,
                 instances,
                 integer_of,
+                member_name,
                 name,
                 number,
                 observed_document,
@@ -142,13 +143,13 @@ mod tests {
 
     /// A stored address Property whose value is a structured node.
     fn address(members: &[(&str, &str)]) -> Instance {
-        let members = members.iter().map(|(member, value)| (name(member), vec![text(value)])).collect();
+        let members = members.iter().map(|(member, value)| (member_name(member), vec![text(value)])).collect();
         property(ExpandedValue::Node(ValueNode::new(None, Vec::new(), members)))
     }
 
     /// The written structured value of an address Property.
     fn written_address(members: Vec<(&str, FragmentMember)>) -> InstanceDocument {
-        let members = members.into_iter().map(|(member, value)| (name(member), value)).collect();
+        let members = members.into_iter().map(|(member, value)| (member_name(member), value)).collect();
         property_document(ExpandedValue::Node(ValueNode::new(None, Vec::new(), members)), None)
     }
 
@@ -718,7 +719,7 @@ mod tests {
         let point = |longitude: i64, latitude: i64| -> ExpandedValue<Fragment> {
             let mut members = IndexMap::new();
             members.insert(
-                name("https://purl.org/geojson/vocab#coordinates"),
+                member_name("https://purl.org/geojson/vocab#coordinates"),
                 FragmentMember::Values(vec![ExpandedValue::List(vec![number(longitude), number(latitude)])]),
             );
             ExpandedValue::Node(ValueNode::new(

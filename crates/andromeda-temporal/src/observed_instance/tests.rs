@@ -1,7 +1,7 @@
 //! The observation each written instance records, family by family.
 
 use crate::{error::TemporalError, observed_instance::ObservedInstance};
-use andromeda_ngsi_ld_entity::{document::instance_document::InstanceDocument, geometry_value::GeometryValue};
+use andromeda_ngsi_ld_entity::{document::instance_document::InstanceDocument, expanded_value_name::ExpandedValueName, geometry_value::GeometryValue};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_model::temporal::TemporalValue;
@@ -463,7 +463,7 @@ fn a_recorded_geo_observation_keeps_its_members() {
     let members = recorded.members().expect("the members are recorded");
     pretty_assertions::assert_eq!(members.bbox().map(|bbox| bbox.ordinates().collect::<Vec<_>>()), Some(vec![1.0, 2.0, 1.0, 2.0]));
     pretty_assertions::assert_eq!(
-        members.foreign().keys().map(AttributeName::as_str).collect::<Vec<_>>(),
+        members.foreign().keys().map(ExpandedValueName::as_str).collect::<Vec<_>>(),
         vec!["https://ex.org/plotName"]
     );
 }

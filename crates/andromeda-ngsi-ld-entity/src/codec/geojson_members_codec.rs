@@ -16,6 +16,7 @@ use crate::{
     },
     conversion::stored_value::into_stored_values,
     expanded_value::ExpandedValue,
+    expanded_value_name::ExpandedValueName,
     geometry_value::ExpandedGeoJsonMembers,
     literal::LiteralValue,
     member_shape::MemberShape,
@@ -45,7 +46,7 @@ pub(crate) struct MembersRead {
     /// The `bbox`, once read.
     bbox: Option<BoundingBox>,
     /// The foreign members, by expanded name.
-    foreign: IndexMap<AttributeName, Vec<ExpandedValue>>,
+    foreign: IndexMap<ExpandedValueName, Vec<ExpandedValue>>,
 }
 
 impl MembersRead {
@@ -55,7 +56,7 @@ impl MembersRead {
         &mut self,
         context: &DecodeContext,
         attribute: &AttributeName,
-        name: AttributeName,
+        name: ExpandedValueName,
         map: &mut A,
     ) -> Result<(), A::Error> {
         let elements = map.next_value_seed(ElementsSeed {

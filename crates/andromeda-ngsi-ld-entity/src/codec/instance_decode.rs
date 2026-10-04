@@ -14,7 +14,7 @@ use crate::{
         element::{ElementsSeed, TypeEntries},
         geometry_decode::GeoValueSeed,
         member_decode::{dataset_id, date_time, instance_id, malformed, references, seal_values, system_instant, unit_code, value_type},
-        object_key::ObjectKey,
+        object_key::{ObjectKey, attribute_key},
         raw_scalar::RawScalar,
     },
     date_time_text::DateTimeText,
@@ -139,63 +139,66 @@ impl<'de> Visitor<'de> for InstanceSeed<'_> {
                     }
                     parts.null_marker = true;
                 }
-                ObjectKey::Name(name) => match MemberRole::of(name.as_str()) {
-                    MemberRole::Carrier(carrier) => {
-                        let content = if carrier == ValueCarrier::Value && parts.family == Some(AttributeType::GeoProperty) {
-                            CarrierContent::Geometry(map.next_value_seed(GeoValueSeed {
+                ObjectKey::Name(name) => {
+                    let name = attribute_key(&name).map_err(refuse)?;
+                    match MemberRole::of(name.as_str()) {
+                        MemberRole::Carrier(carrier) => {
+                            let content = if carrier == ValueCarrier::Value && parts.family == Some(AttributeType::GeoProperty) {
+                                CarrierContent::Geometry(map.next_value_seed(GeoValueSeed {
+                                    context: self.context,
+                                    attribute,
+                                })?)
+                            } else {
+                                CarrierContent::Elements(map.next_value_seed(elements)?)
+                            };
+                            parts.carriers.push((carrier, content));
+                        }
+                        MemberRole::DatasetId => parts.dataset_id = Some(dataset_id(map.next_value_seed(elements)?, attribute).map_err(refuse)?),
+                        MemberRole::InstanceId => parts.instance_id = Some(instance_id(map.next_value_seed(elements)?, attribute).map_err(refuse)?),
+                        MemberRole::ObservedAt => {
+                            parts.observed_at = Some(date_time(map.next_value_seed(elements)?, Some(attribute), MemberShape::ObservedAt).map_err(refuse)?);
+                        }
+                        MemberRole::ExpiresAt => {
+                            parts.expires_at = Some(date_time(map.next_value_seed(elements)?, Some(attribute), MemberShape::ExpiresAt).map_err(refuse)?);
+                        }
+                        MemberRole::DeletedAt => match date_time(map.next_value_seed(elements)?, Some(attribute), MemberShape::DeletedAt).map_err(refuse)? {
+                            Slot::Set(deleted_at) => parts.deleted_at = Some(deleted_at),
+                            Slot::Remove => return Err(refuse(EntityRefusal::ReservedNullValue { attribute: attribute.clone() })),
+                        },
+                        MemberRole::CreatedAt => {
+                            parts.created_at = Some(system_instant(map.next_value_seed(elements)?, attribute, MemberShape::CreatedAt).map_err(refuse)?);
+                        }
+                        MemberRole::ModifiedAt => {
+                            parts.modified_at = Some(system_instant(map.next_value_seed(elements)?, attribute, MemberShape::ModifiedAt).map_err(refuse)?);
+                        }
+                        MemberRole::UnitCode => parts.unit_code = Some(unit_code(map.next_value_seed(elements)?, attribute).map_err(refuse)?),
+                        MemberRole::ValueType => parts.value_type = Some(value_type(map.next_value_seed(elements)?, attribute).map_err(refuse)?),
+                        MemberRole::ObjectType => {
+                            parts.object_types = Some(references(map.next_value_seed(elements)?, attribute, MemberShape::ObjectType).map_err(refuse)?);
+                        }
+                        MemberRole::Seal(seal) => {
+                            let values = seal_values(map.next_value_seed(elements)?, attribute).map_err(refuse)?;
+                            match seal {
+                                ProofSeal::EntityId => parts.seal_entity_id = Some(values),
+                                ProofSeal::EntityType => parts.seal_entity_type = Some(values),
+                            }
+                        }
+                        MemberRole::OutputOnly | MemberRole::Scope => {
+                            return Err(refuse(EntityRefusal::OutputOnlyMember {
+                                attribute: attribute.clone(),
+                                member: name,
+                            }));
+                        }
+                        MemberRole::Attribute => {
+                            let member = map.next_value_seed(AttributeMemberSeed {
                                 context: self.context,
-                                attribute,
-                            })?)
-                        } else {
-                            CarrierContent::Elements(map.next_value_seed(elements)?)
-                        };
-                        parts.carriers.push((carrier, content));
-                    }
-                    MemberRole::DatasetId => parts.dataset_id = Some(dataset_id(map.next_value_seed(elements)?, attribute).map_err(refuse)?),
-                    MemberRole::InstanceId => parts.instance_id = Some(instance_id(map.next_value_seed(elements)?, attribute).map_err(refuse)?),
-                    MemberRole::ObservedAt => {
-                        parts.observed_at = Some(date_time(map.next_value_seed(elements)?, Some(attribute), MemberShape::ObservedAt).map_err(refuse)?);
-                    }
-                    MemberRole::ExpiresAt => {
-                        parts.expires_at = Some(date_time(map.next_value_seed(elements)?, Some(attribute), MemberShape::ExpiresAt).map_err(refuse)?);
-                    }
-                    MemberRole::DeletedAt => match date_time(map.next_value_seed(elements)?, Some(attribute), MemberShape::DeletedAt).map_err(refuse)? {
-                        Slot::Set(deleted_at) => parts.deleted_at = Some(deleted_at),
-                        Slot::Remove => return Err(refuse(EntityRefusal::ReservedNullValue { attribute: attribute.clone() })),
-                    },
-                    MemberRole::CreatedAt => {
-                        parts.created_at = Some(system_instant(map.next_value_seed(elements)?, attribute, MemberShape::CreatedAt).map_err(refuse)?);
-                    }
-                    MemberRole::ModifiedAt => {
-                        parts.modified_at = Some(system_instant(map.next_value_seed(elements)?, attribute, MemberShape::ModifiedAt).map_err(refuse)?);
-                    }
-                    MemberRole::UnitCode => parts.unit_code = Some(unit_code(map.next_value_seed(elements)?, attribute).map_err(refuse)?),
-                    MemberRole::ValueType => parts.value_type = Some(value_type(map.next_value_seed(elements)?, attribute).map_err(refuse)?),
-                    MemberRole::ObjectType => {
-                        parts.object_types = Some(references(map.next_value_seed(elements)?, attribute, MemberShape::ObjectType).map_err(refuse)?);
-                    }
-                    MemberRole::Seal(seal) => {
-                        let values = seal_values(map.next_value_seed(elements)?, attribute).map_err(refuse)?;
-                        match seal {
-                            ProofSeal::EntityId => parts.seal_entity_id = Some(values),
-                            ProofSeal::EntityType => parts.seal_entity_type = Some(values),
+                                attribute: &name,
+                            })?;
+                            parts.sub_attributes.insert(name, member);
                         }
                     }
-                    MemberRole::OutputOnly | MemberRole::Scope => {
-                        return Err(refuse(EntityRefusal::OutputOnlyMember {
-                            attribute: attribute.clone(),
-                            member: name,
-                        }));
-                    }
-                    MemberRole::Attribute => {
-                        let member = map.next_value_seed(AttributeMemberSeed {
-                            context: self.context,
-                            attribute: &name,
-                        })?;
-                        parts.sub_attributes.insert(name, member);
-                    }
-                },
-                ObjectKey::InvalidName(source) => return Err(refuse(EntityRefusal::ExpandedAttributeName(source))),
+                }
+                ObjectKey::InvalidName(source) => return Err(refuse(EntityRefusal::ExpandedMemberName(source))),
                 ObjectKey::Language | ObjectKey::Direction | ObjectKey::List | ObjectKey::OtherKeyword => {
                     return Err(refuse(malformed(Some(attribute), MemberShape::Attribute)));
                 }

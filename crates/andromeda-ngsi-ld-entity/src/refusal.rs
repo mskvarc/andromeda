@@ -8,6 +8,7 @@
 //! echoes the raw input, only typed values the broker already validated.
 
 use crate::{
+    expanded_value_name::ExpandedValueNameError,
     member_shape::MemberShape,
     refusal_wording::{attribute_prefix, compact_term, forbidden_member_subject},
     scope_refusal::ScopeRefusal,
@@ -69,6 +70,9 @@ pub enum EntityRefusal {
     /// A member key is not an attribute name.
     #[error("invalid expanded attribute name: {0}")]
     ExpandedAttributeName(#[source] NgsiLdReferenceError),
+    /// A member key is no name expansion produces.
+    #[error("invalid expanded member name: {0}")]
+    ExpandedMemberName(#[source] ExpandedValueNameError),
     /// The `scope` member is not a value clause 4.18 admits.
     #[error(transparent)]
     Scope(ScopeRefusal),

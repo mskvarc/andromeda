@@ -16,6 +16,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_entity::{
     expanded_value::{ExpandedValue, ValueNode},
+    expanded_value_name::ExpandedValueName,
     json_literal::JsonLiteral,
     literal::{Literal, LiteralValue},
     member_shape::MemberShape,
@@ -82,8 +83,9 @@ pub fn expanded_values<M: MemberMode>(attribute: &AttributeName, items: Vec<Expa
 ///
 /// Returns [`EntityRefusal::NullBesideData`] for the NGSI-LD Null, which is
 /// never data, [`EntityRefusal::Malformed`] for a number out of the supported
-/// range, a datatype, language or node identifier that is not one, and
-/// [`EntityRefusal::ExpandedAttributeName`] for a member name that is no IRI.
+/// range or a datatype or language that is not one, and
+/// [`EntityRefusal::ExpandedMemberName`] for a member name or a node type
+/// expansion never keeps.
 pub fn expanded_value<M: MemberMode>(attribute: &AttributeName, item: ExpandedItem) -> Result<ExpandedValue<M>, EntityRefusal> {
     if is_null(&item) {
         return Err(null_beside_data(attribute));
@@ -125,16 +127,16 @@ fn value_node<M: MemberMode>(attribute: &AttributeName, node: ExpandedNode) -> R
     if node.id.as_deref().is_some_and(is_ngsi_ld_null) {
         return Err(null_beside_data(attribute));
     }
-    let id = node.id.map(|id| id.parse::<NodeId>()).transpose().map_err(|_| nested_malformed(attribute))?;
+    let id = node.id.as_deref().map(NodeId::from);
     let types = node
         .types
         .into_iter()
-        .map(|type_name| type_name.parse::<NgsiLdReference>())
+        .map(|type_name| type_name.parse::<ExpandedValueName>())
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| nested_malformed(attribute))?;
+        .map_err(EntityRefusal::ExpandedMemberName)?;
     let mut members = IndexMap::with_capacity(node.members.len());
     for (name, items) in node.members {
-        let name = name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?;
+        let name = name.parse::<ExpandedValueName>().map_err(EntityRefusal::ExpandedMemberName)?;
         members.insert(name, node_member::<M>(attribute, items)?);
     }
     Ok(ValueNode::new(id, types, members))

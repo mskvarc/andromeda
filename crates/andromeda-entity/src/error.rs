@@ -184,6 +184,7 @@ impl From<EntityRefusal> for EntityError {
             | EntityRefusal::EntityType { .. }
             | EntityRefusal::MissingType
             | EntityRefusal::ExpandedAttributeName(_)
+            | EntityRefusal::ExpandedMemberName(_)
             | EntityRefusal::Scope(_)
             | EntityRefusal::ScopeNull
             | EntityRefusal::EntityExpiresAt

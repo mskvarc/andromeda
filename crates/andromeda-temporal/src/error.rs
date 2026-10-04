@@ -183,6 +183,7 @@ impl From<EntityRefusal> for TemporalError {
             | EntityRefusal::EntityType { .. }
             | EntityRefusal::MissingType
             | EntityRefusal::ExpandedAttributeName(_)
+            | EntityRefusal::ExpandedMemberName(_)
             | EntityRefusal::Scope(_)
             | EntityRefusal::ScopeNull
             | EntityRefusal::EntityExpiresAt

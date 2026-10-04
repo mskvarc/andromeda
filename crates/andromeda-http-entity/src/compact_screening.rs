@@ -1,11 +1,12 @@
 //! The two clause 5.5.4 rules decidable only on the compact payload, read off
 //! the typed compact entity.
 //!
-//! [`validate_fragment_attribute_types`] and
-//! [`reject_embedded_contexts_in_fragment`] state the rules over the compact
-//! JSON of an entity: clause 5.2.4's eight attribute types together with
-//! clause 4.5.2.2's `ngsildproof` seals, and clause 5.5.7's refusal of a
-//! `@context` below the top level. The extractor decodes the request straight
+//! [`validate_fragment_attribute_types`] and [`screen_keys_in_fragment`] state
+//! the rules over the compact JSON of an entity: clause 5.2.4's eight attribute
+//! types together with clause 4.5.2.2's `ngsildproof` seals, and the keys a
+//! document cannot be written with -- clause 5.5.7's `@context` below the top
+//! level, and the keys clause 4.6.4 refuses because JSON-LD expansion would
+//! drop or rewrite them. The extractor decodes the request straight
 //! into the typed [`Entity`] or [`EntityPatch`], so the rules are applied here
 //! to what that decode holds, member by member, rather than to a JSON copy of
 //! the whole entity rendered back for them:
@@ -14,19 +15,19 @@
 //!   inside a typed instance, is read by the representation crate's own walk,
 //!   its location reported from the top of the entity;
 //! - a typed instance declares one of the eight types by construction, holds
-//!   any seal it was written with as a sub-attribute, and can carry an
-//!   embedded `@context` only inside a JSON value or a sub-attribute, so only
-//!   those are read;
+//!   any seal it was written with as a sub-attribute, and is keyed by its
+//!   family's members and by attribute names, so it can carry a refused key
+//!   only inside a JSON value or a sub-attribute, and only those are read;
 //! - a typed geometry is RFC 7946 positions and nothing else, so neither rule
 //!   has anything to read in it, which is what keeps a large geometry out of
 //!   the screening.
 //!
 //! Each rule reports the first fault in the member order of the compact JSON
 //! it is stated over, and the attribute-type rule is decided over every member
-//! before the context rule, exactly as the two run over a rendered entity.
+//! before the key rule, exactly as the two run over a rendered entity.
 //!
 //! [`validate_fragment_attribute_types`]: andromeda_ngsi_ld_representation::attribute_type_validation::validate_fragment_attribute_types
-//! [`reject_embedded_contexts_in_fragment`]: andromeda_ngsi_ld_representation::embedded_context_admission::reject_embedded_contexts_in_fragment
+//! [`screen_keys_in_fragment`]: andromeda_ngsi_ld_representation::compact_key_admission::screen_keys_in_fragment
 
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{
@@ -41,7 +42,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, JsonPointerSegment};
 use andromeda_ngsi_ld_representation::{
     attribute_type_validation::{AttributeNodeFault, AttributeTypeError, validate_attribute_node},
-    embedded_context_admission::{EmbeddedContextError, is_native_json_member, reject_embedded_contexts_in_attribute},
+    compact_key_admission::{CompactKeyError, is_native_json_member, screen_keys_in_nested_value},
     family_member_admission::MemberAdmission,
     proof_seal_admission::{ProofSealMember, proof_seal_admission},
 };
@@ -58,9 +59,11 @@ pub(crate) enum CompactRefusal {
     /// An attribute node is not one clauses 5.2.4 and 4.5.2.2 admit.
     #[error(transparent)]
     AttributeType(#[from] AttributeTypeError),
-    /// A `@context` stands below the top level of the document (clause 5.5.7).
+    /// A key the document cannot be written with: a `@context` below its top
+    /// level (clause 5.5.7), or one JSON-LD expansion would drop or rewrite
+    /// (clause 4.6.4).
     #[error(transparent)]
-    EmbeddedContext(#[from] EmbeddedContextError),
+    Key(#[from] CompactKeyError),
 }
 
 /// Screen a decoded Entity under both rules.
@@ -68,7 +71,7 @@ pub(crate) enum CompactRefusal {
 /// # Errors
 ///
 /// Returns the first attribute node clauses 5.2.4 and 4.5.2.2 refuse, else
-/// the first embedded `@context` clause 5.5.7 refuses.
+/// the first key clauses 5.5.7 and 4.6.4 refuse.
 pub(crate) fn screen_compact_entity(entity: &Entity) -> Result<(), CompactRefusal> {
     screen_compact_members(entity.attribute_members())
 }
@@ -103,7 +106,7 @@ fn screen_compact_members<'a>(members: impl Iterator<Item = (&'a str, &'a Attrib
     members
         .iter()
         .filter(|(name, _)| !is_native_json_member(name))
-        .try_for_each(|(name, member)| reject_contexts_in_member(member, &[segment(name)]))?;
+        .try_for_each(|(name, member)| screen_keys_in_member(member, &[segment(name)]))?;
     Ok(())
 }
 
@@ -189,24 +192,26 @@ fn screen_written_node(name: &str, node: &Value, at: &[JsonPointerSegment]) -> R
     })
 }
 
-/// The clause 5.5.7 rule over one attribute member standing at `at`.
-fn reject_contexts_in_member(member: &AttributeValue, at: &[JsonPointerSegment]) -> Result<(), EmbeddedContextError> {
+/// The key rules over one attribute member standing at `at`.
+fn screen_keys_in_member(member: &AttributeValue, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
     match member {
-        AttributeValue::Raw(raw) => reject_contexts_in_written(raw, at),
-        AttributeValue::Single(instance) => reject_contexts_in_instance(instance, at),
+        AttributeValue::Raw(raw) => screen_keys_in_written(raw, at),
+        AttributeValue::Single(instance) => screen_keys_in_instance(instance, at),
         AttributeValue::Multiple(instances) => instances
             .iter()
             .enumerate()
-            .try_for_each(|(index, instance)| reject_contexts_in_instance(instance, &extended(at, JsonPointerSegment::Index(index)))),
+            .try_for_each(|(index, instance)| screen_keys_in_instance(instance, &extended(at, JsonPointerSegment::Index(index)))),
     }
 }
 
-/// The clause 5.5.7 rule over one typed instance standing at `at`: its
-/// client-written JSON values and its sub-attributes, in member order.
-fn reject_contexts_in_instance(instance: &Attribute, at: &[JsonPointerSegment]) -> Result<(), EmbeddedContextError> {
+/// The key rules over one typed instance standing at `at`: its client-written
+/// JSON values and its sub-attributes, in member order. Its own keys are the
+/// typed members of its family and attribute names, none of which the rules
+/// refuse but a `@context`.
+fn screen_keys_in_instance(instance: &Attribute, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
     let sub_attributes = &instance.common().sub_attributes;
     if sub_attributes.contains_key(CONTEXT_MEMBER) {
-        return Err(EmbeddedContextError::BelowTopLevel {
+        return Err(CompactKeyError::EmbeddedContext {
             path: JsonPointer::from_segments(at.to_vec()),
         });
     }
@@ -221,17 +226,17 @@ fn reject_contexts_in_instance(instance: &Attribute, at: &[JsonPointerSegment]) 
     slots.into_iter().try_for_each(|(name, slot)| {
         let at = extended(at, segment(name));
         match slot {
-            WrittenSlot::Value(value) => reject_contexts_in_value(value, &at),
+            WrittenSlot::Value(value) => screen_keys_in_value(value, &at),
             WrittenSlot::Values(values) => values
                 .iter()
                 .enumerate()
-                .try_for_each(|(index, value)| reject_contexts_in_value(value, &extended(&at, JsonPointerSegment::Index(index)))),
-            WrittenSlot::Linked(OneOrMany::One(entity)) => reject_contexts_in_entity(entity, &at),
+                .try_for_each(|(index, value)| screen_keys_in_value(value, &extended(&at, JsonPointerSegment::Index(index)))),
+            WrittenSlot::Linked(OneOrMany::One(entity)) => screen_keys_in_entity(entity, &at),
             WrittenSlot::Linked(OneOrMany::Many(entities)) => entities
                 .iter()
                 .enumerate()
-                .try_for_each(|(index, entity)| reject_contexts_in_entity(entity, &extended(&at, JsonPointerSegment::Index(index)))),
-            WrittenSlot::SubAttribute(member) => reject_contexts_in_member(member, &at),
+                .try_for_each(|(index, entity)| screen_keys_in_entity(entity, &extended(&at, JsonPointerSegment::Index(index)))),
+            WrittenSlot::SubAttribute(member) => screen_keys_in_member(member, &at),
         }
     })
 }
@@ -281,65 +286,50 @@ fn written_values(instance: &Attribute) -> Vec<(&'static str, WrittenSlot<'_>)> 
     }
 }
 
-/// The clause 5.5.7 rule over one inline Linked Entity standing at `at`: its
-/// attribute members, in member order.
-fn reject_contexts_in_entity(entity: &Entity, at: &[JsonPointerSegment]) -> Result<(), EmbeddedContextError> {
+/// The key rules over one inline Linked Entity standing at `at`: its attribute
+/// members, in member order.
+fn screen_keys_in_entity(entity: &Entity, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
     let mut members: Vec<_> = entity.attribute_members().filter(|(name, _)| !is_native_json_member(name)).collect();
     members.sort_unstable_by_key(|(name, _)| *name);
     members
         .into_iter()
-        .try_for_each(|(name, member)| reject_contexts_in_member(member, &extended(at, segment(name))))
+        .try_for_each(|(name, member)| screen_keys_in_member(member, &extended(at, segment(name))))
 }
 
-/// The clause 5.5.7 rule over one client-written value; a typed geometry
-/// holds positions only and carries nothing to refuse.
-fn reject_contexts_in_value(value: &NgsiLdValue, at: &[JsonPointerSegment]) -> Result<(), EmbeddedContextError> {
+/// The key rules over one client-written value; a typed geometry holds
+/// positions only and carries nothing to refuse.
+fn screen_keys_in_value(value: &NgsiLdValue, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
     match value {
-        NgsiLdValue::Json(json) => reject_contexts_in_written(json, at),
+        NgsiLdValue::Json(json) => screen_keys_in_written(json, at),
         NgsiLdValue::Geometry(_) => Ok(()),
     }
 }
 
-/// The clause 5.5.7 rule over one value carried as written, standing at `at`
-/// below the top level: an object carrying a `@context` is refused, and every
-/// member it holds that is no native JSON literal is walked.
-fn reject_contexts_in_written(value: &Value, at: &[JsonPointerSegment]) -> Result<(), EmbeddedContextError> {
-    match value {
-        Value::Object(members) => {
-            if members.contains_key(CONTEXT_MEMBER) {
-                return Err(EmbeddedContextError::BelowTopLevel {
-                    path: JsonPointer::from_segments(at.to_vec()),
-                });
-            }
-            // The representation crate walks the members of a node it reads
-            // as an attribute exactly as it walks those of any nested object;
-            // its finding is located from the top of the entity.
-            reject_embedded_contexts_in_attribute("", value)
-                .map_err(|EmbeddedContextError::BelowTopLevel { path }| EmbeddedContextError::BelowTopLevel { path: rerooted(at, &path) })
-        }
-        Value::Array(items) => items
-            .iter()
-            .enumerate()
-            .try_for_each(|(index, item)| reject_contexts_in_written(item, &extended(at, JsonPointerSegment::Index(index)))),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Ok(()),
-    }
+/// The key rules over one value carried as written, standing at `at` below
+/// the top level, read by the representation crate's own walk and located
+/// from the top of the entity.
+fn screen_keys_in_written(value: &Value, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
+    screen_keys_in_nested_value(value).map_err(|error| error.relocated(|path| located(at, path)))
+}
+
+/// A pointer the representation crate's walk reported from the value it was
+/// handed, located instead from `at`.
+fn located(at: &[JsonPointerSegment], found: &JsonPointer) -> JsonPointer {
+    JsonPointer::from_segments(at.iter().chain(found.segments()).cloned().collect())
 }
 
 #[cfg(test)]
 mod tests {
     use crate::compact_screening::{CompactRefusal, screen_compact_entity, screen_compact_patch};
     use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
-    use andromeda_ngsi_ld_representation::{
-        attribute_type_validation::validate_fragment_attribute_types,
-        embedded_context_admission::reject_embedded_contexts_in_fragment,
-    };
+    use andromeda_ngsi_ld_representation::{attribute_type_validation::validate_fragment_attribute_types, compact_key_admission::screen_keys_in_fragment};
     use serde_json::{Value, json};
 
     /// What the two rules decide over the compact JSON of a decoded payload,
     /// as they were run before the payload stayed typed.
     fn over_rendered_json(rendered: &Value) -> Result<(), String> {
         validate_fragment_attribute_types(rendered).map_err(|error| error.to_string())?;
-        reject_embedded_contexts_in_fragment(rendered).map_err(|error| error.to_string())
+        screen_keys_in_fragment(rendered).map_err(|error| error.to_string())
     }
 
     /// The finding of the typed screening, as text.
@@ -405,6 +395,14 @@ mod tests {
             entity(
                 json!({"r": {"type": "Relationship", "object": "urn:x:1", "entity": {"id": "urn:x:1", "type": "T", "q": {"type": "Property", "value": {"@context": {}}}}}}),
             ),
+            entity(json!({"p": {"type": "Property", "value": {"opening hours": "9-5", "id": "abc", "type": "Postal Address"}}})),
+            entity(json!({"p": {"type": "Property", "value": {"@foo": "x", "name": "y"}}})),
+            entity(json!({"p": {"type": "Property", "value": 1, "sub": {"value": {"a": [{"@Bar": 1}]}}}})),
+            entity(json!({"p": {"type": "Property", "value": {"": "x"}}})),
+            entity(json!({"p": {"type": "ListProperty", "valueList": [1, {"": 2}]}})),
+            entity(json!({"p": {"type": "Property", "value": {"type": ""}}})),
+            entity(json!({"p": {"type": "Property", "value": {"@type": ["A", ""]}}, "q": {"type": "Property", "value": {"@foo": 1}}})),
+            entity(json!({"label": {"type": "LanguageProperty", "languageMap": {"en": "x", "@none": "y"}}})),
         ]
     }
 
@@ -461,5 +459,7 @@ mod tests {
         assert!(findings.iter().any(|finding| finding.contains("ngsildproof")), "{findings:?}");
         assert!(findings.iter().any(|finding| finding.contains("not an NGSI-LD attribute type")), "{findings:?}");
         assert!(findings.iter().any(|finding| finding.contains("@context is embedded")), "{findings:?}");
+        assert!(findings.iter().any(|finding| finding.contains("form of a JSON-LD keyword")), "{findings:?}");
+        assert!(findings.iter().any(|finding| finding.contains("is empty")), "{findings:?}");
     }
 }

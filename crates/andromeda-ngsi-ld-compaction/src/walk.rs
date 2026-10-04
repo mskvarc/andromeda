@@ -16,6 +16,7 @@ use crate::{
     term_context::TermContext,
     undecidable::Undecidable,
 };
+use andromeda_ngsi_ld_entity::expanded_value_name::ExpandedValueName;
 use jsonld::{BlankIdBuf, IriBuf, Term, syntax::Keyword};
 use std::sync::Arc;
 
@@ -95,6 +96,14 @@ impl<'t> Walk<'t> {
 pub(crate) fn property_term(name: &str) -> Option<Term<IriBuf, BlankIdBuf>> {
     let id = node_identifier(name);
     id.is_valid().then_some(Term::Id(id))
+}
+
+/// The term for the name of a member of a structured value or a foreign
+/// member of a geometry. Expansion keeps every such name, a well-formed IRI or
+/// not (JSON-LD 1.1 expansion algorithm step 13.3), so each is compacted back
+/// into the key it was written as, `.../opening hours` into `opening hours`.
+pub(crate) fn member_term(name: &ExpandedValueName) -> Term<IriBuf, BlankIdBuf> {
+    Term::Id(node_identifier(name.as_str()))
 }
 
 /// A compacted IRI as a JSON string, or `null` where IRI compaction gives

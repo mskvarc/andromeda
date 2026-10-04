@@ -21,7 +21,7 @@ use crate::{
     expanded_item::ExpandedItem,
     reserved_terms::reserved,
     undecidable::Undecidable,
-    walk::{GeometryOutput, Walk, property_term},
+    walk::{GeometryOutput, Walk, member_term},
 };
 use andromeda_ngsi_ld_entity::{geometry_value::GeometryValue, value_mode::Stored};
 use andromeda_ngsi_ld_geometry::{
@@ -65,9 +65,7 @@ impl Walk<'_> {
             result.insert(compact_properties::BBOX, self.bounding_box(bbox)?);
         }
         for (name, values) in members.foreign() {
-            let Some(property) = property_term(name.as_str()) else {
-                continue;
-            };
+            let property = member_term(name);
             let items: Vec<ExpandedItem<'a, Stored>> = ExpandedItem::of_values(values)?;
             self.compact_property(&mut result, &property, &items)?;
         }

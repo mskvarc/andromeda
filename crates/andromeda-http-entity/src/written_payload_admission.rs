@@ -34,7 +34,10 @@
 //!   `@context` clause 5.5.7 admits only at the top level of an NGSI-LD
 //!   document is lifted out of the payload by the transport layer, so every one
 //!   still standing in what arrives here is embedded.
-//!   [`reject_embedded_contexts_in_fragment`] holds it. Its companion rule --
+//!   [`screen_keys_in_fragment`] holds it, beside the clause 4.6.4 refusal of
+//!   a key JSON-LD expansion would drop or rewrite past recovery, which is
+//!   decidable on the compact payload because no context can define the keys
+//!   it refuses. Its companion rule --
 //!   that the user `@context` declares no JSON-LD Scoped Context -- reads the
 //!   request's contexts rather than its payload and needs them resolved, so
 //!   `andromeda_entity::write_admission` owns it beside the expanded rules.
@@ -78,7 +81,7 @@ use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
 use andromeda_ngsi_ld_representation::{
     attribute_type_validation::{validate_attribute_node, validate_fragment_attribute_types},
-    embedded_context_admission::{reject_embedded_contexts_in_attribute, reject_embedded_contexts_in_fragment},
+    compact_key_admission::{screen_keys_in_attribute, screen_keys_in_fragment},
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -86,7 +89,7 @@ use thiserror::Error;
 /// Why a payload a client wrote is not admitted.
 #[derive(Debug, Error)]
 pub(crate) enum WrittenPayloadRefusal {
-    /// The compact payload breaks clause 5.2.4, 4.5.2.2 or 5.5.7.
+    /// The compact payload breaks clause 5.2.4, 4.5.2.2, 5.5.7 or 4.6.4.
     #[error(transparent)]
     Compact(#[from] CompactRefusal),
     /// The expanded payload puts an NGSI-LD Null, a `scope`, an attribute
@@ -101,7 +104,7 @@ impl EntityHttpClassify for WrittenPayloadRefusal {
             // Clause 5.5.4: data that is not syntactically correct according to
             // the API data type definitions is BadRequestData, and clause 5.5.7
             // gives a part of the user @context outside the document's top
-            // level the same type.
+            // level the same type, as clause 4.6.4 does a value it refuses.
             WrittenPayloadRefusal::Compact(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
             WrittenPayloadRefusal::Placement(source) => source.classify_for_entity_http(),
         }
@@ -115,14 +118,14 @@ pub(crate) trait WrittenEntityPayload: WritePayload {
     ///
     /// # Errors
     ///
-    /// Returns the first refusal of clause 5.2.4, 4.5.2.2 or 5.5.7.
+    /// Returns the first refusal of clause 5.2.4, 4.5.2.2, 5.5.7 or 4.6.4.
     fn screen(&self) -> Result<(), CompactRefusal>;
 }
 
 impl WrittenEntityPayload for Value {
     fn screen(&self) -> Result<(), CompactRefusal> {
         validate_fragment_attribute_types(self)?;
-        reject_embedded_contexts_in_fragment(self)?;
+        screen_keys_in_fragment(self)?;
         Ok(())
     }
 }
@@ -168,7 +171,7 @@ pub(crate) async fn admit_written_attribute<'a, W: AttributeWriteKind>(
     context: &ContextSpec,
 ) -> Result<AdmittedAttribute<'a, W>, WrittenPayloadRefusal> {
     validate_attribute_node(attribute.as_str(), &payload).map_err(CompactRefusal::from)?;
-    reject_embedded_contexts_in_attribute(attribute.as_str(), &payload).map_err(CompactRefusal::from)?;
+    screen_keys_in_attribute(attribute.as_str(), &payload).map_err(CompactRefusal::from)?;
     Ok(service.admit_attribute_write(attribute, payload, context).await?)
 }
 

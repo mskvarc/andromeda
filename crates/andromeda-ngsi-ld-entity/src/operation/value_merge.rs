@@ -173,8 +173,9 @@ mod tests {
         expanded_value::{ExpandedValue, ValueNode},
         json_literal::JsonLiteral,
         language_entries::{LanguageEntries, LanguageEntry},
+        node_id::NodeId,
         operation::{
-            speed_entity::{name, number, text},
+            speed_entity::{member_name, number, text},
             value_merge::{merge_language_entries, merge_value, settled_json, settled_value},
         },
         value_mode::{Fragment, FragmentMember, FragmentText},
@@ -198,11 +199,12 @@ mod tests {
     /// A node naming an identifier is atomic: the written one replaces it.
     #[test]
     fn a_node_naming_an_identifier_is_replaced_rather_than_merged() {
-        let held_members = [(name("https://example.org/a"), vec![number(1)])].into_iter().collect();
-        let mut held: ExpandedValue = ExpandedValue::Node(ValueNode::new(Some("urn:ngsi-ld:X:1".parse().expect("an id")), Vec::new(), held_members));
-        let written_members: IndexMap<_, _> = [(name("https://example.org/b"), FragmentMember::Values(vec![number(2)]))].into_iter().collect();
-        let written: ExpandedValue<Fragment> =
-            ExpandedValue::Node(ValueNode::new(Some("urn:ngsi-ld:X:2".parse().expect("an id")), Vec::new(), written_members));
+        let held_members = [(member_name("https://example.org/a"), vec![number(1)])].into_iter().collect();
+        let mut held: ExpandedValue = ExpandedValue::Node(ValueNode::new(Some(NodeId::from("urn:ngsi-ld:X:1")), Vec::new(), held_members));
+        let written_members: IndexMap<_, _> = [(member_name("https://example.org/b"), FragmentMember::Values(vec![number(2)]))]
+            .into_iter()
+            .collect();
+        let written: ExpandedValue<Fragment> = ExpandedValue::Node(ValueNode::new(Some(NodeId::from("urn:ngsi-ld:X:2")), Vec::new(), written_members));
 
         merge_value(&mut held, &written);
 

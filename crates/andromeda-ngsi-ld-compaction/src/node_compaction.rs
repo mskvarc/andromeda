@@ -14,7 +14,7 @@ use crate::{
     expanded_item::{ExpandedItem, NodeIdentifier, node_identifier},
     reserved_terms::reserved,
     undecidable::Undecidable,
-    walk::{Walk, property_term},
+    walk::{Walk, member_term},
 };
 use andromeda_ngsi_ld_entity::{document::value_carrier::ValueCarrier, expanded_value::ValueNode, value_mode::Stored};
 use andromeda_ngsi_ld_vocabulary::NULL_URI;
@@ -33,9 +33,7 @@ impl Walk<'_> {
         let id = id.map(|id| Term::Id(id.clone()));
         self.write_identity(&mut result, id.as_ref(), &types)?;
         for (name, member) in node.members() {
-            let Some(property) = property_term(name.as_str()) else {
-                continue;
-            };
+            let property = member_term(name);
             let items = match M::member_values(member) {
                 MemberValues::Values(values) => ExpandedItem::of_values(values)?,
                 MemberValues::Null => vec![ExpandedItem::text(NULL_URI.as_str())],

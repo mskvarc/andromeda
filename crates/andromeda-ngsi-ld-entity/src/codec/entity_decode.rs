@@ -12,7 +12,7 @@ use crate::{
         element::{ElementsSeed, TypeEntries},
         instance_decode::{AttributeMemberSeed, InstanceDecoded, InstanceSeed},
         member_decode::{date_time, malformed, scope},
-        object_key::ObjectKey,
+        object_key::{ObjectKey, attribute_key},
     },
     date_time_text::DateTimeText,
     document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot},
@@ -106,30 +106,35 @@ impl<'de> Visitor<'de> for EntityNodeSeed<'_> {
                     id = Some(text.parse::<Identifier>().map_err(|source| refuse(EntityRefusal::EntityId { source }))?);
                 }
                 ObjectKey::Type => types = entity_types(map.next_value::<TypeEntries>()?).map_err(refuse)?,
-                ObjectKey::Name(name) => match MemberRole::of(name.as_str()) {
-                    MemberRole::Scope => scope_member = Some(scope(&map.next_value_seed(elements)?).map_err(refuse)?),
-                    MemberRole::ExpiresAt => expires_at = Some(date_time(map.next_value_seed(elements)?, None, MemberShape::EntityExpiresAt).map_err(refuse)?),
-                    MemberRole::Attribute => {
-                        let member = map.next_value_seed(AttributeMemberSeed {
-                            context: self.context,
-                            attribute: &name,
-                        })?;
-                        attributes.insert(name, member);
+                ObjectKey::Name(name) => {
+                    let name = attribute_key(&name).map_err(refuse)?;
+                    match MemberRole::of(name.as_str()) {
+                        MemberRole::Scope => scope_member = Some(scope(&map.next_value_seed(elements)?).map_err(refuse)?),
+                        MemberRole::ExpiresAt => {
+                            expires_at = Some(date_time(map.next_value_seed(elements)?, None, MemberShape::EntityExpiresAt).map_err(refuse)?);
+                        }
+                        MemberRole::Attribute => {
+                            let member = map.next_value_seed(AttributeMemberSeed {
+                                context: self.context,
+                                attribute: &name,
+                            })?;
+                            attributes.insert(name, member);
+                        }
+                        MemberRole::Carrier(_)
+                        | MemberRole::DatasetId
+                        | MemberRole::InstanceId
+                        | MemberRole::ObservedAt
+                        | MemberRole::CreatedAt
+                        | MemberRole::ModifiedAt
+                        | MemberRole::DeletedAt
+                        | MemberRole::UnitCode
+                        | MemberRole::ValueType
+                        | MemberRole::ObjectType
+                        | MemberRole::Seal(_)
+                        | MemberRole::OutputOnly => return Err(refuse(malformed(Some(&name), MemberShape::Root))),
                     }
-                    MemberRole::Carrier(_)
-                    | MemberRole::DatasetId
-                    | MemberRole::InstanceId
-                    | MemberRole::ObservedAt
-                    | MemberRole::CreatedAt
-                    | MemberRole::ModifiedAt
-                    | MemberRole::DeletedAt
-                    | MemberRole::UnitCode
-                    | MemberRole::ValueType
-                    | MemberRole::ObjectType
-                    | MemberRole::Seal(_)
-                    | MemberRole::OutputOnly => return Err(refuse(malformed(Some(&name), MemberShape::Root))),
-                },
-                ObjectKey::InvalidName(source) => return Err(refuse(EntityRefusal::ExpandedAttributeName(source))),
+                }
+                ObjectKey::InvalidName(source) => return Err(refuse(EntityRefusal::ExpandedMemberName(source))),
                 ObjectKey::Value | ObjectKey::Language | ObjectKey::Direction | ObjectKey::List | ObjectKey::OtherKeyword => {
                     return Err(refuse(malformed(None, MemberShape::Root)));
                 }

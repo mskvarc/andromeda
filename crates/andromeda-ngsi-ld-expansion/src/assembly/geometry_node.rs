@@ -18,6 +18,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_entity::{
     expanded_value::{ExpandedValue, ValueNode},
+    expanded_value_name::ExpandedValueName,
     geometry_value::{ExpandedGeoJsonMembers, GeometryValue},
     literal::{Literal, LiteralValue},
     member_shape::MemberShape,
@@ -34,7 +35,7 @@ use andromeda_ngsi_ld_geometry::{
     linear_ring::LinearRing,
     position::{Position, PositionError},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_vocabulary::{expanded::properties, prefix};
 use indexmap::IndexMap;
@@ -86,15 +87,15 @@ fn bounding_box(items: &[ExpandedItem]) -> Result<BoundingBox, GeometryError> {
 ///
 /// # Errors
 ///
-/// Returns [`EntityRefusal::ExpandedAttributeName`] for a foreign member name
-/// that is no IRI, and the refusals of an expanded value for its values, the
+/// Returns [`EntityRefusal::ExpandedMemberName`] for a foreign member name
+/// that expansion never keeps, and the refusals of an expanded value for its values, the
 /// NGSI-LD Null among them.
 pub fn geometry_value(attribute: &AttributeName, geometry: ExpandedGeometry) -> Result<GeometryValue, EntityRefusal> {
     let ExpandedGeometry { form, bbox, foreign } = geometry;
     let foreign = foreign
         .into_iter()
         .map(|(name, items)| {
-            let name = name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?;
+            let name = name.parse::<ExpandedValueName>().map_err(EntityRefusal::ExpandedMemberName)?;
             Ok((name, expanded_values::<Stored>(attribute, items)?))
         })
         .collect::<Result<IndexMap<_, _>, EntityRefusal>>()?;
@@ -256,18 +257,18 @@ pub fn geometry_value_node<M: MemberMode>(attribute: &AttributeName, geometry: E
     };
     let ExpandedGeometry { form, bbox, foreign } = geometry;
     let type_iri = format!("{}{}", prefix::GEOJSON.as_str(), form.geometry_type());
-    let type_name = type_iri.parse::<NgsiLdReference>().map_err(|_| malformed())?;
-    let coordinates = properties::COORDINATES.as_str().parse::<AttributeName>().map_err(|_| malformed())?;
+    let type_name = type_iri.parse::<ExpandedValueName>().map_err(|_| malformed())?;
+    let coordinates = properties::COORDINATES.as_str().parse::<ExpandedValueName>().map_err(|_| malformed())?;
     let list = coordinate_list::<M>(&form).ok_or_else(malformed)?;
     let mut members = IndexMap::with_capacity(2 + foreign.len());
     members.insert(coordinates, M::values(vec![list]));
     if let Some(bbox) = bbox {
-        let name = properties::BBOX.as_str().parse::<AttributeName>().map_err(|_| malformed())?;
+        let name = properties::BBOX.as_str().parse::<ExpandedValueName>().map_err(|_| malformed())?;
         let ordinates = bbox.ordinates().map(ordinate_literal).collect::<Option<Vec<_>>>().ok_or_else(malformed)?;
         members.insert(name, M::values(vec![ExpandedValue::List(ordinates)]));
     }
     for (name, items) in foreign {
-        let name = name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?;
+        let name = name.parse::<ExpandedValueName>().map_err(EntityRefusal::ExpandedMemberName)?;
         members.insert(name, node_member::<M>(attribute, items)?);
     }
     Ok(ExpandedValue::Node(ValueNode::new(None, vec![type_name], members)))

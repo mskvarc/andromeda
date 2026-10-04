@@ -1421,6 +1421,7 @@ dependencies = [
  "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-vocabulary",
  "derive_more",
+ "jsonld-syntax",
  "pretty_assertions",
  "serde",
  "serde_json",

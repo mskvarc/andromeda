@@ -32,7 +32,9 @@
 //! own contexts declare a JSON-LD Scoped Context is decidable once they are
 //! resolved. Both "should result in an error of type `BadRequestData`", and
 //! both have to be decided before the forwarding phase, because a payload or a
-//! context this broker refuses must reach no Context Source.
+//! context this broker refuses must reach no Context Source. The same walk
+//! refuses a key JSON-LD expansion would drop or rewrite past recovery, which
+//! clause 4.6.4 forbids losing.
 //!
 //! The NGSI-LD Null is deliberately not screened here. Clause 5.5.4's second
 //! bullet excepts from its prohibition "the representation of deleted
@@ -55,10 +57,7 @@ use andromeda_http_response::{classified_report::ClassifiedReport, problem_respo
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_representation::{
-    attribute_type_validation::validate_fragment_attribute_types,
-    embedded_context_admission::reject_embedded_contexts_in_fragment,
-};
+use andromeda_ngsi_ld_representation::{attribute_type_validation::validate_fragment_attribute_types, compact_key_admission::screen_keys_in_fragment};
 use andromeda_ngsi_ld_request::{fragment_entity_id::admit_fragment_entity_id, temporal_instance_fragment::admit_temporal_instance_fragment};
 use axum::http::Uri as HttpUri;
 use serde_json::Value;
@@ -70,13 +69,14 @@ use std::fmt::Display;
 /// # Errors
 ///
 /// Answers `BadRequestData` for the first attribute node clauses 5.2.4 and
-/// 4.5.2.2 do not admit, for a user `@context` clause 5.5.7 refuses, and for a
-/// `@context` embedded below the document's top level; a context the request
+/// 4.5.2.2 do not admit, for a user `@context` clause 5.5.7 refuses, for a
+/// `@context` embedded below the document's top level, and for a key clause
+/// 4.6.4 refuses (see `compact_key_admission`); a context the request
 /// names that does not resolve is answered `LdContextNotAvailable` instead.
 pub(crate) async fn admit_written_evolution(engine: &JsonLdEngine, payload: &Value, context: &ContextSpec, instance: &HttpUri) -> Result<(), ProblemResponse> {
     admit_request_context(engine, context, instance).await?;
     validate_fragment_attribute_types(payload).map_err(|error| bad_request_data(&error, instance))?;
-    reject_embedded_contexts_in_fragment(payload).map_err(|error| bad_request_data(&error, instance))
+    screen_keys_in_fragment(payload).map_err(|error| bad_request_data(&error, instance))
 }
 
 /// Screen the `EntityTemporal` Fragment a clause 5.6.12 addition to `entity`
