@@ -22,7 +22,7 @@ use andromeda_ngsi_ld_entity::{
     document::EntityDocument,
     entity_state::EntityState,
     history::written_observation::AddressedInstances,
-    operation::{deletion_drop::DroppedDeletions, selection::OverwritePolicy},
+    operation::selection::OverwritePolicy,
     system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -33,19 +33,14 @@ enum UpsertFragment {
     /// The request's prepared document, applied as an update to the entity
     /// an attempt reads.
     Requested(Box<PreparedEntity>),
-    /// The entity an earlier attempt inserted for an entity it found absent,
-    /// and the deletions it dropped from the request to do so. The insert lost
-    /// to a concurrent create, so a later attempt updates the entity with the
-    /// two put back together.
+    /// The entity an earlier attempt inserted for an entity it found absent.
+    /// The insert lost to a concurrent create, so a later attempt updates the
+    /// entity with it.
     Inserted {
         /// The entity the request is for.
         id: Identifier,
         /// The entity the insert stored.
         stored: Arc<EntityState>,
-        /// The members of the request that asked for a deletion, boxed
-        /// because they are rarely more than a marker and the entry is moved
-        /// through every attempt.
-        deletions: Box<DroppedDeletions>,
     },
 }
 
@@ -84,8 +79,8 @@ impl ChunkRewrite for UpdateRewrite<'_> {
                     alongside: None,
                 })
             }
-            (UpsertFragment::Inserted { id, stored, deletions }, Some(snapshot)) => {
-                let document = requested_again(&stored, *deletions);
+            (UpsertFragment::Inserted { id, stored }, Some(snapshot)) => {
+                let document = EntityDocument::from(&*stored);
                 let write = service.upsert_update_write(target, id.clone(), &document, &snapshot.state, now)?; // clone: the entry is kept to rebuild the write if the store refuses it
                 Ok(PlannedWrite {
                     entry: UpsertFragment::Requested(Box::new(PreparedEntity { id, document })),
@@ -94,19 +89,16 @@ impl ChunkRewrite for UpdateRewrite<'_> {
                 })
             }
             // Clause 5.6.8.4 routes an absent Entity to "the behaviour defined
-            // by clause 5.6.1", where the deletions the update branch admits
-            // have nothing to delete: they are dropped, and the rest of the
-            // request becomes the entity.
+            // by clause 5.6.1", which supports no NGSI-LD Null: clause 5.2.1
+            // admits one only in a partial update or merge and answers
+            // BadRequestData "in all other cases". The state conversion refuses
+            // every Null the update branch admitted, at any level.
             (UpsertFragment::Requested(prepared), None) => {
-                let mut prepared = *prepared;
-                let deletions = Box::new(prepared.document.drop_deletions());
                 let (id, state) = prepared.into_state()?;
-                inserted(service.chunk_insert(target, id, state, now)?, deletions)
+                inserted(service.chunk_insert(target, id, state, now)?)
             }
             // clone: reference-count bumps only when the earlier attempt's write still shares the state
-            (UpsertFragment::Inserted { id, stored, deletions }, None) => {
-                inserted(service.chunk_insert(target, id, Arc::unwrap_or_clone(stored), now)?, deletions)
-            }
+            (UpsertFragment::Inserted { id, stored }, None) => inserted(service.chunk_insert(target, id, Arc::unwrap_or_clone(stored), now)?),
         }
     }
 }
@@ -114,36 +106,25 @@ impl ChunkRewrite for UpdateRewrite<'_> {
 /// The planned insert of an update-mode upsert, keeping what a later attempt
 /// rebuilds the request from if a concurrent create got there first.
 ///
+/// A lost race reads the stored entity back as the written document it is:
+/// the insert moved the request into the entity instead of keeping a copy of
+/// it, and a request the create branch admitted carried no NGSI-LD Null, so
+/// the document is the request. The system times the insert stamped come back
+/// with it, and the update stamps every instance it writes against the entity
+/// it found, so they leave no trace.
+///
 /// # Errors
 ///
 /// Reports the invariant when the insert stores no entity.
-fn inserted(write: ChunkWrite, deletions: Box<DroppedDeletions>) -> Result<PlannedWrite<UpsertFragment>, Box<(Identifier, EntityError)>> {
+fn inserted(write: ChunkWrite) -> Result<PlannedWrite<UpsertFragment>, Box<(Identifier, EntityError)>> {
     Ok(PlannedWrite {
         entry: UpsertFragment::Inserted {
             id: write.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
             stored: stored_state(&write)?,
-            deletions,
         },
         write,
         alongside: None,
     })
-}
-
-/// The request an insert that lost to a concurrent create was built from: the
-/// entity the insert stored, read as the written document it is, with the
-/// deletions the insert dropped put back.
-///
-/// Only a lost race takes this path; the insert itself moved the request into
-/// the entity instead of keeping a copy of it. The system times the insert
-/// stamped come back with it, and the update stamps every instance it writes
-/// against the entity it found, so they leave no trace.
-fn requested_again(stored: &EntityState, deletions: DroppedDeletions) -> EntityDocument {
-    let mut document = EntityDocument::from(stored);
-    match deletions {
-        DroppedDeletions::Dropped(members) => document.restore_deletions(members),
-        DroppedDeletions::Unchanged => {}
-    }
-    document
 }
 
 impl EntityService {
@@ -163,10 +144,8 @@ impl EntityService {
         // Whether an Entity exists is not known while the payload is screened,
         // and the same payload creates it when it does not. The screening
         // therefore states the update branch's admission, and the create branch
-        // drops the deletions rather than storing them: clause 5.5.8 deletes
-        // "each member of the Fragment, whose value is an NGSI-LD Null,
-        // contained by the target", and a target that does not exist contains
-        // none of them.
+        // refuses the entity when its payload carries an NGSI-LD Null: that
+        // branch is clause 5.6.1, which supports none.
         let (prepared, mut chunk_errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Upsert(UpsertPolicy::Update)).await;
         errors.append(&mut chunk_errors);
         let rewrite = UpdateRewrite {

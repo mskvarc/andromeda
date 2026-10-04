@@ -580,13 +580,12 @@ async fn regression_null_sentinel_a_fully_proxied_create_is_refused_before_forwa
 /// local operation, if the requested update mode is 'update'." Clause 5.6.2.4
 /// is one of the three clauses that carry "NGSI-LD Nulls should be supported
 /// by this operation", so the update mode of an upsert deletes with the
-/// sentinel rather than refusing it. Whether the Entity exists is not known
-/// when the payload is screened, so the create branch of the same request
-/// drops the deletions instead: clause 5.5.8 deletes "each member of the
-/// Fragment, whose value is an NGSI-LD Null, contained by the target", and a
-/// target that does not exist contains none of them.
+/// sentinel rather than refusing it. An Entity that does not exist is created
+/// instead "executing the behaviour defined by clause 5.6.1", which supports no
+/// NGSI-LD Null, and clause 5.2.1 answers `BadRequestData` "in all other
+/// cases": the same payload refuses that entity alone.
 #[tokio::test]
-async fn regression_null_sentinel_batch_upsert_update_mode_deletes_with_the_sentinel() {
+async fn regression_null_sentinel_batch_upsert_update_mode_deletes_with_the_sentinel_and_refuses_it_on_create() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let existing = scope.id("Building:upsert-update-existing");
@@ -627,26 +626,66 @@ async fn regression_null_sentinel_batch_upsert_update_mode_deletes_with_the_sent
         .send()
         .await
         .expect("batch upsert request");
-    // Clause 5.6.8.5: the created identifiers, because the batch also brings one
-    // Entity into being.
+    // Clause 5.6.8.5: one entity updated and one refused is a partial success.
+    assert_eq!(response.status, StatusCode::MULTI_STATUS, "{:?}", response.body);
+    let result = response.json_value().expect("a partly failed batch carries a result body");
+    assert_eq!(result["success"], json!([existing]), "clause 5.6.2.4 supports NGSI-LD Nulls: {result}");
+    let errors = result["errors"].as_array().expect("a batch result carries an errors array");
+    assert_eq!(errors.len(), 1, "only the entity to create is refused: {result}");
+    assert_eq!(errors[0]["entityId"], json!(fresh), "{result}");
     assert_eq!(
-        response.status,
-        StatusCode::CREATED,
-        "clause 5.6.2.4 supports NGSI-LD Nulls, so the update mode admits them: {:?}",
-        response.body
+        errors[0]["error"]["type"],
+        json!(BAD_REQUEST_DATA),
+        "clause 5.6.1 supports no NGSI-LD Null: {result}"
     );
 
     let updated = stored_entity(client, &existing).await;
     assert_eq!(updated["temperature"], Value::Null, "the sentinel deleted the attribute: {updated}");
     assert_eq!(updated["humidity"]["value"], json!(55), "the sibling attribute was updated: {updated}");
 
-    let created = stored_entity(client, &fresh).await;
-    assert_eq!(
-        created["temperature"],
-        Value::Null,
-        "a deletion has nothing to delete on the create branch and is dropped: {created}"
-    );
-    assert_eq!(created["humidity"]["value"], json!(60), "the rest of the payload is created: {created}");
+    assert_none_stored(client, &[fresh], "the refused entity is not created").await;
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// The create branch of an update-mode upsert refuses an NGSI-LD Null wherever
+/// it stands, not only as a whole member: clause 5.6.1 supports none, and
+/// clause 5.2.1 answers `BadRequestData` for every Null outside a partial update
+/// or merge. The broker dropped a Null whole member and refused the rest, so
+/// what a create did with a Null depended on how deep it was written.
+#[tokio::test]
+async fn regression_null_sentinel_batch_upsert_update_mode_refuses_a_null_at_any_depth_on_create() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    // Each shape is the member that carries the Null, written beside the
+    // entity's identifier and type.
+    let shapes = [
+        ("whole-member", "speed", json!(NULL_URI)),
+        ("unit-code", "speed", json!({"type": "Property", "value": 5, "unitCode": NULL_URI})),
+        ("observed-at", "speed", json!({"type": "Property", "value": 5, "observedAt": NULL_URI})),
+        ("sub-attribute", "speed", json!({"type": "Property", "value": 5, "accuracy": NULL_URI})),
+        (
+            "dataset-instance",
+            "speed",
+            json!([
+                {"type": "Property", "value": NULL_URI, "datasetId": DATASET_A},
+                {"type": "Property", "value": 5}
+            ]),
+        ),
+        ("scope", "scope", json!(NULL_URI)),
+    ];
+    let ids: Vec<String> = shapes.iter().map(|(local, ..)| scope.id(&format!("Building:upsert-create-{local}"))).collect();
+    let body = Value::Array(shapes.iter().zip(&ids).map(|((_, member, node), id)| building_with(id, member, node)).collect());
+
+    let response = client
+        .raw(Method::POST, "/ngsi-ld/v1/entityOperations/upsert?options=update")
+        .header("content-type", "application/ld+json")
+        .json(&body)
+        .send()
+        .await
+        .expect("batch upsert request");
+    assert_batch_refused_every_entity(&response, ids.len(), "clause 5.6.1 supports no NGSI-LD Null");
+    assert_none_stored(client, &ids, "a refused create stores nothing").await;
 
     scope.finish().await.expect("cleanup failed");
 }

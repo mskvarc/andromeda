@@ -11,7 +11,6 @@
 pub mod append;
 pub mod attribute_write;
 pub mod delete_attribute;
-pub mod deletion_drop;
 pub mod expiry_removal;
 pub mod family_write;
 pub mod instance_patch;

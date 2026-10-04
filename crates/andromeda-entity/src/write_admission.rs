@@ -146,7 +146,10 @@ impl BatchWrite {
     /// behaviour defined by clause 5.6.2 [...] limited to a local operation",
     /// and clause 5.6.2.4 supports NGSI-LD Nulls, while its replace mode
     /// replaces the Entity "completely" -- the clause 5.6.18 whose clause
-    /// 5.6.18.4 states that Nulls are not supported. Clauses 5.6.7.4 and
+    /// 5.6.18.4 states that Nulls are not supported. The update mode's
+    /// admission covers only the Entity that exists: one it finds absent is
+    /// created by clause 5.6.1, which supports no Null, and is refused when its
+    /// payload carries one. Clauses 5.6.7.4 and
     /// 5.6.9.4 run clauses 5.6.1 and 5.6.3, neither of which supports them, and
     /// clause 5.6.20.4 runs the merge of clause 5.6.17, which does.
     pub(crate) const fn null_sentinel_admission(self) -> NullSentinelAdmission {

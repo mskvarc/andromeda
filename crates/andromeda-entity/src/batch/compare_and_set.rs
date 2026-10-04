@@ -226,10 +226,11 @@ async fn an_upsert_update_that_loses_the_create_race_updates_the_created_entity(
     assert_eq!(stored_terms(&contended, &id), terms(&["other", "u"]));
 }
 
-/// The deletions the create branch dropped have something to delete once the
-/// Entity turns out to exist (clause 5.5.8): the update carries them again.
+/// Clause 5.6.8.4 creates an Entity it finds absent by clause 5.6.1, which
+/// supports no NGSI-LD Null (clause 5.2.1): the entity is refused on what the
+/// upsert read, before any write is submitted.
 #[tokio::test]
-async fn an_upsert_update_that_loses_the_create_race_applies_the_deletions_it_dropped() {
+async fn an_upsert_update_refuses_a_null_on_the_create_branch_before_writing() {
     let contended = contended_service(Watchers::None).await;
     let id = building_id("a");
     another_writer_adds_other(&contended, &id);
@@ -238,10 +239,16 @@ async fn an_upsert_update_that_loses_the_create_race_applies_the_deletions_it_dr
         "u": {"type": "Property", "value": 3},
         "other": {"type": "Property", "value": "urn:ngsi-ld:null"}
     });
-    let (result, _) = upsert_update(&contended, &id, &attributes).await;
+    let (result, created) = upsert_update(&contended, &id, &attributes).await;
 
-    assert_eq!(result.success, vec![id.clone()]);
-    assert_eq!(stored_terms(&contended, &id), terms(&["u"]));
+    assert!(result.success.is_empty(), "{:?}", result.success);
+    assert!(created.is_empty());
+    assert!(
+        matches!(result.errors.as_slice(), [(failed, error)] if *failed == id && error.is_validation()),
+        "{:?}",
+        result.errors
+    );
+    assert!(contended.store.submitted_for(&id).is_empty());
 }
 
 /// Clause 5.6.8.4 replace mode replaces the Entity "completely": the
