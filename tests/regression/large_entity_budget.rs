@@ -45,6 +45,10 @@ const QUIET: Duration = Duration::from_secs(8);
 /// The problem type of a refused oversized request (clause 6.3.2).
 pub(crate) const REQUEST_ENTITY_TOO_LARGE: &str = "https://uri.etsi.org/ngsi-ld/errors/RequestEntityTooLarge";
 
+/// The problem type of a request whose content the broker does not admit
+/// (clause 6.3.2).
+const BAD_REQUEST_DATA: &str = "https://uri.etsi.org/ngsi-ld/errors/BadRequestData";
+
 /// The problem type of a query the broker does not resolve (clause 5.5.6).
 const TOO_COMPLEX_QUERY: &str = "https://uri.etsi.org/ngsi-ld/errors/TooComplexQuery";
 
@@ -275,43 +279,52 @@ async fn regression_a_n12_every_temporal_write_of_a_geometry_over_the_budget_is_
     scope.finish().await.expect("cleanup");
 }
 
-/// The temporal text of a `speed` Property whose `calibration` sub-attribute
-/// holds 1,000 readings, over `observations` observations that restate none
-/// of it: each observation inherits 1,005 values (the copied instance, its
-/// `type`, and the sub-attribute's object, `type`, array and readings).
-fn speed_over_observations(observations: usize) -> String {
-    let readings = vec!["0"; 1_000].join(",");
-    let observed = vec![r#"{"value":1,"observedAt":"2026-01-01T00:00:00Z"}"#; observations].join(",");
-    format!(r#"{{"type":"Property","calibration":{{"type":"Property","value":[{readings}]}},"values":[{observed}]}}"#)
+/// The temporal text of a `speed` Property in the simplified temporal
+/// representation holding `observations` `[value, observedAt]` pairs, with a
+/// `calibration` sub-attribute of 1,000 readings beside them when `calibrated`.
+fn speed_over_observations(observations: usize, calibrated: Calibration) -> String {
+    let observed = vec![r#"[1,"2026-01-01T00:00:00Z"]"#; observations].join(",");
+    let calibration = match calibrated {
+        Calibration::Beside => format!(r#""calibration":{{"type":"Property","value":[{}]}},"#, vec!["0"; 1_000].join(",")),
+        Calibration::Absent => String::new(),
+    };
+    format!(r#"{{"type":"Property",{calibration}"values":[{observed}]}}"#)
 }
 
-/// Clause 4.5.9: every observation of a plural member inherits the members of
-/// the instance it is written under. The unfold built those copies before any
-/// budget ran, so a body of a few megabytes -- a large sub-attribute over
-/// millions of empty observations -- exhausted the broker's memory. The copies
-/// are counted before any is made and refused with 413 past the entity value
-/// budget, and nothing is written; a write whose observations inherit less is
-/// recorded whole.
+/// Whether a sub-attribute stands beside the pairs of a simplified temporal
+/// attribute.
+#[derive(Clone, Copy)]
+enum Calibration {
+    /// A 1,000-reading `calibration` sub-attribute stands beside the pairs.
+    Beside,
+    /// The pairs stand alone.
+    Absent,
+}
+
+/// Clause 4.5.9: an attribute in the simplified temporal representation
+/// "shall only contain" its plural member. The unfold once copied every member
+/// beside it into every observation before any budget ran, so a body of a few
+/// megabytes -- a large sub-attribute over millions of observations --
+/// exhausted the broker's memory. A member beside the pairs is now refused with
+/// 400 before anything is copied, and nothing is written; pairs standing alone
+/// are recorded whole.
 #[tokio::test]
-async fn regression_r01_observations_inheriting_past_the_value_budget_are_413() {
+async fn regression_r01_a_sub_attribute_beside_temporal_values_pairs_is_refused_before_it_is_copied() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let entity_type = scope.entity_type("Probe");
 
-    // 1,000 observations inherit 1,005,000 values, past the 1,000,000 budget.
     let refused_id = scope.id("Probe:inherited-refused");
     let refused = send_json(
         scope.client(),
         Method::POST,
         "/ngsi-ld/v1/temporal/entities",
-        format!(r#"{{"id":"{refused_id}","type":"{entity_type}","speed":{}}}"#, speed_over_observations(1_000)),
+        format!(
+            r#"{{"id":"{refused_id}","type":"{entity_type}","speed":{}}}"#,
+            speed_over_observations(1_000, Calibration::Beside)
+        ),
     )
     .await;
-    assert_problem(
-        &refused,
-        StatusCode::PAYLOAD_TOO_LARGE,
-        REQUEST_ENTITY_TOO_LARGE,
-        &["inherit", &ENTITY_JSON_VALUES.to_string()],
-    );
+    assert_problem(&refused, StatusCode::BAD_REQUEST, BAD_REQUEST_DATA, &["speed", "calibration"]);
     let absent = scope
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/temporal/entities/{refused_id}"))
@@ -325,7 +338,10 @@ async fn regression_r01_observations_inheriting_past_the_value_budget_are_413() 
         scope.client(),
         Method::POST,
         "/ngsi-ld/v1/temporal/entities",
-        format!(r#"{{"id":"{id}","type":"{entity_type}","speed":{}}}"#, speed_over_observations(10)),
+        format!(
+            r#"{{"id":"{id}","type":"{entity_type}","speed":{}}}"#,
+            speed_over_observations(10, Calibration::Absent)
+        ),
     )
     .await;
     assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);

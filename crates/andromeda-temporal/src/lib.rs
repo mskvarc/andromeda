@@ -42,7 +42,9 @@ pub mod outcome;
 mod pending_observation;
 /// Read overlay combining stored history with committed pending intents.
 pub mod pending_overlay;
-/// Unfolding the plural members of a written Temporal Evolution into the instances they stand for.
+/// Why an attribute in the simplified temporal representation is not one it admits.
+pub mod plural_member_refusal;
+/// Unfolding the simplified temporal representation of a Temporal Evolution into the instances it stands for.
 mod plural_member_unfold;
 pub mod port;
 mod read;

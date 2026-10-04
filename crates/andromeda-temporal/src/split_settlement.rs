@@ -74,10 +74,10 @@ impl TemporalService {
         let expansion = EntityExpansion::prepare(&self.engine, context).await?;
         let prepared = self.engine.prepare_term_context(context);
         let expander = ContextualExpander::new(&self.engine, &prepared);
-        let mut narrowing = AnswerNarrowing::new(&compiled.entities, compiled.window.timeproperty, &expander);
+        let mut narrowing = AnswerNarrowing::new(&compiled.entities, &expander);
         let mut warnings = Vec::new();
         for (entity_id, answer) in parts {
-            match AnsweredEvolution::read(&expansion, &mut narrowing, answer, self.limits.payload_budget).await {
+            match AnsweredEvolution::read(&expansion, &mut narrowing, answer, compiled.window.timeproperty).await {
                 Ok(part) => truths
                     .entry(entity_id)
                     .or_insert_with(|| LeafTruths::none(filter.leaf_count()))

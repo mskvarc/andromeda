@@ -47,8 +47,6 @@ pub struct StoredHistoryRow {
     pub value_string: Option<String>,
     /// URI value column, which a Relationship target occupies.
     pub value_uri: Option<String>,
-    /// Extracted unit code identity, absent for a unitless instance.
-    pub unit_code_id: Option<i16>,
     /// How many typed value columns the row populates.
     pub populated_value_columns: i32,
 }
@@ -79,7 +77,6 @@ pub async fn stored_history(pool: &PgPool, entity_id: &str) -> Vec<StoredHistory
             value_number: row.get("value_number"),
             value_string: row.get("value_string"),
             value_uri: row.get("value_uri"),
-            unit_code_id: row.get("unit_code_id"),
             populated_value_columns: row.get("populated_value_columns"),
         })
         .collect()
@@ -145,7 +142,6 @@ SELECT an.name AS attribute_name,
        ah.value_number::text AS value_number,
        ah.value_string,
        ah.value_uri,
-       ah.unit_code_id,
        num_nonnulls(ah.value_number, ah.value_string, ah.value_boolean, ah.value_geometry,
                     ah.value_object, ah.value_date_time, ah.value_uri)::int AS populated_value_columns
 FROM attribute_history ah

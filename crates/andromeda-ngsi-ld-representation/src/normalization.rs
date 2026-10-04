@@ -268,10 +268,7 @@ mod tests {
             "type": "Device",
             "speed": {
                 "type": "Property",
-                "values": [
-                    {"value": 42, "observedAt": "2024-01-01T00:00:00Z"},
-                    {"value": 43, "observedAt": "2024-01-01T01:00:00Z"}
-                ]
+                "values": [[42, "2024-01-01T00:00:00Z"], [43, "2024-01-01T01:00:00Z"]]
             }
         });
         let untouched = payload.clone(); // clone: the expectation compares against the input.

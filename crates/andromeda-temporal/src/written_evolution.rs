@@ -2,11 +2,11 @@
 //! its compact form to the written documents the write records.
 //!
 //! Two shapes a Temporal Evolution may take have no place in an entity
-//! document and are therefore read before the typed expansion runs. A plural
-//! member (`values`, `objects`, `languageMaps`, ...) carries several
-//! observations under one envelope, each inheriting the envelope's members
-//! unless it restates them; it is unfolded into the instances it stands for,
-//! within the payload budget (`crate::plural_member_unfold`).
+//! document and are therefore read before the typed expansion runs. An
+//! attribute in the simplified temporal representation (clauses 4.5.9 and
+//! 5.2.20) holds its instances as `[value, instant]` pairs under its family's
+//! plural member (`values`, `objects`, `languageMaps`, ...); it is unfolded
+//! into the instances the pairs stand for (`crate::plural_member_unfold`).
 //! A reified Scope (clause 4.5.6: "a temporal representation of a Property")
 //! dates the Scope paths it names; it is expanded as the attribute instances
 //! it is and recorded beside the entity document, keyed by the scope IRI as the
@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_entity::{
     refusal::EntityRefusal,
 };
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, expanded::properties as expanded_properties};
 use indexmap::IndexMap;
@@ -53,7 +53,8 @@ impl WrittenEvolution {
     }
 
     /// Expand the compact Temporal Evolution `payload` under `expansion`, its
-    /// plural members unfolded within `budget`.
+    /// simplified temporal attributes unfolded on `observedAt`, the one
+    /// Temporal Property a client writes.
     ///
     /// Clause 5.5.4 excepts the temporal evolution from its second NGSI-LD
     /// Null prohibition, so a deleted instance is written as one, but not from
@@ -61,15 +62,13 @@ impl WrittenEvolution {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalError::PayloadBudget`] when the observations of its
-    /// plural members inherit more values than `budget` admits,
-    /// [`TemporalError::JsonLd`] when the context does not resolve or the
-    /// processor refuses the payload, and [`TemporalError::Validation`] when
-    /// the payload is no Temporal Evolution the model admits, puts a
+    /// Returns [`TemporalError::JsonLd`] when the context does not resolve or
+    /// the processor refuses the payload, and [`TemporalError::Validation`]
+    /// when the payload is no Temporal Evolution the model admits, puts a
     /// `unitCode` on a family defined without one, or holds the NGSI-LD Null
     /// under a key of a Property value.
-    pub(crate) async fn expand(expansion: &EntityExpansion<'_>, payload: Value, budget: EntityPayloadBudget) -> Result<WrittenEvolution, TemporalError> {
-        let EvolutionDocuments { document, reified_scope } = read_evolution_document(expansion, payload, budget).await?;
+    pub(crate) async fn expand(expansion: &EntityExpansion<'_>, payload: Value) -> Result<WrittenEvolution, TemporalError> {
+        let EvolutionDocuments { document, reified_scope } = read_evolution_document(expansion, payload, TimeProp::Observed).await?;
         admit_document_unit_codes(&document)?;
         document.admit_null_placements(NullSentinelAdmission::TemporalEvolution)?;
         Ok(WrittenEvolution::new(Arc::new(document), reified_scope.map(Arc::new)))
@@ -138,27 +137,26 @@ pub(crate) struct EvolutionDocuments {
     pub(crate) reified_scope: Option<EntityDocument>,
 }
 
-/// Read the compact Temporal Evolution `payload` under `expansion`: its plural
-/// members unfolded within `budget` (clause 4.5.9), its reified Scope taken out
-/// and expanded on its own (clause 4.5.6), and the rest expanded as the entity
-/// document it is.
+/// Read the compact Temporal Evolution `payload` under `expansion`: its
+/// simplified temporal attributes unfolded (clause 4.5.9), each pair's instant
+/// kept as `observedAt` when `timeproperty` is the Temporal Property the pairs
+/// were made on, its reified Scope taken out and expanded on its own (clause
+/// 4.5.6), and the rest expanded as the entity document it is.
 ///
 /// A Temporal Evolution a client writes and one a Context Source answers with
 /// are the same representation, so both are read through here.
 ///
 /// # Errors
 ///
-/// Returns [`TemporalError::PayloadBudget`] when the observations of its plural
-/// members inherit more values than `budget` admits, [`TemporalError::JsonLd`]
-/// when the context does not resolve or the processor refuses the payload, and
-/// [`TemporalError::Validation`] when the payload is no Temporal Evolution the
-/// model admits.
+/// Returns [`TemporalError::JsonLd`] when the context does not resolve or the
+/// processor refuses the payload, and [`TemporalError::Validation`] when the
+/// payload is no Temporal Evolution the model admits.
 pub(crate) async fn read_evolution_document(
     expansion: &EntityExpansion<'_>,
     mut payload: Value,
-    budget: EntityPayloadBudget,
+    timeproperty: TimeProp,
 ) -> Result<EvolutionDocuments, TemporalError> {
-    unfold_plural_members(&mut payload, budget.json_values)?;
+    unfold_plural_members(&mut payload, timeproperty)?;
     let reified = take_reified_scope(&mut payload);
     let document = expansion.entity_fragment(payload, Normalization::Entity).await?;
     let reified_scope = match reified {
@@ -300,7 +298,7 @@ mod tests {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("build engine");
         let context = ContextSpec::from_body(json!({"settings": {"@id": "https://example.org/settings", "@type": "@json"}}));
         let expansion = EntityExpansion::prepare(&engine, &context).await.expect("the context resolves");
-        WrittenEvolution::expand(&expansion, payload, EntityConfig::default().payload_budget()).await
+        WrittenEvolution::expand(&expansion, payload).await
     }
 
     /// One observation of `config` written as `instance`, observed once.

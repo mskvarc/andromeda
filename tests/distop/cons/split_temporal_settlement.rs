@@ -267,6 +267,53 @@ async fn distop_split_temporal_query_failing_merge_drops_the_entity() {
     topology.finish().await.expect("topology cleanup");
 }
 
+/// Clause 4.5.9 wraps the value of a `LanguageProperty`, `JsonProperty` and
+/// `VocabProperty` pair in a one-member object. A source answering in that
+/// representation is read with the value wrapped once, so an existence filter
+/// on the attribute only the source holds keeps the entity; the wrapper was
+/// read as the value, the part was unreadable, and the entity was dropped.
+#[tokio::test]
+async fn distop_split_temporal_query_wrapped_temporal_values_answers_decide_the_filter() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
+    let held = [
+        (
+            topology.id("Vehicle:split32-language"),
+            "says",
+            json!({ "type": "LanguageProperty", "languageMaps": [[{ "languageMap": { "en": "yes" } }, "2020-08-01T13:00:00Z"]] }),
+        ),
+        (
+            topology.id("Vehicle:split32-json"),
+            "settings",
+            json!({ "type": "JsonProperty", "jsons": [[{ "json": { "mode": "eco" } }, "2020-08-01T13:00:00Z"]] }),
+        ),
+        (
+            topology.id("Vehicle:split32-vocab"),
+            "gender",
+            json!({ "type": "VocabProperty", "vocabs": [[{ "vocab": "Male" }, "2020-08-01T13:00:00Z"]] }),
+        ),
+    ];
+    let mut answer = Vec::new();
+    for (id, name, attribute) in &held {
+        create_local(&topology, id, &vtype, &[("speed", json!([observed(40, "2020-08-01T12:00:00Z")]))]).await;
+        let mut part = json!({ "id": id, "type": vtype });
+        part[*name] = attribute.clone(); // clone: the mock answers with the attribute the case names
+        answer.push(part);
+    }
+    register_source(&topology, &mock, &vtype, &Value::Array(answer)).await;
+
+    let (body, _) = split_query(&topology, &vtype, &format!("&options=temporalValues&q={}", encode("says|settings|gender"))).await;
+    let mut kept = ids(&body);
+    kept.sort_unstable();
+    let mut expected: Vec<String> = held.iter().map(|(id, _, _)| id.clone()).collect(); // clone: the expectation outlives the cases
+    expected.sort_unstable();
+    pretty_assertions::assert_eq!(kept, expected, "{body}");
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
 /// An entity no source answered with has no part outside this broker, so the
 /// store's own filtering decides it, and the count totals what the filters
 /// kept (clause 6.3.13).

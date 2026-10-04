@@ -242,7 +242,7 @@ async fn an_upsert_update_refuses_a_null_on_the_create_branch_before_writing() {
     let (result, created) = upsert_update(&contended, &id, &attributes).await;
 
     assert!(result.success.is_empty(), "{:?}", result.success);
-    assert!(created.is_empty());
+    assert!(created.is_empty(), "{created:?}");
     assert!(
         matches!(result.errors.as_slice(), [(failed, error)] if *failed == id && error.is_validation()),
         "{:?}",

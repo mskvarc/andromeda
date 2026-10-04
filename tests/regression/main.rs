@@ -128,6 +128,7 @@ mod temporal_query_dataset_filter_keeps_entity;
 mod temporal_reified_scope_grammar;
 mod temporal_retrieve_term_expansion;
 mod temporal_scope_evolution;
+mod temporal_simplified_write;
 mod temporal_write_notification;
 mod term_declaration_prefix_resolution;
 mod time_value_restrictions;

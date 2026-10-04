@@ -9,7 +9,7 @@
 //! attribute-type names (`Property`, `GeoProperty`, `Relationship`, ...) keep
 //! their fixed casing, and clause numbers stay in doc comments.
 
-use crate::aggregation_conflict::AggregationConflict;
+use crate::{aggregation_conflict::AggregationConflict, plural_member_refusal::PluralMemberRefusal};
 use andromeda_context_commit::submission_refusal::SubmissionRefusal;
 use andromeda_ngsi_ld_entity::{operation::mutation_error::MutationError, refusal::EntityRefusal};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, reference::NgsiLdReferenceError};
@@ -87,6 +87,10 @@ pub enum TemporalValidationReason {
     /// family never carries, an unusable value.
     #[error(transparent)]
     Representation(EntityRefusal),
+    /// An attribute written in the simplified temporal representation (clause
+    /// 4.5.9) is not one that representation admits.
+    #[error(transparent)]
+    PluralMember(#[from] PluralMemberRefusal),
     /// A standing instance of a Temporal Evolution cannot be current state.
     #[error(transparent)]
     Mutation(MutationError),

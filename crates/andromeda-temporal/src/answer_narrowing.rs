@@ -6,18 +6,15 @@
 //! the query's value, geo and scope filters. A member none of them reads is not
 //! read at all: whatever it holds cannot change the outcome, and a member the
 //! write expansion would refuse cannot then keep the readable ones from being
-//! judged. A `temporalValues` attribute (clause 4.5.9) holds its instances as
-//! `[value, instant]` pairs, which are rewritten as the instances they stand for
-//! so the plural member unfolds as a written one does.
+//! judged. A kept member is carried as the source wrote it: a `temporalValues`
+//! attribute (clause 4.5.9) is unfolded as a written one is, when the answer
+//! is read as a Temporal Evolution.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time_prop::TimeProp};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, filter::referenced_attributes::referenced_attributes, term_expander::TermExpander};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde_json::{Map, Value};
-use std::{
-    collections::{HashMap, HashSet},
-    mem::take,
-};
+use std::collections::{HashMap, HashSet};
 
 /// The members of a temporal representation every narrowing keeps: what
 /// names the entity.
@@ -35,8 +32,6 @@ pub(crate) struct AnswerNarrowing<'q, X: TermExpander> {
     read: HashSet<&'q str>,
     /// Whether a scope requirement reads the entity's Scope (clause 4.19).
     reads_scope: bool,
-    /// The Temporal Property a `temporalValues` pair positions its value on.
-    timeproperty: TimeProp,
     /// Whether each compact member key met so far names an attribute read.
     decided: HashMap<String, bool>,
 }
@@ -44,7 +39,7 @@ pub(crate) struct AnswerNarrowing<'q, X: TermExpander> {
 impl<'q, X: TermExpander> AnswerNarrowing<'q, X> {
     /// The narrowing to the members `selection`'s filters read, compact keys
     /// read under `expander`.
-    pub(crate) fn new(selection: &'q EntitySelection, timeproperty: TimeProp, expander: &'q X) -> AnswerNarrowing<'q, X> {
+    pub(crate) fn new(selection: &'q EntitySelection, expander: &'q X) -> AnswerNarrowing<'q, X> {
         let mut read: HashSet<&'q str> = selection
             .q_expr
             .as_ref()
@@ -55,14 +50,12 @@ impl<'q, X: TermExpander> AnswerNarrowing<'q, X> {
             expander,
             read,
             reads_scope: selection.scope_q.is_some(),
-            timeproperty,
             decided: HashMap::new(),
         }
     }
 
-    /// `answer` reduced to the members the filters read, its `temporalValues`
-    /// pairs rewritten as instances; an answer that is no entity object is
-    /// left for the expansion to refuse.
+    /// `answer` reduced to the members the filters read; an answer that is no
+    /// entity object is left for the expansion to refuse.
     pub(crate) async fn narrow(&mut self, answer: &Value) -> Value {
         let Some(members) = answer.as_object() else {
             return answer.clone(); // clone: the answer stays as the merged response carries it
@@ -78,7 +71,7 @@ impl<'q, X: TermExpander> AnswerNarrowing<'q, X> {
             };
             if keep {
                 // clone: the answer stays as the merged response carries it
-                kept.insert(key.clone(), instances_of(value.clone(), self.timeproperty));
+                kept.insert(key.clone(), value.clone());
             }
         }
         Value::Object(kept)
@@ -101,96 +94,47 @@ impl<'q, X: TermExpander> AnswerNarrowing<'q, X> {
     }
 }
 
-/// The member `value` with each `temporalValues` attribute object's pairs
-/// rewritten as instances: `[value, instant]` becomes `{<value member>:
-/// value}`, the instant kept as `observedAt` when that is the Temporal
-/// Property the pairs are positioned on.
-fn instances_of(value: Value, timeproperty: TimeProp) -> Value {
-    match value {
-        Value::Array(items) => Value::Array(items.into_iter().map(|item| pairs_as_instances(item, timeproperty)).collect()),
-        object @ Value::Object(_) => pairs_as_instances(object, timeproperty),
-        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => other,
-    }
-}
-
-/// One attribute object with the pairs of its family's plural member, if it
-/// holds them, rewritten as instances.
-fn pairs_as_instances(item: Value, timeproperty: TimeProp) -> Value {
-    let Value::Object(mut attribute) = item else {
-        return item;
-    };
-    let Some(family) = attribute
-        .get("type")
-        .and_then(Value::as_str)
-        .and_then(|declared| declared.parse::<AttributeType>().ok())
-    else {
-        return Value::Object(attribute);
-    };
-    if let Some(Value::Array(pairs)) = attribute.get_mut(family.temporal_values_key()) {
-        for pair in pairs.iter_mut() {
-            pair_as_instance(pair, family, timeproperty);
-        }
-    }
-    Value::Object(attribute)
-}
-
-/// Rewrite one clause 4.5.9 `[value, instant]` pair as the instance it stands
-/// for; anything else is left as it is.
-fn pair_as_instance(pair: &mut Value, family: AttributeType, timeproperty: TimeProp) {
-    let Value::Array(elements) = pair else {
-        return;
-    };
-    let [value, instant] = match <[Value; 2]>::try_from(take(elements)) {
-        Ok(paired) => paired,
-        Err(unpaired) => {
-            *elements = unpaired;
-            return;
-        }
-    };
-    let mut instance = Map::from_iter([(family.compact_value_key().to_owned(), value)]);
-    match timeproperty {
-        TimeProp::Observed => {
-            instance.insert(<&'static str>::from(timeproperty).to_owned(), instant);
-        }
-        TimeProp::Created | TimeProp::Modified | TimeProp::Deleted => {}
-    }
-    *pair = Value::Object(instance);
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::answer_narrowing::{instances_of, pairs_as_instances};
-    use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
-    use serde_json::json;
+    use crate::answer_narrowing::AnswerNarrowing;
+    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
+    use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, scope::query::ScopeQuery};
+    use serde_json::{Value, json};
 
-    /// Clause 4.5.9: a `temporalValues` pair is the value and the instant it
-    /// was observed at.
-    #[test]
-    fn a_pair_becomes_the_instance_it_stands_for() {
-        let attribute = json!({"type": "Property", "values": [[60, "2020-08-01T12:00:00Z"], [70, "2020-08-01T13:00:00Z"]]});
-        pretty_assertions::assert_eq!(
-            pairs_as_instances(attribute, TimeProp::Observed),
-            json!({"type": "Property", "values": [
-                {"value": 60, "observedAt": "2020-08-01T12:00:00Z"},
-                {"value": 70, "observedAt": "2020-08-01T13:00:00Z"}
-            ]})
-        );
+    /// The answer narrowed for a `q` over `says` and, when `scope` is given, a
+    /// scope query.
+    async fn narrowed(scope: Option<&str>, answer: &Value) -> Value {
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("build engine");
+        let context = ContextSpec::from_body(json!({"says": "https://example.com/says", "speed": "https://example.com/speed"}));
+        let prepared = engine.prepare_term_context(&context);
+        let expander = ContextualExpander::new(&engine, &prepared);
+        let selection = EntitySelection::builder()
+            .q_expr(Some("\"https://example.com/says\"==\"yes\"".parse().expect("a valid q")))
+            .scope_q(scope.map(|raw| ScopeQuery::parse(raw).expect("a valid scopeQ")))
+            .build();
+        AnswerNarrowing::new(&selection, &expander).narrow(answer).await
     }
 
-    /// Every family's plural member holds its pairs under its own value member.
-    #[test]
-    fn a_relationship_pair_names_its_object() {
-        let attribute = json!([{"type": "Relationship", "datasetId": "urn:ds:1", "objects": [["urn:a", "2020-08-01T12:00:00Z"]]}]);
+    /// The identifying members and the attributes the filters read are kept as
+    /// the source wrote them, `temporalValues` pairs included; the members no
+    /// filter reads are left out.
+    #[tokio::test]
+    async fn the_members_the_filters_read_are_kept_as_written() {
+        let answer = json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "says": {"type": "LanguageProperty", "languageMaps": [[{"languageMap": {"en": "yes"}}, "2020-08-01T12:00:00Z"]]},
+            "speed": {"type": "Property", "values": [[60, "2020-08-01T12:00:00Z"]]},
+            "scope": "/Madrid"
+        });
         pretty_assertions::assert_eq!(
-            instances_of(attribute, TimeProp::Modified),
-            json!([{"type": "Relationship", "datasetId": "urn:ds:1", "objects": [{"object": "urn:a"}]}])
+            narrowed(None, &answer).await,
+            json!({
+                "id": "urn:ngsi-ld:Vehicle:1",
+                "type": "Vehicle",
+                "says": {"type": "LanguageProperty", "languageMaps": [[{"languageMap": {"en": "yes"}}, "2020-08-01T12:00:00Z"]]}
+            })
         );
-    }
-
-    /// A normalized instance is no pair and stays as it is.
-    #[test]
-    fn a_normalized_instance_is_left_alone() {
-        let attribute = json!([{"type": "Property", "value": 60, "observedAt": "2020-08-01T12:00:00Z"}]);
-        pretty_assertions::assert_eq!(instances_of(attribute.clone(), TimeProp::Observed), attribute);
+        pretty_assertions::assert_eq!(narrowed(Some("/Madrid"), &answer).await["scope"], json!("/Madrid"));
     }
 }

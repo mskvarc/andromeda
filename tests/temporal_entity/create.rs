@@ -69,10 +69,7 @@ async fn temporal_create_entity_with_plural_values_success() {
         "speed": {
             "type": "Property",
             "datasetId": "urn:ngsi-ld:Dataset:sensor",
-            "values": [
-                {"value": 55, "observedAt": "2020-08-01T12:00:00Z"},
-                {"value": 61, "observedAt": "2020-08-01T13:00:00Z"}
-            ]
+            "values": [[55, "2020-08-01T12:00:00Z"], [61, "2020-08-01T13:00:00Z"]]
         },
         "@context": [TEST_SUITE_CONTEXT]
     });

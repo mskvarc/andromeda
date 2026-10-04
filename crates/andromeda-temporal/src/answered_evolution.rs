@@ -3,7 +3,8 @@
 //!
 //! A source's temporal answer is the same representation a client writes
 //! (clauses 4.5.9 and 5.6.11), so it is read through the same steps a written
-//! one is: the plural members unfolded, the reified Scope taken out and read
+//! one is: the simplified temporal attributes unfolded on the Temporal
+//! Property the query ran on, the reified Scope taken out and read
 //! as the paths it dates, and the rest expanded as an entity document. The
 //! filters of the query then read it through the entity traits, exactly as
 //! they read any other entity.
@@ -18,12 +19,11 @@ use crate::{
 use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
     term_expander::TermExpander,
 };
-use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
 use serde_json::Value;
 use std::borrow::Cow;
 
@@ -38,7 +38,8 @@ pub(crate) struct AnsweredEvolution {
 
 impl AnsweredEvolution {
     /// Read `answer` under `expansion`, narrowed by `narrowing` to the members
-    /// the query's filters read, within `budget`.
+    /// the query's filters read, its `temporalValues` pairs made on
+    /// `timeproperty`, the Temporal Property the query ran on.
     ///
     /// # Errors
     ///
@@ -49,10 +50,10 @@ impl AnsweredEvolution {
         expansion: &EntityExpansion<'_>,
         narrowing: &mut AnswerNarrowing<'_, X>,
         answer: &Value,
-        budget: EntityPayloadBudget,
+        timeproperty: TimeProp,
     ) -> Result<AnsweredEvolution, TemporalError> {
         let narrowed = narrowing.narrow(answer).await;
-        let EvolutionDocuments { document, reified_scope } = read_evolution_document(expansion, narrowed, budget).await?;
+        let EvolutionDocuments { document, reified_scope } = read_evolution_document(expansion, narrowed, timeproperty).await?;
         let scopes = reified_scope.as_ref().map(reified_paths).unwrap_or_default();
         Ok(AnsweredEvolution { document, scopes })
     }
@@ -101,7 +102,6 @@ impl<'a> ScopedEntity<'a> for &'a AnsweredEvolution {
 #[cfg(test)]
 mod tests {
     use crate::{answer_narrowing::AnswerNarrowing, answered_evolution::AnsweredEvolution, error::TemporalError};
-    use andromeda_entity::config::EntityConfig;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
     use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
     use andromeda_ngsi_ld_lexicon::{scope::path::ScopePath, time_prop::TimeProp};
@@ -117,6 +117,9 @@ mod tests {
         ContextSpec::from_body(json!({
             "speed": "https://example.com/speed",
             "brand": "https://example.com/brand",
+            "says": "https://example.com/says",
+            "settings": "https://example.com/settings",
+            "gender": "https://example.com/gender",
         }))
     }
 
@@ -135,8 +138,8 @@ mod tests {
         let expansion = EntityExpansion::prepare(&engine, &context).await.expect("the context resolves");
         let prepared = engine.prepare_term_context(&context);
         let expander = ContextualExpander::new(&engine, &prepared);
-        let mut narrowing = AnswerNarrowing::new(selection, TimeProp::Observed, &expander);
-        let part = AnsweredEvolution::read(&expansion, &mut narrowing, answer, EntityConfig::default().payload_budget()).await?;
+        let mut narrowing = AnswerNarrowing::new(selection, &expander);
+        let part = AnsweredEvolution::read(&expansion, &mut narrowing, answer, TimeProp::Observed).await?;
         let truths = SplitFilter::of(selection).truths_of(&part, NoLinkedEntities);
         Ok((part, truths))
     }
@@ -156,6 +159,32 @@ mod tests {
         let far_above = selection(Some("\"https://example.com/speed\">70"), None);
         let (_, truths) = read(&far_above, &answer).await.expect("the answer reads");
         assert!(!SplitFilter::of(&far_above).holds(&truths));
+    }
+
+    /// Clause 4.5.9 wraps the value of a `LanguageProperty`, `JsonProperty`
+    /// and `VocabProperty` pair in a one-member object, which is the family's
+    /// value member once, so each answer reads and an existence filter holds.
+    #[tokio::test]
+    async fn a_wrapped_temporal_values_answer_is_read_as_instances() {
+        for (term, attribute) in [
+            (
+                "says",
+                json!({"type": "LanguageProperty", "languageMaps": [[{"languageMap": {"en": "yes"}}, "2020-08-01T12:00:00Z"]]}),
+            ),
+            (
+                "settings",
+                json!({"type": "JsonProperty", "jsons": [[{"json": {"mode": "eco"}}, "2020-08-01T12:00:00Z"]]}),
+            ),
+            (
+                "gender",
+                json!({"type": "VocabProperty", "vocabs": [[{"vocab": "Male"}, "2020-08-01T12:00:00Z"]]}),
+            ),
+        ] {
+            let answer = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", term: attribute});
+            let exists = selection(Some(&format!("\"https://example.com/{term}\"")), None);
+            let (_, truths) = read(&exists, &answer).await.unwrap_or_else(|error| panic!("{term}: {error}"));
+            assert!(SplitFilter::of(&exists).holds(&truths), "{term}");
+        }
     }
 
     /// Clauses 4.5.6 and 4.18: the temporal representation reifies the Scope,

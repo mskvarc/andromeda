@@ -86,9 +86,7 @@ mod tests {
                 owner: GeometryOwner::Attribute(name),
                 ..
             } => name.to_string(),
-            other @ (PayloadBudgetExceeded::GeometryPositions { .. }
-            | PayloadBudgetExceeded::EntityJsonValues { .. }
-            | PayloadBudgetExceeded::InheritedObservationValues { .. }) => {
+            other @ (PayloadBudgetExceeded::GeometryPositions { .. } | PayloadBudgetExceeded::EntityJsonValues { .. }) => {
                 panic!("not a named geometry refusal: {other:?}")
             }
         }

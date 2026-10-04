@@ -258,7 +258,7 @@ fn temporal_vehicle_entity(id: &str) -> Value {
         "type": "Vehicle",
         "speed": {
             "type": "Property",
-            "values": [{"value": 55, "observedAt": "2020-08-01T12:00:00Z"}]
+            "values": [[55, "2020-08-01T12:00:00Z"]]
         },
         "@context": [CORE_CONTEXT]
     })

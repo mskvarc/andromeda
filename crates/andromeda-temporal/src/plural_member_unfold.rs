@@ -1,109 +1,65 @@
-//! Unfolding the plural members of a written Temporal Evolution (clause
-//! 4.5.9) into the instances they stand for.
+//! Unfolding the simplified temporal representation of a Temporal Evolution
+//! (clause 4.5.9) into the instances it stands for.
 //!
-//! A plural member (`values`, `objects`, `languageMaps`, `vocabs`, `jsons`,
-//! `valueLists`, `objectLists`) carries several observations under one
-//! envelope, each inheriting the envelope's members unless it restates them.
-//! Unfolding copies the inherited members into every observation, so the
-//! copies, not the request body, decide what the unfold costs: a small body
-//! whose envelope carries a large sub-attribute and whose plural member holds
-//! many empty observations unfolds into a payload many times its size. The
-//! copies are therefore counted before any is made, every inherited value once
-//! per observation inheriting it, against the entity value limit the written
-//! document is held to (clause 6.3.2, "Request Entity too large"). An
-//! observation's own members are not counted here: they are moved, not
-//! copied, and the request value budget already bounded them.
+//! An attribute object in that representation holds its family's plural member
+//! (`values`, `objects`, `languageMaps`, `vocabs`, `jsons`, `valueLists`,
+//! `objectLists`), whose every element is a `[value, instant]` pair. Clause
+//! 4.5.9 has the object "only contain" that member; besides it the object
+//! carries its `type`, which names the family, and the `datasetId` of the
+//! instances it gathers, since a temporal representation gives each `datasetId`
+//! its own object (clause 4.5.5). Anything else is refused.
+//!
+//! Each pair becomes one instance: the object's `type` and `datasetId`, the
+//! family's value member holding the pair's value -- taken out of the
+//! one-member object clause 4.5.9 wraps the value of a `LanguageProperty`, a
+//! `JsonProperty` and a `VocabProperty` in -- and the pair's instant as
+//! `observedAt` when that is the Temporal Property it was paired on. An
+//! instance copies nothing but `type` and `datasetId`, so the unfold builds no
+//! more than the pairs already hold, and the written document is held to the
+//! entity budget after expansion like any other.
 
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
+use crate::{error::TemporalError, plural_member_refusal::PluralMemberRefusal, temporal_validation_reason::TemporalValidationReason};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::{AttributeType, TemporalValueEncoding},
+    time_prop::TimeProp,
+};
+use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde_json::{Map, Value};
-use std::{collections::HashMap, slice::from_ref};
+use std::slice::from_ref;
 
-/// Unfold every plural member of `payload` into the instances it stands for,
-/// once the values its observations inherit fit `limit`.
-///
-/// An instance holding its family's plural member becomes one instance per
-/// element: the envelope's members without the plural one, overlaid by the
-/// element's own, so a member an element restates overrides the envelope's.
+/// The members an attribute object holding its plural member carries beside
+/// it.
+const MEMBERS_BESIDE_PAIRS: [&str; 2] = ["type", compact_properties::DATASET_ID];
+
+/// Unfold every attribute object of `payload` that holds its family's plural
+/// member into the instances its pairs stand for, each pair's instant kept as
+/// `observedAt` when `timeproperty` is the one the pairs were made on.
 ///
 /// # Errors
 ///
-/// Returns [`PayloadBudgetExceeded::InheritedObservationValues`] when the
-/// observations inherit more values than `limit` admits, before anything is
-/// unfolded.
-pub(crate) fn unfold_plural_members(payload: &mut Value, limit: JsonValueLimit) -> Result<(), PayloadBudgetExceeded> {
+/// Returns [`TemporalError::Validation`] when such an object carries another
+/// member, its plural member is not an array of pairs, a pair's value is not
+/// in its family's form, or a pair's `observedAt` is not a string.
+pub(crate) fn unfold_plural_members(payload: &mut Value, timeproperty: TimeProp) -> Result<(), TemporalError> {
     let Some(members) = payload.as_object_mut() else {
         return Ok(());
     };
-    admit_inherited_values(members, limit)?;
-    for member in members.values_mut() {
-        if !instances(member)
-            .iter()
-            .any(|instance| instance.as_object().is_some_and(|instance| plural_key(instance).is_some()))
-        {
+    for (name, member) in members.iter_mut() {
+        if !instances(member).iter().any(|instance| instance.as_object().and_then(plural_family).is_some()) {
             continue;
         }
-        let instances = match member.take() {
+        let written = match member.take() {
             Value::Array(instances) => instances,
             single @ (Value::Object(_) | Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => vec![single],
         };
-        *member = Value::Array(instances.into_iter().flat_map(unfold_instance).collect());
+        let mut unfolded = Vec::with_capacity(written.len());
+        for instance in written {
+            unfold_instance(name, instance, timeproperty, &mut unfolded)?;
+        }
+        *member = Value::Array(unfolded);
     }
     Ok(())
-}
-
-/// Refuse a payload whose observations inherit more values than `limit`
-/// admits, counted over every instance of every attribute.
-fn admit_inherited_values(members: &Map<String, Value>, limit: JsonValueLimit) -> Result<(), PayloadBudgetExceeded> {
-    members
-        .values()
-        .flat_map(instances)
-        .filter_map(Value::as_object)
-        .try_fold(0_usize, |counted, envelope| {
-            inherited_values(envelope)
-                .and_then(|inherited| counted.checked_add(inherited))
-                .filter(|total| *total <= limit.get())
-                .ok_or(PayloadBudgetExceeded::InheritedObservationValues { limit })
-        })
-        .map(drop)
-}
-
-/// The values the observations of one instance inherit from it: for every
-/// observation, the copied envelope object and every value of each envelope
-/// member the observation does not restate; `None` past `usize`.
-///
-/// Each member is counted once and each observation reads only its own
-/// members, so the count costs what the payload holds, not what the unfold
-/// would build.
-fn inherited_values(envelope: &Map<String, Value>) -> Option<usize> {
-    let Some(key) = plural_key(envelope) else {
-        return Some(0);
-    };
-    let Some(Value::Array(observations)) = envelope.get(key) else {
-        return Some(0);
-    };
-    let members: HashMap<&str, usize> = envelope
-        .iter()
-        .filter(|(name, _)| name.as_str() != key)
-        .map(|(name, value)| (name.as_str(), value_count(value)))
-        .collect();
-    let whole = members.values().try_fold(1_usize, |sum, values| sum.checked_add(*values))?;
-    observations.iter().try_fold(0_usize, |sum, observation| {
-        let restated: usize = observation
-            .as_object()
-            .map_or(0, |own| own.keys().filter_map(|name| members.get(name.as_str())).sum());
-        sum.checked_add(whole.saturating_sub(restated))
-    })
-}
-
-/// The JSON values `value` holds, itself included.
-fn value_count(value: &Value) -> usize {
-    match value {
-        Value::Array(items) => items.iter().map(value_count).fold(1, usize::saturating_add),
-        Value::Object(members) => members.values().map(value_count).fold(1, usize::saturating_add),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => 1,
-    }
 }
 
 /// The instances an attribute member holds: one instance object, or an array
@@ -116,189 +72,287 @@ fn instances(member: &Value) -> &[Value] {
     }
 }
 
-/// The plural member an instance's declared family holds its observations in,
-/// when the instance holds it.
-fn plural_key(instance: &Map<String, Value>) -> Option<&'static str> {
-    let family = instance.get("type").and_then(Value::as_str)?.parse::<AttributeType>().ok()?;
-    let key = family.temporal_values_key();
-    instance.contains_key(key).then_some(key)
+/// The family of an attribute object that holds its family's plural member.
+fn plural_family(instance: &Map<String, Value>) -> Option<AttributeType> {
+    let family = instance.get("type")?.as_str()?.parse::<AttributeType>().ok()?;
+    instance.contains_key(family.temporal_values_key()).then_some(family)
 }
 
-/// The instances one instance stands for: itself, or one per element of its
-/// plural member.
-fn unfold_instance(instance: Value) -> Vec<Value> {
+/// Push onto `unfolded` the instances one instance of the attribute `name`
+/// stands for: itself, or one per pair of its plural member.
+fn unfold_instance(name: &str, instance: Value, timeproperty: TimeProp, unfolded: &mut Vec<Value>) -> Result<(), TemporalError> {
     let Value::Object(mut envelope) = instance else {
-        return vec![instance];
+        unfolded.push(instance);
+        return Ok(());
     };
-    let Some(key) = plural_key(&envelope) else {
-        return vec![Value::Object(envelope)];
+    let Some(family) = plural_family(&envelope) else {
+        unfolded.push(Value::Object(envelope));
+        return Ok(());
     };
-    match envelope.remove(key) {
-        Some(Value::Array(observations)) => observations
-            .into_iter()
-            .map(|observation| {
-                let mut unfolded = envelope.clone(); // clone: every observation inherits the envelope's members, counted before the unfold
-                if let Value::Object(own) = observation {
-                    unfolded.extend(own);
-                }
-                Value::Object(unfolded)
-            })
-            .collect(),
-        Some(other) => {
-            envelope.insert(key.to_owned(), other);
-            vec![Value::Object(envelope)]
-        }
-        None => vec![Value::Object(envelope)],
+    let refused = |fault| refusal(name, family, fault);
+    let Some(Value::Array(pairs)) = envelope.remove(family.temporal_values_key()) else {
+        return Err(refused(PairFault::NotAnArray));
+    };
+    if let Some(member) = envelope.keys().find(|member| !MEMBERS_BESIDE_PAIRS.contains(&member.as_str())) {
+        return Err(refused(PairFault::MemberBesidePairs(member)));
     }
+    unfolded.reserve(pairs.len());
+    for pair in pairs {
+        let instance = pair_instance(&envelope, pair, family, timeproperty).map_err(refused)?;
+        unfolded.push(Value::Object(instance));
+    }
+    Ok(())
+}
+
+/// The instance one `[value, instant]` pair of a `family` object carrying
+/// `envelope` beside its plural member stands for.
+fn pair_instance(envelope: &Map<String, Value>, pair: Value, family: AttributeType, timeproperty: TimeProp) -> Result<Map<String, Value>, PairFault<'static>> {
+    let Value::Array(elements) = pair else {
+        return Err(PairFault::NotAPair);
+    };
+    let [value, instant] = <[Value; 2]>::try_from(elements).map_err(|_unpaired| PairFault::NotAPair)?;
+    let value = match family.temporal_value_encoding() {
+        TemporalValueEncoding::Wrapped => unwrapped(value, family.compact_value_key())?,
+        TemporalValueEncoding::Bare => value,
+    };
+    let mut instance = envelope.clone(); // clone: every pair carries the `type` and `datasetId` of the object it is written in
+    instance.insert(family.compact_value_key().to_owned(), value);
+    match timeproperty {
+        TimeProp::Observed if instant.is_string() => {
+            instance.insert(compact_properties::OBSERVED_AT.to_owned(), instant);
+        }
+        TimeProp::Observed => return Err(PairFault::InstantNotAString),
+        // A system time is the broker's to set, never one an instance carries
+        // into a write, so the instant positions nothing here.
+        TimeProp::Created | TimeProp::Modified | TimeProp::Deleted => {}
+    }
+    Ok(instance)
+}
+
+/// The value a wrapped pair element carries: the element is an object
+/// holding `value_member` and nothing else.
+fn unwrapped(element: Value, value_member: &str) -> Result<Value, PairFault<'static>> {
+    let Value::Object(mut wrapper) = element else {
+        return Err(PairFault::UnwrappedValue);
+    };
+    match (wrapper.remove(value_member), wrapper.is_empty()) {
+        (Some(value), true) => Ok(value),
+        (Some(_) | None, false) | (None, true) => Err(PairFault::UnwrappedValue),
+    }
+}
+
+/// What is wrong with an attribute object holding its plural member, before
+/// the attribute is named.
+#[derive(Clone, Copy, Debug)]
+enum PairFault<'a> {
+    /// It carries this member beside the pairs.
+    MemberBesidePairs(&'a str),
+    /// The plural member is not an array.
+    NotAnArray,
+    /// An element is not a two-element array.
+    NotAPair,
+    /// A wrapped family's value is not wrapped.
+    UnwrappedValue,
+    /// An `observedAt` is not a string.
+    InstantNotAString,
+}
+
+/// The refusal of the attribute `name` of `family` for `fault`.
+fn refusal(name: &str, family: AttributeType, fault: PairFault<'_>) -> TemporalError {
+    let named = |raw: &str| {
+        raw.parse::<AttributeName>()
+            .map_err(|source| TemporalError::from(TemporalValidationReason::AttributeName { source }))
+    };
+    let attribute = match named(name) {
+        Ok(attribute) => attribute,
+        Err(refused) => return refused,
+    };
+    let refused = match fault {
+        PairFault::MemberBesidePairs(member) => match named(member) {
+            Ok(member) => PluralMemberRefusal::MemberBesidePairs { attribute, family, member },
+            Err(refused) => return refused,
+        },
+        PairFault::NotAnArray => PluralMemberRefusal::NotAnArray { attribute, family },
+        PairFault::NotAPair => PluralMemberRefusal::NotAPair { attribute, family },
+        PairFault::UnwrappedValue => PluralMemberRefusal::UnwrappedValue { attribute, family },
+        PairFault::InstantNotAString => PluralMemberRefusal::InstantNotAString { attribute, family },
+    };
+    TemporalError::from(TemporalValidationReason::from(refused))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::plural_member_unfold::unfold_plural_members;
-    use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
+    use crate::{
+        error::TemporalError,
+        plural_member_refusal::PluralMemberRefusal,
+        plural_member_unfold::unfold_plural_members,
+        temporal_validation_reason::TemporalValidationReason,
+    };
+    use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use serde_json::{Value, json};
-    use std::num::NonZeroUsize;
 
-    /// A limit of `values` JSON values.
-    fn limit(values: usize) -> JsonValueLimit {
-        JsonValueLimit::new(NonZeroUsize::new(values).expect("a positive test limit"))
+    /// `attribute` unfolded on the `observedAt` axis, as a write unfolds it.
+    fn unfolded(attribute: &Value) -> Result<Value, TemporalError> {
+        let mut payload = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "attribute": attribute});
+        unfold_plural_members(&mut payload, TimeProp::Observed)?;
+        Ok(payload["attribute"].take())
     }
 
-    /// A limit no test payload reaches.
-    fn unbounded() -> JsonValueLimit {
-        limit(usize::MAX)
+    /// The refusal `attribute` is refused with on the `observedAt` axis.
+    fn refused(attribute: &Value) -> PluralMemberRefusal {
+        match unfolded(attribute) {
+            Err(TemporalError::Validation(TemporalValidationReason::PluralMember(refusal))) => refusal,
+            other => panic!("not a plural member refusal: {other:?}"),
+        }
     }
 
-    /// A `speed` envelope whose `meta` sub-attribute holds ten numbers, over
-    /// `count` copies of `observation`.
-    ///
-    /// Each observation that restates nothing inherits fifteen values: the
-    /// copied instance object, its `type`, and `meta` (the object, its `type`,
-    /// the `value` array and its ten numbers).
-    fn envelope(observation: &Value, count: usize) -> Value {
-        json!({
-            "type": "Property",
-            "meta": {"type": "Property", "value": (0..10).collect::<Vec<u32>>()},
-            "values": vec![observation; count]
-        })
-    }
-
-    /// Whether `payload` unfolds at exactly `values` inherited values and is
-    /// refused, untouched, one below.
-    fn inherits_exactly(payload: &Value, values: usize) -> bool {
-        let mut refused = payload.clone(); // clone: the payload is unfolded under two limits
-        let refusal = unfold_plural_members(&mut refused, limit(values - 1));
-        let mut admitted = payload.clone(); // clone: the payload is unfolded under two limits
-        refusal == Err(PayloadBudgetExceeded::InheritedObservationValues { limit: limit(values - 1) })
-            && refused == *payload
-            && unfold_plural_members(&mut admitted, limit(values)).is_ok()
-    }
-
-    /// Clause 4.5.9: each element of a plural member is its own observation,
-    /// inheriting the envelope's members and overriding the ones it restates.
+    /// Clause 4.5.9, EXAMPLE 1: each pair is the value and the instant it was
+    /// observed at.
     #[test]
-    fn a_plural_member_unfolds_into_one_instance_per_element() {
-        let mut payload = json!({
-            "id": "urn:ngsi-ld:Vehicle:1",
-            "type": "Vehicle",
-            "speed": {
-                "type": "Property",
-                "unitCode": "KMH",
-                "datasetId": "urn:ngsi-ld:Dataset:sensor",
-                "values": [
-                    {"value": 55, "observedAt": "2021-01-01T00:00:00Z"},
-                    {"value": 61, "observedAt": "2021-01-02T00:00:00Z", "unitCode": "MTS"}
-                ]
-            },
-            "brand": {"type": "Property", "value": "Mercedes"}
-        });
-        unfold_plural_members(&mut payload, unbounded()).expect("within the limit");
+    fn each_pair_becomes_the_instance_it_stands_for() {
+        let attribute = json!({"type": "Property", "values": [["Joe Bloggs", "2022-08-09T18:25:02Z"], ["Bill Smith", "2022-08-10T18:25:02Z"]]});
         pretty_assertions::assert_eq!(
-            payload,
-            json!({
-                "id": "urn:ngsi-ld:Vehicle:1",
-                "type": "Vehicle",
-                "speed": [
-                    {"type": "Property", "unitCode": "KMH", "datasetId": "urn:ngsi-ld:Dataset:sensor", "value": 55, "observedAt": "2021-01-01T00:00:00Z"},
-                    {"type": "Property", "unitCode": "MTS", "datasetId": "urn:ngsi-ld:Dataset:sensor", "value": 61, "observedAt": "2021-01-02T00:00:00Z"}
-                ],
-                "brand": {"type": "Property", "value": "Mercedes"}
-            })
+            unfolded(&attribute).expect("the pairs unfold"),
+            json!([
+                {"type": "Property", "value": "Joe Bloggs", "observedAt": "2022-08-09T18:25:02Z"},
+                {"type": "Property", "value": "Bill Smith", "observedAt": "2022-08-10T18:25:02Z"}
+            ])
         );
     }
 
-    /// The two list families hold their observations under their own plural
-    /// members (clause 4.5.9), which unfold the same way.
+    /// Clause 4.5.9 holds every family's pairs in its own member, the value of
+    /// a `LanguageProperty`, `JsonProperty` and `VocabProperty` wrapped in a
+    /// one-member object (EXAMPLES 2 to 7); each unfolds to the family's value
+    /// member holding the value alone.
     #[test]
-    fn a_list_family_unfolds_its_own_plural_member() {
-        let mut payload = json!({
-            "parts": [{"type": "ListRelationship", "objectLists": [{"objectList": [{"object": "urn:ngsi-ld:Part:1"}]}]}]
-        });
-        unfold_plural_members(&mut payload, unbounded()).expect("within the limit");
+    fn every_family_unfolds_into_its_own_value_member() {
+        let instant = "2022-08-09T18:25:02Z";
+        for (attribute, instance) in [
+            (
+                json!({"type": "GeoProperty", "values": [[{"type": "Point", "coordinates": [1, 2]}, instant]]}),
+                json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2]}, "observedAt": instant}),
+            ),
+            (
+                json!({"type": "Relationship", "objects": [[["urn:ngsi-ld:Device:1", "urn:ngsi-ld:Device:2"], instant]]}),
+                json!({"type": "Relationship", "object": ["urn:ngsi-ld:Device:1", "urn:ngsi-ld:Device:2"], "observedAt": instant}),
+            ),
+            (
+                json!({"type": "LanguageProperty", "languageMaps": [[{"languageMap": {"en": "yes", "fr": "oui"}}, instant]]}),
+                json!({"type": "LanguageProperty", "languageMap": {"en": "yes", "fr": "oui"}, "observedAt": instant}),
+            ),
+            (
+                json!({"type": "JsonProperty", "jsons": [[{"json": [{"id": "85a6cc52"}]}, instant]]}),
+                json!({"type": "JsonProperty", "json": [{"id": "85a6cc52"}], "observedAt": instant}),
+            ),
+            (
+                json!({"type": "VocabProperty", "vocabs": [[{"vocab": "Male"}, instant]]}),
+                json!({"type": "VocabProperty", "vocab": "Male", "observedAt": instant}),
+            ),
+            (
+                json!({"type": "ListProperty", "valueLists": [[["First", "Second"], instant]]}),
+                json!({"type": "ListProperty", "valueList": ["First", "Second"], "observedAt": instant}),
+            ),
+            (
+                json!({"type": "ListRelationship", "objectLists": [[["urn:ngsi-ld:Person:Alice"], instant]]}),
+                json!({"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Person:Alice"], "observedAt": instant}),
+            ),
+        ] {
+            pretty_assertions::assert_eq!(unfolded(&attribute).expect("the pairs unfold"), json!([instance]));
+        }
+    }
+
+    /// Clause 4.5.5: a temporal representation gives each `datasetId` its own
+    /// object, whose pairs are instances of that dataset; an instance written
+    /// in full beside them is left as it is.
+    #[test]
+    fn every_pair_takes_the_dataset_of_its_object() {
+        let attribute = json!([
+            {"type": "Property", "datasetId": "urn:ngsi-ld:Dataset:a", "values": [[1, "2022-08-09T18:25:02Z"], [2, "2022-08-10T18:25:02Z"]]},
+            {"type": "Property", "value": 3, "observedAt": "2022-08-11T18:25:02Z"}
+        ]);
         pretty_assertions::assert_eq!(
-            payload,
-            json!({"parts": [{"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Part:1"}]}]})
+            unfolded(&attribute).expect("the pairs unfold"),
+            json!([
+                {"type": "Property", "datasetId": "urn:ngsi-ld:Dataset:a", "value": 1, "observedAt": "2022-08-09T18:25:02Z"},
+                {"type": "Property", "datasetId": "urn:ngsi-ld:Dataset:a", "value": 2, "observedAt": "2022-08-10T18:25:02Z"},
+                {"type": "Property", "value": 3, "observedAt": "2022-08-11T18:25:02Z"}
+            ])
         );
     }
 
-    /// Every observation copies what it inherits, so five observations that
-    /// restate nothing inherit five times the envelope's fifteen values.
+    /// On a system time axis the instant is the broker's, so a source's answer
+    /// paired on `modifiedAt` unfolds to instances carrying no instant.
     #[test]
-    fn every_observation_counts_the_values_it_inherits() {
-        let payload = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": envelope(&json!({}), 5)});
-        assert!(inherits_exactly(&payload, 75), "{payload}");
+    fn a_pair_made_on_a_system_time_keeps_no_instant() {
+        let mut payload = json!({"id": "urn:ngsi-ld:Vehicle:1", "speed": {"type": "Property", "values": [[60, "2020-08-01T12:00:00Z"]]}});
+        unfold_plural_members(&mut payload, TimeProp::Modified).expect("the pairs unfold");
+        pretty_assertions::assert_eq!(payload["speed"], json!([{"type": "Property", "value": 60}]));
     }
 
-    /// A member an observation restates is its own, not a copy: only the
-    /// copied object and `type` remain inherited, two values each.
+    /// Clause 4.5.9 has the object "only contain" its plural member: an
+    /// instance member beside the pairs, which no element could carry, is
+    /// refused rather than copied into every instance.
     #[test]
-    fn a_member_an_observation_restates_is_not_inherited() {
-        let restating = json!({"meta": {"type": "Property", "value": 1}});
-        let payload = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": envelope(&restating, 5)});
-        assert!(inherits_exactly(&payload, 10), "{payload}");
+    fn a_member_beside_the_pairs_is_refused() {
+        for attribute in [
+            json!({"type": "Property", "unitCode": "KMH", "values": [[60, "2020-08-01T12:00:00Z"]]}),
+            json!({"type": "Property", "accuracy": {"type": "Property", "value": 1}, "values": [[60, "2020-08-01T12:00:00Z"]]}),
+        ] {
+            assert!(matches!(refused(&attribute), PluralMemberRefusal::MemberBesidePairs { .. }), "{attribute}");
+        }
     }
 
-    /// The count spans every instance of every attribute: an instance array
-    /// and a second attribute add to the same total.
+    /// Every element of the plural member is a pair: an instance object, a
+    /// bare value and a pair missing or adding an element are refused.
     #[test]
-    fn the_inherited_values_of_every_instance_add_up() {
-        let mut second = envelope(&json!({}), 5);
-        second["datasetId"] = json!("urn:ngsi-ld:Dataset:b");
-        let payload = json!({
-            "id": "urn:ngsi-ld:Vehicle:1",
-            "type": "Vehicle",
-            // The second instance inherits its datasetId as well: 16 values each.
-            "speed": [envelope(&json!({}), 5), second],
-            "heading": envelope(&json!({}), 5)
-        });
-        assert!(inherits_exactly(&payload, 75 + 80 + 75), "{payload}");
+    fn an_element_that_is_no_pair_is_refused() {
+        for element in [
+            json!({"value": 60, "observedAt": "2020-08-01T12:00:00Z"}),
+            json!(60),
+            json!([60]),
+            json!([60, "2020-08-01T12:00:00Z", "2020-08-01T13:00:00Z"]),
+        ] {
+            let attribute = json!({"type": "Property", "values": [element]});
+            assert!(matches!(refused(&attribute), PluralMemberRefusal::NotAPair { .. }), "{element}");
+        }
+        let attribute = json!({"type": "Property", "values": [60, "2020-08-01T12:00:00Z"]});
+        assert!(matches!(refused(&attribute), PluralMemberRefusal::NotAPair { .. }));
+        let attribute = json!({"type": "Property", "values": {"value": 60}});
+        assert!(matches!(refused(&attribute), PluralMemberRefusal::NotAnArray { .. }));
     }
 
-    /// An instance without a plural member inherits nothing to anything.
+    /// A wrapped family's value is refused unwrapped, wrapped under another
+    /// member, or wrapped beside a second member.
     #[test]
-    fn an_instance_without_a_plural_member_inherits_nothing() {
-        let mut payload = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": (0..100).collect::<Vec<u32>>()}});
-        let written = payload.clone(); // clone: the payload is compared after the unfold
-        unfold_plural_members(&mut payload, limit(1)).expect("nothing is inherited");
-        pretty_assertions::assert_eq!(payload, written);
+    fn a_wrapped_value_outside_its_one_member_object_is_refused() {
+        for element in [
+            json!({"en": "yes"}),
+            json!({"value": {"en": "yes"}}),
+            json!({"languageMap": {"en": "yes"}, "observedAt": "2020-08-01T12:00:00Z"}),
+        ] {
+            let attribute = json!({"type": "LanguageProperty", "languageMaps": [[element, "2020-08-01T12:00:00Z"]]});
+            assert!(matches!(refused(&attribute), PluralMemberRefusal::UnwrappedValue { .. }), "{element}");
+        }
     }
 
-    /// A large envelope over many empty observations would unfold into far
-    /// more than the body holds; it is refused before a single copy is made.
+    /// On the `observedAt` axis the instant is the instance's `observedAt`,
+    /// which is a date-time string.
     #[test]
-    fn a_large_envelope_over_many_observations_is_refused_before_it_is_copied() {
-        let mut payload = json!({
-            "id": "urn:ngsi-ld:Vehicle:1",
-            "type": "Vehicle",
-            "speed": {
-                "type": "Property",
-                "meta": {"type": "Property", "value": (0..1_000).collect::<Vec<u32>>()},
-                "values": vec![json!({}); 100_000]
-            }
-        });
-        let refusal = unfold_plural_members(&mut payload, limit(1_000_000)).expect_err("about 100 million inherited values");
-        pretty_assertions::assert_eq!(refusal, PayloadBudgetExceeded::InheritedObservationValues { limit: limit(1_000_000) });
-        assert!(payload["speed"]["values"].is_array(), "nothing was unfolded");
+    fn an_instant_that_is_no_string_is_refused() {
+        let attribute = json!({"type": "Property", "values": [[60, null]]});
+        assert!(matches!(refused(&attribute), PluralMemberRefusal::InstantNotAString { .. }));
+    }
+
+    /// An object naming no family, or not holding its family's member, is an
+    /// instance and is left for the expansion to read.
+    #[test]
+    fn an_object_without_its_family_plural_member_is_left_alone() {
+        for attribute in [
+            json!({"type": "Property", "value": 60, "observedAt": "2020-08-01T12:00:00Z"}),
+            json!({"type": "Relationship", "values": [[60, "2020-08-01T12:00:00Z"]]}),
+            json!({"values": [[60, "2020-08-01T12:00:00Z"]]}),
+        ] {
+            pretty_assertions::assert_eq!(unfolded(&attribute).expect("nothing unfolds"), attribute);
+        }
     }
 }
