@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_model::{
         SubscriptionStatus,
     },
 };
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery};
 use andromeda_postgresql_codes::{notification_trigger::NotificationTriggerCode, subscription_status::SubscriptionStatusCode};
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
 use andromeda_subscription::stored_subscription::StoredSubscription;
@@ -97,6 +97,30 @@ fn stored_subscription_key(raw: i64) -> Result<SubscriptionKey, ContextStoreErro
     Ok(SubscriptionKey::try_from(raw).map_err(StoredSubscriptionError::Key)?)
 }
 
+/// The stored `q`, its trailing members carrying the spelling the subscriber
+/// wrote (clause 4.9), which the expanded `q` column alone no longer holds.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Database`] when either column cannot be
+/// decoded, and [`ContextStoreError::StoredSubscription`] when either is no
+/// query.
+fn stored_q(row: &PgRow) -> Result<Option<Expr>, ContextStoreError> {
+    let q_raw: Option<String> = row.try_get(Subscriptions::Q.unquoted())?;
+    let q: Option<Expr> = q_raw
+        .map(|raw| raw.parse().map_err(|error| StoredSubscriptionError::Q(Box::new(error))))
+        .transpose()?;
+    let written_raw: Option<String> = row.try_get(Subscriptions::QWrittenMembers.unquoted())?;
+    let written: Option<Expr> = written_raw
+        .map(|raw| raw.parse().map_err(|error| StoredSubscriptionError::QWrittenMembers(Box::new(error))))
+        .transpose()?;
+    Ok(match (q, written) {
+        (Some(q), Some(written)) => Some(q.with_written_members(&written)),
+        (q, None) => q,
+        (None, Some(_)) => None,
+    })
+}
+
 /// Read a `SubscriptionRow` from a `PgRow`, honouring [`DatasetIdPresence`].
 ///
 /// # Errors
@@ -123,10 +147,7 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
     let entities = stored_entities(row)?;
     let watched_attributes = stored_attribute_names(row, Subscriptions::WatchedAttributes, StoredSubscriptionError::WatchedAttribute)?;
     let notification_trigger = stored_notification_triggers(row)?;
-    let q_raw: Option<String> = row.try_get(Subscriptions::Q.unquoted())?;
-    let q = q_raw
-        .map(|raw| raw.parse().map_err(|error| StoredSubscriptionError::Q(Box::new(error))))
-        .transpose()?;
+    let q = stored_q(row)?;
     let scope_q_raw: Option<String> = row.try_get(Subscriptions::ScopeQ.unquoted())?;
     let scope_q = scope_q_raw
         .map(|raw| ScopeQuery::parse(&raw).map_err(|error| StoredSubscriptionError::ScopeQ(Box::new(error))))

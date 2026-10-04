@@ -36,6 +36,7 @@ use andromeda_federation::{
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
+use andromeda_ngsi_ld_entity::{document::EntityDocument, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationId};
 use andromeda_ngsi_ld_model::{
@@ -135,7 +136,7 @@ impl SubscriptionForwardingService {
         reading: &ReassemblyReading<'_, '_>,
         sender: &Identifier,
     ) -> Result<Option<Entity>, SubscriptionForwardingError> {
-        if matches!(reading.completion, Completion::Complete) && !matches_entity_filters(reading.compiled, &received.document) {
+        if matches!(reading.completion, Completion::Complete) && !self.admits(reading.compiled, &received.document).await? {
             return Ok(None);
         }
         let part = match received.respelled(reading.local_compactor).await {
@@ -153,9 +154,23 @@ impl SubscriptionForwardingService {
                     .entity(&merged, Normalization::Entity)
                     .await
                     .map_err(ForwardingInvariant::LocalExpansion)?;
-                Ok(matches_entity_filters(reading.compiled, &document).then_some(merged))
+                Ok(self.admits(reading.compiled, &document).await?.then_some(merged))
             }
         }
+    }
+
+    /// Whether the local subscription's filters admit `document`, the entities
+    /// a `rel{…}` hop crosses into read from this broker's store (clause 4.9).
+    async fn admits(&self, compiled: &CompiledSubscription, document: &EntityDocument) -> Result<bool, SubscriptionForwardingError> {
+        let filters: Vec<_> = compiled.hopping_filters().collect();
+        let linked = if filters.is_empty() {
+            LinkedStates::new()
+        } else {
+            self.entity_query
+                .linked_filter_states(&self.live_target, &[document], &filters, Utc::now())
+                .await?
+        };
+        Ok(matches_entity_filters(compiled, document, &linked))
     }
 
     /// Every entity of an inbound notification re-assembled for the local

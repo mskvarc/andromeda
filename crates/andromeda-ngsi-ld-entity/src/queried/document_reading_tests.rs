@@ -6,6 +6,7 @@ use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, positio
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate, parser::parse},
     geo::query::GeoQuery,
+    queried_entity::linked_entities::NoLinkedEntities,
     scope::query::ScopeQuery,
 };
 use serde_json::{Value, json};
@@ -34,6 +35,10 @@ fn evolution() -> Value {
             }
         ],
         "https://example.com/owner": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Person:42"}]}],
+        "https://example.com/label": [{
+            "@type": ["https://uri.etsi.org/ngsi-ld/LanguageProperty"],
+            "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [{"@language": "en", "@value": "Gate"}, {"@language": "fr", "@value": "Portail"}]
+        }],
         "https://example.com/humidity": [{
             "@type": [PROPERTY],
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "urn:ngsi-ld:null"}]
@@ -73,9 +78,12 @@ fn the_document_reading_answers_every_written_instance() {
         ("\"https://example.com/owner\"==\"urn:ngsi-ld:Person:42\"", true),
         ("\"https://example.com/owner\">\"a\"", false),
         ("\"https://example.com/missing\"", false),
+        ("\"https://example.com/label\"[fr]==\"Portail\"", true),
+        ("\"https://example.com/label\"[en]==\"Portail\"", false),
+        ("\"https://example.com/label\"[de]", false),
     ] {
         let expr = parse(q).expect("the Query Term parses");
-        pretty_assertions::assert_eq!(evaluate(&expr, &written), expected, "{q}");
+        pretty_assertions::assert_eq!(evaluate(&expr, &written, NoLinkedEntities), expected, "{q}");
     }
 }
 
@@ -86,9 +94,14 @@ fn a_deleted_instance_holds_no_value() {
     let written = document();
     assert!(!evaluate(
         &parse("\"https://example.com/humidity\"==\"urn:ngsi-ld:null\"").expect("parses"),
-        &written
+        &written,
+        NoLinkedEntities
     ));
-    assert!(evaluate(&parse("\"https://example.com/humidity\"").expect("parses"), &written));
+    assert!(evaluate(
+        &parse("\"https://example.com/humidity\"").expect("parses"),
+        &written,
+        NoLinkedEntities
+    ));
 }
 
 /// Clauses 4.10 and 4.19 over the geometry and the scope the document writes.

@@ -170,3 +170,22 @@ pub struct CompiledSubscription {
     /// clauses 5.8.6 and 4.3.6.8); `None` amends nothing.
     pub ngsild_conformance: Option<SpecVersion>,
 }
+
+impl CompiledSubscription {
+    /// The filters whose `rel{…}` hops cross into linked entities: the `q`
+    /// and, on an entity subscription, the `csf` read over the same entity.
+    pub fn hopping_filters(&self) -> impl Iterator<Item = &Expr> {
+        [self.compiled_q.as_ref(), self.compiled_csf.as_ref()]
+            .into_iter()
+            .flatten()
+            .filter(|filter| filter.contains_linked_hop())
+    }
+
+    /// Whether a filter of this subscription crosses into a linked entity
+    /// (clause 4.9 `LinkedEntityRelation`), which only the entities the hop
+    /// names, read from the store, can decide.
+    #[must_use]
+    pub fn filters_hop(&self) -> bool {
+        self.hopping_filters().next().is_some()
+    }
+}

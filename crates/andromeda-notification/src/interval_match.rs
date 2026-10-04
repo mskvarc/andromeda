@@ -6,19 +6,45 @@
 //! boolean selector cannot be pushed into a `WHERE`. This is the filter the
 //! interval sweep applies.
 
-use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_context_space::context_target::ContextTarget;
+use andromeda_entity::{error::EntityError, query::EntityQueryService};
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use andromeda_ngsi_ld_query::filter::eval::evaluate;
 use andromeda_subscription::geo_filter::SubscriptionGeoFilter;
 use chrono::{DateTime, Utc};
 
+/// The entities of a page the subscription's filters accept as they stand at
+/// `at`, the entities a `rel{…}` hop of its `q` crosses into read from the
+/// store (clause 4.9).
+///
+/// # Errors
+///
+/// Returns the store's [`EntityError`] when the linked entities cannot be read.
+pub(crate) async fn matching_entities(
+    entity_query: &EntityQueryService,
+    target: &ContextTarget,
+    sub: &Subscription,
+    entities: Vec<EntityState>,
+    at: DateTime<Utc>,
+) -> Result<Vec<EntityState>, EntityError> {
+    let linked = match sub.filters.q.as_ref().filter(|q| q.contains_linked_hop()) {
+        Some(q) => {
+            let roots: Vec<&EntityState> = entities.iter().collect();
+            entity_query.linked_filter_states(target, &roots, &[q], at).await?
+        }
+        None => LinkedStates::new(),
+    };
+    Ok(apply_subscription_filters(sub, entities, at, &linked))
+}
+
 /// Apply q, geoQ, and scopeQ filters from a subscription to a list of entity
-/// states, as they stand at `at`.
+/// states, as they stand at `at`, a hop of `q` crossing into `linked`.
 ///
 /// Clause 4.22: an attribute instance past its `expiresAt` is invalid, so it
 /// is removed before any filter reads the entity, and the entities returned --
 /// the ones the notification carries -- no longer hold it either.
-pub(crate) fn apply_subscription_filters(sub: &Subscription, mut entities: Vec<EntityState>, at: DateTime<Utc>) -> Vec<EntityState> {
+fn apply_subscription_filters(sub: &Subscription, mut entities: Vec<EntityState>, at: DateTime<Utc>, linked: &LinkedStates) -> Vec<EntityState> {
     for entity in &mut entities {
         entity.remove_expired_instances(at);
     }
@@ -37,7 +63,7 @@ pub(crate) fn apply_subscription_filters(sub: &Subscription, mut entities: Vec<E
         .into_iter()
         .filter(|entity| {
             if let Some(expr) = compiled_q
-                && !evaluate(expr, entity)
+                && !evaluate(expr, entity, linked)
             {
                 return false;
             }
@@ -57,11 +83,12 @@ pub(crate) fn apply_subscription_filters(sub: &Subscription, mut entities: Vec<E
 #[cfg(test)]
 mod tests {
     use crate::interval_match::apply_subscription_filters;
-    use andromeda_ngsi_ld_entity::entity_state::EntityState;
+    use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
     use andromeda_ngsi_ld_model::subscription::Subscription;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
+    use std::sync::Arc;
 
     const SPEED: &str = "https://example.org/speed";
 
@@ -103,13 +130,23 @@ mod tests {
     /// `q` cannot match through it while the sweep has yet to delete it.
     #[test]
     fn a_periodic_q_does_not_match_through_an_expired_instance() {
-        let matched = apply_subscription_filters(&speeding(), vec![vehicle("2030-01-01T00:00:00Z")], instant("2030-01-01T00:00:00Z"));
+        let matched = apply_subscription_filters(
+            &speeding(),
+            vec![vehicle("2030-01-01T00:00:00Z")],
+            instant("2030-01-01T00:00:00Z"),
+            &LinkedStates::new(),
+        );
         assert_eq!(matched, Vec::<EntityState>::new());
     }
 
     #[test]
     fn a_periodic_q_matches_through_a_standing_instance() {
-        let matched = apply_subscription_filters(&speeding(), vec![vehicle("2030-01-01T00:00:00Z")], instant("2029-01-01T00:00:00Z"));
+        let matched = apply_subscription_filters(
+            &speeding(),
+            vec![vehicle("2030-01-01T00:00:00Z")],
+            instant("2029-01-01T00:00:00Z"),
+            &LinkedStates::new(),
+        );
         assert_eq!(matched, vec![vehicle("2030-01-01T00:00:00Z")]);
     }
 
@@ -123,7 +160,62 @@ mod tests {
         subscription["q"] = Value::Null;
         subscription["geoQ"] = json!({"georel": "near;maxDistance==2000"});
         let subscription: Subscription = serde_json::from_value(subscription).expect("valid subscription");
-        let matched = apply_subscription_filters(&subscription, vec![vehicle("2030-01-01T00:00:00Z")], instant("2029-01-01T00:00:00Z"));
+        let matched = apply_subscription_filters(
+            &subscription,
+            vec![vehicle("2030-01-01T00:00:00Z")],
+            instant("2029-01-01T00:00:00Z"),
+            &LinkedStates::new(),
+        );
         assert_eq!(matched, Vec::<EntityState>::new());
+    }
+
+    /// Clause 4.9 EXAMPLE 13: a periodic `q` hop reads the entity the
+    /// Relationship names, as the sweep gathered it.
+    #[test]
+    fn a_periodic_hop_reads_the_linked_entity() {
+        let subscription: Subscription = serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:Subscription:parked",
+            "type": "Subscription",
+            "entities": [{"type": "https://example.org/Vehicle"}],
+            "q": "\"https://example.org/isParkedIn\"{\"https://example.org/category\"==\"commercial\"}",
+            "timeInterval": 60,
+            "notification": {"endpoint": {"uri": "http://subscriber.example.org/notify", "accept": "application/json"}},
+            "status": "active",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        }))
+        .expect("valid subscription");
+        let parked = |vehicle: &str, parking: &str| {
+            let document = json!([{
+                "@id": vehicle,
+                "@type": ["https://example.org/Vehicle"],
+                "https://example.org/isParkedIn": [{
+                    "@type": ["https://uri.etsi.org/ngsi-ld/Relationship"],
+                    "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": parking}]
+                }]
+            }]);
+            EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes")
+        };
+        let mut linked = LinkedStates::new();
+        for (parking, category) in [("urn:p1", "commercial"), ("urn:p2", "residential")] {
+            let document = json!([{
+                "@id": parking,
+                "@type": ["https://example.org/Parking"],
+                "https://example.org/category": [{
+                    "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                    "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": category}]
+                }]
+            }]);
+            linked.insert(Arc::new(
+                EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes"),
+            ));
+        }
+        let matched = apply_subscription_filters(
+            &subscription,
+            vec![parked("urn:v1", "urn:p1"), parked("urn:v2", "urn:p2")],
+            instant("2029-01-01T00:00:00Z"),
+            &linked,
+        );
+        assert_eq!(matched, vec![parked("urn:v1", "urn:p1")]);
     }
 }

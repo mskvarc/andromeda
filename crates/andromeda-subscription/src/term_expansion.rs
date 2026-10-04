@@ -138,6 +138,11 @@ async fn apply_expand_values_opt_in(expr: Expr, opt_ins: &FilterOptIns, expander
 /// and omit, q, and geoQ in a subscription payload. Context hosting is NOT
 /// handled here — the entity-subscription service adds that on top.
 ///
+/// Returns the expanded `q`. The clause 4.9 text written back into the payload
+/// spells every trailing `[…]` member expanded, while the returned filter also
+/// keeps the spelling the subscriber wrote, which clause 4.9 reads a
+/// `LanguageProperty`'s target language and a raw JSON key in.
+///
 /// # Errors
 ///
 /// Returns [`SubscriptionError::JsonLd`] when the `@context` cannot be
@@ -145,7 +150,7 @@ async fn apply_expand_values_opt_in(expr: Expr, opt_ins: &FilterOptIns, expander
 /// term does not expand to a usable name, and
 /// [`SubscriptionError::Validation`] when `expandValues` or `jsonKeys` is not
 /// the comma-separated attribute-name list Table 5.2.12-1 defines.
-pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &mut Value, context: &ContextSpec) -> Result<(), SubscriptionError> {
+pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &mut Value, context: &ContextSpec) -> Result<Option<Expr>, SubscriptionError> {
     let prepared_context = engine.prepare_term_context(context);
     let term_expander = ContextualExpander::new(engine, &prepared_context);
     // Expand entities[].type
@@ -189,6 +194,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
 
     // Expand the `q` filter's attribute terms under the `jsonKeys` declaration,
     // then let `expandValues` rewrite the operands it opted in.
+    let mut expanded_q = None;
     if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()).map(String::from)
         && let Ok(expr) = parser::parse(&q_str)
         && let Ok(expanded) = expand_q_expr(expr, &opt_ins.json_keys, &term_expander).await
@@ -198,6 +204,7 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
         if let Some(obj) = payload.as_object_mut() {
             obj.insert("q".to_string(), Value::String(expanded_str));
         }
+        expanded_q = Some(expanded);
     }
 
     // Expand the context source filter's property terms the same way: a
@@ -238,13 +245,14 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
         obj.remove("@context");
     }
 
-    Ok(())
+    Ok(expanded_q)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::term_expansion::expand_common_subscription_terms;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_ngsi_ld_query::filter::serialize::serialize_written_members;
     use serde_json::{Value, json};
 
     /// An engine that resolves only what is embedded, never the network.
@@ -377,6 +385,29 @@ mod tests {
         assert!(
             rendered.contains("https://uri.etsi.org/ngsi-ld/default-context/city"),
             "an undeclared attribute's member name expands: {rendered}"
+        );
+    }
+
+    /// Clause 4.9 reads `name[en]` on a `LanguageProperty` as the target
+    /// language `en`: the filter expansion returns keeps that spelling beside
+    /// the expanded member the payload text carries.
+    #[tokio::test]
+    async fn the_expanded_q_keeps_the_written_trailing_members() {
+        let engine = offline_engine();
+        let mut payload = json!({"q": "name[en]==\"Door\""});
+
+        let expanded = expand_common_subscription_terms(&engine, &mut payload, &ContextSpec::none())
+            .await
+            .expect("expands")
+            .expect("the payload names a q");
+
+        pretty_assertions::assert_eq!(
+            payload["q"],
+            json!("\"https://uri.etsi.org/ngsi-ld/default-context/name\"[\"https://uri.etsi.org/ngsi-ld/default-context/en\"]==\"Door\"")
+        );
+        pretty_assertions::assert_eq!(
+            serialize_written_members(&expanded),
+            "\"https://uri.etsi.org/ngsi-ld/default-context/name\"[en]==\"Door\""
         );
     }
 

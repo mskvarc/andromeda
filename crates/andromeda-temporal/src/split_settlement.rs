@@ -12,7 +12,10 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::split_filter::{LeafTruths, SplitFilter};
+use andromeda_ngsi_ld_query::{
+    queried_entity::linked_entities::NoLinkedEntities,
+    split_filter::{LeafTruths, SplitFilter},
+};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -78,7 +81,10 @@ impl TemporalService {
                 Ok(part) => truths
                     .entry(entity_id)
                     .or_insert_with(|| LeafTruths::none(filter.leaf_count()))
-                    .or(&filter.truths_of(&part)),
+                    // A hop leaf is decided by the store over the local part
+                    // alone; an answered part names linked entities this
+                    // broker reads nothing of here.
+                    .or(&filter.truths_of(&part, NoLinkedEntities)),
                 Err(error) => warnings.push(TemporalQueryWarning {
                     entity_id,
                     message: format!("a context source's part of the entity could not be read, so it decided no filter: {error}"),

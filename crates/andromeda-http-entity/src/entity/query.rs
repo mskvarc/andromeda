@@ -36,7 +36,6 @@ use crate::{
     state::EntityRouteServices,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::query::EntityQueryService;
 use andromeda_entity_map::recording::PageMatches;
 use andromeda_federation::{
     config::SplitEntities,
@@ -48,11 +47,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selection::ConsideredEntities};
-use andromeda_ngsi_ld_request::{
-    deferred_split_filters::DeferredSplitFilters,
-    pagination::policy::PaginationPolicy,
-    query::entity::parameters::EntityQueryParameters,
-};
+use andromeda_ngsi_ld_request::{pagination::policy::PaginationPolicy, query::entity::parameters::EntityQueryParameters};
 use axum::http::{HeaderMap, Uri as HttpUri};
 use futures::future::OptionFuture;
 use std::sync::Arc;
@@ -201,16 +196,13 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
             .query(&target, &query, &local_window, local_count, &context)
             .await
             .with_entity_instance(&uri)?;
+        let merged = merge_contributions(local_entities, forwarded, &query, &uri)?;
         let MergedEntities {
             entities,
             warnings,
             contributions,
-        } = merge_and_filter(service, local_entities, forwarded, deferred, &query, &context, &uri).await?;
-        // Clause 5.5.9.3: under `splitEntities` the entities that survived the
-        // deferred filters over the merged result are the whole match set the
-        // reused map is pruned against -- captured here over the full result,
-        // before the page window narrows it. A non-split page prunes per source.
-        let split_survivors = split_entities.then(|| entities.iter().map(|entity| entity.id.clone()).collect::<Vec<_>>());
+        } = retain_matching(service, &target, merged, deferred, &context, &uri).await?;
+        let split_survivors = split_entities.then(|| split_match_set(&entities));
         let (mut entities, total_count) = page.cut(entities, local_total);
 
         // Clause 4.21: the request's `pick`/`omit` govern both the matching
@@ -243,7 +235,6 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let representation = EntityRepresentation::new(opts.render_mode, projection);
         apply_representation_names(service, &representation, &context, &mut entities, resolved.as_mut(), &uri).await?;
         let entities = entities;
-        let page_boundary = cursor_boundary(&entities);
         let answer = matched_entities(&entities, resolved.as_ref(), &representation);
         let rendering = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root)
             .start_rendering(accept.media_type(), prefer.rendering_preferences(), opts.render_mode)
@@ -259,7 +250,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
                 total_count,
                 entity_map_uri,
                 returned: entities.len(),
-                boundary: page_boundary,
+                boundary: cursor_boundary(&entities),
             },
             &page,
             accept.media_type(),
@@ -276,47 +267,35 @@ fn geometry_selection(query: &EntityQueryParameters) -> GeometrySelection<'_> {
     GeometrySelection::new(query.geometry_property.as_ref(), query.dataset_id.as_deref().unwrap_or_default())
 }
 
-/// Fold what the context sources contributed onto the entities this broker
-/// holds itself, then apply the filters `splitEntities` held back.
+/// The identifiers of the entities that survived the deferred filters over the
+/// merged result of a `splitEntities` query.
 ///
-/// Clause 5.7.2.4: with `splitEntities` no single source held enough of an
-/// entity to decide `q`, the geoquery or `scopeQ`, so those are evaluated once
-/// here, over the merged result. A query that deferred nothing keeps every
-/// entity the merge produced.
+/// Clause 5.5.9.3: under `splitEntities` those are the whole match set the
+/// reused map is pruned against, so they are captured over the full result,
+/// before the page window narrows it. A non-split page prunes per source.
+fn split_match_set(entities: &[Entity]) -> Vec<Identifier> {
+    entities.iter().map(|entity| entity.id.clone()).collect() // clone: the map pruning owns the identifiers it keeps
+}
+
+/// Fold what the context sources contributed onto the entities this broker
+/// holds itself.
 ///
 /// # Errors
 ///
 /// `TooManyResults` when the merged collection exceeds the budget the sources
-/// were walked under (clause 4.12), and the classified failure of compiling a
-/// deferred filter against the request's `@context`.
-async fn merge_and_filter(
-    service: &EntityQueryService,
+/// were walked under (clause 4.12).
+fn merge_contributions(
     local_entities: Vec<Entity>,
     forwarded: Option<ForwardedQueryResults>,
-    deferred: Option<DeferredSplitFilters>,
     query: &EntityQueryParameters,
-    context: &ContextSpec,
     instance: &HttpUri,
 ) -> Result<MergedEntities, ProblemResponse> {
-    let MergedEntities {
-        entities,
-        warnings,
-        contributions,
-    } = match forwarded {
+    match forwarded {
         Some(results) => results
             .merge_onto(local_entities, query.attrs.as_deref())
-            .map_err(|exceeded| public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), instance))?,
-        None => MergedEntities::local(local_entities),
-    };
-    let entities = match deferred {
-        Some(deferred) => retain_matching(service, entities, deferred, context, instance).await?,
-        None => entities,
-    };
-    Ok(MergedEntities {
-        entities,
-        warnings,
-        contributions,
-    })
+            .map_err(|exceeded| public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), instance)),
+        None => Ok(MergedEntities::local(local_entities)),
+    }
 }
 
 /// The first and last identifiers of the page as displayed, from which a

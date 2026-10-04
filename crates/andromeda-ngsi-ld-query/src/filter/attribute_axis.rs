@@ -3,9 +3,10 @@
 //!
 //! Clause 4.9 gives an attribute reference three axes, and this module walks all
 //! three: the `.`-separated sub-attribute chain, the trailing `[…]` group that
-//! addresses a member of a compound value, and the `rel{…}` hop that crosses a
-//! Relationship into the entity it names. What the axis terminates at — the
-//! target value each attribute family carries — is
+//! addresses a member of a compound value or the target language of a
+//! `LanguageProperty`, and the `rel{…}` hop that crosses a Relationship into the
+//! entity it names. What the axis terminates at — the target value each
+//! attribute family carries — is
 //! [`family_target`](crate::filter::family_target)'s.
 //!
 //! An attribute may carry several instances (clause 4.5.5), and each of them
@@ -21,39 +22,53 @@ use crate::{
     queried_entity::{
         attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
         instance_metadata::InstanceMetadata,
+        linked_entities::LinkedEntities,
         value_item::ValueItem,
     },
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use std::borrow::Cow;
 
 /// Resolve every value an attribute axis addresses, descending each
-/// linked-entity hop into the entity it names.
+/// linked-entity hop into the entity it names in `linked`.
 ///
-/// A hop can only be followed when the entity carries the linked entity:
-/// clause 4.5.23.2 `join=inline` nests it under the Relationship instance, and
-/// that embedded copy is the only linked data an in-memory evaluation has.
-/// Without it the hop resolves no target and the predicate does not hold. That
-/// is not a weaker reading of clause 4.9 — for a stored entity the SQL
-/// compilation is what answers a traversal filter, and it reads the linked
-/// entity from the store. This evaluator only ever sees the one entity it is
-/// handed, whether that is a notification payload being matched against a
-/// subscription or a residual filter finishing what a store declined.
+/// Clause 4.9 EXAMPLE 13: a hop "makes a sub-query on matching target objects",
+/// the entities the Relationship's objects name. The entity under evaluation
+/// names them and `linked` holds them; an object `linked` does not hold
+/// reaches nothing.
 #[must_use]
-pub fn resolve_targets<'a, E: QueriedEntity<'a>>(entity: E, path: &QueryPath) -> Vec<ResolvedTarget<'a>> {
+pub fn resolve_targets<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity: E, path: &QueryPath, linked: L) -> Vec<ResolvedTarget<'a>> {
     match path {
         QueryPath::Local(local) => resolve_values(entity, local),
         QueryPath::Linked {
             relationship,
             guard_types,
             inner,
-        } => entity
-            .attribute_instances(relationship)
-            .flat_map(|instance| entity.linked_entities(instance))
-            .filter(|linked| admitted_by_guard(*linked, guard_types))
-            .flat_map(|linked| resolve_targets(linked, inner))
+        } => relationship_objects(entity, relationship)
+            .filter_map(|object| linked.linked(object))
+            .filter(|target| admitted_by_guard(*target, guard_types))
+            .flat_map(|target| resolve_targets(target, inner, linked))
             .collect(),
     }
+}
+
+/// The objects of every instance of the Relationship `relationship` an entity
+/// holds: the target objects a hop through it crosses into.
+///
+/// Clause 4.9: the target object of a Relationship is "the object associated
+/// (represented as a URI or array of URIs)", and with several instances "any
+/// object of such instances". An attribute of another family names no linked
+/// entity, whatever its value spells.
+pub fn relationship_objects<'a, E: QueriedEntity<'a>>(entity: E, relationship: &AttributeName) -> impl Iterator<Item = &'a str> {
+    entity
+        .attribute_instances(relationship)
+        .filter(|instance| instance.family() == AttributeType::Relationship)
+        .flat_map(QueriedInstance::values)
+        .filter_map(|item| match item {
+            ValueItem::Reference(object) => Some(object),
+            ValueItem::Node(node) => node.id(),
+            ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Opaque => None,
+        })
 }
 
 /// Whether an attribute axis addresses an element the entity contains,
@@ -69,28 +84,33 @@ pub fn resolve_targets<'a, E: QueriedEntity<'a>>(entity: E, path: &QueryPath) ->
 /// member expression "result[s] in a defined value", here any value the member
 /// holds.
 #[must_use]
-pub fn addresses_element<'a, E: QueriedEntity<'a>>(entity: E, path: &QueryPath) -> bool {
+pub fn addresses_element<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity: E, path: &QueryPath, linked: L) -> bool {
     match path {
         QueryPath::Local(local) => entity.attribute_instances(&local.attr).any(|instance| instance_holds_element(instance, local)),
         QueryPath::Linked {
             relationship,
             guard_types,
             inner,
-        } => entity
-            .attribute_instances(relationship)
-            .flat_map(|instance| entity.linked_entities(instance))
-            .filter(|linked| admitted_by_guard(*linked, guard_types))
-            .any(|linked| addresses_element(linked, inner)),
+        } => relationship_objects(entity, relationship)
+            .filter_map(|object| linked.linked(object))
+            .filter(|target| admitted_by_guard(*target, guard_types))
+            .any(|target| addresses_element(target, inner, linked)),
     }
 }
 
 /// Whether one attribute instance holds the element a path addresses.
+///
+/// With a target language the element is the key-value pair of that language
+/// (clause 4.9), so it exists when the language holds a string.
 fn instance_holds_element<'a, I: QueriedInstance<'a>>(instance: I, path: &AttrPath) -> bool {
     let Some(position) = path.sub_attrs.iter().try_fold(AxisPosition::Instance(instance), AxisPosition::step) else {
         return false;
     };
     if path.value_path.is_empty() {
         return true;
+    }
+    if let Some((language_instance, language)) = position.target_language(path) {
+        return language_instance.language_values(language).next().is_some();
     }
     walk_member_hops(position.first_family_value(), &path.value_path).is_some()
         || position.terminal().and_then(|target| json_member(target, &path.value_path_compact)).is_some()
@@ -140,7 +160,33 @@ fn resolve_instance_value<'a, I: QueriedInstance<'a>>(instance: I, path: &AttrPa
     if path.value_path.is_empty() {
         return position.terminal();
     }
+    if let Some((language_instance, language)) = position.target_language(path) {
+        return language_target(language_instance, language);
+    }
     resolve_compound_member(position, path)
+}
+
+/// The target value clause 4.9 defines for a `LanguageProperty` with a target
+/// language: "the Value associated to the matching key-value pair held within
+/// the languageMap ... where the key matches the target language".
+///
+/// A language holding several strings is matched "as a single element from the
+/// array of values of the key-value pair", which is the any-one reading the
+/// language map has with no target language. A language the map does not hold
+/// is no target element at all, so no operator — `!=` and `!~=` included —
+/// matches it.
+fn language_target<'a, I: QueriedInstance<'a>>(instance: I, language: &str) -> Option<ResolvedTarget<'a>> {
+    let mut strings = instance.language_values(language).filter_map(|item| TerminalKeyword::Literal.read(item));
+    let first = strings.next()?;
+    let value = match strings.next() {
+        None => first,
+        Some(second) => TargetValue::Array([first, second].into_iter().chain(strings).collect()),
+    };
+    Some(ResolvedTarget {
+        value,
+        origin: TargetOrigin::AttributeValue,
+        reading: MultiValueReading::AnyOneValue,
+    })
 }
 
 /// Where a walk down the `.` axis stands.
@@ -176,6 +222,23 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
             }
             AxisPosition::Value(ValueItem::Node(node)) => node.first_member_value(name).map(AxisPosition::Value),
             AxisPosition::Value(ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Opaque) | AxisPosition::Metadata(_) => None,
+        }
+    }
+
+    /// The `LanguageProperty` instance at this position with the target
+    /// language `path`'s trailing group names, or `None` when the trailing
+    /// group addresses a compound member instead.
+    ///
+    /// Clause 4.9 gives `attr[member]` two readings, and the target element
+    /// decides which applies: a `LanguageProperty`'s value is a language map,
+    /// whose one-member trailing group is the target language (EXAMPLE
+    /// `color[en]=="red"`); every other family's is a compound member. The
+    /// language is the member as the client wrote it, because a language tag
+    /// is never a term a `@context` expands.
+    fn target_language<'p>(&self, path: &'p AttrPath) -> Option<(I, &'p str)> {
+        match (self, path.value_path_compact.as_slice()) {
+            (AxisPosition::Instance(instance), [language]) if instance.family() == AttributeType::LanguageProperty => Some((*instance, language.as_str())),
+            (AxisPosition::Instance(_) | AxisPosition::Value(_) | AxisPosition::Metadata(_), _) => None,
         }
     }
 
@@ -264,7 +327,10 @@ mod tests {
             path::{AttrPath, QueryPath},
             target_value::TargetOrigin,
         },
-        queried_entity::expanded_fixture::{FixtureEntity, target_json},
+        queried_entity::{
+            expanded_fixture::{FixtureEntity, target_json},
+            linked_entities::NoLinkedEntities,
+        },
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use serde_json::{Value, json};
@@ -277,10 +343,51 @@ mod tests {
     /// The target values a path resolves to, with their origins.
     fn targets_along(entity: &Value, path: &AttrPath) -> Vec<(Value, TargetOrigin)> {
         let entity = FixtureEntity::from_expanded(entity);
-        resolve_targets(&entity, &QueryPath::Local(path.clone())) // clone: the test owns the path it wraps
+        resolve_targets(&entity, &QueryPath::Local(path.clone()), NoLinkedEntities) // clone: the test owns the path it wraps
             .into_iter()
             .map(|target| (target_json(&target.value), target.origin))
             .collect()
+    }
+
+    /// A path whose trailing group is the one member `member`, as the client
+    /// spelled it.
+    fn bracketed(attribute: &str, member: &str) -> AttrPath {
+        let mut path = AttrPath::simple(name(attribute));
+        path.value_path = vec![name(member)];
+        path.value_path_compact = vec![name(member)];
+        path
+    }
+
+    /// Clause 4.9: with a target language the target value is "the Value
+    /// associated to the matching key-value pair held within the languageMap",
+    /// every string of that language when it holds several, and nothing for a
+    /// language the map does not hold.
+    #[test]
+    fn a_target_language_resolves_the_strings_of_that_language() {
+        let entity = json!({
+            "https://example.com/name": [{
+                "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [
+                    {"@language": "en", "@value": "Door"},
+                    {"@language": "de", "@value": "Tuer"}
+                ]
+            }],
+            "https://example.com/tags": [{
+                "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [
+                    {"@language": "en", "@value": "red"},
+                    {"@language": "en", "@value": "cat"},
+                    {"@language": "fr", "@value": "rouge"}
+                ]
+            }]
+        });
+        pretty_assertions::assert_eq!(
+            targets_along(&entity, &bracketed("https://example.com/name", "en")),
+            vec![(json!("Door"), TargetOrigin::AttributeValue)]
+        );
+        pretty_assertions::assert_eq!(
+            targets_along(&entity, &bracketed("https://example.com/tags", "en")),
+            vec![(json!(["red", "cat"]), TargetOrigin::AttributeValue)]
+        );
+        pretty_assertions::assert_eq!(targets_along(&entity, &bracketed("https://example.com/name", "fr")), Vec::new());
     }
 
     /// The target values one bare attribute path resolves to.

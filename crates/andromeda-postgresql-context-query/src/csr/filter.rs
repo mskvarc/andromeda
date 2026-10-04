@@ -205,7 +205,10 @@ fn csr_ordering_condition(path: &AttrPath, op: OrderingOp, rhs: &Scalar) -> Cond
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
-    use andromeda_ngsi_ld_query::filter::{eval::evaluate, parser};
+    use andromeda_ngsi_ld_query::{
+        filter::{eval::evaluate, parser},
+        queried_entity::linked_entities::NoLinkedEntities,
+    };
     use andromeda_postgresql_query::{
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
@@ -451,12 +454,16 @@ mod tests {
             let expr = parser::parse(&case.expression).unwrap_or_else(|error| panic!("{}: {error}", case.expression));
 
             for entity in &case.matching {
-                assert!(evaluate(&expr, entity), "{} must select {}", case.expression, entity.id());
+                assert!(evaluate(&expr, entity, NoLinkedEntities), "{} must select {}", case.expression, entity.id());
             }
             for entity in &case.non_matching {
-                assert!(!evaluate(&expr, entity), "{} must reject {}", case.expression, entity.id());
+                assert!(!evaluate(&expr, entity, NoLinkedEntities), "{} must reject {}", case.expression, entity.id());
             }
-            assert!(!evaluate(&expr, &absent()), "{} must reject an entity without the attribute", case.expression);
+            assert!(
+                !evaluate(&expr, &absent(), NoLinkedEntities),
+                "{} must reject an entity without the attribute",
+                case.expression
+            );
 
             let projection_sql = render_entity_condition(compile(&expr, &InstanceScan::Current(&EntityRowRefs::unaliased(None)), &names()));
             assert!(

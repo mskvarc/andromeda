@@ -146,18 +146,6 @@ pub fn validate_common_fields(payload: &Value, geo_limits: GeometryCensusLimits)
         if !q_has_comparison(&expr) {
             return Err(SubscriptionError::Validation(SubscriptionValidationReason::QExpressionNoComparison));
         }
-        // Clause 4.9's `{}` axis addresses an attribute of a *linked* entity,
-        // and clause 5.8.6 evaluates a subscription's filter against the entity
-        // data carried by the change that triggered it. That data holds the
-        // Relationship's object URI, not the entity it names, so a traversal
-        // resolves nothing and the subscription could never fire. Accepting one
-        // would be worse than rejecting it: the client would see a live
-        // subscription that silently never notifies. Lifting this needs
-        // store-backed matching, which resolves the linked entity at match time
-        // the way the query path already does.
-        if expr.contains_linked_hop() {
-            return Err(SubscriptionError::Validation(SubscriptionValidationReason::QExpressionLinkedTraversal));
-        }
     }
 
     admit_geo_q(payload, geo_limits)?;
@@ -329,28 +317,19 @@ mod tests {
         ));
     }
 
-    /// Clause 4.9 defines the `{}` axis over an entity's linked entities, and
-    /// clause 5.8.6 matches a subscription against the notification's entity
-    /// data alone. The broker has no store-backed matcher, so a subscription
-    /// carrying a traversal filter would be accepted and could never fire.
-    /// Rejecting it at validation is the honest answer, and it covers updates as
-    /// well because both paths validate here.
+    /// Table 5.2.12-1 types `q` as "a valid query string as per clause 4.9",
+    /// whose grammar includes the `LinkedEntityRelation` hop; no subscription
+    /// clause restricts it, so a hop is admitted at creation and update alike.
     #[test]
-    fn a_subscription_whose_filter_traverses_a_linked_entity_is_rejected() {
+    fn a_subscription_whose_filter_traverses_a_linked_entity_is_accepted() {
         let result = validate_common_fields(&serde_json::json!({"q": "isParkedIn{category==\"commercial\"}"}), limits());
-        assert!(
-            matches!(
-                &result,
-                Err(SubscriptionError::Validation(SubscriptionValidationReason::QExpressionLinkedTraversal))
-            ),
-            "got {result:?}"
-        );
+        assert!(result.is_ok(), "got {result:?}");
     }
 
     #[test]
-    fn a_traversal_nested_inside_a_boolean_filter_is_rejected_too() {
+    fn a_traversal_nested_inside_a_boolean_filter_is_accepted_too() {
         let result = validate_common_fields(&serde_json::json!({"q": "speed>50;isParkedIn{category==\"x\"}"}), limits());
-        assert!(matches!(result, Err(SubscriptionError::Validation(_))), "got {result:?}");
+        assert!(result.is_ok(), "got {result:?}");
     }
 
     #[test]

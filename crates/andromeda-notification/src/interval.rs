@@ -4,7 +4,7 @@ use crate::{
     claimed_notification_context::claimed_notification_context,
     error::NotificationError,
     interval_candidates::IntervalCandidates,
-    interval_match::apply_subscription_filters,
+    interval_match::matching_entities,
     interval_payload::PeriodicPayload,
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
@@ -118,7 +118,13 @@ impl IntervalNotificationOperation {
                 };
 
                 // Apply q/geoQ/scopeQ filters
-                let entities = apply_subscription_filters(&sub, entities, Utc::now());
+                let entities = match matching_entities(&this.entity_query, &this.target, &sub, entities, Utc::now()).await {
+                    Ok(entities) => entities,
+                    Err(e) => {
+                        error!("IntervalWorker failed to read the entities the filter of {} links to: {}", sub.id, e);
+                        return;
+                    }
+                };
 
                 if entities.is_empty() {
                     // Clause 5.8.6: no matching entities means no notification.

@@ -7,11 +7,13 @@
 //! and a notification carries, and for
 //! [`EntityDocument`](crate::document::EntityDocument), the instances a
 //! Temporal Evolution write records. Every read borrows from the model; nothing
-//! is rebuilt as JSON to be evaluated.
+//! is rebuilt as JSON to be evaluated. [`linked_states`] holds the states a
+//! `q` hop crosses into.
 
 pub mod document_reading;
 pub mod family_values;
 pub mod held_instance;
+pub mod linked_states;
 pub mod queried_mode;
 pub mod state_reading;
 pub mod value_node_reading;

@@ -12,12 +12,13 @@ use crate::{
     queried_entity::{
         attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
         instance_metadata::InstanceMetadata,
+        linked_entities::LinkedEntities,
         value_item::{LiteralValue, ValueItem},
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_vocabulary::expanded::properties::{ENTITY, OBJECT};
+use andromeda_ngsi_ld_vocabulary::expanded::properties::OBJECT;
 use serde_json::{Map, Value};
 use std::borrow::Cow;
 use strum::IntoEnumIterator;
@@ -37,6 +38,8 @@ const FAMILY_SEARCH_ORDER: [AttributeType; 7] = [
 /// An entity decoded from an expanded fixture.
 #[derive(Debug)]
 pub(crate) struct FixtureEntity {
+    /// The entity's `@id`.
+    id: Option<String>,
     /// The entity's expanded types.
     types: Vec<EntityTypeName>,
     /// Every attribute with its instances, in fixture order.
@@ -54,8 +57,6 @@ pub(crate) struct FixtureInstance {
     metadata: Vec<(InstanceMetadata, String)>,
     /// The sub-attributes with their instances.
     sub_attributes: Vec<(AttributeName, Vec<FixtureInstance>)>,
-    /// The entities a `join=inline` rendering embedded under the instance.
-    linked: Vec<FixtureEntity>,
 }
 
 /// One value decoded from an expanded fixture.
@@ -80,6 +81,13 @@ pub(crate) enum FixtureLiteral {
     Number(JsonNumber),
     /// A string.
     Text(String),
+    /// A string carrying its `@language`, as a language map entry does.
+    Tagged {
+        /// The string.
+        text: String,
+        /// Its language tag.
+        language: String,
+    },
     /// A boolean.
     Boolean(bool),
 }
@@ -116,7 +124,20 @@ impl FixtureEntity {
             .filter(|(key, _)| !key.starts_with('@'))
             .map(|(key, instances)| (attribute_name(key), instances_of(instances)))
             .collect();
-        FixtureEntity { types, attributes }
+        let id = object.get("@id").and_then(Value::as_str).map(str::to_owned);
+        FixtureEntity { id, types, attributes }
+    }
+}
+
+/// The fixture entities a hop may cross into, found by their `@id`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FixtureLinked<'a>(pub(crate) &'a [FixtureEntity]);
+
+impl<'a> LinkedEntities<'a> for FixtureLinked<'a> {
+    type Entity = &'a FixtureEntity;
+
+    fn linked(self, object: &str) -> Option<&'a FixtureEntity> {
+        self.0.iter().find(|entity| entity.id.as_deref() == Some(object))
     }
 }
 
@@ -149,17 +170,10 @@ impl FixtureInstance {
                 Some((member, text.to_owned()))
             })
             .collect();
-        let linked = object
-            .get(ENTITY.as_str())
-            .and_then(Value::as_array)
-            .map_or_else(Vec::new, |embedded| embedded.iter().map(FixtureEntity::from_expanded).collect());
         let sub_attributes = object
             .iter()
             .filter(|(key, _)| {
-                !key.starts_with('@')
-                    && key.as_str() != value_key.as_str()
-                    && key.as_str() != ENTITY.as_str()
-                    && InstanceMetadata::iter().all(|member| member.iri().as_str() != key.as_str())
+                !key.starts_with('@') && key.as_str() != value_key.as_str() && InstanceMetadata::iter().all(|member| member.iri().as_str() != key.as_str())
             })
             .map(|(key, instances)| (attribute_name(key), instances_of(instances)))
             .collect();
@@ -168,7 +182,6 @@ impl FixtureInstance {
             values,
             metadata,
             sub_attributes,
-            linked,
         }
     }
 }
@@ -217,6 +230,12 @@ fn item_of(node: &Value) -> FixtureItem {
     }
     if let Some(value) = object.get("@value") {
         let is_json = object.get("@type").and_then(Value::as_str) == Some("@json");
+        if let (Value::String(text), Some(language)) = (value, object.get("@language").and_then(Value::as_str)) {
+            return FixtureItem::Literal(FixtureLiteral::Tagged {
+                text: text.to_owned(),
+                language: language.to_owned(),
+            });
+        }
         return match value {
             Value::Number(number) if !is_json => FixtureItem::Literal(FixtureLiteral::Number(JsonNumber::try_from(number).expect("an exact number"))),
             Value::String(text) if !is_json => FixtureItem::Literal(FixtureLiteral::Text(text.to_owned())),
@@ -247,7 +266,9 @@ impl FixtureItem {
     fn view(&self) -> ValueItem<'_, &FixtureNode> {
         match self {
             FixtureItem::Literal(FixtureLiteral::Number(number)) => ValueItem::Literal(LiteralValue::Number(Cow::Borrowed(number))),
-            FixtureItem::Literal(FixtureLiteral::Text(text)) => ValueItem::Literal(LiteralValue::Text(Cow::Borrowed(text))),
+            FixtureItem::Literal(FixtureLiteral::Text(text) | FixtureLiteral::Tagged { text, .. }) => {
+                ValueItem::Literal(LiteralValue::Text(Cow::Borrowed(text)))
+            }
             FixtureItem::Literal(FixtureLiteral::Boolean(boolean)) => ValueItem::Literal(LiteralValue::Boolean(*boolean)),
             FixtureItem::Json(json) => ValueItem::Json(json),
             FixtureItem::Reference(iri) => ValueItem::Reference(iri),
@@ -270,10 +291,6 @@ impl<'a> QueriedEntity<'a> for &'a FixtureEntity {
     fn types(self) -> impl Iterator<Item = &'a EntityTypeName> {
         self.types.iter()
     }
-
-    fn linked_entities(self, relationship: &'a FixtureInstance) -> impl Iterator<Item = &'a FixtureEntity> {
-        relationship.linked.iter()
-    }
 }
 
 impl<'a> QueriedInstance<'a> for &'a FixtureInstance {
@@ -285,6 +302,17 @@ impl<'a> QueriedInstance<'a> for &'a FixtureInstance {
 
     fn values(self) -> impl Iterator<Item = ValueItem<'a, &'a FixtureNode>> {
         self.values.iter().map(FixtureItem::view)
+    }
+
+    fn language_values(self, language: &str) -> impl Iterator<Item = ValueItem<'a, &'a FixtureNode>> {
+        let family = self.family;
+        self.values
+            .iter()
+            .filter(move |item| {
+                family == AttributeType::LanguageProperty
+                    && matches!(item, FixtureItem::Literal(FixtureLiteral::Tagged { language: tag, .. }) if tag == language)
+            })
+            .map(FixtureItem::view)
     }
 
     fn sub_attribute(self, name: &AttributeName) -> Option<&'a FixtureInstance> {

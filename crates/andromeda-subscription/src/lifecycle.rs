@@ -170,9 +170,9 @@ where
             // member initialised from the `@context` applicable to it, so by the
             // time the payload is parsed the member reflects that initialisation.
             notification_context::initialize_notification_context(&mut payload, subscription_context, &self.engine).await?;
-            self.variant.expand_terms(&mut payload, context).await?;
+            let expanded_q = self.variant.expand_terms(&mut payload, context).await?;
 
-            let values = fields::extract_create_fields(&payload, self.variant.dataset_id_policy())?;
+            let values = fields::extract_create_fields(&payload, self.variant.dataset_id_policy())?.with_expanded_q(expanded_q);
             let fields = values.to_fields();
 
             let status = compute_updated_status(
@@ -229,11 +229,11 @@ where
             }
             validate_context_spec(&self.engine, context).await?;
 
-            self.variant.expand_terms(&mut payload, context).await?;
+            let expanded_q = self.variant.expand_terms(&mut payload, context).await?;
 
             let existing = self.get(target, id).await?;
             let existing_status = existing.lifecycle.status;
-            let merged = fields::merge_update_fields(&payload, existing, self.variant.dataset_id_policy())?;
+            let merged = fields::merge_update_fields(&payload, existing, self.variant.dataset_id_policy())?.with_expanded_q(expanded_q);
             validate_merged_subscription(&merged)?;
             let fields = merged.to_fields();
 

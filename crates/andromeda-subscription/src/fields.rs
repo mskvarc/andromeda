@@ -81,6 +81,22 @@ pub struct SubscriptionWriteValues {
 }
 
 impl SubscriptionWriteValues {
+    /// These values, the `q` the write named replaced by `expanded_q`, the
+    /// same filter as term expansion produced it.
+    ///
+    /// The payload carries the expanded `q` as clause 4.9 text, which spells
+    /// every trailing `[…]` member expanded; the filter term expansion returns
+    /// also keeps the spelling the subscriber wrote, which clause 4.9 reads a
+    /// `LanguageProperty`'s target language and a raw JSON key in. A write
+    /// naming no `q` keeps the one these values hold.
+    #[must_use]
+    pub fn with_expanded_q(mut self, expanded_q: Option<Expr>) -> SubscriptionWriteValues {
+        if let Some(q) = expanded_q {
+            self.q = Some(q);
+        }
+        self
+    }
+
     /// Borrow the values in the shape required by the persistence port.
     pub fn to_fields(&self) -> SubscriptionFields<'_> {
         SubscriptionFields {

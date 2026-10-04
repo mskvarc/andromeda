@@ -14,6 +14,7 @@ use crate::helpers::{
     invalid_negative_throttling_subscription,
     invalid_throttling_and_time_interval_subscription,
     raw_subscription_request,
+    retrieve_subscription,
     unavailable_jsonld_context_subscription,
 };
 use andromeda_test_harness::environment::TestEnvironment;
@@ -137,6 +138,26 @@ async fn subscription_create_with_dataset_id_returns_created() {
     let (status, _, _) = create_subscription(&http_client, &payload).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Table 5.2.12-1 types `q` as "a valid query string as per clause 4.9", whose
+/// grammar includes the `LinkedEntityRelation` hop, and clause 5.8.1.4 raises
+/// `BadRequestData` only for what clause 5.2.12 restricts: a hop is admitted, and
+/// reads back as written.
+#[tokio::test]
+async fn subscription_create_with_a_linked_traversal_filter_is_accepted() {
+    let http_client = client();
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:create-linked-traversal");
+    let mut payload = default_subscription(&subscription_id);
+    payload["q"] = json!("isParkedIn{category==\"commercial\"}");
+
+    let (status, _, body) = create_subscription(&http_client, &payload).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, stored) = retrieve_subscription(&http_client, &subscription_id, true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(stored["q"], json!("isParkedIn{category==\"commercial\"}"));
     scope.finish().await.expect("cleanup failed");
 }
 

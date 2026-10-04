@@ -19,7 +19,7 @@ use crate::{
     entity_selection::EntitySelection,
     filter::{eval::predicate_holds_in, expression::Expr, predicate::Predicate},
     geo::query::GeoQuery,
-    queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
+    queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
     scope::{pattern::ScopePattern, query::ScopeQuery},
 };
 
@@ -141,15 +141,17 @@ impl<'q> SplitFilter<'q> {
         q && geo && scope
     }
 
-    /// The truth of every leaf over one part of an entity, read in memory.
-    pub fn truths_of<'a, E>(&self, entity: E) -> LeafTruths
+    /// The truth of every leaf over one part of an entity, read in memory, the
+    /// entities a Query Term's hops cross into read from `linked`.
+    pub fn truths_of<'a, E, L>(&self, entity: E, linked: L) -> LeafTruths
     where
         E: QueriedEntity<'a> + LocatedEntity<'a> + ScopedEntity<'a>,
+        L: LinkedEntities<'a>,
     {
         LeafTruths(
             self.leaves()
                 .map(|leaf| match leaf {
-                    FilterLeaf::Term(pred) => predicate_holds_in(pred, entity),
+                    FilterLeaf::Term(pred) => predicate_holds_in(pred, entity, linked),
                     FilterLeaf::Geo(geo) => geo.matches_entity(entity),
                     FilterLeaf::ScopeRequirement(pattern) => entity.scopes().any(|scope| pattern.matches(scope.as_str())),
                 })
@@ -207,6 +209,7 @@ mod tests {
         queried_entity::{
             attribute_reading::QueriedEntity,
             expanded_fixture::{FixtureEntity, FixtureInstance},
+            linked_entities::NoLinkedEntities,
             located_entity::LocatedEntity,
             scoped_entity::ScopedEntity,
         },
@@ -389,10 +392,14 @@ mod tests {
         for (filter_index, selection) in filters.iter().enumerate() {
             let filter = SplitFilter::of(selection);
             for (part_index, part) in parts.iter().enumerate() {
-                let whole = selection.q_expr.as_ref().is_none_or(|expr| evaluate(expr, part))
+                let whole = selection.q_expr.as_ref().is_none_or(|expr| evaluate(expr, part, NoLinkedEntities))
                     && selection.geo.as_ref().is_none_or(|geo| geo.matches_entity(part))
                     && selection.scope_q.as_ref().is_none_or(|scope| scope.matches_entity(part));
-                pretty_assertions::assert_eq!(filter.holds(&filter.truths_of(part)), whole, "filter {filter_index} over part {part_index}");
+                pretty_assertions::assert_eq!(
+                    filter.holds(&filter.truths_of(part, NoLinkedEntities)),
+                    whole,
+                    "filter {filter_index} over part {part_index}"
+                );
             }
         }
     }

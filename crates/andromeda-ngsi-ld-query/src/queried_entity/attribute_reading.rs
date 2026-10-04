@@ -8,7 +8,7 @@
 
 use crate::queried_entity::{instance_metadata::InstanceMetadata, value_item::ValueItem};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
-use std::{borrow::Cow, iter::empty};
+use std::borrow::Cow;
 
 /// An entity as the `q` evaluator reads it (clause 4.9).
 pub trait QueriedEntity<'a>: Copy {
@@ -26,17 +26,6 @@ pub trait QueriedEntity<'a>: Copy {
     /// The entity's types, expanded (clause 4.5.1), which the type guard of a
     /// linked-entity hop is checked against.
     fn types(self) -> impl Iterator<Item = &'a EntityTypeName>;
-
-    /// The entities a clause 4.5.23.2 `join=inline` rendering embedded under
-    /// `relationship`, one of this entity's Relationship instances.
-    ///
-    /// An entity that was not rendered with its linked entities inline carries
-    /// none, which is what the default gives: a linked-entity hop then
-    /// addresses no target, and the store, which can read the linked entity,
-    /// is what answers such a filter.
-    fn linked_entities(self, _relationship: Self::Instance) -> impl Iterator<Item = Self> {
-        empty()
-    }
 }
 
 /// One attribute instance as the `q` evaluator reads it: a default instance, a
@@ -56,6 +45,15 @@ pub trait QueriedInstance<'a>: Copy {
     /// map, the `json` of a `JsonProperty`, and the items of the list a
     /// `ListProperty` or a `ListRelationship` holds.
     fn values(self) -> impl Iterator<Item = ValueItem<'a, Self::Node>>;
+
+    /// The strings a `LanguageProperty` instance holds under the language tag
+    /// `language`, in order: the target value clause 4.9 reads when a target
+    /// language is specified. None for a language the map does not hold, and
+    /// none for every other family.
+    ///
+    /// The tag is compared as written, which is how the store compares the
+    /// `@language` of an expanded `languageMap` entry.
+    fn language_values(self, language: &str) -> impl Iterator<Item = ValueItem<'a, Self::Node>>;
 
     /// The sub-attribute keyed by the expanded name `name`: its first instance
     /// in the order the instance holds them, which is the one clause 4.9's `.`

@@ -8,9 +8,13 @@
 
 use crate::{
     date_time_text::DateTimeText,
-    document::{instance_document::InstanceDocument, slot::Slot, written_value::ValueSlot},
+    document::{
+        instance_document::InstanceDocument,
+        slot::Slot,
+        written_value::{ValueSlot, WrittenValue},
+    },
     expanded_value::ValueNode,
-    queried::family_values::FamilyValues,
+    queried::family_values::{FamilyValues, language_strings},
     unit_code::UnitCode,
     value_mode::Fragment,
 };
@@ -36,6 +40,24 @@ impl<'a> QueriedInstance<'a> for &'a InstanceDocument {
             ValueSlot::Set(value) => FamilyValues::of_written(value),
             ValueSlot::Absent | ValueSlot::Remove(_) => FamilyValues::none(),
         }
+    }
+
+    fn language_values(self, language: &str) -> impl Iterator<Item = ValueItem<'a, &'a ValueNode<Fragment>>> {
+        let entries = match self.value() {
+            ValueSlot::Set(WrittenValue::LanguageMap(entries)) => entries.entries(),
+            ValueSlot::Set(
+                WrittenValue::Value(_)
+                | WrittenValue::Geometry(_)
+                | WrittenValue::Object(_)
+                | WrittenValue::Vocab(_)
+                | WrittenValue::Json(_)
+                | WrittenValue::ValueList(_)
+                | WrittenValue::ObjectList(_),
+            )
+            | ValueSlot::Absent
+            | ValueSlot::Remove(_) => &[],
+        };
+        language_strings(entries, language)
     }
 
     fn sub_attribute(self, name: &AttributeName) -> Option<&'a InstanceDocument> {

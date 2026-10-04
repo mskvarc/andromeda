@@ -4,8 +4,9 @@ use crate::{
     attribute_instances::AttributeInstances,
     date_time_text::DateTimeText,
     expanded_value::ValueNode,
+    family_value::FamilyValue,
     instance::Instance,
-    queried::family_values::FamilyValues,
+    queried::family_values::{FamilyValues, language_strings},
     value_mode::Stored,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
@@ -59,6 +60,20 @@ impl<'a> QueriedInstance<'a> for HeldInstance<'a> {
 
     fn values(self) -> impl Iterator<Item = ValueItem<'a, &'a ValueNode<Stored>>> {
         FamilyValues::of_state(self.instance.value())
+    }
+
+    fn language_values(self, language: &str) -> impl Iterator<Item = ValueItem<'a, &'a ValueNode<Stored>>> {
+        let entries = match self.instance.value() {
+            FamilyValue::LanguageProperty { entries, .. } => entries.entries(),
+            FamilyValue::Property { .. }
+            | FamilyValue::GeoProperty { .. }
+            | FamilyValue::Relationship { .. }
+            | FamilyValue::VocabProperty { .. }
+            | FamilyValue::JsonProperty { .. }
+            | FamilyValue::ListProperty { .. }
+            | FamilyValue::ListRelationship { .. } => &[],
+        };
+        language_strings(entries, language)
     }
 
     fn sub_attribute(self, name: &AttributeName) -> Option<HeldInstance<'a>> {

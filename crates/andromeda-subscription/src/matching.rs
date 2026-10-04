@@ -10,7 +10,7 @@ use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_model::{notification::ChangeOrigin, subscription::SubscriptionStatus};
 use andromeda_ngsi_ld_query::{
     filter::eval::evaluate,
-    queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
+    queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
 };
 use chrono::Utc;
 use tracing::debug;
@@ -124,19 +124,21 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
 }
 
 /// Evaluate q (clause 4.9), geoQ (clause 4.10), scopeQ (clause 4.19) and csf
-/// against an entity.
+/// against an entity, the entities a `rel{…}` hop crosses into read from
+/// `linked`.
 ///
 /// Returns `true` if the entity passes all configured filters on the subscription.
 /// Filters that are not configured (None) are skipped. On an entity
 /// subscription `csf` is a second Query Language expression over the same
 /// entity. The entity is a stored state or a received document, read through
 /// the query language's own reading of an entity.
-pub fn matches_entity_filters<'a, E>(sub: &CompiledSubscription, entity: E) -> bool
+pub fn matches_entity_filters<'a, E, L>(sub: &CompiledSubscription, entity: E, linked: L) -> bool
 where
     E: QueriedEntity<'a> + LocatedEntity<'a> + ScopedEntity<'a>,
+    L: LinkedEntities<'a>,
 {
     if let Some(ref expr) = sub.compiled_q
-        && !evaluate(expr, entity)
+        && !evaluate(expr, entity, linked)
     {
         debug!("Subscription {} skipped: q filter did not match entity", sub.id);
         return false;
@@ -155,7 +157,7 @@ where
     }
 
     if let Some(ref csf_expr) = sub.compiled_csf
-        && !evaluate(csf_expr, entity)
+        && !evaluate(csf_expr, entity, linked)
     {
         debug!("Subscription {} skipped: csf filter did not match entity", sub.id);
         return false;
@@ -191,6 +193,7 @@ mod tests {
         error::QueryError,
         geo::{compile::compile_geo_query, input::GeoQueryInput},
         projection::compiled::Projection,
+        queried_entity::linked_entities::NoLinkedEntities,
         term_expander::{TermExpander, TermExpansionFailure},
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -397,18 +400,27 @@ mod tests {
     #[test]
     fn a_stored_geo_q_that_no_longer_compiles_admits_no_entity() {
         let mut sub = make_sub();
-        assert!(matches_entity_filters(&sub, &located(13.4, 52.5)), "no geoQ admits every entity");
+        assert!(
+            matches_entity_filters(&sub, &located(13.4, 52.5), NoLinkedEntities),
+            "no geoQ admits every entity"
+        );
 
         sub.compiled_geo_q =
             SubscriptionGeoFilter::from_stored(Some(&serde_json::json!({"georel": "near;maxDistance==1000"})), "urn:ngsi-ld:Subscription:test");
-        assert!(!matches_entity_filters(&sub, &located(13.4, 52.5)), "an unusable geoQ admits nothing");
+        assert!(
+            !matches_entity_filters(&sub, &located(13.4, 52.5), NoLinkedEntities),
+            "an unusable geoQ admits nothing"
+        );
 
         sub.compiled_geo_q = SubscriptionGeoFilter::from_stored(
             Some(&serde_json::json!({"georel": "near;maxDistance==1000", "geometry": "Point", "coordinates": [13.4, 52.5]})),
             "urn:ngsi-ld:Subscription:test",
         );
-        assert!(matches_entity_filters(&sub, &located(13.4, 52.5)), "a compiled geoQ admits what it matches");
-        assert!(!matches_entity_filters(&sub, &located(13.4, 53.5)), "and nothing else");
+        assert!(
+            matches_entity_filters(&sub, &located(13.4, 52.5), NoLinkedEntities),
+            "a compiled geoQ admits what it matches"
+        );
+        assert!(!matches_entity_filters(&sub, &located(13.4, 53.5), NoLinkedEntities), "and nothing else");
     }
 
     #[test]

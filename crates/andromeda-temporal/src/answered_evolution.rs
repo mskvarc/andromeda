@@ -107,7 +107,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{scope::path::ScopePath, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
-        queried_entity::scoped_entity::ScopedEntity,
+        queried_entity::{linked_entities::NoLinkedEntities, scoped_entity::ScopedEntity},
         scope::query::ScopeQuery,
         split_filter::{LeafTruths, SplitFilter},
     };
@@ -137,7 +137,7 @@ mod tests {
         let expander = ContextualExpander::new(&engine, &prepared);
         let mut narrowing = AnswerNarrowing::new(selection, TimeProp::Observed, &expander);
         let part = AnsweredEvolution::read(&expansion, &mut narrowing, answer, EntityConfig::default().payload_budget()).await?;
-        let truths = SplitFilter::of(selection).truths_of(&part);
+        let truths = SplitFilter::of(selection).truths_of(&part, NoLinkedEntities);
         Ok((part, truths))
     }
 

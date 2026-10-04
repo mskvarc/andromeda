@@ -44,6 +44,7 @@ fn project_subscription(select: &mut SelectStatement, kind: StoredKind, target: 
         .column((Subscriptions::Table, Subscriptions::NotificationTrigger))
         .column((Subscriptions::Table, Subscriptions::TimeInterval))
         .column((Subscriptions::Table, Subscriptions::Q))
+        .column((Subscriptions::Table, Subscriptions::QWrittenMembers))
         .column((Subscriptions::Table, Subscriptions::GeoQ))
         .column((Subscriptions::Table, Subscriptions::ScopeQ))
         .column((Subscriptions::Table, Subscriptions::Csf))

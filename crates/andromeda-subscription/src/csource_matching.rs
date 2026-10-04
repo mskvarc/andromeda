@@ -13,7 +13,12 @@ use andromeda_ngsi_ld_model::{
     registration_matching::{EntitySpecification, RegistrationMatchSpecification},
     subscription::SubscriptionStatus,
 };
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrTemporalFilter, filter::eval::evaluate, geo::query::GeoQuery};
+use andromeda_ngsi_ld_query::{
+    csr::compiled::CompiledCsrTemporalFilter,
+    filter::eval::evaluate,
+    geo::query::GeoQuery,
+    queried_entity::linked_entities::NoLinkedEntities,
+};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBSERVATION_SPACE, OPERATION_SPACE};
 use chrono::Utc;
 use serde_json::Value;
@@ -127,7 +132,8 @@ fn scope_query_admits(sub: &CompiledCsrSubscription, registration: &ContextSourc
 }
 
 /// Clause 5.11.2.4: the context source filter is matched against the
-/// registration's Context Source Properties (clause 4.9).
+/// registration's Context Source Properties (clause 4.9), which carry no
+/// Relationship a hop could cross.
 fn context_source_filter_admits(sub: &CompiledCsrSubscription, registration: &ContextSourceRegistration) -> bool {
     let Some(csf) = &sub.compiled_csf else {
         return true;
@@ -136,7 +142,7 @@ fn context_source_filter_admits(sub: &CompiledCsrSubscription, registration: &Co
         .additional_properties
         .as_ref()
         .and_then(ContextSourceProperties::of)
-        .is_some_and(|properties| evaluate(csf, properties))
+        .is_some_and(|properties| evaluate(csf, properties, NoLinkedEntities))
 }
 
 #[cfg(test)]

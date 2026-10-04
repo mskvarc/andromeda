@@ -15,6 +15,9 @@ pub mod forwarded_merge;
 pub mod join_projection;
 /// Resolving the entities a result set links to (clause 4.5.23).
 pub mod linked_entity;
+/// Gathering the entity states the hops of an in-memory filter cross into
+/// (clause 4.9).
+pub mod linked_filter_states;
 /// Deriving the nested projection that applies to each linked entity
 /// (clause 4.21).
 pub(crate) mod linked_projection;

@@ -35,6 +35,8 @@ pub enum Subscriptions {
     TimeInterval,
     /// The `q` query filter
     Q,
+    /// The `q` query filter with its trailing members as the subscriber wrote them
+    QWrittenMembers,
     /// The `geoQ` geo-query filter, as JSONB
     GeoQ,
     /// The `scopeQ` scope filter
@@ -133,6 +135,7 @@ mod tests {
         assert_eq!(Subscriptions::WatchedAttributes.to_string(), "watched_attributes");
         assert_eq!(Subscriptions::ExpandValues.to_string(), "expand_values");
         assert_eq!(Subscriptions::JsonKeys.to_string(), "json_keys");
+        assert_eq!(Subscriptions::QWrittenMembers.to_string(), "q_written_members");
         assert_eq!(Subscriptions::NotificationTrigger.to_string(), "notification_trigger");
         assert_eq!(Subscriptions::TimeInterval.to_string(), "time_interval");
         assert_eq!(Subscriptions::JsonldContext.to_string(), "jsonld_context");

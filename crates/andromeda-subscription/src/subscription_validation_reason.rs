@@ -144,11 +144,6 @@ pub enum SubscriptionValidationReason {
     /// with no comparison selects nothing meaningful.
     #[error("q expression must contain at least one comparison operator")]
     QExpressionNoComparison,
-    /// A subscription `q` filter traversed into a linked entity.
-    #[error(
-        "a filter that traverses into a linked entity is not supported for subscriptions, because a subscription is matched against the notified entity's own data"
-    )]
-    QExpressionLinkedTraversal,
     /// `notification.showChanges` was true under a `keyValues` format, which
     /// cannot represent the previous value.
     #[error("notification.showChanges cannot be true when notification.format is keyValues")]

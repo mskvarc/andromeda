@@ -34,9 +34,9 @@ impl Expr {
     /// Whether any predicate in this filter traverses a linked entity — the
     /// clause 4.9 `{}` axis.
     ///
-    /// A consumer that can only evaluate a filter against the document in front
-    /// of it needs to know: a traversal reaches an attribute of another entity,
-    /// which is a question only a store-backed evaluation can answer.
+    /// A consumer evaluating a filter in memory needs to know: a traversal
+    /// reaches an attribute of another entity, which has to be read before the
+    /// filter can be decided.
     pub fn contains_linked_hop(&self) -> bool {
         match self {
             Expr::And(terms) | Expr::Or(terms) => terms.iter().any(Expr::contains_linked_hop),

@@ -64,6 +64,11 @@ create table subscriptions (
     -- could never fire and is refused before it is written.
     notification_trigger smallint[] compression lz4,
     q text compression lz4,
+    -- `q` again with every trailing `[...]` member as the subscriber wrote it,
+    -- every other name as `q` spells it. Clause 4.9 reads a LanguageProperty's
+    -- target language and a raw JSON key in that spelling, which the expanded
+    -- `q` no longer carries. NULL exactly when `q` is.
+    q_written_members text compression lz4,
     geo_q jsonb compression lz4,
     scope_q text compression lz4,
     csf text compression lz4,

@@ -6,12 +6,13 @@
 //! stay with the broker: each source answers whatever it holds, and the filters
 //! are applied here, once the local and forwarded entities have been merged.
 
-use crate::error::EntityResultExt;
+use crate::{entity::query_forwarding::MergedEntities, error::EntityResultExt};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_ngsi_ld_entity::{document::EntityDocument, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
-use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::{
     filter::{
         eval::evaluate,
@@ -22,26 +23,43 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_request::deferred_split_filters::DeferredSplitFilters;
 use axum::http::Uri as HttpUri;
+use chrono::Utc;
 
-/// Keep the merged entities the deferred filters match.
+/// Keep the merged entities the deferred filters match, with the warnings and
+/// contributions of the merge; a query that deferred nothing keeps every
+/// entity the merge produced.
 ///
-/// Each entity is expanded once, by the typed expansion, under the request's
+/// Clause 5.7.2.4: with `splitEntities` no single source held enough of an
+/// entity to decide `q`, the geoquery or `scopeQ`, so those are evaluated once
+/// here, over the merged result. Each entity is expanded once, by the typed expansion, under the request's
 /// context, and the filters are evaluated over the typed document it expands
 /// to. An entity that cannot be expanded into the request's context cannot be
 /// matched against filters written in that context, so it is dropped rather
 /// than admitted unfiltered; a context that cannot be prepared drops them all.
+/// The entities a `rel{…}` hop of `q` crosses into (clause 4.9) are read from
+/// `target` as they stand now.
 ///
 /// # Errors
 ///
 /// Returns a [`ProblemResponse`] when `q` or the geoquery cannot be compiled
-/// against the request's context.
+/// against the request's context, or when the entities a hop of `q` links to
+/// cannot be read.
 pub(crate) async fn retain_matching(
     service: &EntityQueryService,
-    entities: Vec<Entity>,
-    deferred: DeferredSplitFilters,
+    target: &ContextTarget,
+    merged: MergedEntities,
+    deferred: Option<DeferredSplitFilters>,
     context: &ContextSpec,
     instance: &HttpUri,
-) -> Result<Vec<Entity>, ProblemResponse> {
+) -> Result<MergedEntities, ProblemResponse> {
+    let Some(deferred) = deferred else {
+        return Ok(merged);
+    };
+    let MergedEntities {
+        entities,
+        warnings,
+        contributions,
+    } = merged;
     // One preparation serves the deferred `q` and the geoquery alike.
     let prepared_context = service.engine().prepare_term_context(context);
     let term_expander = ContextualExpander::new(service.engine(), &prepared_context);
@@ -68,15 +86,31 @@ pub(crate) async fn retain_matching(
     let compiled_scope = deferred.scope_q;
 
     let Ok(expansion) = EntityExpansion::prepare(service.engine(), context).await else {
-        return Ok(Vec::new());
+        return Ok(MergedEntities {
+            entities: Vec::new(),
+            warnings,
+            contributions,
+        });
     };
-    let mut matching = Vec::with_capacity(entities.len());
+    let mut documents = Vec::with_capacity(entities.len());
     for entity in entities {
-        let Ok(document) = expansion.entity(&entity, Normalization::Entity).await else {
-            continue;
-        };
-
-        let q_ok = compiled_q.as_ref().is_none_or(|expr| evaluate(expr, &document));
+        if let Ok(document) = expansion.entity(&entity, Normalization::Entity).await {
+            documents.push((entity, document));
+        }
+    }
+    let linked = match compiled_q.as_ref().filter(|expr| expr.contains_linked_hop()) {
+        Some(expr) => {
+            let roots: Vec<&EntityDocument> = documents.iter().map(|(_, document)| document).collect();
+            service
+                .linked_filter_states(target, &roots, &[expr], Utc::now())
+                .await
+                .with_entity_instance(instance)?
+        }
+        None => LinkedStates::new(),
+    };
+    let mut matching = Vec::with_capacity(documents.len());
+    for (entity, document) in documents {
+        let q_ok = compiled_q.as_ref().is_none_or(|expr| evaluate(expr, &document, &linked));
         let geo_ok = compiled_geo.as_ref().is_none_or(|geo| geo.matches_entity(&document));
         let scope_ok = compiled_scope.as_ref().is_none_or(|scope| scope.matches_entity(&document));
 
@@ -84,5 +118,9 @@ pub(crate) async fn retain_matching(
             matching.push(entity);
         }
     }
-    Ok(matching)
+    Ok(MergedEntities {
+        entities: matching,
+        warnings,
+        contributions,
+    })
 }

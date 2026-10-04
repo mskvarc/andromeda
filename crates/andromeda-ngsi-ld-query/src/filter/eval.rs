@@ -15,26 +15,32 @@ use crate::{
         scalar::{CompareValue, Scalar, parse_date, parse_date_time, parse_time},
         target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
     },
-    queried_entity::attribute_reading::QueriedEntity,
+    queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities},
 };
 use std::cmp::Ordering;
 
-/// Evaluate a parsed `q` expression (clause 4.9) against an entity.
+/// Evaluate a parsed `q` expression (clause 4.9) against an entity, reading
+/// the entities its `rel{…}` hops cross into from `linked`.
 ///
 /// The expression's attribute names are expected expanded, as the entity keys
 /// its attributes by expanded name.
-pub fn evaluate<'a, E: QueriedEntity<'a>>(expr: &Expr, entity: E) -> bool {
-    expression_holds(expr, &|path| resolve_targets(entity, path), &|path| addresses_element(entity, path))
+pub fn evaluate<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(expr: &Expr, entity: E, linked: L) -> bool {
+    expression_holds(expr, &|path| resolve_targets(entity, path, linked), &|path| {
+        addresses_element(entity, path, linked)
+    })
 }
 
-/// Evaluate one Query Term (clause 4.9) against an entity, on its own.
+/// Evaluate one Query Term (clause 4.9) against an entity, on its own, reading
+/// the entities its hops cross into from `linked`.
 ///
 /// Every Query Term is existential over the targets its attribute path
 /// resolves to, which is what lets a filter over an entity held in several
 /// parts be decided term by term (clause 5.7.4.4 `splitEntities`): the term
 /// holds over the whole entity when it holds over any one part.
-pub fn predicate_holds_in<'a, E: QueriedEntity<'a>>(pred: &Predicate, entity: E) -> bool {
-    predicate_holds(pred, &|path| resolve_targets(entity, path), &|path| addresses_element(entity, path))
+pub fn predicate_holds_in<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(pred: &Predicate, entity: E, linked: L) -> bool {
+    predicate_holds(pred, &|path| resolve_targets(entity, path, linked), &|path| {
+        addresses_element(entity, path, linked)
+    })
 }
 
 /// Evaluate the boolean structure of an expression over the targets
@@ -227,7 +233,10 @@ mod tests {
             json_key_attributes::JsonKeyAttributes,
             parser::parse,
         },
-        queried_entity::expanded_fixture::FixtureEntity,
+        queried_entity::{
+            expanded_fixture::{FixtureEntity, FixtureLinked},
+            linked_entities::NoLinkedEntities,
+        },
         term_expander::TermExpander,
     };
     use iri_rs::IriBuf;
@@ -237,7 +246,14 @@ mod tests {
     /// Whether an expanded entity satisfies an expression, read through the
     /// entity traits.
     fn holds(expr: &Expr, document: &Value) -> bool {
-        evaluate(expr, &FixtureEntity::from_expanded(document))
+        evaluate(expr, &FixtureEntity::from_expanded(document), NoLinkedEntities)
+    }
+
+    /// Whether an expanded entity satisfies an expression whose hops cross into
+    /// the expanded `linked` entities.
+    fn holds_linked(expr: &Expr, document: &Value, linked: &[Value]) -> bool {
+        let linked: Vec<FixtureEntity> = linked.iter().map(FixtureEntity::from_expanded).collect();
+        evaluate(expr, &FixtureEntity::from_expanded(document), FixtureLinked(&linked))
     }
 
     fn vehicle_entity() -> Value {
@@ -292,7 +308,11 @@ mod tests {
             let Expr::Pred(pred) = &expr else {
                 panic!("{raw} is a single Query Term");
             };
-            pretty_assertions::assert_eq!(predicate_holds_in(pred, &fixture), evaluate(&expr, &fixture), "term {raw}");
+            pretty_assertions::assert_eq!(
+                predicate_holds_in(pred, &fixture, NoLinkedEntities),
+                evaluate(&expr, &fixture, NoLinkedEntities),
+                "term {raw}"
+            );
         }
     }
 
@@ -702,7 +722,7 @@ mod tests {
             }]
         }]);
         let fixture = FixtureEntity::from_expanded(&entity);
-        let exists = |q: &str| evaluate(&parse(q).expect("parses"), &fixture);
+        let exists = |q: &str| evaluate(&parse(q).expect("parses"), &fixture, NoLinkedEntities);
         assert!(exists("\"https://example.com/address\""), "a structured Property value defines its element");
         assert!(exists("\"https://uri.etsi.org/ngsi-ld/location\""), "a geometry defines its element");
         assert!(
@@ -850,24 +870,29 @@ mod tests {
 
     // -- linked-entity traversal (clause 4.9) --------------------------------
 
-    /// A vehicle whose `isParkedIn` Relationship carries the linked entity
-    /// inline, the shape clause 4.5.23.2 `join=inline` produces, expanded.
-    fn vehicle_with_inline_parking(category: &str, linked_type: &str) -> Value {
+    /// A vehicle whose `isParkedIn` Relationship names `parking`.
+    fn vehicle_parked_in(parking: &str) -> Value {
         serde_json::json!([{
             "@id": "urn:ngsi-ld:Vehicle:A1",
             "@type": ["https://example.com/Vehicle"],
             "https://example.com/isParkedIn": [{
-                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:OffStreetParking:Downtown1"}],
-                "https://uri.etsi.org/ngsi-ld/entity": [{
-                    "@id": "urn:ngsi-ld:OffStreetParking:Downtown1",
-                    "@type": [linked_type],
-                    "https://example.com/category": [{
-                        "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": category}]
-                    }]
-                }]
+                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": parking}]
             }]
         }])
     }
+
+    /// A parking of `parking_type` whose `category` is `category`.
+    fn parking(parking_id: &str, category: &str, parking_type: &str) -> Value {
+        serde_json::json!({
+            "@id": parking_id,
+            "@type": [parking_type],
+            "https://example.com/category": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": category}]
+            }]
+        })
+    }
+
+    const DOWNTOWN: &str = "urn:ngsi-ld:OffStreetParking:Downtown1";
 
     fn linked_predicate(inner_value: &str) -> Expr {
         parse(&format!(
@@ -876,16 +901,18 @@ mod tests {
         .expect("parses")
     }
 
+    /// Clause 4.9 EXAMPLE 13: a hop "makes a sub-query on matching target
+    /// objects", the entity the Relationship's object names.
     #[test]
-    fn a_hop_matches_on_the_value_of_the_embedded_linked_entity() {
-        let entity = vehicle_with_inline_parking("commercial", "https://example.com/Building");
-        assert!(holds(&linked_predicate("commercial"), &entity));
+    fn a_hop_matches_on_the_value_of_the_linked_entity() {
+        let linked = [parking(DOWNTOWN, "commercial", "https://example.com/Building")];
+        assert!(holds_linked(&linked_predicate("commercial"), &vehicle_parked_in(DOWNTOWN), &linked));
     }
 
     #[test]
-    fn a_hop_rejects_when_the_embedded_linked_entity_holds_another_value() {
-        let entity = vehicle_with_inline_parking("residential", "https://example.com/Building");
-        assert!(!holds(&linked_predicate("commercial"), &entity));
+    fn a_hop_rejects_when_the_linked_entity_holds_another_value() {
+        let linked = [parking(DOWNTOWN, "residential", "https://example.com/Building")];
+        assert!(!holds_linked(&linked_predicate("commercial"), &vehicle_parked_in(DOWNTOWN), &linked));
     }
 
     #[test]
@@ -897,61 +924,179 @@ mod tests {
             "\"https://example.com/Store\":\"https://example.com/category\"==\"commercial\"}"
         ))
         .expect("parses");
-        assert!(holds(&guarded, &vehicle_with_inline_parking("commercial", "https://example.com/Building")));
-        assert!(!holds(&guarded, &vehicle_with_inline_parking("commercial", "https://example.com/Warehouse")));
+        let building = [parking(DOWNTOWN, "commercial", "https://example.com/Building")];
+        let warehouse = [parking(DOWNTOWN, "commercial", "https://example.com/Warehouse")];
+        assert!(holds_linked(&guarded, &vehicle_parked_in(DOWNTOWN), &building));
+        assert!(!holds_linked(&guarded, &vehicle_parked_in(DOWNTOWN), &warehouse));
     }
 
+    /// An object naming no entity the source holds reaches nothing, so neither
+    /// a comparison nor an existence test through it holds.
     #[test]
-    fn a_hop_without_embedded_linked_data_resolves_no_target() {
-        // The evaluator only ever sees the document it is handed. A Relationship
-        // that names its target by URI alone carries nothing to descend into, so
-        // the predicate does not hold; for a stored entity the SQL compilation
-        // answers the traversal instead.
-        let entity = serde_json::json!([{
-            "@id": "urn:ngsi-ld:Vehicle:A1",
-            "@type": ["https://example.com/Vehicle"],
-            "https://example.com/isParkedIn": [{
-                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:OffStreetParking:Downtown1"}]
-            }]
-        }]);
-        assert!(!holds(&linked_predicate("commercial"), &entity));
-        assert!(!holds(
+    fn a_hop_whose_object_names_no_known_entity_resolves_no_target() {
+        let linked = [parking("urn:ngsi-ld:OffStreetParking:Elsewhere", "commercial", "https://example.com/Building")];
+        assert!(!holds_linked(&linked_predicate("commercial"), &vehicle_parked_in(DOWNTOWN), &linked));
+        assert!(!holds_linked(
             &parse("\"https://example.com/isParkedIn\"{\"https://example.com/category\"}").expect("parses"),
-            &entity
+            &vehicle_parked_in(DOWNTOWN),
+            &linked
         ));
+        assert!(!holds(&linked_predicate("commercial"), &vehicle_parked_in(DOWNTOWN)));
     }
 
     #[test]
-    fn two_hops_descend_through_two_embedded_levels() {
+    fn two_hops_descend_through_two_linked_levels() {
         let entity = serde_json::json!([{
             "@id": "urn:a",
             "@type": ["https://example.com/A"],
-            "https://example.com/outer": [{
-                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:b"}],
-                "https://uri.etsi.org/ngsi-ld/entity": [{
-                    "@id": "urn:b",
-                    "@type": ["https://example.com/B"],
-                    "https://example.com/inner": [{
-                        "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:c"}],
-                        "https://uri.etsi.org/ngsi-ld/entity": [{
-                            "@id": "urn:c",
-                            "@type": ["https://example.com/C"],
-                            "https://example.com/zone": [{
-                                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "north"}]
-                            }]
-                        }]
-                    }]
-                }]
-            }]
+            "https://example.com/outer": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:b"}]}]
         }]);
+        let linked = [
+            serde_json::json!({
+                "@id": "urn:b",
+                "@type": ["https://example.com/B"],
+                "https://example.com/inner": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:c"}]}]
+            }),
+            serde_json::json!({
+                "@id": "urn:c",
+                "@type": ["https://example.com/C"],
+                "https://example.com/zone": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "north"}]}]
+            }),
+        ];
         let two_hops = |zone: &str| {
             parse(&format!(
                 "\"https://example.com/outer\"{{\"https://example.com/inner\"{{\"https://example.com/zone\"==\"{zone}\"}}}}"
             ))
             .expect("parses")
         };
-        assert!(holds(&two_hops("north"), &entity));
-        assert!(!holds(&two_hops("south"), &entity));
+        assert!(holds_linked(&two_hops("north"), &entity, &linked));
+        assert!(!holds_linked(&two_hops("south"), &entity, &linked));
+    }
+
+    /// Clause 4.9: with several instances the target object is "any object of
+    /// such instances", so the hop crosses into the entity every instance
+    /// names, and holds when one of them matches.
+    #[test]
+    fn a_hop_follows_every_object_of_every_instance() {
+        let entity = serde_json::json!([{
+            "@id": "urn:ngsi-ld:Vehicle:A1",
+            "@type": ["https://example.com/Vehicle"],
+            "https://example.com/isParkedIn": [
+                {"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:p1"}]},
+                {
+                    "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:p2"}],
+                    "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:night"}]
+                }
+            ]
+        }]);
+        let linked = [
+            parking("urn:p1", "residential", "https://example.com/Building"),
+            parking("urn:p2", "commercial", "https://example.com/Building"),
+        ];
+        assert!(holds_linked(&linked_predicate("commercial"), &entity, &linked));
+        assert!(holds_linked(&linked_predicate("residential"), &entity, &linked));
+        assert!(!holds_linked(&linked_predicate("industrial"), &entity, &linked));
+    }
+
+    /// Only a Relationship names a linked entity: a Property whose value spells
+    /// a URI is crossed into nothing.
+    #[test]
+    fn a_hop_through_a_property_follows_nothing() {
+        let entity = serde_json::json!([{
+            "@id": "urn:ngsi-ld:Vehicle:A1",
+            "@type": ["https://example.com/Vehicle"],
+            "https://example.com/isParkedIn": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": DOWNTOWN}]}]
+        }]);
+        let linked = [parking(DOWNTOWN, "commercial", "https://example.com/Building")];
+        assert!(!holds_linked(&linked_predicate("commercial"), &entity, &linked));
+    }
+
+    // -- target language (clause 4.9) -----------------------------------------
+
+    /// A Door whose `description` is a language map, and whose `tags` hold two
+    /// strings under one language.
+    fn door() -> Value {
+        serde_json::json!([{
+            "@id": "urn:ngsi-ld:Door:1",
+            "@type": ["https://example.com/Door"],
+            "https://example.com/description": [{
+                "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [
+                    {"@language": "en", "@value": "Door"},
+                    {"@language": "de", "@value": "Tuer"}
+                ]
+            }],
+            "https://example.com/tags": [{
+                "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [
+                    {"@language": "en", "@value": "red"},
+                    {"@language": "en", "@value": "cat"},
+                    {"@language": "fr", "@value": "chat"}
+                ]
+            }],
+            "https://example.com/address": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"https://example.com/en": [{"@value": "Main Street"}]}]
+            }]
+        }])
+    }
+
+    /// Whether the Door satisfies `q`, its names already expanded.
+    fn door_holds(q: &str) -> bool {
+        holds(&parse(q).expect("parses"), &door())
+    }
+
+    /// Clause 4.9 `equal`: "a match is found as the value of the key-value pair
+    /// corresponding to the specified natural language of the languageMap".
+    #[test]
+    fn a_target_language_matches_only_the_value_under_that_language() {
+        assert!(door_holds("\"https://example.com/description\"[en]==\"Door\""));
+        assert!(!door_holds("\"https://example.com/description\"[en]==\"Tuer\""));
+        assert!(door_holds("\"https://example.com/description\"[de]==\"Tuer\""));
+    }
+
+    /// Clause 4.9 `unequal`: "No matching value is found as the value of the
+    /// specified language key", and the entity "shall contain the target
+    /// element", which with a target language is the key-value pair itself.
+    #[test]
+    fn a_target_language_inequality_requires_the_language() {
+        assert!(door_holds("\"https://example.com/description\"[en]!=\"Tuer\""));
+        assert!(!door_holds("\"https://example.com/description\"[en]!=\"Door\""));
+        assert!(!door_holds("\"https://example.com/description\"[fr]!=\"Door\""));
+    }
+
+    #[test]
+    fn a_target_language_existence_asks_for_the_language() {
+        assert!(door_holds("\"https://example.com/description\"[en]"));
+        assert!(!door_holds("\"https://example.com/description\"[fr]"));
+    }
+
+    /// The pattern and ordering operators read the language's value like any
+    /// other String target (clause 4.9), and require the language too.
+    #[test]
+    fn pattern_and_ordering_operators_read_the_target_language() {
+        assert!(door_holds("\"https://example.com/description\"[de]~=\"Tu.*\""));
+        assert!(!door_holds("\"https://example.com/description\"[en]~=\"Tu.*\""));
+        assert!(door_holds("\"https://example.com/description\"[en]!~=\"Tu.*\""));
+        assert!(!door_holds("\"https://example.com/description\"[fr]!~=\"Tu.*\""));
+        assert!(door_holds("\"https://example.com/description\"[en]>\"A\""));
+        assert!(!door_holds("\"https://example.com/description\"[en]<\"A\""));
+    }
+
+    /// Clause 4.9: "a match is found as a single element from the array of
+    /// values of the key-value pair corresponding to the specified natural
+    /// language".
+    #[test]
+    fn several_strings_under_one_language_match_by_element() {
+        assert!(door_holds("\"https://example.com/tags\"[en]==\"cat\""));
+        assert!(!door_holds("\"https://example.com/tags\"[en]!=\"cat\""));
+        assert!(door_holds("\"https://example.com/tags\"[en]!=\"dog\""));
+        assert!(!door_holds("\"https://example.com/tags\"[en]==\"chat\""));
+    }
+
+    /// The target element decides the reading of `attr[member]`: on any family
+    /// other than `LanguageProperty` the member is a compound member, even one
+    /// spelled like a language tag.
+    #[test]
+    fn a_bracketed_member_of_another_family_stays_a_compound_member() {
+        assert!(door_holds("\"https://example.com/address\"[\"https://example.com/en\"]==\"Main Street\""));
     }
 
     /// Clause 4.9's `patternOp` and `notPatternOp` are defined over a String

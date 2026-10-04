@@ -44,6 +44,9 @@ pub enum StoredSubscriptionError {
     /// The `q` column is not a query.
     #[error("a stored subscription q is not a query: {0}")]
     Q(#[source] Box<QueryError>),
+    /// The `q_written_members` column is not a query.
+    #[error("a stored subscription q, as its members were written, is not a query: {0}")]
+    QWrittenMembers(#[source] Box<QueryError>),
     /// The `scope_q` column is not a scope query.
     #[error("a stored subscription scopeQ is not a scope query: {0}")]
     ScopeQ(#[source] Box<QueryError>),

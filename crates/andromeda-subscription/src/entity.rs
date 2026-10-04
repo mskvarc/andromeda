@@ -11,6 +11,7 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::Subscription;
+use andromeda_ngsi_ld_query::filter::expression::Expr;
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -31,7 +32,7 @@ impl EntitySubscriptionVariant {
 impl SubscriptionVariant for EntitySubscriptionVariant {
     type Change = SubscriptionChange;
 
-    async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec) -> Result<(), SubscriptionError> {
+    async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec) -> Result<Option<Expr>, SubscriptionError> {
         term_expansion::expand_common_subscription_terms(&self.engine, payload, context).await
     }
 

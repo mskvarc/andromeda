@@ -10,7 +10,10 @@
 
 use andromeda_entity::{query_residual::ResidualFilter, residual_filter};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
-use andromeda_ngsi_ld_query::split_filter::{LeafTruths, SplitFilter};
+use andromeda_ngsi_ld_query::{
+    queried_entity::linked_entities::NoLinkedEntities,
+    split_filter::{LeafTruths, SplitFilter},
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 
@@ -36,11 +39,14 @@ impl ObservedSelection {
 
     /// The truth of every leaf of `filter` over the observed entity, which is
     /// the part of it this write contributes (clause 5.7.4.4).
+    ///
+    /// A `rel{…}` hop reaches nothing from the observation alone: the store
+    /// decides the hop over the entities it holds.
     #[must_use]
     pub fn leaf_truths(&self, filter: &SplitFilter<'_>) -> LeafTruths {
         match self {
-            ObservedSelection::Observed(state) => filter.truths_of(state.as_ref()),
-            ObservedSelection::Written(document) => filter.truths_of(document.as_ref()),
+            ObservedSelection::Observed(state) => filter.truths_of(state.as_ref(), NoLinkedEntities),
+            ObservedSelection::Written(document) => filter.truths_of(document.as_ref(), NoLinkedEntities),
         }
     }
 }

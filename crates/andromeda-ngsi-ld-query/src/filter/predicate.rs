@@ -74,6 +74,17 @@ impl Predicate {
         }
     }
 
+    /// The attribute axis this predicate compares along, mutably.
+    pub const fn path_mut(&mut self) -> &mut QueryPath {
+        match self {
+            Predicate::Exists(path)
+            | Predicate::Equality { path, .. }
+            | Predicate::Ordering { path, .. }
+            | Predicate::MatchPattern { path, .. }
+            | Predicate::NotMatchPattern { path, .. } => path,
+        }
+    }
+
     /// Move this predicate one linked-entity hop down (clause 4.9
     /// `LinkedEntityRelation`): the predicate keeps its operator and operand and
     /// its axis becomes `relationship{guard_types: previous axis}`.

@@ -45,6 +45,7 @@ mod tests {
         filter::{eval::evaluate, parser},
         geo::query::GeoQuery,
         page_window::{PageStart, PageWindow},
+        queried_entity::linked_entities::NoLinkedEntities,
         scope::query::ScopeQuery,
     };
     use andromeda_tenancy::tenant_ref::TenantRef;
@@ -64,7 +65,7 @@ mod tests {
     /// clauses: clause 4.10 for `georel`, clause 4.18 for `scopeQ`, clause
     /// 5.2.33 for the selectors; clause 4.9 `q` is the evaluator's own.
     fn reference_matches(selection: &EntitySelection, entity: &EntityState) -> bool {
-        let q_holds = selection.q_expr.as_ref().is_none_or(|expr| evaluate(expr, entity));
+        let q_holds = selection.q_expr.as_ref().is_none_or(|expr| evaluate(expr, entity, NoLinkedEntities));
         let geo_holds = selection.geo.as_ref().is_none_or(|geo| {
             // Clause 4.10: one instance of the target GeoProperty meeting the
             // restriction is enough.

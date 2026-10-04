@@ -11,6 +11,15 @@ use crate::{
 };
 use std::fmt::Write;
 
+/// Which spelling of a trailing `[…]` member a rendering writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemberSpelling {
+    /// The members as the path addresses them: expanded once the filter is.
+    Addressed,
+    /// The members as the client wrote them, before any expansion.
+    Written,
+}
+
 /// Render a parsed filter back into clause 4.9 syntax.
 ///
 /// The result parses back to an equal expression; identifiers that would
@@ -18,16 +27,32 @@ use std::fmt::Write;
 #[must_use]
 pub fn serialize(expr: &Expr) -> String {
     let mut buf = String::new();
-    write_expr(&mut buf, expr);
+    write_expr(&mut buf, expr, MemberSpelling::Addressed);
+    buf
+}
+
+/// Render a parsed filter into clause 4.9 syntax with every trailing `[…]`
+/// member spelled as the client wrote it, and every other name as
+/// [`serialize`] spells it.
+///
+/// An expanded filter addresses a compound member by its expanded name, while
+/// a `LanguageProperty`'s target language and a raw JSON key are read in the
+/// spelling the client wrote (clause 4.9); a filter persisted in its expanded
+/// form keeps that spelling only in this second rendering, which
+/// [`Expr::with_written_members`] reads back.
+#[must_use]
+pub fn serialize_written_members(expr: &Expr) -> String {
+    let mut buf = String::new();
+    write_expr(&mut buf, expr, MemberSpelling::Written);
     buf
 }
 
 /// Write the boolean structure of an expression.
-fn write_expr(buf: &mut String, expr: &Expr) {
+fn write_expr(buf: &mut String, expr: &Expr, spelling: MemberSpelling) {
     match expr {
-        Expr::And(terms) => write_terms(buf, terms, ';'),
-        Expr::Or(terms) => write_terms(buf, terms, '|'),
-        Expr::Pred(pred) => write_predicate(buf, pred),
+        Expr::And(terms) => write_terms(buf, terms, ';', spelling),
+        Expr::Or(terms) => write_terms(buf, terms, '|', spelling),
+        Expr::Pred(pred) => write_predicate(buf, pred, spelling),
     }
 }
 
@@ -41,17 +66,17 @@ fn write_expr(buf: &mut String, expr: &Expr) {
 /// disjunction. Without this, `(a|b);c` rendered as `a|b;c` and read back as
 /// `a|(b;c)`, so a stored filter changed meaning the first time it was
 /// re-serialised.
-fn write_terms(buf: &mut String, terms: &[Expr], separator: char) {
+fn write_terms(buf: &mut String, terms: &[Expr], separator: char, spelling: MemberSpelling) {
     for (index, term) in terms.iter().enumerate() {
         if index > 0 {
             buf.push(separator);
         }
         if needs_parentheses(term, separator) {
             buf.push('(');
-            write_expr(buf, term);
+            write_expr(buf, term, spelling);
             buf.push(')');
         } else {
-            write_expr(buf, term);
+            write_expr(buf, term, spelling);
         }
     }
 }
@@ -75,8 +100,8 @@ const fn needs_parentheses(term: &Expr, separator: char) -> bool {
 /// inner path — clause 4.9 writes `rel{attr=="x"}`, not `rel{attr}=="x"` — so
 /// the hops are opened first, the comparison is written at the innermost level,
 /// and the braces are closed afterwards.
-fn write_predicate(buf: &mut String, pred: &Predicate) {
-    let open_hops = write_query_path(buf, pred.path());
+fn write_predicate(buf: &mut String, pred: &Predicate, spelling: MemberSpelling) {
+    let open_hops = write_query_path(buf, pred.path(), spelling);
     match pred {
         Predicate::Exists(_) => {}
         Predicate::Equality { membership, rhs, .. } => {
@@ -103,10 +128,10 @@ fn write_predicate(buf: &mut String, pred: &Predicate) {
 
 /// Write an attribute axis up to and including its terminal local path,
 /// returning how many hop braces the caller has left to close.
-fn write_query_path(buf: &mut String, path: &QueryPath) -> usize {
+fn write_query_path(buf: &mut String, path: &QueryPath, spelling: MemberSpelling) -> usize {
     match path {
         QueryPath::Local(local) => {
-            write_attr_path(buf, local);
+            write_attr_path(buf, local, spelling);
             0
         }
         QueryPath::Linked {
@@ -125,7 +150,7 @@ fn write_query_path(buf: &mut String, path: &QueryPath) -> usize {
             if !guard_types.is_empty() {
                 buf.push(':');
             }
-            1 + write_query_path(buf, inner)
+            1 + write_query_path(buf, inner, spelling)
         }
     }
 }
@@ -140,20 +165,25 @@ fn write_query_path(buf: &mut String, path: &QueryPath) -> usize {
 #[must_use]
 pub fn serialize_attr_path(path: &AttrPath) -> String {
     let mut buffer = String::new();
-    write_attr_path(&mut buffer, path);
+    write_attr_path(&mut buffer, path, MemberSpelling::Addressed);
     buffer
 }
 
-/// Write an attribute path, including sub-attributes and compound value keys.
-fn write_attr_path(buf: &mut String, path: &AttrPath) {
+/// Write an attribute path, including sub-attributes and compound value keys
+/// in `spelling`.
+fn write_attr_path(buf: &mut String, path: &AttrPath, spelling: MemberSpelling) {
     write_ident(buf, path.attr.as_str());
     for sub in &path.sub_attrs {
         buf.push('.');
         write_ident(buf, sub.as_str());
     }
-    if !path.value_path.is_empty() {
+    let members = match spelling {
+        MemberSpelling::Addressed => &path.value_path,
+        MemberSpelling::Written => &path.value_path_compact,
+    };
+    if !members.is_empty() {
         buf.push('[');
-        for (i, vp) in path.value_path.iter().enumerate() {
+        for (i, vp) in members.iter().enumerate() {
             if i > 0 {
                 buf.push('.');
             }

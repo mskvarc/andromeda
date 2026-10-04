@@ -24,6 +24,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, context_source_properties::ContextSourceProperties, forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate, expression::Expr},
+    queried_entity::linked_entities::NoLinkedEntities,
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExprRaw,
 };
@@ -210,7 +211,8 @@ impl FederationService {
                 }
             }
         }
-        evaluate(filter, ContextSourceProperties::new(&expanded))
+        // Context Source Properties carry no Relationship a hop could cross.
+        evaluate(filter, ContextSourceProperties::new(&expanded), NoLinkedEntities)
     }
 
     /// Send each target the forwarded read it resolved to -- a GET or a POST

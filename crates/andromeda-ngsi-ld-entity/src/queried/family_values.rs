@@ -80,6 +80,23 @@ impl<'a> FamilyValues<'a, Fragment> {
     }
 }
 
+/// The strings a language map holds under the tag `language`, in order: the
+/// clause 4.9 target value of a `LanguageProperty` with a target language.
+///
+/// The tag is compared as written, the way the store compares the `@language`
+/// of an expanded `languageMap` entry; the `@none` entry carries no tag and so
+/// is no language's string, and a deleted language holds no string.
+pub fn language_strings<'a, 'l, M: QueriedMode>(
+    entries: &'a [LanguageEntry<M>],
+    language: &'l str,
+) -> impl Iterator<Item = ValueItem<'a, &'a ValueNode<M>>> + use<'a, 'l, M> {
+    entries
+        .iter()
+        .filter(move |entry| entry.language().is_some_and(|tag| tag.as_str() == language))
+        .filter_map(|entry| M::entry_text(entry.text()))
+        .map(|text| ValueItem::Literal(LiteralValue::Text(Cow::Borrowed(text))))
+}
+
 /// A `GeoProperty`'s value: a geometry carries no literal and no member a path
 /// can address, while the clause 4.7.2 string form is a String like any other.
 fn geometry_item<M: QueriedMode>(geometry: &GeoValue) -> ValueItem<'_, &ValueNode<M>> {

@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_query::{
     geo::query::GeoQuery,
     pattern::Pattern,
     projection::projected_members::{ProjectedMembers, ScopeRetention},
-    queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
+    queried_entity::{attribute_reading::QueriedEntity, linked_entities::NoLinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExpr,
 };
@@ -179,8 +179,11 @@ fn attributes_present<'a, E: SelectedEntity<'a>>(attrs: &[IriBuf], entity: E) ->
 }
 
 /// Clause 4.9 `q`.
+///
+/// A store compiles every `rel{…}` hop of a query's `q` itself, reading the
+/// linked entity where it lies, so a hop reaches nothing in memory here.
 fn value_filter_matches<'a, E: SelectedEntity<'a>>(q_expr: Option<&Expr>, entity: E) -> bool {
-    q_expr.is_none_or(|expr| evaluate(expr, entity))
+    q_expr.is_none_or(|expr| evaluate(expr, entity, NoLinkedEntities))
 }
 
 /// Clause 4.10 `georel`.

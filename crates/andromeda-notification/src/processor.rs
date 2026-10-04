@@ -19,16 +19,17 @@ use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
     endpoint::transport::{EndpointTransport, parse_endpoint_transport},
 };
-use andromeda_entity::{port::reader::EntityReader, query::EntityQueryService};
+use andromeda_entity::{error::EntityError, port::reader::EntityReader, query::EntityQueryService};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity_change::EntityLifecycle, notification::SysAttrsSnapshot};
+use andromeda_ngsi_ld_query::filter::expression::Expr;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::{
     cache::SubscriptionCache,
     change::SubscriptionChange,
-    change_filters::{ChangedStates, narrow_by_change_filters},
+    change_filters::{ChangedStates, HopResolution, narrow_by_change_filters},
     compiled::CompiledSubscription,
     error::SubscriptionError,
     store::SubscriptionStore,
@@ -37,7 +38,7 @@ use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use futures::{StreamExt, stream};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, warn};
 
 const NOTIFICATION_CONCURRENCY: usize = 20;
 
@@ -186,7 +187,17 @@ impl NotificationProcessor {
 
         // The entity is read once and shared by every notification the change produces.
         let notified = notified_state(self.entity_reader.as_ref(), &target, &event).await;
-        let matching = admitted_by_entity_filters(audience, &self.cache, &target, &event, candidates, notified.as_deref());
+        let states = changed_states(&event, notified.as_deref());
+        let Ok(linked) = self.linked_states_for(&target, &event, &candidates, states).await else {
+            // The hops cannot be decided without their linked entities; a
+            // queued delivery is retried, as for any read that may answer the
+            // next attempt.
+            return NotificationEvaluationOutcome {
+                retryable_failures: 1,
+                ..NotificationEvaluationOutcome::default()
+            };
+        };
+        let matching = admitted_by_entity_filters(audience, &self.cache, &target, &event, candidates, states, &linked);
         if matching.is_empty() {
             return NotificationEvaluationOutcome::default();
         }
@@ -256,6 +267,32 @@ impl NotificationProcessor {
         matching
     }
 
+    /// The entities the `rel{…}` hops of the candidates' filters cross into
+    /// (clause 4.9), read from the store as they stand now; none when no
+    /// candidate's filters hop.
+    ///
+    /// # Errors
+    ///
+    /// Returns the store's failure when a level of linked entities cannot be
+    /// read.
+    async fn linked_states_for(
+        &self,
+        target: &ContextTarget,
+        event: &ChangeEvent,
+        candidates: &[Arc<CompiledSubscription>],
+        states: ChangedStates<'_>,
+    ) -> Result<LinkedStates, EntityError> {
+        let filters: Vec<&Expr> = candidates.iter().flat_map(|candidate| candidate.hopping_filters()).collect();
+        if filters.is_empty() {
+            return Ok(LinkedStates::new());
+        }
+        let roots = states.filtered(&event.change);
+        self.entity_query
+            .linked_filter_states(target, &roots, &filters, Utc::now())
+            .await
+            .inspect_err(|error| warn!(entity = %event.entity_id, %error, "the entities a subscription filter links to could not be read"))
+    }
+
     /// The entity's clause 4.8 system attributes, resolved once when any
     /// notified subscription asks for them.
     ///
@@ -318,52 +355,63 @@ enum CommitFilters {
 
 /// The candidates the change's entity filters admit for `audience`: decided
 /// now for a live change, as the commit decided them for a queued delivery.
+///
+/// The commit cannot read the entities a `rel{…}` hop crosses into, so it
+/// records a subscription whose filters hop undecided; its queued delivery
+/// decides every filter of it here, on the states queued with it.
 fn admitted_by_entity_filters(
     audience: ChangeAudience<'_>,
     cache: &SubscriptionCache,
     target: &ContextTarget,
     event: &ChangeEvent,
     candidates: Vec<Arc<CompiledSubscription>>,
-    notified: Option<&EntityState>,
+    states: ChangedStates<'_>,
+    linked: &LinkedStates,
 ) -> Vec<Arc<CompiledSubscription>> {
+    let narrow = |candidates| {
+        narrow_by_change_filters(
+            cache,
+            target,
+            candidates,
+            &event.change,
+            states,
+            &event.entity_types,
+            HopResolution::Resolved(linked),
+        )
+    };
     match audience {
         ChangeAudience::Live
         | ChangeAudience::Queued {
             filters: CommitFilters::Undecided,
             ..
-        } => narrow_by_entity_filters(cache, target, event, candidates, notified),
+        } => narrow(candidates),
         ChangeAudience::Queued {
             filters: CommitFilters::Decided,
             ..
-        } => candidates,
+        } => {
+            let (hopping, decided): (Vec<_>, Vec<_>) = candidates.into_iter().partition(|candidate| candidate.filters_hop());
+            decided.into_iter().chain(narrow(hopping)).collect()
+        }
     }
 }
 
-/// Narrow the candidates to those whose `q`, `geoQ` and `scopeQ` the
-/// changed entity satisfies (clause 5.8.6), exactly as the durable path
-/// decides it at commit.
+/// The states the change's entity filters read (clause 5.8.6), exactly as the
+/// durable path reads them at commit.
 ///
 /// A deletion is evaluated against what the entity was, because what it is
 /// now is nothing; the state before the write is what the event carries as
 /// its previous attributes, or, failing that, the removed state. Every other
 /// change is evaluated against the entity the write left behind, and against
 /// the state before it as well when it removed instances.
-fn narrow_by_entity_filters(
-    cache: &SubscriptionCache,
-    target: &ContextTarget,
-    event: &ChangeEvent,
-    candidates: Vec<Arc<CompiledSubscription>>,
-    notified: Option<&EntityState>,
-) -> Vec<Arc<CompiledSubscription>> {
+fn changed_states<'a>(event: &'a ChangeEvent, notified: Option<&'a EntityState>) -> ChangedStates<'a> {
     let previous = event.previous_attributes.as_deref();
-    let states = match event.change.lifecycle {
+    match event.change.lifecycle {
         EntityLifecycle::Deleted => ChangedStates {
             current: None,
             previous: previous.or(event.entity_snapshot.as_deref()),
         },
         EntityLifecycle::Created | EntityLifecycle::Modified => ChangedStates { current: notified, previous },
-    };
-    narrow_by_change_filters(cache, target, candidates, &event.change, states, &event.entity_types)
+    }
 }
 
 #[cfg(test)]
@@ -373,6 +421,7 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
+        queried::linked_states::LinkedStates,
         reads::{
             attribute_change::{AttributeChange, AttributeChangeKind},
             attribute_instance_key::AttributeInstanceKey,
@@ -383,10 +432,16 @@ mod tests {
         notification::ChangeOrigin,
         subscription::{EntitySelector, SubscriptionStatus},
     };
-    use andromeda_ngsi_ld_query::{filter::parser, projection::compiled::Projection, scope::query::ScopeQuery};
+    use andromeda_ngsi_ld_query::{
+        filter::parser,
+        projection::compiled::Projection,
+        queried_entity::linked_entities::NoLinkedEntities,
+        scope::query::ScopeQuery,
+    };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_subscription::{
         cache::SubscriptionCache,
+        change_filters::ChangedStates,
         compiled::CompiledSubscription,
         geo_filter::SubscriptionGeoFilter,
         matching::{matches_entity_filters, matches_subscription},
@@ -649,6 +704,14 @@ mod tests {
         assert!(!matches_subscription(&sub, &event));
     }
 
+    /// The states a modification leaving `state` is filtered against.
+    const fn current(state: &EntityState) -> ChangedStates<'_> {
+        ChangedStates {
+            current: Some(state),
+            previous: None,
+        }
+    }
+
     /// A Vehicle with a `speed` of 80, a `location` and two scopes.
     fn entity_with_geo_and_scope() -> EntityState {
         let document = serde_json::json!([{
@@ -674,49 +737,49 @@ mod tests {
     fn matches_entity_filters_q_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(parser::parse("\"https://example.com/speed\">50").expect("valid q"));
-        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
+        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
     fn matches_entity_filters_q_no_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(parser::parse("\"https://example.com/speed\">100").expect("valid q"));
-        assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope()));
+        assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
     fn matches_entity_filters_scope_exact() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_scope_q = Some(ScopeQuery::parse("/Spain").expect("valid scope query"));
-        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
+        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
     fn matches_entity_filters_scope_no_match() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_scope_q = Some(ScopeQuery::parse("/France").expect("valid scope query"));
-        assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope()));
+        assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
     fn matches_entity_filters_scope_hash_wildcard() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
-        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
+        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
     fn matches_entity_filters_scope_and() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_scope_q = Some(ScopeQuery::parse("/Spain;/Madrid/Gardens").expect("valid scope query"));
-        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
+        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
     fn matches_entity_filters_scope_or() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_scope_q = Some(ScopeQuery::parse("/France,/Spain").expect("valid scope query"));
-        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
+        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
@@ -726,7 +789,7 @@ mod tests {
             Some(&serde_json::json!({"georel": "near;maxDistance==100000", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"})),
             "test",
         );
-        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
+        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
@@ -736,13 +799,13 @@ mod tests {
             Some(&serde_json::json!({"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"})),
             "test",
         );
-        assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope()));
+        assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
     fn matches_entity_filters_no_filters() {
         let sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope()));
+        assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     /// Design: the commit matched a durable delivery's `q`, `geoQ`, `scopeQ`
@@ -764,7 +827,15 @@ mod tests {
         );
 
         // clone: the same candidates are offered to both audiences
-        let live = admitted_by_entity_filters(ChangeAudience::Live, &cache, &ContextTarget::Live, &event, candidates.clone(), Some(&state));
+        let live = admitted_by_entity_filters(
+            ChangeAudience::Live,
+            &cache,
+            &ContextTarget::Live,
+            &event,
+            candidates.clone(),
+            current(&state),
+            &LinkedStates::new(),
+        );
         assert!(live.is_empty(), "a live change is filtered by the q it fails");
 
         let decided = ChangeAudience::Queued {
@@ -772,7 +843,15 @@ mod tests {
             filters: CommitFilters::Decided,
         };
         // clone: same
-        let queued = admitted_by_entity_filters(decided, &cache, &ContextTarget::Live, &event, candidates.clone(), Some(&state));
+        let queued = admitted_by_entity_filters(
+            decided,
+            &cache,
+            &ContextTarget::Live,
+            &event,
+            candidates.clone(),
+            current(&state),
+            &LinkedStates::new(),
+        );
         pretty_assertions::assert_eq!(queued.iter().map(|sub| &sub.id).collect::<Vec<_>>(), vec![&subscription_id]);
 
         // A commit that had no state to read admitted the change undecided, so
@@ -781,6 +860,91 @@ mod tests {
             subscription: &subscription_id,
             filters: CommitFilters::Undecided,
         };
-        assert!(admitted_by_entity_filters(undecided, &cache, &ContextTarget::Live, &event, candidates, Some(&state)).is_empty());
+        assert!(
+            admitted_by_entity_filters(
+                undecided,
+                &cache,
+                &ContextTarget::Live,
+                &event,
+                candidates,
+                current(&state),
+                &LinkedStates::new()
+            )
+            .is_empty()
+        );
+    }
+
+    /// The commit cannot read the entities a `rel{…}` hop crosses into, so it
+    /// recorded a hopping subscription undecided: its delivery decides the hop
+    /// on the linked entities it reads, even for a delivery whose other
+    /// filters the commit decided.
+    #[test]
+    fn a_queued_delivery_decided_at_commit_still_decides_a_hopping_filter() {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
+        sub.compiled_q = Some(parser::parse("\"https://example.com/isParkedIn\"{\"https://example.com/category\"==\"commercial\"}").expect("valid q"));
+        let subscription_id = sub.id.clone(); // clone: the audience names the subscription the candidates own
+        let candidates = vec![Arc::new(sub)];
+        let vehicle = EntityState::from_slice(
+            &serde_json::to_vec(&serde_json::json!([{
+                "@id": "urn:ngsi-ld:Vehicle:A1",
+                "@type": ["https://example.com/Vehicle"],
+                "https://example.com/isParkedIn": [{
+                    "@type": ["https://uri.etsi.org/ngsi-ld/Relationship"],
+                    "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Parking:1"}]
+                }]
+            }]))
+            .expect("JSON"),
+        )
+        .expect("a stored entity decodes");
+        let parking = |category: &str| {
+            let mut linked = LinkedStates::new();
+            linked.insert(Arc::new(
+                EntityState::from_slice(
+                    &serde_json::to_vec(&serde_json::json!([{
+                        "@id": "urn:ngsi-ld:Parking:1",
+                        "@type": ["https://example.com/Parking"],
+                        "https://example.com/category": [{
+                            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": category}]
+                        }]
+                    }]))
+                    .expect("JSON"),
+                )
+                .expect("a stored entity decodes"),
+            ));
+            linked
+        };
+        let event = make_event(
+            "urn:ngsi-ld:Vehicle:A1",
+            vec!["https://example.com/Vehicle"],
+            AttributeChangeKind::Updated,
+            vec!["https://example.com/isParkedIn"],
+        );
+        let decided = ChangeAudience::Queued {
+            subscription: &subscription_id,
+            filters: CommitFilters::Decided,
+        };
+        // clone: the same candidates are offered to both readings
+        let residential = admitted_by_entity_filters(
+            decided,
+            &cache,
+            &ContextTarget::Live,
+            &event,
+            candidates.clone(),
+            current(&vehicle),
+            &parking("residential"),
+        );
+        assert!(residential.is_empty(), "the hop is decided at delivery, and fails");
+        let commercial = admitted_by_entity_filters(
+            decided,
+            &cache,
+            &ContextTarget::Live,
+            &event,
+            candidates,
+            current(&vehicle),
+            &parking("commercial"),
+        );
+        pretty_assertions::assert_eq!(commercial.iter().map(|sub| &sub.id).collect::<Vec<_>>(), vec![&subscription_id]);
     }
 }

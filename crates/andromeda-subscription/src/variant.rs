@@ -14,6 +14,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::Subscription;
+use andromeda_ngsi_ld_query::filter::expression::Expr;
 use futures::future::BoxFuture;
 use serde_json::Value;
 
@@ -47,7 +48,7 @@ pub trait SubscriptionVariant: Send + Sync {
         &'life0 self,
         payload: &'life1 mut Value,
         context: &'life2 ContextSpec,
-    ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
+    ) -> BoxFuture<'async_trait, Result<Option<Expr>, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

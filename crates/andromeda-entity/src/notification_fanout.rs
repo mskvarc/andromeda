@@ -11,7 +11,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity_change::EntityChange, notification::ChangeOrigin};
-use andromeda_subscription::change_filters::{ChangedStates, narrow_by_change_filters};
+use andromeda_subscription::change_filters::{ChangedStates, HopResolution, narrow_by_change_filters};
 use chrono::Utc;
 use std::sync::Arc;
 use tracing::debug;
@@ -134,7 +134,18 @@ impl NotificationWriteConfig {
             current: entity_snapshot.as_deref(),
             previous: previous_snapshot.map(|previous| &**previous),
         };
-        let matching = narrow_by_change_filters(subscription_cache, target, outcome.matched, change, states, entity_types);
+        // The match is recorded inside the write's transaction, where the
+        // entities a `rel{…}` hop crosses into cannot be read: a subscription
+        // whose filters hop is recorded undecided, and its delivery decides it.
+        let matching = narrow_by_change_filters(
+            subscription_cache,
+            target,
+            outcome.matched,
+            change,
+            states,
+            entity_types,
+            HopResolution::Deferred,
+        );
         matching
             .into_iter()
             .map(|sub| {

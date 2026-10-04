@@ -115,6 +115,12 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
         self.held().map(ValueItem::Json).into_iter()
     }
 
+    /// Clause 5.2.9 Context Source Properties are Properties, never a
+    /// `LanguageProperty`, so no target language selects a string of theirs.
+    fn language_values(self, _language: &str) -> impl Iterator<Item = ValueItem<'a, NoStructuredValue>> {
+        empty()
+    }
+
     fn sub_attribute(self, name: &AttributeName) -> Option<PropertyValue<'a>> {
         self.member(name.as_str())
     }
@@ -127,14 +133,17 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
 #[cfg(test)]
 mod tests {
     use crate::registration::context_source_properties::ContextSourceProperties;
-    use andromeda_ngsi_ld_query::filter::{eval::evaluate, parser::parse};
+    use andromeda_ngsi_ld_query::{
+        filter::{eval::evaluate, parser::parse},
+        queried_entity::linked_entities::NoLinkedEntities,
+    };
     use serde_json::{Value, json};
 
     /// Whether the filter holds over the properties, read through the entity
     /// traits.
     fn holds(q: &str, properties: &Value) -> bool {
         let expr = parse(q).expect("the filter parses");
-        ContextSourceProperties::of(properties).is_some_and(|properties| evaluate(&expr, properties))
+        ContextSourceProperties::of(properties).is_some_and(|properties| evaluate(&expr, properties, NoLinkedEntities))
     }
 
     #[test]

@@ -2,14 +2,16 @@
 //! document reading answers over the stored document the state was decoded
 //! from (clauses 4.9, 4.10, 4.19).
 
-use crate::entity_state::EntityState;
+use crate::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate, parser::parse},
     geo::query::GeoQuery,
+    queried_entity::linked_entities::NoLinkedEntities,
     scope::query::ScopeQuery,
 };
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 const PROPERTY: &str = "https://uri.etsi.org/ngsi-ld/Property";
 const RELATIONSHIP: &str = "https://uri.etsi.org/ngsi-ld/Relationship";
@@ -168,6 +170,14 @@ fn rich_cases() -> Vec<(&'static str, bool)> {
         ("\"https://example.com/description\"!=\"Tuer\"", false),
         ("\"https://example.com/description\"~=\"Do.*\"", true),
         ("\"https://example.com/description\"!~=\"rot.*\"", true),
+        ("\"https://example.com/description\"[en]==\"Door\"", true),
+        ("\"https://example.com/description\"[en]==\"Tuer\"", false),
+        ("\"https://example.com/description\"[de]==\"Tuer\"", true),
+        ("\"https://example.com/description\"[en]!=\"Tuer\"", true),
+        ("\"https://example.com/description\"[fr]!=\"Door\"", false),
+        ("\"https://example.com/description\"[de]~=\"Tu.*\"", true),
+        ("\"https://example.com/description\"[en]", true),
+        ("\"https://example.com/description\"[fr]", false),
         ("\"https://example.com/tags\"==3", true),
         ("\"https://example.com/tags\"!=3", false),
         ("\"https://example.com/colors\"==\"blue\"", true),
@@ -233,7 +243,7 @@ fn the_state_reading_answers_every_query_term_as_clause_4_9_does() {
         let entity = state(&fixture());
         for (q, expected) in terms {
             let expr = parse(q).expect("the Query Term parses");
-            pretty_assertions::assert_eq!(evaluate(&expr, &entity), expected, "{q}");
+            pretty_assertions::assert_eq!(evaluate(&expr, &entity, NoLinkedEntities), expected, "{q}");
         }
     }
 }
@@ -254,7 +264,7 @@ fn a_bare_path_holds_for_a_structured_value_and_a_geometry() {
     let entity = state(&document);
     for q in ["\"https://example.com/address\"", "\"https://example.com/site\""] {
         let expr = parse(q).expect("the Query Term parses");
-        assert!(evaluate(&expr, &entity), "{q}");
+        assert!(evaluate(&expr, &entity, NoLinkedEntities), "{q}");
     }
 }
 
@@ -292,4 +302,26 @@ fn a_scope_query_reads_the_scopes_the_state_holds() {
     assert!(ScopeQuery::parse("/Berlin").expect("a scope query").matches_entity(&scoped));
     assert!(!ScopeQuery::parse("/Paris").expect("a scope query").matches_entity(&scoped));
     assert!(!ScopeQuery::parse("/Madrid/#").expect("a scope query").matches_entity(&state(&vehicle())));
+}
+
+/// Clause 4.9 EXAMPLE 13: a hop reads the stored state of the entity the
+/// Relationship's object names.
+#[test]
+fn a_hop_reads_the_linked_state() {
+    let vehicle = state(&vehicle());
+    let parking = |category: &str| {
+        state(&json!([{
+            "@id": "urn:ngsi-ld:OffStreetParking:Downtown1",
+            "@type": ["https://example.com/OffStreetParking"],
+            "https://example.com/category": [{"@type": [PROPERTY], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": category}]}]
+        }]))
+    };
+    let hop = parse("\"https://example.com/isParked\"{\"https://example.com/category\"==\"commercial\"}").expect("the Query Term parses");
+    let mut commercial = LinkedStates::new();
+    commercial.insert(Arc::new(parking("commercial")));
+    let mut residential = LinkedStates::new();
+    residential.insert(Arc::new(parking("residential")));
+    assert!(evaluate(&hop, &vehicle, &commercial));
+    assert!(!evaluate(&hop, &vehicle, &residential));
+    assert!(!evaluate(&hop, &vehicle, NoLinkedEntities));
 }
