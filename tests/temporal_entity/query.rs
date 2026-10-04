@@ -34,6 +34,7 @@ use crate::{
     vehicle_temporal_twenty_instances,
     vehicle_temporal_with_location,
 };
+use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
@@ -317,6 +318,48 @@ async fn temporal_query_q_filter_success() {
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "should return entities matching q filter");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.7.4.4 checks a temporal `q` against the instances in the window,
+/// and clause 4.9 reads a `LanguageProperty` instance through its
+/// `languageMap`: with a target language only that language's string is the
+/// target value, and with none every string is, under the ordering and pattern
+/// operators as under equality.
+#[tokio::test]
+async fn temporal_query_q_language_strings_read_the_instances() {
+    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
+    let c = client();
+    let door = scope.id("Building:query_r65_door");
+    let gate = scope.id("Building:query_r65_gate");
+    for (id, names) in [(&door, json!({"en": "Door", "de": "Tuer"})), (&gate, json!({"en": "Gate", "de": "Dach"}))] {
+        let entity = json!({
+            "id": id,
+            "type": "Building",
+            "label": [{"type": "LanguageProperty", "languageMap": names, "observedAt": "2020-08-01T12:03:00Z"}],
+            "@context": [COMPOUND_CONTEXT]
+        });
+        assert_eq!(create_temporal_entity(&c, &entity).await, StatusCode::CREATED);
+    }
+
+    for (q, expected) in [
+        ("label[en]~=\"^D\"", &door),
+        ("label[de]~=\"^D\"", &gate),
+        ("label[en]>\"E\"", &gate),
+        ("label[en]==\"C\"..\"E\"", &door),
+        ("label~=\"^Tu\"", &door),
+    ] {
+        let query = format!("type=Building&q={}&timerel=after&timeAt=2020-07-01T00:00:00Z", urlencoding::encode(q));
+        let (status, body, _) = query_temporal_entities(&c, &scope, &query, Some(COMPOUND_CONTEXT)).await;
+        assert_eq!(status, StatusCode::OK, "{q}: {body}");
+        let ids: Vec<&str> = body
+            .as_array()
+            .expect("response should be array")
+            .iter()
+            .filter_map(|entity| entity["id"].as_str())
+            .collect();
+        assert_eq!(ids, vec![expected.as_str()], "{q}");
+    }
     scope.finish().await.expect("cleanup failed");
 }
 

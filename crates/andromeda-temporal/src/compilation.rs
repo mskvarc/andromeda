@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_query::{
         expansion::{apply_expand_values, expand_attr_path, expand_attribute_names, expand_q_expr},
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
+        trailing_members::TrailingMembers,
     },
     geo::{compile as geo_compile, query::GeoQuery},
     projection::{
@@ -215,7 +216,7 @@ async fn compile_grouping(
     for term in grouping.0 {
         let key = match term.key {
             GroupKey::Member(member) => GroupKey::Member(member),
-            GroupKey::Path(path) => GroupKey::Path(expand_attr_path(path, &json_keys, expander).await?),
+            GroupKey::Path(path) => GroupKey::Path(expand_attr_path(path, TrailingMembers::Terms(&json_keys), expander).await?),
         };
         expanded_terms.push(GroupingTerm { key, bucket: term.bucket });
     }

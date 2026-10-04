@@ -77,6 +77,11 @@ struct JsonbPathExists;
 #[iden = "jsonb_path_query_first"]
 struct JsonbPathQueryFirst;
 
+/// The `jsonb_path_query_array(target, jsonpath)` function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "jsonb_path_query_array"]
+struct JsonbPathQueryArray;
+
 /// JSONB: `col ? key` - tests if JSONB object contains key.
 #[must_use]
 pub fn jsonb_key_exists(col: SimpleExpr, key: SimpleExpr) -> SimpleExpr {
@@ -202,6 +207,16 @@ pub fn jsonb_path_query_first(target: SimpleExpr, jsonpath: &str) -> SimpleExpr 
     Func::cust(JsonbPathQueryFirst).args([target, text_literal(jsonpath)]).into()
 }
 
+/// JSONB: `jsonb_path_query_array(target, 'jsonpath')` - every value in
+/// `target` the `jsonpath` matches, gathered into one JSONB array, which is
+/// empty when it matches nothing.
+///
+/// The jsonpath is inlined for the same reason [`jsonb_path_exists`] inlines it.
+#[must_use]
+pub fn jsonb_path_query_array(target: SimpleExpr, jsonpath: &str) -> SimpleExpr {
+    Func::cust(JsonbPathQueryArray).args([target, text_literal(jsonpath)]).into()
+}
+
 /// Escape one jsonpath object key, which the path itself double-quotes.
 #[must_use]
 pub fn escape_jsonpath_key(key: &str) -> String {
@@ -259,6 +274,15 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("jsonb_path_exists("), "{sql}");
         assert!(sql.contains("'$[0].\"o''brien\"'"), "the jsonpath is inlined and its apostrophe doubled: {sql}");
+    }
+
+    #[test]
+    fn jsonb_path_query_array_inlines_the_jsonpath() {
+        let sql = Query::select()
+            .expr(jsonb_path_query_array(Expr::col(Alias::new("payload")), "$[0].\"name\"[*]"))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains("jsonb_path_query_array(\"payload\", '$[0].\"name\"[*]')"), "{sql}");
     }
 
     #[test]

@@ -22,6 +22,7 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_postgresql_schema::{current::CurrentAttributeValues, temporal::AttributeHistory};
 use andromeda_postgresql_seaquery::literal::false_literal;
 use sea_query::{Condition, DynIden, SimpleExpr};
 
@@ -51,6 +52,15 @@ impl InstanceScan<'_> {
         match self {
             InstanceScan::Current(_) => projection_column(column.in_projection()),
             InstanceScan::History(_) => HistoryAliases::top_level().instance_column(column.in_history()),
+        }
+    }
+
+    /// The attribute family code of the instance row the scan's probe reads,
+    /// which both relations record per instance.
+    pub(crate) fn attribute_family(&self) -> SimpleExpr {
+        match self {
+            InstanceScan::Current(_) => projection_column(CurrentAttributeValues::AttributeKind),
+            InstanceScan::History(_) => HistoryAliases::top_level().instance_column(AttributeHistory::AttributeKind),
         }
     }
 
@@ -162,6 +172,24 @@ mod tests {
             .to_string(PostgresQueryBuilder);
         assert!(current.contains(r#""cav"."value_long_text""#), "{current}");
         assert!(past.contains(r#""qh"."value_string""#), "{past}");
+    }
+
+    /// Both relations record the family of every instance, which is what
+    /// decides whether a row's `value_object` is a `languageMap`.
+    #[test]
+    fn the_attribute_family_resolves_in_the_relation_the_scan_reads() {
+        let rows = EntityRowRefs::unaliased(None);
+        let window = history();
+        let current = Query::select()
+            .expr(InstanceScan::Current(&rows).attribute_family())
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        let past = Query::select()
+            .expr(InstanceScan::History(&window).attribute_family())
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert!(current.contains(r#""cav"."attribute_kind""#), "{current}");
+        assert!(past.contains(r#""qh"."attribute_kind""#), "{past}");
     }
 
     #[test]

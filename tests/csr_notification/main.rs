@@ -1014,3 +1014,42 @@ async fn csr_notification_expires_at_in_future_results_in_active_status_before_d
     pretty_assertions::assert_eq!(body["status"], "active");
     scope.finish().await.expect("cleanup failed");
 }
+
+/// Clause 4.9: a subscription's `csf` targets the Context Source Properties of
+/// a registration (clause 5.11.2.4), and a trailing path addresses the raw JSON
+/// a registrant wrote by its literal keys -- so `coverage[region]` matches the
+/// `region` member, and the filter reads back as it was written.
+#[tokio::test]
+async fn csr_notification_csf_reads_a_compound_context_source_property_by_its_written_key() {
+    let scope = TestEnvironment::from_suite("csr_notification").await.expect("isolated test environment");
+    let http_client = client();
+    let receiver = NotificationReceiver::start().await;
+
+    let subscription_id = scope.id("Subscription:r67-csf");
+    let mut subscription = base_subscription_payload(&scope, &subscription_id, &receiver.endpoint_url);
+    subscription["csf"] = json!("coverage[region]==\"north\"");
+    let (subscription_status, _) = create_csource_subscription(&http_client, &subscription).await;
+    pretty_assertions::assert_eq!(subscription_status, StatusCode::CREATED);
+    let (retrieved_status, retrieved) = retrieve_csource_subscription(&http_client, &subscription_id, None).await;
+    pretty_assertions::assert_eq!(retrieved_status, StatusCode::OK);
+    pretty_assertions::assert_eq!(retrieved["csf"], json!("coverage[region]==\"north\""));
+
+    let building_type = scope.entity_type("Building");
+    let south = scope.id("Registration:r67-south");
+    let mut south_registration = base_registration_for_type(&south, &building_type);
+    south_registration["coverage"] = json!({"type": "Property", "value": {"region": "south"}});
+    let (south_status, _) = create_registration(&http_client, &south_registration).await;
+    pretty_assertions::assert_eq!(south_status, StatusCode::CREATED);
+    receiver.wait_for_no_notification(Duration::from_secs(2)).await;
+
+    let north = scope.id("Registration:r67-north");
+    let mut north_registration = base_registration_for_type(&north, &building_type);
+    north_registration["coverage"] = json!({"type": "Property", "value": {"region": "north"}});
+    let (north_status, _) = create_registration(&http_client, &north_registration).await;
+    pretty_assertions::assert_eq!(north_status, StatusCode::CREATED);
+    let notification = receiver.wait_for_notification(Duration::from_secs(5)).await;
+    pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
+    pretty_assertions::assert_eq!(notification.body["triggerReason"], "newlyMatching");
+    pretty_assertions::assert_eq!(notification.body["data"][0]["id"], json!(north));
+    scope.finish().await.expect("cleanup failed");
+}

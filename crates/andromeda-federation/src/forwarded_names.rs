@@ -23,7 +23,13 @@ use andromeda_ngsi_ld_lexicon::{
     reference::{NgsiLdReference, NgsiLdReferenceError},
 };
 use andromeda_ngsi_ld_query::{
-    filter::{compaction::compact_q_expr, expansion::expand_q_expr, expression::Expr, json_key_attributes::JsonKeyAttributes, parser},
+    filter::{
+        compaction::{compact_csf_expr, compact_q_expr},
+        expansion::{expand_csf_expr, expand_q_expr},
+        expression::Expr,
+        json_key_attributes::JsonKeyAttributes,
+        parser,
+    },
     projection::grammar::RawProjectionTerm,
     type_selection::grammar::TypeExprRaw,
 };
@@ -204,6 +210,26 @@ impl<'a> ForwardedNames<'a> {
                 let inbound = ContextualExpander::new(self.engine, self.resolver.prepared());
                 let expanded = expand_q_expr(expression.clone(), &literal_keys, &inbound).await?; // clone: the walker consumes the expression the client's parameters keep
                 Ok(compact_q_expr(expanded, &self.names).await)
+            }
+        }
+    }
+
+    /// A client's clause 4.9 Context Source filter with every property and
+    /// sub-property spelled in the forwarding context, and its compound-value
+    /// members as the client wrote them: they are the raw JSON keys of a
+    /// Context Source Property, which no `@context` rewrites.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::Query`] when a name in the filter does not
+    /// expand against the inbound context.
+    pub(crate) async fn csf(&self, expression: &Expr) -> Result<Expr, FederationError> {
+        match self.rewording {
+            Rewording::AsInbound => Ok(expression.clone()), // clone: the forwarded query owns the filter it writes
+            Rewording::Reword => {
+                let inbound = ContextualExpander::new(self.engine, self.resolver.prepared());
+                let expanded = expand_csf_expr(expression.clone(), &inbound).await?; // clone: the walker consumes the expression the client's parameters keep
+                Ok(compact_csf_expr(expanded, &self.names).await)
             }
         }
     }
@@ -475,6 +501,23 @@ mod tests {
             pairs,
             vec![("csf".to_owned(), "velocity==1".to_owned()), ("orderBy".to_owned(), "speed".to_owned())]
         );
+    }
+
+    /// Clause 4.9: a context source filter's trailing path addresses the raw
+    /// JSON keys of a Context Source Property, so the member travels as the
+    /// client wrote it even where the contexts would reword it as a term.
+    #[tokio::test]
+    async fn a_source_filter_keeps_its_compound_value_members_as_written() {
+        let engine = engine();
+        let inbound = inbound();
+        let naming = configured();
+        let resolver = TermResolver::new(&engine, &inbound);
+        let names = ForwardedNames::prepare(&engine, &resolver, &naming, Rewording::Reword)
+            .await
+            .expect("the forwarding context processes");
+        let reworded = names.query_string("csf=speed%5Broad%5D%3D%3D%22Main%22").await.expect("rewords");
+        let pairs = form_urlencoded::parse(reworded.as_bytes()).into_owned().collect::<Vec<_>>();
+        pretty_assertions::assert_eq!(pairs, vec![("csf".to_owned(), "velocity[road]==\"Main\"".to_owned())]);
     }
 
     #[tokio::test]

@@ -189,3 +189,35 @@ async fn notification_periodic_q_target_language() {
     pretty_assertions::assert_eq!(carried_ids(&notification.body), vec![door.as_str()]);
     scope.finish().await.expect("cleanup failed");
 }
+
+/// Clause 4.9 `Range` over a language holding several strings: a match is
+/// found as "a single element from the array of values", so one of the two
+/// English names inside the interval is enough.
+#[tokio::test]
+async fn notification_q_target_language_range_reads_any_one_string() {
+    let http_client = client();
+    let scope = TestEnvironment::from_suite("notification").await.expect("isolated test environment");
+    let receiver = NotificationReceiver::start().await;
+    let subscription_id = scope.id("Subscription:r65_01");
+    subscribe(
+        &http_client,
+        &scope,
+        &receiver,
+        filtered(&subscription_id, &receiver, "R65DoorE", "name[en]==\"C\"..\"E\""),
+    )
+    .await;
+    receiver.clear_notifications().await;
+
+    let hall = scope.id("R65DoorE:hall");
+    let door = scope.id("R65DoorE:door");
+    notified_only_of(
+        &http_client,
+        &receiver,
+        &subscription_id,
+        (&hall, json!({"en": ["Gate", "Hall"], "de": "Diele"})),
+        (&door, json!({"en": ["Gate", "Door"]})),
+        "R65DoorE",
+    )
+    .await;
+    scope.finish().await.expect("cleanup failed");
+}

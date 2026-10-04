@@ -17,7 +17,7 @@ use andromeda_jsonld::{
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     filter::{
-        expansion::{apply_expand_values, expand_attribute_names, expand_q_expr},
+        expansion::{apply_expand_values, expand_attribute_names, expand_csf_expr, expand_q_expr},
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
         parser,
@@ -207,13 +207,14 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
         expanded_q = Some(expanded);
     }
 
-    // Expand the context source filter's property terms the same way: a
-    // registration's Context Source Properties are stored expanded (clause
+    // Expand the context source filter's property terms: a registration's
+    // Context Source Properties are stored under their expanded names (clause
     // 5.5.7), so the filter matched against them (clauses 5.8.1.4 and
-    // 5.11.2.4) has to name them by IRI too.
+    // 5.11.2.4) has to name them by IRI too. Their values are raw JSON, so the
+    // compound-value members stay as written (clause 4.9).
     if let Some(csf_str) = payload.get("csf").and_then(|v| v.as_str()).map(String::from)
         && let Ok(expr) = parser::parse(&csf_str)
-        && let Ok(expanded) = expand_q_expr(expr, &JsonKeyAttributes::default(), &term_expander).await
+        && let Ok(expanded) = expand_csf_expr(expr, &term_expander).await
     {
         let expanded_str = serialize::serialize(&expanded);
         if let Some(obj) = payload.as_object_mut() {
@@ -408,6 +409,24 @@ mod tests {
         pretty_assertions::assert_eq!(
             serialize_written_members(&expanded),
             "\"https://uri.etsi.org/ngsi-ld/default-context/name\"[en]==\"Door\""
+        );
+    }
+
+    /// Clause 4.9: a `csf` targets Context Source Properties, whose values are
+    /// the raw JSON a registrant wrote, so the stored filter names the property
+    /// by IRI and keeps the member as the literal key it addresses.
+    #[tokio::test]
+    async fn the_expanded_csf_keeps_its_trailing_members_verbatim() {
+        let engine = offline_engine();
+        let mut payload = json!({"csf": "coverage[region]==\"north\""});
+
+        expand_common_subscription_terms(&engine, &mut payload, &ContextSpec::none())
+            .await
+            .expect("expands");
+
+        pretty_assertions::assert_eq!(
+            payload["csf"],
+            json!("\"https://uri.etsi.org/ngsi-ld/default-context/coverage\"[region]==\"north\"")
         );
     }
 

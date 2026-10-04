@@ -4,11 +4,13 @@
 //! path, and the target value as whatever that element carries. A path may
 //! stop at the attribute itself, descend a `.`-separated sub-attribute chain,
 //! or carry one trailing `[…]` group. Only the first of those is answered by
-//! the `current_attribute_values` projection alone, and only the third can
-//! name a `LanguageProperty`'s target language — so the routing decision is
-//! this classification, made once, rather than a boolean re-derived at every
-//! call site.
+//! the `current_attribute_values` projection alone, and a target element that
+//! is a `LanguageProperty` -- at the top level or below a sub-attribute -- may
+//! be read with or without a target language. The routing decision is this
+//! classification, made once, rather than a boolean re-derived at every call
+//! site.
 
+use crate::q_predicate::language_map::LanguageSelection;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::path::AttrPath;
 
@@ -28,9 +30,18 @@ pub enum LocalTarget<'a> {
     /// text — a language tag and a JSON member name are both bare names — so
     /// both readings are compiled and disjoined.
     TrailingMember(&'a AttributeName),
-    /// A sub-attribute, or a compound member nested below another, which lives
-    /// only inside the JSONB payload.
+    /// A compound member nested below another, which lives only inside the
+    /// JSONB payload and has no language reading.
     PayloadMember,
+    /// A sub-attribute, which lives only inside the JSONB payload.
+    ///
+    /// The sub-attribute is the target element, and when it is a
+    /// `LanguageProperty` clause 4.9 reads it through its `languageMap` exactly
+    /// as it reads a top-level one: with no trailing group (or `[*]`) every
+    /// string is a candidate, and a one-member group is the target language.
+    /// `None` when the trailing group is a nested compound path, which has no
+    /// such reading.
+    SubAttribute(Option<LanguageSelection<'a>>),
 }
 
 /// Classify what a local attribute path addresses.
@@ -41,23 +52,30 @@ pub enum LocalTarget<'a> {
 /// expands to an IRI.
 #[must_use]
 pub const fn local_target(path: &AttrPath) -> LocalTarget<'_> {
-    if !path.sub_attrs.is_empty() {
-        return LocalTarget::PayloadMember;
-    }
-    if path.value_path.is_empty() {
-        // `[*]` carries no member at all: it suppresses language selection
-        // rather than naming one, which is the same target as a bare path.
-        return LocalTarget::OwnValue;
-    }
-    match path.value_path_compact.as_slice() {
-        [member] => LocalTarget::TrailingMember(member),
-        [] | [_, _, ..] => LocalTarget::PayloadMember,
+    let at_top_level = path.sub_attrs.is_empty();
+    // `[*]` carries no member at all: it suppresses language selection rather
+    // than naming one, which is the same target as a bare path.
+    let trailing = if path.value_path.is_empty() {
+        [].as_slice()
+    } else {
+        path.value_path_compact.as_slice()
+    };
+    match (at_top_level, trailing) {
+        (true, []) => LocalTarget::OwnValue,
+        (true, [member]) => LocalTarget::TrailingMember(member),
+        (true, [_, _, ..]) => LocalTarget::PayloadMember,
+        (false, []) => LocalTarget::SubAttribute(Some(LanguageSelection::AnyLanguage)),
+        (false, [member]) => LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(member))),
+        (false, [_, _, ..]) => LocalTarget::SubAttribute(None),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::q_predicate::local_target::{LocalTarget, local_target};
+    use crate::q_predicate::{
+        language_map::LanguageSelection,
+        local_target::{LocalTarget, local_target},
+    };
     use andromeda_ngsi_ld_query::filter::{
         expression::Expr,
         parser::parse,
@@ -95,17 +113,44 @@ mod tests {
         let path = path_of("\"https://example.com/color\"[en]==\"red\"");
         match local_target(&path) {
             LocalTarget::TrailingMember(member) => pretty_assertions::assert_eq!(member.as_str(), "en"),
-            other @ (LocalTarget::OwnValue | LocalTarget::PayloadMember) => panic!("expected a trailing member, got {other:?}"),
+            other @ (LocalTarget::OwnValue | LocalTarget::PayloadMember | LocalTarget::SubAttribute(_)) => {
+                panic!("expected a trailing member, got {other:?}")
+            }
         }
     }
 
+    /// Clause 4.9: the target element is the last name of the dotted path, so
+    /// a sub-attribute that is a `LanguageProperty` reads every string with no
+    /// trailing group.
     #[test]
-    fn a_sub_attribute_path_is_answered_by_the_payload_alone() {
+    fn a_sub_attribute_path_reads_every_language_of_the_sub_attribute() {
         assert_eq!(
             local_target(&path_of(
                 "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2024-01-01T00:00:00Z\""
             )),
-            LocalTarget::PayloadMember
+            LocalTarget::SubAttribute(Some(LanguageSelection::AnyLanguage))
+        );
+    }
+
+    /// One trailing member below a sub-attribute is that sub-attribute's
+    /// target language, in the spelling the client wrote.
+    #[test]
+    fn one_member_below_a_sub_attribute_is_its_target_language() {
+        let path = path_of("\"https://example.com/door\".\"https://example.com/label\"[en]==\"Front\"");
+        match local_target(&path) {
+            LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(member))) => pretty_assertions::assert_eq!(member.as_str(), "en"),
+            other @ (LocalTarget::OwnValue
+            | LocalTarget::TrailingMember(_)
+            | LocalTarget::PayloadMember
+            | LocalTarget::SubAttribute(None | Some(LanguageSelection::AnyLanguage))) => panic!("expected a sub-attribute target language, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_nested_compound_path_below_a_sub_attribute_has_no_language_reading() {
+        assert_eq!(
+            local_target(&path_of("\"https://example.com/sensor\".\"https://example.com/rawdata\"[a.b]==40")),
+            LocalTarget::SubAttribute(None)
         );
     }
 

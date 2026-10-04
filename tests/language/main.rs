@@ -4,6 +4,8 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
+mod q_language_strings;
+
 use andromeda_test_client::{header::jsonld_link_header, test_client::TestClient};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;

@@ -49,7 +49,7 @@ impl ForwardedQuery {
     /// expand against the request context.
     pub(super) async fn push_csf(&mut self, csf: Option<&Expr>, names: &ForwardedNames<'_>) -> Result<(), FederationError> {
         if let Some(csf) = csf {
-            self.push(ForwardedParameter::Csf, names.q(csf, None).await?.to_string());
+            self.push(ForwardedParameter::Csf, names.csf(csf).await?.to_string());
         }
         Ok(())
     }

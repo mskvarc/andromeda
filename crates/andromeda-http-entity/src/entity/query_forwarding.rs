@@ -8,12 +8,10 @@ use crate::{
         CsrModeFilter,
         EntityResultExt,
         ForwardQueryRequest,
-        JsonKeyAttributes,
         ProblemResponse,
         SourceContribution,
         collect_warnings,
         contributions_of,
-        expand_q_expr,
     },
     error::public_error,
 };
@@ -34,7 +32,7 @@ use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_query::filter::expression::Expr;
+use andromeda_ngsi_ld_query::filter::{expansion::expand_csf_expr, expression::Expr};
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::http::Uri as HttpUri;
 use tracing::warn;
@@ -160,17 +158,13 @@ impl QueryForwarding<'_> {
         //
         // No `jsonKeys` declaration applies: Table 5.2.12-1 scopes that member
         // to Entity attribute names, while `csf` addresses the Context Source
-        // Properties of a registration (clause 4.10), which no entity-level
-        // declaration can name.
+        // Properties of a registration (clause 4.9), whose values are raw JSON
+        // addressed by their literal keys.
         let csf_expr: Option<Expr> = match &self.query.csf {
             Some(expr) => {
                 let prepared_context = self.engine.prepare_term_context(self.context);
                 let csf_expander = ContextualExpander::new(self.engine, &prepared_context);
-                Some(
-                    expand_q_expr(expr.clone(), &JsonKeyAttributes::default(), &csf_expander)
-                        .await
-                        .with_entity_instance(self.uri)?,
-                ) // clone: the raw filter stays in the query for forwarding
+                Some(expand_csf_expr(expr.clone(), &csf_expander).await.with_entity_instance(self.uri)?) // clone: the raw filter stays in the query for forwarding
             }
             None => None,
         };

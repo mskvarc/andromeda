@@ -39,7 +39,6 @@ use andromeda_ngsi_ld_lexicon::{
     time_rel::TimeRel,
 };
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
-use andromeda_ngsi_ld_query::filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes};
 use andromeda_ngsi_ld_render::{
     response::ResponsePayload,
     temporal::simplify::{TemporalSimplifyPayload, TemporalSimplifyRenderer},

@@ -7,11 +7,9 @@ use crate::temporal::{
     CsrModeFilter,
     ForwardTemporalQueryRequest,
     ForwardingOperation,
-    JsonKeyAttributes,
     ProblemResponse,
     ResultInstanceExt,
     TemporalQueryParameters,
-    expand_q_expr,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::reuse::EntityMapUse;
@@ -32,6 +30,7 @@ use andromeda_http_response::{
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_ngsi_ld_query::filter::expansion::expand_csf_expr;
 use axum::http::{HeaderMap, Uri};
 use tracing::warn;
 
@@ -193,16 +192,13 @@ pub(crate) async fn forward_temporal_history(
     }
     // No `jsonKeys` declaration applies to `csf`: Table 5.2.12-1 scopes that
     // member to Entity attribute names, while `csf` addresses the Context
-    // Source Properties of a registration (clause 4.10).
+    // Source Properties of a registration (clause 4.9), whose values are raw
+    // JSON addressed by their literal keys.
     let csf_expr = match &params.csf {
         Some(expr) => {
             let prepared_context = engine.prepare_term_context(context);
             let expander = ContextualExpander::new(engine, &prepared_context);
-            Some(
-                expand_q_expr(expr.clone(), &JsonKeyAttributes::default(), &expander)
-                    .await
-                    .with_instance(instance)?,
-            ) // clone: the raw filter stays in the query for forwarding
+            Some(expand_csf_expr(expr.clone(), &expander).await.with_instance(instance)?) // clone: the raw filter stays in the query for forwarding
         }
         None => None,
     };

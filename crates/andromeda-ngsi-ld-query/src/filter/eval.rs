@@ -153,7 +153,15 @@ fn eval_equality(target: &ResolvedTarget<'_>, membership: SetMembership, rhs: &C
             if is_relationship(target) {
                 return false;
             }
-            let within = compare(&target.value, CmpOp::GreaterEq, min) && compare(&target.value, CmpOp::LessEq, max);
+            let in_range = |value: &TargetValue<'_>| compare(value, CmpOp::GreaterEq, min) && compare(value, CmpOp::LessEq, max);
+            // Where clause 4.9 makes any one value of a language map the target
+            // value, the range holds when one of them lies in it, and its
+            // complement when none does -- the reading `unequal` gives a
+            // language map: "No matching value is found".
+            let within = match any_one_value(target) {
+                Some(values) => values.iter().any(in_range),
+                None => in_range(&target.value),
+            };
             match membership {
                 SetMembership::Within => within,
                 SetMembership::Outside => !within,
@@ -1089,6 +1097,20 @@ mod tests {
         assert!(!door_holds("\"https://example.com/tags\"[en]!=\"cat\""));
         assert!(door_holds("\"https://example.com/tags\"[en]!=\"dog\""));
         assert!(!door_holds("\"https://example.com/tags\"[en]==\"chat\""));
+    }
+
+    /// Clause 4.9's range operand over a language holding several strings: any
+    /// one string inside the interval matches `==`, and `!=` is its complement,
+    /// "No matching value is found" -- with or without a target language.
+    #[test]
+    fn a_range_reads_any_one_string_of_a_language_map() {
+        assert!(door_holds("\"https://example.com/tags\"[en]==\"c\"..\"d\""));
+        assert!(!door_holds("\"https://example.com/tags\"[en]==\"x\"..\"z\""));
+        assert!(!door_holds("\"https://example.com/tags\"[en]!=\"c\"..\"d\""));
+        assert!(door_holds("\"https://example.com/tags\"[en]!=\"x\"..\"z\""));
+        assert!(!door_holds("\"https://example.com/tags\"[pt]!=\"x\"..\"z\""));
+        assert!(door_holds("\"https://example.com/tags\"==\"c\"..\"d\""));
+        assert!(!door_holds("\"https://example.com/tags\"!=\"c\"..\"d\""));
     }
 
     /// The target element decides the reading of `attr[member]`: on any family

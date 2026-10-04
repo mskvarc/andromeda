@@ -19,6 +19,7 @@ use crate::{
         path::{AttrPath, QueryPath, expanded_attribute_name},
         predicate::Predicate,
         scalar::{CompareValue, Scalar},
+        trailing_members::TrailingMembers,
     },
     term_expander::TermExpander,
 };
@@ -55,7 +56,24 @@ pub async fn expand_q_expression(q: Option<&str>, json_keys: &JsonKeyAttributes,
 /// [`QueryError::AttributeNameInvalid`] when a term does not expand to a usable
 /// attribute name.
 pub async fn expand_q_expr(expr: Expr, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Expr, QueryError> {
-    walk_predicates(expr, &|pred| expand_pred_terms(pred, json_keys, expander)).await
+    let members = TrailingMembers::Terms(json_keys);
+    walk_predicates(expr, &|pred| expand_pred_terms(pred, members, expander)).await
+}
+
+/// Recursively expand the property terms of a `csf` expression.
+///
+/// Every attribute path's property and sub-properties expand to full IRIs, as
+/// a registration's Context Source Properties are held under their expanded
+/// names (clause 5.5.7); the compound-value members never do, because those
+/// values are raw JSON (see [`TrailingMembers::Verbatim`]).
+///
+/// # Errors
+///
+/// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
+/// [`QueryError::AttributeNameInvalid`] when a term does not expand to a usable
+/// attribute name.
+pub async fn expand_csf_expr(expr: Expr, expander: &impl TermExpander) -> Result<Expr, QueryError> {
+    walk_predicates(expr, &|pred| expand_pred_terms(pred, TrailingMembers::Verbatim, expander)).await
 }
 
 /// Apply `expandValues`: for attributes in `expand_attrs`, expand string scalar
@@ -110,25 +128,25 @@ where
 }
 
 /// Expand the attribute path of a single predicate.
-async fn expand_pred_terms(pred: Predicate, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Predicate, QueryError> {
+async fn expand_pred_terms(pred: Predicate, members: TrailingMembers<'_>, expander: &impl TermExpander) -> Result<Predicate, QueryError> {
     match pred {
-        Predicate::Exists(path) => Ok(Predicate::Exists(expand_query_path(path, json_keys, expander).await?)),
+        Predicate::Exists(path) => Ok(Predicate::Exists(expand_query_path(path, members, expander).await?)),
         Predicate::Equality { path, membership, rhs } => Ok(Predicate::Equality {
-            path: expand_query_path(path, json_keys, expander).await?,
+            path: expand_query_path(path, members, expander).await?,
             membership,
             rhs,
         }),
         Predicate::Ordering { path, op, rhs } => Ok(Predicate::Ordering {
-            path: expand_query_path(path, json_keys, expander).await?,
+            path: expand_query_path(path, members, expander).await?,
             op,
             rhs,
         }),
         Predicate::MatchPattern { path, pattern } => Ok(Predicate::MatchPattern {
-            path: expand_query_path(path, json_keys, expander).await?,
+            path: expand_query_path(path, members, expander).await?,
             pattern,
         }),
         Predicate::NotMatchPattern { path, pattern } => Ok(Predicate::NotMatchPattern {
-            path: expand_query_path(path, json_keys, expander).await?,
+            path: expand_query_path(path, members, expander).await?,
             pattern,
         }),
     }
@@ -146,9 +164,9 @@ async fn expand_pred_terms(pred: Predicate, json_keys: &JsonKeyAttributes, expan
 /// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
 /// [`QueryError::AttributeNameInvalid`] when a segment, a hop's Relationship or
 /// one of its guard types does not expand to a usable attribute name.
-pub async fn expand_query_path(path: QueryPath, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<QueryPath, QueryError> {
+pub async fn expand_query_path(path: QueryPath, members: TrailingMembers<'_>, expander: &impl TermExpander) -> Result<QueryPath, QueryError> {
     match path {
-        QueryPath::Local(local) => Ok(QueryPath::Local(expand_attr_path(local, json_keys, expander).await?)),
+        QueryPath::Local(local) => Ok(QueryPath::Local(expand_attr_path(local, members, expander).await?)),
         QueryPath::Linked {
             relationship,
             guard_types,
@@ -159,7 +177,7 @@ pub async fn expand_query_path(path: QueryPath, json_keys: &JsonKeyAttributes, e
             for guard_type in &guard_types {
                 expanded_guard.push(expanded_attribute_name(&expander.expand_type(guard_type.as_str()).await?)?);
             }
-            let inner = expand_query_path_boxed(*inner, json_keys, expander).await?;
+            let inner = expand_query_path_boxed(*inner, members, expander).await?;
             Ok(QueryPath::Linked {
                 relationship,
                 guard_types: expanded_guard,
@@ -173,18 +191,17 @@ pub async fn expand_query_path(path: QueryPath, json_keys: &JsonKeyAttributes, e
 /// cannot name its own future type.
 fn expand_query_path_boxed<'a, E: TermExpander>(
     path: QueryPath,
-    json_keys: &'a JsonKeyAttributes,
+    members: TrailingMembers<'a>,
     expander: &'a E,
 ) -> Pin<Box<dyn Future<Output = Result<QueryPath, QueryError>> + Send + 'a>>
 where
     QueryPath: 'a,
 {
-    Box::pin(expand_query_path(path, json_keys, expander))
+    Box::pin(expand_query_path(path, members, expander))
 }
 
-/// Expand an attribute path — main attribute, sub-attributes and, unless the
-/// attribute was declared under `jsonKeys`, compound-value member names — to
-/// full IRIs.
+/// Expand an attribute path — main attribute, sub-attributes and, when
+/// `members` makes them terms, compound-value member names — to full IRIs.
 ///
 /// The member names of a compound value expand for the same reason the attribute
 /// name does: JSON-LD expansion of a structured Property value turns its members
@@ -198,13 +215,13 @@ where
 /// [`QueryError::AttributeNameInvalid`] when the attribute, one of its
 /// sub-attributes or one of its compound-value members does not expand to a
 /// usable attribute name.
-pub async fn expand_attr_path(mut path: AttrPath, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<AttrPath, QueryError> {
+pub async fn expand_attr_path(mut path: AttrPath, members: TrailingMembers<'_>, expander: &impl TermExpander) -> Result<AttrPath, QueryError> {
     path.attr = expanded_attribute_name(&expander.expand_term(path.attr.as_str()).await?)?;
     path.sub_attrs = expand_attribute_names(&path.sub_attrs, expander).await?;
-    // Clause 4.9 EXAMPLE 11: an attribute the request declared under `jsonKeys`
-    // holds a value that is "raw JSON", so the members addressed under it are
-    // literal object keys and are not expanded through the `@context`.
-    if !json_keys.contains(&path.attr) {
+    // A value that is raw JSON -- under an attribute the request declared in
+    // `jsonKeys` (clause 4.9 EXAMPLE 11), or any Context Source Property -- is
+    // addressed by literal object keys, which no `@context` expands.
+    if members.are_terms_under(&path.attr) {
         path.value_path = expand_attribute_names(&path.value_path, expander).await?;
     }
     Ok(path)
@@ -571,6 +588,29 @@ mod tests {
             path_of(&expanded).sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
             vec!["https://example.com/observedAt"]
         );
+    }
+
+    /// Clause 4.9: a `csf` targets the Context Source Properties of a
+    /// registration, whose values are the raw JSON the registrant wrote, so a
+    /// trailing path addresses their literal keys while the property and its
+    /// sub-properties still expand.
+    #[tokio::test]
+    async fn a_csf_expands_its_properties_and_keeps_its_trailing_members_verbatim() {
+        let expr = parser::parse("coverage.since[area.region]==\"north\"").expect("parses");
+        let expanded = expand_csf_expr(expr, &PrefixExpander).await.expect("expands");
+        let path = path_of(&expanded);
+        assert_eq!(path.attr.as_str(), "https://example.com/coverage");
+        assert_eq!(
+            path.sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
+            vec!["https://example.com/since"]
+        );
+        assert_eq!(path.value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["area", "region"]);
+        assert_eq!(
+            path.value_path_compact.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
+            vec!["area", "region"]
+        );
+        let reparsed = parser::parse(&serialize(&expanded)).expect("reparses");
+        assert_eq!(reparsed, expanded, "the stored text keeps the members as written");
     }
 
     #[tokio::test]

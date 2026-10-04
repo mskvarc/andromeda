@@ -28,11 +28,11 @@
 //!
 //! | Predicate shape | Compiles to |
 //! |---|---|
-//! | comparison or pattern with no sub-attribute and no value path | `EXISTS` on `current_attribute_values` |
+//! | comparison or pattern with no sub-attribute and no value path | `EXISTS` on `current_attribute_values`, whose ordering, pattern and range tests also read the strings of a `LanguageProperty` row's `languageMap` |
 //! | bare existence | `EXISTS` on `current_attribute_values`, presence alone |
-//! | equality or existence with one trailing member (`attr[member]`) | both: a `languageMap` probe on the projection, disjoined with the jsonpath fallback |
-//! | anything carrying a sub-attribute or a deeper value path | JSONB jsonpath fallback |
-//! | ordering or pattern with any value path | JSONB jsonpath fallback |
+//! | any operator with one trailing member (`attr[member]`) | both: a target-language probe on the projection, disjoined with the jsonpath fallback |
+//! | anything carrying a sub-attribute | the JSONB jsonpath fallback, disjoined with a reading of the sub-attribute's `languageMap` (with the one trailing member as its target language) unless the value path is deeper |
+//! | a deeper value path (`attr[a.b]`) | JSONB jsonpath fallback |
 //! | attribute IRI absent from `attribute_names` | constant `FALSE` |
 //!
 //! The fallback keeps the previous semantics for the shapes the projection
@@ -48,7 +48,11 @@
 //! and any Property value that is an array or an object. Clause 4.9 names every
 //! one of those a target value, so a Query Term is compared against
 //! `value_object` by JSONB containment as well as against the typed columns —
-//! see [`structured_target`](crate::q_predicate::structured_target).
+//! see [`structured_target`](crate::q_predicate::structured_target). The
+//! operators containment cannot express — ordering, pattern and range — read a
+//! `languageMap` string by string instead (see
+//! [`language_term`](crate::q_predicate::language_term)), since clause 4.9
+//! makes each of its strings a String target value.
 //!
 //! # Deleted attributes
 //!
@@ -106,13 +110,18 @@
 //! ever examined the first instance, which was a spec bug.
 
 pub mod attribute_names;
+pub mod equality_term;
 pub mod fallback;
 pub mod history_instance_document;
 pub mod history_window;
 pub mod in_effect_instance;
 pub mod instance_scan;
 pub mod instance_test;
+pub mod language_map;
+pub mod language_term;
 pub mod local_target;
+pub mod ordering_term;
+pub mod pattern_term;
 pub mod projection;
 pub mod projection_probe;
 pub mod structured_target;

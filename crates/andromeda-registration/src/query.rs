@@ -22,7 +22,12 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
-    filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, path::expanded_attribute_name, referenced_attributes::referenced_attributes},
+    filter::{
+        expansion::{expand_csf_expr, expand_q_expr},
+        json_key_attributes::JsonKeyAttributes,
+        path::expanded_attribute_name,
+        referenced_attributes::referenced_attributes,
+    },
     geo::compile as geo_compile,
     page_window::PageWindow,
     projection::expansion::expand_attrs,
@@ -164,7 +169,7 @@ impl RegistrationService {
             }
         }
         let csf_expr = match params.csf.clone() {
-            Some(expression) => Some(expand_q_expr(expression, &JsonKeyAttributes::default(), &expander).await?), // clone: same reason as `q`.
+            Some(expression) => Some(expand_csf_expr(expression, &expander).await?), // clone: same reason as `q`.
             None => None,
         };
         let temporal = if let (Some(timerel), Some(time_at)) = (&params.timerel, &params.time_at) {

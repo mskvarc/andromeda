@@ -2,33 +2,35 @@
 //! instances an [`InstanceScan`] names: the `current_attribute_values`
 //! projection for a Query Entities `q`, the in-window `attribute_history` rows
 //! for a temporal one.
+//!
+//! This module routes each Query Term to the compilation of its operator
+//! (`equality_term`, `ordering_term`, `pattern_term`, and existence here) by
+//! what its path addresses, and descends linked-entity hops first.
 
 use crate::{
-    attribute_name_key::AttributeNameKey,
     dictionary::query_names::QueryNames,
-    operator::{does_not_hold, pattern as pattern_predicate},
     q_predicate::{
-        fallback::{fallback_equality, fallback_exists, fallback_ordering, fallback_pattern},
+        equality_term::compile_equality,
+        fallback::fallback_exists,
         instance_scan::InstanceScan,
         instance_test::{CompiledTerm, Disjunction, InstanceTest},
+        language_map::LanguageMap,
+        language_term::language_term,
         local_target::{LocalTarget, local_target},
-        structured_target::{StructuredTarget, carries_operand, carries_target_language, omits_operand},
+        ordering_term::compile_ordering,
+        pattern_term::compile_pattern,
+        structured_target::carries_target_language,
         traversal::LinkedHop,
-        typed_column::typed_column_condition,
         value_column::ValueColumn,
     },
 };
-use andromeda_ngsi_ld_query::{
-    filter::{
-        expression::Expr,
-        path::{AttrPath, QueryPath},
-        predicate::{CmpOp, OrderingOp, PatternPolarity, Predicate, SetMembership},
-        scalar::{CompareValue, Scalar},
-    },
-    pattern::Pattern,
+use andromeda_ngsi_ld_query::filter::{
+    expression::Expr,
+    path::{AttrPath, QueryPath},
+    predicate::{PatternPolarity, Predicate},
 };
 use andromeda_postgresql_seaquery::literal::false_literal;
-use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
+use sea_query::Condition;
 
 /// Compile a parsed `q` expression into a sea-query [`Condition`].
 ///
@@ -104,77 +106,43 @@ fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_
     }
 }
 
-/// Compile the comparison itself, routing it to the projection or the fallback.
-fn compile_local_predicate(pred: &Predicate, path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
-    match pred {
-        Predicate::Exists(_) => compile_exists(path, scan, names),
-        Predicate::Equality { membership, rhs, .. } => compile_equality(path, *membership, rhs, scan, names),
-        Predicate::Ordering { op, rhs, .. } => match local_target(path) {
-            LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
-                Some(id) => CompiledTerm::Instances(compile_ordering_on_projection(id, *op, rhs, scan)),
-                None => unsatisfiable_term(),
-            },
-            // An ordering comparison against one member of a structure is not a
-            // containment test, so nothing in the projection answers it and the
-            // payload is the only reader left.
-            LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember => {
-                CompiledTerm::Standalone(scan.document_condition(&path.attr, names, |document| fallback_ordering(path, *op, rhs, &document)))
-            }
-        },
-        Predicate::MatchPattern { pattern, .. } => compile_pattern(path, pattern, PatternPolarity::Match, scan, names),
-        Predicate::NotMatchPattern { pattern, .. } => compile_pattern(path, pattern, PatternPolarity::NotMatch, scan, names),
-    }
-}
-
-/// Compile an equality Query Term (`==`/`!=`), routing it by what its path
+/// Compile the comparison itself, routing it by operator and by what its path
 /// addresses.
 ///
-/// A trailing member is compiled twice and disjoined, because clause 4.9 admits
-/// two readings of `attr[member]` and only the stored row says which one is
-/// meant: the projection probe answers the `LanguageProperty` reading, where the
-/// member is the target language, and the payload fallback answers the compound
-/// value reading. Neither can match the other's rows — a `languageMap` carries
-/// no `hasValue` for the fallback's jsonpath to reach, and a compound value's
-/// member nodes carry no `@language` for the containment to match — so the
-/// disjunction is exact rather than merely permissive.
-fn compile_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
-    let fallback = || scan.document_condition(&path.attr, names, |document| fallback_equality(path, membership, rhs, &document));
-    match local_target(path) {
-        LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
-            Some(id) => CompiledTerm::Instances(compile_equality_on_projection(id, StructuredTarget::AnyValue, membership, rhs, scan)),
-            None => unsatisfiable_term(),
-        },
-        LocalTarget::TrailingMember(member) => {
-            let tagged = match names.attributes.get(&path.attr) {
-                Some(id) => CompiledTerm::Instances(compile_equality_on_projection(
-                    id,
-                    StructuredTarget::TargetLanguage(member),
-                    membership,
-                    rhs,
-                    scan,
-                ))
-                .into_condition(scan),
-                None => unsatisfiable(),
-            };
-            CompiledTerm::Standalone(Condition::any().add(tagged).add(fallback()))
+/// A sub-attribute that is a `LanguageProperty` is the target element of its
+/// path (clause 4.9), and only the payload holds it, so its `languageMap`
+/// reading is disjoined with the payload reading of a Property's value. The two
+/// cannot both match one instance: only a `LanguageProperty` carries
+/// `hasLanguageMap`, and it carries no `hasValue`.
+fn compile_local_predicate(pred: &Predicate, path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
+    let target = local_target(path);
+    let term = match pred {
+        Predicate::Exists(_) => compile_exists(path, target, scan, names),
+        Predicate::Equality { membership, rhs, .. } => compile_equality(path, target, *membership, rhs, scan, names),
+        Predicate::Ordering { op, rhs, .. } => compile_ordering(pred, path, target, *op, rhs, scan, names),
+        Predicate::MatchPattern { pattern, .. } => compile_pattern(pred, path, target, pattern, PatternPolarity::Match, scan, names),
+        Predicate::NotMatchPattern { pattern, .. } => compile_pattern(pred, path, target, pattern, PatternPolarity::NotMatch, scan, names),
+    };
+    match target {
+        LocalTarget::SubAttribute(Some(selection)) => {
+            let language = scan.document_condition(&path.attr, names, |document| {
+                Condition::all().add(language_term(pred, &LanguageMap::of_document(path, document), selection))
+            });
+            CompiledTerm::Standalone(Condition::any().add(term.into_condition(scan)).add(language))
         }
-        LocalTarget::PayloadMember => CompiledTerm::Standalone(fallback()),
+        LocalTarget::OwnValue | LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember | LocalTarget::SubAttribute(None) => term,
     }
 }
 
 /// A predicate that no row can satisfy.
-fn unsatisfiable() -> Condition {
+pub(crate) fn unsatisfiable() -> Condition {
     Condition::all().add(false_literal())
 }
 
 /// A Query Term that no row can satisfy.
-fn unsatisfiable_term() -> CompiledTerm {
+pub(crate) fn unsatisfiable_term() -> CompiledTerm {
     CompiledTerm::Standalone(unsatisfiable())
 }
-
-// ---------------------------------------------------------------------------
-// Existence
-// ---------------------------------------------------------------------------
 
 /// Compile a bare existence predicate.
 ///
@@ -186,9 +154,9 @@ fn unsatisfiable_term() -> CompiledTerm {
 /// `payload`: GIN's `jsonb_ops` only serves `?` when the left operand is the
 /// bare indexed column, and `payload->0` is an expression. It is a sequential
 /// scan.
-fn compile_exists(path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
+fn compile_exists(path: &AttrPath, target: LocalTarget<'_>, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
     let fallback = || scan.document_condition(&path.attr, names, |document| fallback_exists(path, &document));
-    match local_target(path) {
+    match target {
         LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
             Some(id) => CompiledTerm::Instances(InstanceTest {
                 attribute: id,
@@ -207,185 +175,15 @@ fn compile_exists(path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) 
             };
             CompiledTerm::Standalone(Condition::any().add(tagged).add(fallback()))
         }
-        LocalTarget::PayloadMember => CompiledTerm::Standalone(fallback()),
+        LocalTarget::PayloadMember | LocalTarget::SubAttribute(_) => CompiledTerm::Standalone(fallback()),
     }
-}
-
-// ---------------------------------------------------------------------------
-// Comparisons against the projection
-// ---------------------------------------------------------------------------
-
-/// Compile an equality comparison (`==`/`!=`) against the columns of
-/// `current_attribute_values` that can hold the clause 4.9 target value.
-fn compile_equality_on_projection(
-    id: AttributeNameKey,
-    target: StructuredTarget<'_>,
-    membership: SetMembership,
-    rhs: &CompareValue,
-    scan: &InstanceScan<'_>,
-) -> InstanceTest {
-    let value = match rhs {
-        CompareValue::Scalar(scalar) => equality_condition(target, scalar, membership, scan),
-        CompareValue::Range { min, max } => range_condition(target, min, max, membership, scan),
-        // Clause 4.9: every member of a value list is compared with the equality
-        // operator, so `==` holds when any of them matches and `!=` when none
-        // does. The negated form is a conjunction of per-member inequalities
-        // rather than `NOT (any member matches)`: only one value column of a row
-        // is ever populated, so the other columns' comparisons are NULL, and
-        // negating the whole disjunction turns that NULL into a non-match for
-        // every entity — which made `attr!="a","b"` select nothing at all.
-        CompareValue::ValueList(values) => match membership {
-            SetMembership::Within => values.iter().fold(Condition::any(), |cond, value| {
-                cond.add(equality_condition(target, value, SetMembership::Within, scan))
-            }),
-            SetMembership::Outside => values.iter().fold(Condition::all(), |cond, value| {
-                cond.add(equality_condition(target, value, SetMembership::Outside, scan))
-            }),
-        },
-    };
-    InstanceTest { attribute: id, value }
-}
-
-/// One equality comparison against every column the target value can occupy.
-///
-/// A scalar target lives in one typed column; a `LanguageProperty`'s
-/// `languageMap`, a `ListProperty`'s `valueList`, a `ListRelationship`'s
-/// `objectList`, a multi-term `VocabProperty`'s `vocab` and an array-valued
-/// Property all live in `value_object`. Clause 4.9 names each of them a target
-/// value, so both readings are tested and disjoined; the projection's own check
-/// constraint leaves exactly one value column populated per row, so at most one
-/// disjunct is anything but NULL.
-///
-/// `unequal` is compiled as the total negation of that same disjunction rather
-/// than as a disjunction of negated comparisons, which is what clause 4.9
-/// requires of it: "If the data type of the target value and the data type of
-/// the Query Term value are different, then they shall be considered unequal."
-/// A row whose value sits in another typed column makes every comparison
-/// unknown, and only a total negation reads that as the datatype difference it
-/// is — `temp!="20"` over a numeric Property matched nothing while the clause
-/// requires it to match. Its inner disjunction is the whole `equal` condition,
-/// so the two operators cannot drift apart.
-///
-/// With a target language the typed columns are left out entirely. A
-/// language-selected path addresses a `languageMap` key, and a scalar-valued
-/// attribute of the same name carries no such key: comparing its typed column
-/// would let `attr[en]!=5` match a plain numeric Property, whose target element
-/// for that path does not exist at all. That polarity keeps its own compilation
-/// for the same reason — it has to require the key to be present.
-fn equality_condition(target: StructuredTarget<'_>, scalar: &Scalar, membership: SetMembership, scan: &InstanceScan<'_>) -> Condition {
-    let column = scan.value(ValueColumn::Object);
-    match target {
-        StructuredTarget::AnyValue => match membership {
-            SetMembership::Within => carries_any_target_value(&column, scalar, scan),
-            SetMembership::Outside => Condition::all().add(does_not_hold(carries_any_target_value(&column, scalar, scan))),
-        },
-        StructuredTarget::TargetLanguage(language) => match membership {
-            SetMembership::Within => carries_operand(&column, target, scalar),
-            SetMembership::Outside => omits_operand(&column, language, scalar),
-        },
-    }
-}
-
-/// Whether any column that can hold an unqualified clause 4.9 target value
-/// holds this operand.
-fn carries_any_target_value(column: &SimpleExpr, scalar: &Scalar, scan: &InstanceScan<'_>) -> Condition {
-    Condition::any()
-        .add(typed_column_condition(scalar, CmpOp::Equal, scan))
-        .add(carries_operand(column, StructuredTarget::AnyValue, scalar))
-}
-
-/// Compile a range operand (`==10..20` / `!=10..20`) against the typed columns.
-///
-/// A range is two ordering comparisons, which JSONB containment cannot express,
-/// so a language-selected range has nothing to compile here and is left to the
-/// payload fallback that is disjoined with this probe.
-///
-/// The negated form is the total negation of the interval test, for the reason
-/// [`equality_condition`] gives: clause 4.9 makes a target whose datatype is not
-/// the range's unequal to it, and a comparison the column cannot even evaluate
-/// is unknown rather than false.
-fn range_condition(target: StructuredTarget<'_>, min: &Scalar, max: &Scalar, membership: SetMembership, scan: &InstanceScan<'_>) -> Condition {
-    match target {
-        StructuredTarget::AnyValue => match membership {
-            SetMembership::Within => within_range(min, max, scan),
-            SetMembership::Outside => Condition::all().add(does_not_hold(within_range(min, max, scan))),
-        },
-        StructuredTarget::TargetLanguage(_) => unsatisfiable(),
-    }
-}
-
-/// Whether the typed column holding this range's operand kind sits inside the
-/// interval, both bounds included (clause 4.9 `Range`).
-fn within_range(min: &Scalar, max: &Scalar, scan: &InstanceScan<'_>) -> Condition {
-    Condition::all()
-        .add(typed_column_condition(min, CmpOp::GreaterEq, scan))
-        .add(typed_column_condition(max, CmpOp::LessEq, scan))
-}
-
-/// Compile an ordering comparison (`>`/`>=`/`<`/`<=`) against the typed columns
-/// of the scanned instances.
-fn compile_ordering_on_projection(id: AttributeNameKey, op: OrderingOp, rhs: &Scalar, scan: &InstanceScan<'_>) -> InstanceTest {
-    InstanceTest {
-        attribute: id,
-        value: Condition::all().add(typed_column_condition(rhs, op.as_cmp_op(), scan)),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Pattern matching
-// ---------------------------------------------------------------------------
-
-/// Compile `~=` / `!~=` (clause 4.9 `patternOp` / `notPatternOp`).
-///
-/// Both polarities compile *inside* the `EXISTS`, so both require the attribute
-/// to be present. Clause 4.9 is explicit that the entity "shall contain the
-/// target element" for `notPatternOp`; an earlier compiler wrapped the whole
-/// existence test in `NOT (...)`, which matched entities that simply lacked the
-/// attribute.
-///
-/// Only the two string columns are tested, `value_string` and the overflow
-/// `value_long_text`, as one disjunction: a row's value sits in exactly one of
-/// them, so the other arm is NULL and the disjunction reads the one that holds
-/// it. Clause 4.9 requires a Relationship operand to
-/// non-match every operator other than equality and inequality, and the pattern
-/// operators are defined over String targets — so a Relationship's object, which
-/// is the whole content of `value_uri`, is never a pattern target. Probing it
-/// made `owner~="urn:Person:.*"` select entities the standard requires it to
-/// reject.
-///
-/// The attribute-aware trigram index `idx_cav_value_string_trgm` on
-/// `(attribute_name_key int4_ops, value_string gin_trgm_ops)` can accelerate
-/// POSIX `~` (since PostgreSQL 9.3) whenever the pattern yields extractable
-/// trigrams — `urn:ngsi-ld:.*` does, an anchored `^A.*` does not — and it
-/// intersects those trigrams with the attribute key, so a pattern common
-/// across attributes yields candidates only from the one probed. When no
-/// trigram is extractable the probe is still narrowed by the
-/// `attribute_name_key` prefix of `idx_cav_value_string` before any regex is
-/// evaluated. `idx_cav_value_long_text_trgm` serves the overflow arm the same
-/// way.
-fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
-    match local_target(path) {
-        LocalTarget::OwnValue => (),
-        // A regex is not a containment test, so the projection cannot answer a
-        // pattern against one member of a structure; the payload can reach it.
-        LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember => {
-            return CompiledTerm::Standalone(scan.document_condition(&path.attr, names, |document| fallback_pattern(path, pattern, polarity, &document)));
-        }
-    }
-    let Some(id) = names.attributes.get(&path.attr) else {
-        return unsatisfiable_term();
-    };
-
-    let value = scan.string_columns().iter().fold(Condition::any(), |value, column| {
-        value.add(pattern_predicate(scan.value(*column), polarity, SeaExpr::val(pattern.portable().as_str())))
-    });
-    CompiledTerm::Instances(InstanceTest { attribute: id, value })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
+        attribute_name_key::AttributeNameKey,
         dictionary::resolved_names::ResolvedNames,
         entity_row_refs::{DocumentsRef, EntityRowRefs},
         entity_type_name_key::EntityTypeNameKey,
@@ -796,7 +594,7 @@ mod tests {
         assert!(sql.contains("\"cav\".\"value_string\" !~"), "{sql}");
         assert!(sql.contains("\"cav\".\"value_long_text\" !~"), "{sql}");
         assert!(
-            !sql.contains("NOT (EXISTS") && !sql.contains("NOT EXISTS"),
+            !sql.contains("NOT (EXISTS(SELECT 1 FROM \"current_attribute_values\"") && !sql.contains("NOT EXISTS(SELECT 1 FROM \"current_attribute_values\""),
             "clause 4.9 requires the target element to be present: {sql}"
         );
     }
@@ -907,21 +705,118 @@ mod tests {
         assert!(sql.contains("jsonb_path_exists"), "the compound-member reading is compiled beside it: {sql}");
     }
 
-    /// Clause 4.9's ordering and pattern operators are not containment tests,
-    /// so nothing probes the structured column under them; a range is two
-    /// ordering comparisons and inherits that.
+    /// Clause 4.9's ordering, pattern and range operators are not containment
+    /// tests, so nothing probes the structured column by containment under
+    /// them. A `LanguageProperty`'s strings are each a String target value with
+    /// no target language, so a String operand reads them one by one — only on
+    /// a row written as a `LanguageProperty`, never a `ListProperty`'s array.
     #[test]
-    fn ordering_pattern_and_range_operators_do_not_probe_the_structured_value_column() {
+    fn ordering_pattern_and_string_range_read_a_language_map_only_on_a_language_property() {
         for expression in [
             "\"https://example.com/color\">\"red\"",
             "\"https://example.com/color\"~=\"re.*\"",
             "\"https://example.com/color\"!~=\"re.*\"",
+            "\"https://example.com/color\"==\"a\"..\"m\"",
+            "\"https://example.com/color\"!=\"a\"..\"m\"",
+        ] {
+            let (sql, _) = render(expression);
+            assert!(!sql.contains("\"value_object\" @>"), "{expression}: {sql}");
+            assert!(
+                sql.contains(r#"jsonb_array_elements((CASE WHEN ("cav"."attribute_kind" = (5)) THEN "cav"."value_object" END))"#),
+                "{expression}: {sql}"
+            );
+            assert!(sql.contains("\"cav\".\"value_string\""), "the typed column is still read: {expression}: {sql}");
+        }
+    }
+
+    /// A number or a boolean is a datatype no string carries, so its ordering
+    /// and range terms read the typed column alone and keep its index.
+    #[test]
+    fn a_numeric_ordering_or_range_reads_only_its_typed_column() {
+        for expression in [
+            "\"https://example.com/temperature\">20",
             "\"https://example.com/temperature\"==10..20",
             "\"https://example.com/temperature\"!=10..20",
         ] {
             let (sql, _) = render(expression);
             assert!(!sql.contains("value_object"), "{expression}: {sql}");
         }
+    }
+
+    /// Clause 4.9: an excluded range holds over a language map none of whose
+    /// strings lies in the interval, which is the total negation of the one
+    /// interval test that reads the typed column and the strings together.
+    #[test]
+    fn an_excluded_string_range_negates_the_strings_with_the_typed_column() {
+        let (sql, _) = render("\"https://example.com/color\"!=\"a\"..\"m\"");
+        assert_eq!(sql.matches("NOT COALESCE(").count(), 1, "{sql}");
+        let negated = sql.split("NOT COALESCE(").nth(1).unwrap_or_default();
+        assert!(negated.contains("jsonb_array_elements"), "the strings sit inside the negation: {sql}");
+    }
+
+    /// Clause 4.9: with a target language the target value is a String of that
+    /// language, so the ordering, pattern and range operators read its strings
+    /// on the projection, disjoined with the compound-member reading.
+    #[test]
+    fn a_target_language_reads_that_languages_strings_under_every_operator() {
+        for expression in [
+            "\"https://example.com/color\"[en]>\"m\"",
+            "\"https://example.com/color\"[en]~=\"^r\"",
+            "\"https://example.com/color\"[en]!~=\"^r\"",
+            "\"https://example.com/color\"[en]==\"a\"..\"m\"",
+            "\"https://example.com/color\"[en]!=\"a\"..\"m\"",
+        ] {
+            let (sql, binds) = render(expression);
+            assert!(sql.contains(r#""ls"."value" ->> ('@language')"#), "{expression}: {sql}");
+            assert!(
+                binds.iter().any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "en")),
+                "the tag binds as the client wrote it: {expression}: {binds:?}"
+            );
+            assert!(sql.contains("jsonb_path_"), "the compound-member reading stays: {expression}: {sql}");
+            assert!(sql.contains(" OR "), "{expression}: {sql}");
+        }
+    }
+
+    /// The complementary forms require the language to hold a string and deny
+    /// every one of them.
+    #[test]
+    fn a_target_language_complement_requires_the_language() {
+        for expression in ["\"https://example.com/color\"[en]!~=\"^r\"", "\"https://example.com/color\"[en]!=\"a\"..\"m\""] {
+            let (sql, _) = render(expression);
+            assert!(sql.contains("NOT EXISTS(SELECT 1 FROM jsonb_array_elements"), "{expression}: {sql}");
+        }
+    }
+
+    /// Clause 4.9's target element is the last name of the dotted path, so a
+    /// `LanguageProperty` sub-attribute is read through its `languageMap` in
+    /// the payload, beside the reading of a Property value.
+    #[test]
+    fn a_sub_attribute_is_read_through_its_language_map_in_the_payload() {
+        for expression in [
+            "\"https://example.com/address\".\"https://example.com/label\"[en]==\"Front\"",
+            "\"https://example.com/address\".\"https://example.com/label\"[en]!=\"Front\"",
+            "\"https://example.com/address\".\"https://example.com/label\"[en]",
+            "\"https://example.com/address\".\"https://example.com/label\"[en]>\"F\"",
+            "\"https://example.com/address\".\"https://example.com/label\"[en]~=\"^F\"",
+            "\"https://example.com/address\".\"https://example.com/label\"==\"Front\"",
+        ] {
+            let (sql, _) = render(expression);
+            assert!(
+                sql.contains(r#"."https://example.com/label"[*]."https://uri.etsi.org/ngsi-ld/hasLanguageMap"[*]"#),
+                "{expression}: {sql}"
+            );
+            assert!(
+                !sql.contains("current_attribute_values"),
+                "a sub-attribute is not projected: {expression}: {sql}"
+            );
+        }
+    }
+
+    /// A nested compound path below a sub-attribute has no language reading.
+    #[test]
+    fn a_nested_compound_path_below_a_sub_attribute_reads_no_language_map() {
+        let (sql, _) = render("\"https://example.com/address\".\"https://example.com/label\"[a.b]==\"x\"");
+        assert!(!sql.contains("hasLanguageMap"), "{sql}");
     }
 
     // -- unknown attributes --------------------------------------------------
@@ -987,7 +882,7 @@ mod tests {
             "(\"https://example.com/color\"==\"red\"|\"https://example.com/name\"==\"x\")|\"https://example.com/a\"==1",
         ] {
             let (sql, _) = render(expression);
-            assert_eq!(sql.matches("EXISTS").count(), 1, "{expression}: {sql}");
+            assert_eq!(sql.matches("FROM \"current_attribute_values\"").count(), 1, "{expression}: {sql}");
             assert!(
                 sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\" AS \"cav\" WHERE (\"cav\".\"expires_at\" IS NULL"),
                 "the attribute key moves into each arm: {expression}: {sql}"

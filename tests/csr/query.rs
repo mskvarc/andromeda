@@ -34,6 +34,7 @@ use crate::{
     unique_id,
 };
 use andromeda_test_client::test_client::TestClient;
+use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use serde_json::{Value, json};
 
@@ -750,5 +751,46 @@ async fn query_by_scope_matches_the_scope_query_language_over_registration_scope
         [json!("/Madrid/Gardens"), json!(["/Madrid/Gardens"])].contains(&stored["scope"]),
         "the stored scope reads back in its clause 4.18 spelling: {stored}"
     );
+    scope.finish().await.expect("cleanup failed");
+}
+
+// ---------------------------------------------------------------------------
+// 4.9 -- csf over a compound Context Source Property
+// ---------------------------------------------------------------------------
+
+/// Clause 4.9: a `csf` targets "the name of a Context Source Property member
+/// of the `CSourceRegistration`", and a trailing path is evaluated "as a
+/// `MemberExpression` of ECMA 262" against its value -- the raw JSON the
+/// registrant wrote, whose `region` key no `@context` expanded.
+#[tokio::test]
+async fn query_by_csf_reads_a_compound_context_source_property_by_its_written_key() {
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
+    let entity_type = format!("https://example.test/csr-csf/{}", unique_id("Device").replace(':', "-"));
+    let north = unique_id("urn:ngsi-ld:ContextSourceRegistration:csf-north");
+    let south = unique_id("urn:ngsi-ld:ContextSourceRegistration:csf-south");
+    for (id, region) in [(&north, "north"), (&south, "south")] {
+        let registration = json!({
+            "id": id,
+            "type": "ContextSourceRegistration",
+            "information": [{"entities": [{"type": entity_type}]}],
+            "endpoint": "http://my.csource.org:1026/",
+            "coverage": {"type": "Property", "value": {"region": region}},
+            "@context": [CORE_CONTEXT],
+        });
+        let (status, _, _) = create_registration(&c, &registration).await;
+        pretty_assertions::assert_eq!(status, StatusCode::CREATED, "{id}");
+    }
+
+    for (csf, expected) in [
+        ("coverage[region]==\"north\"", vec![north.clone()]),
+        ("coverage[region]==\"south\"", vec![south.clone()]),
+    ] {
+        let query = format!("type={}&csf={}", urlencoding::encode(&entity_type), urlencoding::encode(csf));
+        let (status, body) = query_registrations(&c, &query, Some("application/json"), None).await;
+        pretty_assertions::assert_eq!(status, StatusCode::OK, "{csf}: {body}");
+        pretty_assertions::assert_eq!(registration_ids(&body), expected, "{csf}");
+    }
     scope.finish().await.expect("cleanup failed");
 }

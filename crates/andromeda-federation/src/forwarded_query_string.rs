@@ -19,14 +19,15 @@ use url::form_urlencoded;
 impl ForwardedNames<'_> {
     /// A raw query string a client wrote, with every parameter that carries
     /// names (`type`, `attrs`, `jsonKeys`, `expandValues`, `geoproperty`,
-    /// `pick`, `omit` and `q`) spelled in the forwarding context and every
+    /// `pick`, `omit`, `q` and `csf`) spelled in the forwarding context and every
     /// other parameter unchanged.
     ///
     /// # Errors
     ///
     /// Returns [`FederationError::Query`] when a name-bearing parameter does
     /// not parse, and the errors of [`ForwardedNames::attr`] and
-    /// [`ForwardedNames::q`] when one of its names does not reword.
+    /// [`ForwardedNames::q`] and [`ForwardedNames::csf`] when one of its names
+    /// does not reword.
     pub(crate) async fn query_string(&self, raw: &str) -> Result<String, FederationError> {
         if self.rewording() == Rewording::AsInbound {
             return Ok(raw.to_owned());
@@ -83,7 +84,7 @@ impl ForwardedNames<'_> {
             }
             ParameterNames::SourceFilter => {
                 let expression = parser::parse(value)?;
-                Ok(self.q(&expression, None).await?.to_string())
+                Ok(self.csf(&expression).await?.to_string())
             }
             ParameterNames::Nothing => Ok(value.to_owned()),
         }

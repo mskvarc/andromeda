@@ -14,9 +14,11 @@
 use crate::{
     filter::{
         expression::Expr,
+        json_key_attributes::JsonKeyAttributes,
         path::{AttrPath, QueryPath},
         predicate::Predicate,
         scalar::{CompareValue, Scalar},
+        trailing_members::TrailingMembers,
     },
     term_compactor::TermCompactor,
 };
@@ -29,10 +31,26 @@ use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 /// so `expand_q_expr` applied to the result under the same `@context` yields
 /// the expression this was given.
 pub async fn compact_q_expr(expr: Expr, compactor: &impl TermCompactor) -> Expr {
+    compact_expr(expr, TrailingMembers::Terms(&JsonKeyAttributes::default()), compactor).await
+}
+
+/// Recursively compact every property term of a `csf` expression, leaving its
+/// compound-value members as written.
+///
+/// The inverse of [`crate::filter::expansion::expand_csf_expr`]: the members
+/// address raw JSON keys (see [`TrailingMembers::Verbatim`]), which no
+/// `@context` abbreviates.
+pub async fn compact_csf_expr(expr: Expr, compactor: &impl TermCompactor) -> Expr {
+    compact_expr(expr, TrailingMembers::Verbatim, compactor).await
+}
+
+/// Compact every attribute term of an expression whose trailing members are
+/// spelled as `members` says.
+async fn compact_expr(expr: Expr, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> Expr {
     match expr {
-        Expr::And(terms) => Expr::And(compact_all_terms(terms, compactor).await),
-        Expr::Or(terms) => Expr::Or(compact_all_terms(terms, compactor).await),
-        Expr::Pred(pred) => Expr::Pred(compact_pred_terms(pred, compactor).await),
+        Expr::And(terms) => Expr::And(compact_all_terms(terms, members, compactor).await),
+        Expr::Or(terms) => Expr::Or(compact_all_terms(terms, members, compactor).await),
+        Expr::Pred(pred) => Expr::Pred(compact_pred_terms(pred, members, compactor).await),
     }
 }
 
@@ -129,41 +147,41 @@ async fn revert_rhs_values(rhs: CompareValue, compactor: &impl TermCompactor) ->
 }
 
 /// Compact the operands of one boolean node in order.
-async fn compact_all_terms(terms: Vec<Expr>, compactor: &impl TermCompactor) -> Vec<Expr> {
+async fn compact_all_terms(terms: Vec<Expr>, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> Vec<Expr> {
     let mut compacted = Vec::with_capacity(terms.len());
     for term in terms {
-        compacted.push(compact_q_expr_boxed(term, compactor).await);
+        compacted.push(compact_expr_boxed(term, members, compactor).await);
     }
     compacted
 }
 
 /// Box-pinned wrapper: the walker recurses, and an `async fn` cannot name its
 /// own future type.
-fn compact_q_expr_boxed<'a, C: TermCompactor>(expr: Expr, compactor: &'a C) -> Pin<Box<dyn Future<Output = Expr> + Send + 'a>> {
-    Box::pin(compact_q_expr(expr, compactor))
+fn compact_expr_boxed<'a, C: TermCompactor>(expr: Expr, members: TrailingMembers<'a>, compactor: &'a C) -> Pin<Box<dyn Future<Output = Expr> + Send + 'a>> {
+    Box::pin(compact_expr(expr, members, compactor))
 }
 
 /// Compact the attribute axis of a single predicate, keeping its operator and
 /// operand.
-async fn compact_pred_terms(pred: Predicate, compactor: &impl TermCompactor) -> Predicate {
+async fn compact_pred_terms(pred: Predicate, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> Predicate {
     match pred {
-        Predicate::Exists(path) => Predicate::Exists(compact_query_path(path, compactor).await),
+        Predicate::Exists(path) => Predicate::Exists(compact_query_path(path, members, compactor).await),
         Predicate::Equality { path, membership, rhs } => Predicate::Equality {
-            path: compact_query_path(path, compactor).await,
+            path: compact_query_path(path, members, compactor).await,
             membership,
             rhs,
         },
         Predicate::Ordering { path, op, rhs } => Predicate::Ordering {
-            path: compact_query_path(path, compactor).await,
+            path: compact_query_path(path, members, compactor).await,
             op,
             rhs,
         },
         Predicate::MatchPattern { path, pattern } => Predicate::MatchPattern {
-            path: compact_query_path(path, compactor).await,
+            path: compact_query_path(path, members, compactor).await,
             pattern,
         },
         Predicate::NotMatchPattern { path, pattern } => Predicate::NotMatchPattern {
-            path: compact_query_path(path, compactor).await,
+            path: compact_query_path(path, members, compactor).await,
             pattern,
         },
     }
@@ -173,9 +191,9 @@ async fn compact_pred_terms(pred: Predicate, compactor: &impl TermCompactor) -> 
 /// linked-entity hop the Relationship as a term and its guard as entity types
 /// — the same split [`crate::filter::expansion::expand_query_path`] makes in
 /// the other direction.
-pub async fn compact_query_path(path: QueryPath, compactor: &impl TermCompactor) -> QueryPath {
+pub async fn compact_query_path(path: QueryPath, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> QueryPath {
     match path {
-        QueryPath::Local(local) => QueryPath::Local(compact_attr_path(local, compactor).await),
+        QueryPath::Local(local) => QueryPath::Local(compact_attr_path(local, members, compactor).await),
         QueryPath::Linked {
             relationship,
             guard_types,
@@ -186,7 +204,7 @@ pub async fn compact_query_path(path: QueryPath, compactor: &impl TermCompactor)
             for guard_type in &guard_types {
                 compacted_guard.push(compactor.compact_type(guard_type).await);
             }
-            let inner = compact_query_path_boxed(*inner, compactor).await;
+            let inner = compact_query_path_boxed(*inner, members, compactor).await;
             QueryPath::Linked {
                 relationship,
                 guard_types: compacted_guard,
@@ -198,20 +216,26 @@ pub async fn compact_query_path(path: QueryPath, compactor: &impl TermCompactor)
 
 /// Box-pinned wrapper: the axis walker recurses through hops, and an
 /// `async fn` cannot name its own future type.
-fn compact_query_path_boxed<'a, C: TermCompactor>(path: QueryPath, compactor: &'a C) -> Pin<Box<dyn Future<Output = QueryPath> + Send + 'a>> {
-    Box::pin(compact_query_path(path, compactor))
+fn compact_query_path_boxed<'a, C: TermCompactor>(
+    path: QueryPath,
+    members: TrailingMembers<'a>,
+    compactor: &'a C,
+) -> Pin<Box<dyn Future<Output = QueryPath> + Send + 'a>> {
+    Box::pin(compact_query_path(path, members, compactor))
 }
 
-/// Compact an attribute path — main attribute, sub-attributes and
-/// compound-value member names — to terms.
+/// Compact an attribute path — main attribute, sub-attributes and, when
+/// `members` makes them terms, compound-value member names — to terms.
 ///
-/// The compacted member names become the path's compact spelling as well:
-/// a freshly parsed path carries what the client wrote in both `value_path`
-/// and `value_path_compact`, and a compacted path is meant to read as one.
-pub async fn compact_attr_path(mut path: AttrPath, compactor: &impl TermCompactor) -> AttrPath {
+/// The member names become the path's compact spelling as well: a freshly
+/// parsed path carries what the client wrote in both `value_path` and
+/// `value_path_compact`, and a compacted path is meant to read as one.
+pub async fn compact_attr_path(mut path: AttrPath, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> AttrPath {
+    if members.are_terms_under(&path.attr) {
+        path.value_path = compact_all(&path.value_path, compactor).await;
+    }
     path.attr = compactor.compact_term(&path.attr).await;
     path.sub_attrs = compact_all(&path.sub_attrs, compactor).await;
-    path.value_path = compact_all(&path.value_path, compactor).await;
     path.value_path_compact = path.value_path.clone(); // clone: the compact spelling is the compacted one
     path
 }
@@ -229,7 +253,13 @@ async fn compact_all(names: &[AttributeName], compactor: &impl TermCompactor) ->
 mod tests {
     use crate::{
         error::QueryError,
-        filter::{compaction::compact_q_expr, expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, parser, serialize::serialize},
+        filter::{
+            compaction::{compact_csf_expr, compact_q_expr},
+            expansion::{expand_csf_expr, expand_q_expr},
+            json_key_attributes::JsonKeyAttributes,
+            parser,
+            serialize::serialize,
+        },
         term_compactor::TermCompactor,
         term_expander::TermExpander,
     };
@@ -361,5 +391,24 @@ mod tests {
         let compacted = compact_q_expr(expanded, &PrefixCompactor).await;
 
         pretty_assertions::assert_eq!(serialize(&compacted), "isParkedIn{Building,Store:category==\"x\"}");
+    }
+
+    /// A `csf` round-trips with its trailing members exactly as written, even
+    /// a member that reads like a term the compactor would abbreviate: those
+    /// members are the raw JSON keys of a Context Source Property (clause 4.9).
+    #[tokio::test]
+    async fn a_csf_round_trips_with_its_trailing_members_as_written() {
+        let written = "coverage.since[\"https://example.com/area\".region]==\"north\"";
+        let parsed = parser::parse(written).expect("parses");
+        let expanded = expand_csf_expr(parsed.clone(), &PrefixExpander).await.expect("expands");
+
+        let compacted = compact_csf_expr(expanded.clone(), &PrefixCompactor).await;
+
+        pretty_assertions::assert_eq!(compacted, parsed);
+        pretty_assertions::assert_ne!(
+            compact_q_expr(expanded, &PrefixCompactor).await,
+            parsed,
+            "an Entity filter compacts the same member as a term"
+        );
     }
 }

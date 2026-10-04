@@ -259,13 +259,15 @@ mod tests {
         assert!(sql.contains(" OR "), "{sql}");
     }
 
-    /// A sub-attribute path has no language reading at all: a target language
-    /// selects a key of the attribute's own `languageMap`, never one below a
-    /// sub-attribute, so nothing probes the projection here.
+    /// A sub-attribute lives only in the payload, so nothing probes the
+    /// projection: the Property-value reading and the `languageMap` reading of
+    /// a `LanguageProperty` sub-attribute (clause 4.9) both read the payload.
     #[test]
     fn a_sub_attribute_path_compiles_to_the_payload_alone() {
         let sql = render("\"https://example.com/address\".\"https://example.com/sub\"==\"a\"");
         assert!(!sql.contains("current_attribute_values"), "{sql}");
+        assert!(sql.contains("hasValue"), "{sql}");
+        assert!(sql.contains("hasLanguageMap"), "{sql}");
     }
 
     /// The member hop precedes the `@value` selector, because JSON-LD expansion

@@ -18,6 +18,7 @@ use andromeda_ngsi_ld_query::{
         expansion::{apply_expand_values, expand_attr_path, expand_attribute_names, expand_q_expr},
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
+        trailing_members::TrailingMembers,
     },
     geo::{compile as geo_compile, query::GeoQuery, reference_budget::admit_reference_geometry},
     ordering::{
@@ -178,7 +179,7 @@ impl EntityQueryService {
                 RawOrderTarget::ModifiedAt => OrderTarget::ModifiedAt,
                 // clone: expansion rewrites the path it consumes, and the cached
                 // request parameters stay immutable across compilations.
-                RawOrderTarget::Attribute(path) => OrderTarget::Attribute(expand_attr_path(path.clone(), &json_keys, &expander).await?),
+                RawOrderTarget::Attribute(path) => OrderTarget::Attribute(expand_attr_path(path.clone(), TrailingMembers::Terms(&json_keys), &expander).await?),
             };
             compiled.push(CompiledOrderTerm {
                 target,

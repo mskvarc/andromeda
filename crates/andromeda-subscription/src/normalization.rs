@@ -8,7 +8,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     filter::{
-        compaction::{compact_q_expr, revert_expand_values},
+        compaction::{compact_csf_expr, compact_q_expr, revert_expand_values},
         expression::Expr,
     },
     projection::term::ProjectionTerm,
@@ -169,7 +169,7 @@ pub async fn compact_subscription_filters(compactor: &NameCompaction, value: &mu
     }
     if let Some(expr) = filters.csf.as_ref() {
         // clone: the stored filter stays in the resource while the compacted copy is rendered
-        insert_compacted(value, "csf", &compact_q_expr(expr.clone(), compactor).await);
+        insert_compacted(value, "csf", &compact_csf_expr(expr.clone(), compactor).await);
     }
     for (member, names) in [("expandValues", filters.expand_values.as_deref()), ("jsonKeys", filters.json_keys.as_deref())] {
         let Some(names) = names else {
@@ -275,6 +275,25 @@ mod tests {
 
         pretty_assertions::assert_eq!(value["q"], json!("speed>10"));
         pretty_assertions::assert_eq!(value["csf"], json!("tier==\"gold\""));
+    }
+
+    /// Clause 4.9: a stored `csf` member is the literal key of a Context Source
+    /// Property's raw JSON value, so it reads back exactly as written even when
+    /// it is spelled like an IRI the reader's terms would abbreviate.
+    #[tokio::test]
+    async fn a_stored_csf_reads_back_with_its_trailing_members_as_written() {
+        let filters: SubscriptionFilters = serde_json::from_value(json!({
+            "csf": "\"https://uri.etsi.org/ngsi-ld/default-context/coverage\"[\"https://uri.etsi.org/ngsi-ld/default-context/region\"]==\"north\""
+        }))
+        .expect("valid filters");
+        let mut value = serde_json::to_value(&filters).expect("serialises");
+
+        compact_subscription_filters(&core_names().await, &mut value, &filters).await;
+
+        pretty_assertions::assert_eq!(
+            value["csf"],
+            json!("coverage[\"https://uri.etsi.org/ngsi-ld/default-context/region\"]==\"north\"")
+        );
     }
 
     /// Table 5.2.12-1: `expandValues` and `jsonKeys` are stored expanded and

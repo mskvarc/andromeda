@@ -32,5 +32,6 @@ pub mod serialize;
 pub mod target_value;
 pub mod token;
 pub mod token_cursor;
+pub mod trailing_members;
 pub mod value_path;
 pub mod written_members;
