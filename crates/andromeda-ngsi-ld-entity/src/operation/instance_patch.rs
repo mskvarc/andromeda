@@ -145,18 +145,16 @@ pub(crate) fn patch_instance(
 
 /// Apply the members every family shares: a set member is written, a member
 /// set to the NGSI-LD Null is deleted, an omitted one is kept.
+///
+/// `createdAt` and `modifiedAt` are never taken from a fragment: clause 5.2.5
+/// ignores them in a write, and the write stamps attribute instances itself
+/// (clause 4.8).
 fn apply_instance_members(instance: &mut Instance, document: &InstanceDocument, observed_at: Option<&Slot<DateTimeText>>) {
     if let Some(slot) = observed_at.or_else(|| document.observed_at()) {
         instance.set_observed_at(slot.as_set().cloned()); // clone: the stored instance owns its copy of the borrowed fragment.
     }
     if let Some(slot) = document.expires_at() {
         instance.set_expires_at(slot.as_set().cloned()); // clone: the stored instance owns its copy of the borrowed fragment.
-    }
-    if let Some(created_at) = document.created_at() {
-        instance.set_created_at(Some(created_at));
-    }
-    if let Some(modified_at) = document.modified_at() {
-        instance.set_modified_at(Some(modified_at));
     }
     if let Some(instance_id) = document.instance_id() {
         instance.set_instance_id(Some(instance_id.clone())); // clone: the stored instance owns its copy of the borrowed fragment.

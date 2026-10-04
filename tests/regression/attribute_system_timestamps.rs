@@ -233,3 +233,148 @@ async fn regression_attribute_system_timestamps_order_by_created_at_uses_the_sta
     client.delete_entity(&later).await.expect("delete entity");
     scope.finish().await.expect("cleanup failed");
 }
+
+/// An instant no write in this suite happens at, so a system time equal to it
+/// can only have been copied from the request.
+const CLIENT_INSTANT: &str = "1900-01-01T00:00:00Z";
+
+/// A `name` Property whose `accuracy` sub-attribute claims both system times.
+fn name_with_stamped_accuracy(value: &str) -> Value {
+    json!({
+        "type": "Property",
+        "value": value,
+        "accuracy": {"type": "Property", "value": 1, "createdAt": CLIENT_INSTANT, "modifiedAt": CLIENT_INSTANT}
+    })
+}
+
+/// Assert the `accuracy` sub-attribute of `name` carries no system time.
+fn assert_accuracy_unstamped(name: &Value, scenario: &str) {
+    let accuracy = &name["accuracy"];
+    assert_eq!(accuracy["value"], json!(1), "{scenario}: the sub-attribute is kept: {name}");
+    assert!(accuracy.get("createdAt").is_none(), "{scenario}: no sub-attribute createdAt: {name}");
+    assert!(accuracy.get("modifiedAt").is_none(), "{scenario}: no sub-attribute modifiedAt: {name}");
+}
+
+/// Clause 5.2.5: a `createdAt` or `modifiedAt` a client writes "shall" be
+/// ignored, and the broker stamps attribute instances alone (clause 4.8), so a
+/// sub-attribute reads back under `sysAttrs` with no system time at all
+/// (Table 6.3.11-1 includes them "where known"). Creating and merging used to
+/// store the client's 1900 instants on the sub-attribute.
+#[tokio::test]
+async fn regression_r15_a_sub_attribute_keeps_no_client_system_time() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Vehicle:r15-sub-attribute");
+
+    create(
+        client,
+        &json!({"id": id, "type": "Vehicle", "name": name_with_stamped_accuracy("first"), "@context": [CORE_CONTEXT]}),
+    )
+    .await;
+    let created = read(client, &id, true).await;
+    assert_accuracy_unstamped(&created["name"], "create");
+    assert_ne!(
+        instant(&created["name"], "createdAt"),
+        CLIENT_INSTANT,
+        "the attribute is stamped by the broker: {created}"
+    );
+
+    let merged = client
+        .raw(http::Method::PATCH, &format!("/ngsi-ld/v1/entities/{id}"))
+        .header("content-type", "application/ld+json")
+        .json(&json!({"name": name_with_stamped_accuracy("second"), "@context": [CORE_CONTEXT]}))
+        .send()
+        .await
+        .expect("merge entity request");
+    assert_eq!(merged.status, StatusCode::NO_CONTENT, "merge: {:?}", merged.body);
+    let after_merge = read(client, &id, true).await;
+    assert_eq!(after_merge["name"]["value"], json!("second"), "the merge applied: {after_merge}");
+    assert_accuracy_unstamped(&after_merge["name"], "merge");
+
+    client.delete_entity(&id).await.expect("delete entity");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// A `sysAttrs` read written back is a valid write: clause 5.2.5 ignores the
+/// system times it carries rather than refusing them, so Replace Entity
+/// answers 204 and adopts none of them, at the entity, the attribute or the
+/// sub-attribute.
+#[tokio::test]
+async fn regression_r15_a_sys_attrs_read_written_back_adopts_no_system_time() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Vehicle:r15-write-back");
+
+    create(
+        client,
+        &json!({"id": id, "type": "Vehicle", "name": name_with_stamped_accuracy("first"), "@context": [CORE_CONTEXT]}),
+    )
+    .await;
+    let mut written_back = read(client, &id, true).await;
+    let entity_created = instant(&written_back, "createdAt");
+    let name_created = instant(&written_back["name"], "createdAt");
+    written_back["createdAt"] = json!(CLIENT_INSTANT);
+    written_back["name"]["createdAt"] = json!(CLIENT_INSTANT);
+    written_back["name"]["modifiedAt"] = json!(CLIENT_INSTANT);
+    written_back["name"]["accuracy"]["createdAt"] = json!(CLIENT_INSTANT);
+    written_back["@context"] = json!([CORE_CONTEXT]);
+
+    let replaced = client
+        .raw(http::Method::PUT, &format!("/ngsi-ld/v1/entities/{id}"))
+        .header("content-type", "application/ld+json")
+        .json(&written_back)
+        .send()
+        .await
+        .expect("replace entity request");
+    assert_eq!(replaced.status, StatusCode::NO_CONTENT, "replace: {:?}", replaced.body);
+
+    let after = read(client, &id, true).await;
+    assert_eq!(instant(&after, "createdAt"), entity_created, "the entity keeps its createdAt: {after}");
+    assert_eq!(instant(&after["name"], "createdAt"), name_created, "the attribute keeps its createdAt: {after}");
+    assert_ne!(
+        instant(&after["name"], "modifiedAt"),
+        CLIENT_INSTANT,
+        "the attribute modifiedAt is the broker's: {after}"
+    );
+    assert_accuracy_unstamped(&after["name"], "replace");
+
+    client.delete_entity(&id).await.expect("delete entity");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// The Temporal API records an instance's sub-attributes beside its value,
+/// and clause 5.2.5 holds there too: a sub-attribute of a recorded instance
+/// keeps no client system time. The history row's metadata used to keep it.
+#[tokio::test]
+async fn regression_r15_a_temporal_instance_sub_attribute_keeps_no_client_system_time() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Vehicle:r15-temporal");
+
+    let mut instance = name_with_stamped_accuracy("first");
+    instance["observedAt"] = json!("2024-01-01T00:00:00Z");
+    let created = client
+        .create_temporal_entity(&json!({"id": id, "type": "Vehicle", "name": [instance], "@context": [CORE_CONTEXT]}))
+        .await
+        .expect("create temporal entity request");
+    assert_eq!(created.status, StatusCode::CREATED, "create temporal entity: {:?}", created.body);
+
+    let response = client
+        .raw(http::Method::GET, &format!("/ngsi-ld/v1/temporal/entities/{id}?options=sysAttrs"))
+        .header("accept", "application/ld+json")
+        .send()
+        .await
+        .expect("retrieve temporal entity request");
+    assert_eq!(response.status, StatusCode::OK, "retrieve temporal entity: {:?}", response.body);
+    let evolution = response.json_value().expect("a temporal entity is JSON");
+    let recorded = evolution["name"].as_array().map_or(&evolution["name"], |instances| &instances[0]);
+    assert_accuracy_unstamped(recorded, "temporal create");
+
+    let deleted = client
+        .raw(http::Method::DELETE, &format!("/ngsi-ld/v1/temporal/entities/{id}"))
+        .send()
+        .await
+        .expect("delete temporal entity request");
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT, "delete temporal entity: {:?}", deleted.body);
+    scope.finish().await.expect("cleanup failed");
+}

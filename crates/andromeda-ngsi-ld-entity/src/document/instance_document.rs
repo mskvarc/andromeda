@@ -198,6 +198,17 @@ impl InstanceDocument {
         self.instance_id = instance_id;
     }
 
+    /// Drop `createdAt` and `modifiedAt` from this instance, leaving its
+    /// sub-attributes as they are.
+    ///
+    /// The broker generates both (clause 4.8) and ignores any a request
+    /// carries (clause 5.2.5); a sub-attribute holds none at all, since Table
+    /// 6.3.11-1 includes them only "where known".
+    pub const fn forget_system_instants(&mut self) {
+        self.created_at = None;
+        self.modified_at = None;
+    }
+
     /// The written sub-attributes, for a mutation.
     pub const fn sub_attributes_mut(&mut self) -> &mut IndexMap<AttributeName, AttributeMember> {
         &mut self.sub_attributes

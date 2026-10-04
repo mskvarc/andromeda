@@ -12,6 +12,7 @@
 use andromeda_ngsi_ld_entity::{
     date_time_text::DateTimeText,
     document::{
+        attribute_member::AttributeMember,
         instance_document::{InstanceDocument, InstanceDocumentParts},
         slot::Slot,
     },
@@ -134,7 +135,12 @@ impl ObservationMetadata {
 }
 
 /// The instance holding the metadata members of `parts` and nothing else.
-fn metadata_document(parts: InstanceDocumentParts) -> InstanceDocument {
+///
+/// The sub-attributes keep no `createdAt` or `modifiedAt`: the broker stamps
+/// attribute instances alone (clause 4.8), so one there was written by a
+/// client, which clause 5.2.5 says to ignore.
+fn metadata_document(mut parts: InstanceDocumentParts) -> InstanceDocument {
+    parts.sub_attributes.values_mut().for_each(AttributeMember::forget_system_instants_throughout);
     InstanceDocument::builder()
         .expires_at(parts.expires_at)
         .unit_code(parts.unit_code)
@@ -144,4 +150,56 @@ fn metadata_document(parts: InstanceDocumentParts) -> InstanceDocument {
         .proof_seals(parts.proof_seals)
         .sub_attributes(parts.sub_attributes)
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::temporal::observation_metadata::ObservationMetadata;
+    use andromeda_ngsi_ld_entity::{
+        document::{attribute_member::AttributeMember, instance_document::InstanceDocument},
+        system_instant::SystemInstant,
+    };
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use indexmap::IndexMap;
+
+    /// A client-written instant.
+    fn at() -> SystemInstant {
+        "1900-01-01T00:00:00Z".parse().expect("RFC 3339")
+    }
+
+    /// One sub-attribute named `name` carrying both system times and `nested`.
+    fn stamped(name: &str, nested: IndexMap<AttributeName, AttributeMember>) -> IndexMap<AttributeName, AttributeMember> {
+        let instance = InstanceDocument::builder()
+            .created_at(Some(at()))
+            .modified_at(Some(at()))
+            .sub_attributes(nested)
+            .build();
+        IndexMap::from([(name.parse().expect("a valid name"), AttributeMember::Instances(vec![instance]))])
+    }
+
+    /// The system times of every sub-attribute instance, depth first.
+    fn times(sub_attributes: &IndexMap<AttributeName, AttributeMember>) -> Vec<(Option<SystemInstant>, Option<SystemInstant>)> {
+        sub_attributes
+            .values()
+            .flat_map(AttributeMember::instances)
+            .flat_map(|instance| {
+                let mut found = vec![(instance.created_at(), instance.modified_at())];
+                found.extend(times(instance.sub_attributes()));
+                found
+            })
+            .collect()
+    }
+
+    /// Clause 5.2.5: a client's `createdAt` and `modifiedAt` are ignored, so
+    /// the metadata a history row stores keeps none on any sub-attribute.
+    #[test]
+    fn sub_attribute_system_times_are_not_kept_at_any_depth() {
+        let written = InstanceDocument::builder()
+            .sub_attributes(stamped("https://example.org/accuracy", stamped("https://example.org/method", IndexMap::new())))
+            .build();
+
+        let metadata = ObservationMetadata::from_parts(written.into_parts()).expect("the sub-attributes are metadata");
+
+        pretty_assertions::assert_eq!(times(&metadata.into_parts().sub_attributes), vec![(None, None), (None, None)]);
+    }
 }

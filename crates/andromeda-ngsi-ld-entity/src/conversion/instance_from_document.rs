@@ -47,7 +47,12 @@ impl Instance {
     /// `unitCode`, the NGSI-LD Null anywhere, a repeated sub-attribute
     /// instance.
     pub fn try_from_document(attribute: &AttributeName, document: InstanceDocument) -> Result<(Option<Identifier>, Instance), EntityRefusal> {
-        let parts = document.into_parts();
+        let mut parts = document.into_parts();
+        // The broker stamps attribute instances alone (clause 4.8), so a time
+        // on a sub-attribute was written by a client, which clause 5.2.5 says
+        // to ignore. Each level drops its children's, so every depth is
+        // covered once.
+        parts.sub_attributes.values_mut().for_each(AttributeMember::forget_system_instants);
         let family = resolved_family(&parts);
         reject_nulls(attribute, &parts)?;
         let envelope = Envelope {
@@ -235,4 +240,69 @@ pub(crate) fn attributes_from_members(members: IndexMap<AttributeName, Attribute
         }
     }
     Ok(attributes)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        document::{
+            attribute_member::AttributeMember,
+            instance_document::InstanceDocument,
+            written_value::{ValueSlot, WrittenValue},
+        },
+        instance::Instance,
+        operation::speed_entity::{ACCURACY, SPEED, name, number},
+        system_instant::SystemInstant,
+    };
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
+    use indexmap::IndexMap;
+
+    /// The instant every written instance below claims.
+    fn at() -> SystemInstant {
+        "1900-01-01T00:00:00Z".parse().expect("RFC 3339")
+    }
+
+    /// A written Property instance claiming both system times.
+    fn stamped(sub_attributes: IndexMap<AttributeName, AttributeMember>) -> InstanceDocument {
+        InstanceDocument::builder()
+            .family(Some(AttributeType::Property))
+            .value(ValueSlot::Set(WrittenValue::Value(vec![number(1)])))
+            .created_at(Some(at()))
+            .modified_at(Some(at()))
+            .sub_attributes(sub_attributes)
+            .build()
+    }
+
+    /// One sub-attribute of `raw` holding `instance`.
+    fn sub_attribute(raw: &str, instance: InstanceDocument) -> IndexMap<AttributeName, AttributeMember> {
+        IndexMap::from([(name(raw), AttributeMember::Instances(vec![instance]))])
+    }
+
+    /// The system times of the default instance of `attribute` among the
+    /// sub-attributes of `instance`.
+    fn sub_attribute_times<'a>(instance: &'a Instance, attribute: &str) -> (&'a Instance, (Option<SystemInstant>, Option<SystemInstant>)) {
+        let held = instance
+            .sub_attributes()
+            .get(attribute)
+            .and_then(|instances| instances.get(None))
+            .expect("the sub-attribute");
+        (held, (held.created_at(), held.modified_at()))
+    }
+
+    /// The broker stamps attribute instances alone (clause 4.8), so a
+    /// sub-attribute time is a client's, which clause 5.2.5 ignores at every
+    /// depth; the instance's own times are what the stored-document decoder
+    /// reads back and survive.
+    #[test]
+    fn sub_attribute_system_times_are_dropped_at_every_depth() {
+        let method = "https://example.org/method";
+        let written = stamped(sub_attribute(ACCURACY, stamped(sub_attribute(method, stamped(IndexMap::new())))));
+
+        let (_, instance) = Instance::try_from_document(&name(SPEED), written).expect("a valid instance");
+
+        pretty_assertions::assert_eq!((instance.created_at(), instance.modified_at()), (Some(at()), Some(at())));
+        let (accuracy, accuracy_times) = sub_attribute_times(&instance, ACCURACY);
+        pretty_assertions::assert_eq!(accuracy_times, (None, None));
+        pretty_assertions::assert_eq!(sub_attribute_times(accuracy, method).1, (None, None));
+    }
 }
