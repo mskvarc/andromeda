@@ -177,10 +177,10 @@ async fn get_entity_map(client: &Client, id: &str, accept: &str) -> (StatusCode,
     (status, headers, body)
 }
 
-async fn update_entity_map(client: &Client, id: &str, patch: &Value) -> (StatusCode, Value) {
+async fn update_entity_map(client: &Client, id: &str, content_type: &str, patch: &Value) -> (StatusCode, Value) {
     let resp = client
         .patch(format!("{BASE_URL}/entityMaps/{}", encode(id)))
-        .header("Content-Type", "application/json")
+        .header("Content-Type", content_type)
         .json(patch)
         .send()
         .await

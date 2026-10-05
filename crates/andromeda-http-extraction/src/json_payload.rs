@@ -1,8 +1,8 @@
 //! A plain JSON request body decoded into a typed value.
 //!
-//! The operations whose body is a small JSON document rather than an NGSI-LD
-//! entity representation -- updating an `EntityMap` (clause 5.14.2), toggling a
-//! tenant -- read it here. The body is subject to the same clause 6.3.4
+//! The operations whose body is a small JSON document of Andromeda's own
+//! rather than an NGSI-LD JSON-LD document -- toggling a tenant -- read it
+//! here. The body is subject to the same clause 6.3.4
 //! preconditions and the same size limit as every other payload, and each
 //! refusal is a problem detail rather than the framework's plain text.
 

@@ -131,6 +131,20 @@ pub(crate) async fn scoped(method: Method, path: &str, snapshot: &str, body: Opt
     request.send().await.expect("Snapshot-scoped request")
 }
 
+/// One request scoped to a Snapshot through `NGSILD-Snapshot`, carrying `body`
+/// as plain JSON, as a body that cannot name a `@context` is sent (clause
+/// 6.3.5).
+pub(crate) async fn scoped_json(method: Method, path: &str, snapshot: &str, body: &Value) -> Response {
+    client()
+        .request(method, broker_url(path))
+        .header("NGSILD-Snapshot", snapshot)
+        .header("Content-Type", "application/json")
+        .json(body)
+        .send()
+        .await
+        .expect("Snapshot-scoped request")
+}
+
 /// The schema holding a published Snapshot's branch, `snap_<snapshot_key>`.
 pub(crate) async fn published_branch_schema(pool: &PgPool, snapshot_id: &str) -> String {
     let key: i64 = sqlx::query_scalar("SELECT snapshot_key FROM snapshots WHERE id = $1")

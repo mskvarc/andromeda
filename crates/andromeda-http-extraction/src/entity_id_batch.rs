@@ -1,6 +1,12 @@
 //! The request body of a batch delete: an array of Entity IDs (clause
 //! 5.6.10).
 //!
+//! Clause 5.6.10.3 takes "A JSON-LD Array", so the body passes every NGSI-LD
+//! body precondition a JSON-LD document does -- clauses 6.3.4 and 6.3.5, the
+//! JSON value limit and the number range -- before its items are read. An
+//! `application/ld+json` array of strings names no `@context`, and clause
+//! 6.3.5 refuses it as such.
+//!
 //! The body is decoded item by item rather than as one typed array, so an
 //! `id` that is a URI too long to be stored is reported against itself as a
 //! clause 5.2.17 `BatchEntityError` while the rest of the batch is deleted.
@@ -10,14 +16,16 @@ use crate::{
     batch_array::batch_items,
     batch_body_refusal::{BatchBodyRefusal, BatchMembers},
     batch_item_refusal::BatchItemRefusal,
+    jsonld::{AdmittedBody, admit_request_body},
 };
-use andromeda_http_response::problem_response::ProblemResponse;
+use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{
     identifier::{Identifier, IdentifierParseError},
     uri::Uri,
 };
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchEntityError;
-use axum::{body::Bytes, http::Uri as HttpUri};
+use axum::extract::{FromRequest, Request};
 use serde_json::Value;
 
 /// The Entity IDs a batch delete names, and the ones refused per entity.
@@ -29,23 +37,32 @@ pub struct EntityIdBatch {
     pub refused: Vec<BatchEntityError>,
 }
 
-/// Decode the body of a batch delete into the identifiers it names.
-///
-/// The body was counted against the request's JSON value limit when it was
-/// read (see [`RequestPayload`](crate::request_payload::RequestPayload)).
-///
-/// # Errors
-///
-/// Returns a [`ProblemResponse`] for the [`BatchBodyRefusal`] that fails the
-/// request as a whole: a body that is not JSON, not an array or an empty array
-/// (clauses 5.5.4 and 5.6.10.4), a null item, an item that is not a string
-/// (clause 5.6.10.3), or a string that is not a URI (Table 5.2.17-1).
-pub fn parse_batch_entity_ids(body: &Bytes, instance: &HttpUri) -> Result<EntityIdBatch, ProblemResponse> {
-    entity_id_batch(body).map_err(|refusal| refusal.into_problem(instance.clone())) // clone: the refusal names the request it answers
+/// Axum extractor for the body of a batch delete, read as the JSON-LD array
+/// clause 5.6.10.3 takes.
+pub struct JsonLdEntityIds {
+    /// The identifiers the body names.
+    pub batch: EntityIdBatch,
+    /// The context the request named, in its `Link` header (clause 6.3.5).
+    pub context: ContextSpec,
+}
+
+impl<S> FromRequest<S> for JsonLdEntityIds
+where
+    S: Send + Sync,
+{
+    type Rejection = ExtractorRejection;
+
+    async fn from_request(req: Request, state: &S) -> Result<JsonLdEntityIds, ExtractorRejection> {
+        admit_request_body(req, state, |AdmittedBody { text, context, uri }| {
+            let batch = entity_id_batch(&text).map_err(|refusal| ExtractorRejection::Classified(refusal.into_problem(uri)))?;
+            Ok(JsonLdEntityIds { batch, context })
+        })
+        .await
+    }
 }
 
 /// The identifiers `body` names, or the refusal that fails the request.
-fn entity_id_batch(body: &Bytes) -> Result<EntityIdBatch, BatchBodyRefusal> {
+fn entity_id_batch(body: &[u8]) -> Result<EntityIdBatch, BatchBodyRefusal> {
     let items = batch_items::<Value>(body, BatchMembers::EntityIds)?;
     let mut batch = EntityIdBatch {
         ids: Vec::with_capacity(items.len()),
@@ -74,13 +91,55 @@ fn entity_id_batch(body: &Bytes) -> Result<EntityIdBatch, BatchBodyRefusal> {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_id_batch::parse_batch_entity_ids;
+    use crate::entity_id_batch::JsonLdEntityIds;
+    use andromeda_http_response::extraction_rejection::ExtractorRejection;
+    use andromeda_jsonld::request_context::RequestContext;
     use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
     use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
-    use axum::{body::Bytes, http::Uri};
+    use axum::{
+        body::Body,
+        extract::FromRequest,
+        http::{
+            Request,
+            StatusCode,
+            header::{CONTENT_LENGTH, CONTENT_TYPE, LINK},
+        },
+    };
+    use iri_rs::IriBuf;
 
-    fn instance() -> Uri {
-        Uri::from_static("/ngsi-ld/v1/entityOperations/delete")
+    const CONTEXT_LINK: &str = r#"<https://example.org/ctx.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#;
+
+    /// A batch delete request of `content_type` carrying `body`, declaring its
+    /// length, and one `Link` line per entry of `links`.
+    fn request(content_type: &str, body: String, links: &[&str]) -> Request<Body> {
+        let mut request = Request::builder()
+            .uri("/ngsi-ld/v1/entityOperations/delete")
+            .header(CONTENT_TYPE, content_type)
+            .header(CONTENT_LENGTH, body.len());
+        for link in links {
+            request = request.header(LINK, *link);
+        }
+        request.body(Body::from(body)).expect("request builds")
+    }
+
+    /// An `application/json` batch delete request carrying `body`.
+    fn json_request(body: &str) -> Request<Body> {
+        request("application/json", body.to_owned(), &[])
+    }
+
+    async fn extract(request: Request<Body>) -> Result<JsonLdEntityIds, ExtractorRejection> {
+        JsonLdEntityIds::from_request(request, &()).await
+    }
+
+    /// The category and detail the request is refused with.
+    async fn refusal_of(request: Request<Body>) -> (NgsiLdErrorType, String) {
+        match extract(request).await {
+            Ok(extracted) => panic!("the request was to fail as a whole, parsed {:?}", extracted.batch),
+            Err(ExtractorRejection::Classified(response)) => (response.problem().error_type(), response.problem().detail().to_owned()),
+            Err(ExtractorRejection::BadRequestData { detail, .. }) => (NgsiLdErrorType::BadRequestData, detail),
+            Err(ExtractorRejection::InvalidRequest { detail, .. }) => (NgsiLdErrorType::InvalidRequest, detail),
+            Err(other @ (ExtractorRejection::Empty(_) | ExtractorRejection::NotAcceptable(_))) => panic!("expected a problem, got {other:?}"),
+        }
     }
 
     /// A URN of exactly `length` octets.
@@ -89,31 +148,80 @@ mod tests {
         format!("{prefix}{}", "a".repeat(length - prefix.len()))
     }
 
-    /// The category and detail the request is refused with.
-    fn refusal_of(body: &str) -> (NgsiLdErrorType, String) {
-        match parse_batch_entity_ids(&Bytes::from(body.to_owned()), &instance()) {
-            Ok(batch) => panic!("the request was to fail as a whole, parsed {batch:?}"),
-            Err(refusal) => (refusal.problem().error_type(), refusal.problem().detail().to_owned()),
+    #[tokio::test]
+    async fn a_json_id_array_is_read_against_its_one_context_link() {
+        let extracted = extract(request("application/json", r#"["urn:ngsi-ld:T:1"]"#.to_owned(), &[CONTEXT_LINK]))
+            .await
+            .expect("a batch of ids");
+        pretty_assertions::assert_eq!(extracted.batch.ids.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:1"]);
+        pretty_assertions::assert_eq!(
+            extracted.context.request_context(),
+            &RequestContext::Link(IriBuf::new("https://example.org/ctx.jsonld".to_owned()).expect("a valid IRI"))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_json_id_array_without_a_link_is_read_against_the_default_context() {
+        let extracted = extract(json_request(r#"["urn:ngsi-ld:T:1"]"#)).await.expect("a batch of ids");
+        pretty_assertions::assert_eq!(extracted.context.request_context(), &RequestContext::Default);
+    }
+
+    /// Clause 6.3.5: an `application/ld+json` body names its context in an
+    /// `@context` member, which an array of strings cannot carry.
+    #[tokio::test]
+    async fn an_ld_json_id_array_names_no_context_and_is_bad_request_data() {
+        pretty_assertions::assert_eq!(
+            refusal_of(request("application/ld+json", r#"["urn:ngsi-ld:T:1"]"#.to_owned(), &[])).await,
+            (NgsiLdErrorType::BadRequestData, "application/ld+json body must contain @context".to_owned())
+        );
+    }
+
+    /// Clause 6.3.5: an `application/ld+json` body beside a context `Link` is
+    /// `BadRequestData`.
+    #[tokio::test]
+    async fn an_ld_json_id_array_beside_a_context_link_is_bad_request_data() {
+        let (error_type, _detail) = refusal_of(request("application/ld+json", r#"["urn:ngsi-ld:T:1"]"#.to_owned(), &[CONTEXT_LINK])).await;
+        pretty_assertions::assert_eq!(error_type, NgsiLdErrorType::BadRequestData);
+    }
+
+    /// Clause 6.3.4: an unsupported media type is a bare 415, an absent
+    /// `Content-Length` a bare 411.
+    #[tokio::test]
+    async fn the_clause_6_3_4_preconditions_answer_with_bare_statuses() {
+        match extract(request("application/xml", r#"["urn:ngsi-ld:T:1"]"#.to_owned(), &[])).await {
+            Err(ExtractorRejection::Empty(status)) => pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE),
+            _other => panic!("expected a bare 415"),
+        }
+        let unmeasured = Request::builder()
+            .uri("/ngsi-ld/v1/entityOperations/delete")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"["urn:ngsi-ld:T:1"]"#))
+            .expect("request builds");
+        match extract(unmeasured).await {
+            Err(ExtractorRejection::Empty(status)) => pretty_assertions::assert_eq!(status, StatusCode::LENGTH_REQUIRED),
+            _other => panic!("expected a bare 411"),
         }
     }
 
-    #[test]
-    fn well_formed_ids_are_all_identifiers() {
-        let batch = parse_batch_entity_ids(&Bytes::from_static(br#"["urn:ngsi-ld:Vehicle:a","urn:ngsi-ld:Vehicle:b"]"#), &instance()).expect("a batch of ids");
+    #[tokio::test]
+    async fn well_formed_ids_are_all_identifiers() {
+        let extracted = extract(json_request(r#"["urn:ngsi-ld:Vehicle:a","urn:ngsi-ld:Vehicle:b"]"#))
+            .await
+            .expect("a batch of ids");
         pretty_assertions::assert_eq!(
-            batch.ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            extracted.batch.ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
             vec!["urn:ngsi-ld:Vehicle:a", "urn:ngsi-ld:Vehicle:b"]
         );
-        pretty_assertions::assert_eq!(batch.refused, Vec::new());
+        pretty_assertions::assert_eq!(extracted.batch.refused, Vec::new());
     }
 
     /// Table 5.2.17-1 sets no length on `entityId`: an `id` too long to be
     /// stored is reported against itself and its neighbours are deleted.
-    #[test]
-    fn an_over_long_id_is_refused_against_itself() {
+    #[tokio::test]
+    async fn an_over_long_id_is_refused_against_itself() {
         let long_id = urn_of_length(IDENTIFIER_BYTE_LIMIT + 1);
         let body = format!(r#"["urn:ngsi-ld:Vehicle:a","{long_id}"]"#);
-        let batch = parse_batch_entity_ids(&Bytes::from(body), &instance()).expect("a batch of ids");
+        let batch = extract(request("application/json", body, &[])).await.expect("a batch of ids").batch;
         pretty_assertions::assert_eq!(batch.ids.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["urn:ngsi-ld:Vehicle:a"]);
         pretty_assertions::assert_eq!(batch.refused.len(), 1);
         pretty_assertions::assert_eq!(batch.refused[0].entity_id.as_str(), long_id.as_str());
@@ -126,8 +234,8 @@ mod tests {
 
     /// Clauses 5.6.10.3 and 5.6.10.4 and Table 5.2.17-1: an item with no URI to
     /// report against fails the request as `BadRequestData`, naming the item.
-    #[test]
-    fn an_item_with_no_uri_to_report_against_fails_the_request() {
+    #[tokio::test]
+    async fn an_item_with_no_uri_to_report_against_fails_the_request() {
         for (body, detail) in [
             (r#"["urn:ngsi-ld:Vehicle:a",null]"#, "batch item 1 is null"),
             (r#"["urn:ngsi-ld:Vehicle:a",42]"#, "batch item 1 is not an entity id string"),
@@ -137,27 +245,25 @@ mod tests {
                 "the 'id' of batch item 1 is not a URI: invalid URI: not a valid URN, URL or IRI",
             ),
         ] {
-            pretty_assertions::assert_eq!(refusal_of(body), (NgsiLdErrorType::BadRequestData, detail.to_owned()), "{body}");
+            pretty_assertions::assert_eq!(
+                refusal_of(json_request(body)).await,
+                (NgsiLdErrorType::BadRequestData, detail.to_owned()),
+                "{body}"
+            );
         }
     }
 
     /// Clause 5.5.4: only a body that is not JSON is `InvalidRequest`.
-    #[test]
-    fn the_body_shape_refusals_carry_the_clause_5_5_4_categories() {
+    #[tokio::test]
+    async fn the_body_shape_refusals_carry_the_clause_5_5_4_categories() {
+        pretty_assertions::assert_eq!(refusal_of(json_request("[]")).await.0, NgsiLdErrorType::BadRequestData);
         pretty_assertions::assert_eq!(
-            refusal_of("[]"),
-            (
-                NgsiLdErrorType::BadRequestData,
-                "the request body must be a non-empty JSON array of entity ids".to_owned()
-            )
-        );
-        pretty_assertions::assert_eq!(
-            refusal_of("{}"),
+            refusal_of(json_request("{}")).await,
             (
                 NgsiLdErrorType::BadRequestData,
                 "the request body must be a JSON array of entity ids".to_owned()
             )
         );
-        pretty_assertions::assert_eq!(refusal_of("[,").0, NgsiLdErrorType::InvalidRequest);
+        pretty_assertions::assert_eq!(refusal_of(json_request("[,")).await.0, NgsiLdErrorType::InvalidRequest);
     }
 }

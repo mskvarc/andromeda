@@ -1,9 +1,13 @@
 //! HTTP request model for updating an `EntityMap`.
 
+use andromeda_ngsi_ld_model::request_body::RequestBody;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, de::IgnoredAny};
 
 /// Request body for `PATCH /entityMaps/{id}` (clauses 5.14.2 and 6.32.3.2).
+///
+/// Clause 5.14.2.3 takes "A JSON-LD document", so an `application/ld+json`
+/// body names its context in a top-level `@context`, which decoding skips.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateEntityMapBody {
@@ -24,9 +28,13 @@ pub struct UpdateEntityMapBody {
     _id: Option<IgnoredAny>,
 }
 
+impl RequestBody for UpdateEntityMapBody {}
+
 #[cfg(test)]
 mod tests {
     use crate::body::entity_map::UpdateEntityMapBody;
+    use andromeda_ngsi_ld_model::request_body::RequestBody;
+    use chrono::{DateTime, Utc};
 
     #[test]
     fn output_only_members_are_accepted_without_becoming_domain_values() {
@@ -44,5 +52,24 @@ mod tests {
     #[test]
     fn an_unknown_member_is_rejected() {
         assert!(serde_json::from_value::<UpdateEntityMapBody>(serde_json::json!({"bogus": true})).is_err());
+    }
+
+    /// Clause 5.14.2.3: the body is a JSON-LD document, whose top-level
+    /// `@context` is not a member of the update.
+    #[test]
+    fn a_top_level_context_is_skipped_when_the_body_is_read_from_its_text() {
+        let body = UpdateEntityMapBody::from_request_text(
+            br#"{"@context": ["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"], "expiresAt": "2030-01-01T00:00:00Z"}"#,
+        )
+        .expect("the context is skipped");
+        pretty_assertions::assert_eq!(
+            body.expires_at,
+            Some("2030-01-01T00:00:00Z".parse::<DateTime<Utc>>().expect("a valid timestamp"))
+        );
+    }
+
+    #[test]
+    fn an_unknown_member_is_rejected_when_the_body_is_read_from_its_text() {
+        assert!(UpdateEntityMapBody::from_request_text(br#"{"bogus": true}"#).is_err());
     }
 }

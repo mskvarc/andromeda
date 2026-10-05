@@ -231,7 +231,7 @@ async fn batch_upsert_update(client: &Client, entities: &Value) -> StatusCode {
 async fn batch_delete(client: &Client, ids: &Value) -> StatusCode {
     let resp = client
         .post(format!("{BASE_URL}/entityOperations/delete"))
-        .header("Content-Type", "application/ld+json")
+        .header("Content-Type", "application/json")
         .json(ids)
         .send()
         .await

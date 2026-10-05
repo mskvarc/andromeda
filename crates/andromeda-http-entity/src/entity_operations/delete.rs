@@ -3,7 +3,6 @@
 use crate::entity_operations::{
     AcceptFormatNoGeo,
     BatchOperationResult,
-    ContextUrl,
     EntityResultExt,
     EntityTenantState,
     IntoResponse,
@@ -25,8 +24,7 @@ use crate::entity_operations::{
 };
 use andromeda_http_extraction::{
     context_target,
-    entity_id_batch::{EntityIdBatch, parse_batch_entity_ids},
-    request_payload::RequestPayload,
+    entity_id_batch::{EntityIdBatch, JsonLdEntityIds},
 };
 use andromeda_ngsi_ld_request::empty::EmptyParams;
 
@@ -41,24 +39,20 @@ pub(crate) async fn batch_delete(
     }: EntityTenantState,
     _accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
-    ContextUrl(context): ContextUrl,
     prefer: PreferHeader,
-    // Clause 6.3.2: "'Length required' (411) ... shall be raised when an HTTP
-    // request provided by a client does not define the 'Content-Length' HTTP
-    // header." This operation reads a raw body rather than going through the
-    // `JsonLd` extractor, and `RequestPayload` applies the precondition before
-    // it reads the body within the broker's size limit, and counts its values
-    // within the JSON value limit (clause 6.3.2).
-    RequestPayload(body): RequestPayload,
+    // Clause 5.6.10.3 takes "A JSON-LD Array": the body passes the clause
+    // 6.3.4 and 6.3.5 preconditions a JSON-LD document does, and clause
+    // 5.6.10.4 reports an identifier refused on its own -- one too long to be
+    // stored -- against itself while the rest are deleted.
+    JsonLdEntityIds {
+        batch: EntityIdBatch {
+            ids: entity_ids,
+            refused: mut id_errors,
+        },
+        context,
+    }: JsonLdEntityIds,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
-
-    // Clause 5.6.10.4: an identifier refused on its own -- one too long to be
-    // stored -- is reported against itself, and the rest are deleted.
-    let EntityIdBatch {
-        ids: entity_ids,
-        refused: mut id_errors,
-    } = parse_batch_entity_ids(&body, &uri)?;
 
     let triggering = TriggeringRequest {
         via: incoming_via.as_ref(),

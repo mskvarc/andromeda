@@ -13,8 +13,9 @@ use crate::{
     setup_single_vehicle,
     update_entity_map,
 };
+use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, SubsecRound, Utc};
 use reqwest::StatusCode;
 use serde_json::json;
 
@@ -87,7 +88,7 @@ async fn entity_map_update_valid_expires_at_returns_204() {
 
     let new_expires = (Utc::now() + Duration::hours(2)).to_rfc3339();
     let patch = json!({ "expiresAt": new_expires });
-    let (status, _) = update_entity_map(&c, &map_id, &patch).await;
+    let (status, _) = update_entity_map(&c, &map_id, "application/json", &patch).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, _, _) = get_entity_map(&c, &map_id, "application/json").await;
@@ -114,8 +115,69 @@ async fn entity_map_update_output_only_fields_ignored_returns_204() {
         "entityMap": { "urn:fake": ["@none"] },
         "linkedMaps": { "fake": "fake" }
     });
-    let (status, _) = update_entity_map(&c, &map_id, &patch).await;
+    let (status, _) = update_entity_map(&c, &map_id, "application/json", &patch).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
+
+    cleanup_entity_map(&c, &map_id).await;
+    delete_entity(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.14.2.3 takes "A JSON-LD document": an `application/ld+json` body
+/// names its context in a top-level `@context`, which is no member of the
+/// update.
+#[tokio::test]
+async fn entity_map_update_ld_json_with_context_returns_204() {
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
+    let c = client();
+    let id = scope.id("Vehicle:em-upd-ld");
+    setup_single_vehicle(&c, &id).await;
+
+    let (status, _, body) = create_entity_map_from_get(&c, &scope, "type=Vehicle").await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    let map_id = body["id"].as_str().expect("map id missing").to_owned();
+
+    let new_expires = (Utc::now() + Duration::hours(4)).trunc_subsecs(0);
+    let patch = json!({ "@context": [CORE_CONTEXT], "expiresAt": new_expires.to_rfc3339() });
+    let (status, body) = update_entity_map(&c, &map_id, "application/ld+json", &patch).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+
+    let (status, _, body) = get_entity_map(&c, &map_id, "application/json").await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    let stored = body["expiresAt"]
+        .as_str()
+        .expect("expiresAt is a string")
+        .parse::<DateTime<Utc>>()
+        .expect("expiresAt is a timestamp");
+    pretty_assertions::assert_eq!(stored, new_expires);
+
+    cleanup_entity_map(&c, &map_id).await;
+    delete_entity(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 6.3.5: an `application/ld+json` body without `@context`, and an
+/// `application/json` body carrying one, are `BadRequestData`.
+#[tokio::test]
+async fn entity_map_update_context_in_the_wrong_body_or_none_in_the_right_one_returns_400() {
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
+    let c = client();
+    let id = scope.id("Vehicle:em-upd-ctx");
+    setup_single_vehicle(&c, &id).await;
+
+    let (status, _, body) = create_entity_map_from_get(&c, &scope, "type=Vehicle").await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    let map_id = body["id"].as_str().expect("map id missing").to_owned();
+
+    let expires = (Utc::now() + Duration::hours(4)).to_rfc3339();
+    for (content_type, patch) in [
+        ("application/ld+json", json!({ "expiresAt": expires })),
+        ("application/json", json!({ "@context": [CORE_CONTEXT], "expiresAt": expires })),
+    ] {
+        let (status, body) = update_entity_map(&c, &map_id, content_type, &patch).await;
+        pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST, "{content_type}");
+        pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str(), "{content_type}");
+    }
 
     cleanup_entity_map(&c, &map_id).await;
     delete_entity(&c, &id).await;
@@ -128,7 +190,7 @@ async fn entity_map_update_nonexistent_map_returns_404() {
     let c = client();
 
     let patch = json!({ "expiresAt": (Utc::now() + Duration::hours(1)).to_rfc3339() });
-    let (status, body) = update_entity_map(&c, "urn:ngsi-ld:EntityMap:nonexistent", &patch).await;
+    let (status, body) = update_entity_map(&c, "urn:ngsi-ld:EntityMap:nonexistent", "application/json", &patch).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
     scope.finish().await.expect("cleanup failed");
@@ -146,7 +208,7 @@ async fn entity_map_update_invalid_expires_at_returns_400() {
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
     let patch = json!({ "expiresAt": "not-a-date" });
-    let (status, body) = update_entity_map(&c, &map_id, &patch).await;
+    let (status, body) = update_entity_map(&c, &map_id, "application/json", &patch).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 
@@ -167,7 +229,7 @@ async fn entity_map_update_past_expires_at_returns_400() {
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
 
     let patch = json!({ "expiresAt": (Utc::now() - Duration::minutes(1)).to_rfc3339() });
-    let (status, body) = update_entity_map(&c, &map_id, &patch).await;
+    let (status, body) = update_entity_map(&c, &map_id, "application/json", &patch).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 

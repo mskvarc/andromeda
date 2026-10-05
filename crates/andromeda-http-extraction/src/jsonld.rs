@@ -70,13 +70,13 @@ pub struct JsonLdDocument {
 
 /// A request body that passed the NGSI-LD body preconditions, with its
 /// `@context` read.
-struct AdmittedBody {
+pub(crate) struct AdmittedBody {
     /// The payload as received.
-    text: Bytes,
+    pub(crate) text: Bytes,
     /// The extracted context specification from the body and/or Link header.
-    context: ContextSpec,
+    pub(crate) context: ContextSpec,
     /// The request URI, the `instance` of any later rejection.
-    uri: Uri,
+    pub(crate) uri: Uri,
 }
 
 /// Classify the Content-Type into one of the supported NGSI-LD types.
@@ -141,13 +141,11 @@ where
     type Rejection = ExtractorRejection;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        read_body(req, state)
-            .await?
-            .decode(|AdmittedBody { text, context, uri }| {
-                let value = T::from_request_text(&text).map_err(|source| undecodable_body(&UndecodableBody::of_text::<T>(&text, source), uri))?;
-                Ok(JsonLd { value, context })
-            })
-            .await
+        admit_request_body(req, state, |AdmittedBody { text, context, uri }| {
+            let value = T::from_request_text(&text).map_err(|source| undecodable_body(&UndecodableBody::of_text::<T>(&text, source), uri))?;
+            Ok(JsonLd { value, context })
+        })
+        .await
     }
 }
 
@@ -158,16 +156,31 @@ where
     type Rejection = ExtractorRejection;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        read_body(req, state)
-            .await?
-            .decode(|AdmittedBody { text, context, uri }| {
-                // clone: each refusal names the request
-                let document = admitted_document(&text).map_err(|refusal| number_rejection(refusal, uri.clone()))?;
-                let document = deserialize_exact_document(document).map_err(|source| undecodable_body(&UndecodableBody::Document { source }, uri))?;
-                Ok(JsonLdDocument { document, context })
-            })
-            .await
+        admit_request_body(req, state, |AdmittedBody { text, context, uri }| {
+            // clone: each refusal names the request
+            let document = admitted_document(&text).map_err(|refusal| number_rejection(refusal, uri.clone()))?;
+            let document = deserialize_exact_document(document).map_err(|source| undecodable_body(&UndecodableBody::Document { source }, uri))?;
+            Ok(JsonLdDocument { document, context })
+        })
+        .await
     }
+}
+
+/// Apply every NGSI-LD body precondition to `req` -- clauses 6.3.4 and 6.3.5,
+/// the JSON value limit and the number range -- read its `@context`, and hand
+/// the admitted body to `finish`, on the blocking pool when the payload is
+/// large.
+///
+/// # Errors
+///
+/// Returns the refusal of the first precondition the request fails, or of
+/// `finish`.
+pub(crate) async fn admit_request_body<S: Send + Sync, T: Send + 'static>(
+    req: Request,
+    state: &S,
+    finish: impl FnOnce(AdmittedBody) -> Result<T, ExtractorRejection> + Send + 'static,
+) -> Result<T, ExtractorRejection> {
+    read_body(req, state).await?.decode(finish).await
 }
 
 /// A request body that passed the clause 6.3.4 and 6.3.5 header

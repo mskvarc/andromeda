@@ -15,7 +15,6 @@ use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     api_root::ApiRoot,
     entity_query::EntityQuery,
-    json_payload::JsonPayload,
     jsonld::JsonLd,
     pagination_policy::RequestPagination,
     prefer::PreferHeader,
@@ -78,7 +77,9 @@ pub async fn update(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(entity_map_id): TypedPath<Identifier>,
-    JsonPayload(body): JsonPayload<UpdateEntityMapBody>,
+    // Clause 5.14.2.3 takes "A JSON-LD document"; the update names no term,
+    // so its context is never resolved.
+    JsonLd { value: body, context: _ }: JsonLd<UpdateEntityMapBody>,
 ) -> Result<Response, ProblemResponse> {
     let expires_at = body.expires_at.ok_or_else(|| bad_request_data("expiresAt is required", &uri))?;
 

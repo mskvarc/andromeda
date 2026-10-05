@@ -20,7 +20,6 @@ use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::{AcceptFormat, AcceptFormatNoGeo},
     api_root::ApiRoot,
-    context::ContextUrl,
     entity_batch::{BatchBody, ParsedBatch, parse_batch_entities},
     prefer::PreferHeader,
     protocol::NgsiLdProtocolHeaders,

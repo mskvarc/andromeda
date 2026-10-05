@@ -1,6 +1,6 @@
 //! Snapshot-scoped Core API acceptance cases.
 
-use crate::support::{broker_url, clean_database, client, create_entity, create_snapshot_raw, scoped, wait_for_snapshot_terminal};
+use crate::support::{broker_url, clean_database, client, create_entity, create_snapshot_raw, scoped, scoped_json, wait_for_snapshot_terminal};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use serial_test::serial;
@@ -159,14 +159,9 @@ async fn snapshot_core_batch_provision_matrix_is_branch_local() {
             .is_success()
     );
     pretty_assertions::assert_eq!(
-        scoped(
-            Method::POST,
-            "/entityOperations/delete",
-            snapshot,
-            Some(&json!(["urn:ngsi-ld:Vehicle:batch-two"]))
-        )
-        .await
-        .status(),
+        scoped_json(Method::POST, "/entityOperations/delete", snapshot, &json!(["urn:ngsi-ld:Vehicle:batch-two"]))
+            .await
+            .status(),
         StatusCode::NO_CONTENT
     );
     pretty_assertions::assert_eq!(
