@@ -5,13 +5,10 @@
 //! The stages are the ones [`crate::response`] runs over a document, in the
 //! same order and with the same outcome -- the clause 4.5 representation, the
 //! clause 4.15 negotiation, the clause 4.21 structural rule, the clause 4.5.23
-//! inline join, the presentation-boundary URI decoding, the clause 6.3.6
+//! inline join, the presentation-boundary URI decoding, the clause 4.3.6.8
+//! version fallback a `Prefer: ngsi-ld=<version>` asks for, the clause 6.3.6
 //! `@context` member and the clause 4.5.16 `GeoJSON` envelope -- applied while
-//! each member is written. A response a client asked to adapt to an older
-//! specification version (clause 4.3.6.8) is the one exception: the fallback
-//! tables rewrite a finished document, so each entity is written by the same
-//! walk into a document, which is adapted and handed to [`crate::response`]
-//! whole.
+//! each member is written.
 
 use crate::{
     context::ResponseContext,
@@ -21,10 +18,10 @@ use crate::{
         typed_entity::{IdentifierMember, TypedEntity},
     },
     error::{RenderError, RenderedShape},
-    response::{ReadyResponse, ResponseHead, ResponsePayload, ResponseRenderer, TargetDecoding},
+    response::{ResponseHead, ResponseRenderer},
     structural_projection::StructuralProjection,
     uri_decoding::UriDecoding,
-    version::adaptation::VersionAdaptation,
+    version::{adaptation::VersionAdaptation, adapted_payload::AdaptedPayload, fallback::VersionFallback},
 };
 use andromeda_http_headers::{language::LanguageFilter, media_type::ResponseMediaType};
 use andromeda_linked_retrieval::{
@@ -32,7 +29,6 @@ use andromeda_linked_retrieval::{
     plan::{FlatEntity, InlineCursor},
     typed::TypedEntities,
 };
-use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde::{Serialize, Serializer, ser::SerializeMap};
@@ -94,12 +90,13 @@ impl<'a> EntityBody<'a> {
         EntityBody { join: Some(join), ..self }
     }
 
-    /// The entity written in `format` under the walk's presentation rules.
-    const fn typed(&self, format: ResponseFormat, language_filter: Option<&'a LanguageFilter>) -> TypedEntity<'a> {
+    /// The entity written in `format` under the walk's presentation rules and
+    /// `fallback`.
+    const fn typed(&self, format: ResponseFormat, language_filter: Option<&'a LanguageFilter>, fallback: Option<VersionFallback>) -> TypedEntity<'a> {
         TypedEntity {
             entity: self.entity,
             format,
-            walk: MemberWalk::new(UriDecoding::Decode, language_filter),
+            walk: MemberWalk::new(UriDecoding::Decode, language_filter, fallback),
             projection: self.projection,
             identifier: IdentifierMember::Written,
             context: None,
@@ -156,10 +153,9 @@ impl<'a> ReadyEntityResponse<'a> {
     /// Returns [`RenderError::Serialization`] when the body cannot be written,
     /// including when `writer` fails.
     pub fn render_into<W: Write>(self, writer: W) -> Result<ResponseHead, RenderError> {
-        let version_adaptation = match self.renderer.requested_version {
-            None => VersionAdaptation::None,
-            Some(target) if target >= SpecVersion::CONFORMANT => VersionAdaptation::Unchanged,
-            Some(_) => return self.render_adapted(writer),
+        let (version_adaptation, fallback) = match self.renderer.requested_version {
+            None => (VersionAdaptation::None, None),
+            Some(target) => (VersionAdaptation::requested(target), VersionFallback::new(target, AdaptedPayload::Entity)),
         };
         let (context, context_link) = match &self.renderer.context {
             ResponseContext::Body(context) => (Some(context), None),
@@ -169,7 +165,7 @@ impl<'a> ReadyEntityResponse<'a> {
         let format = self.renderer.format;
         let selection = self.renderer.geometry_selection;
         let language_filter = self.language_filter;
-        let typed = |body: &EntityBody<'a>| -> TypedEntity<'a> { body.typed(format, language_filter) };
+        let typed = |body: &EntityBody<'a>| -> TypedEntity<'a> { body.typed(format, language_filter, fallback) };
         let written = match (&self.payload, self.renderer.media_type) {
             (EntityPayload::Single(body), ResponseMediaType::Json | ResponseMediaType::JsonLd) => {
                 serde_json::to_writer(writer, &TypedEntity { context, ..typed(body) }).map_err(|error| RenderError::serialization(RenderedShape::Entity, error))
@@ -195,34 +191,6 @@ impl<'a> ReadyEntityResponse<'a> {
             media_type: self.renderer.media_type,
             version_adaptation,
         })
-    }
-
-    /// Write each entity as a document, adapt the documents to the requested
-    /// version and write them.
-    fn render_adapted<W: Write>(self, writer: W) -> Result<ResponseHead, RenderError> {
-        let ReadyEntityResponse {
-            renderer,
-            payload,
-            language_filter,
-        } = self;
-        let format = renderer.format;
-        let document = |body: &EntityBody<'a>| {
-            serde_json::to_value(body.typed(format, language_filter)).map_err(|error| RenderError::serialization(RenderedShape::Entity, error))
-        };
-        let payload = match payload {
-            EntityPayload::Single(body) => ResponsePayload::Single(document(&body)?),
-            EntityPayload::Collection(bodies) => ResponsePayload::Collection(bodies.iter().map(document).collect::<Result<_, _>>()?),
-        };
-        // The walk decoded every target as it wrote it; decoding the document
-        // again would undo an escape the client wrote on purpose.
-        let rendered = ReadyResponse {
-            renderer,
-            payload,
-            targets: TargetDecoding::Applied,
-        }
-        .render()?;
-        serde_json::to_writer(writer, &rendered.value).map_err(|error| RenderError::serialization(RenderedShape::Entity, error))?;
-        Ok(rendered.head)
     }
 }
 

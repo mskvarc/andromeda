@@ -47,12 +47,22 @@ pub(crate) struct NotifiedInstance<'a> {
     pub(crate) report: InstanceReport<'a>,
 }
 
+/// What a notification reports of one instance's value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ReportedValue {
+    /// The value the instance carries.
+    #[default]
+    Held,
+    /// The NGSI-LD Null of a reported deletion, in place of the value.
+    Deleted,
+}
+
 /// What a notification reports of one instance beside its own members.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct InstanceReport<'a> {
-    /// The NGSI-LD Null its value member takes, when the instance is reported
+    /// Whether the value member is written or the instance is reported
     /// deleted.
-    pub(crate) null: Option<NullValue>,
+    pub(crate) value: ReportedValue,
     /// The `deletedAt` it is stamped with.
     pub(crate) deleted_at: Option<DateTime<Utc>>,
     /// Under `showChanges`, the instance it was before the change.
@@ -69,6 +79,19 @@ pub(crate) enum NullValue {
     List,
     /// A language map holding the Null under `@none` (clause 4.5.18).
     LanguageMap,
+}
+
+impl InstanceReport<'_> {
+    /// The NGSI-LD Null the value member of an instance written as `family`
+    /// takes, when the instance is reported deleted. The spelling is the
+    /// written family's, so a family a version fallback reformats is deleted
+    /// as the family it is written as.
+    pub(crate) const fn null(&self, family: AttributeType) -> Option<NullValue> {
+        match self.value {
+            ReportedValue::Held => None,
+            ReportedValue::Deleted => Some(NullValue::of(family)),
+        }
+    }
 }
 
 impl NullValue {
@@ -115,9 +138,9 @@ impl<'a> NotifiedMember<'a> {
         let held_instances = held_sources.iter().map(|&source| NotifiedInstance {
             source,
             report: InstanceReport {
-                null: match changes.held {
-                    HeldAttributes::Deleted => Some(NullValue::of(source.attribute_type())),
-                    HeldAttributes::Current => None,
+                value: match changes.held {
+                    HeldAttributes::Deleted => ReportedValue::Deleted,
+                    HeldAttributes::Current => ReportedValue::Held,
                 },
                 deleted_at: None,
                 previous: previous_of(source, previous),
@@ -130,7 +153,7 @@ impl<'a> NotifiedMember<'a> {
             sources.iter().map(|&source| NotifiedInstance {
                 source,
                 report: InstanceReport {
-                    null: Some(NullValue::of(source.attribute_type())),
+                    value: ReportedValue::Deleted,
                     deleted_at: *deleted_at,
                     previous: previous_of(source, previous),
                 },

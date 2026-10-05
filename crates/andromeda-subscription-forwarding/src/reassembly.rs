@@ -44,8 +44,8 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_render::{
     entity::EntityRenderer,
     geometry_selection::GeometrySelection,
-    notification_conformance::amend_notification_entities,
     notification_data::notification_data,
+    version::{adapted_payload::AdaptedPayload, fallback::VersionFallback},
 };
 use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_request::entity::GetEntityParams;
@@ -183,6 +183,10 @@ impl SubscriptionForwardingService {
         format: ResponseFormat,
         local: &Identifier,
     ) -> Result<Vec<Value>, SubscriptionForwardingError> {
+        let fallback = reading
+            .compiled
+            .ngsild_conformance
+            .and_then(|target| VersionFallback::new(target, AdaptedPayload::Entity));
         let local_terms = self.engine.prepare_term_context(reading.local_context);
         let mut local_expansions = AttributeExpansions::new(&self.engine, &local_terms);
         let mut data = Vec::with_capacity(received_entities.len());
@@ -201,8 +205,12 @@ impl SubscriptionForwardingService {
             // `id` and `type` stay whatever the projection lists: Table 5.2.4-1
             // makes both mandatory, so the copy's `data` carries Entities.
             narrow_entity(&mut entity, reading.compiled, &mut local_expansions).await?;
+            // Clause 5.8.6: the copy is sent to the local subscription's
+            // endpoint, so its Entities are amended to the local
+            // subscription's `ngsildConformance` as they are written.
             let rendered = EntityRenderer::new(&entity)
                 .with_mode(format)
+                .with_optional_fallback(fallback)
                 .render()
                 .map_err(ForwardingInvariant::Rendering)?;
             data.push(rendered);
@@ -293,11 +301,6 @@ impl SubscriptionForwardingService {
         let data = self
             .reassembled_entities(received_entities, &inbound, &reading, &sender, format, &local)
             .await?;
-        // Clause 5.8.6: the copy is sent to the local subscription's endpoint,
-        // so it is the local subscription's `ngsildConformance` that the copy's
-        // Entities are amended to -- after the format rendering, which is where
-        // the clause places the amendment.
-        let data = amend_notification_entities(data, subscription.delivery.ngsild_conformance, format);
         if data.is_empty() {
             debug!(subscription = %local, "re-assembled notification carries no entity; nothing delivered");
             return Ok(());

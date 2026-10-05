@@ -5,7 +5,8 @@
 //! re-assembled notification of a forwarded subscription, an entity nested
 //! into a document by an inline join. It writes the entity with the very walk a
 //! response body is written by ([`crate::entity_body`]), the clause 4.15
-//! negotiation and the clause 4.21 structural rule included, and leaves every
+//! negotiation, the clause 4.21 structural rule and the clause 4.3.6.8 version
+//! fallback included, and leaves every
 //! Relationship target as the store holds it: whoever finishes the document
 //! decodes them once, at the presentation boundary ([`crate::uri_decoding`]).
 
@@ -17,6 +18,7 @@ use crate::{
     error::{RenderError, RenderedShape},
     structural_projection::StructuralProjection,
     uri_decoding::UriDecoding,
+    version::fallback::VersionFallback,
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -36,6 +38,8 @@ pub struct EntityRenderer<'a> {
     /// The clause 4.21 `pick`/`omit` structural-member rule to apply to
     /// the rendered value's `id`, `type` and `scope` keys, if any.
     structural_projection: Option<StructuralProjection<'a>>,
+    /// The clause 4.3.6.8 fallback the entity is written under, if any.
+    fallback: Option<VersionFallback>,
 }
 
 impl<'a> EntityRenderer<'a> {
@@ -47,6 +51,7 @@ impl<'a> EntityRenderer<'a> {
             language_filter: None,
             mode: ResponseFormat::Normalized,
             structural_projection: None,
+            fallback: None,
         }
     }
 
@@ -77,6 +82,17 @@ impl<'a> EntityRenderer<'a> {
         self.structural_projection = projection;
         self
     }
+
+    /// Write the entity for an older NGSI-LD version (clause 4.3.6.8).
+    ///
+    /// Takes an `Option` so a caller that may or may not have a version to
+    /// conform to has one spelling to reach for; `None` writes the entity as
+    /// this broker's own version does.
+    #[must_use]
+    pub const fn with_optional_fallback(mut self, fallback: Option<VersionFallback>) -> Self {
+        self.fallback = fallback;
+        self
+    }
 }
 
 impl EntityRenderer<'_> {
@@ -90,7 +106,7 @@ impl EntityRenderer<'_> {
         serialize_value(&TypedEntity {
             entity: self.entity,
             format: self.mode,
-            walk: MemberWalk::new(UriDecoding::Keep, self.language_filter),
+            walk: MemberWalk::new(UriDecoding::Keep, self.language_filter, self.fallback),
             projection: self.structural_projection,
             identifier: IdentifierMember::Written,
             context: None,

@@ -24,7 +24,7 @@ use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity_map::EntityMap, entity_map_fingerprint::RequestFingerprint};
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
-use andromeda_ngsi_ld_render::response::ResponsePayload;
+use andromeda_ngsi_ld_render::{entity_map_body::EntityMapBody, response::ResponsePayload};
 use axum::{
     http::{StatusCode, Uri as HttpUri},
     response::{IntoResponse, Response},
@@ -128,7 +128,8 @@ async fn render_created(
     warnings: Vec<NgsiLdWarning>,
 ) -> Result<Response, ProblemResponse> {
     let location = format!("/ngsi-ld/v1/{resource}/{}", map.id);
-    let value = serde_json::to_value(map).map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, rendering.uri))?;
+    let value = serde_json::to_value(EntityMapBody::new(map, rendering.prefer.requested_version))
+        .map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, rendering.uri))?;
     let rendered = ResponseContextSource::new(state.entity_query.engine(), rendering.context, &state.context_hosting, rendering.api_root)
         .start_rendering_normalized(rendering.accept.media_type(), rendering.prefer.rendering_preferences())
         .await

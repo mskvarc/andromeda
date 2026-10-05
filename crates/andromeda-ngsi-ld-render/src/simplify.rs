@@ -118,7 +118,10 @@ pub fn simplify_entity(entity: &Entity) -> Result<Value, serde_json::Error> {
 /// Simplify a single `AttributeValue` to its key-value form, as the typed walk
 /// of the simplified representation writes it.
 fn simplify_attribute_value(attr: &AttributeValue) -> Result<Value, serde_json::Error> {
-    serde_json::to_value(SimplifiedMember::new(MemberInstances::Held(attr), MemberWalk::new(UriDecoding::Keep, None)))
+    serde_json::to_value(SimplifiedMember::new(
+        MemberInstances::Held(attr),
+        MemberWalk::new(UriDecoding::Keep, None, None),
+    ))
 }
 
 /// Render an already-serialised entity in the clause 4.5.4 simplified form.

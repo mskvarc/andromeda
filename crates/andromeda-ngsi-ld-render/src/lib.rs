@@ -28,14 +28,16 @@ pub mod concise;
 pub mod context;
 pub mod entity;
 mod entity_body;
+pub mod entity_map_body;
 pub mod entity_response;
+#[cfg(test)]
+mod entity_response_fallback_tests;
 #[cfg(test)]
 mod entity_response_tests;
 pub mod error;
 pub mod geojson;
 pub mod geometry_selection;
 pub mod language_negotiation;
-pub mod notification_conformance;
 pub mod notification_data;
 pub mod notification_entity;
 pub mod notified_changes;

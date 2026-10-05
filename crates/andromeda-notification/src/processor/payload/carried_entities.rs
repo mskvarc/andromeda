@@ -1,8 +1,9 @@
 //! The entities one notification carries, written the way clause 5.8.6 sends
 //! them: each notified entity in the subscription's format with the Linked
 //! Entities of its `join` nested into it for `inline` or written beside it for
-//! `flat` (clause 4.5.23), `pick` and `omit` applied, and the whole amended to
-//! the subscription's `ngsildConformance` last. Which Linked Entities are
+//! `flat` (clause 4.5.23), `pick` and `omit` applied, and every entity amended
+//! to the subscription's `ngsildConformance` as it is written. Which Linked
+//! Entities are
 //! written, where, and narrowed by which list is the engine's plan under the
 //! subscription's list, which "every Entity within the payload body" is
 //! reduced by (clause 5.8.6).
@@ -13,7 +14,7 @@
 
 use crate::{
     error::NotificationError,
-    processor::payload::notified_entity::{NotifiedEntity, linked_entity},
+    processor::payload::notified_entity::{NotifiedEntity, WrittenShape, linked_entity},
 };
 use andromeda_linked_retrieval::{
     graph::LinkedGraph,
@@ -26,9 +27,9 @@ use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::attribute_iri_index::AttributeIriIndex;
 use andromeda_ngsi_ld_render::{
-    notification_conformance::amend_notification_entities,
     notification_entity::TargetSpelling,
     structural_projection::StructuralProjection,
+    version::{adapted_payload::AdaptedPayload, fallback::VersionFallback},
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use serde_json::Value;
@@ -67,9 +68,10 @@ pub(crate) struct NotifiedLinks<'a> {
 /// projection, narrows each notified entity's `type` and `scope`; clause 5.8.6
 /// holds `id` back from that rule, since a notification carries Entities and
 /// an Entity is only actionable with its `id` (clause 4.5.1). Clause 5.8.6
-/// puts the `ngsildConformance` amendment last, after the format rendering and
-/// after `pick`, `omit` and `join`, so the fallback tables of clause 4.3.6.8 run
-/// over the representation the subscriber will actually receive.
+/// amends "every Entity within the payload body" to the `ngsildConformance`
+/// version: the fallback tables of clause 4.3.6.8 are applied by the walk that
+/// writes each entity in the format the subscriber receives, to the Linked
+/// Entities nested into it and to the flat ones beside it alike.
 ///
 /// `linked` is `None` when no traversal ran or it failed, which writes the
 /// notified entities alone whatever the `join`. Which Linked Entities are
@@ -91,25 +93,23 @@ pub(crate) fn carried_entities(
         list,
         conformance,
     } = shape;
+    let fallback = conformance.and_then(|target| VersionFallback::new(target, AdaptedPayload::Entity));
     let plan = RetrievingJoin::from_mode(join)
         .zip(linked)
         .map(|(join, linked)| JoinPlan::<TypedEntities>::new(join, linked.graph, MemberRule::new(list, linked.index)));
-    let payload = match &plan {
+    let written = WrittenShape { format, targets, fallback };
+    match &plan {
         Some(JoinPlan::Inline(inline)) => notified
             .iter()
-            .map(|entity| entity.render(format, targets, Some(inline.cursor()), projection))
-            .collect::<Result<Vec<_>, _>>()?,
+            .map(|entity| entity.render(written, Some(inline.cursor()), projection))
+            .collect(),
         Some(JoinPlan::Flat(flat)) => notified
             .iter()
-            .map(|entity| entity.render(format, targets, None, projection))
-            .chain(flat.linked().map(|linked| linked_entity(linked, format, targets)))
-            .collect::<Result<Vec<_>, _>>()?,
-        None => notified
-            .iter()
-            .map(|entity| entity.render(format, targets, None, projection))
-            .collect::<Result<Vec<_>, _>>()?,
-    };
-    Ok(amend_notification_entities(payload, conformance, format))
+            .map(|entity| entity.render(written, None, projection))
+            .chain(flat.linked().map(|linked| linked_entity(linked, written)))
+            .collect(),
+        None => notified.iter().map(|entity| entity.render(written, None, projection)).collect(),
+    }
 }
 
 #[cfg(test)]
@@ -123,7 +123,7 @@ mod tests {
         narrowing::list::ListInForce,
         typed::TypedEntities,
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
     use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_number::json_value::deserialize_exact;
     use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, term::ProjectionTerm};
@@ -168,20 +168,26 @@ mod tests {
 
     /// The graph a one-level join from `notified` reaches: the City.
     fn city(notified: &[NotifiedEntity]) -> LinkedGraph<Entity> {
+        city_as(
+            notified,
+            &json!({
+                "id": "urn:ngsi-ld:City:Paris",
+                "type": "City",
+                "name": {"type": "Property", "value": "Paris"},
+                "mayor": {"type": "Property", "value": "someone"}
+            }),
+        )
+    }
+
+    /// The graph a one-level join from `notified` reaches: the City, as
+    /// `document` writes it.
+    fn city_as(notified: &[NotifiedEntity], document: &Value) -> LinkedGraph<Entity> {
         let RootEdges { ids, edges } = RootEdges::of::<TypedEntities>(notified.iter().map(|entity| &*entity.entity));
         LinkedGraph {
             roots: ids,
-            nodes: [(
-                "urn:ngsi-ld:City:Paris".parse().expect("an identifier"),
-                entity(&json!({
-                    "id": "urn:ngsi-ld:City:Paris",
-                    "type": "City",
-                    "name": {"type": "Property", "value": "Paris"},
-                    "mayor": {"type": "Property", "value": "someone"}
-                })),
-            )]
-            .into_iter()
-            .collect(),
+            nodes: [("urn:ngsi-ld:City:Paris".parse().expect("an identifier"), entity(document))]
+                .into_iter()
+                .collect(),
             edges,
             failures: Vec::new(),
             depth: NonZeroU32::MIN,
@@ -304,6 +310,46 @@ mod tests {
         assert_eq!(
             payload[2],
             json!({"id": "urn:ngsi-ld:City:Paris", "name": {"type": "Property", "value": "Paris"}})
+        );
+    }
+
+    /// Clause 5.8.6 amends "every Entity within the payload body" to the
+    /// `ngsildConformance` version: the notified entities, the Linked Entity
+    /// an inline join nests into them, and the one a flat join writes beside
+    /// them.
+    #[test]
+    fn the_conformance_amends_every_entity_of_the_payload() {
+        let projection = Projection::default();
+        let buildings = vec![notified(&json!({
+            "id": "urn:ngsi-ld:Building:1",
+            "type": ["Building", "Landmark"],
+            "locatedAt": {"type": "Relationship", "object": "urn:ngsi-ld:City:Paris", "observedAt": "2025-01-01T00:00:00Z"}
+        }))];
+        let linked = city_as(
+            &buildings,
+            &json!({
+                "id": "urn:ngsi-ld:City:Paris",
+                "type": "City",
+                "scope": "/France",
+                "name": {"type": "LanguageProperty", "languageMap": {"fr": "Paris"}}
+            }),
+        );
+        let index = index();
+        let amended = |join| CarriedShape {
+            conformance: Some(SpecVersion::V1_0),
+            ..shape(Some(join), &projection)
+        };
+        let flat = carried_entities(&buildings, Some(links(&linked, &index)), amended(JoinMode::Flat)).expect("the walk writes them");
+        assert_eq!(flat[0]["type"], json!("Building"));
+        assert_eq!(flat[0]["locatedAt"], json!({"type": "Relationship", "object": "urn:ngsi-ld:City:Paris"}));
+        assert_eq!(
+            flat[1],
+            json!({"id": "urn:ngsi-ld:City:Paris", "type": "City", "name": {"type": "Property", "value": {"fr": "Paris"}}})
+        );
+        let inline = carried_entities(&buildings, Some(links(&linked, &index)), amended(JoinMode::Inline)).expect("the walk writes them");
+        assert_eq!(
+            inline[0]["locatedAt"]["entity"],
+            json!({"id": "urn:ngsi-ld:City:Paris", "type": "City", "name": {"type": "Property", "value": {"fr": "Paris"}}})
         );
     }
 

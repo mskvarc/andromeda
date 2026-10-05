@@ -31,6 +31,11 @@ impl<'a> ObjectListBody<'a> {
     pub(crate) const fn new(list: &'a RelationshipObjectList, reification: Reification, decoding: UriDecoding) -> ObjectListBody<'a> {
         ObjectListBody { list, reification, decoding }
     }
+
+    /// The first target of the list, written under the list's decoding.
+    pub(crate) fn first(self) -> Option<DecodedTarget<'a>> {
+        self.list.0.first().map(|target| DecodedTarget::new(target, self.decoding))
+    }
 }
 
 impl Serialize for ObjectListBody<'_> {

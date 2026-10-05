@@ -33,7 +33,7 @@ use andromeda_jsonld::{
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_query::page_window::PageWindow;
-use andromeda_ngsi_ld_render::response::ResponsePayload;
+use andromeda_ngsi_ld_render::{entity_map_body::EntityMapBody, response::ResponsePayload};
 use andromeda_ngsi_ld_request::{
     body::entity_map::UpdateEntityMapBody,
     empty::EmptyParams,
@@ -61,7 +61,8 @@ pub async fn get(
 ) -> Result<Response, ProblemResponse> {
     let map = state.entity_maps.retrieve(&entity_map_id).await.with_entity_map_instance(&uri)?;
 
-    let value = serde_json::to_value(&map).map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, &uri))?;
+    let value = serde_json::to_value(EntityMapBody::new(&map, prefer.requested_version))
+        .map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, &uri))?;
     let rendered = ResponseContextSource::new(state.entity_query.engine(), &context, &state.context_hosting, &api_root)
         .start_rendering_normalized(accept.media_type(), prefer.rendering_preferences())
         .await

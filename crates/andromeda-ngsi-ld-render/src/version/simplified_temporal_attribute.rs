@@ -23,25 +23,22 @@
 
 use crate::{
     object_list::object_list_member_target,
-    version::{adapted_payload::AdaptedPayload, family_introduction::family_introduced},
+    version::fallback::{InstanceMember, VersionFallback},
 };
-use andromeda_ngsi_ld_lexicon::{
-    attribute_type::{AttributeType, TemporalValueEncoding},
-    spec_version::SpecVersion,
-};
+use andromeda_ngsi_ld_lexicon::attribute_type::{AttributeType, TemporalValueEncoding};
 use serde_json::{Map, Value};
 use std::str::FromStr;
 
 /// Adapt an attribute of a simplified temporal payload, which is either one
 /// dataset's object or the array of them.
-pub(crate) fn adapt_simplified_temporal_attribute(value: &mut Value, target: SpecVersion, adapted_payload: AdaptedPayload) {
+pub(crate) fn adapt_simplified_temporal_attribute(value: &mut Value, fallback: VersionFallback) {
     match value {
         Value::Array(datasets) if datasets.iter().any(Value::is_object) => {
             // Notes 2 and 3 of Table 4.3.6.8-1: instances separated by
             // `datasetId` exist from 1.3 onwards, and here the outer array is
             // exactly that set -- the time sequence is a member of each of its
             // objects, not the array itself.
-            if target < SpecVersion::V1_3 && adapted_payload.collapses_instances() {
+            if fallback.collapses_instances() {
                 let default_idx = datasets
                     .iter()
                     .position(|dataset| !dataset.as_object().is_some_and(|members| members.contains_key("datasetId")))
@@ -51,22 +48,22 @@ pub(crate) fn adapt_simplified_temporal_attribute(value: &mut Value, target: Spe
                 } else {
                     datasets.swap_remove(default_idx)
                 };
-                adapt_dataset(&mut default_dataset, target);
+                adapt_dataset(&mut default_dataset, fallback);
                 *value = default_dataset;
                 return;
             }
             for dataset in datasets.iter_mut() {
-                adapt_dataset(dataset, target);
+                adapt_dataset(dataset, fallback);
             }
         }
-        Value::Object(_) => adapt_dataset(value, target),
+        Value::Object(_) => adapt_dataset(value, fallback),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {}
     }
 }
 
 /// Adapt the object one `datasetId` group of a simplified temporal attribute is
 /// rendered as.
-fn adapt_dataset(dataset: &mut Value, target: SpecVersion) {
+fn adapt_dataset(dataset: &mut Value, fallback: VersionFallback) {
     let Some(obj) = dataset.as_object_mut() else {
         return;
     };
@@ -75,28 +72,15 @@ fn adapt_dataset(dataset: &mut Value, target: SpecVersion) {
     let Some(family) = obj.get("type").and_then(Value::as_str).and_then(|raw| AttributeType::from_str(raw).ok()) else {
         return;
     };
-    if target < family_introduced(family)
-        && let Some(generalization) = generalization_of(family)
-    {
+    let generalization = fallback.family(family);
+    if generalization != family {
         reformat_pairs(obj, family, generalization);
         obj.insert("type".to_string(), Value::String(generalization.as_ref().to_owned()));
     }
-    // Table 4.3.6.8-2 and -3: `datasetId` arrived at 1.3. It is the only member
-    // of either table a clause 4.5.9 attribute object can carry.
-    if target < SpecVersion::V1_3 {
+    // Table 4.3.6.8-2 and -3: `datasetId` is the only member of either table a
+    // clause 4.5.9 attribute object can carry.
+    if !fallback.keeps_instance_member(generalization, InstanceMember::DatasetId) {
         obj.remove("datasetId");
-    }
-}
-
-/// The family Table 4.3.6.8-1 reformats `family` into when the target predates
-/// it, or `None` for the three families every version has known.
-const fn generalization_of(family: AttributeType) -> Option<AttributeType> {
-    match family {
-        AttributeType::LanguageProperty | AttributeType::VocabProperty | AttributeType::JsonProperty | AttributeType::ListProperty => {
-            Some(AttributeType::Property)
-        }
-        AttributeType::ListRelationship => Some(AttributeType::Relationship),
-        AttributeType::Property | AttributeType::GeoProperty | AttributeType::Relationship => None,
     }
 }
 
@@ -158,13 +142,14 @@ fn rewrite_value(carried: Value, family: AttributeType, generalization: Attribut
 
 #[cfg(test)]
 mod tests {
-    use crate::version::{adapted_payload::AdaptedPayload, simplified_temporal_attribute::adapt_simplified_temporal_attribute};
+    use crate::version::{adapted_payload::AdaptedPayload, fallback::VersionFallback, simplified_temporal_attribute::adapt_simplified_temporal_attribute};
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
     use serde_json::{Value, json};
 
     /// Adapt one attribute of a clause 4.5.9 payload.
     fn adapt(target: SpecVersion, mut attribute: Value) -> Value {
-        adapt_simplified_temporal_attribute(&mut attribute, target, AdaptedPayload::SimplifiedTemporalEvolution);
+        let fallback = VersionFallback::new(target, AdaptedPayload::SimplifiedTemporalEvolution).expect("a target below the conformant version");
+        adapt_simplified_temporal_attribute(&mut attribute, fallback);
         attribute
     }
 

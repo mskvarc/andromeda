@@ -10,13 +10,19 @@
 //! is written from its positions. Any other member is rendered on its own and
 //! handed to the document rule, which is exact by construction and costs no
 //! more than that one member.
+//!
+//! Under a clause 4.3.6.8 version fallback below 1.3 the `properties` hold one
+//! instance of a multi-attribute and no `datasetId` (Table 4.3.6.8-1 notes 2
+//! and 3, Table 4.3.6.8-2), so the geometry is the one that instance carries:
+//! the Feature never names a geometry its own `properties` do not.
 
 use crate::{
-    entity_body::typed_entity::TypedEntity,
+    entity_body::{instance_fallback::kept_instance, typed_entity::TypedEntity},
     geometry_selection::{GeometrySelection, selects},
+    version::fallback::InstanceMember,
 };
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_model::attribute::{
     common_fields::CommonAttributeFields,
     geo_property::GeoProperty,
@@ -80,13 +86,17 @@ pub(crate) fn feature_geometry<'a>(entity: &TypedEntity<'a>, selection: Geometry
     let Some(member) = located else {
         return Ok(FeatureGeometry::Undefined);
     };
-    let layout = if entity.format.is_simplified() {
+    let names_dataset_id = entity.walk.keeps_instance_member(AttributeType::GeoProperty, InstanceMember::DatasetId);
+    let layout = if entity.format.is_simplified() || !names_dataset_id {
         InstanceLayout::Simplified
     } else {
         InstanceLayout::Reified
     };
     match plain_geo_properties(member) {
         Some(PlainGeoProperties::Single(geo_property)) => Ok(sole_instance(geo_property, layout, selection.dataset_ids())),
+        Some(PlainGeoProperties::Several(instances)) if entity.walk.collapses_instances() => {
+            Ok(kept_instance(&instances, |instance| instance.common.dataset_id.as_ref()).map_or(FeatureGeometry::Undefined, |instance| typed(&instance.value)))
+        }
         Some(PlainGeoProperties::Several(instances)) => Ok(selected_instance(&instances, layout, selection.dataset_ids())),
         None => rendered_member_geometry(entity, member, named, selection),
     }

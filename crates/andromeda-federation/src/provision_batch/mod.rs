@@ -50,6 +50,7 @@ use andromeda_jsonld::{
 use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
+use andromeda_ngsi_ld_render::version::adapted_payload::AdaptedPayload;
 use andromeda_ngsi_ld_request::options::UpsertMode;
 use futures::{StreamExt, stream};
 use std::collections::HashMap;
@@ -353,6 +354,7 @@ const fn entity_payload<'a>(body: Option<&'a [u8]>, context: &'a ContextSpec) ->
         Some(bytes) => WritePayload::Document {
             bytes,
             vocabulary: DocumentVocabulary::Entities,
+            element: AdaptedPayload::Entity,
             context,
         },
         None => WritePayload::Empty(context),

@@ -9,9 +9,18 @@
 //! `LanguageProperty` to the text it negotiates, and a Relationship that nests
 //! Linked Entities (clause 4.5.23) answers with them rather than with the URIs
 //! they were resolved from (clause 4.5.4, EXAMPLE 9 and EXAMPLE 10).
+//!
+//! A clause 4.3.6.8 version fallback below 1.3 writes a multi-attribute as the
+//! one instance Table 4.3.6.8-1 notes 2 and 3 keep, as its bare value, and a
+//! wrapped family the target never defined as the bare value of the Property
+//! it is reformatted as. The list families keep their arrays: clause 4.5.4
+//! writes a `ListProperty` as a Property value and a `ListRelationship` as the
+//! URIs a Relationship's simplified rendering is, so the reformat leaves both
+//! as they are (see [`crate::version::simplified_attribute`]).
 
 use crate::{
     entity_body::{
+        instance_fallback::kept_instance,
         linked_entities::{list_relationship_entities, relationship_entities},
         member_walk::MemberWalk,
         notified_member::{InstanceReport, MemberInstances, NotifiedInstance, NotifiedMember, NullValue},
@@ -52,6 +61,16 @@ impl<'a> SimplifiedMember<'a> {
             walk: self.walk,
         }
     }
+
+    /// The one instance of `instances` a version fallback below 1.3 writes the
+    /// member as, or `None` when the member keeps every instance.
+    fn kept<'i, T>(&self, instances: &'i [T], dataset_id: impl Fn(&T) -> Option<&Identifier>) -> Option<&'i T> {
+        if self.walk.collapses_instances() {
+            kept_instance(instances, dataset_id)
+        } else {
+            None
+        }
+    }
 }
 
 impl Serialize for SimplifiedMember<'_> {
@@ -59,12 +78,18 @@ impl Serialize for SimplifiedMember<'_> {
         let held = InstanceReport::default();
         match self.value {
             MemberInstances::Held(AttributeValue::Single(attribute)) => self.instance(attribute, held).serialize(serializer),
-            MemberInstances::Held(AttributeValue::Multiple(instances)) => dataset_map(serializer, DatasetInstances::Held(instances), self),
+            MemberInstances::Held(AttributeValue::Multiple(instances)) => match self.kept(instances, Attribute::dataset_id) {
+                Some(kept) => self.instance(kept, held).serialize(serializer),
+                None => dataset_map(serializer, DatasetInstances::Held(instances), self),
+            },
             // Clause 4.5.4 keeps the bare NGSI-LD Null a member is reported
             // deleted by.
             MemberInstances::Held(AttributeValue::NgsiLdNull) | MemberInstances::Notified(NotifiedMember::NgsiLdNull) => NullValue::Uri.serialize(serializer),
             MemberInstances::Notified(NotifiedMember::One(instance)) => self.instance(instance.source, instance.report).serialize(serializer),
-            MemberInstances::Notified(NotifiedMember::Many(instances)) => dataset_map(serializer, DatasetInstances::Notified(instances), self),
+            MemberInstances::Notified(NotifiedMember::Many(instances)) => match self.kept(instances, |instance| instance.source.dataset_id()) {
+                Some(kept) => self.instance(kept.source, kept.report).serialize(serializer),
+                None => dataset_map(serializer, DatasetInstances::Notified(instances), self),
+            },
         }
     }
 }
@@ -145,8 +170,9 @@ struct SimplifiedInstance<'a> {
 
 impl Serialize for SimplifiedInstance<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self.report.null {
-            Some(null) => simplified_null(serializer, self.source.attribute_type(), null),
+        let family = simplified_family(self.walk, self.source.attribute_type());
+        match self.report.null(family) {
+            Some(null) => simplified_null(serializer, family, null),
             None => SimplifiedTyped {
                 attribute: self.source,
                 walk: self.walk,
@@ -168,6 +194,19 @@ fn simplified_null<S: Serializer>(serializer: S, family: AttributeType, null: Nu
     }
 }
 
+/// The family an instance of `family` is written as in the simplified
+/// representation: a wrapped family a version fallback reformats as a
+/// Property is written as one, and every other family as itself, since its
+/// simplified rendering is the same whether it is reformatted or not.
+const fn simplified_family(walk: MemberWalk<'_>, family: AttributeType) -> AttributeType {
+    match family {
+        AttributeType::LanguageProperty | AttributeType::VocabProperty | AttributeType::JsonProperty => walk.written_family(family),
+        AttributeType::Property | AttributeType::GeoProperty | AttributeType::Relationship | AttributeType::ListProperty | AttributeType::ListRelationship => {
+            family
+        }
+    }
+}
+
 /// One typed attribute instance in the simplified representation.
 struct SimplifiedTyped<'a> {
     /// The instance written.
@@ -182,7 +221,7 @@ impl Serialize for SimplifiedTyped<'_> {
         match self.attribute {
             Attribute::LanguageProperty(language_property) => match self.walk.language_filter.and_then(|filter| negotiated_entry(language_property, filter)) {
                 Some(entry) => entry.value.serialize(serializer),
-                None => wrapped(serializer, AttributeType::LanguageProperty, &language_property.language_map),
+                None => self.wrapped(serializer, AttributeType::LanguageProperty, &language_property.language_map),
             },
             Attribute::Property(property) => ValueBody(&property.value).serialize(serializer),
             Attribute::GeoProperty(geo_property) => geo_property.value.serialize(serializer),
@@ -190,8 +229,8 @@ impl Serialize for SimplifiedTyped<'_> {
                 Some(linked) => linked.serialize(serializer),
                 None => DecodedTargets::new(&relationship.object, decoding).serialize(serializer),
             },
-            Attribute::VocabProperty(vocab_property) => wrapped(serializer, AttributeType::VocabProperty, &vocab_property.vocab),
-            Attribute::JsonProperty(json_property) => wrapped(serializer, AttributeType::JsonProperty, &json_property.json),
+            Attribute::VocabProperty(vocab_property) => self.wrapped(serializer, AttributeType::VocabProperty, &vocab_property.vocab),
+            Attribute::JsonProperty(json_property) => self.wrapped(serializer, AttributeType::JsonProperty, &json_property.json),
             Attribute::ListProperty(list_property) => ValueListBody(&list_property.value_list).serialize(serializer),
             Attribute::ListRelationship(list_relationship) => match list_relationship_entities(list_relationship, ResponseFormat::Simplified, self.walk) {
                 Some(linked) => linked.serialize(serializer),
@@ -200,6 +239,18 @@ impl Serialize for SimplifiedTyped<'_> {
                 // concise list.
                 None => ObjectListBody::new(&list_relationship.object_list, Reification::Concise, decoding).serialize(serializer),
             },
+        }
+    }
+}
+
+impl SimplifiedTyped<'_> {
+    /// A wrapped family's value: in the one member clause 4.5.4 keeps for it,
+    /// or bare when a version fallback reformats the family as a Property.
+    fn wrapped<S: Serializer, T: Serialize>(&self, serializer: S, family: AttributeType, value: &T) -> Result<S::Ok, S::Error> {
+        if simplified_family(self.walk, family) == family {
+            wrapped(serializer, family, value)
+        } else {
+            value.serialize(serializer)
         }
     }
 }

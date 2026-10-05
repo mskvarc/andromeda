@@ -10,9 +10,9 @@
 use crate::{
     concise::{InstanceStanding, collapses_to_bare_value, keeps_family_type},
     object_list::object_list_member_target,
-    version::{adapted_payload::AdaptedPayload, family_introduction::family_introduced},
+    version::fallback::{InstanceMember, VersionFallback},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, spec_version::SpecVersion};
+use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_representation::{
     compact_node::value_node::object_members,
     concise_reading::{ArrayReading, ObjectReading, read_array, read_object},
@@ -27,8 +27,8 @@ use serde_json::{Map, Value};
 /// What that array is depends on which Element the payload is: in an Entity it
 /// is the clause 4.5.5 set of instances separated by `datasetId`, and in the
 /// Temporal Evolution of one it is the clause 4.5.7 sequence of instances in
-/// time. [`AdaptedPayload`] carries that reading.
-pub(crate) fn adapt_reified_attribute(value: &mut Value, target: SpecVersion, format: ResponseFormat, adapted_payload: AdaptedPayload) {
+/// time. The [`VersionFallback`] carries that reading.
+pub(crate) fn adapt_reified_attribute(value: &mut Value, fallback: VersionFallback, format: ResponseFormat) {
     match value {
         // Only an array the clause 4.5.2.3 reading takes for instances is the
         // multi-instance form: an array of values is the value of one
@@ -41,7 +41,7 @@ pub(crate) fn adapt_reified_attribute(value: &mut Value, target: SpecVersion, fo
             // Both notes speak of instances "separated by datasetId", which a
             // clause 4.5.7 temporal sequence is not, so the collapse does not
             // reach one.
-            if target < SpecVersion::V1_3 && adapted_payload.collapses_instances() {
+            if fallback.collapses_instances() {
                 // Clause 4.5.5 makes the default instance the one carrying no
                 // `datasetId`.
                 let default_idx = instances
@@ -53,16 +53,16 @@ pub(crate) fn adapt_reified_attribute(value: &mut Value, target: SpecVersion, fo
                 } else {
                     instances.swap_remove(default_idx)
                 };
-                adapt_attribute_instance(&mut default_instance, target, format, adapted_payload, InstanceStanding::Alone);
+                adapt_attribute_instance(&mut default_instance, fallback, format, InstanceStanding::Alone);
                 *value = default_instance;
                 return;
             }
             for instance in instances.iter_mut() {
-                adapt_attribute_instance(instance, target, format, adapted_payload, InstanceStanding::AmongInstances);
+                adapt_attribute_instance(instance, fallback, format, InstanceStanding::AmongInstances);
             }
         }
         Value::Object(_) => {
-            adapt_attribute_instance(value, target, format, adapted_payload, InstanceStanding::Alone);
+            adapt_attribute_instance(value, fallback, format, InstanceStanding::Alone);
         }
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {}
     }
@@ -118,47 +118,28 @@ fn collapse_object_list(obj: &mut Map<String, Value>) {
 }
 
 /// Adapt a single attribute instance based on its family.
-fn adapt_attribute_instance(instance: &mut Value, target: SpecVersion, format: ResponseFormat, adapted_payload: AdaptedPayload, standing: InstanceStanding) {
+fn adapt_attribute_instance(instance: &mut Value, fallback: VersionFallback, format: ResponseFormat, standing: InstanceStanding) {
     let Some(obj) = instance.as_object_mut() else {
         return;
     };
     let Some(family) = reified_family(obj) else {
         return;
     };
-    let reformats = target < family_introduced(family);
-
-    let adapted_family = match family {
-        AttributeType::Property | AttributeType::GeoProperty => {
-            adapt_property_fields(obj, target, adapted_payload);
-            family
+    let adapted_family = fallback.family(family);
+    if adapted_family != family {
+        match adapted_family {
+            AttributeType::Relationship => collapse_object_list(obj),
+            AttributeType::Property
+            | AttributeType::GeoProperty
+            | AttributeType::VocabProperty
+            | AttributeType::LanguageProperty
+            | AttributeType::JsonProperty
+            | AttributeType::ListProperty
+            | AttributeType::ListRelationship => move_value_member(obj, family, adapted_family),
         }
-        AttributeType::Relationship => {
-            adapt_relationship_fields(obj, target, adapted_payload);
-            family
-        }
-        AttributeType::LanguageProperty | AttributeType::VocabProperty | AttributeType::JsonProperty | AttributeType::ListProperty => {
-            let adapted_family = if reformats {
-                move_value_member(obj, family, AttributeType::Property);
-                retype(obj, AttributeType::Property);
-                AttributeType::Property
-            } else {
-                family
-            };
-            adapt_property_fields(obj, target, adapted_payload);
-            adapted_family
-        }
-        AttributeType::ListRelationship => {
-            let adapted_family = if reformats {
-                collapse_object_list(obj);
-                retype(obj, AttributeType::Relationship);
-                AttributeType::Relationship
-            } else {
-                family
-            };
-            adapt_relationship_fields(obj, target, adapted_payload);
-            adapted_family
-        }
-    };
+        retype(obj, adapted_family);
+    }
+    remove_instance_members(obj, fallback, adapted_family);
 
     if format == ResponseFormat::Concise {
         conclude_concise_instance(instance, adapted_family, standing);
@@ -201,48 +182,26 @@ fn conclude_concise_instance(instance: &mut Value, family: AttributeType, standi
     }
 }
 
-/// Remove property-level fields per Table 4.3.6.8-2.
-///
-/// `observedAt` is the one row that does not reach a temporal instance: clause
-/// 4.5.7 makes it the Temporal Property recording the point in time the
-/// instance stands at, so removing it would leave a payload that is no version
-/// of a temporal representation rather than an older one.
-fn adapt_property_fields(obj: &mut Map<String, Value>, target: SpecVersion, adapted_payload: AdaptedPayload) {
-    if target < SpecVersion::V1_3 {
-        obj.remove("datasetId");
-        obj.remove("unitCode");
-        if adapted_payload.removes_observed_at() {
-            obj.remove("observedAt");
+/// Remove the members Tables 4.3.6.8-2 and -3 remove from an instance
+/// written as `family`.
+fn remove_instance_members(obj: &mut Map<String, Value>, fallback: VersionFallback, family: AttributeType) {
+    for (member, key) in [
+        (InstanceMember::DatasetId, compact_properties::DATASET_ID),
+        (InstanceMember::ObservedAt, compact_properties::OBSERVED_AT),
+        (InstanceMember::UnitCode, compact_properties::UNIT_CODE),
+        (InstanceMember::ExpiresAt, compact_properties::EXPIRES_AT),
+        (InstanceMember::ValueType, compact_properties::VALUE_TYPE),
+        (InstanceMember::ObjectType, compact_properties::OBJECT_TYPE),
+    ] {
+        if !fallback.keeps_instance_member(family, member) {
+            obj.remove(key);
         }
-    }
-    if target < SpecVersion::V1_9 {
-        obj.remove("expiresAt");
-        obj.remove("valueType");
-    }
-}
-
-/// Remove relationship-level fields per Table 4.3.6.8-3.
-///
-/// `observedAt` is held back for a temporal instance for the reason clause
-/// 4.5.8 gives it there, which is the one clause 4.5.7 gives a Property's.
-fn adapt_relationship_fields(obj: &mut Map<String, Value>, target: SpecVersion, adapted_payload: AdaptedPayload) {
-    if target < SpecVersion::V1_3 {
-        obj.remove("datasetId");
-        if adapted_payload.removes_observed_at() {
-            obj.remove("observedAt");
-        }
-    }
-    if target < SpecVersion::V1_8 {
-        obj.remove("objectType");
-    }
-    if target < SpecVersion::V1_9 {
-        obj.remove("expiresAt");
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::version::{adapted_payload::AdaptedPayload, reified_attribute::adapt_reified_attribute};
+    use crate::version::{adapted_payload::AdaptedPayload, fallback::VersionFallback, reified_attribute::adapt_reified_attribute};
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
     use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
     use serde_json::{Value, json};
@@ -250,14 +209,16 @@ mod tests {
     /// Adapt one attribute of an Entity, in the representation the payload was
     /// rendered in.
     fn adapt(target: SpecVersion, format: ResponseFormat, mut attribute: Value) -> Value {
-        adapt_reified_attribute(&mut attribute, target, format, AdaptedPayload::Entity);
+        let fallback = VersionFallback::new(target, AdaptedPayload::Entity).expect("a target below the conformant version");
+        adapt_reified_attribute(&mut attribute, fallback, format);
         attribute
     }
 
     /// Adapt one attribute of a Temporal Evolution, in the normalized reading
     /// clause 4.5.6 gives it.
     fn temporal(target: SpecVersion, mut attribute: Value) -> Value {
-        adapt_reified_attribute(&mut attribute, target, ResponseFormat::Normalized, AdaptedPayload::TemporalEvolution);
+        let fallback = VersionFallback::new(target, AdaptedPayload::TemporalEvolution).expect("a target below the conformant version");
+        adapt_reified_attribute(&mut attribute, fallback, ResponseFormat::Normalized);
         attribute
     }
 

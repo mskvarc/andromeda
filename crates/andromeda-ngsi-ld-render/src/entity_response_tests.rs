@@ -6,15 +6,24 @@
 //! it writes it, so the two agree only if both decode exactly the same members,
 //! in every representation -- the simplified one included, whose document keeps
 //! nothing that would tell a target apart.
+//!
+//! Under a clause 4.3.6.8 version fallback the typed walk applies the fallback
+//! tables as it writes, and the document pipeline applies the same tables to
+//! the finished document; the two agree on every entity whose members both
+//! readings treat alike. Where the typed walk reads a fallback the document
+//! reading cannot -- sub-attributes, nested Linked Entities, `showChanges`
+//! members -- the expectation is asserted on its own
+//! ([`crate::entity_response_fallback_tests`]).
 
 use crate::{
     context::ResponseContext,
     entity::EntityRenderer,
     entity_response::{EntityBody, EntityPayload},
     geometry_selection::GeometrySelection,
-    response::{ReadyResponse, ResponseHead, ResponsePayload, ResponseRenderer, TargetDecoding},
+    response::{ResponseHead, ResponsePayload, ResponseRenderer, enveloped},
     structural_projection::StructuralProjection,
     uri_decoding::decode_percent_encoded_uris,
+    version::{adaptation::VersionAdaptation, renderer::VersionRenderer},
 };
 use andromeda_http_headers::{language::LanguageFilter, media_type::ResponseMediaType};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
@@ -294,30 +303,34 @@ impl Rendering<'_> {
 
     /// The body and head the document pipeline renders: each entity's
     /// normalized document has its targets decoded by the document rule, is
-    /// read back, and is rendered in the representation asked for.
+    /// read back, is rendered in the representation asked for, is adapted to
+    /// the requested version by the document reading of the fallback tables,
+    /// and is put in the pipeline's envelope. The pipeline's own decoding is
+    /// not run again over a document whose targets are decoded already: a
+    /// concise or simplified document no longer tells a target from a value.
     fn by_document(&self, bodies: &[(&Entity, Option<StructuralProjection<'_>>)], shape: Shape) -> (Value, ResponseHead) {
         let render = |(entity, projection): &(&Entity, Option<StructuralProjection<'_>>)| {
             let mut normalized = EntityRenderer::new(entity).render().expect("the document reading renders");
             decode_percent_encoded_uris(&mut normalized);
             let decoded: Entity = serde_json::from_value(normalized).expect("the decoded document reads back");
-            EntityRenderer::new(&decoded)
+            let document = EntityRenderer::new(&decoded)
                 .with_optional_language_filter(self.language_filter)
                 .with_mode(self.format)
                 .with_optional_structural_projection(*projection)
                 .render()
-                .expect("the document reading renders")
+                .expect("the document reading renders");
+            match self.version {
+                Some(version) => VersionRenderer::new(version).with_format(self.format).with_payload(document).render().0,
+                None => document,
+            }
         };
         let payload = match shape {
             Shape::Single => ResponsePayload::Single(bodies.first().map(render).expect("one entity")),
             Shape::Collection => ResponsePayload::Collection(bodies.iter().map(render).collect()),
         };
-        let rendered = ReadyResponse {
-            renderer: self.renderer(),
-            payload,
-            targets: TargetDecoding::Applied,
-        }
-        .render()
-        .expect("the document pipeline renders");
+        let shape = payload.envelope_shape(self.carrier.0);
+        let adaptation = self.version.map_or(VersionAdaptation::None, VersionAdaptation::requested);
+        let rendered = enveloped(self.renderer(), shape, payload.into_value(), adaptation).expect("the document pipeline renders");
         (rendered.value, rendered.head)
     }
 
@@ -435,15 +448,36 @@ fn a_collection_mixing_projections_renders_alike() {
     }
 }
 
+/// The corpus entities both readings of the fallback tables treat alike: every
+/// one but those carrying sub-attributes, a nested Linked Entity or
+/// `showChanges` members, which only the typed walk adapts, and the one whose
+/// attribute holds two default instances, of which the simplified document
+/// reading keeps the last and every typed representation the first.
+fn fallback_entities() -> Vec<Entity> {
+    let typed_only = [
+        "urn:ngsi-ld:Building:nested",
+        "urn:ngsi-ld:Building:changes",
+        "urn:ngsi-ld:Building:joined",
+        "urn:ngsi-ld:Building:defaults",
+    ];
+    entities().into_iter().filter(|entity| !typed_only.contains(&entity.id.as_str())).collect()
+}
+
 /// Clause 4.3.6.8: a conformant or newer version leaves the body as it is
-/// (200), an older one adapts it (203); both agree with the document pipeline.
+/// (200), an older one adapts it (203); both agree with the document pipeline
+/// at every version the fallback tables name, in every representation.
 #[test]
 fn a_requested_version_renders_alike() {
-    let entities = entities();
+    let entities = fallback_entities();
     let carriers = carriers();
     for carrier in &carriers {
-        for version in [SpecVersion::CONFORMANT, SpecVersion::V1_4] {
-            for format in [ResponseFormat::Normalized, ResponseFormat::Concise, ResponseFormat::Simplified] {
+        for version in SpecVersion::SUPPORTED {
+            for format in [
+                ResponseFormat::Normalized,
+                ResponseFormat::Concise,
+                ResponseFormat::KeyValues,
+                ResponseFormat::Simplified,
+            ] {
                 let rendering = Rendering {
                     carrier,
                     format,

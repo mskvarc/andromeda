@@ -13,10 +13,10 @@ use crate::{
         reified_member::Reification,
         value_body::{ValueBody, ValueListBody},
     },
-    uri_decoding::{DecodedTargets, UriDecoding},
+    uri_decoding::{DecodedTarget, DecodedTargets, UriDecoding},
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, reference::NgsiLdReference};
 use andromeda_ngsi_ld_model::attribute::{geo_property_value::GeoPropertyValue, instance::Attribute, language_property::LanguageMap, one_or_many::OneOrMany};
 use serde::{Serialize, Serializer};
 
@@ -39,6 +39,10 @@ pub(crate) enum FamilyValue<'a> {
     ValueList(ValueListBody<'a>),
     /// A `ListRelationship`'s targets.
     ObjectList(ObjectListBody<'a>),
+    /// The one target a `ListRelationship` reformatted as a Relationship
+    /// keeps (Table 4.3.6.8-1): the first of its list, or the Null of an
+    /// empty one.
+    FirstTarget(Option<DecodedTarget<'a>>),
 }
 
 impl<'a> FamilyValue<'a> {
@@ -55,6 +59,25 @@ impl<'a> FamilyValue<'a> {
             Attribute::ListRelationship(list_relationship) => {
                 FamilyValue::ObjectList(ObjectListBody::new(&list_relationship.object_list, reification, decoding))
             }
+        }
+    }
+
+    /// The value, as the member of `family` writes it once Table 4.3.6.8-1
+    /// reformats the family that carries it: a `ListRelationship`'s list
+    /// becomes the single `object` of a Relationship, and every other value
+    /// moves under its generalization's key unchanged.
+    pub(crate) fn written_as(self, family: AttributeType) -> FamilyValue<'a> {
+        match self {
+            FamilyValue::ObjectList(list) if family == AttributeType::Relationship => FamilyValue::FirstTarget(list.first()),
+            unchanged @ (FamilyValue::Value(_)
+            | FamilyValue::Targets(_)
+            | FamilyValue::Vocab(_)
+            | FamilyValue::Geometry(_)
+            | FamilyValue::LanguageMap(_)
+            | FamilyValue::Json(_)
+            | FamilyValue::ValueList(_)
+            | FamilyValue::ObjectList(_)
+            | FamilyValue::FirstTarget(_)) => unchanged,
         }
     }
 
@@ -93,6 +116,7 @@ impl Serialize for FamilyValue<'_> {
             FamilyValue::Json(json) => json.serialize(serializer),
             FamilyValue::ValueList(values) => values.serialize(serializer),
             FamilyValue::ObjectList(list) => list.serialize(serializer),
+            FamilyValue::FirstTarget(target) => target.serialize(serializer),
         }
     }
 }

@@ -64,6 +64,14 @@ impl SpecVersion {
         self.minor
     }
 
+    /// Whether this version is older than `other`, comparing the major
+    /// component first, then the minor: the order the derived `Ord` gives,
+    /// spelled so a `const` rule table can read it.
+    #[must_use]
+    pub const fn precedes(self, other: SpecVersion) -> bool {
+        self.major < other.major || (self.major == other.major && self.minor < other.minor)
+    }
+
     /// The closest version in [`SpecVersion::SUPPORTED`] that is not newer
     /// than this one.
     ///
@@ -120,6 +128,26 @@ mod tests {
         assert!(SpecVersion::V1_8 < SpecVersion::V1_9);
         assert!(SpecVersion::V1_9 < SpecVersion::new(2, 0));
         assert!(SpecVersion::new(1, 10) > SpecVersion::V1_9);
+    }
+
+    /// `precedes` agrees with the derived order in both directions and is
+    /// strict: no version precedes itself.
+    #[test]
+    fn precedes_is_the_strict_derived_order() {
+        let versions = [
+            SpecVersion::new(0, 9),
+            SpecVersion::V1_0,
+            SpecVersion::V1_3,
+            SpecVersion::new(1, 5),
+            SpecVersion::V1_9,
+            SpecVersion::new(1, 10),
+            SpecVersion::new(2, 0),
+        ];
+        for older in versions {
+            for newer in versions {
+                pretty_assertions::assert_eq!(older.precedes(newer), older < newer, "{older} precedes {newer}");
+            }
+        }
     }
 
     #[test]

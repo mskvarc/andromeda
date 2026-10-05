@@ -1,7 +1,7 @@
 //! What a notified entity is written as for each kind of change (clause
 //! 5.8.6), every part of it by the typed walk.
 
-use crate::processor::payload::notified_entity::{DeletedRendering, NotifiedEntity};
+use crate::processor::payload::notified_entity::{DeletedRendering, NotifiedEntity, WrittenShape};
 use andromeda_linked_retrieval::{
     graph::{LinkedGraph, RootEdges},
     join::RetrievingJoin,
@@ -47,11 +47,20 @@ fn current(entity: Entity) -> NotifiedEntity {
     }
 }
 
+/// The shape a subscription naming no `ngsildConformance` writes in.
+const fn shape(format: ResponseFormat, targets: TargetSpelling) -> WrittenShape {
+    WrittenShape {
+        format,
+        targets,
+        fallback: None,
+    }
+}
+
 /// `entity` as a notification reporting nothing beyond its state writes it.
 fn written(entity: Entity, format: ResponseFormat, targets: TargetSpelling) -> Value {
     let projection = whole();
     current(entity)
-        .render(format, targets, None, StructuralProjection::from(&projection))
+        .render(shape(format, targets), None, StructuralProjection::from(&projection))
         .expect("the walk writes it")
 }
 
@@ -72,8 +81,7 @@ fn a_current_entity_is_written_as_it_stands() {
     let projection = whole();
     let rendered = current(vehicle())
         .render(
-            ResponseFormat::Normalized,
-            TargetSpelling::Decoded,
+            shape(ResponseFormat::Normalized, TargetSpelling::Decoded),
             None,
             StructuralProjection::from(&projection),
         )
@@ -101,8 +109,7 @@ fn an_entity_deletion_reports_every_attribute_deleted_with_its_previous_value() 
     let projection = whole();
     let rendered = notified
         .render(
-            ResponseFormat::Normalized,
-            TargetSpelling::Decoded,
+            shape(ResponseFormat::Normalized, TargetSpelling::Decoded),
             None,
             StructuralProjection::from(&projection),
         )
@@ -131,8 +138,7 @@ fn deleted_instances_join_the_held_ones() {
     let projection = whole();
     let rendered = notified
         .render(
-            ResponseFormat::Simplified,
-            TargetSpelling::Decoded,
+            shape(ResponseFormat::Simplified, TargetSpelling::Decoded),
             None,
             StructuralProjection::from(&projection),
         )
@@ -169,8 +175,7 @@ fn an_inline_join_nests_the_linked_entity() {
     let projection = whole();
     let rendered = notified
         .render(
-            ResponseFormat::Simplified,
-            TargetSpelling::Decoded,
+            shape(ResponseFormat::Simplified, TargetSpelling::Decoded),
             Some(inline.cursor()),
             StructuralProjection::from(&projection),
         )

@@ -12,7 +12,8 @@
 //!
 //! An entity that already carries nested entities -- a Context Source answered
 //! with them -- has them written in the same representation, as they were
-//! carried.
+//! carried. A nested entity is Entity data in the same payload, so the clause
+//! 4.3.6.8 version fallback the carrying entity is written under reaches it.
 
 use crate::entity_body::{
     member_walk::MemberWalk,
@@ -47,7 +48,7 @@ impl<'a> AttributeJoin<'a> {
         Some(TypedEntity {
             entity,
             format,
-            walk: MemberWalk::new(walk.decoding, walk.language_filter),
+            walk: MemberWalk::new(walk.decoding, walk.language_filter, walk.fallback),
             projection: None,
             identifier: IdentifierMember::Written,
             context: None,
@@ -112,13 +113,38 @@ pub(crate) fn list_relationship_entities<'a>(
     resolved.or_else(|| list_relationship.entity_list.as_ref().map(|carried| carried_entities(carried, format, walk)))
 }
 
+/// The entity a `ListRelationship` reformatted as a Relationship nests under
+/// `entity` (Table 4.3.6.8-1): the one its first target resolved to under the
+/// walk's join, or else the first one it carries.
+pub(crate) fn first_target_entities<'a>(list_relationship: &'a ListRelationship, format: ResponseFormat, walk: MemberWalk<'a>) -> Option<NestedEntities<'a>> {
+    let first = list_relationship.object_list.0.first();
+    let resolved = walk.join.zip(first).and_then(|(join, target)| join.linked_entity(target, format, walk));
+    let carried = || {
+        list_relationship.entity_list.as_ref().and_then(|carried| match carried {
+            OneOrMany::One(entity) => Some(entity),
+            OneOrMany::Many(entities) => entities.first(),
+        })
+    };
+    resolved
+        .or_else(|| carried().map(|entity| carried_entity(entity, format, walk)))
+        .map(|entity| NestedEntities::One(Box::new(entity)))
+}
+
 /// Entities a Relationship already carries, written in `format` as they were
 /// carried.
 fn carried_entities<'a>(carried: &'a OneOrMany<Entity>, format: ResponseFormat, walk: MemberWalk<'a>) -> NestedEntities<'a> {
-    let written = |entity| TypedEntity {
+    match carried {
+        OneOrMany::One(entity) => NestedEntities::One(Box::new(carried_entity(entity, format, walk))),
+        OneOrMany::Many(entities) => NestedEntities::Many(entities.iter().map(|entity| carried_entity(entity, format, walk)).collect()),
+    }
+}
+
+/// One entity a Relationship already carries, written in `format`.
+const fn carried_entity<'a>(entity: &'a Entity, format: ResponseFormat, walk: MemberWalk<'a>) -> TypedEntity<'a> {
+    TypedEntity {
         entity,
         format,
-        walk: MemberWalk::new(walk.decoding, None),
+        walk: MemberWalk::new(walk.decoding, None, walk.fallback),
         projection: None,
         identifier: IdentifierMember::Written,
         context: None,
@@ -126,10 +152,6 @@ fn carried_entities<'a>(carried: &'a OneOrMany<Entity>, format: ResponseFormat, 
         join: None,
         narrowing: None,
         changes: None,
-    };
-    match carried {
-        OneOrMany::One(entity) => NestedEntities::One(Box::new(written(entity))),
-        OneOrMany::Many(entities) => NestedEntities::Many(entities.iter().map(written).collect()),
     }
 }
 

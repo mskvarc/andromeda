@@ -10,6 +10,7 @@ use crate::{
     forwarded_write::{PlannedBody, PlannedWrite},
     forwarding_context::BodyPresence,
     forwarding_url::forwarding_url,
+    operation::ProvisionResource,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     provision_plan::{ProvisionPlan, RegistrationSelection},
     registration_payload::forwarding_decision,
@@ -20,6 +21,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
+use andromeda_ngsi_ld_render::version::adapted_payload::AdaptedPayload;
 use iri_rs::IriBuf;
 use url::Url;
 
@@ -153,11 +155,18 @@ impl FederationService {
             Some(_) => DocumentVocabulary::Attribute,
             None => DocumentVocabulary::Entities,
         };
+        // A temporal body's attribute arrays are the clause 4.5.7 sequences of
+        // instances in time, which the clause 4.3.6.8 fallback reads apart
+        // from an entity's sets of instances.
+        let element = match request.resource {
+            ProvisionResource::Entities => AdaptedPayload::Entity,
+            ProvisionResource::TemporalEntities => AdaptedPayload::TemporalEvolution,
+        };
         Ok(Some(PlannedWrite {
             registration: csr,
             url,
             method: request.method.clone(), // clone: each planned write owns the method it sends
-            body: narrowed.map(|bytes| PlannedBody { bytes, vocabulary }),
+            body: narrowed.map(|bytes| PlannedBody { bytes, vocabulary, element }),
             proxied_attrs,
             context: request.context,
             triggering: request.triggering,

@@ -18,11 +18,26 @@ use andromeda_ngsi_ld_render::{
     notification_entity::{NotificationEntity, StampedInstants, TargetSpelling},
     notified_changes::{DeletedInstances, HeldAttributes, NotifiedChanges},
     structural_projection::StructuralProjection,
+    version::fallback::VersionFallback,
 };
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
+
+/// How every entity of one notification is written: the subscription's
+/// `notification.format`, the spelling of Relationship targets, and the clause
+/// 4.3.6.8 fallback of its `ngsildConformance`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WrittenShape {
+    /// The `notification.format`.
+    pub(crate) format: ResponseFormat,
+    /// How Relationship targets are spelled.
+    pub(crate) targets: TargetSpelling,
+    /// The fallback every entity is amended by, if the subscription names an
+    /// older version.
+    pub(crate) fallback: Option<VersionFallback>,
+}
 
 /// The instances a change deleted, as the state before it held them.
 #[derive(Debug)]
@@ -64,9 +79,9 @@ impl NotifiedEntity {
         })
     }
 
-    /// The entity in `format`, its Relationship targets spelled as `targets`
-    /// says, `type` and `scope` narrowed by `projection`, the Linked Entities
-    /// the plan's cursor answers nested into it.
+    /// The entity written as `shape` says, `type` and `scope` narrowed by
+    /// `projection`, the Linked Entities the plan's cursor answers nested into
+    /// it.
     ///
     /// # Errors
     ///
@@ -74,12 +89,13 @@ impl NotifiedEntity {
     /// written.
     pub(crate) fn render(
         &self,
-        format: ResponseFormat,
-        targets: TargetSpelling,
+        shape: WrittenShape,
         join: Option<InlineCursor<'_, TypedEntities>>,
         projection: StructuralProjection<'_>,
     ) -> Result<Value, NotificationError> {
-        let notified = NotificationEntity::new(&self.entity, &self.stamped, format, targets).with_projection(projection);
+        let notified = NotificationEntity::new(&self.entity, &self.stamped, shape.format, shape.targets)
+            .with_projection(projection)
+            .with_fallback(shape.fallback);
         let notified = match self.changes() {
             Some(changes) => notified.with_changes(changes),
             None => notified,
@@ -92,13 +108,14 @@ impl NotifiedEntity {
     }
 }
 
-/// One Linked Entity a flat join appends (clause 4.5.23.3), in `format`, its
-/// Relationship targets spelled as `targets` says, written by the rule its
-/// first encounter decided.
+/// One Linked Entity a flat join appends (clause 4.5.23.3), written as `shape`
+/// says, by the rule its first encounter decided.
 ///
 /// # Errors
 ///
 /// Returns [`NotificationError::Rendering`] when the entity cannot be written.
-pub(crate) fn linked_entity(linked: &FlatEntity<'_, TypedEntities>, format: ResponseFormat, targets: TargetSpelling) -> Result<Value, NotificationError> {
-    Ok(NotificationEntity::linked(linked, format, targets).render()?)
+pub(crate) fn linked_entity(linked: &FlatEntity<'_, TypedEntities>, shape: WrittenShape) -> Result<Value, NotificationError> {
+    Ok(NotificationEntity::linked(linked, shape.format, shape.targets)
+        .with_fallback(shape.fallback)
+        .render()?)
 }

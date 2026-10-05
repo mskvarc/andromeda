@@ -6,7 +6,9 @@
 //!
 //! 1. percent-decoding of the URIs a Relationship points at,
 //! 2. version adaptation for a client that asked for an older spec version
-//!    (`Prefer: ngsi-ld=<version>`, clause 4.3.6.8),
+//!    (`Prefer: ngsi-ld=<version>`, clause 4.3.6.8) -- applied here to a
+//!    temporal answer, which is still a document; any other payload reaches
+//!    this pipeline already written for the version by its own writer,
 //! 3. `@context` injection for a body that carries it (clause 6.3.6), and
 //! 4. the `GeoJSON` Feature or `FeatureCollection` envelope (clause 4.5.16).
 //!
@@ -29,7 +31,6 @@ use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use iri_rs::IriBuf;
 use serde_json::Value;
-use std::sync::Arc;
 
 /// Payload fed to [`ResponseRenderer`]: the three NGSI-LD response shapes.
 ///
@@ -56,21 +57,25 @@ impl ResponsePayload {
         matches!(self, ResponsePayload::Single(_) | ResponsePayload::Collection(_))
     }
 
-    /// The `GeoJSON` envelope this shape takes, if it takes one.
+    /// The `GeoJSON` envelope this shape takes under `media_type`, if it
+    /// takes one.
     ///
-    /// Clause 4.5.16 wraps entities. A batch result is not an entity and is
-    /// answered as `application/json` whatever the request asked for, which is
-    /// what `None` says here.
-    const fn geo_json_shape(&self) -> Option<GeoJsonShape> {
-        match self {
-            ResponsePayload::Single(_) => Some(GeoJsonShape::Feature),
-            ResponsePayload::Collection(_) => Some(GeoJsonShape::FeatureCollection),
-            ResponsePayload::Batch(_) => None,
+    /// Clause 4.5.16 wraps entities answered as `GeoJSON`. A batch result is
+    /// not an entity and is answered as `application/json` whatever the
+    /// request asked for, which is what `None` says here.
+    pub(crate) const fn envelope_shape(&self, media_type: ResponseMediaType) -> Option<GeoJsonShape> {
+        match (self, media_type) {
+            (ResponsePayload::Single(_), ResponseMediaType::GeoJson) => Some(GeoJsonShape::Feature),
+            (ResponsePayload::Collection(_), ResponseMediaType::GeoJson) => Some(GeoJsonShape::FeatureCollection),
+            (ResponsePayload::Batch(_), ResponseMediaType::GeoJson)
+            | (ResponsePayload::Single(_) | ResponsePayload::Collection(_) | ResponsePayload::Batch(_), ResponseMediaType::Json | ResponseMediaType::JsonLd) => {
+                None
+            }
         }
     }
 
     /// The payload as one JSON value.
-    fn into_value(self) -> Value {
+    pub(crate) fn into_value(self) -> Value {
         match self {
             ResponsePayload::Single(value) | ResponsePayload::Batch(value) => value,
             ResponsePayload::Collection(values) => Value::Array(values),
@@ -114,17 +119,6 @@ pub struct ReadyResponse<'a> {
     pub(crate) renderer: ResponseRenderer<'a>,
     /// What is being answered.
     pub(crate) payload: ResponsePayload,
-    /// Whether the payload's Relationship targets are still to be decoded.
-    pub(crate) targets: TargetDecoding,
-}
-
-/// Whether a payload's Relationship targets have been percent-decoded yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TargetDecoding {
-    /// The pipeline decodes them, as it does every document a caller hands it.
-    Pending,
-    /// The typed walk that wrote the payload decoded them as it wrote them.
-    Applied,
 }
 
 /// Output of the rendering pipeline, ready for the response type to serialize.
@@ -180,10 +174,12 @@ impl<'a> ResponseRenderer<'a> {
 
     /// Set which NGSI-LD Element the payload is.
     ///
-    /// Only version adaptation reads it, and only for the two rows of the
-    /// clause 4.3.6.8 tables that read differently once an attribute's array is
-    /// the clause 4.5.7 sequence of instances in time. Every resource whose
-    /// payload is an Entity leaves it at its default.
+    /// Only version adaptation reads it. A temporal answer is a document this
+    /// pipeline adapts, under the two rows of the clause 4.3.6.8 tables that
+    /// read differently once an attribute's array is the clause 4.5.7
+    /// sequence of instances in time. Every other payload leaves it at its
+    /// default and is written for the requested version by its own writer
+    /// before it reaches the pipeline, which then only reports the outcome.
     #[must_use]
     pub const fn with_adapted_payload(mut self, adapted_payload: AdaptedPayload) -> Self {
         self.adapted_payload = adapted_payload;
@@ -212,11 +208,7 @@ impl<'a> ResponseRenderer<'a> {
     /// cannot be produced without a payload.
     #[must_use]
     pub const fn with_payload(self, payload: ResponsePayload) -> ReadyResponse<'a> {
-        ReadyResponse {
-            renderer: self,
-            payload,
-            targets: TargetDecoding::Pending,
-        }
+        ReadyResponse { renderer: self, payload }
     }
 
     /// Attach the typed entities to render, in the representation set by
@@ -240,12 +232,8 @@ impl ReadyResponse<'_> {
     /// Returns [`RenderError::Serialization`] when the `GeoJSON` envelope cannot
     /// be turned into a JSON value.
     pub fn render(self) -> Result<RenderedOutput, RenderError> {
-        let ReadyResponse { renderer, payload, targets } = self;
-        let geo_json_shape = match renderer.media_type {
-            ResponseMediaType::Json | ResponseMediaType::JsonLd => None,
-            ResponseMediaType::GeoJson => payload.geo_json_shape(),
-        };
-
+        let ReadyResponse { renderer, payload } = self;
+        let geo_json_shape = payload.envelope_shape(renderer.media_type);
         let carries_relationships = payload.carries_relationships();
         let mut value = payload.into_value();
 
@@ -253,15 +241,15 @@ impl ReadyResponse<'_> {
         // GeoJSON wrapping, so the policy is media-type-independent: the walk
         // runs while the payload is still a plain entity object, and the Feature
         // envelope is built afterwards from the already-decoded value.
-        if carries_relationships && targets == TargetDecoding::Pending {
+        if carries_relationships {
             decode_percent_encoded_uris(&mut value);
         }
 
         // Version adaptation drives the 203 status, so the flag comes from
-        // whether the renderer actually adapted -- a conformant-or-newer target
-        // short-circuits and leaves the payload authoritative (200).
-        let version_adaptation = match renderer.requested_version {
-            Some(target) => {
+        // whether the payload was written for an older version -- a
+        // conformant-or-newer target leaves it authoritative (200).
+        let version_adaptation = match (renderer.requested_version, renderer.adapted_payload) {
+            (Some(target), AdaptedPayload::TemporalEvolution | AdaptedPayload::SimplifiedTemporalEvolution) => {
                 let (adapted, adaptation) = VersionRenderer::new(target)
                     .with_format(renderer.format)
                     .with_adapted_payload(renderer.adapted_payload)
@@ -270,37 +258,55 @@ impl ReadyResponse<'_> {
                 value = adapted;
                 adaptation
             }
-            None => VersionAdaptation::None,
+            (Some(target), AdaptedPayload::Entity) => VersionAdaptation::requested(target),
+            (None, AdaptedPayload::Entity | AdaptedPayload::TemporalEvolution | AdaptedPayload::SimplifiedTemporalEvolution) => VersionAdaptation::None,
         };
-
-        // Exactly one carrier holds the context, so the body value and the
-        // `Link` target are read from the one variant the caller chose.
-        let (context_value, context_link) = match renderer.context {
-            ResponseContext::Body(context) => (Some(context), None),
-            ResponseContext::Link(target) => (None, Some(target)),
-            ResponseContext::Absent => (None, None),
-        };
-
-        value = if let Some(shape) = geo_json_shape {
-            GeoJsonRenderer::new(value)
-                .with_context(context_value)
-                .with_geometry_selection(renderer.geometry_selection)
-                .with_shape(shape)
-                .render()?
-        } else {
-            inject_context(&mut value, context_value);
-            value
-        };
-
-        Ok(RenderedOutput {
-            value,
-            head: ResponseHead {
-                context_link,
-                media_type: renderer.media_type,
-                version_adaptation,
-            },
-        })
+        enveloped(renderer, geo_json_shape, value, version_adaptation)
     }
+}
+
+/// The finished payload `value` in the envelope `renderer`'s media type and
+/// context carrier call for: the `GeoJSON` Feature or `FeatureCollection` of
+/// `shape`, or the payload with its `@context` member; `version_adaptation`
+/// is reported beside it.
+///
+/// # Errors
+///
+/// Returns [`RenderError::Serialization`] when the `GeoJSON` envelope cannot
+/// be turned into a JSON value.
+pub(crate) fn enveloped(
+    renderer: ResponseRenderer<'_>,
+    shape: Option<GeoJsonShape>,
+    mut value: Value,
+    version_adaptation: VersionAdaptation,
+) -> Result<RenderedOutput, RenderError> {
+    // Exactly one carrier holds the context, so the body value and the
+    // `Link` target are read from the one variant the caller chose.
+    let (context_value, context_link) = match renderer.context {
+        ResponseContext::Body(context) => (Some(context), None),
+        ResponseContext::Link(target) => (None, Some(target)),
+        ResponseContext::Absent => (None, None),
+    };
+
+    value = if let Some(shape) = shape {
+        GeoJsonRenderer::new(value)
+            .with_context(context_value)
+            .with_geometry_selection(renderer.geometry_selection)
+            .with_shape(shape)
+            .render()?
+    } else {
+        inject_context(&mut value, context_value);
+        value
+    };
+
+    Ok(RenderedOutput {
+        value,
+        head: ResponseHead {
+            context_link,
+            media_type: renderer.media_type,
+            version_adaptation,
+        },
+    })
 }
 
 /// Insert an `@context` member into a rendered payload.
@@ -310,23 +316,12 @@ impl ReadyResponse<'_> {
 /// enclosing object the member could go on instead.
 fn inject_context(value: &mut Value, context_value: Option<Value>) {
     let Some(context_value) = context_value else { return };
-
-    match value {
-        Value::Object(object) => {
-            object.insert("@context".to_string(), context_value);
+    if let Some(items) = value.as_array_mut() {
+        for object in items.iter_mut().filter_map(|item| item.as_object_mut()) {
+            object.insert("@context".to_string(), context_value.clone()); // clone: every entity of the collection carries its own copy
         }
-        Value::Array(items) => {
-            // Formatted once and shared through an `Arc` so the value is not
-            // rebuilt per entity; `Value` owns its data, so the insert itself
-            // still copies.
-            let shared = Arc::new(context_value);
-            for item in items.iter_mut() {
-                if let Some(object) = item.as_object_mut() {
-                    object.insert("@context".to_string(), (*shared).clone());
-                }
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    } else if let Some(object) = value.as_object_mut() {
+        object.insert("@context".to_string(), context_value);
     }
 }
 

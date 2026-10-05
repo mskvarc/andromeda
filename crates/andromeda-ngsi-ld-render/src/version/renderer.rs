@@ -3,6 +3,7 @@
 use crate::version::{
     adaptation::VersionAdaptation,
     adapted_payload::AdaptedPayload,
+    fallback::{EntityMember, VersionFallback},
     reified_attribute::adapt_reified_attribute,
     simplified_attribute::adapt_simplified_attribute,
     simplified_temporal_attribute::adapt_simplified_temporal_attribute,
@@ -11,7 +12,7 @@ use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_representation::{entity_members::ENTITY_MEMBERS, response_format::ResponseFormat};
 use serde_json::Value;
 
-/// Adapt a serialized NGSI-LD entity payload to conform to an older spec version.
+/// Adapt a rendered NGSI-LD payload to conform to an older spec version.
 ///
 /// Applies the fallback tables from clause 4.3.6.8:
 /// - Table 4.3.6.8-1: entity-level removals
@@ -81,7 +82,8 @@ impl VersionRenderer {
         self
     }
 
-    /// Apply the clause 4.3.6.8 fallback tables and return the adapted payload
+    /// Apply the clause 4.3.6.8 fallback tables to a payload of Entity data --
+    /// one entity or an array of them -- and return the adapted payload
     /// together with whether adaptation was performed.
     ///
     /// The [`VersionAdaptation`] the caller receives drives the status code: a
@@ -100,39 +102,51 @@ impl VersionRenderer {
             adapted_payload,
             mut payload,
         } = self;
-        if target >= SpecVersion::CONFORMANT {
+        let Some(fallback) = VersionFallback::new(target, adapted_payload) else {
             return (payload, VersionAdaptation::Unchanged);
+        };
+        // `adapt_entity` leaves anything but an entity object as it is.
+        match payload.as_array_mut() {
+            Some(items) => items.iter_mut().for_each(|item| adapt_entity(item, fallback, format)),
+            None => adapt_entity(&mut payload, fallback, format),
         }
+        (payload, VersionAdaptation::Applied { version: target })
+    }
 
-        match &mut payload {
-            Value::Object(_) => adapt_entity(&mut payload, target, format, adapted_payload),
-            Value::Array(items) => {
-                for item in items {
-                    adapt_entity(item, target, format, adapted_payload);
-                }
-            }
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
-        }
+    /// Apply the clause 4.3.6.8 fallback tables to a payload that is one
+    /// attribute -- the body of a request whose path names the attribute
+    /// (clauses 5.6.4 and 5.6.19) -- rather than an entity: Tables 4.3.6.8-2
+    /// and -3 reach its instance members directly, and nothing of Table
+    /// 4.3.6.8-1 but the family reformat and the instance collapse applies.
+    #[must_use]
+    pub fn render_attribute(self) -> (Value, VersionAdaptation) {
+        let VersionRenderer {
+            target,
+            format,
+            adapted_payload,
+            mut payload,
+        } = self;
+        let Some(fallback) = VersionFallback::new(target, adapted_payload) else {
+            return (payload, VersionAdaptation::Unchanged);
+        };
+        adapt_attribute(&mut payload, fallback, format);
         (payload, VersionAdaptation::Applied { version: target })
     }
 }
 
 /// Adapt a single entity object.
-fn adapt_entity(entity: &mut Value, target: SpecVersion, format: ResponseFormat, adapted_payload: AdaptedPayload) {
+fn adapt_entity(entity: &mut Value, fallback: VersionFallback, format: ResponseFormat) {
     let Some(obj) = entity.as_object_mut() else {
         return;
     };
 
-    // Table 4.3.6.8-1: entity-level removals
-    if target < SpecVersion::V1_9 {
+    if !fallback.keeps_entity_member(EntityMember::ExpiresAt) {
         obj.remove("expiresAt");
     }
-    if target < SpecVersion::V1_4 {
+    if !fallback.keeps_entity_member(EntityMember::Scope) {
         obj.remove("scope");
     }
-    // Table 4.3.6.8-1 note 1: a multi-valued `type` exists from 1.3 onwards;
-    // an older target receives the first value alone.
-    if target < SpecVersion::V1_3
+    if fallback.writes_single_type()
         && let Some(Value::Array(types)) = obj.get_mut("type")
     {
         let first = types.first().cloned().unwrap_or(Value::Null); // clone: the first element outlives the array it is lifted out of
@@ -145,7 +159,7 @@ fn adapt_entity(entity: &mut Value, target: SpecVersion, format: ResponseFormat,
 
     for key in attr_keys {
         if let Some(attr_value) = obj.get_mut(&key) {
-            adapt_attribute(attr_value, target, format, adapted_payload);
+            adapt_attribute(attr_value, fallback, format);
         }
     }
 }
@@ -156,17 +170,17 @@ fn adapt_entity(entity: &mut Value, target: SpecVersion, format: ResponseFormat,
 /// 6.3.12 selects it instead of the clause 4.5.1 representations, and its
 /// attribute objects hold the plural members that representation defines rather
 /// than an instance's value member.
-fn adapt_attribute(value: &mut Value, target: SpecVersion, format: ResponseFormat, adapted_payload: AdaptedPayload) {
-    if adapted_payload == AdaptedPayload::SimplifiedTemporalEvolution {
-        adapt_simplified_temporal_attribute(value, target, adapted_payload);
+fn adapt_attribute(value: &mut Value, fallback: VersionFallback, format: ResponseFormat) {
+    if fallback.payload() == AdaptedPayload::SimplifiedTemporalEvolution {
+        adapt_simplified_temporal_attribute(value, fallback);
         return;
     }
     match format {
         // Concise is the normalized shape with the inferrable `type` dropped
         // (clause 4.5.2.3), so one walk serves both; which member the family is
         // read from is what differs, and that is decided per instance.
-        ResponseFormat::Normalized | ResponseFormat::Concise => adapt_reified_attribute(value, target, format, adapted_payload),
-        ResponseFormat::KeyValues | ResponseFormat::Simplified => adapt_simplified_attribute(value, target),
+        ResponseFormat::Normalized | ResponseFormat::Concise => adapt_reified_attribute(value, fallback, format),
+        ResponseFormat::KeyValues | ResponseFormat::Simplified => adapt_simplified_attribute(value, fallback),
     }
 }
 

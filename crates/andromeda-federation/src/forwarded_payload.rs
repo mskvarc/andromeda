@@ -21,7 +21,7 @@ use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfo;
-use andromeda_ngsi_ld_render::version::renderer::VersionRenderer;
+use andromeda_ngsi_ld_render::version::{adapted_payload::AdaptedPayload, renderer::VersionRenderer};
 use iri_rs::IriBuf;
 use serde_json::Value;
 
@@ -50,6 +50,8 @@ pub(crate) enum OutgoingBody<'a> {
         bytes: &'a [u8],
         /// What kind of document it is, which decides where its names sit.
         vocabulary: DocumentVocabulary,
+        /// Which NGSI-LD Element its Entity data is.
+        element: AdaptedPayload,
     },
     /// A reduced subscription (clause 5.8.1.4), written in the inbound
     /// context's terms.
@@ -57,6 +59,47 @@ pub(crate) enum OutgoingBody<'a> {
     /// A document this broker wrote in the forwarding context's terms already,
     /// such as the `Query` of a forwarded batch query (clause 6.23).
     Expressed(&'a [u8]),
+}
+
+/// How the clause 4.3.6.8 fallback reads one outgoing body.
+///
+/// Tables 4.3.6.8-1 to -3 describe Entity data, so only a body that carries
+/// it is amended, and each by the reading its shape calls for (clause
+/// 4.3.6.6): an entity, an entity fragment or an array of them as Entity data;
+/// the one attribute a request path names as that attribute's instances.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FallbackReading {
+    /// Entities of the given Element.
+    Entities(AdaptedPayload),
+    /// One attribute of an entity of the given Element.
+    Attribute(AdaptedPayload),
+    /// No Entity data: a Subscription, a batch `Query`, a discovery answer or
+    /// an `EntityMap`.
+    Untouched,
+}
+
+impl OutgoingBody<'_> {
+    /// The reading the fallback takes of the body.
+    const fn fallback_reading(self) -> FallbackReading {
+        match self {
+            OutgoingBody::Document {
+                vocabulary: DocumentVocabulary::Entities,
+                element,
+                ..
+            } => FallbackReading::Entities(element),
+            OutgoingBody::Document {
+                vocabulary: DocumentVocabulary::Attribute,
+                element,
+                ..
+            } => FallbackReading::Attribute(element),
+            OutgoingBody::Document {
+                vocabulary: DocumentVocabulary::Discovery | DocumentVocabulary::Opaque,
+                ..
+            }
+            | OutgoingBody::Subscription(_)
+            | OutgoingBody::Expressed(_) => FallbackReading::Untouched,
+        }
+    }
 }
 
 /// Strip an inline `@context` from every object of a body.
@@ -109,7 +152,8 @@ pub(crate) async fn build_forwarded_payload(
         });
     };
 
-    let mut value = conformant(spelled_body(engine, inbound, &decision.context, body).await?, info);
+    let reading = body.fallback_reading();
+    let mut value = conformant(spelled_body(engine, inbound, &decision.context, body).await?, info, reading);
     // Clause 6.3.5: `application/ld+json` carries its context inline and never
     // beside a context `Link`.
     if let Some(context) = decision.context.inline_for(inbound) {
@@ -160,7 +204,7 @@ pub(crate) async fn build_items_payload(
             decision.context.rewording(),
         )
         .await?;
-        value = conformant(value, info);
+        value = conformant(value, info, FallbackReading::Entities(AdaptedPayload::Entity));
         if let Some(inline) = decision.context.inline_for(context.spec()) {
             embed_inline_context(&mut value, &inline);
         }
@@ -196,11 +240,21 @@ pub(crate) fn build_identifiers_payload(ids: &[Identifier]) -> Result<ForwardedP
 
 /// The payload conforming to the version the registration's
 /// `ngsildConformance` says its source understands (clauses 4.3.6.6 and
-/// 4.3.6.8), or unchanged when it names none.
-fn conformant(value: Value, info: &ContextSourceInfo<'_>) -> Value {
-    match info.ngsild_conformance {
-        Some(version) => VersionRenderer::new(version).with_payload(value).render().0,
-        None => value,
+/// 4.3.6.8), read as `reading` says, or unchanged when it names none.
+fn conformant(value: Value, info: &ContextSourceInfo<'_>, reading: FallbackReading) -> Value {
+    let Some(version) = info.ngsild_conformance else {
+        return value;
+    };
+    match reading {
+        FallbackReading::Entities(element) => VersionRenderer::new(version).with_adapted_payload(element).with_payload(value).render().0,
+        FallbackReading::Attribute(element) => {
+            VersionRenderer::new(version)
+                .with_adapted_payload(element)
+                .with_payload(value)
+                .render_attribute()
+                .0
+        }
+        FallbackReading::Untouched => value,
     }
 }
 
@@ -238,6 +292,7 @@ mod tests {
     use andromeda_jsonld::{batch_contexts::BatchContexts, context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, key_value_pair::KeyValuePair};
+    use andromeda_ngsi_ld_render::version::adapted_payload::AdaptedPayload;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
@@ -316,6 +371,7 @@ mod tests {
         OutgoingBody::Document {
             bytes,
             vocabulary: DocumentVocabulary::Entities,
+            element: AdaptedPayload::Entity,
         }
     }
 
@@ -626,6 +682,93 @@ mod tests {
         assert!(forwarded.get("scope").is_none(), "scope was introduced in 1.4: {forwarded}");
         assert!(forwarded["speed"].get("observedAt").is_none(), "observedAt was introduced in 1.3: {forwarded}");
     }
+    /// The body forwarded to a 1.0 source for `body`.
+    async fn forwarded_to_1_0(body: OutgoingBody<'_>) -> Value {
+        let payload = payload(&link_spec(USER_CONTEXT), &[("ngsildConformance", "1.0")], Some(body)).await;
+        serde_json::from_slice(payload.body.as_deref().expect("body")).expect("JSON body")
+    }
+
+    /// Tables 4.3.6.8-x describe Entity data alone: a forwarded Subscription
+    /// keeps its own `expiresAt` and every `entities` selector.
+    #[tokio::test]
+    async fn a_forwarded_subscription_is_not_read_as_an_entity() {
+        let subscription = json!({
+            "id": "urn:ngsi-ld:Subscription:forwarded-1",
+            "type": "Subscription",
+            "entities": [{"type": "Vehicle"}, {"type": "Bus"}],
+            "expiresAt": "2030-01-01T00:00:00Z",
+            "notification": {"endpoint": {"uri": "http://receiver.example.org/"}}
+        });
+        let bytes = serde_json::to_vec(&subscription).expect("serialises");
+        let forwarded = forwarded_to_1_0(OutgoingBody::Subscription(&bytes)).await;
+        pretty_assertions::assert_eq!(forwarded["expiresAt"], json!("2030-01-01T00:00:00Z"));
+        pretty_assertions::assert_eq!(forwarded["entities"], json!([{"type": "Vehicle"}, {"type": "Bus"}]));
+    }
+
+    /// A batch `Query` is no Entity data either.
+    #[tokio::test]
+    async fn a_forwarded_query_keeps_its_entity_selectors() {
+        let query = json!({"type": "Query", "entities": [{"type": "Vehicle"}, {"type": "Bus"}]});
+        let bytes = serde_json::to_vec(&query).expect("serialises");
+        pretty_assertions::assert_eq!(forwarded_to_1_0(OutgoingBody::Expressed(&bytes)).await, query);
+    }
+
+    /// Tables 4.3.6.8-2 and -3 reach the instance members of the one attribute
+    /// a request path names.
+    #[tokio::test]
+    async fn a_forwarded_attribute_body_drops_its_newer_members() {
+        let attribute = serde_json::to_vec(&json!({
+            "type": "Property",
+            "value": 10,
+            "observedAt": "2025-01-01T00:00:00Z",
+            "unitCode": "KMH",
+            "valueType": "Speed"
+        }))
+        .expect("serialises");
+        let forwarded = forwarded_to_1_0(OutgoingBody::Document {
+            bytes: &attribute,
+            vocabulary: DocumentVocabulary::Attribute,
+            element: AdaptedPayload::Entity,
+        })
+        .await;
+        pretty_assertions::assert_eq!(forwarded, json!({"type": "Property", "value": 10}));
+    }
+
+    /// Clause 4.5.7: a temporal entity's attribute array is the sequence of
+    /// its instances in time, and `observedAt` places each in it.
+    #[tokio::test]
+    async fn a_forwarded_temporal_body_keeps_its_instance_sequence() {
+        let speeds = json!([
+            {"type": "Property", "value": 1, "observedAt": "2025-01-01T00:00:00Z"},
+            {"type": "Property", "value": 2, "observedAt": "2025-01-02T00:00:00Z"},
+            {"type": "Property", "value": 3, "observedAt": "2025-01-03T00:00:00Z"}
+        ]);
+        let temporal = serde_json::to_vec(&json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": speeds})).expect("serialises");
+        let forwarded = forwarded_to_1_0(OutgoingBody::Document {
+            bytes: &temporal,
+            vocabulary: DocumentVocabulary::Entities,
+            element: AdaptedPayload::TemporalEvolution,
+        })
+        .await;
+        pretty_assertions::assert_eq!(forwarded["speed"], speeds);
+    }
+
+    /// Entity data is amended: `scope` arrived at 1.4 and the
+    /// `LanguageProperty` at 1.4.
+    #[tokio::test]
+    async fn a_forwarded_entity_is_amended() {
+        let entity = serde_json::to_vec(&json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "scope": "/Madrid",
+            "name": {"type": "LanguageProperty", "languageMap": {"en": "bus"}}
+        }))
+        .expect("serialises");
+        let forwarded = forwarded_to_1_0(document(&entity)).await;
+        assert!(forwarded.get("scope").is_none(), "{forwarded}");
+        pretty_assertions::assert_eq!(forwarded["name"], json!({"type": "Property", "value": {"en": "bus"}}));
+    }
+
     /// The one attribute a request path names is spelled as an attribute in
     /// the forwarding context: its core members stay, what it names moves.
     #[tokio::test]
@@ -637,6 +780,7 @@ mod tests {
             Some(OutgoingBody::Document {
                 bytes: &attribute,
                 vocabulary: DocumentVocabulary::Attribute,
+                element: AdaptedPayload::Entity,
             }),
         )
         .await;

@@ -15,6 +15,13 @@
 //! a `join=inline` subscription (clause 4.5.23.2) are written on the way. A
 //! Linked Entity a `join=flat` subscription appends is written by the same
 //! walk, under the rule the Linked Entity plan decided for it.
+//!
+//! A Subscription's `ngsildConformance` has every Entity of the notification
+//! "amended to conform to the supplied version" (clause 5.8.6): the clause
+//! 4.3.6.8 fallback is applied by the same walk, to the notified entity, to
+//! the Linked Entities nested into it, and to each flat Linked Entity. It
+//! reaches the Entities and never the Notification that carries them: Tables
+//! 4.3.6.8-1 to -3 describe Entity data alone.
 
 use crate::{
     entity_body::{
@@ -25,6 +32,7 @@ use crate::{
     notified_changes::NotifiedChanges,
     structural_projection::StructuralProjection,
     uri_decoding::UriDecoding,
+    version::fallback::VersionFallback,
 };
 use andromeda_linked_retrieval::{
     narrowing::member::MemberRule,
@@ -84,6 +92,9 @@ pub struct NotificationEntity<'a> {
     /// The rule a flat Linked Entity's members are written by, if it narrows
     /// anything.
     narrowing: Option<MemberRule<'a>>,
+    /// The clause 4.3.6.8 fallback of the subscription's
+    /// `ngsildConformance`, if it names an older version.
+    fallback: Option<VersionFallback>,
 }
 
 impl<'a> NotificationEntity<'a> {
@@ -101,6 +112,7 @@ impl<'a> NotificationEntity<'a> {
             projection: None,
             identifier: IdentifierMember::Mandatory,
             narrowing: None,
+            fallback: None,
         }
     }
 
@@ -123,6 +135,7 @@ impl<'a> NotificationEntity<'a> {
             projection: None,
             identifier: IdentifierMember::Written,
             narrowing: linked.rule.restricting(),
+            fallback: None,
         }
     }
 
@@ -153,6 +166,13 @@ impl<'a> NotificationEntity<'a> {
         }
     }
 
+    /// The entity, amended to the version its subscription's
+    /// `ngsildConformance` names (clause 5.8.6), when `fallback` is one.
+    #[must_use]
+    pub const fn with_fallback(self, fallback: Option<VersionFallback>) -> NotificationEntity<'a> {
+        NotificationEntity { fallback, ..self }
+    }
+
     /// The entity as the JSON value the notification carries.
     ///
     /// # Errors
@@ -167,7 +187,7 @@ impl<'a> NotificationEntity<'a> {
         let typed = TypedEntity {
             entity: self.entity,
             format: self.format,
-            walk: MemberWalk::new(decoding, None),
+            walk: MemberWalk::new(decoding, None, self.fallback),
             projection: self.projection,
             identifier: self.identifier,
             context: None,

@@ -20,6 +20,7 @@ use crate::{
     notification_entity::StampedInstants,
     notified_changes::NotifiedChanges,
     structural_projection::StructuralProjection,
+    version::fallback::EntityMember,
 };
 use andromeda_linked_retrieval::{keyword::Keyword, narrowing::member::MemberRule, plan::InlineCursor, typed::TypedEntities};
 use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
@@ -135,17 +136,29 @@ impl Serialize for TypedEntity<'_> {
             object.serialize_entry(ProjectionTerm::ID_KEYWORD, &entity.id)?;
         }
         if self.keeps(Keyword::Type) {
-            object.serialize_entry(ProjectionTerm::TYPE_KEYWORD, &entity.type_)?;
+            match entity.type_.iter().next() {
+                Some(first) if self.walk.writes_single_type() => object.serialize_entry(ProjectionTerm::TYPE_KEYWORD, first)?,
+                Some(_) | None => object.serialize_entry(ProjectionTerm::TYPE_KEYWORD, &entity.type_)?,
+            }
         }
         if let Some(scope) = &entity.scope
             && self.keeps(Keyword::Scope)
+            && self.walk.keeps_entity_member(EntityMember::Scope)
         {
             object.serialize_entry(ProjectionTerm::SCOPE_KEYWORD, scope)?;
         }
         let spelling = self.instant_spelling();
         let stamped = self.stamped.copied().unwrap_or_default();
+        // The expiry a notification stamps is the entity's own member as much
+        // as the one the entity carries, so the fallback drops both.
+        let expiry = self.walk.keeps_entity_member(EntityMember::ExpiresAt);
         for (name, own, stamp, precedence) in [
-            (compact_properties::EXPIRES_AT, entity.expires_at, stamped.expires_at, StampPrecedence::OwnFirst),
+            (
+                compact_properties::EXPIRES_AT,
+                entity.expires_at.filter(|_| expiry),
+                stamped.expires_at.filter(|_| expiry),
+                StampPrecedence::OwnFirst,
+            ),
             (compact_properties::CREATED_AT, entity.created_at, stamped.created_at, StampPrecedence::OwnFirst),
             (
                 compact_properties::MODIFIED_AT,

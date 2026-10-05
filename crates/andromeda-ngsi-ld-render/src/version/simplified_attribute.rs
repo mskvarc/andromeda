@@ -43,8 +43,8 @@
 //! [`SIMPLIFIED_WRAPPED_FAMILIES`] and the `dataset` map of clause 4.5.4's
 //! multi-attribute case.
 
-use crate::version::family_introduction::family_introduced;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, spec_version::SpecVersion};
+use crate::version::fallback::VersionFallback;
+use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_query::dataset::DEFAULT_INSTANCE_TOKEN;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde_json::Value;
@@ -82,18 +82,18 @@ fn sole_member(value: &Value) -> Option<&str> {
 /// family's version unwraps it. Clause 4.5.4 keeps no `type` to tell the two
 /// apart, so the ambiguity is in the representation rather than in this
 /// reading of it.
-pub(crate) fn adapt_simplified_attribute(value: &mut Value, target: SpecVersion) {
+pub(crate) fn adapt_simplified_attribute(value: &mut Value, fallback: VersionFallback) {
     let Some(member) = sole_member(value) else {
         return;
     };
     if member == compact_properties::DATASET {
-        adapt_simplified_dataset_map(value, target);
+        adapt_simplified_dataset_map(value, fallback);
         return;
     }
     let Some(family) = SIMPLIFIED_WRAPPED_FAMILIES.into_iter().find(|family| family.compact_value_key() == member) else {
         return;
     };
-    if target >= family_introduced(family) {
+    if fallback.family(family) == family {
         return;
     }
     if let Some(inner) = value.as_object_mut().and_then(|obj| obj.remove(family.compact_value_key())) {
@@ -109,16 +109,16 @@ pub(crate) fn adapt_simplified_attribute(value: &mut Value, target: SpecVersion)
 /// `@none` key clause 4.5.4 gives it -- and receives it as the bare value a 1.0
 /// simplified attribute is, not as a map. A 1.3 or newer target keeps the map,
 /// with each instance adapted in its own right.
-fn adapt_simplified_dataset_map(value: &mut Value, target: SpecVersion) {
+fn adapt_simplified_dataset_map(value: &mut Value, fallback: VersionFallback) {
     let Some(datasets) = value.as_object_mut().and_then(|obj| obj.get_mut(compact_properties::DATASET)) else {
         return;
     };
     let Some(datasets) = datasets.as_object_mut() else {
         return;
     };
-    if target >= SpecVersion::V1_3 {
+    if !fallback.collapses_instances() {
         for instance in datasets.values_mut() {
-            adapt_simplified_attribute(instance, target);
+            adapt_simplified_attribute(instance, fallback);
         }
         return;
     }
@@ -133,19 +133,20 @@ fn adapt_simplified_dataset_map(value: &mut Value, target: SpecVersion) {
     let Some(mut default_instance) = datasets.remove(&default_key) else {
         return;
     };
-    adapt_simplified_attribute(&mut default_instance, target);
+    adapt_simplified_attribute(&mut default_instance, fallback);
     *value = default_instance;
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::version::simplified_attribute::adapt_simplified_attribute;
+    use crate::version::{adapted_payload::AdaptedPayload, fallback::VersionFallback, simplified_attribute::adapt_simplified_attribute};
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
     use serde_json::{Value, json};
 
     /// Adapt one attribute of a clause 4.5.4 payload.
     fn adapt(target: SpecVersion, mut attribute: Value) -> Value {
-        adapt_simplified_attribute(&mut attribute, target);
+        let fallback = VersionFallback::new(target, AdaptedPayload::Entity).expect("a target below the conformant version");
+        adapt_simplified_attribute(&mut attribute, fallback);
         attribute
     }
 

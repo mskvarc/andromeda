@@ -20,6 +20,7 @@ use crate::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_ngsi_ld_render::version::adapted_payload::AdaptedPayload;
 use futures::{StreamExt, stream};
 use tracing::{debug, warn};
 use url::Url;
@@ -53,6 +54,9 @@ pub(crate) struct PlannedBody {
     /// What kind of document it is, which decides where its names sit when it
     /// is spelled in the forwarding context.
     pub(crate) vocabulary: DocumentVocabulary,
+    /// Which NGSI-LD Element the document's Entity data is, which decides
+    /// how the clause 4.3.6.8 fallback reads it.
+    pub(crate) element: AdaptedPayload,
 }
 
 /// What one forwarded write carries, and the context each part of it was
@@ -67,6 +71,8 @@ pub(crate) enum WritePayload<'a> {
         bytes: &'a [u8],
         /// What kind of document it is.
         vocabulary: DocumentVocabulary,
+        /// Which NGSI-LD Element its Entity data is.
+        element: AdaptedPayload,
         /// The context it was submitted under.
         context: &'a ContextSpec,
     },
@@ -121,9 +127,10 @@ impl FederationService {
         } = write;
         let mode = registration.access.mode.unwrap_or_default();
         let payload = match &body {
-            Some(PlannedBody { bytes, vocabulary }) => WritePayload::Document {
+            Some(PlannedBody { bytes, vocabulary, element }) => WritePayload::Document {
                 bytes,
                 vocabulary: *vocabulary,
+                element: *element,
                 context,
             },
             None => WritePayload::Empty(context),
@@ -181,8 +188,13 @@ impl FederationService {
                 self.payload_for(registration, context, None).await,
                 single_write_naming(registration, context, BodyPresence::Absent),
             ),
-            WritePayload::Document { bytes, vocabulary, context } => (
-                self.payload_for(registration, context, Some(OutgoingBody::Document { bytes, vocabulary }))
+            WritePayload::Document {
+                bytes,
+                vocabulary,
+                element,
+                context,
+            } => (
+                self.payload_for(registration, context, Some(OutgoingBody::Document { bytes, vocabulary, element }))
                     .await,
                 single_write_naming(registration, context, BodyPresence::Present),
             ),
