@@ -88,7 +88,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-telemetry",
         "andromeda-tenancy",
     ],
-    allow_workspace_dev_dependencies: [],
+    allow_workspace_dev_dependencies: ["andromeda-http-headers"],
     allow_production_dependencies: [],
 }
 

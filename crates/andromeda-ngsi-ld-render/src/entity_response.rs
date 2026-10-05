@@ -13,7 +13,9 @@
 use crate::{
     context::ResponseContext,
     entity_body::{
+        entity_collection::EntityCollection,
         feature_body::FeatureBody,
+        feature_collection::FeatureCollection,
         member_walk::MemberWalk,
         typed_entity::{IdentifierMember, TypedEntity},
     },
@@ -24,6 +26,7 @@ use crate::{
     version::{adaptation::VersionAdaptation, adapted_payload::AdaptedPayload, fallback::VersionFallback},
 };
 use andromeda_http_headers::{language::LanguageFilter, media_type::ResponseMediaType};
+use andromeda_json_literal::JsonLiteral;
 use andromeda_linked_retrieval::{
     narrowing::member::MemberRule,
     plan::{FlatEntity, InlineCursor},
@@ -31,12 +34,8 @@ use andromeda_linked_retrieval::{
 };
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
-use serde::{Serialize, Serializer, ser::SerializeMap};
-use serde_json::Value;
+use serde::Deserialize;
 use std::io::Write;
-
-/// The member a JSON-LD document declares its context in.
-const CONTEXT_MEMBER: &str = "@context";
 
 /// One entity of an entity response, with the clause 4.21 structural rule
 /// that governs it.
@@ -158,10 +157,14 @@ impl<'a> ReadyEntityResponse<'a> {
             Some(target) => (VersionAdaptation::requested(target), VersionFallback::new(target, AdaptedPayload::Entity)),
         };
         let (context, context_link) = match &self.renderer.context {
-            ResponseContext::Body(context) => (Some(context), None),
+            ResponseContext::Body(context) => (
+                Some(JsonLiteral::deserialize(context).map_err(|error| RenderError::serialization(RenderedShape::Context, error))?),
+                None,
+            ),
             ResponseContext::Link(target) => (None, Some(target.clone())), // clone: the head owns the target the renderer keeps
             ResponseContext::Absent => (None, None),
         };
+        let context = context.as_ref();
         let format = self.renderer.format;
         let selection = self.renderer.geometry_selection;
         let language_filter = self.language_filter;
@@ -191,45 +194,5 @@ impl<'a> ReadyEntityResponse<'a> {
             media_type: self.renderer.media_type,
             version_adaptation,
         })
-    }
-}
-
-/// A collection of entities, each carrying the body's `@context`: an array of
-/// entities is no JSON-LD document, so there is no enclosing object the member
-/// could go on instead (clause 6.3.6).
-struct EntityCollection<'a> {
-    /// The entities.
-    entities: &'a [TypedEntity<'a>],
-    /// The `@context` each carries, if the body carries one.
-    context: Option<&'a Value>,
-}
-
-impl Serialize for EntityCollection<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(self.entities.iter().map(|entity| TypedEntity {
-            context: self.context,
-            ..*entity
-        }))
-    }
-}
-
-/// The clause 4.5.16.3 `FeatureCollection`, carrying the body's `@context`
-/// beside its features, none of which carries one of its own.
-struct FeatureCollection<'a> {
-    /// The features.
-    features: Vec<FeatureBody<'a>>,
-    /// The `@context`, if the body carries one.
-    context: Option<&'a Value>,
-}
-
-impl Serialize for FeatureCollection<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut collection = serializer.serialize_map(None)?;
-        collection.serialize_entry("type", "FeatureCollection")?;
-        collection.serialize_entry("features", &self.features)?;
-        if let Some(context) = self.context {
-            collection.serialize_entry(CONTEXT_MEMBER, context)?;
-        }
-        collection.end()
     }
 }

@@ -25,6 +25,9 @@ pub enum RenderedShape {
     /// A clause 4.5.16 `GeoJSON` `FeatureCollection`.
     #[strum(serialize = "GeoJSON FeatureCollection")]
     GeoJsonFeatureCollection,
+    /// The `@context` member a body carries (clause 6.3.6).
+    #[strum(serialize = "@context")]
+    Context,
 }
 
 /// A rendering that could not be built.
@@ -71,7 +74,12 @@ mod tests {
 
     #[test]
     fn every_shape_renders_a_distinct_name() {
-        let shapes = [RenderedShape::Entity, RenderedShape::GeoJsonFeature, RenderedShape::GeoJsonFeatureCollection];
+        let shapes = [
+            RenderedShape::Entity,
+            RenderedShape::GeoJsonFeature,
+            RenderedShape::GeoJsonFeatureCollection,
+            RenderedShape::Context,
+        ];
         let names: Vec<String> = shapes.iter().map(ToString::to_string).collect();
         let mut unique = names.clone();
         unique.sort();

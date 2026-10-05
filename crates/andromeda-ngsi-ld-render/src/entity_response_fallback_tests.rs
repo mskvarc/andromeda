@@ -440,11 +440,10 @@ fn the_conformant_target_writes_the_unchanged_body() {
 /// with `changes`.
 fn notified(entity: &Entity, changes: NotifiedChanges<'_>, format: ResponseFormat, target: SpecVersion) -> Value {
     let stamped = StampedInstants::default();
-    NotificationEntity::new(entity, &stamped, format, TargetSpelling::AsStored)
+    let notified = NotificationEntity::new(entity, &stamped, format, TargetSpelling::AsStored)
         .with_changes(changes)
-        .with_fallback(VersionFallback::new(target, AdaptedPayload::Entity))
-        .render()
-        .expect("the notified entity is written")
+        .with_fallback(VersionFallback::new(target, AdaptedPayload::Entity));
+    serde_json::to_value(notified).expect("the notified entity is written")
 }
 
 /// Clause 5.8.6 amends a notified deletion like any other member: a deleted

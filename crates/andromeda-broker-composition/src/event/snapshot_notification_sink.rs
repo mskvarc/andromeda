@@ -4,11 +4,11 @@ use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
     endpoint::transport::EndpointTransport,
+    notification_body::NotificationBody,
     notification_context_placement::notification_context_placement,
     request::DeliveryRequest,
 };
 use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use andromeda_notification::{delivery_backoff::backoff_seconds, delivery_config::DeliveryConfig, delivery_error_bound::DeliveryErrorBound};
 use andromeda_postgresql_context_store::snapshot::status_outbox::{SnapshotDeliveryFailure, SnapshotStatusDelivery, SnapshotStatusOutbox};
 use andromeda_snapshot::{error::SnapshotError, snapshot_invariant::SnapshotInvariant};
@@ -138,17 +138,14 @@ impl DeliverySnapshotNotificationSink {
 
     /// Deliver one durably leased Snapshot lifecycle event over HTTP.
     pub async fn deliver_status(&self, delivery: &SnapshotStatusDelivery) -> DeliveryResult {
-        // clone: the leased outbox row remains available to record the result after transport completes
-        let mut payload = delivery.payload.clone();
-        if let Some(document) = payload.as_object_mut() {
-            document.insert("@context".to_owned(), serde_json::Value::String(NGSI_LD_CORE_CONTEXT_URL.to_string()));
-        }
         let request = DeliveryRequest {
-            payload: Arc::new(payload),
+            // clone: the leased outbox row remains available to record the result after transport completes
+            body: NotificationBody::new(delivery.notification_id.clone(), delivery.notification.clone()),
             endpoint_uri: delivery.endpoint.clone(),
             content_type: ResponseMediaType::JsonLd,
-            // The `@context` was just inserted above; clause 6.3.8 is asked
-            // where it belongs rather than the answer being restated here.
+            // The notification was written with its `@context` when the event
+            // committed; clause 6.3.8 is asked where it belongs rather than the
+            // answer being restated here.
             context_placement: notification_context_placement(ResponseMediaType::JsonLd, delivery.receiver_info.as_deref()),
             context_url: None,
             tenant: None,

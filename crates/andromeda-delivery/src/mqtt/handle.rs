@@ -100,7 +100,7 @@ impl MqttTransportHandle {
     async fn deliver_inner(&self, request: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError> {
         let connection = self.pool.get_or_create_connection(&self.config).await?;
         let start = Instant::now();
-        let envelope = build_envelope(request);
+        let envelope = build_envelope(request)?;
 
         // Register the ack waiter and enqueue the publish under one lock, so the
         // event loop assigns packet ids to waiters in the order it sends them.

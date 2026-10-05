@@ -8,7 +8,6 @@
 //! read from, and the walk a query response is written by writes all of it,
 //! the Linked Entities of a `join=inline` subscription included.
 
-use crate::error::NotificationError;
 use andromeda_linked_retrieval::{
     plan::{FlatEntity, InlineCursor},
     typed::TypedEntities,
@@ -22,7 +21,6 @@ use andromeda_ngsi_ld_render::{
 };
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::sync::Arc;
 
 /// How every entity of one notification is written: the subscription's
@@ -79,20 +77,15 @@ impl NotifiedEntity {
         })
     }
 
-    /// The entity written as `shape` says, `type` and `scope` narrowed by
-    /// `projection`, the Linked Entities the plan's cursor answers nested into
-    /// it.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`NotificationError::Rendering`] when the entity cannot be
-    /// written.
-    pub(crate) fn render(
-        &self,
+    /// The entity, to be written as `shape` says, `type` and `scope` narrowed
+    /// by `projection`, the Linked Entities the plan's cursor answers nested
+    /// into it.
+    pub(crate) fn notified<'a>(
+        &'a self,
         shape: WrittenShape,
-        join: Option<InlineCursor<'_, TypedEntities>>,
-        projection: StructuralProjection<'_>,
-    ) -> Result<Value, NotificationError> {
+        join: Option<InlineCursor<'a, TypedEntities>>,
+        projection: StructuralProjection<'a>,
+    ) -> NotificationEntity<'a> {
         let notified = NotificationEntity::new(&self.entity, &self.stamped, shape.format, shape.targets)
             .with_projection(projection)
             .with_fallback(shape.fallback);
@@ -100,22 +93,15 @@ impl NotifiedEntity {
             Some(changes) => notified.with_changes(changes),
             None => notified,
         };
-        let notified = match join {
+        match join {
             Some(join) => notified.with_inline_join(join),
             None => notified,
-        };
-        Ok(notified.render()?)
+        }
     }
 }
 
-/// One Linked Entity a flat join appends (clause 4.5.23.3), written as `shape`
-/// says, by the rule its first encounter decided.
-///
-/// # Errors
-///
-/// Returns [`NotificationError::Rendering`] when the entity cannot be written.
-pub(crate) fn linked_entity(linked: &FlatEntity<'_, TypedEntities>, shape: WrittenShape) -> Result<Value, NotificationError> {
-    Ok(NotificationEntity::linked(linked, shape.format, shape.targets)
-        .with_fallback(shape.fallback)
-        .render()?)
+/// One Linked Entity a flat join appends (clause 4.5.23.3), to be written as
+/// `shape` says, by the rule its first encounter decided.
+pub(crate) const fn linked_entity<'a>(linked: &FlatEntity<'a, TypedEntities>, shape: WrittenShape) -> NotificationEntity<'a> {
+    NotificationEntity::linked(linked, shape.format, shape.targets).with_fallback(shape.fallback)
 }

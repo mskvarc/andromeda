@@ -25,14 +25,21 @@ use andromeda_linked_retrieval::{join::RetrievingJoin, narrowing::list::ListInFo
 use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{notification::SysAttrsSnapshot, subscription::Subscription};
+use andromeda_ngsi_ld_model::{
+    notification::{NotificationData, SysAttrsSnapshot},
+    subscription::Subscription,
+};
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
-use andromeda_ngsi_ld_render::{notification_entity::TargetSpelling, notified_changes::HeldAttributes, structural_projection::StructuralProjection};
+use andromeda_ngsi_ld_render::{
+    notification_data::DataShape,
+    notification_entity::TargetSpelling,
+    notified_changes::HeldAttributes,
+    structural_projection::StructuralProjection,
+};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::compilation::{notification_attributes, notification_projection};
 use chrono::Utc;
 use iri_rs::IriBuf;
-use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 use tracing::debug;
 
@@ -50,13 +57,13 @@ pub(crate) struct PeriodicPayload<'a> {
 }
 
 impl PeriodicPayload<'_> {
-    /// Render the entities of one periodic notification the way clause 5.8.6
-    /// prescribes: narrowed to `notification.attributes` and the
-    /// subscription's `datasetId` instances, reduced by `pick` and `omit`,
+    /// Write the `data` of one periodic notification the way clause 5.8.6
+    /// prescribes, as `data` says: narrowed to `notification.attributes` and
+    /// the subscription's `datasetId` instances, reduced by `pick` and `omit`,
     /// compacted under the subscription's context, joined to their Linked
     /// Entities and rendered in its `notification.format` -- every step after
     /// the selection written as a change-driven notification's is.
-    pub(crate) async fn entities(&self, sub: &Subscription, entities: Vec<EntityState>) -> Result<Vec<Value>, NotificationError> {
+    pub(crate) async fn entities(&self, sub: &Subscription, entities: Vec<EntityState>, data: DataShape<'_>) -> Result<NotificationData, NotificationError> {
         let projection = notification_projection(&sub.notification, sub.id.as_ref());
         let attributes = notification_attributes(&sub.notification, sub.id.as_ref());
         let rule = periodic_rule(sub, &projection, &attributes);
@@ -119,7 +126,7 @@ impl PeriodicPayload<'_> {
             conformance: sub.delivery.ngsild_conformance,
         };
         let links = indexed.as_ref().map(|(graph, index)| NotifiedLinks { graph, index });
-        carried_entities(&notified, links, shape)
+        carried_entities(&notified, links, shape, data)
     }
 
     /// The clause 4.8 system attributes of every entity one periodic

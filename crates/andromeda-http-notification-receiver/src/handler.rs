@@ -16,7 +16,7 @@ use andromeda_http_extraction::jsonld::NotificationDocument;
 use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::notification::{CsourceNotification, Notification};
+use andromeda_ngsi_ld_model::notification::{ReceivedCsourceNotification, ReceivedNotification};
 use axum::{
     extract::{OriginalUri, State},
     http::{HeaderMap, StatusCode},
@@ -29,9 +29,9 @@ use serde_json::Value;
 #[derive(Debug)]
 enum Received {
     /// A notification of a forwarded subscription copy (clause 5.3.1).
-    Notification(Notification),
+    Notification(ReceivedNotification),
     /// A notification of a companion registration subscription (clause 5.3.2).
-    ContextSourceNotification(CsourceNotification),
+    ContextSourceNotification(ReceivedCsourceNotification),
 }
 
 /// Why a document is not one of the notifications the receiver accepts.

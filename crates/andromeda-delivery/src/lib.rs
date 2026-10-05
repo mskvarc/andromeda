@@ -34,6 +34,7 @@ pub mod error;
 pub mod host_port;
 pub mod http;
 pub mod mqtt;
+pub mod notification_body;
 pub mod notification_context;
 pub mod notification_context_placement;
 pub mod outcome;
@@ -46,6 +47,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-health",
         "andromeda-http-headers",
+        "andromeda-json-literal",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",

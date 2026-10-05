@@ -43,24 +43,10 @@ use andromeda_subscription::{
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use futures::{StreamExt, stream};
-use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, error};
 
 const CSR_NOTIFICATION_CONCURRENCY: usize = 20;
-
-/// The registration a change event's snapshot carries, read back into its
-/// typed form so it is matched exactly as a stored registration is.
-fn snapshot_registration(snapshot: &Value, csr_id: &Identifier) -> Option<ContextSourceRegistration> {
-    match serde_json::from_value(snapshot.clone()) {
-        // clone: deserialisation consumes the document and the event still owns its snapshot
-        Ok(registration) => Some(registration),
-        Err(error) => {
-            error!("CSR {} snapshot is not a registration: {}", csr_id, error);
-            None
-        }
-    }
-}
 
 /// Applies context-source subscription and registration events to notification policy.
 pub struct CsourceNotificationProcessor {
@@ -318,7 +304,7 @@ impl CsourceNotificationProcessor {
         };
 
         let change = RegistrationChange::from_event_reason(event.trigger_reason);
-        let before = event.csr_snapshot.as_ref().and_then(|snapshot| snapshot_registration(snapshot, &event.csr_id));
+        let before = event.csr_snapshot.as_deref();
         let after = match change {
             RegistrationChange::Created | RegistrationChange::Updated => match self.csr_repo.get(&event.csr_id).await {
                 Ok(Some(csr)) => Some(csr),
@@ -337,7 +323,7 @@ impl CsourceNotificationProcessor {
 
         let planned = self
             .membership
-            .plan_registration_change(&found, change, &event.csr_id, before.as_ref(), after.as_ref())
+            .plan_registration_change(&found, change, &event.csr_id, before, after.as_ref())
             .await;
         stream::iter(planned)
             .for_each_concurrent(CSR_NOTIFICATION_CONCURRENCY, |notification| async move {

@@ -201,7 +201,7 @@ fn chain_mentions_tls_terms(error: &(dyn Error + 'static)) -> bool {
 impl NotificationTransport for HttpTransport {
     async fn deliver(&self, req: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError> {
         // One delivery attempt, timed and counted as a whole: the bracket spans
-        // serialisation, the SSRF guard and the send, which is the latency a
+        // the size check, the SSRF guard and the send, which is the latency a
         // notification actually incurs.
         let timer = DeliveryTimer::start();
         let result = self.deliver_inner(req).await;
@@ -213,12 +213,9 @@ impl NotificationTransport for HttpTransport {
 impl HttpTransport {
     /// The delivery body itself, wrapped by [`HttpTransport::deliver`] for timing.
     async fn deliver_inner(&self, req: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError> {
-        // The body is serialised here, once, so the size limit is checked
-        // against the bytes actually sent rather than an estimate.
-        let body = serde_json::to_vec(req.payload.as_ref()).map_err(|source| TransportError::PayloadSerialization {
-            endpoint: req.endpoint_uri.clone(), // clone: the error owns the endpoint it names
-            source,
-        })?;
+        // The size limit is checked against the bytes actually sent rather
+        // than an estimate.
+        let body = req.body.text();
         if body.len() > self.config.max_payload_size {
             return Err(TransportError::PayloadTooLarge {
                 size: body.len(),
@@ -251,7 +248,8 @@ impl HttpTransport {
             .post(req.endpoint_uri.clone())
             .headers(header_map)
             .timeout(deadline)
-            .body(body); // the serialised notification, moved into the request
+            // `reqwest` owns the body it sends, and the request keeps the written notification for another attempt
+            .body(body.to_owned());
 
         let start = Instant::now();
         let response = request.send().await.map_err(|error| send_failure(req.endpoint_uri.clone(), deadline, error))?; // clone: the error path owns the endpoint it names
@@ -331,6 +329,7 @@ mod tests {
             config::HttpTransportConfig,
             transport::{HttpTransport, chain_indicates_tls, error_chain_text, notification_headers},
         },
+        notification_body::NotificationBody,
         notification_context::NotificationContext,
         outcome::DeliveryOutcome,
         request::NotificationDelivery,
@@ -407,16 +406,21 @@ mod tests {
         (Url::parse(&format!("http://{address}/notify")).expect("a well-formed endpoint"), accepted)
     }
 
+    /// The written notification `document`.
+    fn notification(document: &serde_json::Value) -> NotificationBody {
+        let id = Identifier::from_str("urn:ngsi-ld:Notification:1").expect("a well-formed notification id");
+        NotificationBody::written(&id, document).expect("a written notification")
+    }
+
     async fn deliver(transport: &HttpTransport, endpoint: &Url) -> DeliveryOutcome {
         let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
-        let context = NotificationContext::stated(None, json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        let context = NotificationContext::core();
         let request = NotificationDelivery::builder()
-            .payload(&json!({"id": "urn:ngsi-ld:Notification:1"}))
             .endpoint_uri(endpoint)
             .context(&context)
             .subscription_id(&subscription)
             .build()
-            .assemble();
+            .assemble(notification(&json!({"id": "urn:ngsi-ld:Notification:1"})));
         transport.deliver(&request).await.expect("the notification is delivered")
     }
 
@@ -485,13 +489,12 @@ mod tests {
         let media = MediaTypeBuf::from_str("application/json").expect("a well-formed media type");
         let endpoint = Url::parse("http://receiver.example/notify").expect("a well-formed endpoint URI");
         let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
-        let context = NotificationContext::stated(None, json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        let context = NotificationContext::core();
         let pairs = vec![KeyValuePair {
             key: "Link".into(),
             value: receiver_link.into(),
         }];
         let request = NotificationDelivery::builder()
-            .payload(&payload)
             .endpoint_uri(&endpoint)
             .accept(Some(&media))
             .receiver_info(Some(&pairs))
@@ -499,7 +502,7 @@ mod tests {
             .tenant(None)
             .subscription_id(&subscription)
             .build()
-            .assemble();
+            .assemble(notification(&payload));
         notification_headers(&request, layout)
             .get_all(LINK)
             .iter()

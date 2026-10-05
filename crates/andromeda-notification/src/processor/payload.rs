@@ -24,14 +24,18 @@ use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_chang
 use andromeda_ngsi_ld_model::{
     entity::Entity,
     entity_change::{EntityChange, EntityLifecycle},
-    notification::SysAttrsSnapshot,
+    notification::{NotificationData, SysAttrsSnapshot},
 };
-use andromeda_ngsi_ld_render::{notification_entity::TargetSpelling, notified_changes::HeldAttributes, structural_projection::StructuralProjection};
+use andromeda_ngsi_ld_render::{
+    notification_data::DataShape,
+    notification_entity::TargetSpelling,
+    notified_changes::HeldAttributes,
+    structural_projection::StructuralProjection,
+};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::compiled::CompiledSubscription;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
-use serde_json::Value;
 use std::{slice::from_ref, sync::Arc};
 use tracing::debug;
 
@@ -71,15 +75,16 @@ pub(crate) fn subscription_rule(sub: &CompiledSubscription) -> SelectionRule<'_>
     }
 }
 
-/// The entities one notification carries for a subscription (clause 5.8.6).
+/// The `data` one notification carries for a subscription (clause 5.8.6),
+/// written as `data` says.
 ///
 /// The entity the change supplies is reduced to what the subscription selects,
 /// compacted under the subscription's context, given what the notification
 /// reports of the change beside it and its `join` Linked Entities, rendered in
-/// the subscription's `notification.format` and finally amended to its
-/// declared `ngsildConformance`. An entity that cannot be compacted under any
-/// context leaves nothing to notify, which is an empty payload.
-pub(super) async fn build_notification_data(params: &NotificationBuildParams<'_>) -> Vec<Value> {
+/// the subscription's `notification.format` and amended to its declared
+/// `ngsildConformance` as it is written. An entity that cannot be compacted
+/// under any context or written leaves nothing to notify, which is `None`.
+pub(super) async fn build_notification_data(params: &NotificationBuildParams<'_>, data: DataShape<'_>) -> Option<NotificationData> {
     let context = ContextSpec::for_subscription_context(params.sub.jsonld_context.as_ref());
     let context_compactor = params.engine.compactor(&context);
     let compactor = EntityCompactor::new(&context_compactor);
@@ -93,19 +98,19 @@ pub(super) async fn build_notification_data(params: &NotificationBuildParams<'_>
         Ok(notified) => notified,
         Err(error) => {
             debug!(%error, subscription = %params.sub.id, "the notified entity could not be compacted");
-            return vec![];
+            return None;
         }
     };
-    match notification_payload(&notified, params, &context).await {
-        Ok(payload) => payload,
+    match notification_payload(&notified, params, &context, data).await {
+        Ok(payload) => Some(payload),
         Err(error) => {
             debug!(%error, subscription = %params.sub.id, "the notified entity could not be written");
-            vec![]
+            None
         }
     }
 }
 
-/// The entities a notification carries: the notified entity, with the Linked
+/// The `data` a notification carries: the notified entity, with the Linked
 /// Entities of a `join` (clause 4.5.23), written as [`carried_entities`]
 /// writes every notification's entities.
 ///
@@ -117,7 +122,8 @@ async fn notification_payload(
     rooted: &RootedNotification,
     params: &NotificationBuildParams<'_>,
     context: &ContextSpec,
-) -> Result<Vec<Value>, NotificationError> {
+    data: DataShape<'_>,
+) -> Result<NotificationData, NotificationError> {
     let sub = params.sub;
     let list = sub.list_in_force();
     let linked = match (RetrievingJoin::from_mode(sub.notification_join), params.change.lifecycle) {
@@ -139,7 +145,7 @@ async fn notification_payload(
         conformance: sub.ngsild_conformance,
     };
     let links = indexed.as_ref().map(|(graph, index)| NotifiedLinks { graph, index });
-    carried_entities(from_ref(&rooted.notified), links, shape)
+    carried_entities(from_ref(&rooted.notified), links, shape, data)
 }
 
 /// The notified entity, and the key of the rendering it was written from,

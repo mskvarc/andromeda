@@ -12,9 +12,9 @@ use crate::{
     },
     geometry_selection::GeometrySelection,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_linked_retrieval::keyword::Keyword;
 use serde::{Serialize, Serializer, ser::SerializeMap};
-use serde_json::Value;
 
 /// The `type` a Feature names itself by (IETF RFC 7946 section 3.2).
 const FEATURE: &str = "Feature";
@@ -27,7 +27,7 @@ pub(crate) struct FeatureBody<'a> {
     /// The geometry clause 4.5.16.1 selected.
     geometry: FeatureGeometry<'a>,
     /// The `@context` the Feature carries, when it is the whole body.
-    context: Option<&'a Value>,
+    context: Option<&'a JsonLiteral>,
 }
 
 impl<'a> FeatureBody<'a> {
@@ -37,7 +37,11 @@ impl<'a> FeatureBody<'a> {
     ///
     /// Returns the failure of rendering a selected member that is no plain
     /// `GeoProperty`.
-    pub(crate) fn new(entity: &TypedEntity<'a>, selection: GeometrySelection<'_>, context: Option<&'a Value>) -> Result<FeatureBody<'a>, serde_json::Error> {
+    pub(crate) fn new(
+        entity: &TypedEntity<'a>,
+        selection: GeometrySelection<'_>,
+        context: Option<&'a JsonLiteral>,
+    ) -> Result<FeatureBody<'a>, serde_json::Error> {
         let properties = TypedEntity {
             identifier: IdentifierMember::Promoted,
             context: None,

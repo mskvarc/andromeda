@@ -10,18 +10,12 @@ impl RegistrationService {
     /// # Errors
     ///
     /// Returns [`RegistrationError::NotFound`] when no registration carries
-    /// `id`, [`RegistrationError::Internal`] when the pre-deletion snapshot
-    /// cannot be serialised, and [`RegistrationError::Persistence`] when the
-    /// store rejects the read or the deletion. A removal hook that cannot
+    /// `id`, and [`RegistrationError::Persistence`] when the store rejects the
+    /// read or the deletion. A removal hook that cannot
     /// capture or finish its teardown is logged rather than returned: the
     /// registration is deleted either way.
     pub async fn delete(&self, id: &Identifier) -> Result<(), RegistrationError> {
         let existing = self.repo.get(id).await?;
-        let snapshot = existing
-            .as_ref()
-            .map(serde_json::to_value)
-            .transpose()
-            .map_err(RegistrationError::Representation)?;
         // Captured before the row goes: the store deletes the forwarding
         // records together with the registration.
         let teardown = match (self.removal_hook.as_deref(), existing.as_ref()) {
@@ -39,7 +33,7 @@ impl RegistrationService {
         self.emit_csr_change(CsrChangeEvent {
             csr_id: id.clone(), // clone: the deletion event outlives the borrowed request identifier.
             trigger_reason: CsrTriggerReason::NoLongerMatching,
-            csr_snapshot: snapshot,
+            csr_snapshot: existing.map(Box::new),
             revision,
         });
         Ok(())

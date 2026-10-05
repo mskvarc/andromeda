@@ -1,6 +1,7 @@
 //! Durable delivery queue for Snapshot lifecycle notifications.
 
 use crate::{
+    jsonb_text::JsonbText,
     snapshot::{mapper::row_to_snapshot, persistence_error, record::snapshot_select},
     store_fault::undecodable,
 };
@@ -8,12 +9,13 @@ use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, snapshot::SnapshotStatus};
 use andromeda_postgresql_schema::snapshot::{SnapshotNotificationOutbox, Snapshots};
-use andromeda_postgresql_seaquery::{clock::now, queue::claimable_at};
+use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, queue::claimable_at};
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
 use sea_query::{Alias, CaseStatement, Expr, ExprTrait, JoinType, Keyword, LockBehavior, LockType, Order, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
-use serde_json::Value;
+use serde::Deserialize;
+use serde_json::{Value, value::RawValue};
 use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
 use url::Url;
 use uuid::Uuid;
@@ -29,8 +31,11 @@ pub struct SnapshotStatusDelivery {
     pub endpoint: Url,
     /// Receiver-supplied HTTP headers captured with the event.
     pub receiver_info: Option<Vec<KeyValuePair>>,
-    /// Standards-shaped `SnapshotNotification` document.
-    pub payload: Value,
+    /// The `SnapshotNotification` (clause 5.3.4) as it was written when the
+    /// lifecycle event committed, `@context` included.
+    pub notification: Box<RawValue>,
+    /// The identifier the written notification names itself by.
+    pub notification_id: Identifier,
     /// Number of attempts already completed before this lease.
     pub attempt_count: i32,
 }
@@ -232,7 +237,7 @@ pub(crate) async fn enqueue_terminal_notification(transaction: &mut Transaction<
         return Ok(());
     }
     let snapshot_key: i64 = row.try_get("snapshot_key").map_err(|error| persistence_error(error))?;
-    let payload = serde_json::to_value(snapshot.build_notification())?;
+    let payload = serde_json::to_string(&snapshot.build_notification())?;
     let receiver_info = snapshot.receiver_info.as_ref().map(serde_json::to_value).transpose()?;
     let mut insert = Query::insert();
     insert
@@ -249,7 +254,7 @@ pub(crate) async fn enqueue_terminal_notification(transaction: &mut Transaction<
             Expr::val(snapshot_key),
             Expr::val(endpoint.as_str()),
             Expr::val(receiver_info),
-            Expr::val(payload),
+            cast(Expr::val(payload), PostgresType::Jsonb),
         ])
         .map_err(|error| persistence_error(error))?;
     let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
@@ -270,10 +275,19 @@ async fn execute(pool: &PgPool, statement: impl SqlxBinder) -> Result<u64, Snaps
     Ok(result.rows_affected())
 }
 
+/// The member of a written notification its delivery is identified by.
+#[derive(Deserialize)]
+struct NotificationIdentity {
+    /// The notification's own identifier.
+    id: Identifier,
+}
+
 /// Decode one claimed outbox row into its transport-facing delivery value.
 fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
     let raw_snapshot: String = row.try_get("snapshot_id").map_err(|error| persistence_error(error))?;
     let raw_endpoint: String = row.try_get("endpoint").map_err(|error| persistence_error(error))?;
+    let payload: JsonbText<'_> = row.try_get("payload").map_err(|error| persistence_error(error))?;
+    let notification: Box<RawValue> = serde_json::from_slice(payload.as_bytes())?;
     let receiver_info = row
         .try_get::<Option<Value>, _>("receiver_info")
         .map_err(|error| persistence_error(error))?
@@ -284,7 +298,8 @@ fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
         snapshot_id: raw_snapshot.parse().map_err(|error| SnapshotError::from(undecodable(&error)))?,
         endpoint: Url::parse(&raw_endpoint).map_err(|error| SnapshotError::from(undecodable(&error)))?,
         receiver_info,
-        payload: row.try_get("payload").map_err(|error| persistence_error(error))?,
+        notification_id: serde_json::from_str::<NotificationIdentity>(notification.get())?.id,
+        notification,
         attempt_count: row.try_get("attempt_count").map_err(|error| persistence_error(error))?,
     })
 }

@@ -13,21 +13,15 @@ use crate::processor::{
 };
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
-use andromeda_delivery::{
-    dispatch::DeliveryResult,
-    notification_context::NotificationContext,
-    request::{NotificationDelivery, notification_media_type},
-};
+use andromeda_delivery::{dispatch::DeliveryResult, notification_context::NotificationContext, request::NotificationDelivery};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationId};
-use andromeda_ngsi_ld_model::notification::{Notification, NotificationType, SysAttrsSnapshot};
-use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, notification_data::notification_data};
+use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
+use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, notification_data::DataShape};
 use andromeda_subscription::{
     compiled::CompiledSubscription,
     notification_slot::{NotificationSlot, NotificationSlotGate},
 };
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, error, warn};
 
@@ -53,45 +47,6 @@ pub(super) struct NotifiedChange<'a> {
     /// Compaction and linked-entity memoization shared by the notifications
     /// this change produces.
     pub(super) compaction_cache: &'a NotificationCompactionCache,
-}
-
-/// The clause 5.3.1 notification document sent to `subscription`, or `None`
-/// when it can be neither identified, shaped nor serialized.
-///
-/// Table 5.3.1-1: an endpoint whose `accept` is `application/geo+json`
-/// receives the entities as one `FeatureCollection`.
-fn notification_payload(subscription: &CompiledSubscription, entities: Vec<Value>) -> Option<Value> {
-    let subscription_id = &subscription.id;
-    let Ok(notification_id) = NotificationId::mint().map(Identifier::from) else {
-        error!("Failed to construct notification URN for {}", subscription_id);
-        return None;
-    };
-    let data = match notification_data(
-        entities,
-        notification_media_type(subscription.endpoint_accept.as_ref()),
-        GeometrySelection::new(None, subscription.dataset_id.as_deref().unwrap_or_default()),
-    ) {
-        Ok(data) => data,
-        Err(error) => {
-            error!("Failed to render the notification data for {}: {}", subscription_id, error);
-            return None;
-        }
-    };
-    let notification = Notification::builder()
-        .id(notification_id)
-        .type_(NotificationType)
-        // clone: the builder takes the identifier by value and the delivery still names it
-        .subscription_id(subscription_id.clone())
-        .notified_at(Utc::now())
-        .data(data)
-        .build();
-    match serde_json::to_value(&notification) {
-        Ok(payload) => Some(payload),
-        Err(error) => {
-            error!("Failed to serialize notification for {}: {}", subscription_id, error);
-            None
-        }
-    }
 }
 
 impl NotificationProcessor {
@@ -124,6 +79,29 @@ impl NotificationProcessor {
         let Some(notified) = change.notified else {
             return Some(DeliveryResult::TerminalFailure);
         };
+        let Some(endpoint_transport) = compiled_transport(compiled_sub) else {
+            return Some(DeliveryResult::TerminalFailure);
+        };
+        // Clause 5.5.6: a `jsonldContext` that cannot be loaded names no context
+        // this notification can be rendered under; the document may be reachable
+        // again on a later attempt.
+        let context = match NotificationContext::resolve(compiled_sub.jsonld_context.as_ref(), &self.engine).await {
+            Ok(context) => context,
+            Err(error) => {
+                warn!("the jsonldContext of subscription {} cannot be loaded: {}", subscription_id, error);
+                return Some(DeliveryResult::RetryableFailure);
+            }
+        };
+        let delivery = NotificationDelivery::builder()
+            .endpoint_uri(&compiled_sub.endpoint_uri)
+            .accept(compiled_sub.endpoint_accept.as_ref())
+            .receiver_info(compiled_sub.endpoint_receiver_info.as_deref())
+            .context(&context)
+            .tenant(self.tenant.tenant_name())
+            .snapshot(change.target.snapshot().map(SnapshotTarget::snapshot_id))
+            .timeout(compiled_sub.endpoint_timeout)
+            .subscription_id(subscription_id)
+            .build();
         let event = change.event;
         let build = NotificationBuildParams {
             target: change.target,
@@ -138,43 +116,24 @@ impl NotificationProcessor {
             entity_query: &self.entity_query,
             cache: change.compaction_cache,
         };
-        let data = build_notification_data(&build).await;
-        if data.is_empty() {
-            debug!(
-                "Subscription {} produced empty notification data for entity {}",
-                subscription_id, event.entity_id
-            );
-            return Some(DeliveryResult::TerminalFailure);
-        }
-
-        let Some(payload) = notification_payload(compiled_sub, data) else {
+        // Table 5.3.1-1: an endpoint whose `accept` is `application/geo+json`
+        // receives the entities as one `FeatureCollection`.
+        let shape = DataShape {
+            media_type: delivery.content_type(),
+            selection: GeometrySelection::new(None, compiled_sub.dataset_id.as_deref().unwrap_or_default()),
+            context: delivery.body_context(),
+        };
+        let Some(data) = build_notification_data(&build, shape).await else {
+            debug!("Subscription {} produced no notification data for entity {}", subscription_id, event.entity_id);
             return Some(DeliveryResult::TerminalFailure);
         };
-        let Some(endpoint_transport) = compiled_transport(compiled_sub) else {
-            return Some(DeliveryResult::TerminalFailure);
-        };
-        // Clause 5.5.6: a `jsonldContext` that cannot be loaded names no context
-        // this notification can be rendered under; the document may be reachable
-        // again on a later attempt.
-        let context = match NotificationContext::resolve(compiled_sub.jsonld_context.as_ref(), &self.engine).await {
-            Ok(context) => context,
+        let request = match delivery.notification(data) {
+            Ok(request) => request,
             Err(error) => {
-                warn!("the jsonldContext of subscription {} cannot be loaded: {}", subscription_id, error);
-                return Some(DeliveryResult::RetryableFailure);
+                error!("Failed to write the notification for {}: {}", subscription_id, error);
+                return Some(DeliveryResult::TerminalFailure);
             }
         };
-        let request = NotificationDelivery::builder()
-            .payload(&payload)
-            .endpoint_uri(&compiled_sub.endpoint_uri)
-            .accept(compiled_sub.endpoint_accept.as_ref())
-            .receiver_info(compiled_sub.endpoint_receiver_info.as_deref())
-            .context(&context)
-            .tenant(self.tenant.tenant_name())
-            .snapshot(change.target.snapshot().map(SnapshotTarget::snapshot_id))
-            .timeout(compiled_sub.endpoint_timeout)
-            .subscription_id(subscription_id)
-            .build()
-            .assemble();
         let delivery = self.transport.deliver(&endpoint_transport, &request).await;
 
         if delivery.is_delivered() {

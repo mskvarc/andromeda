@@ -21,10 +21,8 @@ fn entity(document: Value) -> Entity {
 /// `notified` in `format` with `changes` reported beside it.
 fn rendered(notified: &Entity, changes: NotifiedChanges<'_>, format: ResponseFormat) -> Value {
     let stamped = StampedInstants::default();
-    NotificationEntity::new(notified, &stamped, format, TargetSpelling::Decoded)
-        .with_changes(changes)
-        .render()
-        .expect("the walk writes it")
+    let written = NotificationEntity::new(notified, &stamped, format, TargetSpelling::Decoded).with_changes(changes);
+    serde_json::to_value(written).expect("the walk writes it")
 }
 
 /// Every Attribute an entity held, one instance per family and one of two.
@@ -267,10 +265,9 @@ fn a_projection_narrows_the_structural_members_but_never_the_id() {
         omit: Vec::new(),
     };
     let stamped = StampedInstants::default();
-    let document = NotificationEntity::new(&notified, &stamped, ResponseFormat::Normalized, TargetSpelling::Decoded)
-        .with_projection(StructuralProjection::from(&projection))
-        .render()
-        .expect("the walk writes it");
+    let written = NotificationEntity::new(&notified, &stamped, ResponseFormat::Normalized, TargetSpelling::Decoded)
+        .with_projection(StructuralProjection::from(&projection));
+    let document = serde_json::to_value(written).expect("the walk writes it");
     assert_eq!(document["id"], json!("urn:ngsi-ld:Vehicle:1"));
     assert!(document.get("type").is_none(), "{document}");
     assert_eq!(document["scope"], json!("/Madrid"));

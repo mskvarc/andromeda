@@ -102,29 +102,6 @@ impl GeoJsonRenderer<'_> {
     }
 }
 
-/// The clause 4.5.16.3 `FeatureCollection` of `entities`, each geometry taken
-/// by `selection`, naming no `@context` of its own.
-///
-/// This is the `data` of an `application/geo+json` notification (Table
-/// 5.3.1-1), whose `@context` is written when the notification is assembled
-/// for delivery, since clause 6.3.8 lets the endpoint's `receiverInfo` move it
-/// into a `Link` header instead.
-///
-/// # Errors
-///
-/// Returns [`RenderError::Serialization`] when the assembled
-/// `FeatureCollection` cannot be turned into a JSON object.
-pub fn feature_collection(entities: &[Value], selection: GeometrySelection<'_>) -> Result<Map<String, Value>, RenderError> {
-    let collection = FeatureCollection {
-        bbox: None,
-        features: entities.iter().map(|entity| entity_to_feature(entity, selection)).collect(),
-        foreign_members: None,
-    };
-    serde_json::to_value(collection)
-        .and_then(serde_json::from_value)
-        .map_err(|error| RenderError::serialization(RenderedShape::GeoJsonFeatureCollection, error))
-}
-
 /// Convert a single NGSI-LD entity JSON object into a `GeoJSON` [`Feature`].
 pub(crate) fn entity_to_feature(entity: &Value, selection: GeometrySelection<'_>) -> Feature {
     let Some(obj) = entity.as_object() else {
@@ -288,30 +265,6 @@ mod tests {
             .render()
             .expect("GeoJSON collection");
         pretty_assertions::assert_eq!(geo["@context"], ctx);
-    }
-
-    /// Table 5.3.1-1: an `application/geo+json` notification's `data` is one
-    /// `FeatureCollection`, whose context is written at delivery, so the
-    /// collection names none and no Feature carries one either.
-    #[test]
-    fn a_notification_feature_collection_names_no_context_anywhere() {
-        let entities = [json!({
-            "id": "urn:ngsi-ld:Building:1",
-            "type": "Building",
-            "@context": "https://example.org/ctx",
-            "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}}
-        })];
-
-        let collection = feature_collection(&entities, GeometrySelection::new(None, &[])).expect("a FeatureCollection");
-
-        pretty_assertions::assert_eq!(collection.get("type"), Some(&json!("FeatureCollection")));
-        assert!(collection.get("@context").is_none(), "{collection:?}");
-        let features = collection.get("features").and_then(Value::as_array).expect("features");
-        pretty_assertions::assert_eq!(features.len(), 1);
-        pretty_assertions::assert_eq!(features[0]["id"], json!("urn:ngsi-ld:Building:1"));
-        pretty_assertions::assert_eq!(features[0]["geometry"], json!({"type": "Point", "coordinates": [1.0, 2.0]}));
-        assert!(features[0].get("@context").is_none(), "{}", features[0]);
-        assert!(features[0]["properties"].get("@context").is_none(), "{}", features[0]);
     }
 
     #[test]

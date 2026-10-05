@@ -22,6 +22,7 @@ use crate::{
     structural_projection::StructuralProjection,
     version::fallback::EntityMember,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_linked_retrieval::{keyword::Keyword, narrowing::member::MemberRule, plan::InlineCursor, typed::TypedEntities};
 use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
 use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
@@ -30,7 +31,6 @@ use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer, ser::SerializeMap};
-use serde_json::Value;
 
 /// The member a JSON-LD document declares its context in.
 const CONTEXT_MEMBER: &str = "@context";
@@ -82,7 +82,7 @@ pub(crate) struct TypedEntity<'a> {
     pub(crate) identifier: IdentifierMember,
     /// The `@context` member written beside the entity's own, if the body
     /// carries one.
-    pub(crate) context: Option<&'a Value>,
+    pub(crate) context: Option<&'a JsonLiteral>,
     /// The entity times a notification writes on the entity, if it is one.
     pub(crate) stamped: Option<&'a StampedInstants>,
     /// Where the clause 4.5.23 inline join stands at this entity, if the

@@ -7,9 +7,10 @@
 //! that. Both spellings are one decision, so they are resolved together, once
 //! per notification, and travel as one value the transports read.
 
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{engine::processor::JsonLdEngine, error::JsonLdError};
 use iri_rs::IriBuf;
-use serde_json::Value;
+use serde::Deserialize;
 
 /// The `@context` of one subscription's notification, in the spelling each
 /// carrier names.
@@ -20,8 +21,9 @@ pub struct NotificationContext {
     jsonld_context: Option<IriBuf>,
     /// The `@context` member of a notification that carries it in the body:
     /// `jsonldContext` followed by the core context when clause 5.2.3 still
-    /// owes it, as the subscription's JSON-LD processor resolved it.
-    body_context: Value,
+    /// owes it, as the subscription's JSON-LD processor resolved it, held as
+    /// the text every notification body writes.
+    body_context: JsonLiteral,
 }
 
 impl NotificationContext {
@@ -32,9 +34,11 @@ impl NotificationContext {
     ///
     /// Returns the [`JsonLdError`] a document the `jsonldContext` names could
     /// not be loaded with (clause 5.5.6): no notification can be rendered
-    /// under a context that cannot be read.
+    /// under a context that cannot be read. Returns [`JsonLdError::Json`] when
+    /// the resolved context cannot be held as JSON text, which no context the
+    /// processor resolves can be.
     pub async fn resolve(jsonld_context: Option<&IriBuf>, engine: &JsonLdEngine) -> Result<NotificationContext, JsonLdError> {
-        let body_context = engine.notification_body_context(jsonld_context).await?;
+        let body_context = JsonLiteral::deserialize(&engine.notification_body_context(jsonld_context).await?)?;
         Ok(NotificationContext {
             jsonld_context: jsonld_context.cloned(), // clone: the context outlives the subscription it was read from
             body_context,
@@ -49,15 +53,23 @@ impl NotificationContext {
 
     /// The `@context` member a notification carrying it in the body names.
     #[must_use]
-    pub const fn body_context(&self) -> &Value {
+    pub const fn body_context(&self) -> &JsonLiteral {
         &self.body_context
     }
 
     /// A context whose two spellings a test states directly, for the
     /// transports' own unit tests, which run without a JSON-LD processor.
     #[cfg(test)]
-    pub(crate) const fn stated(jsonld_context: Option<IriBuf>, body_context: Value) -> NotificationContext {
+    pub(crate) const fn stated(jsonld_context: Option<IriBuf>, body_context: JsonLiteral) -> NotificationContext {
         NotificationContext { jsonld_context, body_context }
+    }
+
+    /// The context of a subscription that named no `jsonldContext`, for the
+    /// transports' own unit tests.
+    #[cfg(test)]
+    pub(crate) fn core() -> NotificationContext {
+        let core = JsonLiteral::admit(&format!("\"{}\"", andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL)).expect("the core context is a JSON string");
+        NotificationContext::stated(None, core)
     }
 }
 
@@ -67,7 +79,6 @@ mod tests {
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
-    use serde_json::json;
 
     fn offline_engine() -> JsonLdEngine {
         JsonLdEngine::builder().allow_remote(false).build().expect("the offline engine builds")
@@ -80,7 +91,7 @@ mod tests {
         let context = NotificationContext::resolve(None, &offline_engine()).await.expect("resolves");
 
         assert!(context.jsonld_context().is_none());
-        pretty_assertions::assert_eq!(context.body_context(), &json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        pretty_assertions::assert_eq!(context.body_context().text(), format!("\"{NGSI_LD_CORE_CONTEXT_URL}\""));
     }
 
     /// A `jsonldContext` naming a core context is the subscriber's explicit
@@ -92,7 +103,7 @@ mod tests {
         let context = NotificationContext::resolve(Some(&chosen), &offline_engine()).await.expect("resolves");
 
         pretty_assertions::assert_eq!(context.jsonld_context(), Some(&chosen));
-        pretty_assertions::assert_eq!(context.body_context(), &json!(chosen.as_str()));
+        pretty_assertions::assert_eq!(context.body_context().text(), format!("\"{chosen}\""));
     }
 
     /// Clause 5.5.6: a `jsonldContext` whose document cannot be loaded names no

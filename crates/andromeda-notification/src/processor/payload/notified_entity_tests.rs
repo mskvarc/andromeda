@@ -59,9 +59,8 @@ const fn shape(format: ResponseFormat, targets: TargetSpelling) -> WrittenShape 
 /// `entity` as a notification reporting nothing beyond its state writes it.
 fn written(entity: Entity, format: ResponseFormat, targets: TargetSpelling) -> Value {
     let projection = whole();
-    current(entity)
-        .render(shape(format, targets), None, StructuralProjection::from(&projection))
-        .expect("the walk writes it")
+    let current = current(entity);
+    serde_json::to_value(current.notified(shape(format, targets), None, StructuralProjection::from(&projection))).expect("the walk writes it")
 }
 
 /// A Vehicle with a speed and a Relationship.
@@ -79,13 +78,12 @@ fn vehicle() -> Entity {
 #[test]
 fn a_current_entity_is_written_as_it_stands() {
     let projection = whole();
-    let rendered = current(vehicle())
-        .render(
-            shape(ResponseFormat::Normalized, TargetSpelling::Decoded),
-            None,
-            StructuralProjection::from(&projection),
-        )
-        .expect("the walk writes it");
+    let rendered = serde_json::to_value(current(vehicle()).notified(
+        shape(ResponseFormat::Normalized, TargetSpelling::Decoded),
+        None,
+        StructuralProjection::from(&projection),
+    ))
+    .expect("the walk writes it");
     assert_eq!(rendered["speed"], json!({"type": "Property", "value": 80}));
     assert_eq!(rendered["parkedIn"]["object"], json!("urn:ngsi-ld:Parking:a/b"));
 }
@@ -107,13 +105,12 @@ fn an_entity_deletion_reports_every_attribute_deleted_with_its_previous_value() 
         previous: Some(previous),
     };
     let projection = whole();
-    let rendered = notified
-        .render(
-            shape(ResponseFormat::Normalized, TargetSpelling::Decoded),
-            None,
-            StructuralProjection::from(&projection),
-        )
-        .expect("the walk writes it");
+    let rendered = serde_json::to_value(notified.notified(
+        shape(ResponseFormat::Normalized, TargetSpelling::Decoded),
+        None,
+        StructuralProjection::from(&projection),
+    ))
+    .expect("the walk writes it");
     assert_eq!(rendered["deletedAt"], json!("2024-06-15T12:30:00Z"));
     assert_eq!(rendered["speed"], json!({"type": "Property", "value": "urn:ngsi-ld:null", "previousValue": 80}));
     assert_eq!(
@@ -136,13 +133,12 @@ fn deleted_instances_join_the_held_ones() {
         deleted_at: None,
     });
     let projection = whole();
-    let rendered = notified
-        .render(
-            shape(ResponseFormat::Simplified, TargetSpelling::Decoded),
-            None,
-            StructuralProjection::from(&projection),
-        )
-        .expect("the walk writes it");
+    let rendered = serde_json::to_value(notified.notified(
+        shape(ResponseFormat::Simplified, TargetSpelling::Decoded),
+        None,
+        StructuralProjection::from(&projection),
+    ))
+    .expect("the walk writes it");
     assert_eq!(
         rendered["speed"],
         json!({"dataset": {"@none": 80, "urn:ngsi-ld:Dataset:old": "urn:ngsi-ld:null"}})
@@ -173,13 +169,12 @@ fn an_inline_join_nests_the_linked_entity() {
         panic!("an inline join plans inline");
     };
     let projection = whole();
-    let rendered = notified
-        .render(
-            shape(ResponseFormat::Simplified, TargetSpelling::Decoded),
-            Some(inline.cursor()),
-            StructuralProjection::from(&projection),
-        )
-        .expect("the walk writes it");
+    let rendered = serde_json::to_value(notified.notified(
+        shape(ResponseFormat::Simplified, TargetSpelling::Decoded),
+        Some(inline.cursor()),
+        StructuralProjection::from(&projection),
+    ))
+    .expect("the walk writes it");
     assert_eq!(rendered["parkedIn"], json!({"id": "urn:ngsi-ld:Parking:a%2Fb", "type": "Parking", "free": 3}));
 }
 

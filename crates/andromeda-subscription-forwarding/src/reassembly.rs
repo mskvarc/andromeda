@@ -15,11 +15,7 @@ use crate::{
     received_entity::ReceivedEntity,
     service::SubscriptionForwardingService,
 };
-use andromeda_delivery::{
-    endpoint::transport::parse_endpoint_transport,
-    notification_context::NotificationContext,
-    request::{NotificationDelivery, notification_media_type},
-};
+use andromeda_delivery::{endpoint::transport::parse_endpoint_transport, notification_context::NotificationContext, request::NotificationDelivery};
 use andromeda_entity::{
     error::EntityError,
     query::{attribute_expansion::AttributeExpansions, retrieval::RetrievalNarrowing},
@@ -35,19 +31,19 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
 use andromeda_ngsi_ld_entity::{document::EntityDocument, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationId};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity::Entity,
-    notification::{Notification, NotificationData, NotificationType},
+    notification::{ReceivedNotification, ReceivedNotificationData},
     registration::forwarding_mode::ForwardingMode,
 };
 use andromeda_ngsi_ld_render::{
-    entity::EntityRenderer,
     geometry_selection::GeometrySelection,
-    notification_data::notification_data,
+    notification_data::{DataShape, notification_data},
+    notification_entity::NotificationEntity,
     version::{adapted_payload::AdaptedPayload, fallback::VersionFallback},
 };
-use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::entity::GetEntityParams;
 use andromeda_subscription::{
     compilation::compile_subscription,
@@ -58,13 +54,6 @@ use andromeda_subscription::{
 use chrono::Utc;
 use serde_json::Value;
 use tracing::{debug, warn};
-
-/// Mint a notification identifier.
-fn notification_id() -> Result<Identifier, SubscriptionForwardingError> {
-    NotificationId::mint()
-        .map(Identifier::from)
-        .map_err(|error| ForwardingInvariant::MintedNotificationId(error).into())
-}
 
 impl SubscriptionForwardingService {
     /// Complete one entity of the notification from this broker and from every
@@ -172,21 +161,16 @@ impl SubscriptionForwardingService {
     }
 
     /// Every entity of an inbound notification re-assembled for the local
-    /// subscription and rendered in its `format`; an entity that cannot be
-    /// read, or that the local filters drop, leaves the copy (clause 5.8.6).
+    /// subscription; an entity that cannot be read, or that the local filters
+    /// drop, leaves the copy (clause 5.8.6).
     async fn reassembled_entities(
         &self,
         received_entities: &[Value],
         inbound: &EntityExpansion<'_>,
         reading: &ReassemblyReading<'_, '_>,
         sender: &Identifier,
-        format: ResponseFormat,
         local: &Identifier,
-    ) -> Result<Vec<Value>, SubscriptionForwardingError> {
-        let fallback = reading
-            .compiled
-            .ngsild_conformance
-            .and_then(|target| VersionFallback::new(target, AdaptedPayload::Entity));
+    ) -> Result<Vec<Entity>, SubscriptionForwardingError> {
         let local_terms = self.engine.prepare_term_context(reading.local_context);
         let mut local_expansions = AttributeExpansions::new(&self.engine, &local_terms);
         let mut data = Vec::with_capacity(received_entities.len());
@@ -205,15 +189,7 @@ impl SubscriptionForwardingService {
             // `id` and `type` stay whatever the projection lists: Table 5.2.4-1
             // makes both mandatory, so the copy's `data` carries Entities.
             narrow_entity(&mut entity, reading.compiled, &mut local_expansions).await?;
-            // Clause 5.8.6: the copy is sent to the local subscription's
-            // endpoint, so its Entities are amended to the local
-            // subscription's `ngsildConformance` as they are written.
-            let rendered = EntityRenderer::new(&entity)
-                .with_mode(format)
-                .with_optional_fallback(fallback)
-                .render()
-                .map_err(ForwardingInvariant::Rendering)?;
-            data.push(rendered);
+            data.push(entity);
         }
         Ok(data)
     }
@@ -229,7 +205,7 @@ impl SubscriptionForwardingService {
     /// [`SubscriptionForwardingError::Internal`] when a notification identifier
     /// cannot be minted, an entity cannot be rendered, or the local
     /// subscription's endpoint names no deliverable transport.
-    pub async fn handle_notification(&self, notification: &Notification, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
+    pub async fn handle_notification(&self, notification: &ReceivedNotification, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
         let Some((local, sender)) = self.mappings.local_of_forwarded(&notification.subscription_id).await? else {
             return Err(SubscriptionForwardingError::UnknownSubscription {
                 subscription: notification.subscription_id.clone(), // clone: the error owns the identifier
@@ -238,7 +214,7 @@ impl SubscriptionForwardingService {
         // Every forwarded copy asks its source for `application/json`, so its
         // notifications carry an Entity array (Table 5.3.1-1); a
         // FeatureCollection names no Entity this copy can be re-assembled from.
-        let NotificationData::Entities(received_entities) = &notification.data else {
+        let ReceivedNotificationData::Entities(received_entities) = &notification.data else {
             warn!(subscription = %local, "inbound notification carried a FeatureCollection its forwarded copy did not ask for");
             return Ok(());
         };
@@ -298,35 +274,16 @@ impl SubscriptionForwardingService {
             local_context: &local_context,
             local_compactor: &local_compactor,
         };
-        let data = self
-            .reassembled_entities(received_entities, &inbound, &reading, &sender, format, &local)
-            .await?;
+        let data = self.reassembled_entities(received_entities, &inbound, &reading, &sender, &local).await?;
         if data.is_empty() {
             debug!(subscription = %local, "re-assembled notification carries no entity; nothing delivered");
             return Ok(());
         }
 
         let endpoint = &subscription.notification.endpoint;
-        // Table 5.3.1-1: the local endpoint's `accept` decides the shape of the
-        // copy's `data`, whatever shape the source sent.
-        let data = notification_data(
-            data,
-            notification_media_type(endpoint.accept.as_ref()),
-            GeometrySelection::new(None, subscription.filters.dataset_id.as_deref().unwrap_or_default()),
-        )
-        .map_err(ForwardingInvariant::Rendering)?;
-        let copy = Notification {
-            id: notification_id()?,
-            type_: NotificationType,
-            subscription_id: local.clone(), // clone: the copy names the local subscription
-            notified_at: Utc::now(),
-            data,
-        };
-        let payload = serde_json::to_value(&copy)?;
         let transport = parse_endpoint_transport(endpoint.uri.url(), endpoint.notifier_info.as_deref()).map_err(ForwardingInvariant::LocalEndpoint)?;
         let context = NotificationContext::resolve(subscription.delivery.jsonld_context.as_ref(), &self.engine).await?;
-        let request = NotificationDelivery::builder()
-            .payload(&payload)
+        let delivery = NotificationDelivery::builder()
             .endpoint_uri(endpoint.uri.url())
             .accept(endpoint.accept.as_ref())
             .receiver_info(endpoint.receiver_info.as_deref())
@@ -334,8 +291,26 @@ impl SubscriptionForwardingService {
             .tenant(self.tenant.tenant_name())
             .timeout(endpoint.timeout)
             .subscription_id(&local)
-            .build()
-            .assemble();
+            .build();
+        // Clause 5.8.6: the copy is sent to the local subscription's endpoint,
+        // so its Entities are written in the local subscription's `format` and
+        // amended to its `ngsildConformance`; Table 5.3.1-1: the local
+        // endpoint's `accept` decides the shape of the copy's `data`, whatever
+        // shape the source sent.
+        let fallback = compiled
+            .ngsild_conformance
+            .and_then(|target| VersionFallback::new(target, AdaptedPayload::Entity));
+        let relayed: Vec<NotificationEntity<'_>> = data
+            .iter()
+            .map(|entity| NotificationEntity::relayed(entity, format).with_fallback(fallback))
+            .collect();
+        let shape = DataShape {
+            media_type: delivery.content_type(),
+            selection: GeometrySelection::new(None, subscription.filters.dataset_id.as_deref().unwrap_or_default()),
+            context: delivery.body_context(),
+        };
+        let written = notification_data(&relayed, shape).map_err(ForwardingInvariant::Rendering)?;
+        let request = delivery.notification(written).map_err(ForwardingInvariant::WrittenNotification)?;
         let result = self.transport.deliver(&transport, &request).await;
         if result.is_delivered() {
             self.subscriptions.mark_success(&self.live_target, &local).await?;

@@ -14,6 +14,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::{
     dispatch::TransportDispatcher,
     endpoint::transport::{EndpointTransport, parse_endpoint_transport},
+    notification_body::NotificationBody,
     notification_context::NotificationContext,
     request::NotificationDelivery,
 };
@@ -21,10 +22,10 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationId};
 use andromeda_ngsi_ld_model::{
-    notification::{CsourceNotification, CsourceNotificationType, CsrTriggerReason},
+    notification::{CsourceNotification, CsrTriggerReason},
     registration::ContextSourceRegistration,
 };
-use andromeda_registration::information_compaction::compact_information;
+use andromeda_registration::information_compaction::compacted_information;
 use andromeda_subscription::{
     compiled::CompiledCsrSubscription,
     csource_matching::matching_information,
@@ -33,7 +34,6 @@ use andromeda_subscription::{
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
-use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, error};
 
@@ -98,20 +98,19 @@ impl CsourceNotificationDelivery {
     ///
     /// # Errors
     ///
-    /// Returns [`NotificationError::Representation`] when a registration
-    /// cannot be serialised, and [`NotificationError::JsonLd`] when the
-    /// subscription's context does not resolve or process (clause 5.5.6).
+    /// Returns [`NotificationError::JsonLd`] when the subscription's context
+    /// does not resolve or process (clause 5.5.6).
     pub(crate) async fn notified_registrations(
         &self,
         registrations: &[&ContextSourceRegistration],
         subscription: &CompiledCsrSubscription,
-    ) -> Result<Vec<Value>, NotificationError> {
+    ) -> Result<Vec<ContextSourceRegistration>, NotificationError> {
         let context = ContextSpec::for_subscription_context(subscription.jsonld_context.as_ref());
         let names = NameCompaction::new(self.engine.compactor(&context).processed_context().await?);
-        registrations
+        Ok(registrations
             .iter()
             .map(|registration| notified_registration(&names, registration, subscription))
-            .collect()
+            .collect())
     }
 
     /// Deliver `data` -- the notified registrations -- to `subscription` with
@@ -121,7 +120,12 @@ impl CsourceNotificationDelivery {
     /// A `timeInterval` subscription carries no `throttling` -- Table 5.2.12-1
     /// gives the member cardinality 0 when `timeInterval` is present -- so the
     /// one gate serves both cadences without either having to know which it is.
-    pub(crate) async fn deliver(&self, subscription: &CompiledCsrSubscription, data: Vec<Value>, trigger_reason: CsrTriggerReason) -> CsourceDeliveryOutcome {
+    pub(crate) async fn deliver(
+        &self,
+        subscription: &CompiledCsrSubscription,
+        data: Vec<ContextSourceRegistration>,
+        trigger_reason: CsrTriggerReason,
+    ) -> CsourceDeliveryOutcome {
         let sub_id = &subscription.id;
 
         match self
@@ -141,27 +145,6 @@ impl CsourceNotificationDelivery {
             }
         }
 
-        let Ok(notification_id) = NotificationId::mint().map(Identifier::from) else {
-            error!("Failed to construct notification URN for {}", sub_id);
-            return CsourceDeliveryOutcome::NotSent;
-        };
-        let notification = CsourceNotification::builder()
-            .id(notification_id)
-            .type_(CsourceNotificationType)
-            .subscription_id(sub_id.clone()) // clone: the notification owns its subscription id and the subscription is still needed for delivery
-            .notified_at(Utc::now())
-            .data(data)
-            .trigger_reason(Some(trigger_reason))
-            .build();
-
-        let payload = match serde_json::to_value(&notification) {
-            Ok(payload) => payload,
-            Err(error) => {
-                error!("Failed to serialize CsourceNotification for {}: {}", sub_id, error);
-                return CsourceDeliveryOutcome::NotSent;
-            }
-        };
-
         let Some(endpoint_transport) = compiled_transport(subscription) else {
             return CsourceDeliveryOutcome::NotSent;
         };
@@ -172,7 +155,27 @@ impl CsourceNotificationDelivery {
         else {
             return CsourceDeliveryOutcome::NotSent;
         };
-        let request = self.request_for(subscription, &payload, &context).assemble();
+        let delivery = self.delivery_for(subscription, &context);
+        let Ok(notification_id) = NotificationId::mint().map(Identifier::from) else {
+            error!("Failed to construct notification URN for {}", sub_id);
+            return CsourceDeliveryOutcome::NotSent;
+        };
+        let notification = CsourceNotification::builder()
+            .context(delivery.body_context())
+            .id(&notification_id)
+            .subscription_id(sub_id)
+            .notified_at(Utc::now())
+            .data(&data)
+            .trigger_reason(trigger_reason)
+            .build();
+        let body = match NotificationBody::written(&notification_id, &notification) {
+            Ok(body) => body,
+            Err(error) => {
+                error!("Failed to write CsourceNotification for {}: {}", sub_id, error);
+                return CsourceDeliveryOutcome::NotSent;
+            }
+        };
+        let request = delivery.assemble(body);
         let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
         if success {
@@ -186,9 +189,8 @@ impl CsourceNotificationDelivery {
     }
 
     /// The delivery one CSR notification becomes.
-    fn request_for<'a>(&'a self, subscription: &'a CompiledCsrSubscription, payload: &'a Value, context: &'a NotificationContext) -> NotificationDelivery<'a> {
+    fn delivery_for<'a>(&'a self, subscription: &'a CompiledCsrSubscription, context: &'a NotificationContext) -> NotificationDelivery<'a> {
         NotificationDelivery::builder()
-            .payload(payload)
             .endpoint_uri(&subscription.endpoint_uri)
             .accept(subscription.endpoint_accept.as_ref())
             .receiver_info(subscription.endpoint_receiver_info.as_deref())
@@ -219,20 +221,12 @@ fn notified_registration(
     names: &NameCompaction,
     registration: &ContextSourceRegistration,
     subscription: &CompiledCsrSubscription,
-) -> Result<Value, NotificationError> {
-    let mut value = serde_json::to_value(registration).map_err(NotificationError::Representation)?;
-    let matching = matching_information(subscription, registration)
-        .into_iter()
-        .map(serde_json::to_value)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(NotificationError::Representation)?;
-    if let Some(object) = value.as_object_mut() {
-        object.insert("information".to_string(), Value::Array(matching));
-    }
-    if let Some(information) = value.get_mut("information") {
-        compact_information(names, information);
-    }
-    Ok(value)
+) -> ContextSourceRegistration {
+    let information = compacted_information(names, matching_information(subscription, registration));
+    // clone: the notification carries its own trimmed copy of the stored registration
+    let mut notified = registration.clone();
+    notified.coverage.information = information;
+    notified
 }
 
 #[cfg(test)]
@@ -300,7 +294,8 @@ mod tests {
     /// `RegistrationInfo` elements.
     #[tokio::test]
     async fn the_notified_registration_keeps_only_the_matching_information() {
-        let value = notified_registration(&core_names().await, &registration(), &subscription("https://example.com/Vehicle")).expect("serialises");
+        let notified = notified_registration(&core_names().await, &registration(), &subscription("https://example.com/Vehicle"));
+        let value = serde_json::to_value(notified).expect("serialises");
 
         pretty_assertions::assert_eq!(value["information"], json!([{"entities": [{"type": "https://example.com/Vehicle"}]}]));
         pretty_assertions::assert_eq!(value["id"], json!("urn:ngsi-ld:ContextSourceRegistration:1"));
@@ -322,7 +317,7 @@ mod tests {
         }))
         .expect("registration parses");
 
-        let value = notified_registration(&core_names().await, &registration, &subscription(vocabulary)).expect("serialises");
+        let value = serde_json::to_value(notified_registration(&core_names().await, &registration, &subscription(vocabulary))).expect("serialises");
 
         pretty_assertions::assert_eq!(value["information"], json!([{"entities": [{"type": "Vehicle"}]}]));
     }

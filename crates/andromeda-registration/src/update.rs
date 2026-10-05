@@ -31,10 +31,8 @@ impl RegistrationService {
     /// registration carries `id`, [`RegistrationError::Conflict`] when the
     /// merged footprint overlaps an existing registration or local context
     /// data (clause 5.9.3.4), [`RegistrationError::JsonLd`] when the fragment
-    /// cannot be expanded,
-    /// [`RegistrationError::Internal`] when the pre-update snapshot cannot be
-    /// serialised, and [`RegistrationError::Persistence`] when the store
-    /// rejects the read or the write.
+    /// cannot be expanded, and [`RegistrationError::Persistence`] when the
+    /// store rejects the read or the write.
     pub async fn update(&self, id: &Identifier, payload: Value, context: &AdmittedContext) -> Result<(), RegistrationError> {
         // Counted before the fragment is expanded or a geometry built from it.
         admit_registration_geometries(&payload, self.geometry_limits)?;
@@ -58,7 +56,8 @@ impl RegistrationService {
         }
 
         let existing = self.repo.get(id).await?.ok_or_else(|| RegistrationError::not_found(id))?;
-        let pre_update_snapshot = serde_json::to_value(&existing).map_err(RegistrationError::Representation)?;
+        // clone: the change event carries the registration as it stood, and the merge consumes it
+        let pre_update_snapshot = Box::new(existing.clone());
         let mut fragment = extract_update_fragment(&payload)?;
         fragment.additional_properties = expanded_properties;
         let resolved = apply_fragment(existing, &fragment)?;

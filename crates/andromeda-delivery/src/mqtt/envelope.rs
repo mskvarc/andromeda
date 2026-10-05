@@ -6,44 +6,51 @@
 //! as well as its own user properties so a client does not have to know which
 //! version it is talking to.
 
-use crate::{mqtt::metadata::transported_headers, request::DeliveryRequest};
-use serde_json::{Map, Value};
-use tracing::error;
+use crate::{error::TransportError, mqtt::metadata::transported_headers, request::DeliveryRequest};
+use serde::Serialize;
+use serde_json::value::RawValue;
+use std::collections::BTreeMap;
 
 /// The content-type member, named as the HTTP header it stands in for.
 const CONTENT_TYPE_KEY: &str = "Content-Type";
 
+/// The `{metadata, body}` envelope one notification is published as.
+#[derive(Serialize)]
+struct Envelope<'a> {
+    /// What an HTTP notification carries in its headers, one member per name.
+    metadata: BTreeMap<String, String>,
+    /// The written notification, as the HTTP delivery sends it.
+    body: &'a RawValue,
+}
+
 /// Build the envelope a notification is published as.
 ///
-/// The body is the notification [`Value`] the request carries, wrapped in the
-/// `{metadata, body}` envelope and serialised once here — the transport never
-/// parses a pre-serialised body back out.
-pub fn build_envelope(request: &DeliveryRequest) -> Vec<u8> {
-    let mut metadata = Map::new();
-    metadata.insert(CONTENT_TYPE_KEY.to_string(), Value::String(request.content_type.as_str().to_string()));
-    for (key, value) in transported_headers(request) {
-        metadata.insert(key, Value::String(value));
-    }
-
-    let mut envelope = Map::new();
-    envelope.insert("metadata".to_string(), Value::Object(metadata));
-    // clone: the envelope owns its body, and the request keeps the notification
-    envelope.insert("body".to_string(), (*request.payload).clone());
-    let envelope = Value::Object(envelope);
-
-    match serde_json::to_vec(&envelope) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            error!(error = %error, "failed to serialize MQTT notification envelope");
-            Vec::new()
-        }
-    }
+/// The body is the notification the request carries, written once by its
+/// sender and embedded here as it was written.
+///
+/// # Errors
+///
+/// Returns [`TransportError::PayloadSerialization`] when the envelope cannot
+/// be written.
+pub fn build_envelope(request: &DeliveryRequest) -> Result<Vec<u8>, TransportError> {
+    let mut metadata = BTreeMap::new();
+    metadata.insert(CONTENT_TYPE_KEY.to_string(), request.content_type.as_str().to_string());
+    metadata.extend(transported_headers(request));
+    let envelope = Envelope {
+        metadata,
+        body: request.body.json(),
+    };
+    serde_json::to_vec(&envelope).map_err(|source| TransportError::PayloadSerialization {
+        endpoint: request.endpoint_uri.clone(), // clone: the error owns the endpoint it names
+        source,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         mqtt::envelope::build_envelope,
+        notification_body::NotificationBody,
         notification_context::NotificationContext,
         request::{DeliveryRequest, NotificationDelivery},
     };
@@ -70,9 +77,9 @@ mod tests {
         let media = MediaTypeBuf::from_str(accept).expect("a well-formed media type");
         let endpoint = Url::parse("mqtt://broker:1883/topic").expect("a well-formed endpoint URI");
         let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
-        let context = NotificationContext::stated(None, json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        let context = NotificationContext::core();
+        let id = Identifier::from_str("urn:ngsi-ld:Notification:1").expect("a well-formed notification id");
         NotificationDelivery::builder()
-            .payload(payload)
             .endpoint_uri(&endpoint)
             .accept(Some(&media))
             .receiver_info(receiver_info)
@@ -80,38 +87,36 @@ mod tests {
             .tenant(tenant)
             .subscription_id(&subscription)
             .build()
-            .assemble()
+            .assemble(NotificationBody::written(&id, payload).expect("a written notification"))
     }
 
-    /// Table 5.3.1-1 over MQTT (clause 7.2): an `application/geo+json`
-    /// notification's body is the same document an HTTP delivery sends, its
-    /// `data` one `FeatureCollection` naming the context once and no Feature
-    /// naming one, and the metadata carries no `Link`.
+    /// Table 5.3.1-1 over MQTT (clause 7.2): the body is the document the
+    /// HTTP delivery sends, written once, an `application/geo+json`
+    /// notification's `FeatureCollection` included, and the metadata of a body
+    /// carrying its context names no `Link`.
     #[test]
-    fn a_geo_json_notification_body_carries_the_feature_collection_the_http_delivery_does() {
+    fn a_geo_json_notification_body_is_the_document_the_http_delivery_sends() {
         let payload = json!({
+            "@context": NGSI_LD_CORE_CONTEXT_URL.as_str(),
             "id": "urn:ngsi-ld:Notification:1",
             "type": "Notification",
             "data": {
                 "type": "FeatureCollection",
+                "@context": NGSI_LD_CORE_CONTEXT_URL.as_str(),
                 "features": [{"type": "Feature", "id": "urn:ngsi-ld:Building:1", "geometry": null, "properties": {"type": "Building"}}]
             }
         });
 
-        let rendered = envelope(&notification(&payload, "application/geo+json", None, None));
+        let request = notification(&payload, "application/geo+json", None, None);
+        let rendered = envelope(&request);
 
         pretty_assertions::assert_eq!(rendered["metadata"]["Content-Type"], json!("application/geo+json"));
-        pretty_assertions::assert_eq!(rendered["body"]["data"]["type"], json!("FeatureCollection"));
-        pretty_assertions::assert_eq!(rendered["body"]["data"]["@context"], json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
-        pretty_assertions::assert_eq!(rendered["body"]["@context"], json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
-        for feature in rendered["body"]["data"]["features"].as_array().expect("the features survive") {
-            assert!(feature.get("@context").is_none(), "{feature}");
-        }
+        pretty_assertions::assert_eq!(rendered["body"], payload);
         assert!(rendered["metadata"].get("Link").is_none());
     }
 
     fn envelope(request: &DeliveryRequest) -> Value {
-        serde_json::from_slice(&build_envelope(request)).expect("the envelope parses")
+        serde_json::from_slice(&build_envelope(request).expect("the envelope is written")).expect("the envelope parses")
     }
 
     #[test]
@@ -121,14 +126,14 @@ mod tests {
         pretty_assertions::assert_eq!(rendered["metadata"]["Content-Type"], json!("application/json"));
     }
 
+    /// The body is the written notification byte for byte: the envelope
+    /// embeds the text the HTTP delivery sends rather than writing the document
+    /// again.
     #[test]
-    fn the_envelope_carries_the_notification_value_verbatim_as_its_body() {
-        // The body is the notification `Value` the request holds, not a re-parse
-        // of pre-serialised bytes, so it round-trips through the envelope
-        // unchanged — the same output the old parse-then-wrap produced.
+    fn the_envelope_embeds_the_written_notification_byte_for_byte() {
         let req = request("application/json", None, None);
-        let rendered = envelope(&req);
-        pretty_assertions::assert_eq!(rendered["body"], (*req.payload).clone());
+        let written = String::from_utf8(build_envelope(&req).expect("the envelope is written")).expect("UTF-8");
+        assert!(written.ends_with(&format!(r#""body":{}}}"#, req.body.text())), "{written}");
     }
 
     #[test]

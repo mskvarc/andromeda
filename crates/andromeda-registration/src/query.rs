@@ -4,7 +4,7 @@ use crate::{
     RegistrationService,
     context_source_properties::compact_context_source_properties,
     error::RegistrationError,
-    information_compaction::compact_information,
+    information_compaction::compacted_information,
     registration_invariant::RegistrationInvariant,
     registration_validation_reason::RegistrationValidationReason,
 };
@@ -108,10 +108,8 @@ impl RegistrationService {
                 continue;
             };
             let additional_properties = registration.additional_properties.take();
+            registration.coverage.information = compacted_information(&names, &registration.coverage.information);
             let mut value = serde_json::to_value(registration).map_err(RegistrationError::Representation)?;
-            if let Some(information) = value.get_mut("information") {
-                compact_information(&names, information);
-            }
             if let Some(properties) = additional_properties
                 && let Some(compacted) = compact_context_source_properties(&names, properties)
                 && let Some(target) = value.as_object_mut()

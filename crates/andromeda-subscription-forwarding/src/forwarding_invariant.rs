@@ -1,8 +1,8 @@
 //! The invariants the distributed subscription side relies on.
 
-use andromeda_delivery::endpoint::error::EndpointParseError;
+use andromeda_delivery::{endpoint::error::EndpointParseError, notification_body::NotificationWriteError};
 use andromeda_ngsi_ld_expansion::error::ExpansionError;
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{NotificationIdParseError, SubscriptionIdParseError};
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SubscriptionIdParseError;
 use andromeda_ngsi_ld_render::error::RenderError;
 use thiserror::Error;
 
@@ -15,9 +15,10 @@ pub enum ForwardingInvariant {
     /// A subscription identifier minted for a peer is not one.
     #[error("a minted subscription identifier is invalid: {0}")]
     MintedSubscriptionId(#[source] SubscriptionIdParseError),
-    /// A notification identifier minted for the local subscriber is not one.
-    #[error("a minted notification identifier is invalid: {0}")]
-    MintedNotificationId(#[source] NotificationIdParseError),
+    /// The notification re-assembled for the local subscriber could not be
+    /// written.
+    #[error("the re-assembled notification could not be written: {0}")]
+    WrittenNotification(#[source] NotificationWriteError),
     /// Merging a present entity with its other parts produced nothing.
     #[error("merging a present entity with its other parts produced nothing")]
     MergeProducedNothing,

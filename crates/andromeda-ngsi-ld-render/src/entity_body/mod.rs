@@ -10,8 +10,10 @@
 //! `GeoProperty` geometry goes to the wire from its positions.
 
 pub(crate) mod common_members;
+pub(crate) mod entity_collection;
 pub(crate) mod family_value;
 pub(crate) mod feature_body;
+pub(crate) mod feature_collection;
 pub(crate) mod feature_geometry;
 pub(crate) mod instance_fallback;
 pub(crate) mod linked_entities;

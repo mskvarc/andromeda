@@ -8,19 +8,14 @@ use crate::{
     interval_payload::PeriodicPayload,
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
-use andromeda_delivery::{
-    dispatch::TransportDispatcher,
-    endpoint::transport::parse_endpoint_transport,
-    request::{NotificationDelivery, notification_media_type},
-};
+use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_entity::{
     port::{payload_pages::EntityPayloadPages, reader::EntityReader},
     query::EntityQueryService,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NotificationId};
-use andromeda_ngsi_ld_model::{notification::Notification, subscription::Subscription};
-use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, notification_data::notification_data};
+use andromeda_ngsi_ld_model::subscription::Subscription;
+use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, notification_data::DataShape};
 use andromeda_subscription::{
     notification_slot::{NotificationSlot, NotificationSlotGate},
     store::SubscriptionStore,
@@ -28,7 +23,6 @@ use andromeda_subscription::{
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::{DateTime, Utc};
 use futures::{StreamExt, stream};
-use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, error};
 
@@ -134,19 +128,6 @@ impl IntervalNotificationOperation {
                     return;
                 }
 
-                let data = match this.payload().entities(&sub, entities).await {
-                    Ok(d) => d,
-                    Err(e) => {
-                        error!("IntervalWorker failed to build notification payload for {}: {}", sub.id, e);
-                        return;
-                    }
-                };
-
-                if data.is_empty() {
-                    this.advance_anchor(&sub, cutoff).await;
-                    return;
-                }
-
                 // Claim slot only once we know we are actually going to send a notification.
                 // Table 5.2.15-1: a periodic subscription carries no
                 // `throttling` (Table 5.2.12-1 makes the pair mutually
@@ -163,10 +144,6 @@ impl IntervalNotificationOperation {
                         return;
                     }
                 }
-
-                let Some(payload) = notification_payload(&sub, data) else {
-                    return;
-                };
 
                 let endpoint_uri = sub.notification.endpoint.uri.url();
 
@@ -191,9 +168,8 @@ impl IntervalNotificationOperation {
                 else {
                     return;
                 };
-                let request = NotificationDelivery::builder()
-                    .payload(&payload)
-                    .endpoint_uri(sub.notification.endpoint.uri.url())
+                let delivery = NotificationDelivery::builder()
+                    .endpoint_uri(endpoint_uri)
                     .accept(sub.notification.endpoint.accept.as_ref())
                     .receiver_info(sub.notification.endpoint.receiver_info.as_deref())
                     .context(&context)
@@ -201,8 +177,29 @@ impl IntervalNotificationOperation {
                     .snapshot(this.target.snapshot().map(SnapshotTarget::snapshot_id))
                     .timeout(sub.notification.endpoint.timeout)
                     .subscription_id(&sub.id)
-                    .build()
-                    .assemble();
+                    .build();
+
+                // Table 5.3.1-1: an `application/geo+json` endpoint receives the
+                // entities as one `FeatureCollection`.
+                let shape = DataShape {
+                    media_type: delivery.content_type(),
+                    selection: GeometrySelection::new(None, sub.filters.dataset_id.as_deref().unwrap_or_default()),
+                    context: delivery.body_context(),
+                };
+                let data = match this.payload().entities(&sub, entities, shape).await {
+                    Ok(data) => data,
+                    Err(e) => {
+                        error!("IntervalWorker failed to build notification payload for {}: {}", sub.id, e);
+                        return;
+                    }
+                };
+                let request = match delivery.notification(data) {
+                    Ok(request) => request,
+                    Err(e) => {
+                        error!("Failed to write notification for {}: {}", sub.id, e);
+                        return;
+                    }
+                };
 
                 let success = this.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
@@ -255,42 +252,6 @@ impl IntervalNotificationOperation {
     async fn advance_anchor(&self, sub: &Subscription, cutoff: DateTime<Utc>) {
         if let Err(error) = self.sub_repo.advance_interval_anchor(&self.target, &sub.id, cutoff).await {
             debug!("Failed to advance interval anchor for {}: {}", sub.id, error);
-        }
-    }
-}
-
-/// The Notification (Table 5.3.1-1) carrying `data` for `sub`, serialised, or
-/// `None` -- logged -- when it cannot be built.
-///
-/// An `application/geo+json` endpoint receives the entities as one
-/// `FeatureCollection`, as Table 5.3.1-1 requires.
-fn notification_payload(sub: &Subscription, data: Vec<Value>) -> Option<Value> {
-    let Ok(notification_id) = NotificationId::mint().map(Identifier::from) else {
-        error!("Failed to construct notification URN for {}", sub.id);
-        return None;
-    };
-    let data = match notification_data(
-        data,
-        notification_media_type(sub.notification.endpoint.accept.as_ref()),
-        GeometrySelection::new(None, sub.filters.dataset_id.as_deref().unwrap_or_default()),
-    ) {
-        Ok(data) => data,
-        Err(e) => {
-            error!("Failed to render the notification data for {}: {}", sub.id, e);
-            return None;
-        }
-    };
-    let notification = Notification::builder()
-        .id(notification_id)
-        .subscription_id(sub.id.clone()) // clone: the notification owns its subscription id
-        .notified_at(Utc::now())
-        .data(data)
-        .build();
-    match serde_json::to_value(&notification) {
-        Ok(payload) => Some(payload),
-        Err(e) => {
-            error!("Failed to serialize notification for {}: {}", sub.id, e);
-            None
         }
     }
 }

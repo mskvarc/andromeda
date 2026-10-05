@@ -12,8 +12,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use async_trait::async_trait;
-use serde_json::Value;
-use std::{error::Error, str::FromStr, sync::Arc};
+use std::{error::Error, sync::Arc};
 use tracing::{debug, warn};
 
 /// Unified dispatcher routing to HTTP, MQTT, SSE or WebSocket.
@@ -143,17 +142,12 @@ impl TransportDispatcher {
     /// Push a notification to whichever SSE clients are streaming it.
     ///
     /// The SSE `id:` field is the notification's own identifier so a client
-    /// reconnecting with `Last-Event-ID` names something meaningful; a payload
-    /// without one falls back to the subscription identifier.
+    /// reconnecting with `Last-Event-ID` names something meaningful.
     fn deliver_sse(&self, request: &DeliveryRequest) -> DeliveryResult {
-        let data = request.payload.to_string();
-        let event_id = request
-            .payload
-            .get("id")
-            .and_then(Value::as_str)
-            .and_then(|id| Identifier::from_str(id).ok())
-            // clone: the event owns its id, and the payload's own is used when it names a valid one
-            .unwrap_or_else(|| request.subscription_id.clone());
+        // The event owns its data, and the request keeps the written notification.
+        let data = request.body.text().to_owned();
+        // clone: the event owns its id, and the request keeps the notification's own
+        let event_id = request.body.id().clone();
         report_stream(
             &request.subscription_id,
             self.sse_registry.try_send(&request.subscription_id, &SseNotificationEvent { event_id, data }),
@@ -162,7 +156,8 @@ impl TransportDispatcher {
 
     /// Push a notification to whichever WebSocket clients are streaming it.
     fn deliver_ws(&self, request: &DeliveryRequest) -> DeliveryResult {
-        let data = request.payload.to_string();
+        // The message owns its data, and the request keeps the written notification.
+        let data = request.body.text().to_owned();
         report_stream(
             &request.subscription_id,
             self.ws_registry.try_send(&request.subscription_id, &WsNotificationMessage { data }),

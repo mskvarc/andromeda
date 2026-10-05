@@ -7,8 +7,10 @@ use andromeda_ngsi_ld_lexicon::{
     ngsi_ld_urn::SnapshotNotificationId,
     rfc3339::{datetime, optional_datetime},
 };
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use chrono::{DateTime, Utc};
 use derive_more::{Display, Into};
+use iri_rs::Iri;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -178,6 +180,12 @@ pub struct ExecutionResultDetails {
 #[derive(Debug, Clone, Serialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotNotification {
+    /// The core context the notification is written under: it is sent as
+    /// `application/ld+json`, whose body carries its `@context` (clause
+    /// 6.3.6).
+    #[serde(rename = "@context")]
+    #[builder(default = NGSI_LD_CORE_CONTEXT_URL)]
+    pub context: Iri<&'static str>,
     /// Unique notification identifier (`urn:ngsi-ld:SnapshotNotification:{uuid}`).
     pub id: SnapshotNotificationId,
     /// Always `SnapshotNotification`.

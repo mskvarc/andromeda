@@ -12,7 +12,7 @@ use andromeda_federation::subscription::{SubscriptionForward, SubscriptionForwar
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
-    notification::{CsourceNotification, CsrTriggerReason},
+    notification::{CsrTriggerReason, ReceivedCsourceNotification},
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
     subscription::Subscription,
 };
@@ -152,7 +152,11 @@ impl SubscriptionForwardingService {
     /// for. Propagates the mapping-store, federation, subscription-store and
     /// serialisation failures raised while placing, updating or removing the
     /// reduced copies the notification calls for.
-    pub async fn handle_csource_notification(&self, notification: &CsourceNotification, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
+    pub async fn handle_csource_notification(
+        &self,
+        notification: &ReceivedCsourceNotification,
+        context: &ContextSpec,
+    ) -> Result<(), SubscriptionForwardingError> {
         let Some(local) = self.mappings.local_of_companion(&notification.subscription_id).await? else {
             return Err(SubscriptionForwardingError::UnknownSubscription {
                 subscription: notification.subscription_id.clone(), // clone: the error owns the identifier

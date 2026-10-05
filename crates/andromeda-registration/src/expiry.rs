@@ -71,9 +71,7 @@ impl RegistrationExpiry {
     /// # Errors
     ///
     /// Returns [`RegistrationError::Persistence`] when the store cannot read or
-    /// delete the due registrations, and [`RegistrationError::Representation`] when a
-    /// deleted registration cannot be serialised into the snapshot the change
-    /// event carries.
+    /// delete the due registrations.
     pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<RegistrationExpiryOutcome, RegistrationError> {
         let teardowns = self.capture_teardowns(cutoff).await?;
         let ExpiredDeletion { revision, registrations } = self.store.delete_expired(cutoff).await?;
@@ -87,13 +85,12 @@ impl RegistrationExpiry {
         }
         let mut expired = Vec::with_capacity(registrations.len());
         for registration in registrations {
-            let snapshot = serde_json::to_value(&registration)?;
-            let identifier = registration.id;
+            let identifier = registration.id.clone(); // clone: the outcome keeps the identifier of the registration the event takes
             if let Some(ref sink) = self.change_sink {
                 sink.publish(CsrChangeEvent {
                     csr_id: identifier.clone(), // clone: outcome and event independently own the identifier.
                     trigger_reason: CsrTriggerReason::NoLongerMatching,
-                    csr_snapshot: Some(snapshot),
+                    csr_snapshot: Some(Box::new(registration)),
                     revision,
                 });
             }

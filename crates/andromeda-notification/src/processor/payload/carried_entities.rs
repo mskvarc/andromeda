@@ -1,5 +1,5 @@
-//! The entities one notification carries, written the way clause 5.8.6 sends
-//! them: each notified entity in the subscription's format with the Linked
+//! The entities one notification carries, written once the way clause 5.8.6
+//! sends them: each notified entity in the subscription's format with the Linked
 //! Entities of its `join` nested into it for `inline` or written beside it for
 //! `flat` (clause 4.5.23), `pick` and `omit` applied, and every entity amended
 //! to the subscription's `ngsildConformance` as it is written. Which Linked
@@ -24,15 +24,15 @@ use andromeda_linked_retrieval::{
     typed::TypedEntities,
 };
 use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
-use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationData};
 use andromeda_ngsi_ld_query::projection::attribute_iri_index::AttributeIriIndex;
 use andromeda_ngsi_ld_render::{
-    notification_entity::TargetSpelling,
+    notification_data::{DataShape, notification_data},
+    notification_entity::{NotificationEntity, TargetSpelling},
     structural_projection::StructuralProjection,
     version::{adapted_payload::AdaptedPayload, fallback::VersionFallback},
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
-use serde_json::Value;
 
 /// How a subscription has the entities of its notifications written.
 #[derive(Clone, Copy, Debug)]
@@ -61,8 +61,9 @@ pub(crate) struct NotifiedLinks<'a> {
     pub(crate) index: &'a AttributeIriIndex,
 }
 
-/// The entities a notification carries: every notified entity, with the
-/// `linked` entities of a `join` nested into it or written after them all.
+/// The `data` of a notification carrying every notified entity, with the
+/// `linked` entities of a `join` nested into it or written after them all,
+/// written once as `data` says.
 ///
 /// Clause 4.21, the `id` / `type` / `scope` half of the subscription's
 /// projection, narrows each notified entity's `type` and `scope`; clause 5.8.6
@@ -84,7 +85,8 @@ pub(crate) fn carried_entities(
     notified: &[NotifiedEntity],
     linked: Option<NotifiedLinks<'_>>,
     shape: CarriedShape<'_>,
-) -> Result<Vec<Value>, NotificationError> {
+    data: DataShape<'_>,
+) -> Result<NotificationData, NotificationError> {
     let CarriedShape {
         format,
         join,
@@ -98,18 +100,19 @@ pub(crate) fn carried_entities(
         .zip(linked)
         .map(|(join, linked)| JoinPlan::<TypedEntities>::new(join, linked.graph, MemberRule::new(list, linked.index)));
     let written = WrittenShape { format, targets, fallback };
-    match &plan {
+    let entities: Vec<NotificationEntity<'_>> = match &plan {
         Some(JoinPlan::Inline(inline)) => notified
             .iter()
-            .map(|entity| entity.render(written, Some(inline.cursor()), projection))
+            .map(|entity| entity.notified(written, Some(inline.cursor()), projection))
             .collect(),
         Some(JoinPlan::Flat(flat)) => notified
             .iter()
-            .map(|entity| entity.render(written, None, projection))
+            .map(|entity| entity.notified(written, None, projection))
             .chain(flat.linked().map(|linked| linked_entity(linked, written)))
             .collect(),
-        None => notified.iter().map(|entity| entity.render(written, None, projection)).collect(),
-    }
+        None => notified.iter().map(|entity| entity.notified(written, None, projection)).collect(),
+    };
+    Ok(notification_data(&entities, data)?)
 }
 
 #[cfg(test)]
@@ -118,6 +121,7 @@ mod tests {
         carried_entities::{CarriedShape, NotifiedLinks, carried_entities},
         notified_entity::NotifiedEntity,
     };
+    use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_linked_retrieval::{
         graph::{LinkedGraph, RootEdges},
         narrowing::list::ListInForce,
@@ -128,6 +132,8 @@ mod tests {
     use andromeda_ngsi_ld_number::json_value::deserialize_exact;
     use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, term::ProjectionTerm};
     use andromeda_ngsi_ld_render::{
+        geometry_selection::GeometrySelection,
+        notification_data::DataShape,
         notification_entity::{StampedInstants, TargetSpelling},
         notified_changes::HeldAttributes,
         structural_projection::StructuralProjection,
@@ -229,6 +235,18 @@ mod tests {
         NotifiedLinks { graph, index }
     }
 
+    /// The entities `carried_entities` writes into an `application/json`
+    /// notification's `data`.
+    fn carried(notified: &[NotifiedEntity], linked: Option<NotifiedLinks<'_>>, shape: CarriedShape<'_>) -> Vec<Value> {
+        let data = DataShape {
+            media_type: ResponseMediaType::Json,
+            selection: GeometrySelection::new(None, &[]),
+            context: None,
+        };
+        let written = carried_entities(notified, linked, shape, data).expect("the walk writes them");
+        serde_json::from_str(written.text()).expect("the written data is an Entity array")
+    }
+
     fn ids(payload: &[Value]) -> Vec<&str> {
         payload.iter().filter_map(|entity| entity["id"].as_str()).collect()
     }
@@ -241,7 +259,7 @@ mod tests {
         let buildings = buildings();
         let linked = city(&buildings);
         let index = index();
-        let payload = carried_entities(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Flat), &projection)).expect("the walk writes them");
+        let payload = carried(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Flat), &projection));
         assert_eq!(
             ids(&payload),
             vec!["urn:ngsi-ld:Building:1", "urn:ngsi-ld:Building:2", "urn:ngsi-ld:City:Paris"]
@@ -256,7 +274,7 @@ mod tests {
         let buildings = buildings();
         let linked = city(&buildings);
         let index = index();
-        let payload = carried_entities(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Inline), &projection)).expect("the walk writes them");
+        let payload = carried(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Inline), &projection));
         assert_eq!(ids(&payload), vec!["urn:ngsi-ld:Building:1", "urn:ngsi-ld:Building:2"]);
         for building in &payload {
             assert_eq!(building["locatedAt"]["entity"]["id"], json!("urn:ngsi-ld:City:Paris"));
@@ -271,7 +289,7 @@ mod tests {
         let linked = city(&buildings);
         let index = index();
         for (join, linked) in [(Some(JoinMode::Flat), None), (Some(JoinMode::None), Some(links(&linked, &index))), (None, None)] {
-            let payload = carried_entities(&buildings, linked, shape(join, &projection)).expect("the walk writes them");
+            let payload = carried(&buildings, linked, shape(join, &projection));
             assert_eq!(ids(&payload), vec!["urn:ngsi-ld:Building:1", "urn:ngsi-ld:Building:2"], "{join:?}");
             assert!(payload[0]["locatedAt"].get("entity").is_none());
         }
@@ -289,7 +307,7 @@ mod tests {
         let buildings = buildings();
         let linked = city(&buildings);
         let index = index();
-        let payload = carried_entities(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Flat), &projection)).expect("the walk writes them");
+        let payload = carried(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Flat), &projection));
         assert!(payload[0].get("type").is_none() && payload[1].get("type").is_none());
         assert_eq!(payload[0]["id"], json!("urn:ngsi-ld:Building:1"));
         assert_eq!(
@@ -306,7 +324,7 @@ mod tests {
         let buildings = buildings();
         let linked = city(&buildings);
         let index = index();
-        let payload = carried_entities(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Flat), &projection)).expect("the walk writes them");
+        let payload = carried(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Flat), &projection));
         assert_eq!(
             payload[2],
             json!({"id": "urn:ngsi-ld:City:Paris", "name": {"type": "Property", "value": "Paris"}})
@@ -339,14 +357,14 @@ mod tests {
             conformance: Some(SpecVersion::V1_0),
             ..shape(Some(join), &projection)
         };
-        let flat = carried_entities(&buildings, Some(links(&linked, &index)), amended(JoinMode::Flat)).expect("the walk writes them");
+        let flat = carried(&buildings, Some(links(&linked, &index)), amended(JoinMode::Flat));
         assert_eq!(flat[0]["type"], json!("Building"));
         assert_eq!(flat[0]["locatedAt"], json!({"type": "Relationship", "object": "urn:ngsi-ld:City:Paris"}));
         assert_eq!(
             flat[1],
             json!({"id": "urn:ngsi-ld:City:Paris", "type": "City", "name": {"type": "Property", "value": {"fr": "Paris"}}})
         );
-        let inline = carried_entities(&buildings, Some(links(&linked, &index)), amended(JoinMode::Inline)).expect("the walk writes them");
+        let inline = carried(&buildings, Some(links(&linked, &index)), amended(JoinMode::Inline));
         assert_eq!(
             inline[0]["locatedAt"]["entity"],
             json!({"id": "urn:ngsi-ld:City:Paris", "type": "City", "name": {"type": "Property", "value": {"fr": "Paris"}}})
@@ -361,9 +379,9 @@ mod tests {
         let buildings = buildings();
         let linked = city(&buildings);
         let index = index();
-        let flat = carried_entities(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Flat), &projection)).expect("the walk writes them");
+        let flat = carried(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Flat), &projection));
         assert_eq!(flat.len(), 2);
-        let inline = carried_entities(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Inline), &projection)).expect("the walk writes them");
+        let inline = carried(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Inline), &projection));
         assert_eq!(inline[0]["locatedAt"], json!({"type": "Relationship", "object": "urn:ngsi-ld:City:Paris"}));
     }
 }

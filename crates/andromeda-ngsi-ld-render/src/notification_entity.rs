@@ -28,12 +28,12 @@ use crate::{
         member_walk::MemberWalk,
         typed_entity::{IdentifierMember, TypedEntity},
     },
-    error::{RenderError, RenderedShape},
     notified_changes::NotifiedChanges,
     structural_projection::StructuralProjection,
     uri_decoding::UriDecoding,
     version::fallback::VersionFallback,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_linked_retrieval::{
     narrowing::member::MemberRule,
     plan::{FlatEntity, InlineCursor},
@@ -42,7 +42,7 @@ use andromeda_linked_retrieval::{
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
+use serde::{Serialize, Serializer};
 
 /// The entity times a notification writes on the notified entity.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -139,6 +139,28 @@ impl<'a> NotificationEntity<'a> {
         }
     }
 
+    /// One entity a notification relays as its source sent it, re-assembled
+    /// for the local subscription (clause 5.8.6), in `format`, its
+    /// Relationship targets as the store holds them.
+    ///
+    /// The relayed entity carries the times its source wrote on it, and its
+    /// `id` is written as a query response writes it.
+    #[must_use]
+    pub const fn relayed(entity: &'a Entity, format: ResponseFormat) -> NotificationEntity<'a> {
+        NotificationEntity {
+            entity,
+            stamped: None,
+            format,
+            targets: TargetSpelling::AsStored,
+            join: None,
+            changes: None,
+            projection: None,
+            identifier: IdentifierMember::Written,
+            narrowing: None,
+            fallback: None,
+        }
+    }
+
     /// The entity, its Relationships nesting the Linked Entities `join`
     /// resolved (clause 4.5.23.2).
     #[must_use]
@@ -173,29 +195,32 @@ impl<'a> NotificationEntity<'a> {
         NotificationEntity { fallback, ..self }
     }
 
-    /// The entity as the JSON value the notification carries.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RenderError::Serialization`] when the entity cannot be
-    /// written.
-    pub fn render(&self) -> Result<Value, RenderError> {
+    /// The entity as the typed walk writes it, carrying `context` beside its
+    /// own members when the body carries one.
+    pub(crate) const fn typed(&self, context: Option<&'a JsonLiteral>) -> TypedEntity<'a> {
         let decoding = match self.targets {
             TargetSpelling::Decoded => UriDecoding::Decode,
             TargetSpelling::AsStored => UriDecoding::Keep,
         };
-        let typed = TypedEntity {
+        TypedEntity {
             entity: self.entity,
             format: self.format,
             walk: MemberWalk::new(decoding, None, self.fallback),
             projection: self.projection,
             identifier: self.identifier,
-            context: None,
+            context,
             stamped: self.stamped,
             join: self.join,
             narrowing: self.narrowing,
             changes: self.changes,
-        };
-        serde_json::to_value(typed).map_err(|error| RenderError::serialization(RenderedShape::Entity, error))
+        }
+    }
+}
+
+/// The entity as one member of a notification's `data` writes it, without a
+/// `@context` of its own.
+impl Serialize for NotificationEntity<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.typed(None).serialize(serializer)
     }
 }
