@@ -1,5 +1,6 @@
 use andromeda_http_extraction::jsonld::{JsonLd, JsonLdDocument};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_model::request_body::RequestBody;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
@@ -52,14 +53,19 @@ async fn malformed_json_is_invalid_request_with_the_exact_instance() -> Result<(
     Ok(())
 }
 
+/// A body that does not decode is refused once its context was admitted, so
+/// an unretrievable context answers first (clauses 5.5.4 and 5.5.6).
 #[tokio::test]
-async fn structurally_invalid_json_is_bad_request_data_before_policy_execution() -> Result<(), Box<dyn Error>> {
+async fn structurally_invalid_json_is_bad_request_data_once_its_context_is_admitted() -> Result<(), Box<dyn Error>> {
     let request = json_request("{}")?;
-    let rejection = match JsonLd::<RequiredIdentifier>::from_request(request, &()).await {
-        Err(rejection) => rejection,
-        Ok(value) => return Err(format!("body without id was accepted as {}", value.value.id).into()),
+    let Ok(JsonLd { body, .. }) = JsonLd::<RequiredIdentifier>::from_request(request, &()).await else {
+        return Err("the body was refused before its context was admitted".into());
     };
-    let body = rejection_body(rejection).await?;
+    let refusal = match body.admitted(&AdmittedContext::core_only()) {
+        Err(refusal) => refusal,
+        Ok(value) => return Err(format!("body without id was accepted as {}", value.id).into()),
+    };
+    let body = rejection_body(ExtractorRejection::Classified(refusal)).await?;
     pretty_assertions::assert_eq!(body["status"], 400);
     pretty_assertions::assert_eq!(body["title"], "Bad request data");
     pretty_assertions::assert_eq!(body["instance"], "/ngsi-ld/v1/entities");

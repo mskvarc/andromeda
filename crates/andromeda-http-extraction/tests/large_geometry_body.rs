@@ -9,6 +9,7 @@
 //! measures nothing but this test.
 
 use andromeda_http_extraction::jsonld::JsonLd;
+use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     entity::Entity,
@@ -99,8 +100,9 @@ async fn a_million_position_polygon_body_decodes_without_a_tree() {
     let elapsed = started.elapsed();
     let peak_above_input = ALLOCATOR.peak_above(mark);
     println!("decoding a body of {length} bytes holding {POSITIONS} positions peaked at {peak_above_input} bytes above the input and took {elapsed:?}");
-    let entity = match extracted {
-        Ok(JsonLd { value, .. }) => value,
+    let entity = match extracted.map(|JsonLd { body, .. }| body.admitted(&AdmittedContext::core_only())) {
+        Ok(Ok(entity)) => entity,
+        Ok(Err(refusal)) => panic!("the polygon body is a valid Entity, got {refusal:?}"),
         Err(rejection) => panic!("the polygon body is a valid Entity, got {rejection:?}"),
     };
     assert_eq!(

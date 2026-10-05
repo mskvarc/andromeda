@@ -7,8 +7,9 @@
 //! A body is admitted from its text alone: its JSON values are counted, its
 //! numbers checked and its top-level `@context` read without building it, and
 //! a [`JsonLd`] body is then decoded straight from the text into its domain
-//! type. Only a [`JsonLdDocument`], which a handler keeps untyped, is parsed
-//! into a JSON tree.
+//! type, held as a [`SubmittedBody`] until its context is admitted. Only a
+//! [`JsonLdDocument`], which a handler keeps untyped, is parsed into a JSON
+//! tree.
 
 use crate::{
     addressed_uri::addressed_request_uri,
@@ -21,15 +22,17 @@ use crate::{
     request_json_value_limit::RequestJsonValueLimit,
     request_links::{PayloadCarrier, RequestLinks},
     request_payload::buffer_payload,
+    submitted_body::SubmittedBody,
     undecodable_body::UndecodableBody,
 };
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{classified_report::ClassifiedReport, extraction_rejection::ExtractorRejection};
 use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext, user_context_admission::SubmittedContext};
 use andromeda_ngsi_ld_model::request_body::RequestBody;
 use andromeda_ngsi_ld_number::json_value::{
     deserialize_exact_document,
     number_range::{NumberRangeError, refuse_numbers_out_of_range},
 };
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_representation::embedded_context_admission::find_embedded_context;
 use axum::{
     body::Bytes,
@@ -47,11 +50,13 @@ use serde_json::Value;
 /// (`application/json`, `application/ld+json`, `application/merge-patch+json`),
 /// extracts and merges `@context` values from the body when present, and
 /// decodes the body, its `@context` member skipped, straight from its text into
-/// `T`. A handler that keeps the body as an untyped JSON document takes
-/// [`JsonLdDocument`] instead.
+/// `T`. A body that does not decode is refused only once its context was
+/// admitted, so an unretrievable or refused context answers first (clauses
+/// 5.5.4 and 5.5.7). A handler that keeps the body as an untyped JSON document
+/// takes [`JsonLdDocument`] instead.
 pub struct JsonLd<T> {
-    /// The deserialized request body with `@context` removed.
-    pub value: T,
+    /// The request body with `@context` removed, decoded into `T`.
+    pub body: SubmittedBody<T>,
     /// The context the request named in its body or `Link` header, admitted
     /// before anything is read under it.
     pub context: SubmittedContext,
@@ -160,8 +165,15 @@ where
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         admit_request_body(req, state, |AdmittedBody { text, context, uri }| {
             let context = submitted_context(context, &text, &uri)?;
-            let value = T::from_request_text(&text).map_err(|source| undecodable_body(&UndecodableBody::of_text::<T>(&text, source), uri))?;
-            Ok(JsonLd { value, context })
+            let decoded = T::from_request_text(&text).map_err(|source| {
+                let refusal = UndecodableBody::of_text::<T>(&text, source);
+                // clone: the refusal names the request, which the held body keeps naming
+                ClassifiedReport::public(NgsiLdErrorType::BadRequestData, refusal.to_string()).with_instance(uri.clone())
+            });
+            Ok(JsonLd {
+                body: SubmittedBody::new(decoded, uri),
+                context,
+            })
         })
         .await
     }
@@ -394,7 +406,11 @@ mod tests {
         request_json_value_limit::RequestJsonValueLimit,
     };
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
-    use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext, user_context_admission::SubmittedContext};
+    use andromeda_jsonld::{
+        context_spec::ContextSpec,
+        request_context::RequestContext,
+        user_context_admission::{AdmittedContext, SubmittedContext},
+    };
     use andromeda_ngsi_ld_model::{entity::Entity, request_body::RequestBody};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -422,11 +438,19 @@ mod tests {
         request
     }
 
-    async fn extract<T>(request: Request<Body>) -> Result<JsonLd<T>, ExtractorRejection>
+    /// What a typed extraction yields once its context was admitted.
+    struct Typed<T> {
+        value: T,
+        context: SubmittedContext,
+    }
+
+    async fn extract<T>(request: Request<Body>) -> Result<Typed<T>, ExtractorRejection>
     where
         T: RequestBody + Send + 'static,
     {
-        JsonLd::<T>::from_request(with_content_length(request), &()).await
+        let JsonLd { body, context } = JsonLd::<T>::from_request(with_content_length(request), &()).await?;
+        let value = body.admitted(&AdmittedContext::core_only()).map_err(ExtractorRejection::Classified)?;
+        Ok(Typed { value, context })
     }
 
     async fn extract_document(request: Request<Body>) -> Result<JsonLdDocument, ExtractorRejection> {
@@ -868,7 +892,7 @@ mod tests {
                 (Ok(untyped), Ok(typed)) => pretty_assertions::assert_eq!(untyped, typed, "{body}"),
                 // Both refuse the document; the typed extraction can also name
                 // the member it failed at, which an untyped one has none of.
-                (Err(ExtractorRejection::BadRequestData { .. }), Err(ExtractorRejection::BadRequestData { .. })) => {}
+                (Err(untyped), Err(typed)) if is_bad_request_data(&untyped) && is_bad_request_data(&typed) => {}
                 _other => panic!("{body}: the untyped and Entity-typed extractions disagree"),
             }
         }
@@ -884,9 +908,10 @@ mod tests {
         impl RequestBody for Named {}
 
         match extract::<Named>(json_request(r#"{"name":5}"#)).await {
-            Err(ExtractorRejection::BadRequestData { detail, .. }) => {
+            Err(ExtractorRejection::Classified(response)) => {
+                pretty_assertions::assert_eq!(response.problem().error_type(), NgsiLdErrorType::BadRequestData);
                 pretty_assertions::assert_eq!(
-                    detail,
+                    response.problem().detail(),
                     "the request body member 'name' does not decode: invalid type: integer `5`, expected a string at line 1 column 9"
                 );
             }

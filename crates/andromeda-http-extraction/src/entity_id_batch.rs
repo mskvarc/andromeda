@@ -17,6 +17,7 @@ use crate::{
     batch_body_refusal::{BatchBodyRefusal, BatchMembers},
     batch_item_refusal::BatchItemRefusal,
     jsonld::{AdmittedBody, admit_request_body, submitted_context},
+    submitted_body::SubmittedBody,
 };
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::user_context_admission::SubmittedContext;
@@ -40,8 +41,8 @@ pub struct EntityIdBatch {
 /// Axum extractor for the body of a batch delete, read as the JSON-LD array
 /// clause 5.6.10.3 takes.
 pub struct JsonLdEntityIds {
-    /// The identifiers the body names.
-    pub batch: EntityIdBatch,
+    /// The identifiers the body names, read once the context is admitted.
+    pub batch: SubmittedBody<EntityIdBatch>,
     /// The context the request named, in its `Link` header (clause 6.3.5),
     /// admitted before anything is read under it.
     pub context: SubmittedContext,
@@ -56,8 +57,12 @@ where
     async fn from_request(req: Request, state: &S) -> Result<JsonLdEntityIds, ExtractorRejection> {
         admit_request_body(req, state, |AdmittedBody { text, context, uri }| {
             let context = submitted_context(context, &text, &uri)?;
-            let batch = entity_id_batch(&text).map_err(|refusal| ExtractorRejection::Classified(refusal.into_problem(uri)))?;
-            Ok(JsonLdEntityIds { batch, context })
+            // clone: the refusal names the request, which the held body keeps naming
+            let batch = entity_id_batch(&text).map_err(|refusal| refusal.into_problem(uri.clone()));
+            Ok(JsonLdEntityIds {
+                batch: SubmittedBody::new(batch, uri),
+                context,
+            })
         })
         .await
     }
@@ -93,9 +98,13 @@ fn entity_id_batch(body: &[u8]) -> Result<EntityIdBatch, BatchBodyRefusal> {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_id_batch::JsonLdEntityIds;
+    use crate::entity_id_batch::{EntityIdBatch, JsonLdEntityIds};
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
-    use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext, user_context_admission::SubmittedContext};
+    use andromeda_jsonld::{
+        context_spec::ContextSpec,
+        request_context::RequestContext,
+        user_context_admission::{AdmittedContext, SubmittedContext},
+    };
     use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
     use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use axum::{
@@ -133,10 +142,20 @@ mod tests {
         JsonLdEntityIds::from_request(request, &()).await
     }
 
+    /// The identifiers the request names, read as once its context was
+    /// admitted.
+    async fn batch_of(request: Request<Body>) -> Result<EntityIdBatch, ExtractorRejection> {
+        extract(request)
+            .await?
+            .batch
+            .admitted(&AdmittedContext::core_only())
+            .map_err(ExtractorRejection::Classified)
+    }
+
     /// The category and detail the request is refused with.
     async fn refusal_of(request: Request<Body>) -> (NgsiLdErrorType, String) {
-        match extract(request).await {
-            Ok(extracted) => panic!("the request was to fail as a whole, parsed {:?}", extracted.batch),
+        match batch_of(request).await {
+            Ok(batch) => panic!("the request was to fail as a whole, parsed {batch:?}"),
             Err(ExtractorRejection::Classified(response)) => (response.problem().error_type(), response.problem().detail().to_owned()),
             Err(ExtractorRejection::BadRequestData { detail, .. }) => (NgsiLdErrorType::BadRequestData, detail),
             Err(ExtractorRejection::InvalidRequest { detail, .. }) => (NgsiLdErrorType::InvalidRequest, detail),
@@ -155,7 +174,8 @@ mod tests {
         let extracted = extract(request("application/json", r#"["urn:ngsi-ld:T:1"]"#.to_owned(), &[CONTEXT_LINK]))
             .await
             .expect("a batch of ids");
-        pretty_assertions::assert_eq!(extracted.batch.ids.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:1"]);
+        let batch = extracted.batch.admitted(&AdmittedContext::core_only()).expect("a batch of ids");
+        pretty_assertions::assert_eq!(batch.ids.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:1"]);
         pretty_assertions::assert_eq!(
             extracted.context,
             SubmittedContext::from(ContextSpec::from_link(
@@ -209,14 +229,14 @@ mod tests {
 
     #[tokio::test]
     async fn well_formed_ids_are_all_identifiers() {
-        let extracted = extract(json_request(r#"["urn:ngsi-ld:Vehicle:a","urn:ngsi-ld:Vehicle:b"]"#))
+        let batch = batch_of(json_request(r#"["urn:ngsi-ld:Vehicle:a","urn:ngsi-ld:Vehicle:b"]"#))
             .await
             .expect("a batch of ids");
         pretty_assertions::assert_eq!(
-            extracted.batch.ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            batch.ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
             vec!["urn:ngsi-ld:Vehicle:a", "urn:ngsi-ld:Vehicle:b"]
         );
-        pretty_assertions::assert_eq!(extracted.batch.refused, Vec::new());
+        pretty_assertions::assert_eq!(batch.refused, Vec::new());
     }
 
     /// Table 5.2.17-1 sets no length on `entityId`: an `id` too long to be
@@ -225,7 +245,7 @@ mod tests {
     async fn an_over_long_id_is_refused_against_itself() {
         let long_id = urn_of_length(IDENTIFIER_BYTE_LIMIT + 1);
         let body = format!(r#"["urn:ngsi-ld:Vehicle:a","{long_id}"]"#);
-        let batch = extract(request("application/json", body, &[])).await.expect("a batch of ids").batch;
+        let batch = batch_of(request("application/json", body, &[])).await.expect("a batch of ids");
         pretty_assertions::assert_eq!(batch.ids.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["urn:ngsi-ld:Vehicle:a"]);
         pretty_assertions::assert_eq!(batch.refused.len(), 1);
         pretty_assertions::assert_eq!(batch.refused[0].entity_id.as_str(), long_id.as_str());

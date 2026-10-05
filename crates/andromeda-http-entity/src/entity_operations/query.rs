@@ -34,6 +34,7 @@ pub(crate) async fn query(
     EntityPostQuery { query, context }: EntityPostQuery,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(services.entity_query.engine(), context).await.with_entity_instance(&uri)?;
+    let query = query.admitted(&context)?;
     run(EntityQueryRequest::builder()
         .services(services)
         .target(target)

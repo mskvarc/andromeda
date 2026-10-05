@@ -10,7 +10,7 @@
 //! admission itself is the route's: it is installed as a request extension of
 //! the [`TemporalQueryAdmission`] type the binding names.
 
-use crate::{addressed_uri::addressed_uri, jsonld::JsonLd, query::ValidatedQuery};
+use crate::{addressed_uri::addressed_uri, jsonld::JsonLd, query::ValidatedQuery, submitted_body::SubmittedBody};
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
     extraction_rejection::ExtractorRejection,
@@ -89,8 +89,9 @@ where
 /// 6.24.3.1), folded into one parameter set admitted by the route's `A`, with
 /// the one context the body extractor resolved (clause 6.3.5).
 pub struct AdmittedTemporalPostQuery<A> {
-    /// The query the body and the URL parameters describe.
-    pub params: TemporalQueryParameters,
+    /// The query the body and the URL parameters describe, read once the
+    /// context is admitted.
+    pub params: SubmittedBody<TemporalQueryParameters>,
     /// The context the query is read against: the body's own `@context` for
     /// `application/ld+json`, the `Link` context for `application/json`.
     pub context: SubmittedContext,
@@ -109,16 +110,18 @@ where
         let (mut parts, body) = request.into_parts();
         let ValidatedQuery(url_params) = ValidatedQuery::<TemporalPostQueryParams>::from_request_parts(&mut parts, state).await?;
         let admission = installed_admission::<A>(&parts)?;
-        let uri = addressed_uri(&parts);
-        let JsonLd { value: query, context } = JsonLd::<Query>::from_request(Request::from_parts(parts, body), state).await?;
-        let mut params = TemporalQueryParameters::try_from(query)
-            .map_err(|error| ExtractorRejection::Classified(classify_parameter_error(&error).with_instance(uri.clone())))?; // clone: the admission below names the request too
-        url_params.apply_to(&mut params);
-        // The body's `aggrParams.aggrGroupBy` is folded into `params` by now,
-        // so the admission sees the whole query.
-        admission
-            .admit(&params, TemporalQueryBinding::Body)
-            .map_err(|report| ExtractorRejection::Classified(report.with_instance(uri)))?;
+        let JsonLd { body, context } = JsonLd::<Query>::from_request(Request::from_parts(parts, body), state).await?;
+        let params = body.and_then(|query, uri| {
+            // clone: each refusal names the request, which the held body keeps naming
+            let mut params = TemporalQueryParameters::try_from(query).map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?;
+            url_params.apply_to(&mut params);
+            // The body's `aggrParams.aggrGroupBy` is folded into `params` by
+            // now, so the admission sees the whole query.
+            admission
+                .admit(&params, TemporalQueryBinding::Body)
+                .map_err(|report| report.with_instance(uri.clone()))?; // clone: as above
+            Ok(params)
+        });
         Ok(AdmittedTemporalPostQuery {
             params,
             context,

@@ -40,11 +40,12 @@ pub(crate) async fn update(
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     TypedPath(id): TypedPath<Identifier>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
-    JsonLd { value: patch, context }: JsonLd<EntityPatch>,
+    JsonLd { body, context }: JsonLd<EntityPatch>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
+    let patch = body.admitted(&context)?;
     let service = &state.entities;
     let is_local = params.local.unwrap_or(false);
     // Clause 5.6.18.4 runs the clause 5.5.4 validation before the forwarding

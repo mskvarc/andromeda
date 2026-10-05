@@ -604,9 +604,9 @@ async fn regression_embedded_user_context_subscriptions_and_registrations_are_re
 /// Clause 5.5.7 holds for every NGSI-LD document a client sends: a posted
 /// query, an Entity Map creation from one and an Entity Map update carrying an
 /// `@context` below the top level are `BadRequestData`. A query's entity
-/// selector admits no member but `id`, `idPattern` and `type`, so its
-/// decoding refuses the member before the admission is reached, with the same
-/// error type.
+/// selector admits no member but `id`, `idPattern` and `type`, yet the body is
+/// judged only once its context was admitted, so the refusal names clause
+/// 5.5.7 rather than the member the decoding would refuse.
 #[tokio::test]
 async fn regression_embedded_user_context_queries_and_entity_maps_are_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -623,9 +623,7 @@ async fn regression_embedded_user_context_queries_and_entity_maps_are_refused() 
         "/ngsi-ld/v1/temporal/entityMaps",
     ] {
         let response = send_ld_json(client, Method::POST, path, &query).await;
-        assert_eq!(response.status, StatusCode::BAD_REQUEST, "{path}: {:?}", response.body);
-        let problem = response.json_value().expect("a refusal carries a problem details body");
-        assert_eq!(problem["type"], json!(BAD_REQUEST_DATA), "{path}: {problem}");
+        assert_embedded_context_refused(&response, path);
     }
 
     let device = scope.id("Device:entity-map-target");
@@ -699,6 +697,83 @@ async fn regression_embedded_user_context_an_unreachable_context_outranks_an_emb
         .and_then(|errors| errors.iter().find(|error| error["entityId"] == json!(unreachable)))
         .unwrap_or(&Value::Null);
     assert_eq!(reported["error"]["type"], json!(LD_CONTEXT_NOT_AVAILABLE), "{result}");
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.5.4 judges a payload "syntactically correct, according to the
+/// @context": a body that does not decode into what the operation takes is
+/// refused only once its context loaded, so an unreachable context answers
+/// `LdContextNotAvailable` first on every typed body, and on each entity of a
+/// batch.
+#[tokio::test]
+async fn regression_embedded_user_context_an_unreachable_context_outranks_an_undecodable_body() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let link = format!(r#"<{UNREACHABLE_CONTEXT}>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#);
+
+    for (label, method, path, body) in [
+        (
+            "entity create",
+            Method::POST,
+            "/ngsi-ld/v1/entities".to_owned(),
+            json!({"id": scope.id("Device:unreachable-undecodable"), "type": 5}),
+        ),
+        (
+            "entity query",
+            Method::POST,
+            "/ngsi-ld/v1/entityOperations/query".to_owned(),
+            json!({"type": "Query", "entities": [{"type": "Device", "bogus": 1}]}),
+        ),
+        (
+            "temporal entity query",
+            Method::POST,
+            "/ngsi-ld/v1/temporal/entityOperations/query".to_owned(),
+            json!({"type": "Query", "entities": [{"type": "Device", "bogus": 1}]}),
+        ),
+        (
+            "entity map creation",
+            Method::POST,
+            "/ngsi-ld/v1/entityMaps".to_owned(),
+            json!({"type": "Query", "entities": [{"type": "Device", "bogus": 1}]}),
+        ),
+        (
+            "batch delete",
+            Method::POST,
+            "/ngsi-ld/v1/entityOperations/delete".to_owned(),
+            json!(["urn:ngsi-ld:Device:a", 42]),
+        ),
+    ] {
+        let response = client
+            .raw(method, &path)
+            .header("content-type", "application/json")
+            .header("link", link.as_str())
+            .json(&body)
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(response.status, StatusCode::GATEWAY_TIMEOUT, "{label}: {:?}", response.body);
+        let problem = response.json_value().expect("a refusal carries a problem details body");
+        assert_eq!(problem["type"], json!(LD_CONTEXT_NOT_AVAILABLE), "{label}: {problem}");
+    }
+
+    let unreachable = scope.id("Device:batch-unreachable-undecodable");
+    let decodable = scope.id("Device:batch-reachable-undecodable");
+    let body = json!([
+        {"id": unreachable, "type": 5, "@context": [UNREACHABLE_CONTEXT]},
+        {"id": decodable, "type": 5, "@context": [CORE_CONTEXT]}
+    ]);
+    let response = send_ld_json(client, Method::POST, "/ngsi-ld/v1/entityOperations/create", &body).await;
+    assert_eq!(response.status, StatusCode::MULTI_STATUS, "{:?}", response.body);
+    let result = response.json_value().expect("a batch answers with a clause 5.2.16 result");
+    let reported = |id: &str| {
+        result["errors"]
+            .as_array()
+            .and_then(|errors| errors.iter().find(|error| error["entityId"] == json!(id)))
+            .map_or(Value::Null, |error| error["error"]["type"].clone()) // clone: the type outlives the borrowed result
+    };
+    assert_eq!(reported(&unreachable), json!(LD_CONTEXT_NOT_AVAILABLE), "{result}");
+    assert_eq!(reported(&decodable), json!(BAD_REQUEST_DATA), "{result}");
 
     scope.finish().await.expect("cleanup failed");
 }

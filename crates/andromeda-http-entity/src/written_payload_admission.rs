@@ -236,7 +236,13 @@ async fn screened_batch_entities(
 ) -> Result<Vec<SubmittedEntity>, WrittenPayloadRefusal> {
     let mut decided: HashMap<BatchContextId, ContextAdmission> = HashMap::new();
     let mut submitted = Vec::with_capacity(items.len());
-    for BatchItem { entity, context, embedded } in items {
+    for BatchItem {
+        entity_id,
+        entity,
+        context,
+        embedded,
+    } in items
+    {
         let admission = match decided.entry(context.id()) {
             Entry::Occupied(seen) => seen.into_mut(),
             Entry::Vacant(slot) => slot.insert(context_admission(admit_context(&context).await)?),
@@ -244,7 +250,7 @@ async fn screened_batch_entities(
         let admitted = match admission {
             ContextAdmission::Admitted(admitted) => admitted,
             ContextAdmission::Unavailable(refusal) => {
-                refused.push(batch_entity_error(entity.id.into(), refusal, EntityHttpClassify::classify_for_entity_http));
+                refused.push(batch_entity_error(entity_id, refusal, EntityHttpClassify::classify_for_entity_http));
                 continue;
             }
         };
@@ -252,9 +258,18 @@ async fn screened_batch_entities(
         // level is that entity's refusal, judged once its context loaded.
         if let Some(found) = embedded {
             let refusal = WrittenPayloadRefusal::Placement(EntityError::from(JsonLdError::from(found)));
-            refused.push(batch_entity_error(entity.id.into(), &refusal, EntityHttpClassify::classify_for_entity_http));
+            refused.push(batch_entity_error(entity_id, &refusal, EntityHttpClassify::classify_for_entity_http));
             continue;
         }
+        // Clause 5.5.4: an item that is no entity is judged under the context
+        // it named, once that context loaded.
+        let entity = match entity {
+            Ok(entity) => entity,
+            Err(refusal) => {
+                refused.push(refusal.against(entity_id));
+                continue;
+            }
+        };
         match screen_compact_entity(&entity) {
             Ok(()) => submitted.push(SubmittedEntity {
                 entity,
@@ -307,7 +322,7 @@ mod tests {
         written_payload_admission::{WrittenPayloadRefusal, screened_batch_entities},
     };
     use andromeda_entity::error::EntityError;
-    use andromeda_http_extraction::entity_batch::BatchItem;
+    use andromeda_http_extraction::{batch_item_refusal::BatchItemRefusal, entity_batch::BatchItem, undecodable_body::UndecodableBody};
     use andromeda_jsonld::{
         batch_contexts::{AdmittedBatchContext, BatchContext, BatchContexts},
         context_spec::ContextSpec,
@@ -315,7 +330,7 @@ mod tests {
         engine::processor::JsonLdEngine,
         error::JsonLdError,
     };
-    use andromeda_ngsi_ld_model::entity::Entity;
+    use andromeda_ngsi_ld_model::{entity::Entity, request_body::RequestBody};
     use andromeda_ngsi_ld_problem_details::batch_operation::BatchEntityError;
     use andromeda_ngsi_ld_representation::{
         attribute_type_validation::{AttributeNodeFault, AttributeTypeError},
@@ -340,7 +355,8 @@ mod tests {
         entities
             .iter()
             .map(|(id, context)| BatchItem {
-                entity: entity(&json!({ "id": id, "type": "Building" })),
+                entity_id: id.parse().expect("a valid URI"),
+                entity: Ok(entity(&json!({ "id": id, "type": "Building" }))),
                 context: contexts.context_of(Some(serde_json::from_str(context).unwrap_or_else(|_| Value::from(*context)))),
                 embedded: None,
             })
@@ -353,7 +369,7 @@ mod tests {
         items(entities)
             .into_iter()
             .map(|item| BatchItem {
-                embedded: embedding.contains(&item.entity.id.as_str()).then(|| {
+                embedded: embedding.contains(&item.entity_id.as_str()).then(|| {
                     find_embedded_context(br#"{"speed": {"@context": {}}}"#)
                         .expect("valid JSON")
                         .expect("an embedded context")
@@ -423,6 +439,56 @@ mod tests {
         pretty_assertions::assert_eq!(
             refused_types(&refused),
             vec![("urn:ngsi-ld:Building:a".to_owned(), "LdContextNotAvailable".to_owned())]
+        );
+    }
+
+    /// `items`, the entity `id`s in `undecodable` holding the refusal of an
+    /// item that is no entity.
+    fn items_undecodable(entities: &[(&str, &str)], undecodable: &[&str]) -> Vec<BatchItem> {
+        items(entities)
+            .into_iter()
+            .map(|item| BatchItem {
+                entity: if undecodable.contains(&item.entity_id.as_str()) {
+                    let text = br#"{"id": "urn:ngsi-ld:Building:x", "type": 5}"#;
+                    let source = Entity::from_request_text(text).expect_err("a numeric type is no entity");
+                    Err(BatchItemRefusal::from(UndecodableBody::of_text::<Entity>(text, source)))
+                } else {
+                    item.entity
+                },
+                ..item
+            })
+            .collect()
+    }
+
+    /// Clause 5.5.4 judges an item "according to the @context": an item that
+    /// is no entity is refused on its own once its context loaded, and an
+    /// unretrievable context outranks it.
+    #[tokio::test]
+    async fn an_undecodable_entity_is_refused_once_its_context_loaded() {
+        let mut refused = Vec::new();
+        let rendered = screened_batch_entities(
+            async |context: &BatchContext| admission_of(context).await,
+            items_undecodable(
+                &[
+                    ("urn:ngsi-ld:Building:a", ADMITTED),
+                    ("urn:ngsi-ld:Building:b", ADMITTED),
+                    ("urn:ngsi-ld:Building:c", UNRETRIEVABLE),
+                ],
+                &["urn:ngsi-ld:Building:b", "urn:ngsi-ld:Building:c"],
+            ),
+            &mut refused,
+        )
+        .await
+        .expect("an undecodable entity does not fail the operation");
+
+        let admitted: Vec<String> = rendered.iter().map(|item| item.entity.id.to_string()).collect();
+        pretty_assertions::assert_eq!(admitted, vec!["urn:ngsi-ld:Building:a"]);
+        pretty_assertions::assert_eq!(
+            refused_types(&refused),
+            vec![
+                ("urn:ngsi-ld:Building:b".to_owned(), "BadRequestData".to_owned()),
+                ("urn:ngsi-ld:Building:c".to_owned(), "LdContextNotAvailable".to_owned()),
+            ]
         );
     }
 

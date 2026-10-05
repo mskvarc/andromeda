@@ -183,8 +183,13 @@ where
 /// so a batch whose items agree resolves its context once.
 #[derive(Debug)]
 pub struct BatchItem {
-    /// The decoded entity, its `@context` member removed.
-    pub entity: Entity,
+    /// The `id` the item carried, which every refusal of it is reported
+    /// against.
+    pub entity_id: Uri,
+    /// The decoded entity, its `@context` member removed, or the refusal of
+    /// an item that is no entity: clause 5.5.4 judges the item "according to
+    /// the @context", so the refusal is reported only once the context loaded.
+    pub entity: Result<Entity, BatchItemRefusal>,
     /// The context the entity is read against.
     pub context: BatchContext,
     /// The first `@context` the item embedded below its own top level (clause
@@ -193,10 +198,12 @@ pub struct BatchItem {
     pub embedded: Option<EmbeddedContext>,
 }
 
-/// One batch item that decoded, with what it carried beside the entity.
+/// One batch item that passed the batch rules, with what it carried beside
+/// the entity.
 struct DecodedItem {
-    /// The decoded entity, its `@context` member removed.
-    entity: Entity,
+    /// The decoded entity, its `@context` member removed, or the refusal of
+    /// an item that is no entity.
+    entity: Result<Entity, BatchItemRefusal>,
     /// The item's own top-level `@context`, as written.
     own_context: Option<Value>,
     /// The first `@context` the item embedded below its own top level.
@@ -206,14 +213,15 @@ struct DecodedItem {
 /// A decoded batch request.
 #[derive(Debug)]
 pub struct ParsedBatch {
-    /// The entities that decoded, each with its own context, in submission
-    /// order.
+    /// The items that passed the batch rules, each with its own context, in
+    /// submission order.
     pub items: Vec<BatchItem>,
     /// The context the request as a whole is answered and forwarded under:
     /// the one every item shares, or the default context when the items of an
     /// `application/ld+json` batch name different ones.
     pub context: ContextSpec,
-    /// The items that failed to decode, each against its own entity.
+    /// The items refused before their context is known, each against its own
+    /// entity.
     pub errors: Vec<BatchEntityError>,
 }
 
@@ -266,10 +274,11 @@ impl<'b> BatchArrayItem<'b> {
     /// # Errors
     ///
     /// Returns the [`BatchItemRefusal`] when the `id` is too long to be stored,
-    /// when the item carries a number the model cannot represent, carries an
-    /// `@context` its representation forbids or lacks one it requires (clause
-    /// 6.3.5), or is not an entity. Clause 5.6.7.4 reports these per entity,
-    /// leaving the rest of the batch intact.
+    /// when the item carries a number the model cannot represent, or carries
+    /// an `@context` its representation forbids or lacks one it requires
+    /// (clause 6.3.5). Clause 5.6.7.4 reports these per entity, leaving the
+    /// rest of the batch intact. An item that is not an entity is decoded into
+    /// its refusal, held until the context it names was admitted.
     fn admit(self, entity_id: &Uri, content_kind: ContentKind) -> Result<DecodedItem, BatchItemRefusal> {
         IdentifierTooLong::check(entity_id.as_str())?;
         let text = self.text.get().as_bytes();
@@ -287,7 +296,7 @@ impl<'b> BatchArrayItem<'b> {
             (ContentKind::Json, None) | (ContentKind::LdJson, Some(_)) => {}
         }
 
-        let entity = Entity::from_request_text(text).map_err(|source| BatchItemRefusal::from(UndecodableBody::of_text::<Entity>(text, source)))?;
+        let entity = Entity::from_request_text(text).map_err(|source| BatchItemRefusal::from(UndecodableBody::of_text::<Entity>(text, source)));
         Ok(DecodedItem {
             entity,
             own_context: context,
@@ -355,6 +364,7 @@ fn decode_batch(
         let entity_id = item.entity_id(index)?;
         match item.admit(&entity_id, content_kind) {
             Ok(DecodedItem { entity, own_context, embedded }) => admitted.push(BatchItem {
+                entity_id,
                 entity,
                 context: contexts.context_of(own_context),
                 embedded,
@@ -374,7 +384,7 @@ fn decode_batch(
 mod tests {
     use crate::{
         blocking_decode::BlockingDecodePolicy,
-        entity_batch::{BatchBody, ParsedBatch, parse_batch_entities},
+        entity_batch::{BatchBody, BatchItem, ParsedBatch, parse_batch_entities},
         request_json_value_limit::RequestJsonValueLimit,
     };
     use andromeda_http_response::problem_response::ProblemResponse;
@@ -407,10 +417,18 @@ mod tests {
     }
 
     /// The entities and per-entity errors a batch decodes into, read against
-    /// the default context.
+    /// the default context: the refusals held until an item's context is
+    /// admitted follow the ones raised before it.
     async fn parsed(batch: &BatchBody) -> (Vec<Entity>, Vec<BatchEntityError>) {
-        let ParsedBatch { items, errors, .. } = parse_batch_entities(batch, &batch_uri()).await.expect("batch parses");
-        (items.into_iter().map(|item| item.entity).collect(), errors)
+        let ParsedBatch { items, mut errors, .. } = parse_batch_entities(batch, &batch_uri()).await.expect("batch parses");
+        let mut entities = Vec::new();
+        for BatchItem { entity_id, entity, .. } in items {
+            match entity {
+                Ok(entity) => entities.push(entity),
+                Err(refusal) => errors.push(refusal.against(entity_id)),
+            }
+        }
+        (entities, errors)
     }
 
     /// The batch body an `application/json` request carries, as the extractor
@@ -476,7 +494,7 @@ mod tests {
         assert!(errors.is_empty(), "{errors:?}");
         let findings: Vec<(String, Option<String>)> = items
             .iter()
-            .map(|item| (item.entity.id.to_string(), item.embedded.as_ref().map(|found| found.path.to_string())))
+            .map(|item| (item.entity_id.to_string(), item.embedded.as_ref().map(|found| found.path.to_string())))
             .collect();
         pretty_assertions::assert_eq!(
             findings,
@@ -669,7 +687,7 @@ mod tests {
         pretty_assertions::assert_eq!(items[0].context.id(), items[2].context.id(), "items naming one context share it");
         pretty_assertions::assert_ne!(items[0].context.id(), items[1].context.id());
         pretty_assertions::assert_eq!(context, ContextSpec::none(), "items naming several contexts leave the request the default one");
-        assert!(items.iter().all(|item| item.entity.id.as_str().starts_with("urn:ngsi-ld:Vehicle:")));
+        assert!(items.iter().all(|item| item.entity_id.as_str().starts_with("urn:ngsi-ld:Vehicle:")));
     }
 
     /// Items naming one and the same context make it the request's context
@@ -922,7 +940,10 @@ mod tests {
                     Ok(ParsedBatch { items, errors, .. }) => Ok((
                         items
                             .iter()
-                            .map(|item| serde_json::to_value(&item.entity).expect("an entity serializes"))
+                            .map(|item| match &item.entity {
+                                Ok(entity) => serde_json::to_value(entity).expect("an entity serializes"),
+                                Err(refusal) => serde_json::Value::String(refusal.to_string()),
+                            })
                             .collect::<Vec<_>>(),
                         errors,
                     )),
