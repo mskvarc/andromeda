@@ -46,6 +46,7 @@
 //! `information` they are handed, and own the encoding of that derivation.
 
 pub mod create_params;
+pub mod expired_deletion;
 pub mod forwarding_outcome;
 pub mod mutation;
 pub mod page;
@@ -54,10 +55,16 @@ pub mod update_fragment;
 use crate::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
-    store::{create_params::CreateCsrParams, forwarding_outcome::ForwardingOutcome, mutation::RegistrationMutation, page::RegistrationPage},
+    store::{
+        create_params::CreateCsrParams,
+        expired_deletion::ExpiredDeletion,
+        forwarding_outcome::ForwardingOutcome,
+        mutation::RegistrationMutation,
+        page::RegistrationPage,
+    },
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
@@ -78,11 +85,9 @@ pub trait RegistrationStore: Send + Sync + 'static {
     ///
     /// Removes the routing projection rows of every deleted registration in the
     /// same transaction as the deletion: an expired registration that lingers in
-    /// the projection keeps being preselected for distributed operations.
-    fn delete_expired<'life0, 'async_trait>(
-        &'life0 self,
-        cutoff: DateTime<Utc>,
-    ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
+    /// the projection keeps being preselected for distributed operations. The
+    /// sweep draws one change revision for every deletion it commits.
+    fn delete_expired<'life0, 'async_trait>(&'life0 self, cutoff: DateTime<Utc>) -> BoxFuture<'async_trait, Result<ExpiredDeletion, RegistrationError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait;
@@ -104,7 +109,8 @@ pub trait RegistrationStore: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
-    /// Persist a new registration.
+    /// Persist a new registration, returning the change revision the write
+    /// drew.
     ///
     /// Writes the routing projection derived from `params.information` in the
     /// same transaction as the payload, so the registration never becomes
@@ -113,7 +119,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
         &'life0 self,
         id: &'life1 Identifier,
         params: &'life2 CreateCsrParams,
-    ) -> BoxFuture<'async_trait, Result<(), RegistrationError>>
+    ) -> BoxFuture<'async_trait, Result<CsourceChangeRevision, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -244,6 +250,8 @@ pub trait RegistrationStore: Send + Sync + 'static {
 mod tests {
     use crate::{error::RegistrationError, store::RegistrationMutation};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_model::csource_change_revision::CsourceChangeRevision;
+    use pretty_assertions::assert_eq;
 
     /// Parse the fixed valid registration identifier used by mutation tests.
     fn registration_identifier() -> Option<Identifier> {
@@ -252,13 +260,15 @@ mod tests {
         parsed.ok()
     }
 
-    /// An applied store mutation is accepted by registration policy.
+    /// An applied store mutation is accepted by registration policy, which
+    /// keeps the revision the write drew.
     #[test]
     fn applied_mutation_satisfies_the_registration_precondition() {
         let Some(identifier) = registration_identifier() else {
             return;
         };
-        assert!(RegistrationMutation::Applied.require_applied(&identifier).is_ok());
+        let revision = CsourceChangeRevision::from(3);
+        assert_eq!(RegistrationMutation::Applied(revision).require_applied(&identifier).ok(), Some(revision));
     }
 
     /// A missing store mutation becomes the policy-owned not-found error.

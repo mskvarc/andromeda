@@ -21,6 +21,10 @@ pub enum Subscriptions {
     SubscriptionKey,
     /// Which subscription family a row is (`SubscriptionKindCode`)
     Kind,
+    /// The `context_source_change_clock` revision a csource subscription's latest client write drew
+    ContextSourceRevision,
+    /// The `context_source_revision` whose notification a broker has claimed
+    EvaluatedContextSourceRevision,
     /// The `subscriptionName` member (clause 5.2.12)
     SubscriptionName,
     /// The `description` member
@@ -132,6 +136,8 @@ mod tests {
         assert_eq!(Subscriptions::Id.to_string(), "id");
         assert_eq!(Subscriptions::SubscriptionKey.to_string(), "subscription_key");
         assert_eq!(Subscriptions::Kind.to_string(), "kind");
+        assert_eq!(Subscriptions::ContextSourceRevision.to_string(), "context_source_revision");
+        assert_eq!(Subscriptions::EvaluatedContextSourceRevision.to_string(), "evaluated_context_source_revision");
         assert_eq!(Subscriptions::WatchedAttributes.to_string(), "watched_attributes");
         assert_eq!(Subscriptions::ExpandValues.to_string(), "expand_values");
         assert_eq!(Subscriptions::JsonKeys.to_string(), "json_keys");

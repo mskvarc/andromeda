@@ -5,8 +5,15 @@
 //! notified of which registrations from what each was already told, as the
 //! tenant database records it ([`crate::csource_membership`]); the delivery
 //! itself lives beside it.
+//!
+//! A change is reached after later writes may have committed, so each one is
+//! evaluated against the state it found, as the change revisions order them
+//! ([`crate::csource_change_order`]): a registration change skips every
+//! subscription written after it, and a subscription write is notified once,
+//! by whichever of its changes claims the latest write first.
 
 use crate::{
+    csource_change_order::{CsourceChangeOrder, LatestWriteClaim},
     csource_delivery::{CsourceDeliveryOutcome, CsourceNotificationDelivery},
     csource_match_set::matching_registrations,
     csource_membership::{CsourceMembership, PlannedNotification},
@@ -19,6 +26,7 @@ use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
+    csource_change_revision::CsourceChangeRevision,
     notification::{CsrChangeEvent, CsrTriggerReason},
     registration::ContextSourceRegistration,
     subscription::SubscriptionStatus,
@@ -59,6 +67,7 @@ pub struct CsourceNotificationProcessor {
     target: ContextTarget,
     sub_repo: Arc<dyn SubscriptionStore>,
     csr_repo: Arc<dyn RegistrationStore>,
+    order: Arc<dyn CsourceChangeOrder>,
     cache: CsourceSubscriptionCache,
     membership: CsourceMembership,
     delivery: CsourceNotificationDelivery,
@@ -75,6 +84,8 @@ pub struct CsourceNotificationProcessorDeps {
     pub csr_repo: Arc<dyn RegistrationStore>,
     /// The registrations each subscription was notified of.
     pub notified: Arc<dyn NotifiedRegistrationStore>,
+    /// The order the tenant's registrations and subscriptions were written in.
+    pub order: Arc<dyn CsourceChangeOrder>,
     /// The JSON-LD engine notifications are compacted with.
     pub engine: JsonLdEngine,
     /// The dispatcher every transport binding is reached through.
@@ -92,6 +103,7 @@ impl CsourceNotificationProcessor {
             sub_repo,
             csr_repo,
             notified,
+            order,
             engine,
             transport,
             tenant,
@@ -100,6 +112,7 @@ impl CsourceNotificationProcessor {
             target: target.clone(), // clone: the processor and its delivery half address the same branch.
             sub_repo: Arc::clone(&sub_repo),
             csr_repo,
+            order,
             cache: CsourceSubscriptionCache::new(),
             membership: CsourceMembership::new(notified),
             delivery: CsourceNotificationDelivery::new(target, sub_repo, engine, transport, tenant),
@@ -126,20 +139,56 @@ impl CsourceNotificationProcessor {
     }
 
     /// Apply one committed context-source subscription lifecycle change.
+    ///
+    /// The latest write is claimed before the subscription is read, and
+    /// confirmed still latest after: the state read is then exactly the one
+    /// the claimed write left. A write that commits in between is notified by
+    /// its own change.
     pub async fn apply_subscription_change(&self, change: CsourceSubscriptionChange) {
         match change {
-            CsourceSubscriptionChange::Upserted { target, id, kind } => match self.sub_repo.get(&target, &id).await {
-                Ok(Some(stored)) if stored.subscription.lifecycle.status == SubscriptionStatus::Active => {
-                    let compiled = Arc::new(compile_csource_subscription(&stored.subscription));
-                    self.cache.insert(id, Arc::clone(&compiled));
-                    self.send_matching_csrs_for_subscription(&compiled, kind).await;
+            CsourceSubscriptionChange::Upserted { target, id, kind } => {
+                let owed = self.claim_owed_write(&id).await;
+                match self.sub_repo.get(&target, &id).await {
+                    Ok(Some(stored)) if stored.subscription.lifecycle.status == SubscriptionStatus::Active => {
+                        let compiled = Arc::new(compile_csource_subscription(&stored.subscription));
+                        self.cache.insert(id, Arc::clone(&compiled));
+                        if let Some(revision) = owed
+                            && self.is_latest_write(&compiled.id, revision).await
+                        {
+                            self.send_matching_csrs_for_subscription(&compiled, kind).await;
+                        }
+                    }
+                    Ok(Some(_) | None) => self.cache.remove(&id),
+                    Err(e) => {
+                        debug!("Failed to load CSR subscription {} for cache update: {}", id, e);
+                    }
                 }
-                Ok(Some(_) | None) => self.cache.remove(&id),
-                Err(e) => {
-                    debug!("Failed to load CSR subscription {} for cache update: {}", id, e);
-                }
-            },
+            }
             CsourceSubscriptionChange::Deleted { id, .. } => self.cache.remove(&id),
+        }
+    }
+
+    /// The revision of `id`'s latest write when this change is the one that
+    /// notifies it, or `None` when another change already did.
+    async fn claim_owed_write(&self, id: &Identifier) -> Option<CsourceChangeRevision> {
+        match self.order.claim_latest_write(id).await {
+            Ok(LatestWriteClaim::Claimed(revision)) => Some(revision),
+            Ok(LatestWriteClaim::Settled) => None,
+            Err(error) => {
+                error!("Failed to claim the latest write of CSR subscription {}: {}", id, error);
+                None
+            }
+        }
+    }
+
+    /// Whether the write that drew `revision` is still `id`'s latest.
+    async fn is_latest_write(&self, id: &Identifier, revision: CsourceChangeRevision) -> bool {
+        match self.order.latest_write(id).await {
+            Ok(latest) => latest == Some(revision),
+            Err(error) => {
+                error!("Failed to read the latest write of CSR subscription {}: {}", id, error);
+                false
+            }
         }
     }
 
@@ -251,11 +300,12 @@ impl CsourceNotificationProcessor {
 
     /// Evaluate and deliver notifications for one committed registration change.
     pub async fn apply_registration_change(&self, event: CsrChangeEvent) {
-        // A subscription and a subsequent CSR mutation may be committed by
-        // different request tasks before the subscription-change broadcast is
-        // observed here. Reconcile from the authoritative store before
-        // matching the CSR so a late registration cannot outrun the compiled
-        // companion subscription cache (clause 5.11.2.4).
+        // A subscription may have been written by another request task, or by
+        // another broker, whose change this worker has not seen yet. The cache
+        // is reconciled from the store, and every subscription written after
+        // the registration change is then left out: clause 5.11.2.4 notifies a
+        // change of a registration that matched the subscription when it was
+        // made, and a later write's own notification reports the change.
         if let Err(error) = self.reload_cache().await {
             error!(
                 "Failed to reload context-source subscriptions before CSR {} evaluation: {}",
@@ -263,6 +313,9 @@ impl CsourceNotificationProcessor {
             );
             return;
         }
+        let Some(found) = self.subscriptions_found_by(event.revision).await else {
+            return;
+        };
 
         let change = RegistrationChange::from_event_reason(event.trigger_reason);
         let before = event.csr_snapshot.as_ref().and_then(|snapshot| snapshot_registration(snapshot, &event.csr_id));
@@ -284,13 +337,32 @@ impl CsourceNotificationProcessor {
 
         let planned = self
             .membership
-            .plan_registration_change(&self.cache.subscriptions(), change, &event.csr_id, before.as_ref(), after.as_ref())
+            .plan_registration_change(&found, change, &event.csr_id, before.as_ref(), after.as_ref())
             .await;
         stream::iter(planned)
             .for_each_concurrent(CSR_NOTIFICATION_CONCURRENCY, |notification| async move {
                 self.send_planned(&notification).await;
             })
             .await;
+    }
+
+    /// The cached subscriptions as a registration change that drew `revision`
+    /// found them: those written after it are left out, or `None` when the
+    /// order cannot be read.
+    async fn subscriptions_found_by(&self, revision: CsourceChangeRevision) -> Option<Vec<Arc<CompiledCsrSubscription>>> {
+        match self.order.written_after(revision).await {
+            Ok(rewritten) => Some(
+                self.cache
+                    .subscriptions()
+                    .into_iter()
+                    .filter(|subscription| !rewritten.contains(&subscription.id))
+                    .collect(),
+            ),
+            Err(error) => {
+                error!("Failed to read the CSR subscriptions written after revision {}: {}", revision, error);
+                None
+            }
+        }
     }
 
     /// Send one planned notification, trimmed to the information the

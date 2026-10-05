@@ -72,12 +72,13 @@ impl RegistrationService {
             expires_at: resolved.expires_at,
         })?;
         check_conflicts(self.repo.as_ref(), self.entity_probe.as_ref(), resolved.mode, &resolved.information, Some(id)).await?;
-        self.repo.update(id, &resolved).await?.require_applied(id)?;
+        let revision = self.repo.update(id, &resolved).await?.require_applied(id)?;
 
         self.emit_csr_change(CsrChangeEvent {
             csr_id: id.clone(), // clone: the event owns the identifier borrowed from the request path.
             trigger_reason: CsrTriggerReason::Updated,
             csr_snapshot: Some(pre_update_snapshot),
+            revision,
         });
         Ok(())
     }

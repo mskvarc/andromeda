@@ -1,5 +1,6 @@
 //! Change events and the notification payloads they produce (ETSI GS CIM 009 clause 5.3).
 
+use crate::csource_change_revision::CsourceChangeRevision;
 use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -154,6 +155,9 @@ pub struct CsrChangeEvent {
     pub trigger_reason: CsrTriggerReason,
     /// For delete events, a snapshot of the CSR before deletion.
     pub csr_snapshot: Option<Value>,
+    /// The revision the mutation drew, which orders it against every write of
+    /// a context source subscription.
+    pub revision: CsourceChangeRevision,
 }
 
 /// NGSI-LD `CsourceNotification` payload (ETSI GS CIM 009 clause 5.3.2).

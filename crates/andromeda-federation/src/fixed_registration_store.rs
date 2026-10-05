@@ -10,12 +10,19 @@ use crate::{FederationService, config::FederationConfig, local_entity_type::Loca
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
-use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
-    store::{RegistrationStore, create_params::CreateCsrParams, forwarding_outcome::ForwardingOutcome, mutation::RegistrationMutation, page::RegistrationPage},
+    store::{
+        RegistrationStore,
+        create_params::CreateCsrParams,
+        expired_deletion::ExpiredDeletion,
+        forwarding_outcome::ForwardingOutcome,
+        mutation::RegistrationMutation,
+        page::RegistrationPage,
+    },
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
@@ -49,14 +56,16 @@ impl FixedRegistrationStore {
 }
 
 impl RegistrationStore for FixedRegistrationStore {
-    fn delete_expired<'life0, 'async_trait>(
-        &'life0 self,
-        _cutoff: DateTime<Utc>,
-    ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
+    fn delete_expired<'life0, 'async_trait>(&'life0 self, _cutoff: DateTime<Utc>) -> BoxFuture<'async_trait, Result<ExpiredDeletion, RegistrationError>>
     where
         'life0: 'async_trait,
     {
-        Box::pin(async { Ok(Vec::new()) })
+        Box::pin(async {
+            Ok(ExpiredDeletion {
+                revision: CsourceChangeRevision::from(1),
+                registrations: Vec::new(),
+            })
+        })
     }
 
     fn find_expired<'life0, 'async_trait>(
@@ -81,13 +90,13 @@ impl RegistrationStore for FixedRegistrationStore {
         &'life0 self,
         _id: &'life1 Identifier,
         _params: &'life2 CreateCsrParams,
-    ) -> BoxFuture<'async_trait, Result<(), RegistrationError>>
+    ) -> BoxFuture<'async_trait, Result<CsourceChangeRevision, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
     {
-        Box::pin(async { Ok(()) })
+        Box::pin(async { Ok(CsourceChangeRevision::from(1)) })
     }
 
     fn get<'life0, 'life1, 'async_trait>(

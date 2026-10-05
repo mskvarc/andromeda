@@ -3,7 +3,8 @@
 //!
 //! The `SubscriptionStore` trait and the `SubscriptionFields` type it
 //! references belong to the policy crate; the statements a subscription's row
-//! is created and replaced with live in `create_update_sql`, the delivery
+//! is created and replaced with live in `entity_statements` and
+//! `csource_statements`, the delivery
 //! counters and their statements in `delivery_state`, and the projection every
 //! read shares in `projection`. This module owns the port implementation
 //! itself.
@@ -12,17 +13,9 @@ use crate::{
     csource_subscription::repo::CsourceSubscriptionRepository,
     subscription::repo::SubscriptionRepository,
     subscription_store::{
-        create_update_sql::{
-            bind_csource_create,
-            bind_csource_update,
-            bind_entity_create,
-            bind_entity_update,
-            csource_create_sql,
-            csource_update_sql,
-            entity_create_sql,
-            entity_update_sql,
-        },
+        csource_statements::{bind_csource_create, bind_csource_update, csource_create_sql, csource_update_sql},
         delivery_state::{DeliveryOutcome, advance_interval_anchor_statement, claim_statement, mark_statement, state_insert_sql},
+        entity_statements::{bind_entity_create, bind_entity_update, entity_create_sql, entity_update_sql},
         failure::{create_error, persistence_error},
         interned_attributes::intern_attribute_lists,
         mapper::{row_from_pg, row_to_stored_subscription, rows_to_stored_subscriptions, stored_subscription_uri},

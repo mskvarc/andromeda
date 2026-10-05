@@ -11,13 +11,20 @@ use crate::{
     store_fault::{StoreFault, persistence_failure},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_ngsi_ld_model::{csource_change_revision::CsourceChangeRevision, registration::ContextSourceRegistration};
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
-    store::{RegistrationStore, create_params::CreateCsrParams, forwarding_outcome::ForwardingOutcome, mutation::RegistrationMutation, page::RegistrationPage},
+    store::{
+        RegistrationStore,
+        create_params::CreateCsrParams,
+        expired_deletion::ExpiredDeletion,
+        forwarding_outcome::ForwardingOutcome,
+        mutation::RegistrationMutation,
+        page::RegistrationPage,
+    },
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -80,14 +87,6 @@ pub(super) fn create_error(error: sqlx::Error, identifier: &Identifier) -> Regis
     }
 }
 
-/// Map PostgreSQL affected-row counts to a backend-neutral mutation outcome.
-pub(super) const fn mutation_outcome(rows_affected: u64) -> RegistrationMutation {
-    match rows_affected {
-        0 => RegistrationMutation::Missing,
-        1.. => RegistrationMutation::Applied,
-    }
-}
-
 /// Convert PostgreSQL's signed count representation to the policy-owned count.
 pub(super) fn registration_count(total: i64) -> Result<u64, RegistrationError> {
     u64::try_from(total).map_err(|error| persistence_error(error))
@@ -95,7 +94,7 @@ pub(super) fn registration_count(total: i64) -> Result<u64, RegistrationError> {
 
 #[async_trait]
 impl RegistrationStore for PostgresRegistrationStore {
-    async fn delete_expired(&self, cutoff: DateTime<Utc>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+    async fn delete_expired(&self, cutoff: DateTime<Utc>) -> Result<ExpiredDeletion, RegistrationError> {
         registration_write::delete_expired(self, cutoff).await
     }
 
@@ -107,7 +106,7 @@ impl RegistrationStore for PostgresRegistrationStore {
         registration_read::exists(self, id).await
     }
 
-    async fn create(&self, id: &Identifier, params: &CreateCsrParams) -> Result<(), RegistrationError> {
+    async fn create(&self, id: &Identifier, params: &CreateCsrParams) -> Result<CsourceChangeRevision, RegistrationError> {
         registration_write::create(self, id, params).await
     }
 
@@ -147,11 +146,10 @@ impl RegistrationStore for PostgresRegistrationStore {
 #[cfg(test)]
 mod tests {
     use crate::{
-        csource_registration::registration_store::{PK_CONTEXT_SOURCE_REGISTRATIONS, create_error, mutation_outcome},
+        csource_registration::registration_store::{PK_CONTEXT_SOURCE_REGISTRATIONS, create_error},
         migration_set::tenant::tenant_migrator,
     };
-    use andromeda_registration::{error::RegistrationError, store::mutation::RegistrationMutation};
-    use pretty_assertions::assert_eq;
+    use andromeda_registration::error::RegistrationError;
     use std::{
         fmt::Debug,
         sync::{Arc, Mutex},
@@ -187,19 +185,6 @@ mod tests {
             create_error(sqlx::Error::PoolTimedOut, &identifier),
             RegistrationError::StoreSaturated
         ));
-    }
-
-    /// Zero affected rows preserve the policy-level missing outcome.
-    #[test]
-    fn zero_affected_rows_map_to_missing() {
-        assert_eq!(mutation_outcome(0), RegistrationMutation::Missing);
-    }
-
-    /// Any positive affected-row count preserves the policy-level applied outcome.
-    #[test]
-    fn positive_affected_rows_map_to_applied() {
-        assert_eq!(mutation_outcome(1), RegistrationMutation::Applied);
-        assert_eq!(mutation_outcome(2), RegistrationMutation::Applied);
     }
 
     #[test]

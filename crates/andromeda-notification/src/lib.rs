@@ -5,6 +5,8 @@
 
 /// The `@context` of a notification whose slot is already claimed.
 mod claimed_notification_context;
+/// The order context source registrations and subscriptions were written in.
+pub mod csource_change_order;
 /// Sending one context source notification.
 mod csource_delivery;
 /// Context-source interval notification evaluation.

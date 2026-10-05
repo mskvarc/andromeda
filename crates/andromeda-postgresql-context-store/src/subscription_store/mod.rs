@@ -7,15 +7,21 @@
 //! - [`stored_kind`] — which family a statement addresses.
 //! - [`status_code`] — the number a lifecycle state is stored as.
 //! - [`interned_attributes`] — the dictionary keys of the attribute lists.
-//! - [`create_update_sql`] — the create and replace statements and binders.
+//! - [`entity_statements`] — the entity create and replace statements and binders.
+//! - [`csource_statements`] — the context-source create and replace statements and binders.
+//! - [`conformance_text`] — the text `ngsildConformance` is stored as.
 //! - [`delivery_state`] — the delivery counters and their statements.
 //! - [`projection`] — the read-side projection every subscription query shares.
 //! - [`failure`] — how adapter failures surface at the policy boundary.
 
-/// The create and replace statements of the subscription row.
-mod create_update_sql;
+/// The text a subscription's `ngsildConformance` is stored as.
+mod conformance_text;
+/// The create and replace statements of a context-source subscription row.
+mod csource_statements;
 /// The delivery counters and the statements that read and move them.
 pub(crate) mod delivery_state;
+/// The create and replace statements of an entity subscription row.
+mod entity_statements;
 /// How adapter failures surface at the policy boundary.
 mod failure;
 /// The dictionary keys a subscription's attribute lists are stored as.
@@ -35,7 +41,7 @@ pub mod rows;
 /// The number a subscription's lifecycle state is stored as.
 pub(crate) mod status_code;
 /// Which subscription family a statement addresses.
-mod stored_kind;
+pub(crate) mod stored_kind;
 /// What a subscription row that no longer reads back as a subscription looks like.
 pub mod stored_subscription_error;
 /// The number a subscription's `notificationTrigger` list stores each trigger

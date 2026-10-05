@@ -18,6 +18,7 @@ mod compact_member;
 pub mod compact_node;
 pub mod context_source_identity;
 pub mod context_source_info;
+pub mod csource_change_revision;
 pub mod entity;
 pub mod entity_change;
 mod entity_decoding;

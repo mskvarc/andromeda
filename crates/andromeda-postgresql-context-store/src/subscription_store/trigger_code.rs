@@ -25,6 +25,13 @@ pub const fn stored_trigger(trigger: NotificationTrigger) -> NotificationTrigger
     }
 }
 
+/// The stored `SMALLINT[]` of a subscription's trigger set, or `None` when the
+/// subscription carries no explicit set (matching every trigger).
+#[must_use]
+pub fn stored_trigger_list(triggers: Option<&[NotificationTrigger]>) -> Option<Vec<i16>> {
+    triggers.map(|triggers| triggers.iter().map(|trigger| stored_trigger(*trigger).code()).collect())
+}
+
 /// The trigger condition a stored registry member names.
 #[must_use]
 pub const fn trigger_of(code: NotificationTriggerCode) -> NotificationTrigger {
@@ -40,7 +47,7 @@ pub const fn trigger_of(code: NotificationTriggerCode) -> NotificationTrigger {
 
 #[cfg(test)]
 mod tests {
-    use crate::subscription_store::trigger_code::{stored_trigger, trigger_of};
+    use crate::subscription_store::trigger_code::{stored_trigger, stored_trigger_list, trigger_of};
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use andromeda_postgresql_codes::notification_trigger::NotificationTriggerCode;
     use strum::IntoEnumIterator;
@@ -57,6 +64,23 @@ mod tests {
         for trigger in NotificationTrigger::iter() {
             pretty_assertions::assert_eq!(stored_trigger(trigger).label(), trigger.to_string());
         }
+    }
+
+    #[test]
+    fn a_trigger_set_is_stored_as_its_registry_numbers_in_the_order_written() {
+        let triggers = [NotificationTrigger::AttributeUpdated, NotificationTrigger::EntityCreated];
+        pretty_assertions::assert_eq!(
+            stored_trigger_list(Some(&triggers)),
+            Some(vec![
+                stored_trigger(NotificationTrigger::AttributeUpdated).code(),
+                stored_trigger(NotificationTrigger::EntityCreated).code()
+            ])
+        );
+    }
+
+    #[test]
+    fn no_explicit_trigger_set_stores_nothing() {
+        pretty_assertions::assert_eq!(stored_trigger_list(None), None);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use crate::{
     RegistrationChangeSink,
     error::RegistrationError,
     removal_hook::{RegistrationRemovalHook, RegistrationTeardown},
-    store::RegistrationStore,
+    store::{RegistrationStore, expired_deletion::ExpiredDeletion},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::{CsrChangeEvent, CsrTriggerReason};
@@ -76,7 +76,7 @@ impl RegistrationExpiry {
     /// event carries.
     pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<RegistrationExpiryOutcome, RegistrationError> {
         let teardowns = self.capture_teardowns(cutoff).await?;
-        let registrations = self.store.delete_expired(cutoff).await?;
+        let ExpiredDeletion { revision, registrations } = self.store.delete_expired(cutoff).await?;
         if let Some(hook) = self.removal_hook.as_deref() {
             for teardown in teardowns
                 .iter()
@@ -94,6 +94,7 @@ impl RegistrationExpiry {
                     csr_id: identifier.clone(), // clone: outcome and event independently own the identifier.
                     trigger_reason: CsrTriggerReason::NoLongerMatching,
                     csr_snapshot: Some(snapshot),
+                    revision,
                 });
             }
             expired.push(identifier);

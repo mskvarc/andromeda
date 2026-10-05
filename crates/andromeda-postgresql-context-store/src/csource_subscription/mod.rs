@@ -4,3 +4,5 @@
 pub mod notified_registrations;
 /// The context-source subscription repository struct.
 pub mod repo;
+/// The change revisions of context-source subscriptions.
+pub mod revision_ledger;

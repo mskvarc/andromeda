@@ -32,7 +32,7 @@ impl RegistrationService {
                 .ok(),
             (Some(_) | None, None) | (None, Some(_)) => None,
         };
-        self.repo.delete(id).await?.require_applied(id)?;
+        let revision = self.repo.delete(id).await?.require_applied(id)?;
         if let (Some(hook), Some(teardown)) = (self.removal_hook.as_deref(), teardown.as_ref()) {
             hook.removed(teardown).await;
         }
@@ -40,6 +40,7 @@ impl RegistrationService {
             csr_id: id.clone(), // clone: the deletion event outlives the borrowed request identifier.
             trigger_reason: CsrTriggerReason::NoLongerMatching,
             csr_snapshot: snapshot,
+            revision,
         });
         Ok(())
     }

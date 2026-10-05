@@ -2,7 +2,7 @@
 -- 0024: Subscriptions and their delivery state
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.3.6.8, 4.8, 5.2.12, 5.2.14.2, 5.2.15,
---   5.8
+--   5.8, 5.11.2.4, 5.11.3.4
 --
 -- Entity subscriptions and context source registration subscriptions, and the
 -- delivery statistics of each.
@@ -24,13 +24,30 @@
 -- which is not stored because it would always equal `status = active`, and
 -- becomes expired when `expires_at` passes.
 --
--- A `subscriptions` row changes only when the client updates it and when it
--- expires. `modified_at` (clause 4.8) moves only on a client update, never on
--- a delivery.
+-- A `subscriptions` row changes only when the client updates it, when it
+-- expires, and when a broker claims the notification a csource subscription's
+-- latest write owes. `modified_at` (clause 4.8) moves only on a client update,
+-- never on a delivery.
+--
+-- A csource subscription is notified of each registration change against the
+-- subscription as that change found it (clauses 5.11.2.4, 5.11.3.4). Every
+-- client write of one takes the next `context_source_change_clock` revision,
+-- the same counter every registration write takes, so the revisions order the
+-- two kinds of write as they committed. A registration change is not matched
+-- against a subscription written after it: that write's own notification
+-- reads the registrations after both committed and reports the change.
 -- ============================================================================
 create table subscriptions (
     -- The identity every queued delivery references in place of the URI.
     subscription_key bigint generated always as identity,
+    -- The `context_source_change_clock` revision of the subscription's latest
+    -- client write. NULL exactly for an entity subscription.
+    context_source_revision bigint,
+    -- The `context_source_revision` whose notification a broker has claimed;
+    -- the latest write is owed one notification, and a broker that reaches an
+    -- older write's change after it has nothing left to send. NULL until the
+    -- first claim.
+    evaluated_context_source_revision bigint,
     created_at timestamptz not null default now(),
     modified_at timestamptz not null default now(),
     -- A csource subscription leaves `dataset_id` and `local_only` at their
@@ -96,6 +113,8 @@ create table subscriptions (
     constraint chk_subscriptions_id_length check (octet_length(id) <= 1024),
     constraint chk_subscriptions_notification_trigger check (notification_trigger is null or (cardinality(notification_trigger) > 0 and notification_trigger <@ array[1, 2, 3, 4, 5, 6]::smallint[])),
     constraint chk_subscriptions_kind check (kind between 1 and 2),
+    constraint chk_subscriptions_context_source_revision check ((kind = 2) = (context_source_revision is not null)),
+    constraint chk_subscriptions_evaluated_context_source_revision check (evaluated_context_source_revision <= context_source_revision),
     constraint chk_subscriptions_status check (status between 1 and 3),
     constraint chk_subscriptions_time_interval_positive check (time_interval > 0),
     constraint chk_subscriptions_throttling_positive check (throttling > 0),

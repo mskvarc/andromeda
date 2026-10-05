@@ -13,7 +13,7 @@ use tokio::time::{Instant, sleep};
 /// Authoritative tenant reset SQL maintained alongside the test harness.
 pub const RESET_TENANT_SQL: &str = include_str!("../sql/reset-tenant.sql");
 
-/// Reset every mutable tenant table while preserving the cached `attribute_names` and `entity_type_names` dictionaries, the `schema_metadata` contract row, and the seeded unit-code catalogue.
+/// Reset every mutable tenant table while preserving the cached `attribute_names` and `entity_type_names` dictionaries, the `schema_metadata` contract row, the seeded unit-code catalogue, and the `context_source_change_clock` singleton.
 ///
 /// # Errors
 ///
@@ -331,5 +331,12 @@ mod tests {
         // Truncating `schema_metadata` makes the tenant read as never-stamped,
         // and the startup verification refuses every connection after it.
         assert!(!truncated_relations().contains("schema_metadata"));
+    }
+
+    #[test]
+    fn reset_script_leaves_the_context_source_change_clock_singleton_in_place() {
+        // Every registration write advances the one seeded row; an emptied
+        // clock leaves those writes nothing to advance.
+        assert!(!truncated_relations().contains("context_source_change_clock"));
     }
 }

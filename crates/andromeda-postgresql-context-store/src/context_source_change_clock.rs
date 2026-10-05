@@ -1,0 +1,84 @@
+//! Drawing revisions from the tenant's `context_source_change_clock`.
+//!
+//! Every write of a context source registration and every client write of a
+//! context source subscription advances the clock inside its own transaction.
+//! The advance takes the singleton row's lock, held until the transaction
+//! ends, so revisions are drawn in the order the writes commit, across every
+//! broker sharing the database. Each writer advances the clock as its last
+//! lock-taking statement: a writer holding the clock never waits on a lock
+//! another writer takes before advancing it, so the clock adds no deadlock.
+
+use andromeda_ngsi_ld_model::csource_change_revision::CsourceChangeRevision;
+use andromeda_postgresql_schema::context_source_change_clock::ContextSourceChangeClock;
+use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, PostgresQueryBuilder, Query, QueryStatementBuilder, SimpleExpr, UpdateStatement, WithClause};
+use sea_query_sqlx::SqlxBinder;
+use sqlx::PgExecutor;
+
+/// The common table expression one statement advances the clock in.
+#[derive(Iden, Clone, Copy)]
+#[iden = "advanced_clock"]
+struct AdvancedClock;
+
+/// Advance the clock by one, returning the revision drawn.
+fn advance_statement() -> UpdateStatement {
+    Query::update()
+        .table(ContextSourceChangeClock::Table)
+        .value(ContextSourceChangeClock::Revision, Expr::col(ContextSourceChangeClock::Revision).add(1))
+        .returning_col(ContextSourceChangeClock::Revision)
+        .to_owned()
+}
+
+/// Advance the clock inside the transaction `executor` runs in, returning the
+/// revision drawn.
+///
+/// # Errors
+///
+/// Returns the driver error when the statement fails.
+pub(crate) async fn advance<'e>(executor: impl PgExecutor<'e>) -> Result<CsourceChangeRevision, sqlx::Error> {
+    let (sql, values) = advance_statement().build_sqlx(PostgresQueryBuilder);
+    let (revision,): (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(executor).await?;
+    Ok(CsourceChangeRevision::from(revision))
+}
+
+/// The `WITH` clause a single statement advances the clock in, the revision
+/// drawn read through [`advanced_revision`].
+pub(crate) fn advance_clause() -> WithClause {
+    WithClause::new()
+        .cte(CommonTableExpression::new().table_name(AdvancedClock).query(advance_statement()).to_owned())
+        .to_owned()
+}
+
+/// The revision [`advance_clause`] drew, as a scalar subquery.
+pub(crate) fn advanced_revision() -> SimpleExpr {
+    let drawn = Query::select().column(ContextSourceChangeClock::Revision).from(AdvancedClock).to_owned();
+    SimpleExpr::SubQuery(None, Box::new(drawn.into_sub_query_statement()))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context_source_change_clock::{advance_clause, advance_statement, advanced_revision};
+    use pretty_assertions::assert_eq;
+    use sea_query::{PostgresQueryBuilder, Query};
+
+    #[test]
+    fn an_advance_increments_the_singleton_and_returns_the_revision_drawn() {
+        let (sql, _) = advance_statement().build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"UPDATE "context_source_change_clock" SET "revision" = "revision" + $1 RETURNING "revision""#
+        );
+    }
+
+    #[test]
+    fn a_statement_reads_the_revision_its_own_advance_drew() {
+        let sql = Query::select()
+            .expr(advanced_revision())
+            .take()
+            .with(advance_clause())
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"WITH "advanced_clock" AS (UPDATE "context_source_change_clock" SET "revision" = "revision" + 1 RETURNING "revision") SELECT (SELECT "revision" FROM "advanced_clock")"#
+        );
+    }
+}

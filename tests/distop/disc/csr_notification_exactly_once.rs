@@ -2,7 +2,9 @@
 //! subscription once, and with the trigger reason what the subscriber was
 //! already told calls for (clauses 5.3.3 and 5.11.7), whichever broker sharing
 //! the tenant database evaluates it and however it overlaps the subscription's
-//! initial notification.
+//! initial notification. A subscription update is notified once, with every
+//! registration it then matches (clause 5.11.3.4), however late the broker
+//! reaches the registration changes made before it.
 
 use crate::{
     disc::{
@@ -16,6 +18,7 @@ use crate::{
     topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use futures::future::join_all;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -119,6 +122,144 @@ fn notified_registrations(notification: &Value) -> Vec<&str> {
         .flatten()
         .filter_map(|registration| registration["id"].as_str())
         .collect()
+}
+
+/// One subscription that first selects a type no registration has, two
+/// registrations of two other types, and the update that makes the
+/// subscription select exactly those two types: the sequence of ETSI
+/// `047_16_03`.
+struct UpdatedSelection {
+    /// The subscription.
+    subscription_id: String,
+    /// The type the subscription selects when created.
+    unmatched_type: String,
+    /// The two types the update selects, each with its registration.
+    selected: [(String, String); 2],
+}
+
+impl UpdatedSelection {
+    /// The `index`-th selection of a racing run, every name its own.
+    fn new(topology: &MultiBrokerTopology<BrokerRole>, index: usize) -> UpdatedSelection {
+        UpdatedSelection {
+            subscription_id: topology.id(&format!("subscription:updated-selection-{index}")),
+            unmatched_type: topology.id(&format!("UnmatchedType{index}")),
+            selected: [
+                (
+                    topology.id(&format!("VehicleType{index}")),
+                    topology.id(&format!("registration:updated-selection-vehicle-{index}")),
+                ),
+                (
+                    topology.id(&format!("BusType{index}")),
+                    topology.id(&format!("registration:updated-selection-bus-{index}")),
+                ),
+            ],
+        }
+    }
+
+    /// The two registrations, sorted, as a notification carrying both lists
+    /// them once sorted.
+    fn registrations(&self) -> Vec<&str> {
+        let mut registrations: Vec<&str> = self.selected.iter().map(|(_, registration_id)| registration_id.as_str()).collect();
+        registrations.sort_unstable();
+        registrations
+    }
+
+    /// Create the subscription on the front broker, the two registrations on
+    /// `registrar`, and update the subscription on the front broker the moment
+    /// the second registration is acknowledged.
+    async fn run(&self, topology: &MultiBrokerTopology<BrokerRole>, registrar: BrokerRole, endpoint: &str) {
+        csr_subscription::create_and_assert(
+            topology,
+            &CsrSubscriptionBuilder::new(&self.subscription_id, endpoint, &self.unmatched_type).build(),
+        )
+        .await;
+        let registrar = topology.broker(registrar).expect("the registering broker").client();
+        for (entity_type, registration_id) in &self.selected {
+            let created = registrar
+                .create_registration(&CsrBuilder::new(registration_id, PEER_ENDPOINT).entity_type(entity_type).build())
+                .await
+                .expect("create a registration of a type the subscription does not yet select");
+            assert_status(&created, 201);
+        }
+        let entities: Vec<Value> = self.selected.iter().map(|(entity_type, _)| json!({ "type": entity_type })).collect();
+        let updated = csr_subscription::update(
+            topology.broker(BrokerRole::A).expect("topology broker A").client(),
+            &self.subscription_id,
+            &json!({ "entities": entities }),
+        )
+        .await;
+        assert_status(&updated, 204);
+    }
+}
+
+/// Run every selection of `selections` at once, then require each
+/// subscription's one notification to carry both of its registrations and no
+/// second notification to follow.
+async fn assert_each_update_is_notified_once_with_both_registrations(
+    topology: &MultiBrokerTopology<BrokerRole>,
+    adapter: &NotificationAdapter,
+    selections: &[UpdatedSelection],
+    registrar: BrokerRole,
+) {
+    let endpoint = adapter.endpoint_url();
+    join_all(selections.iter().map(|selection| selection.run(topology, registrar, &endpoint))).await;
+    for selection in selections {
+        let notification = adapter.wait_for_subscription_notification(&selection.subscription_id, PRESENT).await;
+        assert_eq!(
+            notification.body["triggerReason"].as_str(),
+            Some("newlyMatching"),
+            "the notification of {}",
+            selection.subscription_id
+        );
+        let mut carried = notified_registrations(&notification.body);
+        carried.sort_unstable();
+        assert_eq!(
+            carried,
+            selection.registrations(),
+            "the update of {} is notified with both registrations it selects, not a registration created while the subscription selected neither",
+            selection.subscription_id
+        );
+    }
+    // One shared quiet window: every notification received during it is
+    // buffered, so each later check only inspects what was already received.
+    for (index, selection) in selections.iter().enumerate() {
+        let window = if index == 0 { ABSENT } else { Duration::ZERO };
+        adapter.wait_for_no_subscription_notification(&selection.subscription_id, window).await;
+    }
+}
+
+/// Clauses 5.11.2.4 and 5.11.3.4: two registrations created while a
+/// subscription selected neither are no change of a matching registration,
+/// so their creations notify nothing; the update that makes the subscription
+/// select both is notified once, with both. Many selections race at once so
+/// the broker reaches the registration creations, and the subscription's own
+/// creation, only after the update has committed: evaluated against the
+/// subscription as it stands by then, a creation reports its registration
+/// alone ahead of the update, and the creation of the subscription reports
+/// both a second time.
+#[tokio::test]
+async fn csr_notification_an_update_selecting_registrations_created_before_it_is_notified_once_with_both() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let adapter = NotificationAdapter::start().await;
+    let selections: Vec<UpdatedSelection> = (0..RACING_PAIRS).map(|index| UpdatedSelection::new(&topology, index)).collect();
+    assert_each_update_is_notified_once_with_both_registrations(&topology, &adapter, &selections, BrokerRole::A).await;
+    adapter.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// The same sequence with the registrations created on the replica and the
+/// subscription created and updated on the front broker: the replica learns of
+/// the update only through the tenant database, so it is the order the writes
+/// committed in, recorded there, that keeps it from reporting a registration
+/// the subscription did not select when the registration was created.
+#[tokio::test]
+async fn csr_notification_a_replica_does_not_report_a_registration_created_before_the_update_that_selected_it() {
+    let topology = topology::replica_pair().await.expect("replica-pair topology");
+    let adapter = NotificationAdapter::start().await;
+    let selections: Vec<UpdatedSelection> = (0..RACING_PAIRS).map(|index| UpdatedSelection::new(&topology, index)).collect();
+    assert_each_update_is_notified_once_with_both_registrations(&topology, &adapter, &selections, BrokerRole::AReplica).await;
+    adapter.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
 }
 
 /// What a subscriber was told is recorded in the tenant database, shared by

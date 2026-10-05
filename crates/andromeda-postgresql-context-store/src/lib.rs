@@ -14,6 +14,9 @@ mod branch_statement;
 pub mod component_report;
 /// PostgreSQL connection and pool configuration.
 pub mod config;
+/// The tenant-wide order context source registration and subscription writes
+/// commit in.
+mod context_source_change_clock;
 /// Resolution of persisted live and Snapshot context branches.
 pub mod context_space;
 /// Persistence layer for context source registrations.

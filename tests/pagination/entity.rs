@@ -48,7 +48,10 @@ fn pagination_link(headers: &HeaderMap) -> Option<String> {
         .get_all("link")
         .iter()
         .filter_map(|value| value.to_str().ok())
-        .flat_map(|line| line.split(", <").map(|value| if value.starts_with('<') { value.to_owned() } else { format!("<{value}") }))
+        .flat_map(|line| {
+            line.split(", <")
+                .map(|value| if value.starts_with('<') { value.to_owned() } else { format!("<{value}") })
+        })
         .filter(|value| !value.to_ascii_lowercase().contains("json-ld#context"))
         .collect::<Vec<_>>();
     let joined = values.join(", ");
