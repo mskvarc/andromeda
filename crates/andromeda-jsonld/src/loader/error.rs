@@ -7,7 +7,7 @@
 //! its reason as separate fields all the way to whoever renders the Problem
 //! Detail, instead of being flattened into one message at the boundary.
 
-use crate::{context_cache::ContextCacheError, error::JsonLdError};
+use crate::{context_cache::ContextCacheError, context_subtree::UnusableLocalContext, error::JsonLdError};
 use iri_rs::{InvalidIri, IriBuf};
 use mediatype::{MediaTypeBuf, MediaTypeError};
 use reqwest::StatusCode;
@@ -107,8 +107,8 @@ pub enum InvalidContextDocument {
     #[error("the response body is not JSON: {0}")]
     NotJson(#[source] Arc<serde_json::Error>),
     /// The document carries no usable top-level `@context`.
-    #[error("the document has no usable top-level @context")]
-    NoContext,
+    #[error("the document has no usable top-level @context: {0}")]
+    NoContext(#[source] UnusableLocalContext),
 }
 
 impl LoaderError {
@@ -148,6 +148,7 @@ impl From<&LoaderError> for JsonLdError {
 mod tests {
     use crate::{
         context_cache::ContextCacheError,
+        context_subtree::UnusableLocalContext,
         error::JsonLdError,
         loader::error::{ContextUnavailable, InvalidContextDocument, LoaderError, LoaderErrorKind},
     };
@@ -177,7 +178,7 @@ mod tests {
         }
         let invalid = JsonLdError::from(&LoaderError {
             url: IriBuf::new("https://example.com/context.jsonld".to_string()).expect("valid URL"),
-            kind: LoaderErrorKind::Invalid(InvalidContextDocument::NoContext),
+            kind: LoaderErrorKind::Invalid(InvalidContextDocument::NoContext(UnusableLocalContext::NoContextMember)),
         });
         assert!(!invalid.is_context_not_available(), "a retrieved invalid document is BadRequestData");
     }

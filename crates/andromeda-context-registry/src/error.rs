@@ -1,7 +1,7 @@
 //! Failures reported by Context Registry policy and implementations.
 
 use crate::{identifier::ContextIdentifier, registry_invariant::RegistryInvariant};
-use andromeda_jsonld::error::JsonLdError;
+use andromeda_jsonld::{context_subtree::UnusableLocalContext, error::JsonLdError};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use iri_rs::IriBuf;
@@ -10,9 +10,11 @@ use thiserror::Error;
 /// A hosted-context semantic failure or backend-neutral implementation failure.
 #[derive(Debug, Error)]
 pub enum ContextRegistryError {
-    /// A hosted Context payload omitted its required top-level `@context` member.
-    #[error("payload must contain a top-level @context field")]
-    MissingTopLevelContext,
+    /// A hosted Context payload is valid JSON but carries no local context: it
+    /// is not an object, has no top-level `@context` member, or that member
+    /// holds no JSON-LD context (clause 5.13.2.3).
+    #[error("payload must carry a JSON-LD context in a top-level @context member: {0}")]
+    NoLocalContext(#[source] UnusableLocalContext),
     /// The requested Context is not registered.
     #[error("context not found: {identifier}")]
     NotFound {

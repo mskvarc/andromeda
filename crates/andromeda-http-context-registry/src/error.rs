@@ -9,8 +9,10 @@ use axum::http::Uri;
 #[must_use]
 pub fn classify_context_registry_error(error: &ContextRegistryError) -> ClassifiedReport {
     match error {
-        ContextRegistryError::MissingTopLevelContext => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
-        ContextRegistryError::ReloadRequiresCached { .. } | ContextRegistryError::CoreContextDeletion => {
+        // Clause 5.13.2.4 applies clause 5.5.4 "in case of invalid @context":
+        // the body already parsed as JSON, so data that is no local context is
+        // "not syntactically correct" JSON-LD, which is BadRequestData.
+        ContextRegistryError::NoLocalContext(_) | ContextRegistryError::ReloadRequiresCached { .. } | ContextRegistryError::CoreContextDeletion => {
             ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string())
         }
         ContextRegistryError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, error.to_string()),
@@ -49,6 +51,7 @@ impl<T> ContextRegistryResultExt<T> for Result<T, ContextRegistryError> {
 mod tests {
     use crate::error::classify_context_registry_error;
     use andromeda_context_registry::{error::ContextRegistryError, identifier::ContextIdentifier};
+    use andromeda_jsonld::context_subtree::UnusableLocalContext;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -57,7 +60,14 @@ mod tests {
     fn focused_context_registry_categories_and_disclosure_are_stable() {
         let identifier = "urn:ngsi-ld:JsonLdContext:1".parse::<Identifier>().expect("a valid test identifier");
         for (error, expected) in [
-            (ContextRegistryError::MissingTopLevelContext, NgsiLdErrorType::InvalidRequest),
+            (
+                ContextRegistryError::NoLocalContext(UnusableLocalContext::NoContextMember),
+                NgsiLdErrorType::BadRequestData,
+            ),
+            (
+                ContextRegistryError::NoLocalContext(UnusableLocalContext::NotAContext),
+                NgsiLdErrorType::BadRequestData,
+            ),
             (
                 ContextRegistryError::NotFound {
                     identifier: ContextIdentifier::from(identifier),

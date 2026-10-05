@@ -62,7 +62,7 @@ fn hosting_failure(error: &ContextRegistryError) -> ContextHostingError {
         ContextRegistryError::StoreSaturated => ContextHostingError::Persistence(PersistenceFailure::Saturated),
         ContextRegistryError::StoreUnavailable => ContextHostingError::Persistence(PersistenceFailure::Unavailable),
         ContextRegistryError::Persistence(failure) => ContextHostingError::Persistence(*failure),
-        ContextRegistryError::MissingTopLevelContext
+        ContextRegistryError::NoLocalContext(_)
         | ContextRegistryError::NotFound { .. }
         | ContextRegistryError::CoreContextDeletion
         | ContextRegistryError::CachedContextNotServed { .. }

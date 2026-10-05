@@ -156,7 +156,7 @@ async fn read_document(
 
     let text = from_utf8(&bytes).map_err(|error| invalid(reported, InvalidContextDocument::NotUtf8(error)))?;
     let json = serde_json::from_str::<Value>(text).map_err(|error| invalid(reported, InvalidContextDocument::NotJson(Arc::new(error))))?;
-    let subtree = context_subtree(json).ok_or_else(|| invalid(reported, InvalidContextDocument::NoContext))?;
+    let subtree = context_subtree(json).map_err(|reason| invalid(reported, InvalidContextDocument::NoContext(reason)))?;
     Ok(RemoteContextDocument {
         value: jsonld_syntax::Value::from_serde_json(subtree),
         freshness,
@@ -273,7 +273,7 @@ const fn too_large(url: IriBuf, size: usize, max: usize) -> LoaderError {
 mod tests {
     use crate::{
         context_cache::ContextCacheError,
-        context_subtree::context_subtree,
+        context_subtree::{UnusableLocalContext, context_subtree},
         context_tail::ContextTail,
         error::JsonLdError,
         loader::{
@@ -446,7 +446,7 @@ mod tests {
         for deterministic in [
             LoaderErrorKind::Http(StatusCode::NOT_FOUND),
             LoaderErrorKind::TooLarge { size: 10, max: 5 },
-            LoaderErrorKind::Invalid(InvalidContextDocument::NoContext),
+            LoaderErrorKind::Invalid(InvalidContextDocument::NoContext(UnusableLocalContext::NoContextMember)),
             LoaderErrorKind::FetchDisabled,
             LoaderErrorKind::Unavailable(ContextUnavailable::Cache(ContextCacheError::Read(PersistenceFailure::Unavailable))),
         ] {
@@ -468,7 +468,7 @@ mod tests {
 
         pretty_assertions::assert_eq!(
             context_subtree(downloaded),
-            Some(json!({ "@context": { "Device": "https://example.org/Device" } }))
+            Ok(json!({ "@context": { "Device": "https://example.org/Device" } }))
         );
     }
 

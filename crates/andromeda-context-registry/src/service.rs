@@ -60,8 +60,8 @@ impl ContextRegistryService {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextRegistryError::MissingTopLevelContext`] when the payload
-    /// carries no top-level `@context` member,
+    /// Returns [`ContextRegistryError::NoLocalContext`] when the payload
+    /// carries no JSON-LD context in a top-level `@context` member,
     /// [`ContextRegistryError::Persistence`] when the store cannot record the
     /// hosted Context, and [`ContextRegistryError::Invariant`] when a freshly
     /// minted identifier is not one or is already held.
@@ -89,8 +89,8 @@ impl ContextRegistryService {
     ///
     /// # Errors
     ///
-    /// Returns [`ContextRegistryError::MissingTopLevelContext`] when the payload
-    /// carries no top-level `@context` member,
+    /// Returns [`ContextRegistryError::NoLocalContext`] when the payload
+    /// carries no JSON-LD context in a top-level `@context` member,
     /// [`ContextRegistryError::Persistence`] when the store cannot record or read
     /// the Context, and [`ContextRegistryError::Invariant`] when an identifier
     /// cannot be built or a freshly minted one is already held.
@@ -339,10 +339,11 @@ impl ContextRegistryService {
 ///
 /// # Errors
 ///
-/// Returns [`ContextRegistryError::MissingTopLevelContext`] when the payload is
-/// not a JSON object, or is one that carries no top-level `@context` member.
+/// Returns [`ContextRegistryError::NoLocalContext`] when the payload is not a
+/// JSON object, is one that carries no top-level `@context` member, or carries
+/// one that holds no JSON-LD context.
 fn hosted_context_subtree(payload: Value) -> Result<Value, ContextRegistryError> {
-    context_subtree(payload).ok_or(ContextRegistryError::MissingTopLevelContext)
+    context_subtree(payload).map_err(ContextRegistryError::NoLocalContext)
 }
 
 /// Parse the compile-time vocabulary constant into the HTTP resource identifier type.
@@ -396,8 +397,9 @@ mod tests {
         Ok(())
     }
 
-    /// Clause 5.13.2.3 requires a top-level `@context` field; a client document
-    /// without one names no local context, which is a request error.
+    /// Clause 5.13.2.3 requires a top-level `@context` field holding a local
+    /// context; a client document without one names no local context, which is
+    /// a request error.
     #[test]
     fn a_document_without_a_top_level_context_is_refused() {
         for supplied in [
@@ -405,9 +407,10 @@ mod tests {
             json!({}),
             json!([{ "@context": {} }]),
             json!("@context"),
+            json!({ "@context": 5 }),
         ] {
             assert!(
-                matches!(hosted_context_subtree(supplied), Err(ContextRegistryError::MissingTopLevelContext)),
+                matches!(hosted_context_subtree(supplied), Err(ContextRegistryError::NoLocalContext(_))),
                 "a document with no top-level @context must be refused"
             );
         }

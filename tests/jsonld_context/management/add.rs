@@ -6,7 +6,7 @@ use crate::{
     ngsi_requests::{create_entity, create_subscription, delete_entity, delete_subscription},
     polling::eventually,
     private_tenant::PrivateTenant,
-    problem_types::INVALID_REQUEST_TYPE,
+    problem_types::BAD_REQUEST_DATA_TYPE,
     unique_ids::unique_id,
 };
 use reqwest::StatusCode;
@@ -55,32 +55,62 @@ async fn add_valid_context_uri_list_returns_201() {
     tenant.finish().await;
 }
 
-/// `050_02_01`: a body without a top-level `@context` is `InvalidRequest`.
-#[tokio::test]
-async fn add_invalid_context_missing_key_returns_400() {
+/// Refuse `body` on Add @context as `BadRequestData` and store nothing.
+///
+/// Clause 5.13.2.4 applies clause 5.5.4 "in case of invalid @context": each
+/// body is valid JSON, so a local context it does not carry is data that "is
+/// not syntactically correct", which is `BadRequestData`, not `InvalidRequest`.
+async fn assert_refused_as_bad_request_data(body: &serde_json::Value) {
     let tenant = PrivateTenant::provisioned().await;
-    let body = json!({
-        "A1": "urn:ngsi-ld:attributes:A1",
-        "A2": "urn:ngsi-ld:attributes:A2",
-        "A3": "urn:ngsi-ld:attributes:A3"
-    });
 
-    let (status, _, problem) = create_context(tenant.client(), &body).await;
+    let (status, location, problem) = create_context(tenant.client(), body).await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(problem["type"], INVALID_REQUEST_TYPE.as_str());
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {problem}");
+    assert_eq!(problem["type"], BAD_REQUEST_DATA_TYPE.as_str(), "{body}: {problem}");
+    assert_eq!(location, None, "{body} must not be given a Location");
+    let (status, hosted) = list_contexts(tenant.client(), "kind=Hosted").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(hosted.is_empty(), "{body} must store nothing: {hosted:?}");
     tenant.finish().await;
 }
 
-/// `050_02_02`: an empty object is refused.
+/// `050_02_01`: a body without a top-level `@context` is `BadRequestData`.
 #[tokio::test]
-async fn add_invalid_context_empty_object_returns_400() {
-    let tenant = PrivateTenant::provisioned().await;
+async fn add_context_without_a_context_member_is_bad_request_data() {
+    assert_refused_as_bad_request_data(&json!({
+        "A1": "urn:ngsi-ld:attributes:A1",
+        "A2": "urn:ngsi-ld:attributes:A2",
+        "A3": "urn:ngsi-ld:attributes:A3"
+    }))
+    .await;
+}
 
-    let (status, _, _) = create_context(tenant.client(), &json!({})).await;
+/// `050_02_02`: an empty object carries no `@context` and is `BadRequestData`.
+#[tokio::test]
+async fn add_context_empty_object_is_bad_request_data() {
+    assert_refused_as_bad_request_data(&json!({})).await;
+}
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    tenant.finish().await;
+/// Clause 5.13.2.3: the payload is "a JSON object that has a top-level field
+/// named @context"; an array holding one is not that object.
+#[tokio::test]
+async fn add_context_array_body_is_bad_request_data() {
+    assert_refused_as_bad_request_data(&json!([{ "@context": { "A1": "urn:ngsi-ld:attributes:A1" } }])).await;
+}
+
+/// Clause 5.13.2.3 with JSON-LD 1.1 clause 9.15: a number is no context, so a
+/// top-level `@context` holding one carries no local context to store.
+#[tokio::test]
+async fn add_context_member_that_is_a_number_is_bad_request_data() {
+    assert_refused_as_bad_request_data(&json!({ "@context": 5 })).await;
+}
+
+/// JSON-LD 1.1 clause 9.15: a context array holds `null`, strings and objects,
+/// never a number or another array.
+#[tokio::test]
+async fn add_context_array_holding_no_context_is_bad_request_data() {
+    assert_refused_as_bad_request_data(&json!({ "@context": ["https://example.org/a.jsonld", 5] })).await;
+    assert_refused_as_bad_request_data(&json!({ "@context": [["https://example.org/a.jsonld"]] })).await;
 }
 
 /// `050_03_01`: a subscription whose `@context` is an array leaves an

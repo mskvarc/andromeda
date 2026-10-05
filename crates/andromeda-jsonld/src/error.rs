@@ -318,6 +318,7 @@ mod tests {
     use crate::{
         context_cache::ContextCacheError,
         context_graph::ContextGraphError,
+        context_subtree::UnusableLocalContext,
         context_term::ContextTerm,
         error::{JsonLdError, context_error_of_compaction, context_error_of_expansion, context_error_of_processing, is_protected_term_redefinition},
         loader::error::{ContextUnavailable, InvalidContextDocument, LoaderError, LoaderErrorKind},
@@ -363,7 +364,7 @@ mod tests {
         let internal = [
             JsonLdError::ContextInvalid {
                 url: url(),
-                source: InvalidContextDocument::NoContext,
+                source: InvalidContextDocument::NoContext(UnusableLocalContext::NoContextMember),
             },
             JsonLdError::EmbeddedContextMissing { url: url() },
             JsonLdError::TermNotExpanded,
