@@ -30,18 +30,15 @@
 //!   and concise alike, into "'entityIdSealed' and 'entityTypeSealed' shall
 //!   never be present" -- an unconditional prohibition, since the `ngsildproof`
 //!   exception is a Property's.
-//! - A third is decidable on the compact payload for a different reason: the
-//!   `@context` clause 5.5.7 admits only at the top level of an NGSI-LD
-//!   document is lifted out of the payload by the transport layer, so every one
-//!   still standing in what arrives here is embedded.
-//!   [`screen_keys_in_fragment`] holds it, beside the clause 4.6.4 refusal of
-//!   a key JSON-LD expansion would drop or rewrite past recovery, which is
-//!   decidable on the compact payload because no context can define the keys
-//!   it refuses. Its companion rule --
-//!   that the user `@context` declares no JSON-LD Scoped Context -- reads the
-//!   request's contexts rather than its payload and needs them resolved, so
-//!   `andromeda_jsonld::user_context_admission` owns it, and every admission
-//!   here takes the context it admitted.
+//! - A third is decidable on the compact payload because no context can define
+//!   the keys it refuses: the clause 4.6.4 refusal of a key JSON-LD expansion
+//!   would drop or rewrite past recovery, which [`screen_keys_in_fragment`]
+//!   holds. Clause 5.5.7's two rules on the user `@context` -- no JSON-LD
+//!   Scoped Context, and no part of it below the document's top level -- are
+//!   the request's, not the payload's: `andromeda_jsonld::user_context_admission`
+//!   owns both, every admission here takes the context it admitted, and a
+//!   batch entity that embedded an `@context` is refused on its own once the
+//!   context it names was admitted.
 //! - The rest read the expanded payload -- where an NGSI-LD Null may stand,
 //!   what the `scope` member of clause 4.18 may hold, what an attribute
 //!   instance's envelope may carry, and whether a `GeoProperty` geometry is
@@ -79,6 +76,7 @@ use andromeda_http_response::{batch_projection::batch_entity_error, classified_r
 use andromeda_jsonld::{
     batch_contexts::{AdmittedBatchContext, BatchContext, BatchContextId},
     engine::processor::JsonLdEngine,
+    error::JsonLdError,
     user_context_admission::AdmittedContext,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -95,7 +93,7 @@ use thiserror::Error;
 /// Why a payload a client wrote is not admitted.
 #[derive(Debug, Error)]
 pub(crate) enum WrittenPayloadRefusal {
-    /// The compact payload breaks clause 5.2.4, 4.5.2.2, 5.5.7 or 4.6.4.
+    /// The compact payload breaks clause 5.2.4, 4.5.2.2 or 4.6.4.
     #[error(transparent)]
     Compact(#[from] CompactRefusal),
     /// The expanded payload puts an NGSI-LD Null, a `scope`, an attribute
@@ -108,9 +106,8 @@ impl EntityHttpClassify for WrittenPayloadRefusal {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
         match self {
             // Clause 5.5.4: data that is not syntactically correct according to
-            // the API data type definitions is BadRequestData, and clause 5.5.7
-            // gives a part of the user @context outside the document's top
-            // level the same type, as clause 4.6.4 does a value it refuses.
+            // the API data type definitions is BadRequestData, as clause 4.6.4
+            // makes a value it refuses.
             WrittenPayloadRefusal::Compact(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
             WrittenPayloadRefusal::Placement(source) => source.classify_for_entity_http(),
         }
@@ -124,7 +121,7 @@ pub(crate) trait WrittenEntityPayload: WritePayload {
     ///
     /// # Errors
     ///
-    /// Returns the first refusal of clause 5.2.4, 4.5.2.2, 5.5.7 or 4.6.4.
+    /// Returns the first refusal of clause 5.2.4, 4.5.2.2 or 4.6.4.
     fn screen(&self) -> Result<(), CompactRefusal>;
 }
 
@@ -199,7 +196,8 @@ pub(crate) async fn admit_written_attribute<'a, W: AttributeWriteKind>(
 /// the other outcome, and it is not returned as an error at all: clause
 /// 5.6.7.5 requires the batch to answer 207 with a per-entity `BatchEntityError`
 /// for it, so the refusal is projected onto every entity naming that context,
-/// and the entities naming another one proceed.
+/// and the entities naming another one proceed. An `@context` one entity
+/// embedded below its own top level is that entity's `BatchEntityError`.
 pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
     service: &EntityService,
     engine: &JsonLdEngine,
@@ -238,7 +236,7 @@ async fn screened_batch_entities(
 ) -> Result<Vec<SubmittedEntity>, WrittenPayloadRefusal> {
     let mut decided: HashMap<BatchContextId, ContextAdmission> = HashMap::new();
     let mut submitted = Vec::with_capacity(items.len());
-    for BatchItem { entity, context } in items {
+    for BatchItem { entity, context, embedded } in items {
         let admission = match decided.entry(context.id()) {
             Entry::Occupied(seen) => seen.into_mut(),
             Entry::Vacant(slot) => slot.insert(context_admission(admit_context(&context).await)?),
@@ -250,6 +248,13 @@ async fn screened_batch_entities(
                 continue;
             }
         };
+        // Clause 5.5.7: an `@context` the entity embedded below its own top
+        // level is that entity's refusal, judged once its context loaded.
+        if let Some(found) = embedded {
+            let refusal = WrittenPayloadRefusal::Placement(EntityError::from(JsonLdError::from(found)));
+            refused.push(batch_entity_error(entity.id.into(), &refusal, EntityHttpClassify::classify_for_entity_http));
+            continue;
+        }
         match screen_compact_entity(&entity) {
             Ok(()) => submitted.push(SubmittedEntity {
                 entity,
@@ -311,7 +316,11 @@ mod tests {
         error::JsonLdError,
     };
     use andromeda_ngsi_ld_model::entity::Entity;
-    use andromeda_ngsi_ld_representation::attribute_type_validation::{AttributeNodeFault, AttributeTypeError};
+    use andromeda_ngsi_ld_problem_details::batch_operation::BatchEntityError;
+    use andromeda_ngsi_ld_representation::{
+        attribute_type_validation::{AttributeNodeFault, AttributeTypeError},
+        embedded_context_admission::find_embedded_context,
+    };
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
 
@@ -333,8 +342,88 @@ mod tests {
             .map(|(id, context)| BatchItem {
                 entity: entity(&json!({ "id": id, "type": "Building" })),
                 context: contexts.context_of(Some(serde_json::from_str(context).unwrap_or_else(|_| Value::from(*context)))),
+                embedded: None,
             })
             .collect()
+    }
+
+    /// `items`, the entity `id`s in `embedding` carrying an `@context` under
+    /// `/speed`.
+    fn items_embedding(entities: &[(&str, &str)], embedding: &[&str]) -> Vec<BatchItem> {
+        items(entities)
+            .into_iter()
+            .map(|item| BatchItem {
+                embedded: embedding.contains(&item.entity.id.as_str()).then(|| {
+                    find_embedded_context(br#"{"speed": {"@context": {}}}"#)
+                        .expect("valid JSON")
+                        .expect("an embedded context")
+                }),
+                ..item
+            })
+            .collect()
+    }
+
+    /// The problem type each refused entity carries, by entity id.
+    fn refused_types(refused: &[BatchEntityError]) -> Vec<(String, String)> {
+        refused
+            .iter()
+            .filter_map(|error| serde_json::to_value(error).ok())
+            .map(|error| {
+                (
+                    error["entityId"].as_str().unwrap_or_default().to_owned(),
+                    error["error"]["type"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    /// Clause 5.5.7: an entity that embedded an `@context` below its own top
+    /// level is refused on its own as `BadRequestData`, its siblings admitted.
+    #[tokio::test]
+    async fn an_entity_embedding_a_context_is_refused_on_its_own() {
+        let mut refused = Vec::new();
+        let rendered = screened_batch_entities(
+            async |context: &BatchContext| admission_of(context).await,
+            items_embedding(
+                &[("urn:ngsi-ld:Building:a", ADMITTED), ("urn:ngsi-ld:Building:b", ADMITTED)],
+                &["urn:ngsi-ld:Building:b"],
+            ),
+            &mut refused,
+        )
+        .await
+        .expect("an embedded context does not fail the operation");
+
+        let admitted: Vec<String> = rendered.iter().map(|item| item.entity.id.to_string()).collect();
+        pretty_assertions::assert_eq!(admitted, vec!["urn:ngsi-ld:Building:a"]);
+        pretty_assertions::assert_eq!(
+            refused_types(&refused),
+            vec![("urn:ngsi-ld:Building:b".to_owned(), "BadRequestData".to_owned())]
+        );
+    }
+
+    /// Clause 5.5.4 judges data "according to the @context": an entity whose
+    /// context cannot be retrieved is answered so, whatever it embedded.
+    #[tokio::test]
+    async fn an_unretrievable_context_outranks_an_embedded_one() {
+        let mut refused = Vec::new();
+        screened_batch_entities(
+            async |context: &BatchContext| admission_of(context).await,
+            items_embedding(&[("urn:ngsi-ld:Building:a", UNRETRIEVABLE)], &["urn:ngsi-ld:Building:a"]),
+            &mut refused,
+        )
+        .await
+        .expect("an unretrievable context does not fail the operation");
+
+        pretty_assertions::assert_eq!(
+            refused_types(&refused),
+            vec![("urn:ngsi-ld:Building:a".to_owned(), "LdContextNotAvailable".to_owned())]
+        );
     }
 
     /// The admission the fake decides for `context`: the two failures named

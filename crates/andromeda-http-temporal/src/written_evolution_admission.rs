@@ -26,15 +26,13 @@
 //! Fragment, and a mismatch is refused here so that no Context Source receives
 //! a Fragment for another Entity.
 //!
-//! Clause 5.5.7's two prohibitions on the user `@context` are screened here for
-//! the same reason and at the same point: a `@context` embedded below the
-//! document's top level is decidable on the payload, and whether the request's
-//! own contexts declare a JSON-LD Scoped Context is decidable once they are
-//! resolved. Both "should result in an error of type `BadRequestData`", and
-//! both have to be decided before the forwarding phase, because a payload or a
-//! context this broker refuses must reach no Context Source. The same walk
-//! refuses a key JSON-LD expansion would drop or rewrite past recovery, which
-//! clause 4.6.4 forbids losing.
+//! A key JSON-LD expansion would drop or rewrite past recovery, which clause
+//! 4.6.4 forbids losing, is refused here for the same reason and at the same
+//! point, before the forwarding phase, because a payload this broker refuses
+//! must reach no Context Source. Clause 5.5.7's two prohibitions on the user
+//! `@context` -- no JSON-LD Scoped Context, and no part of it below the
+//! document's top level -- are the request's: the user `@context` admission
+//! (`crate::request_context_admission`) refuses both before this runs.
 //!
 //! The NGSI-LD Null is deliberately not screened here. Clause 5.5.4's second
 //! bullet excepts from its prohibition "the representation of deleted
@@ -251,29 +249,29 @@ mod tests {
         assert!(admit_written_evolution(&payload, &instance()).is_err());
     }
 
-    /// Clause 5.5.7: "there cannot be parts of the user @context other than at
-    /// the top level of the NGSI-LD document".
+    /// Clause 4.6.4: a key JSON-LD expansion would drop cannot be returned as
+    /// written, in a temporal instance as anywhere else.
     #[test]
-    fn a_context_embedded_in_a_temporal_instance_is_refused() {
+    fn a_keyword_form_key_in_a_temporal_instance_is_refused() {
         let payload = json!({
             "id": "urn:ngsi-ld:Vehicle:1",
             "type": "Vehicle",
-            "speed": [{"type": "Property", "value": 10, "observedAt": "2024-01-01T00:00:00Z", "@context": {"speed": "https://example.org/speed"}}]
+            "speed": [{"type": "Property", "value": 10, "observedAt": "2024-01-01T00:00:00Z", "@foo": 1}]
         });
         assert!(admit_written_evolution(&payload, &instance()).is_err());
 
-        let modified = fragment(&json!({"type": "Property", "value": 10, "unit": {"@context": {}}}));
+        let modified = fragment(&json!({"type": "Property", "value": 10, "unit": {"@foo": {}}}));
         assert!(admit_written_instance(&entity(), &modified, &instance()).is_err());
     }
 
-    /// The `json` element of a `JsonProperty` holds native JSON, so a key
-    /// spelled `@context` inside one is data (clause 5.5.7, closing note).
+    /// The `json` element of a `JsonProperty` holds native JSON, so a
+    /// keyword-form key inside one is data (clause 5.5.7, closing note).
     #[test]
-    fn a_context_key_inside_a_temporal_json_property_is_admitted() {
+    fn a_keyword_form_key_inside_a_temporal_json_property_is_admitted() {
         let payload = json!({
             "id": "urn:ngsi-ld:Vehicle:1",
             "type": "Vehicle",
-            "config": [{"type": "JsonProperty", "json": {"@context": "https://example.org/not-a-context"}, "observedAt": "2024-01-01T00:00:00Z"}]
+            "config": [{"type": "JsonProperty", "json": {"@foo": "data"}, "observedAt": "2024-01-01T00:00:00Z"}]
         });
         assert!(admit_written_evolution(&payload, &instance()).is_ok());
     }

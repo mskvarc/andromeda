@@ -28,6 +28,7 @@ use andromeda_http_extraction::{
 use andromeda_http_response::{internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse, single::NgsiLdResponse};
 use andromeda_jsonld::{
     context_spec::ContextSpec,
+    error::JsonLdError,
     user_context_admission::{SubmittedContext, admit_user_context},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -84,7 +85,9 @@ pub async fn update(
     // so its context is never resolved.
     JsonLd { value: body, context }: JsonLd<UpdateEntityMapBody>,
 ) -> Result<Response, ProblemResponse> {
-    context.unused();
+    // The update names no term a context could define, but clause 5.5.7
+    // refuses an `@context` embedded below its top level all the same.
+    context.unused().map_err(JsonLdError::from).with_entity_map_instance(&uri)?;
     let expires_at = body.expires_at.ok_or_else(|| bad_request_data("expiresAt is required", &uri))?;
 
     if expires_at <= chrono::Utc::now() {

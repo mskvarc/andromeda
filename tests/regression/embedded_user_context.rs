@@ -20,6 +20,12 @@
 //! compaction via an @context. Therefore, the given short-hand name is always
 //! used for accessing JSON keys within a `JsonProperty` json element".
 //!
+//! The rule holds for every NGSI-LD document a client sends, not only for
+//! Entities: a Subscription or a Context Source Registration carrying an
+//! `@context` inside `entities` or `information` was accepted. The user `@context` admission now refuses it on every operation, after
+//! the context loaded, so an unreachable context still answers
+//! `LdContextNotAvailable` first (clause 5.5.4).
+//!
 //! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
@@ -471,6 +477,228 @@ async fn regression_embedded_user_context_the_core_context_scoped_proof_term_sti
         json!("eddsa-jcs-2022"),
         "the proof value is stored verbatim: {stored}"
     );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// A remote `@context` at an address nothing answers on, so its resolution
+/// fails with a connection refusal rather than a slow timeout (clause 5.5.6).
+const UNREACHABLE_CONTEXT: &str = "http://127.0.0.1:9/unreachable.jsonld";
+
+/// The problem type clause 5.5.6 gives a `@context` that cannot be retrieved.
+const LD_CONTEXT_NOT_AVAILABLE: &str = "https://uri.etsi.org/ngsi-ld/errors/LdContextNotAvailable";
+
+/// The status a resource at `path` answers a plain GET with.
+async fn status_of(client: &TestClient, path: &str) -> StatusCode {
+    client.raw(Method::GET, path).send().await.expect("retrieve request").status
+}
+
+/// The resource at `path`, read back as JSON.
+async fn resource(client: &TestClient, path: &str) -> Value {
+    let response = client.raw(Method::GET, path).send().await.expect("retrieve request");
+    assert_eq!(response.status, StatusCode::OK, "{path}: {:?}", response.body);
+    response.json_value().expect("a resource is JSON")
+}
+
+/// Create the resource `body` at `collection` and require the broker to accept
+/// it.
+async fn create_resource(client: &TestClient, collection: &str, body: &Value, scenario: &str) {
+    let response = send_ld_json(client, Method::POST, collection, body).await;
+    assert_eq!(response.status, StatusCode::CREATED, "{scenario}: {:?}", response.body);
+}
+
+/// A Subscription to `Device`s, its `entities` selector carrying `selector`'s
+/// members.
+fn subscription(id: &str, selector: &Value) -> Value {
+    let mut entity_selector = json!({"type": "Device"});
+    if let (Some(target), Some(members)) = (entity_selector.as_object_mut(), selector.as_object()) {
+        target.extend(members.clone()); // clone: the fixture keeps its selector members
+    }
+    json!({
+        "id": id,
+        "type": "Subscription",
+        "entities": [entity_selector],
+        "notification": {"endpoint": {"uri": "http://127.0.0.1:9/notify", "accept": "application/json"}},
+        "@context": [CORE_CONTEXT]
+    })
+}
+
+/// A Context Source Registration for `Device`s, its first entity selector
+/// carrying `selector`'s members.
+fn registration(id: &str, selector: &Value) -> Value {
+    let mut entity_selector = json!({"type": "Device"});
+    if let (Some(target), Some(members)) = (entity_selector.as_object_mut(), selector.as_object()) {
+        target.extend(members.clone()); // clone: the fixture keeps its selector members
+    }
+    json!({
+        "id": id,
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [entity_selector]}],
+        "endpoint": "http://context-source.invalid:1026/",
+        "@context": [CORE_CONTEXT]
+    })
+}
+
+/// Clause 5.5.7: a Subscription or a Context Source Registration carrying
+/// an `@context` below its top level is `BadRequestData` on create and on
+/// update, and nothing is created or changed.
+#[tokio::test]
+async fn regression_embedded_user_context_subscriptions_and_registrations_are_refused() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let embedded = json!({"@context": {"Device": "https://example.org/Device"}});
+
+    for (label, collection, refused_id, kept_id, build) in [
+        (
+            "subscription",
+            "/ngsi-ld/v1/subscriptions",
+            scope.id("Subscription:embedded-refused"),
+            scope.id("Subscription:embedded-kept"),
+            subscription as fn(&str, &Value) -> Value,
+        ),
+        (
+            "context source subscription",
+            "/ngsi-ld/v1/csourceSubscriptions",
+            scope.id("Subscription:csource-embedded-refused"),
+            scope.id("Subscription:csource-embedded-kept"),
+            subscription,
+        ),
+        (
+            "context source registration",
+            "/ngsi-ld/v1/csourceRegistrations",
+            scope.id("ContextSourceRegistration:embedded-refused"),
+            scope.id("ContextSourceRegistration:embedded-kept"),
+            registration,
+        ),
+    ] {
+        let created = send_ld_json(client, Method::POST, collection, &build(&refused_id, &embedded)).await;
+        assert_embedded_context_refused(&created, &format!("{label} create"));
+        assert_eq!(
+            status_of(client, &format!("{collection}/{refused_id}")).await,
+            StatusCode::NOT_FOUND,
+            "{label}: a refused create stores nothing"
+        );
+
+        create_resource(client, collection, &build(&kept_id, &json!({})), &format!("{label}: seeding")).await;
+        let mut fragment = build(&kept_id, &json!({"@context": {}}));
+        if let Some(members) = fragment.as_object_mut() {
+            members.remove("id");
+            members.insert("description".to_owned(), json!("patched"));
+        }
+        let updated = send_ld_json(client, Method::PATCH, &format!("{collection}/{kept_id}"), &fragment).await;
+        assert_embedded_context_refused(&updated, &format!("{label} update"));
+        let kept = resource(client, &format!("{collection}/{kept_id}")).await;
+        assert!(kept.get("description").is_none(), "{label}: a refused update changes nothing: {kept}");
+
+        let deleted = client
+            .raw(Method::DELETE, &format!("{collection}/{kept_id}"))
+            .send()
+            .await
+            .expect("delete request");
+        assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{label}: cleanup");
+    }
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.5.7 holds for every NGSI-LD document a client sends: a posted
+/// query, an Entity Map creation from one and an Entity Map update carrying an
+/// `@context` below the top level are `BadRequestData`. A query's entity
+/// selector admits no member but `id`, `idPattern` and `type`, so its
+/// decoding refuses the member before the admission is reached, with the same
+/// error type.
+#[tokio::test]
+async fn regression_embedded_user_context_queries_and_entity_maps_are_refused() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let query = json!({
+        "type": "Query",
+        "entities": [{"type": "Device", "@context": {"Device": "https://example.org/Device"}}],
+        "@context": [CORE_CONTEXT]
+    });
+    for path in [
+        "/ngsi-ld/v1/entityOperations/query",
+        "/ngsi-ld/v1/temporal/entityOperations/query",
+        "/ngsi-ld/v1/entityMaps",
+        "/ngsi-ld/v1/temporal/entityMaps",
+    ] {
+        let response = send_ld_json(client, Method::POST, path, &query).await;
+        assert_eq!(response.status, StatusCode::BAD_REQUEST, "{path}: {:?}", response.body);
+        let problem = response.json_value().expect("a refusal carries a problem details body");
+        assert_eq!(problem["type"], json!(BAD_REQUEST_DATA), "{path}: {problem}");
+    }
+
+    let device = scope.id("Device:entity-map-target");
+    create_device(client, &plain_device(&device), "seeding the map's entity").await;
+    let created = client
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entityMaps?type=Device&id={}", urlencoding::encode(&device)))
+        .send()
+        .await
+        .expect("create entity map request");
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    let map = created.json_value().expect("a created map is JSON");
+    let map_id = map["id"].as_str().expect("the map names its id").to_owned();
+    let path = format!("/ngsi-ld/v1/entityMaps/{map_id}");
+    let map_update = json!({
+        "expiresAt": "2099-01-01T00:00:00Z",
+        "linkedMaps": {"@context": {}},
+        "@context": [CORE_CONTEXT]
+    });
+    let updated = send_ld_json(client, Method::PATCH, &path, &map_update).await;
+    assert_embedded_context_refused(&updated, "entity map update");
+    assert_eq!(resource(client, &path).await["expiresAt"], map["expiresAt"], "a refused update changes nothing");
+
+    let deleted = client.raw(Method::DELETE, &path).send().await.expect("delete request");
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT, "cleanup");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.5.4 judges data "according to the @context": a request whose
+/// `@context` cannot be retrieved is `LdContextNotAvailable` whatever it
+/// embedded, on a single write, a subscription and each entity of a batch.
+#[tokio::test]
+async fn regression_embedded_user_context_an_unreachable_context_outranks_an_embedded_one() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let link = format!(r#"<{UNREACHABLE_CONTEXT}>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#);
+
+    let entity = json!({
+        "id": scope.id("Device:unreachable-embedded"),
+        "type": "Device",
+        "speed": {"type": "Property", "value": 1, "@context": {}}
+    });
+    let mut subscribed = subscription(&scope.id("Subscription:unreachable-embedded"), &json!({"@context": {}}));
+    if let Some(members) = subscribed.as_object_mut() {
+        members.remove("@context");
+    }
+    for (label, path, body) in [
+        ("entity create", "/ngsi-ld/v1/entities", entity),
+        ("subscription create", "/ngsi-ld/v1/subscriptions", subscribed),
+    ] {
+        let response = client
+            .raw(Method::POST, path)
+            .header("content-type", "application/json")
+            .header("link", link.as_str())
+            .json(&body)
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(response.status, StatusCode::GATEWAY_TIMEOUT, "{label}: {:?}", response.body);
+        let problem = response.json_value().expect("a refusal carries a problem details body");
+        assert_eq!(problem["type"], json!(LD_CONTEXT_NOT_AVAILABLE), "{label}: {problem}");
+    }
+
+    let unreachable = scope.id("Device:batch-unreachable-embedded");
+    let mut item = device_with(&unreachable, "speed", &json!({"type": "Property", "value": 1, "@context": {}}));
+    item["@context"] = json!([UNREACHABLE_CONTEXT]);
+    let response = send_ld_json(client, Method::POST, "/ngsi-ld/v1/entityOperations/create", &json!([item])).await;
+    assert_eq!(response.status, StatusCode::MULTI_STATUS, "{:?}", response.body);
+    let result = response.json_value().expect("a batch answers with a clause 5.2.16 result");
+    let reported = result["errors"]
+        .as_array()
+        .and_then(|errors| errors.iter().find(|error| error["entityId"] == json!(unreachable)))
+        .unwrap_or(&Value::Null);
+    assert_eq!(reported["error"]["type"], json!(LD_CONTEXT_NOT_AVAILABLE), "{result}");
 
     scope.finish().await.expect("cleanup failed");
 }

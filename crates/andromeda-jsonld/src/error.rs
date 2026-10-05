@@ -13,6 +13,7 @@ use crate::{
     context_term::ContextTerm,
     loader::error::{ContextUnavailable, InvalidContextDocument, LoaderError},
 };
+use andromeda_ngsi_ld_representation::embedded_context_admission::EmbeddedContext;
 use iri_rs::{InvalidIri, IriBuf};
 use jsonld::{CompactError, ContextLoadError, ExpandError, compaction, context_processing, expansion};
 use jsonld_syntax::{context::InvalidContext, parse};
@@ -136,6 +137,12 @@ pub enum JsonLdError {
         /// The term whose definition carries the scoped `@context`.
         term: ContextTerm,
     },
+
+    /// Clause 5.5.7: the user `@context` shall not "be embedded into NGSI-LD
+    /// Attributes, i.e. there cannot be parts of the user @context other than
+    /// at the top level of the NGSI-LD document".
+    #[error(transparent)]
+    EmbeddedUserContext(#[from] EmbeddedContext),
 
     /// The HTTP client could not be constructed from the configured settings.
     #[error("failed to build the JSON-LD HTTP client: {0}")]
@@ -323,6 +330,7 @@ mod tests {
         error::{JsonLdError, context_error_of_compaction, context_error_of_expansion, context_error_of_processing, is_protected_term_redefinition},
         loader::error::{ContextUnavailable, InvalidContextDocument, LoaderError, LoaderErrorKind},
     };
+    use andromeda_ngsi_ld_representation::embedded_context_admission::find_embedded_context;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use iri_rs::IriBuf;
     use jsonld::{CompactError, ContextLoadError, ExpandError, ExtractContextError, LoadError, compaction, context_processing, expansion};
@@ -374,6 +382,11 @@ mod tests {
             JsonLdError::ScopedUserContext {
                 term: ContextTerm::new("speed"),
             },
+            JsonLdError::EmbeddedUserContext(
+                find_embedded_context(br#"{"speed": {"@context": {}}}"#)
+                    .expect("valid JSON")
+                    .expect("an embedded context"),
+            ),
         ];
         for error in &internal {
             assert!(!error.is_context_not_available(), "{error} must not report as a loading failure");

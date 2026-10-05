@@ -217,6 +217,7 @@ mod tests {
             | JsonLdError::DocumentShape
             | JsonLdError::ContextGraph(_)
             | JsonLdError::ScopedUserContext { .. }
+            | JsonLdError::EmbeddedUserContext(_)
             | JsonLdError::Json(_)) => panic!("expected ContextHttp, got {other}"),
         }
     }

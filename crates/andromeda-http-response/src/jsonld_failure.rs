@@ -13,7 +13,8 @@ pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
         }
         JsonLdError::Json(source) if source.is_syntax() || source.is_eof() => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
         // Clause 5.5.7: parts of a user @context that contain a JSON-LD Scoped
-        // Context "should result in an error of type BadRequestData".
+        // Context, or that stand below the top level of the document, "should
+        // result in an error of type BadRequestData".
         JsonLdError::ProtectedContextPreload { .. }
         | JsonLdError::ContextInvalid { .. }
         | JsonLdError::PreloadedContextUnreadable { .. }
@@ -23,6 +24,7 @@ pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
         | JsonLdError::EmbeddedContextInvalid { .. }
         | JsonLdError::InlineContextInvalid(_)
         | JsonLdError::ScopedUserContext { .. }
+        | JsonLdError::EmbeddedUserContext(_)
         | JsonLdError::ClientBuild(_)
         | JsonLdError::Expansion(_)
         | JsonLdError::Compaction(_)

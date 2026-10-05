@@ -63,12 +63,12 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-problem-details",
         "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",
         "andromeda-persistence-failure",
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [
-        "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-test-allocator",
     ],

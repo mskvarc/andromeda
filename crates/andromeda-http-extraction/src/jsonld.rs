@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_number::json_value::{
     deserialize_exact_document,
     number_range::{NumberRangeError, refuse_numbers_out_of_range},
 };
+use andromeda_ngsi_ld_representation::embedded_context_admission::find_embedded_context;
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
@@ -68,6 +69,20 @@ pub struct JsonLdDocument {
     /// The context the request named in its body or `Link` header, admitted
     /// before anything is read under it.
     pub context: SubmittedContext,
+}
+
+/// Axum extractor for a Notification a Context Source sends this broker
+/// (clauses 5.3.1 and 5.8.6), kept as an untyped JSON document.
+///
+/// A Notification is a document a broker rendered rather than one a client
+/// wrote, so it carries no user `@context` for clause 5.5.7 to admit: a
+/// `FeatureCollection` in its `data` member carries its own `@context` (Table
+/// 5.3.1-1). Applies every other precondition [`JsonLdDocument`] applies.
+pub struct NotificationDocument {
+    /// The notification with `@context` removed.
+    pub document: Value,
+    /// The context the notification names in its body or `Link` header.
+    pub context: ContextSpec,
 }
 
 /// A request body that passed the NGSI-LD body preconditions, with its
@@ -144,11 +159,9 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         admit_request_body(req, state, |AdmittedBody { text, context, uri }| {
+            let context = submitted_context(context, &text, &uri)?;
             let value = T::from_request_text(&text).map_err(|source| undecodable_body(&UndecodableBody::of_text::<T>(&text, source), uri))?;
-            Ok(JsonLd {
-                value,
-                context: SubmittedContext::from(context),
-            })
+            Ok(JsonLd { value, context })
         })
         .await
     }
@@ -162,16 +175,48 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         admit_request_body(req, state, |AdmittedBody { text, context, uri }| {
-            // clone: each refusal names the request
-            let document = admitted_document(&text).map_err(|refusal| number_rejection(refusal, uri.clone()))?;
-            let document = deserialize_exact_document(document).map_err(|source| undecodable_body(&UndecodableBody::Document { source }, uri))?;
-            Ok(JsonLdDocument {
-                document,
-                context: SubmittedContext::from(context),
-            })
+            let context = submitted_context(context, &text, &uri)?;
+            let document = untyped_document(&text, uri)?;
+            Ok(JsonLdDocument { document, context })
         })
         .await
     }
+}
+
+impl<S> FromRequest<S> for NotificationDocument
+where
+    S: Send + Sync,
+{
+    type Rejection = ExtractorRejection;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        admit_request_body(req, state, |AdmittedBody { text, context, uri }| {
+            let document = untyped_document(&text, uri)?;
+            Ok(NotificationDocument { document, context })
+        })
+        .await
+    }
+}
+
+/// The untyped document `text` is, numbers in canonical spelling and the
+/// top-level `@context` removed.
+fn untyped_document(text: &[u8], uri: Uri) -> Result<Value, ExtractorRejection> {
+    // clone: each refusal names the request
+    let document = admitted_document(text).map_err(|refusal| number_rejection(refusal, uri.clone()))?;
+    deserialize_exact_document(document).map_err(|source| undecodable_body(&UndecodableBody::Document { source }, uri))
+}
+
+/// The user `@context` a client body submitted: the context it names and the
+/// first `@context` it embeds below a document's top level (clause 5.5.7),
+/// which the user `@context` admission refuses.
+///
+/// # Errors
+///
+/// Returns an `InvalidRequest` for a text that is no JSON, which the earlier
+/// preconditions refuse first.
+pub(crate) fn submitted_context(context: ContextSpec, text: &[u8], uri: &Uri) -> Result<SubmittedContext, ExtractorRejection> {
+    let embedded = find_embedded_context(text).map_err(|error| number_rejection(NumberRangeError::Syntax(error), uri.clone()))?; // clone: the refusal names the request
+    Ok(SubmittedContext::new(context, embedded))
 }
 
 /// Apply every NGSI-LD body precondition to `req` -- clauses 6.3.4 and 6.3.5,
@@ -345,7 +390,7 @@ async fn read_body<S: Send + Sync>(req: Request, state: &S) -> Result<ReadBody, 
 mod tests {
     use crate::{
         blocking_decode::BlockingDecodePolicy,
-        jsonld::{JsonLd, JsonLdDocument},
+        jsonld::{JsonLd, JsonLdDocument, NotificationDocument},
         request_json_value_limit::RequestJsonValueLimit,
     };
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
@@ -353,6 +398,7 @@ mod tests {
     use andromeda_ngsi_ld_model::{entity::Entity, request_body::RequestBody};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use andromeda_ngsi_ld_representation::embedded_context_admission::find_embedded_context;
     use axum::{
         body::{Body, HttpBody, to_bytes},
         extract::FromRequest,
@@ -1006,5 +1052,32 @@ mod tests {
                 assert!(off_executor.is_err(), "{body}: an array is no Entity");
             }
         }
+    }
+
+    /// Clause 5.5.7: a Subscription carrying an `@context` inside `entities`
+    /// is extracted with the finding located, for the admission to refuse.
+    #[tokio::test]
+    async fn a_subscription_embedding_a_context_carries_the_finding() {
+        let body = r#"{"type": "Subscription", "entities": [{"type": "Device", "@context": {"Device": "https://example.org/Device"}}], "notification": {"endpoint": {"uri": "http://example.org/notify"}}}"#;
+        let extracted = extract_document(json_request(body))
+            .await
+            .expect("the body is admitted for the admission to judge");
+        let expected = find_embedded_context(body.as_bytes()).expect("valid JSON");
+        pretty_assertions::assert_eq!(expected.as_ref().map(|found| found.path.to_string()).as_deref(), Some("/entities/0"));
+        pretty_assertions::assert_eq!(
+            extracted.context,
+            SubmittedContext::new(ContextSpec::from_request(RequestContext::Default), expected)
+        );
+    }
+
+    /// A Notification is broker-rendered, so its `data` may hold a
+    /// `FeatureCollection` carrying its own `@context` (Table 5.3.1-1).
+    #[tokio::test]
+    async fn a_notification_carrying_a_feature_collection_context_is_admitted() {
+        let body = r#"{"id": "urn:ngsi-ld:Notification:1", "type": "Notification", "subscriptionId": "urn:ngsi-ld:Subscription:1", "notifiedAt": "2024-01-01T00:00:00Z", "data": {"type": "FeatureCollection", "@context": "https://example.org/ctx.jsonld", "features": []}}"#;
+        let notification = NotificationDocument::from_request(with_content_length(json_request(body)), &())
+            .await
+            .expect("a notification is admitted");
+        pretty_assertions::assert_eq!(notification.document["data"]["@context"], json!("https://example.org/ctx.jsonld"));
     }
 }

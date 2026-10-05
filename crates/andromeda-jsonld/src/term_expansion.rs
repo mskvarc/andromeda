@@ -82,6 +82,7 @@ const fn expansion_failure(error: &JsonLdError) -> TermExpansionFailure {
         | JsonLdError::EmbeddedContextInvalid { .. }
         | JsonLdError::InlineContextInvalid(_)
         | JsonLdError::ScopedUserContext { .. }
+        | JsonLdError::EmbeddedUserContext(_)
         | JsonLdError::ClientBuild(_)
         | JsonLdError::Expansion(_)
         | JsonLdError::Compaction(_)

@@ -521,3 +521,26 @@ async fn snapshot_create_refuses_a_scoped_or_unreachable_context() {
     );
     pretty_assertions::assert_eq!(get_snapshot(&client(), unreachable_id).await.0, StatusCode::NOT_FOUND);
 }
+
+/// Clause 5.5.7: a Snapshot create or update carrying an `@context` below the
+/// top level of its body is `BadRequestData`, whether or not the operation
+/// resolves its context.
+#[tokio::test]
+#[serial(snapshot)]
+async fn snapshot_create_and_update_refuse_an_embedded_context() {
+    let _serialized_environment = clean_database().await;
+    let refused_id = "urn:ngsi-ld:Snapshot:test-embedded-context";
+    let mut embedded = minimal(Some(refused_id));
+    embedded["snapshotQueries"] = json!([{"type": "Query", "entities": [{"type": "Vehicle", "@context": {}}]}]);
+    let (status, _, problem) = create_snapshot_raw(&client(), &embedded).await;
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_problem_details(&problem, "https://uri.etsi.org/ngsi-ld/errors/BadRequestData", StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(get_snapshot(&client(), refused_id).await.0, StatusCode::NOT_FOUND);
+
+    let kept_id = "urn:ngsi-ld:Snapshot:test-embedded-context-kept";
+    let (status, _, _) = create_snapshot_raw(&client(), &minimal(Some(kept_id))).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    let (status, problem) = update_snapshot(&client(), kept_id, &json!({"snapshotStatus": "paused", "receiverInfo": [{"@context": {}}]})).await;
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_problem_details(&problem, "https://uri.etsi.org/ngsi-ld/errors/BadRequestData", StatusCode::BAD_REQUEST);
+}

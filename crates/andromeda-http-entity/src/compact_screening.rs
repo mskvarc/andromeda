@@ -3,10 +3,11 @@
 //!
 //! [`validate_fragment_attribute_types`] and [`screen_keys_in_fragment`] state
 //! the rules over the compact JSON of an entity: clause 5.2.4's eight attribute
-//! types together with clause 4.5.2.2's `ngsildproof` seals, and the keys a
-//! document cannot be written with -- clause 5.5.7's `@context` below the top
-//! level, and the keys clause 4.6.4 refuses because JSON-LD expansion would
-//! drop or rewrite them. The extractor decodes the request straight
+//! types together with clause 4.5.2.2's `ngsildproof` seals, and the keys
+//! clause 4.6.4 refuses because JSON-LD expansion would drop or rewrite them.
+//! Clause 5.5.7's `@context` below the top level is not among them: it is part
+//! of the request's user `@context`, refused by the user `@context` admission
+//! (`andromeda_jsonld::user_context_admission`) before this screening runs. The extractor decodes the request straight
 //! into the typed [`Entity`] or [`EntityPatch`], so the rules are applied here
 //! to what that decode holds, member by member, rather than to a JSON copy of
 //! the whole entity rendered back for them:
@@ -42,7 +43,8 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, JsonPointerSegment};
 use andromeda_ngsi_ld_representation::{
     attribute_type_validation::{AttributeNodeFault, AttributeTypeError, validate_attribute_node},
-    compact_key_admission::{CompactKeyError, is_native_json_member, screen_keys_in_nested_value},
+    compact_key_admission::{CompactKeyError, screen_keys_in_nested_value},
+    embedded_context_admission::is_native_json_member,
     family_member_admission::MemberAdmission,
     proof_seal_admission::{ProofSealMember, proof_seal_admission},
 };
@@ -50,18 +52,14 @@ use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde_json::Value;
 use thiserror::Error;
 
-/// The member a JSON-LD document declares its context in.
-const CONTEXT_MEMBER: &str = "@context";
-
 /// A compact payload one of the two rules refuses.
 #[derive(Debug, Error)]
 pub(crate) enum CompactRefusal {
     /// An attribute node is not one clauses 5.2.4 and 4.5.2.2 admit.
     #[error(transparent)]
     AttributeType(#[from] AttributeTypeError),
-    /// A key the document cannot be written with: a `@context` below its top
-    /// level (clause 5.5.7), or one JSON-LD expansion would drop or rewrite
-    /// (clause 4.6.4).
+    /// A key the document cannot be written with: one JSON-LD expansion would
+    /// drop or rewrite (clause 4.6.4).
     #[error(transparent)]
     Key(#[from] CompactKeyError),
 }
@@ -71,7 +69,7 @@ pub(crate) enum CompactRefusal {
 /// # Errors
 ///
 /// Returns the first attribute node clauses 5.2.4 and 4.5.2.2 refuse, else
-/// the first key clauses 5.5.7 and 4.6.4 refuse.
+/// the first key clause 4.6.4 refuses.
 pub(crate) fn screen_compact_entity(entity: &Entity) -> Result<(), CompactRefusal> {
     screen_compact_members(entity.attribute_members())
 }
@@ -207,14 +205,10 @@ fn screen_keys_in_member(member: &AttributeValue, at: &[JsonPointerSegment]) -> 
 /// The key rules over one typed instance standing at `at`: its client-written
 /// JSON values and its sub-attributes, in member order. Its own keys are the
 /// typed members of its family and attribute names, none of which the rules
-/// refuse but a `@context`.
+/// refuse; a `@context` among them is the user `@context` admission's to
+/// refuse, before this is reached.
 fn screen_keys_in_instance(instance: &Attribute, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
     let sub_attributes = &instance.common().sub_attributes;
-    if sub_attributes.contains_key(CONTEXT_MEMBER) {
-        return Err(CompactKeyError::EmbeddedContext {
-            path: JsonPointer::from_segments(at.to_vec()),
-        });
-    }
     let mut slots: Vec<(&str, WrittenSlot<'_>)> = written_values(instance);
     slots.extend(
         sub_attributes
@@ -241,7 +235,7 @@ fn screen_keys_in_instance(instance: &Attribute, at: &[JsonPointerSegment]) -> R
     })
 }
 
-/// A member of a typed instance that can carry an embedded `@context`.
+/// A member of a typed instance that can carry a key the rules refuse.
 enum WrittenSlot<'a> {
     /// One client-written value.
     Value(&'a NgsiLdValue),
@@ -380,21 +374,6 @@ mod tests {
             entity(json!({"speed": {"type": "Property", "value": 1, "both": {"object": "urn:x:1", "vocab": "x"}}})),
             entity(json!({"speed": {"type": "Property", "value": 1, "readings": [{"value": 1, "datasetId": "urn:ds:1"}, 7]}})),
             entity(json!({"speed": {"type": "Property", "value": 1, "accuracy": {"type": "Property", "value": {"type": "Feature"}}}})),
-            entity(json!({"p": {"type": "Property", "value": {"a": {"@context": {}}}}})),
-            entity(json!({"p": {"value": 1, "@context": "https://example.org/ctx.jsonld"}})),
-            entity(json!({"p": [{"value": 1}, {"value": 2, "nested": {"@context": {}}}]})),
-            entity(json!({"p": {"type": "Property", "value": 1, "json": {"x": {"@context": {}}}}})),
-            entity(json!({"p": {"type": "ListProperty", "valueList": [1, {"a": [{"@context": {}}]}]}})),
-            entity(json!({"p": {"type": "Property", "value": 1, "sub": {"type": "Property", "value": {"@context": {}}}}})),
-            entity(json!({"p": [{"type": "Property", "value": 1}, {"type": "Property", "value": {"@context": {}}, "datasetId": "urn:ds:2"}]})),
-            entity(json!({"a": {"type": "Propertyy", "value": 1}, "b": {"type": "Property", "value": {"@context": {}}}})),
-            entity(json!({"location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0], "@context": {}}}})),
-            entity(json!({"json": {"type": "Property", "value": {"@context": {}}}})),
-            entity(json!({"p": {"type": "Property", "value": 1, "sub": [{"value": 1}, {"value": {"deep": [{"@context": {}}]}}]}})),
-            entity(json!({"z": {"type": "Property", "value": {"@context": {}}}, "a": {"type": "Property", "value": {"x": {"@context": {}}}}})),
-            entity(
-                json!({"r": {"type": "Relationship", "object": "urn:x:1", "entity": {"id": "urn:x:1", "type": "T", "q": {"type": "Property", "value": {"@context": {}}}}}}),
-            ),
             entity(json!({"p": {"type": "Property", "value": {"opening hours": "9-5", "id": "abc", "type": "Postal Address"}}})),
             entity(json!({"p": {"type": "Property", "value": {"@foo": "x", "name": "y"}}})),
             entity(json!({"p": {"type": "Property", "value": 1, "sub": {"value": {"a": [{"@Bar": 1}]}}}})),
@@ -458,7 +437,6 @@ mod tests {
             .collect();
         assert!(findings.iter().any(|finding| finding.contains("ngsildproof")), "{findings:?}");
         assert!(findings.iter().any(|finding| finding.contains("not an NGSI-LD attribute type")), "{findings:?}");
-        assert!(findings.iter().any(|finding| finding.contains("@context is embedded")), "{findings:?}");
         assert!(findings.iter().any(|finding| finding.contains("form of a JSON-LD keyword")), "{findings:?}");
         assert!(findings.iter().any(|finding| finding.contains("is empty")), "{findings:?}");
     }

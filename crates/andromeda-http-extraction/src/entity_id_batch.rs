@@ -16,7 +16,7 @@ use crate::{
     batch_array::batch_items,
     batch_body_refusal::{BatchBodyRefusal, BatchMembers},
     batch_item_refusal::BatchItemRefusal,
-    jsonld::{AdmittedBody, admit_request_body},
+    jsonld::{AdmittedBody, admit_request_body, submitted_context},
 };
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::user_context_admission::SubmittedContext;
@@ -55,11 +55,9 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<JsonLdEntityIds, ExtractorRejection> {
         admit_request_body(req, state, |AdmittedBody { text, context, uri }| {
+            let context = submitted_context(context, &text, &uri)?;
             let batch = entity_id_batch(&text).map_err(|refusal| ExtractorRejection::Classified(refusal.into_problem(uri)))?;
-            Ok(JsonLdEntityIds {
-                batch,
-                context: SubmittedContext::from(context),
-            })
+            Ok(JsonLdEntityIds { batch, context })
         })
         .await
     }

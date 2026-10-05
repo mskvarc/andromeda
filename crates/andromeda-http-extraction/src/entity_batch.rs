@@ -30,8 +30,9 @@ use andromeda_jsonld::{
 };
 use andromeda_ngsi_ld_lexicon::{identifier_length::IdentifierTooLong, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, request_body::RequestBody};
-use andromeda_ngsi_ld_number::json_value::number_range::refuse_numbers_out_of_range;
+use andromeda_ngsi_ld_number::json_value::number_range::{NumberRangeError, refuse_numbers_out_of_range};
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchEntityError;
+use andromeda_ngsi_ld_representation::embedded_context_admission::{EmbeddedContext, find_embedded_context};
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
@@ -186,6 +187,20 @@ pub struct BatchItem {
     pub entity: Entity,
     /// The context the entity is read against.
     pub context: BatchContext,
+    /// The first `@context` the item embedded below its own top level (clause
+    /// 5.5.7), which is the item's own refusal: several items share one
+    /// [`BatchContext`], so the finding never travels with it.
+    pub embedded: Option<EmbeddedContext>,
+}
+
+/// One batch item that decoded, with what it carried beside the entity.
+struct DecodedItem {
+    /// The decoded entity, its `@context` member removed.
+    entity: Entity,
+    /// The item's own top-level `@context`, as written.
+    own_context: Option<Value>,
+    /// The first `@context` the item embedded below its own top level.
+    embedded: Option<EmbeddedContext>,
 }
 
 /// A decoded batch request.
@@ -255,10 +270,11 @@ impl<'b> BatchArrayItem<'b> {
     /// `@context` its representation forbids or lacks one it requires (clause
     /// 6.3.5), or is not an entity. Clause 5.6.7.4 reports these per entity,
     /// leaving the rest of the batch intact.
-    fn admit(self, entity_id: &Uri, content_kind: ContentKind) -> Result<(Entity, Option<Value>), BatchItemRefusal> {
+    fn admit(self, entity_id: &Uri, content_kind: ContentKind) -> Result<DecodedItem, BatchItemRefusal> {
         IdentifierTooLong::check(entity_id.as_str())?;
         let text = self.text.get().as_bytes();
         refuse_numbers_out_of_range(text)?;
+        let embedded = find_embedded_context(text).map_err(NumberRangeError::Syntax)?;
 
         // The context is carried beside the entity, not decoded into it.
         let context = match self.envelope {
@@ -272,7 +288,11 @@ impl<'b> BatchArrayItem<'b> {
         }
 
         let entity = Entity::from_request_text(text).map_err(|source| BatchItemRefusal::from(UndecodableBody::of_text::<Entity>(text, source)))?;
-        Ok((entity, context))
+        Ok(DecodedItem {
+            entity,
+            own_context: context,
+            embedded,
+        })
     }
 }
 
@@ -334,9 +354,10 @@ fn decode_batch(
         let item = BatchArrayItem::read(item)?;
         let entity_id = item.entity_id(index)?;
         match item.admit(&entity_id, content_kind) {
-            Ok((entity, own)) => admitted.push(BatchItem {
+            Ok(DecodedItem { entity, own_context, embedded }) => admitted.push(BatchItem {
                 entity,
-                context: contexts.context_of(own),
+                context: contexts.context_of(own_context),
+                embedded,
             }),
             Err(refusal) => errors.push(refusal.against(entity_id)),
         }
@@ -439,6 +460,31 @@ mod tests {
         );
         pretty_assertions::assert_eq!(errors.len(), 1);
         pretty_assertions::assert_eq!(errors[0].entity_id.as_str(), "urn:ngsi-ld:Vehicle:2");
+    }
+
+    /// Clause 5.5.7: an item's own top-level `@context` is admitted, and the
+    /// first one it embeds deeper is carried with that item alone, located
+    /// from the item's own top level.
+    #[tokio::test]
+    async fn an_item_carries_the_context_it_embedded_and_its_sibling_none() {
+        let batch = batch_of(
+            "application/ld+json",
+            r#"[{"@context":"https://example.org/a","id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":1,"@context":{}}},{"@context":"https://example.org/a","id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle"}]"#,
+        )
+        .await;
+        let ParsedBatch { items, errors, .. } = parse_batch_entities(&batch, &batch_uri()).await.expect("batch parses");
+        assert!(errors.is_empty(), "{errors:?}");
+        let findings: Vec<(String, Option<String>)> = items
+            .iter()
+            .map(|item| (item.entity.id.to_string(), item.embedded.as_ref().map(|found| found.path.to_string())))
+            .collect();
+        pretty_assertions::assert_eq!(
+            findings,
+            vec![
+                ("urn:ngsi-ld:Vehicle:1".to_owned(), Some("/speed".to_owned())),
+                ("urn:ngsi-ld:Vehicle:2".to_owned(), None),
+            ]
+        );
     }
 
     #[tokio::test]

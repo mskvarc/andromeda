@@ -18,6 +18,7 @@ andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true
 andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-persistence-failure.workspace = true
 andromeda-tenancy.workspace = true
@@ -38,7 +39,6 @@ url = "2.5.8"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
-andromeda-ngsi-ld-representation.workspace = true
 andromeda-test-allocator.workspace = true
 pretty_assertions = "1.4.1"
 tokio = { version = "1.53.2", features = ["macros", "rt", "rt-multi-thread"] }

@@ -12,7 +12,7 @@ use crate::{
     error::{bad_request_data, classify_forwarding, classify_resolution},
     state::NotificationReceiverState,
 };
-use andromeda_http_extraction::jsonld::JsonLdDocument;
+use andromeda_http_extraction::jsonld::NotificationDocument;
 use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -78,15 +78,9 @@ pub(crate) async fn receive(
     State(state): State<NotificationReceiverState>,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
-    JsonLdDocument {
-        document,
-        context: body_context,
-    }: JsonLdDocument,
+    NotificationDocument { document, context }: NotificationDocument,
 ) -> Result<Response, ProblemResponse> {
     let received = Received::try_from(document).map_err(|error| bad_request_data(format!("not a notification: {error}"), &uri))?;
-    // A Notification is a document a broker rendered (clauses 5.3.1 and
-    // 5.8.6), so it carries no user `@context` for clause 5.5.7 to admit.
-    let context = body_context.into_broker_document_context();
     // The resolved forwarding service carries a lease on its tenant's runtime;
     // holding it across handling keeps the runtime resident so eviction cannot
     // close its pools while the notification is processed.

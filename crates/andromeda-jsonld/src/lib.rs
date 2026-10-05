@@ -81,13 +81,11 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-headers",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-persistence-failure",
     ],
-    allow_workspace_dev_dependencies: [
-        "andromeda-ngsi-ld-representation",
-        "andromeda-test-mocks",
-    ],
+    allow_workspace_dev_dependencies: ["andromeda-test-mocks"],
     allow_production_dependencies: ["reqwest", "tokio"],
 }
 

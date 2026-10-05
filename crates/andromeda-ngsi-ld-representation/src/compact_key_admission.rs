@@ -1,15 +1,10 @@
-//! Refusing the keys a compact NGSI-LD document cannot be written with: a
-//! `@context` below its top level, and a key JSON-LD expansion would drop or
-//! rewrite past recovery.
+//! Refusing the keys a compact NGSI-LD document cannot be written with: a key
+//! JSON-LD expansion would drop or rewrite past recovery.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.5.7 states that the user `@context` shall
-//! not "be embedded into NGSI-LD Attributes, i.e. there cannot be parts of the
-//! user @context other than at the top level of the NGSI-LD document", and
-//! that "parts of user @context that are not following the two points above
-//! should result in an error of type `BadRequestData`, because JSON-LD Scoped
-//! Contexts and nested embedded @context could be used to modify terms defined
-//! in the Core @context or to reshape NGSI-LD Elements during the expansion of
-//! terms".
+//! A `@context` below the top level of a document is the other key clause
+//! 5.5.7 refuses; it is a property of the request's user `@context`, found on
+//! the request text by `crate::embedded_context_admission` and refused by the
+//! user `@context` admission before any payload rule here is reached.
 //!
 //! Clause 4.6.4 requires a broker to "preserve the representation of the
 //! content of the values provided by the context information providers and
@@ -30,56 +25,32 @@
 //! form is checked there.
 //!
 //! The rules are decidable on the compact payload a client wrote and on nothing
-//! else, because the transport layer lifts the document's own top-level
-//! `@context` out of the payload before any handler sees it: every `@context`
-//! still standing in what reaches this module is by definition one clause 5.5.7
-//! does not admit. The walk is therefore unconditional -- every object below a
-//! top-level member is examined, including a Property's `value`, a
-//! `GeoProperty`'s geometry and a `LanguageProperty`'s `languageMap`, all of
-//! which the JSON-LD processor traverses. The keys of a language map are
+//! else. The walk is unconditional -- every object below a top-level member is
+//! examined, including a Property's `value`, a `GeoProperty`'s geometry and a
+//! `LanguageProperty`'s `languageMap`, all of which the JSON-LD processor
+//! traverses. The keys of a language map are
 //! language tags rather than terms (a `@language` container), so they are read
 //! by the language rules instead of these.
 //!
-//! The one exemption is a native JSON literal. Clause 5.5.7 closes with "note
-//! that the `JsonProperty` is designed to hold native JSON values which are by
-//! definition not available for expansion and compaction via an @context.
-//! Therefore, the given short-hand name is always used for accessing JSON keys
-//! within a `JsonProperty` json element": the processor never expands inside
-//! one, so any key there is data.
+//! The one exemption is a native JSON literal (see
+//! `crate::embedded_context_admission::is_native_json_member`): the processor
+//! never expands inside one, so any key there is data.
 //!
 //! This is a statement about a representation, which is why it is stated here
 //! rather than beside one write path. Which of the write paths run it is
 //! decided by those paths: a payload a Context Source or another broker sent
 //! back is not a user `@context` and is never screened.
 
+use crate::embedded_context_admission::is_native_json_member;
 use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, PathSegment};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use jsonld_syntax::{is_keyword, is_keyword_like};
 use serde_json::{Map, Value};
 use thiserror::Error;
 
-/// The member a JSON-LD document declares its context in.
-const CONTEXT_MEMBER: &str = "@context";
-
 /// The members a node object declares its types in: the core `@context`'s
 /// protected alias and the keyword itself.
 const TYPE_MEMBERS: &[&str] = &["type", "@type"];
-
-/// The compacted members the NGSI-LD Core `@context` coerces to
-/// `@type: "@json"`, whose content is a native JSON literal rather than
-/// JSON-LD.
-///
-/// Clause 5.5.7 gives the Core `@context` absolute precedence and states that
-/// it "is protected and cannot be overridden", so a user `@context` cannot
-/// redefine one of these into a member the processor would traverse. What
-/// stands under one of them is therefore data in every request, whatever
-/// contexts it carries.
-const NATIVE_JSON_MEMBERS: &[&str] = &[
-    compact_properties::CONTEXT_SOURCE_EXTRAS,
-    compact_properties::JSON,
-    compact_properties::PREVIOUS_JSON,
-    compact_properties::PROBLEM_DETAILS,
-];
 
 /// The compacted members the NGSI-LD Core `@context` declares as language
 /// maps, whose keys are language tags rather than terms.
@@ -88,13 +59,6 @@ const LANGUAGE_MAP_MEMBERS: &[&str] = &[compact_properties::LANGUAGE_MAP, compac
 /// A key a compact document cannot be written with.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum CompactKeyError {
-    /// A `@context` stands below the top level of the document (ETSI GS CIM 009 v1.9.1 clause 5.5.7).
-    #[error("an @context is embedded at {path}, but a user @context is admitted only at the top level of an NGSI-LD document")]
-    EmbeddedContext {
-        /// Where the object that carries the embedded `@context` stands,
-        /// from the document's top level down.
-        path: JsonPointer,
-    },
     /// A key has the form of a JSON-LD keyword without being one (clause
     /// 4.6.4).
     #[error(
@@ -124,7 +88,6 @@ impl CompactKeyError {
     #[must_use]
     pub fn relocated(self, relocate: impl FnOnce(&JsonPointer) -> JsonPointer) -> CompactKeyError {
         match self {
-            CompactKeyError::EmbeddedContext { path } => CompactKeyError::EmbeddedContext { path: relocate(&path) },
             CompactKeyError::KeywordFormKey { path } => CompactKeyError::KeywordFormKey { path: relocate(&path) },
             CompactKeyError::EmptyKey { path } => CompactKeyError::EmptyKey { path: relocate(&path) },
             CompactKeyError::EmptyType { path } => CompactKeyError::EmptyType { path: relocate(&path) },
@@ -200,23 +163,19 @@ fn screen_top_level_slot<'a>(node: &'a Value, path: &mut Vec<PathSegment<'a>>) -
     }
 }
 
-/// Walk the members of one top-level object, where a `@context` is the
-/// document's own and is admitted.
+/// Walk the members of one top-level object.
 fn screen_top_level_object<'a>(members: &'a Map<String, Value>, path: &mut Vec<PathSegment<'a>>) -> Result<(), CompactKeyError> {
-    members
-        .iter()
-        .filter(|(member, _)| member.as_str() != CONTEXT_MEMBER)
-        .try_for_each(|(member, value)| {
-            if is_keyword_form(member) {
-                return Err(CompactKeyError::KeywordFormKey {
-                    path: pointer_to(path, member),
-                });
-            }
-            if is_native_json_member(member) {
-                return Ok(());
-            }
-            screen_member(member, value, path)
-        })
+    members.iter().try_for_each(|(member, value)| {
+        if is_keyword_form(member) {
+            return Err(CompactKeyError::KeywordFormKey {
+                path: pointer_to(path, member),
+            });
+        }
+        if is_native_json_member(member) {
+            return Ok(());
+        }
+        screen_member(member, value, path)
+    })
 }
 
 /// Walk one member's value, at any depth below the top level.
@@ -246,15 +205,9 @@ fn screen_slot<'a>(value: &'a Value, reading: KeyReading, path: &mut Vec<PathSeg
     }
 }
 
-/// Refuse an object below the top level that carries a `@context` or a key the
-/// rules refuse, and descend into everything it holds that is not a native
-/// JSON literal.
+/// Refuse an object below the top level that carries a key the rules refuse,
+/// and descend into everything it holds that is not a native JSON literal.
 fn screen_object<'a>(members: &'a Map<String, Value>, reading: KeyReading, path: &mut Vec<PathSegment<'a>>) -> Result<(), CompactKeyError> {
-    if members.contains_key(CONTEXT_MEMBER) {
-        return Err(CompactKeyError::EmbeddedContext {
-            path: JsonPointer::from_walk(path),
-        });
-    }
     if reading == KeyReading::Terms {
         members.iter().try_for_each(|(member, value)| screen_key(member, value, path))?;
     }
@@ -307,100 +260,17 @@ fn pointer_to(path: &[PathSegment<'_>], member: &str) -> JsonPointer {
     JsonPointer::from_walk(&walk)
 }
 
-/// Whether a member's content is a native JSON literal the JSON-LD processor
-/// never expands (clause 5.5.7, closing note).
-#[must_use]
-pub fn is_native_json_member(member: &str) -> bool {
-    NATIVE_JSON_MEMBERS.contains(&member)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::compact_key_admission::{CompactKeyError, screen_keys_in_attribute, screen_keys_in_fragment, screen_keys_in_nested_value};
     use serde_json::json;
 
-    /// The JSON Pointer an embedded-context error names, for comparison
+    /// The JSON Pointer a refusal names, for comparison
     /// against the expected one.
     fn refused_path(error: &CompactKeyError) -> String {
         match error {
-            CompactKeyError::EmbeddedContext { path }
-            | CompactKeyError::KeywordFormKey { path }
-            | CompactKeyError::EmptyKey { path }
-            | CompactKeyError::EmptyType { path } => path.to_string(),
+            CompactKeyError::KeywordFormKey { path } | CompactKeyError::EmptyKey { path } | CompactKeyError::EmptyType { path } => path.to_string(),
         }
-    }
-
-    /// Clause 5.5.7: "there cannot be parts of the user @context other than at
-    /// the top level of the NGSI-LD document", so the document's own top-level
-    /// `@context` is the one that stands.
-    #[test]
-    fn a_top_level_context_is_the_documents_own_and_is_admitted() {
-        let fragment = json!({
-            "@context": ["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld", {"speed": "https://example.org/speed"}],
-            "id": "urn:ngsi-ld:Vehicle:1",
-            "type": "Vehicle",
-            "speed": {"type": "Property", "value": 42}
-        });
-        assert!(screen_keys_in_fragment(&fragment).is_ok());
-    }
-
-    #[test]
-    fn a_context_embedded_in_an_attribute_node_is_refused_under_the_attribute_name() {
-        let fragment = json!({
-            "id": "urn:ngsi-ld:Vehicle:1",
-            "type": "Vehicle",
-            "speed": {"@context": {"speed": "https://example.org/speed"}, "type": "Property", "value": 42}
-        });
-        let error = screen_keys_in_fragment(&fragment).expect_err("clause 5.5.7 refuses it");
-        pretty_assertions::assert_eq!(refused_path(&error), "/speed");
-    }
-
-    #[test]
-    fn a_context_embedded_in_a_sub_attribute_is_refused_under_the_full_member_path() {
-        let fragment = json!({
-            "id": "urn:ngsi-ld:Vehicle:1",
-            "type": "Vehicle",
-            "speed": {
-                "type": "Property",
-                "value": 42,
-                "accuracy": {"@context": {"accuracy": "https://example.org/accuracy"}, "type": "Property", "value": 0.5}
-            }
-        });
-        let error = screen_keys_in_fragment(&fragment).expect_err("clause 5.5.7 refuses it");
-        pretty_assertions::assert_eq!(refused_path(&error), "/speed/accuracy");
-    }
-
-    /// A Property's `value` is expanded as JSON-LD, so a `@context` inside it
-    /// is applied by the processor and is exactly the reshaping clause 5.5.7
-    /// names. The seal walk of
-    /// [`crate::attribute_type_validation`](crate::attribute_type_validation)
-    /// stops at a value object; this one does not.
-    #[test]
-    fn a_context_inside_a_property_value_object_is_refused() {
-        let fragment = json!({
-            "id": "urn:ngsi-ld:Vehicle:1",
-            "type": "Vehicle",
-            "speed": {"type": "Property", "value": {"@context": {"x": "https://example.org/x"}, "x": 1}}
-        });
-        let error = screen_keys_in_fragment(&fragment).expect_err("clause 5.5.7 refuses it");
-        pretty_assertions::assert_eq!(refused_path(&error), "/speed/value");
-    }
-
-    #[test]
-    fn a_context_inside_a_geo_property_geometry_and_a_language_map_is_refused() {
-        let geometry = json!({
-            "id": "urn:ngsi-ld:Vehicle:1",
-            "type": "Vehicle",
-            "location": {"type": "GeoProperty", "value": {"@context": {}, "type": "Point", "coordinates": [1.0, 2.0]}}
-        });
-        assert!(screen_keys_in_fragment(&geometry).is_err());
-
-        let language_map = json!({
-            "id": "urn:ngsi-ld:Vehicle:1",
-            "type": "Vehicle",
-            "label": {"type": "LanguageProperty", "languageMap": {"@context": {}, "en": "hello"}}
-        });
-        assert!(screen_keys_in_fragment(&language_map).is_err());
     }
 
     /// Clause 5.5.7, closing note: a `JsonProperty` "is designed to hold
@@ -426,7 +296,7 @@ mod tests {
             let fragment = json!({
                 "id": "urn:ngsi-ld:Vehicle:1",
                 "type": "Vehicle",
-                "config": {"type": "JsonProperty", "json": {"ok": true}, member: {"@context": {}}}
+                "config": {"type": "JsonProperty", "json": {"ok": true}, member: {"@foo": {"": 1}}}
             });
             assert!(screen_keys_in_fragment(&fragment).is_ok(), "{member}");
         }
@@ -435,65 +305,13 @@ mod tests {
     /// A `json` member standing inside a Property value is still the core
     /// `json` term, whose content the processor keeps verbatim.
     #[test]
-    fn a_context_under_a_json_member_nested_in_a_value_is_admitted() {
+    fn a_keyword_form_key_under_a_json_member_nested_in_a_value_is_admitted() {
         let fragment = json!({
             "id": "urn:ngsi-ld:Vehicle:1",
             "type": "Vehicle",
-            "speed": {"type": "Property", "value": {"json": {"@context": {}}}}
+            "speed": {"type": "Property", "value": {"json": {"@foo": {}}}}
         });
         assert!(screen_keys_in_fragment(&fragment).is_ok());
-    }
-
-    #[test]
-    fn a_context_in_one_instance_of_a_multi_instance_attribute_is_refused() {
-        let fragment = json!({
-            "id": "urn:ngsi-ld:Vehicle:1",
-            "type": "Vehicle",
-            "speed": [
-                {"type": "Property", "value": 1, "datasetId": "urn:ngsi-ld:Dataset:a"},
-                {"type": "Property", "value": 2, "datasetId": "urn:ngsi-ld:Dataset:b", "@context": {}}
-            ]
-        });
-        let error = screen_keys_in_fragment(&fragment).expect_err("clause 5.5.7 refuses it");
-        pretty_assertions::assert_eq!(refused_path(&error), "/speed/1");
-    }
-
-    /// A batch payload is an array of documents, each with a top level of its
-    /// own where its `@context` legitimately stands.
-    #[test]
-    fn each_element_of_a_batch_array_keeps_its_own_top_level() {
-        let admitted = json!([
-            {"@context": {"speed": "https://example.org/speed"}, "id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"},
-            {"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle"}
-        ]);
-        assert!(screen_keys_in_fragment(&admitted).is_ok());
-
-        let refused = json!([
-            {"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"},
-            {"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle", "speed": {"type": "Property", "value": 1, "@context": {}}}
-        ]);
-        let error = screen_keys_in_fragment(&refused).expect_err("clause 5.5.7 refuses it");
-        pretty_assertions::assert_eq!(refused_path(&error), "/1/speed");
-    }
-
-    /// Clause 5.6.4 makes an Attribute Fragment the attribute node itself, so
-    /// the `@context` an `application/ld+json` request writes beside it is at
-    /// the document's top level.
-    #[test]
-    fn an_attribute_fragment_keeps_its_own_top_level_context() {
-        let fragment = json!({"@context": {"speed": "https://example.org/speed"}, "type": "Property", "value": 42});
-        assert!(screen_keys_in_attribute("speed", &fragment).is_ok());
-    }
-
-    #[test]
-    fn an_attribute_fragment_is_refused_for_a_context_below_its_top_level() {
-        let fragment = json!({"type": "Property", "value": 42, "accuracy": {"type": "Property", "value": 0.5, "@context": {}}});
-        let error = screen_keys_in_attribute("speed", &fragment).expect_err("clause 5.5.7 refuses it");
-        pretty_assertions::assert_eq!(refused_path(&error), "/speed/accuracy");
-
-        let instances = json!([{"type": "Property", "value": 42, "unit": {"@context": {}}}]);
-        let error = screen_keys_in_attribute("speed", &instances).expect_err("clause 5.5.7 refuses it");
-        pretty_assertions::assert_eq!(refused_path(&error), "/speed/0/unit");
     }
 
     #[test]
@@ -582,12 +400,23 @@ mod tests {
         assert!(screen_keys_in_fragment(&payload).is_ok());
     }
 
+    /// A bare Attribute Fragment reports a refused key under the attribute
+    /// name the request URI carries, through its instances too.
+    #[test]
+    fn an_attribute_fragment_is_located_under_its_attribute_name() {
+        let fragment = json!({"type": "Property", "value": 42, "accuracy": {"type": "Property", "value": 0.5, "@foo": 1}});
+        let error = screen_keys_in_attribute("speed", &fragment).expect_err("a keyword-form key is refused");
+        pretty_assertions::assert_eq!(refused_path(&error), "/speed/accuracy/@foo");
+
+        let instances = json!([{"type": "Property", "value": 42, "unit": {"": 1}}]);
+        let error = screen_keys_in_attribute("speed", &instances).expect_err("an empty key is refused");
+        pretty_assertions::assert_eq!(refused_path(&error), "/speed/0/unit/");
+    }
+
     /// A value read apart from its document is located from the value itself.
     #[test]
     fn a_nested_value_is_screened_from_its_own_top() {
         let error = screen_keys_in_nested_value(&json!({"a": {"": 1}})).expect_err("an empty key is refused");
         pretty_assertions::assert_eq!(refused_path(&error), "/a/");
-        let error = screen_keys_in_nested_value(&json!({"@context": {}})).expect_err("an embedded context is refused");
-        pretty_assertions::assert_eq!(refused_path(&error), "/");
     }
 }

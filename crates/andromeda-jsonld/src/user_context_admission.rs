@@ -19,6 +19,13 @@
 //! under a request's context takes the admitted one. An operation that never
 //! resolves its context says so with [`SubmittedContext::unused`].
 //!
+//! Clause 5.5.7's second prohibition -- no part of the user `@context` below
+//! the top level of the document -- is a property of the same user
+//! `@context`. The request body extractors find it on the request text
+//! (`andromeda_ngsi_ld_representation::embedded_context_admission`) and carry
+//! it in the [`SubmittedContext`], so the admission refuses it on every
+//! operation, after the context loaded and was found free of scoped contexts.
+//!
 //! Three things shape the rule itself:
 //!
 //! - It is about the request's `@context`, not about its payload, so it reads
@@ -53,30 +60,51 @@ use crate::{
     },
     error::JsonLdError,
 };
-use derive_more::{Deref, From};
+use andromeda_ngsi_ld_representation::embedded_context_admission::EmbeddedContext;
+use derive_more::Deref;
 use iri_rs::IriBuf;
 use serde_json::Value;
 use std::collections::HashSet;
 
-/// The `@context` a client request named, not yet admitted.
+/// The `@context` a client request named, not yet admitted, and the first
+/// part of it the request body embedded below a document's top level.
 ///
 /// It exposes nothing of the context it carries: an operation reads under a
 /// request's context only once [`admit_user_context`] has admitted it.
-#[derive(Debug, From, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 #[must_use = "a submitted context is admitted, or declared unused"]
-pub struct SubmittedContext(ContextSpec);
+pub struct SubmittedContext {
+    /// The context the request named, in its body or `Link` header.
+    spec: ContextSpec,
+    /// The first `@context` the request body carried below a document's top
+    /// level (clause 5.5.7), if any.
+    embedded: Option<EmbeddedContext>,
+}
 
 impl SubmittedContext {
+    /// The context a request body named as `spec`, with the first `@context`
+    /// the body embedded below a document's top level.
+    pub const fn new(spec: ContextSpec, embedded: Option<EmbeddedContext>) -> SubmittedContext {
+        SubmittedContext { spec, embedded }
+    }
+
     /// Declare that the operation never resolves the context it was submitted
     /// with: one whose input names no term a context could define.
-    pub fn unused(self) {}
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`EmbeddedContext`] the body carried: clause 5.5.7 refuses
+    /// it whether or not the context is ever resolved.
+    pub fn unused(self) -> Result<(), EmbeddedContext> {
+        self.embedded.map_or(Ok(()), Err)
+    }
+}
 
-    /// The context of a document this broker itself rendered and a client
-    /// relays back, such as a Notification (clauses 5.3.1 and 5.8.6), which
-    /// carries no user `@context` for clause 5.5.7 to admit.
-    #[must_use]
-    pub fn into_broker_document_context(self) -> ContextSpec {
-        self.0
+// A manual impl because the derive would take both fields: a context named
+// without a body has no part of it embedded anywhere.
+impl From<ContextSpec> for SubmittedContext {
+    fn from(spec: ContextSpec) -> SubmittedContext {
+        SubmittedContext { spec, embedded: None }
     }
 }
 
@@ -113,12 +141,17 @@ impl AdmittedContext {
 /// Returns, in this order: [`JsonLdError::ContextGraph`] when the contexts'
 /// references form a cycle or nest too deep, the typed context-loading variant
 /// when one of them does not resolve -- which clause 5.5.6 answers with
-/// `LdContextNotAvailable` -- and [`JsonLdError::ScopedUserContext`] naming the
-/// first term found carrying a scoped `@context`.
+/// `LdContextNotAvailable` -- [`JsonLdError::ScopedUserContext`] naming the
+/// first term found carrying a scoped `@context`, and
+/// [`JsonLdError::EmbeddedUserContext`] locating the first `@context` the body
+/// embedded below a document's top level.
 pub async fn admit_user_context(engine: &JsonLdEngine, submitted: SubmittedContext) -> Result<AdmittedContext, JsonLdError> {
-    let SubmittedContext(context) = submitted;
-    screen_user_context(engine, &context).await?;
-    Ok(AdmittedContext(context))
+    let SubmittedContext { spec, embedded } = submitted;
+    screen_user_context(engine, &spec).await?;
+    if let Some(embedded) = embedded {
+        return Err(JsonLdError::EmbeddedUserContext(embedded));
+    }
+    Ok(AdmittedContext(spec))
 }
 
 /// Decide whether `context` is a user `@context` clause 5.5.7 admits, as
@@ -190,6 +223,7 @@ mod tests {
         error::JsonLdError,
         user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
     };
+    use andromeda_ngsi_ld_representation::embedded_context_admission::{EmbeddedContext, find_embedded_context};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
@@ -470,5 +504,62 @@ mod tests {
         ]));
         let error = admitted(&engine, &context).await.expect_err("the absent context is refused");
         assert!(error.is_context_not_available(), "expected a loading error, got {error}");
+    }
+
+    /// A finding locating `@context` under `/speed`, as the extractor makes it.
+    fn embedded_under_speed() -> EmbeddedContext {
+        find_embedded_context(br#"{"speed": {"type": "Property", "value": 1, "@context": {}}}"#)
+            .expect("valid JSON")
+            .expect("an embedded context")
+    }
+
+    /// The admission of `context` submitted with the embedded finding.
+    async fn admitted_with_finding(engine: &JsonLdEngine, context: &ContextSpec) -> Result<AdmittedContext, JsonLdError> {
+        // clone: the test keeps the spec it built
+        admit_user_context(engine, SubmittedContext::new(context.clone(), Some(embedded_under_speed()))).await
+    }
+
+    /// Clause 5.5.7: a loadable context submitted with a `@context` embedded
+    /// below the top level is refused for the embedding, located.
+    #[tokio::test]
+    async fn an_embedded_context_is_refused_once_the_context_loaded() {
+        let engine = engine_serving(&[]);
+        let error = admitted_with_finding(&engine, &ContextSpec::from_body(json!({"speed": "https://example.org/speed"})))
+            .await
+            .expect_err("clause 5.5.7 refuses it");
+        let JsonLdError::EmbeddedUserContext(found) = error else {
+            panic!("expected the embedded refusal, got {error}");
+        };
+        pretty_assertions::assert_eq!(found.path.to_string(), "/speed");
+    }
+
+    /// Clause 5.5.4 judges data "according to the @context": a context that
+    /// cannot be retrieved is answered as such before the embedding is.
+    #[tokio::test]
+    async fn an_unloadable_context_is_refused_before_an_embedded_one() {
+        let engine = engine_serving(&[]);
+        let error = admitted_with_finding(&engine, &link_spec("https://example.org/absent.jsonld"))
+            .await
+            .expect_err("the absent context is refused");
+        assert!(error.is_context_not_available(), "expected a loading error, got {error}");
+    }
+
+    #[tokio::test]
+    async fn a_scoped_context_is_refused_before_an_embedded_one() {
+        let engine = engine_serving(&[]);
+        let context = ContextSpec::from_body(json!({"speed": {"@id": "https://example.org/speed", "@context": {}}}));
+        let error = admitted_with_finding(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
+        pretty_assertions::assert_eq!(refused_term(&error), "speed");
+    }
+
+    /// An operation that never resolves its context still refuses an embedded
+    /// one.
+    #[test]
+    fn an_unused_context_refuses_only_an_embedded_one() {
+        pretty_assertions::assert_eq!(
+            SubmittedContext::new(ContextSpec::none(), Some(embedded_under_speed())).unused(),
+            Err(embedded_under_speed())
+        );
+        pretty_assertions::assert_eq!(SubmittedContext::new(ContextSpec::none(), None).unused(), Ok(()));
     }
 }

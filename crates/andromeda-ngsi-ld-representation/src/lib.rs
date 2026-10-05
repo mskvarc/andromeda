@@ -57,6 +57,7 @@ pub mod attribute_nesting;
 pub mod attribute_type_validation;
 pub mod compact_key_admission;
 pub mod concise_reading;
+pub mod embedded_context_admission;
 pub mod entity_members;
 pub mod family_member_admission;
 pub mod join_mode;
