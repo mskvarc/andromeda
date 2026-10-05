@@ -120,8 +120,9 @@ pub struct CompiledSubscription {
     pub throttling_secs: Option<f64>,
     /// Periodic notification interval in seconds.
     pub time_interval_secs: Option<f64>,
-    /// Attributes projected into notification data.
-    pub notification_attributes: Option<Vec<AttributeName>>,
+    /// The clause 5.2.14 `notification.attributes`, the `pick` synonym, as
+    /// expanded IRIs; empty when the subscription lists none.
+    pub notification_attributes: Vec<IriBuf>,
     /// The clause 5.2.14 `pick` and `omit` members of the notification,
     /// compiled to the same projection a query's `pick`/`omit` parameters
     /// compile to (clause 4.21); empty on both sides when the subscription

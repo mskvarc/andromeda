@@ -1,7 +1,7 @@
 //! What a notified entity is written as for each kind of change (clause
 //! 5.8.6), every part of it by the typed walk.
 
-use crate::processor::payload::notified_entity::{DeletedRendering, NotifiedEntity, rendered_entity};
+use crate::processor::payload::notified_entity::{DeletedRendering, NotifiedEntity};
 use andromeda_linked_retrieval::{
     graph::{LinkedGraph, RootEdges},
     join::RetrievingJoin,
@@ -45,6 +45,14 @@ fn current(entity: Entity) -> NotifiedEntity {
         deleted: None,
         previous: None,
     }
+}
+
+/// `entity` as a notification reporting nothing beyond its state writes it.
+fn written(entity: Entity, format: ResponseFormat, targets: TargetSpelling) -> Value {
+    let projection = whole();
+    current(entity)
+        .render(format, targets, None, StructuralProjection::from(&projection))
+        .expect("the walk writes it")
 }
 
 /// A Vehicle with a speed and a Relationship.
@@ -176,20 +184,14 @@ fn an_inline_join_nests_the_linked_entity() {
 #[test]
 fn a_carried_linked_entity_and_a_family_named_type_are_written_by_the_walk() {
     let typed_like_a_family = entity(&json!({"id": "urn:ngsi-ld:Link:1", "type": "Relationship"}));
-    let rendered = rendered_entity(
-        &typed_like_a_family,
-        &StampedInstants::default(),
-        ResponseFormat::Normalized,
-        TargetSpelling::Decoded,
-    )
-    .expect("the walk writes it");
+    let rendered = written(typed_like_a_family, ResponseFormat::Normalized, TargetSpelling::Decoded);
     assert_eq!(rendered, json!({"id": "urn:ngsi-ld:Link:1", "type": "Relationship"}));
 
     let carrying = entity(&json!({
         "id": "urn:ngsi-ld:Link:2", "type": "A",
         "rel": {"type": "Relationship", "object": "urn:ngsi-ld:B:1", "entity": {"id": "urn:ngsi-ld:B:1", "type": "B", "name": {"type": "Property", "value": "b"}}}
     }));
-    let simplified = rendered_entity(&carrying, &StampedInstants::default(), ResponseFormat::Simplified, TargetSpelling::Decoded).expect("the walk writes it");
+    let simplified = written(carrying, ResponseFormat::Simplified, TargetSpelling::Decoded);
     assert_eq!(
         simplified,
         json!({"id": "urn:ngsi-ld:Link:2", "type": "A", "rel": {"id": "urn:ngsi-ld:B:1", "type": "B", "name": "b"}})
@@ -199,6 +201,6 @@ fn a_carried_linked_entity_and_a_family_named_type_are_written_by_the_walk() {
 /// A periodic notification spells its targets as the store holds them.
 #[test]
 fn targets_as_stored_are_left_encoded() {
-    let rendered = rendered_entity(&vehicle(), &StampedInstants::default(), ResponseFormat::Normalized, TargetSpelling::AsStored).expect("the walk writes it");
+    let rendered = written(vehicle(), ResponseFormat::Normalized, TargetSpelling::AsStored);
     assert_eq!(rendered["parkedIn"]["object"], json!("urn:ngsi-ld:Parking:a%2Fb"));
 }

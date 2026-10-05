@@ -2,7 +2,10 @@
 //! them: each notified entity in the subscription's format with the Linked
 //! Entities of its `join` nested into it for `inline` or written beside it for
 //! `flat` (clause 4.5.23), `pick` and `omit` applied, and the whole amended to
-//! the subscription's `ngsildConformance` last.
+//! the subscription's `ngsildConformance` last. Which Linked Entities are
+//! written, where, and narrowed by which list is the engine's plan under the
+//! subscription's list, which "every Entity within the payload body" is
+//! reduced by (clause 5.8.6).
 //!
 //! A change-driven notification carries the one entity the change touched, a
 //! periodic one every entity the subscription matches; both are written here,
@@ -10,7 +13,7 @@
 
 use crate::{
     error::NotificationError,
-    processor::payload::notified_entity::{NotifiedEntity, rendered_entity},
+    processor::payload::notified_entity::{NotifiedEntity, linked_entity},
 };
 use andromeda_linked_retrieval::{
     graph::LinkedGraph,
@@ -24,7 +27,7 @@ use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::attribute_iri_index::AttributeIriIndex;
 use andromeda_ngsi_ld_render::{
     notification_conformance::amend_notification_entities,
-    notification_entity::{StampedInstants, TargetSpelling},
+    notification_entity::TargetSpelling,
     structural_projection::StructuralProjection,
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
@@ -41,8 +44,20 @@ pub(crate) struct CarriedShape<'a> {
     pub(crate) targets: TargetSpelling,
     /// The `id` / `type` / `scope` half of the `pick` / `omit` projection.
     pub(crate) projection: StructuralProjection<'a>,
+    /// The list in force the subscription narrows every entity by.
+    pub(crate) list: ListInForce<'a>,
     /// The `ngsildConformance` the entities are amended to.
     pub(crate) conformance: Option<SpecVersion>,
+}
+
+/// The Linked Entities a subscription's `join` reached, with the expansion of
+/// every attribute key the notification carries.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NotifiedLinks<'a> {
+    /// What the traversal reached.
+    pub(crate) graph: &'a LinkedGraph<Entity>,
+    /// The expansion of every attribute key of the roots and the graph.
+    pub(crate) index: &'a AttributeIriIndex,
 }
 
 /// The entities a notification carries: every notified entity, with the
@@ -65,7 +80,7 @@ pub(crate) struct CarriedShape<'a> {
 /// Returns [`NotificationError::Rendering`] when an entity cannot be written.
 pub(crate) fn carried_entities(
     notified: &[NotifiedEntity],
-    linked: Option<&LinkedGraph<Entity>>,
+    linked: Option<NotifiedLinks<'_>>,
     shape: CarriedShape<'_>,
 ) -> Result<Vec<Value>, NotificationError> {
     let CarriedShape {
@@ -73,12 +88,12 @@ pub(crate) fn carried_entities(
         join,
         targets,
         projection,
+        list,
         conformance,
     } = shape;
-    let index = AttributeIriIndex::default();
     let plan = RetrievingJoin::from_mode(join)
         .zip(linked)
-        .map(|(join, graph)| JoinPlan::<TypedEntities>::new(join, graph, MemberRule::new(ListInForce::Unrestricted, &index)));
+        .map(|(join, linked)| JoinPlan::<TypedEntities>::new(join, linked.graph, MemberRule::new(list, linked.index)));
     let payload = match &plan {
         Some(JoinPlan::Inline(inline)) => notified
             .iter()
@@ -87,10 +102,7 @@ pub(crate) fn carried_entities(
         Some(JoinPlan::Flat(flat)) => notified
             .iter()
             .map(|entity| entity.render(format, targets, None, projection))
-            .chain(
-                flat.linked()
-                    .map(|linked| rendered_entity(linked.node, &StampedInstants::default(), format, targets)),
-            )
+            .chain(flat.linked().map(|linked| linked_entity(linked, format, targets)))
             .collect::<Result<Vec<_>, _>>()?,
         None => notified
             .iter()
@@ -103,22 +115,25 @@ pub(crate) fn carried_entities(
 #[cfg(test)]
 mod tests {
     use crate::processor::payload::{
-        carried_entities::{CarriedShape, carried_entities},
+        carried_entities::{CarriedShape, NotifiedLinks, carried_entities},
         notified_entity::NotifiedEntity,
     };
     use andromeda_linked_retrieval::{
         graph::{LinkedGraph, RootEdges},
+        narrowing::list::ListInForce,
         typed::TypedEntities,
     };
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_number::json_value::deserialize_exact;
-    use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
+    use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, term::ProjectionTerm};
     use andromeda_ngsi_ld_render::{
         notification_entity::{StampedInstants, TargetSpelling},
         notified_changes::HeldAttributes,
         structural_projection::StructuralProjection,
     };
     use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
+    use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
     use std::{num::NonZeroU32, sync::Arc};
@@ -158,7 +173,12 @@ mod tests {
             roots: ids,
             nodes: [(
                 "urn:ngsi-ld:City:Paris".parse().expect("an identifier"),
-                entity(&json!({"id": "urn:ngsi-ld:City:Paris", "type": "City"})),
+                entity(&json!({
+                    "id": "urn:ngsi-ld:City:Paris",
+                    "type": "City",
+                    "name": {"type": "Property", "value": "Paris"},
+                    "mayor": {"type": "Property", "value": "someone"}
+                })),
             )]
             .into_iter()
             .collect(),
@@ -168,14 +188,39 @@ mod tests {
         }
     }
 
+    fn iri(key: &str) -> IriBuf {
+        IriBuf::new(format!("https://example.com/{key}")).expect("valid IRI")
+    }
+
+    /// The expansion of every key the Buildings and the City carry.
+    fn index() -> AttributeIriIndex {
+        let mut index = AttributeIriIndex::new();
+        for key in ["locatedAt", "name", "mayor"] {
+            index.insert(key.parse::<AttributeName>().expect("valid attribute name"), iri(key));
+        }
+        index
+    }
+
+    fn leaf(key: &str) -> ProjectionTerm {
+        ProjectionTerm::Attribute {
+            iri: iri(key),
+            linked: Vec::new(),
+        }
+    }
+
     fn shape(join: Option<JoinMode>, projection: &Projection) -> CarriedShape<'_> {
         CarriedShape {
             format: ResponseFormat::Normalized,
             join,
             targets: TargetSpelling::AsStored,
             projection: StructuralProjection::from(projection),
+            list: ListInForce::of(Some(projection), &[]),
             conformance: None,
         }
+    }
+
+    const fn links<'a>(graph: &'a LinkedGraph<Entity>, index: &'a AttributeIriIndex) -> NotifiedLinks<'a> {
+        NotifiedLinks { graph, index }
     }
 
     fn ids(payload: &[Value]) -> Vec<&str> {
@@ -189,7 +234,8 @@ mod tests {
         let projection = Projection::default();
         let buildings = buildings();
         let linked = city(&buildings);
-        let payload = carried_entities(&buildings, Some(&linked), shape(Some(JoinMode::Flat), &projection)).expect("the walk writes them");
+        let index = index();
+        let payload = carried_entities(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Flat), &projection)).expect("the walk writes them");
         assert_eq!(
             ids(&payload),
             vec!["urn:ngsi-ld:Building:1", "urn:ngsi-ld:Building:2", "urn:ngsi-ld:City:Paris"]
@@ -203,7 +249,8 @@ mod tests {
         let projection = Projection::default();
         let buildings = buildings();
         let linked = city(&buildings);
-        let payload = carried_entities(&buildings, Some(&linked), shape(Some(JoinMode::Inline), &projection)).expect("the walk writes them");
+        let index = index();
+        let payload = carried_entities(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Inline), &projection)).expect("the walk writes them");
         assert_eq!(ids(&payload), vec!["urn:ngsi-ld:Building:1", "urn:ngsi-ld:Building:2"]);
         for building in &payload {
             assert_eq!(building["locatedAt"]["entity"]["id"], json!("urn:ngsi-ld:City:Paris"));
@@ -216,27 +263,61 @@ mod tests {
         let projection = Projection::default();
         let buildings = buildings();
         let linked = city(&buildings);
-        for (join, linked) in [(Some(JoinMode::Flat), None), (Some(JoinMode::None), Some(&linked)), (None, None)] {
+        let index = index();
+        for (join, linked) in [(Some(JoinMode::Flat), None), (Some(JoinMode::None), Some(links(&linked, &index))), (None, None)] {
             let payload = carried_entities(&buildings, linked, shape(join, &projection)).expect("the walk writes them");
             assert_eq!(ids(&payload), vec!["urn:ngsi-ld:Building:1", "urn:ngsi-ld:Building:2"], "{join:?}");
             assert!(payload[0]["locatedAt"].get("entity").is_none());
         }
     }
 
-    /// Clause 4.21: `omit` of `type` removes it from every notified entity,
-    /// `id` is held back from the rule, and a Linked Entity no nested term
-    /// reached is written whole.
+    /// Clause 4.21 with clause 5.8.6: `omit` of `type` and `id` removes both
+    /// from every entity of the payload, except the notified entities' `id`,
+    /// which clause 5.8.6 holds back from the rule.
     #[test]
-    fn the_structural_projection_narrows_every_notified_entity() {
+    fn the_structural_projection_narrows_every_entity_of_the_payload() {
         let projection = Projection {
             pick: Vec::new(),
             omit: vec![ProjectionTerm::Type, ProjectionTerm::Id],
         };
         let buildings = buildings();
         let linked = city(&buildings);
-        let payload = carried_entities(&buildings, Some(&linked), shape(Some(JoinMode::Flat), &projection)).expect("the walk writes them");
+        let index = index();
+        let payload = carried_entities(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Flat), &projection)).expect("the walk writes them");
         assert!(payload[0].get("type").is_none() && payload[1].get("type").is_none());
         assert_eq!(payload[0]["id"], json!("urn:ngsi-ld:Building:1"));
-        assert_eq!(payload[2]["type"], json!("City"));
+        assert_eq!(
+            payload[2],
+            json!({"name": {"type": "Property", "value": "Paris"}, "mayor": {"type": "Property", "value": "someone"}})
+        );
+    }
+
+    /// Clause 5.8.6, "every Entity within the payload body": a plain `pick`
+    /// narrows the flat Linked Entity as it narrows the notified entities.
+    #[test]
+    fn a_plain_pick_narrows_a_flat_linked_entity() {
+        let projection = Projection::builder().pick(vec![ProjectionTerm::Id, leaf("name"), leaf("locatedAt")]).build();
+        let buildings = buildings();
+        let linked = city(&buildings);
+        let index = index();
+        let payload = carried_entities(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Flat), &projection)).expect("the walk writes them");
+        assert_eq!(
+            payload[2],
+            json!({"id": "urn:ngsi-ld:City:Paris", "name": {"type": "Property", "value": "Paris"}})
+        );
+    }
+
+    /// A Linked Entity the list leaves no member is not written, and the
+    /// Relationship keeps the `object` naming it.
+    #[test]
+    fn an_emptied_linked_entity_is_not_written() {
+        let projection = Projection::builder().pick(vec![leaf("locatedAt")]).build();
+        let buildings = buildings();
+        let linked = city(&buildings);
+        let index = index();
+        let flat = carried_entities(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Flat), &projection)).expect("the walk writes them");
+        assert_eq!(flat.len(), 2);
+        let inline = carried_entities(&buildings, Some(links(&linked, &index)), shape(Some(JoinMode::Inline), &projection)).expect("the walk writes them");
+        assert_eq!(inline[0]["locatedAt"], json!({"type": "Relationship", "object": "urn:ngsi-ld:City:Paris"}));
     }
 }

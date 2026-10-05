@@ -373,7 +373,7 @@ mod tests {
             }],
             throttling_secs: None,
             time_interval_secs: None,
-            notification_attributes: None,
+            notification_attributes: Vec::new(),
             notification_format: None,
             notification_sys_attrs: SysAttrsInclusion::Strip,
             notification_show_changes: false,

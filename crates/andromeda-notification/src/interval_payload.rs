@@ -10,10 +10,10 @@
 use crate::{
     error::NotificationError,
     processor::payload::{
-        carried_entities::{CarriedShape, carried_entities},
+        carried_entities::{CarriedShape, NotifiedLinks, carried_entities},
         compaction::compact_notified_state,
         entity_instants::{ExpiryStamp, notified_instants},
-        join::{PeriodicJoin, resolve_periodic_join},
+        join::{PeriodicJoin, linked_attribute_index, resolve_periodic_join},
         notified_entity::NotifiedEntity,
         selection::{Selection, SelectionRule},
     },
@@ -21,6 +21,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{port::reader::EntityReader, query::EntityQueryService};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -28,8 +29,9 @@ use andromeda_ngsi_ld_model::{notification::SysAttrsSnapshot, subscription::Subs
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_render::{notification_entity::TargetSpelling, notified_changes::HeldAttributes, structural_projection::StructuralProjection};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, sys_attrs::SysAttrsInclusion};
-use andromeda_subscription::compilation::notification_projection;
+use andromeda_subscription::compilation::{notification_attributes, notification_projection};
 use chrono::Utc;
+use iri_rs::IriBuf;
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 use tracing::debug;
@@ -56,7 +58,8 @@ impl PeriodicPayload<'_> {
     /// the selection written as a change-driven notification's is.
     pub(crate) async fn entities(&self, sub: &Subscription, entities: Vec<EntityState>) -> Result<Vec<Value>, NotificationError> {
         let projection = notification_projection(&sub.notification, sub.id.as_ref());
-        let rule = periodic_rule(sub, &projection);
+        let attributes = notification_attributes(&sub.notification, sub.id.as_ref());
+        let rule = periodic_rule(sub, &projection, &attributes);
         // Table 5.2.14-1: without `sysAttrs` a notification carries no clause
         // 4.8 system attribute, the instances' included.
         let sys_attrs = match sub.notification.sys_attrs {
@@ -89,6 +92,12 @@ impl PeriodicPayload<'_> {
             }
             Some(JoinMode::None) | None => None,
         };
+        let indexed = match &linked {
+            Some(graph) => linked_attribute_index(self.engine, &context, rule.list, roots.iter(), graph)
+                .await
+                .map(|index| (graph, index)),
+            None => None,
+        };
         let notified: Vec<NotifiedEntity> = roots
             .into_iter()
             .map(|entity| NotifiedEntity {
@@ -106,9 +115,11 @@ impl PeriodicPayload<'_> {
             // store holds them.
             targets: TargetSpelling::AsStored,
             projection: StructuralProjection::from(&projection),
+            list: rule.list,
             conformance: sub.delivery.ngsild_conformance,
         };
-        carried_entities(&notified, linked.as_ref(), shape)
+        let links = indexed.as_ref().map(|(graph, index)| NotifiedLinks { graph, index });
+        carried_entities(&notified, links, shape)
     }
 
     /// The clause 4.8 system attributes of every entity one periodic
@@ -138,15 +149,15 @@ impl PeriodicPayload<'_> {
 }
 
 /// What a periodic notification selects of every entity it carries (clause
-/// 5.8.6): the `notification.attributes`, the instances matching the
+/// 5.8.6): the attributes its `pick`, its `omit` or its
+/// `notification.attributes` keep, and the instances matching the
 /// subscription's `datasetId` -- "For each entity in the notification, only
 /// the Attribute instances are to be included that match the datasetId member
-/// in Subscription" -- and the attributes `pick` and `omit` keep.
-fn periodic_rule<'s>(sub: &'s Subscription, projection: &'s Projection) -> SelectionRule<'s> {
+/// in Subscription".
+fn periodic_rule<'s>(sub: &'s Subscription, projection: &'s Projection, attributes: &'s [IriBuf]) -> SelectionRule<'s> {
     SelectionRule {
-        attributes: sub.notification.attributes.as_deref(),
+        list: ListInForce::of(Some(projection), attributes),
         dataset_ids: sub.filters.dataset_id.as_deref(),
-        projection,
     }
 }
 
@@ -156,7 +167,7 @@ mod tests {
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::subscription::Subscription;
-    use andromeda_subscription::compilation::notification_projection;
+    use andromeda_subscription::compilation::{notification_attributes, notification_projection};
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
 
@@ -216,8 +227,9 @@ mod tests {
     fn a_periodic_notification_carries_only_the_selected_dataset_instances() {
         let sub = subscription(&json!({"datasetId": [FRENCH]}));
         let projection = notification_projection(&sub.notification, sub.id.as_ref());
+        let attributes = notification_attributes(&sub.notification, sub.id.as_ref());
         let state = building();
-        let selected = Selection::of(&state, periodic_rule(&sub, &projection)).apply(&state).into_owned();
+        let selected = Selection::of(&state, periodic_rule(&sub, &projection, &attributes)).apply(&state).into_owned();
         assert_eq!(name_datasets(&selected), vec![Some(FRENCH)]);
     }
 
@@ -226,7 +238,8 @@ mod tests {
     fn a_periodic_notification_without_a_dataset_selection_carries_every_instance() {
         let sub = subscription(&json!({}));
         let projection = notification_projection(&sub.notification, sub.id.as_ref());
+        let attributes = notification_attributes(&sub.notification, sub.id.as_ref());
         let state = building();
-        assert_eq!(Selection::of(&state, periodic_rule(&sub, &projection)), Selection::Whole);
+        assert_eq!(Selection::of(&state, periodic_rule(&sub, &projection, &attributes)), Selection::Whole);
     }
 }

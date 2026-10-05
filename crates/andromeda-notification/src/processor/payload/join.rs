@@ -8,14 +8,18 @@ use crate::processor::payload::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::{EntityQueryService, core_linked_source::CoreLinkedSource};
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
 use andromeda_linked_retrieval::{
+    attribute_index::attribute_iri_index,
     graph::{LinkedGraph, RootEdges},
     join::TraversalBounds,
+    narrowing::list::ListInForce,
+    representation::LinkedRepresentation,
     traversal::traverse,
     typed::TypedEntities,
 };
 use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_query::projection::attribute_iri_index::AttributeIriIndex;
 use andromeda_ngsi_ld_representation::{linked_resolution_failure::LinkedResolutionFailure, sys_attrs::SysAttrsInclusion};
 use std::num::NonZeroU32;
 use tracing::{debug, warn};
@@ -67,6 +71,41 @@ pub(crate) async fn resolve_periodic_join(entity_query: &EntityQueryService, roo
         }
         Err(error) => {
             debug!(%error, "Failed to resolve linked entities for a periodic notification payload");
+            None
+        }
+    }
+}
+
+/// The expansion of every attribute key the notified `roots` and the `linked`
+/// entities carry, under the subscription's `context` they were compacted
+/// under, which the subscription's `list` is matched against while the Linked
+/// Entities are planned and written (clause 5.8.6).
+///
+/// A list that narrows nothing matches nothing, and needs no index. `None`
+/// when a key cannot be expanded, which leaves the notification without its
+/// Linked Entities, as a traversal that fails leaves it.
+pub(crate) async fn linked_attribute_index<'e>(
+    engine: &JsonLdEngine,
+    context: &ContextSpec,
+    list: ListInForce<'_>,
+    roots: impl Iterator<Item = &'e Entity>,
+    linked: &'e LinkedGraph<Entity>,
+) -> Option<AttributeIriIndex> {
+    if list.is_unrestricted() {
+        return Some(AttributeIriIndex::default());
+    }
+    let prepared = engine.prepare_term_context(context);
+    let expander = ContextualExpander::new(engine, &prepared);
+    // Collected so the keys borrow no longer than the expander they are
+    // expanded through.
+    let keys: Vec<&str> = roots
+        .flat_map(TypedEntities::attribute_keys)
+        .chain(linked.attribute_keys::<TypedEntities>())
+        .collect();
+    match attribute_iri_index(keys, &expander).await {
+        Ok(index) => Some(index),
+        Err(error) => {
+            debug!(%error, "the attribute keys of a notification's Linked Entities could not be expanded");
             None
         }
     }

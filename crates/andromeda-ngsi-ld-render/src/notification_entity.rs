@@ -12,7 +12,9 @@
 //! The entity is written by the typed walk a query response is written by
 //! ([`crate::entity_response`]): what the notification reports of the change
 //! beside the entity's state ([`NotifiedChanges`]) and the Linked Entities of
-//! a `join=inline` subscription (clause 4.5.23.2) are written on the way.
+//! a `join=inline` subscription (clause 4.5.23.2) are written on the way. A
+//! Linked Entity a `join=flat` subscription appends is written by the same
+//! walk, under the rule the Linked Entity plan decided for it.
 
 use crate::{
     entity_body::{
@@ -24,7 +26,11 @@ use crate::{
     structural_projection::StructuralProjection,
     uri_decoding::UriDecoding,
 };
-use andromeda_linked_retrieval::{plan::InlineCursor, typed::TypedEntities};
+use andromeda_linked_retrieval::{
+    narrowing::member::MemberRule,
+    plan::{FlatEntity, InlineCursor},
+    typed::TypedEntities,
+};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use chrono::{DateTime, Utc};
@@ -59,8 +65,8 @@ pub enum TargetSpelling {
 pub struct NotificationEntity<'a> {
     /// The compact entity.
     entity: &'a Entity,
-    /// The times the notification writes on it.
-    stamped: &'a StampedInstants,
+    /// The times the notification writes on it, if it is a notified entity.
+    stamped: Option<&'a StampedInstants>,
     /// The subscription's `notification.format`.
     format: ResponseFormat,
     /// How its Relationship targets are spelled.
@@ -73,6 +79,11 @@ pub struct NotificationEntity<'a> {
     /// The clause 4.21 rule the subscription's `pick` and `omit` state for
     /// `type` and `scope`; `id` is written whatever it says (clause 5.8.6).
     projection: Option<StructuralProjection<'a>>,
+    /// Whether `id` is written whatever the rule says.
+    identifier: IdentifierMember,
+    /// The rule a flat Linked Entity's members are written by, if it narrows
+    /// anything.
+    narrowing: Option<MemberRule<'a>>,
 }
 
 impl<'a> NotificationEntity<'a> {
@@ -82,12 +93,36 @@ impl<'a> NotificationEntity<'a> {
     pub const fn new(entity: &'a Entity, stamped: &'a StampedInstants, format: ResponseFormat, targets: TargetSpelling) -> NotificationEntity<'a> {
         NotificationEntity {
             entity,
-            stamped,
+            stamped: Some(stamped),
             format,
             targets,
             join: None,
             changes: None,
             projection: None,
+            identifier: IdentifierMember::Mandatory,
+            narrowing: None,
+        }
+    }
+
+    /// One Linked Entity a flat join appends (clause 4.5.23.3), in `format`,
+    /// its Relationship targets spelled as `targets` says, written by the
+    /// rule its first encounter decided.
+    ///
+    /// The clause 5.8.6 exemption of `id` is the notified entity's: a Linked
+    /// Entity keeps its `id` only where its list does (clause 5.7.1.5), as in
+    /// a query response.
+    #[must_use]
+    pub const fn linked(linked: &FlatEntity<'a, TypedEntities>, format: ResponseFormat, targets: TargetSpelling) -> NotificationEntity<'a> {
+        NotificationEntity {
+            entity: linked.node,
+            stamped: None,
+            format,
+            targets,
+            join: None,
+            changes: None,
+            projection: None,
+            identifier: IdentifierMember::Written,
+            narrowing: linked.rule.restricting(),
         }
     }
 
@@ -134,11 +169,11 @@ impl<'a> NotificationEntity<'a> {
             format: self.format,
             walk: MemberWalk::new(decoding, None),
             projection: self.projection,
-            identifier: IdentifierMember::Mandatory,
+            identifier: self.identifier,
             context: None,
-            stamped: Some(self.stamped),
+            stamped: self.stamped,
             join: self.join,
-            narrowing: None,
+            narrowing: self.narrowing,
             changes: self.changes,
         };
         serde_json::to_value(typed).map_err(|error| RenderError::serialization(RenderedShape::Entity, error))

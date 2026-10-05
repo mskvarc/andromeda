@@ -46,7 +46,7 @@ pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription
         selectors,
         throttling_secs: sub.delivery.throttling,
         time_interval_secs: sub.delivery.time_interval,
-        notification_attributes: sub.notification.attributes.clone(), // clone: compiled state owns its projection.
+        notification_attributes: notification_attributes(&sub.notification, sub.id.as_ref()),
         notification_projection: notification_projection(&sub.notification, sub.id.as_ref()),
         notification_format: sub.notification.format,
         notification_sys_attrs: if sub.notification.sys_attrs.unwrap_or(false) {
@@ -176,11 +176,23 @@ pub fn notification_projection(notification: &NotificationParams, sub_id: &str) 
         .build()
 }
 
-/// The compiled terms of one stored `pick` or `omit` list.
+/// Compile the clause 5.2.14 `attributes` member, "a synonym for pick"
+/// (Table 5.2.14.1-1), into the expanded IRIs it lists.
 ///
-/// A name that is neither a keyword nor an absolute IRI can address nothing in
-/// an expanded entity, so it is left out of the projection rather than carried
-/// as a term that never matches.
+/// The stored names were expanded through the subscription's `@context` when
+/// the resource was written (clause 5.5.7). An empty result lists nothing,
+/// which narrows nothing, as an empty `pick` does.
+#[must_use]
+pub fn notification_attributes(notification: &NotificationParams, sub_id: &str) -> Vec<IriBuf> {
+    notification
+        .attributes
+        .iter()
+        .flatten()
+        .filter_map(|name| expanded_attribute(name.as_str(), sub_id))
+        .collect()
+}
+
+/// The compiled terms of one stored `pick` or `omit` list.
 fn projection_terms(names: &[AttributeName], sub_id: &str) -> Vec<ProjectionTerm> {
     names
         .iter()
@@ -191,20 +203,28 @@ fn projection_terms(names: &[AttributeName], sub_id: &str) -> Vec<ProjectionTerm
             // `&str` is unbounded, so a catch-all is the only way to close
             // this match; anything that is not one of the three keywords is
             // an attribute term.
-            other => match IriBuf::new(other.to_owned()) {
-                Ok(iri) => Some(ProjectionTerm::Attribute { iri, linked: Vec::new() }),
-                Err(error) => {
-                    debug!(subscription = sub_id, name = other, %error, "Subscription projection member is not an expanded attribute name");
-                    None
-                }
-            },
+            other => expanded_attribute(other, sub_id).map(|iri| ProjectionTerm::Attribute { iri, linked: Vec::new() }),
         })
         .collect()
 }
 
+/// The expanded IRI a stored attribute name spells.
+///
+/// A name that is not an absolute IRI can address nothing in an expanded
+/// entity, so it is left out rather than carried as a name that never matches.
+fn expanded_attribute(name: &str, sub_id: &str) -> Option<IriBuf> {
+    match IriBuf::new(name.to_owned()) {
+        Ok(iri) => Some(iri),
+        Err(error) => {
+            debug!(subscription = sub_id, name, %error, "Subscription projection member is not an expanded attribute name");
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::compilation::{compile_temporal_q, csource_matching_attributes, notification_projection};
+    use crate::compilation::{compile_temporal_q, csource_matching_attributes, notification_attributes, notification_projection};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::subscription::NotificationParams;
     use andromeda_ngsi_ld_query::{projection::term::ProjectionTerm, temporal::window::TimeInterval};
@@ -258,6 +278,21 @@ mod tests {
         let projection = notification_projection(&notification, "urn:ngsi-ld:Subscription:test");
 
         pretty_assertions::assert_eq!(projection.pick.len(), 1);
+    }
+
+    /// Table 5.2.14.1-1: `attributes` lists expanded attribute names, and a
+    /// name that is no IRI addresses nothing.
+    #[test]
+    fn notification_attributes_compile_to_their_expanded_iris() {
+        let notification = notification(serde_json::json!({
+            "endpoint": {"uri": "https://receiver.example.com/notify"},
+            "attributes": ["https://example.com/speed", "colour"]
+        }));
+
+        pretty_assertions::assert_eq!(
+            notification_attributes(&notification, "urn:ngsi-ld:Subscription:test"),
+            vec![IriBuf::new("https://example.com/speed".to_owned()).expect("valid IRI")]
+        );
     }
 
     fn names(raw: &[&str]) -> Vec<AttributeName> {

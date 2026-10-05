@@ -9,7 +9,10 @@
 //! the Linked Entities of a `join=inline` subscription included.
 
 use crate::error::NotificationError;
-use andromeda_linked_retrieval::{plan::InlineCursor, typed::TypedEntities};
+use andromeda_linked_retrieval::{
+    plan::{FlatEntity, InlineCursor},
+    typed::TypedEntities,
+};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_render::{
     notification_entity::{NotificationEntity, StampedInstants, TargetSpelling},
@@ -89,12 +92,13 @@ impl NotifiedEntity {
     }
 }
 
-/// `entity` with `stamped` written on it, in `format`, its Relationship
-/// targets spelled as `targets` says.
+/// One Linked Entity a flat join appends (clause 4.5.23.3), in `format`, its
+/// Relationship targets spelled as `targets` says, written by the rule its
+/// first encounter decided.
 ///
 /// # Errors
 ///
 /// Returns [`NotificationError::Rendering`] when the entity cannot be written.
-pub(crate) fn rendered_entity(entity: &Entity, stamped: &StampedInstants, format: ResponseFormat, targets: TargetSpelling) -> Result<Value, NotificationError> {
-    Ok(NotificationEntity::new(entity, stamped, format, targets).render()?)
+pub(crate) fn linked_entity(linked: &FlatEntity<'_, TypedEntities>, format: ResponseFormat, targets: TargetSpelling) -> Result<Value, NotificationError> {
+    Ok(NotificationEntity::linked(linked, format, targets).render()?)
 }

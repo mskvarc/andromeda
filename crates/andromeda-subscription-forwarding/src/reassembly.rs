@@ -11,7 +11,7 @@
 use crate::{
     error::SubscriptionForwardingError,
     forwarding_invariant::ForwardingInvariant,
-    notification_narrowing::{narrow_entity, notification_attribute_iris},
+    notification_narrowing::narrow_entity,
     received_entity::ReceivedEntity,
     service::SubscriptionForwardingService,
 };
@@ -185,7 +185,6 @@ impl SubscriptionForwardingService {
     ) -> Result<Vec<Value>, SubscriptionForwardingError> {
         let local_terms = self.engine.prepare_term_context(reading.local_context);
         let mut local_expansions = AttributeExpansions::new(&self.engine, &local_terms);
-        let wanted = notification_attribute_iris(reading.compiled);
         let mut data = Vec::with_capacity(received_entities.len());
         for value in received_entities {
             let received = match ReceivedEntity::read(value, inbound).await {
@@ -201,7 +200,7 @@ impl SubscriptionForwardingService {
             };
             // `id` and `type` stay whatever the projection lists: Table 5.2.4-1
             // makes both mandatory, so the copy's `data` carries Entities.
-            narrow_entity(&mut entity, reading.compiled, wanted.as_deref(), &mut local_expansions).await?;
+            narrow_entity(&mut entity, reading.compiled, &mut local_expansions).await?;
             let rendered = EntityRenderer::new(&entity)
                 .with_mode(format)
                 .render()

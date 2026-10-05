@@ -1,29 +1,31 @@
 //! Which members of a notified entity state one notification carries
-//! (clause 5.8.6): the attributes `notification.attributes` lists, the
-//! instances the subscription's `datasetId` selects, and the attributes its
-//! `pick` and `omit` keep.
+//! (clause 5.8.6): the attributes the subscription's list in force returns --
+//! its `pick`, its `omit`, or its `notification.attributes` -- and the
+//! instances its `datasetId` selects.
 //!
 //! A selection is decided on the typed state by expanded attribute name, before
 //! anything is compacted, and it is a value of its own: two subscriptions that
 //! select the same instances of the same state are served one compaction.
+//! Which attribute a list returns is the Linked Entity engine's rule, the one
+//! every Linked Entity of the notification is narrowed by too: clause 5.8.6
+//! reduces "every Entity within the payload body ... down to only contain the
+//! defined entity members listed", clause 5.7.1.5's sentence verbatim.
 
-use crate::processor::payload::projection::projection_keeps;
+use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_entity::{attributes::Attributes, entity_state::EntityState, reads::attribute_instance_key::AttributeInstanceKey};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity_change::EntityChange;
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::compiled::Projection};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::attribute_iri_index::AttributeIriIndex};
 use andromeda_ngsi_ld_vocabulary::prefix;
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 /// What a subscription selects of every entity it is notified of.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SelectionRule<'r> {
-    /// The `notification.attributes` list, by expanded name.
-    pub(crate) attributes: Option<&'r [AttributeName]>,
+    /// The subscription's list in force, its terms by expanded name.
+    pub(crate) list: ListInForce<'r>,
     /// The subscription's `datasetId` selectors (Table 5.2.12-1).
     pub(crate) dataset_ids: Option<&'r [DatasetSelector]>,
-    /// The compiled `notification.pick` / `notification.omit`.
-    pub(crate) projection: &'r Projection,
 }
 
 impl SelectionRule<'_> {
@@ -37,15 +39,18 @@ impl SelectionRule<'_> {
     /// query's `pick` leaves it; and the clause 4.8 system attributes are
     /// `sysAttrs`'s alone to decide, whatever the selection.
     pub(crate) const fn entity_members(self) -> EntityMembers {
-        match self.attributes {
-            Some(_) => EntityMembers::Unscoped,
-            None => EntityMembers::Kept,
+        match self.list {
+            ListInForce::Attributes(_) => EntityMembers::Unscoped,
+            ListInForce::Unrestricted | ListInForce::Pick(_) | ListInForce::Omit(_) => EntityMembers::Kept,
         }
     }
 
     /// Whether the rule keeps the attribute `name` at all.
+    ///
+    /// The state keys its attributes by the expanded IRI the terms carry, so
+    /// the list matches them without an index.
     fn keeps_attribute(self, name: &AttributeName) -> bool {
-        self.attributes.is_none_or(|listed| listed.contains(name)) && projection_keeps(name, self.projection)
+        self.list.returns_attribute(name.as_str(), &AttributeIriIndex::default())
     }
 
     /// Whether the rule keeps the instance of `name` carrying `dataset_id`.
@@ -235,6 +240,7 @@ fn held_instance(state: &EntityState, key: &AttributeInstanceKey) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::processor::payload::selection::{EntityMembers, Selection, SelectionRule};
+    use andromeda_linked_retrieval::narrowing::list::ListInForce;
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
         reads::{
@@ -244,7 +250,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
-    use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::compiled::Projection};
+    use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::term::ProjectionTerm};
+    use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
     use std::{borrow::Cow, sync::Arc};
@@ -298,11 +305,18 @@ mod tests {
         raw.iter().map(|entry| entry.parse().expect("valid dataset selector")).collect()
     }
 
-    fn rule<'r>(attributes: Option<&'r [AttributeName]>, dataset_ids: Option<&'r [DatasetSelector]>, projection: &'r Projection) -> SelectionRule<'r> {
-        SelectionRule {
-            attributes,
-            dataset_ids,
-            projection,
+    fn rule<'r>(list: ListInForce<'r>, dataset_ids: Option<&'r [DatasetSelector]>) -> SelectionRule<'r> {
+        SelectionRule { list, dataset_ids }
+    }
+
+    fn iris(names: &[&str]) -> Vec<IriBuf> {
+        names.iter().map(|name| IriBuf::new((*name).to_owned()).expect("valid IRI")).collect()
+    }
+
+    fn term(name: &str, linked: Vec<ProjectionTerm>) -> ProjectionTerm {
+        ProjectionTerm::Attribute {
+            iri: IriBuf::new(name.to_owned()).expect("valid IRI"),
+            linked,
         }
     }
 
@@ -326,8 +340,7 @@ mod tests {
     #[test]
     fn a_subscription_selecting_nothing_carries_the_state_itself() {
         let state = vehicle();
-        let projection = Projection::default();
-        let selection = Selection::of(&state, rule(None, None, &projection));
+        let selection = Selection::of(&state, rule(ListInForce::Unrestricted, None));
         assert_eq!(selection, Selection::Whole);
         assert!(matches!(selection.apply(&state), Cow::Borrowed(_)));
     }
@@ -336,9 +349,8 @@ mod tests {
     #[test]
     fn the_none_selector_keeps_only_the_default_instance() {
         let state = vehicle();
-        let projection = Projection::default();
         let none = selectors(&["@none"]);
-        let selected = Selection::of(&state, rule(None, Some(&none), &projection)).apply(&state).into_owned();
+        let selected = Selection::of(&state, rule(ListInForce::Unrestricted, Some(&none))).apply(&state).into_owned();
         assert_eq!(datasets_of(&selected, SPEED), vec![None]);
         assert_eq!(datasets_of(&selected, NAME), vec![None]);
     }
@@ -348,9 +360,8 @@ mod tests {
     #[test]
     fn a_named_selector_keeps_only_its_instance() {
         let state = vehicle();
-        let projection = Projection::default();
         let named = selectors(&[NAMED]);
-        let selected = Selection::of(&state, rule(None, Some(&named), &projection)).apply(&state).into_owned();
+        let selected = Selection::of(&state, rule(ListInForce::Unrestricted, Some(&named))).apply(&state).into_owned();
         assert_eq!(datasets_of(&selected, SPEED), vec![Some(NAMED)]);
         assert!(selected.attributes().get(NAME).is_none());
     }
@@ -359,9 +370,8 @@ mod tests {
     #[test]
     fn the_none_and_a_named_selector_together_keep_both_instances() {
         let state = vehicle();
-        let projection = Projection::default();
         let both = selectors(&["@none", NAMED]);
-        assert_eq!(Selection::of(&state, rule(None, Some(&both), &projection)), Selection::Whole);
+        assert_eq!(Selection::of(&state, rule(ListInForce::Unrestricted, Some(&both))), Selection::Whole);
     }
 
     /// The NGSI-LD core attributes are carried whole by a `datasetId`
@@ -369,9 +379,8 @@ mod tests {
     #[test]
     fn a_dataset_selection_leaves_the_core_attributes_whole() {
         let state = vehicle();
-        let projection = Projection::default();
         let other = selectors(&["urn:ngsi-ld:Dataset:other"]);
-        let selected = Selection::of(&state, rule(None, Some(&other), &projection)).apply(&state).into_owned();
+        let selected = Selection::of(&state, rule(ListInForce::Unrestricted, Some(&other))).apply(&state).into_owned();
         assert_eq!(datasets_of(&selected, LOCATION), vec![None, Some(NAMED)]);
         assert!(selected.attributes().get(SPEED).is_none());
     }
@@ -382,9 +391,8 @@ mod tests {
     #[test]
     fn the_listed_attributes_travel_with_the_expiry_and_without_the_scope() {
         let state = vehicle();
-        let projection = Projection::default();
-        let listed: Vec<AttributeName> = vec![SPEED.parse().expect("valid attribute name")];
-        let selection = Selection::of(&state, rule(Some(&listed), None, &projection));
+        let listed = iris(&[SPEED]);
+        let selection = Selection::of(&state, rule(ListInForce::Attributes(&listed), None));
         assert!(matches!(
             selection,
             Selection::Narrowed {
@@ -404,9 +412,8 @@ mod tests {
     #[test]
     fn a_list_naming_every_attribute_is_no_whole_selection() {
         let state = vehicle();
-        let projection = Projection::default();
-        let listed: Vec<AttributeName> = [SPEED, NAME, LOCATION].iter().map(|name| name.parse().expect("valid attribute name")).collect();
-        let selection = Selection::of(&state, rule(Some(&listed), None, &projection));
+        let listed = iris(&[SPEED, NAME, LOCATION]);
+        let selection = Selection::of(&state, rule(ListInForce::Attributes(&listed), None));
         assert!(matches!(
             selection,
             Selection::Narrowed {
@@ -414,6 +421,29 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// Clauses 5.8.6 and 4.21: a `pick` keeps the attributes it names, and
+    /// the entity's own members, which a `pick` of attributes alone leaves to
+    /// the structural rule.
+    #[test]
+    fn a_pick_keeps_only_the_picked_attributes() {
+        let state = vehicle();
+        let pick = [term(SPEED, Vec::new())];
+        let selected = Selection::of(&state, rule(ListInForce::Pick(&pick), None)).apply(&state).into_owned();
+        assert_eq!(selected.attributes().names().map(AttributeName::as_str).collect::<Vec<_>>(), vec![SPEED]);
+        assert!(selected.scope().is_some());
+    }
+
+    /// Clause 4.21: `omit=rel{a}` omits `a` inside the entity `rel` links to,
+    /// so the Relationship itself stays, while a bare `omit` removes it.
+    #[test]
+    fn an_omit_removes_a_bare_name_and_keeps_a_nested_one() {
+        let state = vehicle();
+        let omit = [term(NAME, Vec::new()), term(SPEED, vec![term(NAME, Vec::new())])];
+        let selected = Selection::of(&state, rule(ListInForce::Omit(&omit), None)).apply(&state).into_owned();
+        assert!(selected.attributes().get(NAME).is_none());
+        assert_eq!(datasets_of(&selected, SPEED), vec![None, Some(NAMED)]);
     }
 
     /// The identity selection carries neither the scope nor the expiry.
@@ -432,9 +462,8 @@ mod tests {
     #[test]
     fn a_dataset_selection_keeps_the_scope_and_the_expiry() {
         let state = vehicle();
-        let projection = Projection::default();
         let none = selectors(&["@none"]);
-        let selected = Selection::of(&state, rule(None, Some(&none), &projection)).apply(&state).into_owned();
+        let selected = Selection::of(&state, rule(ListInForce::Unrestricted, Some(&none))).apply(&state).into_owned();
         assert!(selected.scope().is_some());
         assert_eq!(selected.expires_at(), state.expires_at());
     }
@@ -443,9 +472,8 @@ mod tests {
     #[test]
     fn an_attribute_kept_whole_is_shared_with_the_source() {
         let state = vehicle();
-        let projection = Projection::default();
-        let listed: Vec<AttributeName> = vec![LOCATION.parse().expect("valid attribute name")];
-        let selected = Selection::of(&state, rule(Some(&listed), None, &projection)).apply(&state).into_owned();
+        let listed = iris(&[LOCATION]);
+        let selected = Selection::of(&state, rule(ListInForce::Attributes(&listed), None)).apply(&state).into_owned();
         let (Some(kept), Some(source)) = (selected.attributes().get_shared(LOCATION), state.attributes().get_shared(LOCATION)) else {
             panic!("the location is kept");
         };
@@ -459,9 +487,8 @@ mod tests {
     fn a_dataset_specific_deletion_selects_only_that_instance() {
         let previous = vehicle();
         let current = EntityState::new(previous.id().clone(), previous.types().clone());
-        let projection = Projection::default();
         let deleted = [key(SPEED, Some(NAMED))];
-        let selection = Selection::deleted(&previous, &current, &deleted, rule(None, None, &projection)).expect("a deleted instance");
+        let selection = Selection::deleted(&previous, &current, &deleted, rule(ListInForce::Unrestricted, None)).expect("a deleted instance");
         let selected = selection.apply(&previous);
         assert_eq!(datasets_of(&selected, SPEED), vec![Some(NAMED)]);
         assert!(selected.attributes().get(NAME).is_none());
@@ -471,9 +498,8 @@ mod tests {
     fn every_instance_one_change_deleted_is_selected() {
         let previous = vehicle();
         let current = EntityState::new(previous.id().clone(), previous.types().clone());
-        let projection = Projection::default();
         let deleted = [key(SPEED, None), key(SPEED, Some(NAMED)), key(NAME, None)];
-        let selection = Selection::deleted(&previous, &current, &deleted, rule(None, None, &projection)).expect("deleted instances");
+        let selection = Selection::deleted(&previous, &current, &deleted, rule(ListInForce::Unrestricted, None)).expect("deleted instances");
         let selected = selection.apply(&previous);
         assert_eq!(datasets_of(&selected, SPEED), vec![None, Some(NAMED)]);
         assert_eq!(datasets_of(&selected, NAME), vec![None]);
@@ -484,14 +510,16 @@ mod tests {
     #[test]
     fn nothing_is_materialised_for_an_instance_still_held_or_not_selected() {
         let previous = vehicle();
-        let projection = Projection::default();
         let still_held = [key(SPEED, None)];
-        assert_eq!(Selection::deleted(&previous, &previous, &still_held, rule(None, None, &projection)), None);
+        assert_eq!(
+            Selection::deleted(&previous, &previous, &still_held, rule(ListInForce::Unrestricted, None)),
+            None
+        );
 
         let current = EntityState::new(previous.id().clone(), previous.types().clone());
-        let listed: Vec<AttributeName> = vec![NAME.parse().expect("valid attribute name")];
+        let listed = iris(&[NAME]);
         assert_eq!(
-            Selection::deleted(&previous, &current, &still_held, rule(Some(&listed), None, &projection)),
+            Selection::deleted(&previous, &current, &still_held, rule(ListInForce::Attributes(&listed), None)),
             None
         );
     }

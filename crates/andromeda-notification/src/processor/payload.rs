@@ -7,10 +7,10 @@ use crate::{
     error::NotificationError,
     processor::payload::{
         cache::{NotificationCompactionCache, NotifiedSource, Reading, RenderingKey},
-        carried_entities::{CarriedShape, carried_entities},
+        carried_entities::{CarriedShape, NotifiedLinks, carried_entities},
         compaction::compact_notified_state,
         entity_instants::{ExpiryStamp, notified_instants},
-        join::resolve_join_targets,
+        join::{linked_attribute_index, resolve_join_targets},
         notified_entity::{DeletedRendering, NotifiedEntity},
         selection::{Selection, SelectionRule},
     },
@@ -18,6 +18,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_change::AttributeChangeKind};
 use andromeda_ngsi_ld_model::{
@@ -62,12 +63,19 @@ pub(super) struct NotificationBuildParams<'a> {
     pub(super) cache: &'a NotificationCompactionCache,
 }
 
+/// The list in force a subscription narrows every entity of its
+/// notifications by (clause 5.8.6): its `pick` or `omit`, or else its
+/// `notification.attributes`, which the subscription validation keeps from
+/// being combined.
+pub(crate) fn subscription_list(sub: &CompiledSubscription) -> ListInForce<'_> {
+    ListInForce::of(Some(&sub.notification_projection), &sub.notification_attributes)
+}
+
 /// The selection a subscription applies to every entity it is notified of.
 pub(crate) fn subscription_rule(sub: &CompiledSubscription) -> SelectionRule<'_> {
     SelectionRule {
-        attributes: sub.notification_attributes.as_deref(),
+        list: subscription_list(sub),
         dataset_ids: sub.dataset_id.as_deref(),
-        projection: &sub.notification_projection,
     }
 }
 
@@ -119,6 +127,7 @@ async fn notification_payload(
     context: &ContextSpec,
 ) -> Result<Vec<Value>, NotificationError> {
     let sub = params.sub;
+    let list = subscription_list(sub);
     let linked = match (sub.notification_join, params.change.lifecycle) {
         (Some(JoinMode::Flat | JoinMode::Inline), EntityLifecycle::Created | EntityLifecycle::Modified) => {
             resolve_join_targets(&rooted.notified.entity, &rooted.root, params, context).await
@@ -126,14 +135,22 @@ async fn notification_payload(
         (Some(JoinMode::Flat | JoinMode::Inline), EntityLifecycle::Deleted)
         | (Some(JoinMode::None) | None, EntityLifecycle::Created | EntityLifecycle::Modified | EntityLifecycle::Deleted) => None,
     };
+    let indexed = match &linked {
+        Some(graph) => linked_attribute_index(params.engine, context, list, from_ref(&*rooted.notified.entity).iter(), graph)
+            .await
+            .map(|index| (graph, index)),
+        None => None,
+    };
     let shape = CarriedShape {
         format: sub.notification_format.unwrap_or_default(),
         join: sub.notification_join,
         targets: TargetSpelling::Decoded,
         projection: StructuralProjection::from(&sub.notification_projection),
+        list,
         conformance: sub.ngsild_conformance,
     };
-    carried_entities(from_ref(&rooted.notified), linked.as_deref(), shape)
+    let links = indexed.as_ref().map(|(graph, index)| NotifiedLinks { graph, index });
+    carried_entities(from_ref(&rooted.notified), links, shape)
 }
 
 /// The notified entity, and the key of the rendering it was written from,
@@ -422,7 +439,5 @@ pub(crate) mod notified_entity;
 /// What a notification reports of each kind of change, as the typed walk writes it.
 #[cfg(test)]
 mod notified_entity_tests;
-/// The `pick`/`omit` projection decided by attribute name.
-pub(crate) mod projection;
 /// What of a notified entity state one notification carries.
 pub(crate) mod selection;
