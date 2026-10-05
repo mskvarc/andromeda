@@ -229,7 +229,7 @@ fn refused_requests() -> Result<Vec<Request<Body>>, Box<dyn Error>> {
         request(Method::GET, "/entities?type=Vehicle&limit=abc", &[], "")?,
         request(Method::POST, "/entities", &[("content-type", "application/json"), ("content-length", "1")], "{")?,
         request(Method::GET, "/entities/bare-name", &[], "")?,
-        request(Method::GET, "/temporal/entityMaps?type=Vehicle", &[], "")?,
+        request(Method::GET, "/temporal/entityMaps?type=Vehicle&lastN=abc", &[], "")?,
         request(Method::DELETE, "/temporal/entities?type=Vehicle&lastN=5", &[], "")?,
         request(Method::GET, "/types?unknownParameter=1", &[], "")?,
         request(Method::DELETE, "/snapshots", &[], "")?,

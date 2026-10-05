@@ -21,7 +21,7 @@ use andromeda_ngsi_ld_render::{
     structural_projection::{RenderedEntityMembers, rendered_entity_members},
     temporal::aggregation::TemporalAggregationRenderer,
 };
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use serde_json::{Map, Value, json};
 use std::slice::from_ref;
@@ -49,7 +49,7 @@ impl TemporalService {
     ) -> Result<TemporalReadResult, TemporalError> {
         let timer = temporal::start(TemporalOperation::Retrieve);
         let result = async {
-            params.validate(false)?;
+            params.validate(TemporalQueryOperation::Retrieve, self.linked_retrieval)?;
 
             let compiled = self.compile_temporal_query(params, context).await?;
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
@@ -215,7 +215,7 @@ impl TemporalService {
     ) -> Result<Vec<Identifier>, TemporalError> {
         let timer = temporal::start(TemporalOperation::QueryIds);
         let result = async {
-            params.validate(true)?;
+            params.validate(TemporalQueryOperation::Query, self.linked_retrieval)?;
             let mut compiled = self.compile_temporal_query(params, context).await?;
             match identifiers {
                 RequestedIdentifiers::Narrow => {}

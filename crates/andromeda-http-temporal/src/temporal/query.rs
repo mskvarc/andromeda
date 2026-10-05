@@ -30,8 +30,8 @@ use crate::{
 };
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_linked_retrieval::join::RetrievingJoin;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
 use andromeda_temporal::{
     error::TemporalError,
     linked::candidates::TemporalLinkedCandidate,

@@ -2,8 +2,11 @@
 
 use crate::error::{EntityMapResultExt, bad_request_data};
 use andromeda_http_response::problem_response::ProblemResponse;
-use andromeda_ngsi_ld_query::{filter::expression::Expr, projection::grammar::RawProjectionTerm};
-use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
+use andromeda_linked_retrieval::admission::TemporalJoin;
+use andromeda_ngsi_ld_request::query::{
+    entity::{operation::EntityQueryOperation, parameters::EntityQueryParameters},
+    temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
+};
 use axum::http::Uri;
 
 /// Validate the parameters of an entity map creation (clause 5.14.4.4): the
@@ -13,7 +16,7 @@ use axum::http::Uri;
 /// the map resources render no `GeoJSON` (clause 6.34.3.1), so its presence is
 /// always an error of type `BadRequestData`.
 pub(crate) fn validate_entity_map_query(query: &EntityQueryParameters, uri: &Uri) -> Result<(), ProblemResponse> {
-    query.validate().with_entity_map_instance(uri)?;
+    query.validate(EntityQueryOperation::EntityMap).with_entity_map_instance(uri)?;
     if query.geometry_property.is_some() {
         return Err(bad_request_data(
             "geometryProperty is only applicable when the Accept header is application/geo+json, which an EntityMap is never rendered as",
@@ -25,47 +28,20 @@ pub(crate) fn validate_entity_map_query(query: &EntityQueryParameters, uri: &Uri
 
 /// Validate the parameters of a temporal entity map creation (clause
 /// 5.14.5.4): the temporal query's own constraints, which the clause restates
-/// from Query Temporal Evolution -- the clause 5.7.4.4 "too wide query"
-/// narrowing rule included -- and then, on top of them, that Linked Entity
-/// retrieval is not available on the operation, so `join`/`joinLevel`, a
-/// nested projection term and a `q` hop into a Linked Entity are each an error
-/// of type `BadRequestData`.
-pub(crate) fn validate_temporal_entity_map_query(params: &TemporalQueryParameters, uri: &Uri) -> Result<(), ProblemResponse> {
-    // Clauses 5.14.5.4 / 5.7.4.4: the creation is a temporal query and inherits
-    // its parameter validation, including the clause 5.7.2.4 narrowing rule that
-    // the map's own join/linked-hop checks below do not cover. `require_temporal`
-    // is true, matching the temporal query endpoint the map is created from.
-    params.validate(true).with_entity_map_instance(uri)?;
-    if params.join.is_some() || params.join_level.is_some() {
-        return Err(bad_request_data(
-            "join and joinLevel are not applicable to temporal EntityMap creation: Linked Entity retrieval is not available on this operation",
-            uri,
-        ));
-    }
-    if params.q.as_ref().is_some_and(Expr::contains_linked_hop) {
-        return Err(bad_request_data(
-            "the query filter reaches into a Linked Entity, which temporal EntityMap creation does not retrieve",
-            uri,
-        ));
-    }
-    let nests = params
-        .pick
-        .iter()
-        .chain(params.omit.iter())
-        .flatten()
-        .any(|term| RawProjectionTerm::linked_depth(term) > 0);
-    if nests {
-        return Err(bad_request_data(
-            "the projection names Linked Entity members, which temporal EntityMap creation does not retrieve",
-            uri,
-        ));
-    }
-    Ok(())
+/// from Query Temporal Evolution -- the temporal window, the clause 5.7.4.4
+/// "too wide query" narrowing rule and the refusal of Linked Entity retrieval,
+/// which the `temporal_linked_retrieval` extension lifts as `linked_retrieval`
+/// says.
+pub(crate) fn validate_temporal_entity_map_query(params: &TemporalQueryParameters, linked_retrieval: TemporalJoin, uri: &Uri) -> Result<(), ProblemResponse> {
+    params
+        .validate(TemporalQueryOperation::EntityMap, linked_retrieval)
+        .with_entity_map_instance(uri)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::validation::{validate_entity_map_query, validate_temporal_entity_map_query};
+    use andromeda_linked_retrieval::admission::TemporalJoin;
     use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
     use axum::http::{StatusCode, Uri};
 
@@ -98,9 +74,9 @@ mod tests {
     #[test]
     fn a_temporal_creation_without_any_narrowing_input_is_a_bad_request() {
         const WINDOW: &str = "timerel=before&timeAt=2022-01-01T00:00:00Z";
-        assert!(validate_temporal_entity_map_query(&temporal_query(WINDOW), &uri()).is_err());
-        assert!(validate_temporal_entity_map_query(&temporal_query(&format!("type=Vehicle&{WINDOW}")), &uri()).is_ok());
-        assert!(validate_temporal_entity_map_query(&temporal_query(&format!("local=true&{WINDOW}")), &uri()).is_ok());
+        assert!(validate_temporal_entity_map_query(&temporal_query(WINDOW), TemporalJoin::Spec, &uri()).is_err());
+        assert!(validate_temporal_entity_map_query(&temporal_query(&format!("type=Vehicle&{WINDOW}")), TemporalJoin::Spec, &uri()).is_ok());
+        assert!(validate_temporal_entity_map_query(&temporal_query(&format!("local=true&{WINDOW}")), TemporalJoin::Spec, &uri()).is_ok());
     }
 
     /// Clause 5.14.4.4: `geometryProperty` needs a `GeoJSON` `Accept`, which
@@ -122,17 +98,36 @@ mod tests {
     }
 
     /// Clause 5.14.5.4: no Linked Entity retrieval on the temporal creation,
-    /// whether asked for through the join parameters, a projection or a filter.
+    /// whether asked for through `join`, a projection or a filter; `@none`
+    /// and a lone `joinLevel` ask for none.
     #[test]
     fn linked_entity_retrieval_is_refused_on_temporal_entity_map_creation() {
         const WINDOW: &str = "timerel=before&timeAt=2022-01-01T00:00:00Z";
-        let refused =
-            validate_temporal_entity_map_query(&temporal_query(&format!("type=Vehicle&join=inline&joinLevel=2&{WINDOW}")), &uri()).expect_err("refused");
+        let refused = validate_temporal_entity_map_query(
+            &temporal_query(&format!("type=Vehicle&join=inline&joinLevel=2&{WINDOW}")),
+            TemporalJoin::Spec,
+            &uri(),
+        )
+        .expect_err("refused");
         pretty_assertions::assert_eq!(refused.problem().status_code(), StatusCode::BAD_REQUEST);
-        assert!(validate_temporal_entity_map_query(&temporal_query(&format!("type=Vehicle&join=flat&{WINDOW}")), &uri()).is_err());
-        assert!(validate_temporal_entity_map_query(&temporal_query(&format!("type=Vehicle&joinLevel=1&{WINDOW}")), &uri()).is_err());
-        assert!(validate_temporal_entity_map_query(&temporal_query(&format!("type=Vehicle&q=linkedTo%7Bspeed%3E5%7D&{WINDOW}")), &uri()).is_err());
-        assert!(validate_temporal_entity_map_query(&temporal_query(&format!("type=Vehicle&pick=linkedTo%7Bspeed%7D&{WINDOW}")), &uri()).is_err());
-        assert!(validate_temporal_entity_map_query(&temporal_query(&format!("type=Vehicle&q=speed%3E5&pick=speed&{WINDOW}")), &uri()).is_ok());
+        for refused in ["join=flat", "q=linkedTo%7Bspeed%3E5%7D", "pick=linkedTo%7Bspeed%7D"] {
+            let query = temporal_query(&format!("type=Vehicle&{refused}&{WINDOW}"));
+            assert!(validate_temporal_entity_map_query(&query, TemporalJoin::Spec, &uri()).is_err(), "{refused}");
+        }
+        for admitted in ["join=%40none", "joinLevel=1", "q=speed%3E5&pick=speed"] {
+            let query = temporal_query(&format!("type=Vehicle&{admitted}&{WINDOW}"));
+            assert!(validate_temporal_entity_map_query(&query, TemporalJoin::Spec, &uri()).is_ok(), "{admitted}");
+        }
+    }
+
+    /// With the `temporal_linked_retrieval` extension the creation follows
+    /// Query Entities: a nesting within the join is admitted.
+    #[test]
+    fn the_extension_admits_linked_entity_retrieval_on_temporal_entity_map_creation() {
+        const WINDOW: &str = "timerel=before&timeAt=2022-01-01T00:00:00Z";
+        let joined = temporal_query(&format!("type=Vehicle&join=flat&pick=linkedTo%7Bspeed%7D&{WINDOW}"));
+        assert!(validate_temporal_entity_map_query(&joined, TemporalJoin::Extended, &uri()).is_ok());
+        let unjoined = temporal_query(&format!("type=Vehicle&pick=linkedTo%7Bspeed%7D&{WINDOW}"));
+        assert!(validate_temporal_entity_map_query(&unjoined, TemporalJoin::Extended, &uri()).is_err());
     }
 }

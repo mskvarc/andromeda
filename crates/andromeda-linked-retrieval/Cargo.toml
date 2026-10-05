@@ -1,0 +1,21 @@
+[package]
+name = "andromeda-linked-retrieval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-representation.workspace = true
+derive_more = { version = "2.1.1", features = ["display", "from"] }
+thiserror = "2.0.21"
+typed-builder = "0.23.2"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+pretty_assertions = "1.4.1"

@@ -41,6 +41,7 @@ use andromeda_entity::{
     port::{reader::EntityReader, retrieved_entity::RetrievedEntity, retry_delay::RetryDelay},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -621,6 +622,7 @@ fn service(broker: StubBroker) -> TemporalService {
             payload_budget: EntityConfig::default().payload_budget(),
         },
         None,
+        TemporalJoin::Extended,
     )
 }
 
@@ -842,6 +844,7 @@ fn service_with_remote(broker: StubBroker, source: &Arc<RecordingSource>) -> Tem
             payload_budget: EntityConfig::default().payload_budget(),
         },
         Some(Arc::clone(source) as Arc<dyn RemoteTemporalLinkedSource>), // clone: the test keeps its handle on the recording
+        TemporalJoin::Extended,
     )
 }
 

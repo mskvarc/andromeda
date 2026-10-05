@@ -23,6 +23,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-headers",
         "andromeda-http-response",
         "andromeda-jsonld",
+        "andromeda-linked-retrieval",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-problem-details",

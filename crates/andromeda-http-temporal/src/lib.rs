@@ -3,7 +3,7 @@
 #![deny(missing_docs)]
 
 pub mod error;
-mod grouping_gate;
+mod extension_gate;
 mod history_read;
 mod join;
 mod operation_query;
@@ -25,6 +25,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-headers",
         "andromeda-http-response",
         "andromeda-jsonld",
+        "andromeda-linked-retrieval",
         "andromeda-ngsi-ld-expansion",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",

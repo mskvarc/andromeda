@@ -181,7 +181,7 @@ pub struct EntityQueryParametersOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{error::ParameterError, params_from_query};
+    use crate::{error::ParameterError, params_from_query, query::entity::operation::EntityQueryOperation};
     use andromeda_ngsi_ld_model::query::body::Query;
     use andromeda_ngsi_ld_query::{ordering::term::OrderDirection, projection::exclusivity::ProjectionConflict};
 
@@ -323,7 +323,7 @@ mod tests {
         // contains `keyValues` as a substring is not the keyValues option, and
         // clause 6.3.20 refuses it rather than reading a rendering out of it.
         let refused = params_from_query("type=Vehicle&options=mykeyValues")
-            .validate()
+            .validate(EntityQueryOperation::Query)
             .expect_err("a substring of a token is not that token");
         assert!(matches!(refused, ParameterError::OptionsInvalid(_)), "{refused}");
     }
@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn pick_and_omit_together_rejected() {
         let p = params_from_query("type=Vehicle&pick=speed&omit=scope");
-        let err = p.validate().expect_err("expected mutual exclusivity error");
+        let err = p.validate(EntityQueryOperation::Query).expect_err("expected mutual exclusivity error");
         assert!(matches!(err, ParameterError::Projection(ProjectionConflict::PickWithOmit)));
         assert!(err.to_string().contains("mutually exclusive"));
     }
@@ -367,7 +367,9 @@ mod tests {
     #[test]
     fn pick_or_omit_with_attrs_is_rejected() {
         for query in ["type=Vehicle&pick=speed&attrs=fuelLevel", "type=Vehicle&omit=speed&attrs=fuelLevel"] {
-            let err = params_from_query(query).validate().expect_err("projection and attrs are mutually exclusive");
+            let err = params_from_query(query)
+                .validate(EntityQueryOperation::Query)
+                .expect_err("projection and attrs are mutually exclusive");
             assert!(matches!(err, ParameterError::Projection(ProjectionConflict::ProjectionWithAttrs)));
         }
     }
@@ -378,8 +380,12 @@ mod tests {
     /// `andromeda_federation::ordering_admission` decides it.
     #[test]
     fn validate_leaves_the_ordering_rule_to_the_operation() {
-        assert!(params_from_query("type=Vehicle&orderBy=speed").validate().is_ok());
-        assert!(params_from_query("type=Vehicle&orderBy=speed&local=true").validate().is_ok());
+        assert!(params_from_query("type=Vehicle&orderBy=speed").validate(EntityQueryOperation::Query).is_ok());
+        assert!(
+            params_from_query("type=Vehicle&orderBy=speed&local=true")
+                .validate(EntityQueryOperation::Query)
+                .is_ok()
+        );
     }
 
     /// Clause 5.7.2.4: a query whose `pick` nests into a Linked Entity without
@@ -387,7 +393,9 @@ mod tests {
     #[test]
     fn validate_rejects_a_nested_pick_without_a_join() {
         let p = params_from_query("type=Building&pick=linkedTo%7Bcategory%7D");
-        let err = p.validate().expect_err("expected a projection/join consistency error");
+        let err = p
+            .validate(EntityQueryOperation::Query)
+            .expect_err("expected a projection/join consistency error");
         assert!(matches!(err, ParameterError::ProjectionLinkedTermsWithoutJoin), "got {err:?}");
     }
 
@@ -396,14 +404,16 @@ mod tests {
     #[test]
     fn validate_measures_the_nesting_against_the_join_level() {
         let too_deep = params_from_query("type=Building&join=flat&joinLevel=1&pick=a%7Bb%7Bc%7D%7D");
-        let err = too_deep.validate().expect_err("expected a projection/join consistency error");
+        let err = too_deep
+            .validate(EntityQueryOperation::Query)
+            .expect_err("expected a projection/join consistency error");
         assert!(
             matches!(err, ParameterError::ProjectionDepthExceedsJoinLevel { depth: 2, join_level: 1 }),
             "got {err:?}"
         );
 
         let deep_enough = params_from_query("type=Building&join=flat&joinLevel=2&pick=a%7Bb%7Bc%7D%7D");
-        assert!(deep_enough.validate().is_ok());
+        assert!(deep_enough.validate(EntityQueryOperation::Query).is_ok());
     }
 
     /// Clause 5.7.2.4: a `q` hop walks into a Linked Entity, and a query where
@@ -413,7 +423,9 @@ mod tests {
     #[test]
     fn validate_rejects_a_traversing_filter_without_a_retrieving_join() {
         for query in ["type=Car&q=isParkedIn%7Bcategory%7D", "type=Car&join=%40none&q=isParkedIn%7Bcategory%7D"] {
-            let err = params_from_query(query).validate().expect_err("expected a filter/join consistency error");
+            let err = params_from_query(query)
+                .validate(EntityQueryOperation::Query)
+                .expect_err("expected a filter/join consistency error");
             assert!(matches!(err, ParameterError::FilterTraversalWithoutJoin), "got {err:?} for {query}");
         }
     }
@@ -425,14 +437,33 @@ mod tests {
     #[test]
     fn validate_measures_the_filter_hops_against_the_join_level() {
         let too_deep = params_from_query("type=Car&join=inline&joinLevel=1&q=isParkedIn%7BinDistrict%7Bzone%7D%7D");
-        let err = too_deep.validate().expect_err("expected a filter/join consistency error");
+        let err = too_deep
+            .validate(EntityQueryOperation::Query)
+            .expect_err("expected a filter/join consistency error");
         assert!(
             matches!(err, ParameterError::FilterDepthExceedsJoinLevel { depth: 2, join_level: 1 }),
             "got {err:?}"
         );
 
         let deep_enough = params_from_query("type=Car&join=inline&joinLevel=2&q=isParkedIn%7BinDistrict%7Bzone%7D%7D");
-        assert!(deep_enough.validate().is_ok());
+        assert!(deep_enough.validate(EntityQueryOperation::Query).is_ok());
+    }
+
+    /// Clause 5.6.21.4: Purge Entities retrieves no Linked Entity, so a hop
+    /// and a nesting are refused whatever join the request names, while the
+    /// same request is a valid query.
+    #[test]
+    fn validate_refuses_every_linked_reference_on_a_purge() {
+        for query in [
+            "type=Car&drop=speed&join=flat&q=isParkedIn%7Bcategory%7D",
+            "type=Car&drop=speed&join=flat&pick=isParkedIn%7Bcategory%7D",
+        ] {
+            let err = params_from_query(query)
+                .validate(EntityQueryOperation::Purge)
+                .expect_err("purge retrieves nothing");
+            assert!(matches!(err, ParameterError::LinkedRetrievalUnavailable { .. }), "got {err:?} for {query}");
+            assert!(params_from_query(query).validate(EntityQueryOperation::Query).is_ok(), "{query}");
+        }
     }
 
     /// The query reads its page beside its selection; the policy, not the
@@ -462,7 +493,7 @@ mod tests {
             serde_json::to_value(geometry.geometry.to_geojson()).expect("geometry serializes"),
             serde_json::json!({"type": "Point", "coordinates": [13.3986, 52.5547]})
         );
-        assert!(p.validate().is_ok());
+        assert!(p.validate(EntityQueryOperation::Query).is_ok());
     }
 
     #[test]
@@ -473,7 +504,7 @@ mod tests {
             serde_json::to_value(geometry.geometry.to_geojson()).expect("geometry serializes"),
             serde_json::json!({"type": "LineString", "coordinates": [[2.3, 48.8], [2.4, 48.9]]})
         );
-        assert!(p.validate().is_ok());
+        assert!(p.validate(EntityQueryOperation::Query).is_ok());
     }
 
     #[test]
@@ -504,7 +535,10 @@ mod tests {
             "georel=near%3BmaxDistance==100&geometry=Point&coordinates=[1,2]",
             "local=true",
         ] {
-            assert!(params_from_query(query).validate().is_ok(), "{query} must narrow the query");
+            assert!(
+                params_from_query(query).validate(EntityQueryOperation::Query).is_ok(),
+                "{query} must narrow the query"
+            );
         }
         for query in [
             "id=urn:ngsi-ld:T:1",
@@ -513,7 +547,10 @@ mod tests {
             "id=urn:ngsi-ld:T:1&idPattern=urn:.*",
         ] {
             assert!(
-                matches!(params_from_query(query).validate(), Err(ParameterError::SelectorRequired(_))),
+                matches!(
+                    params_from_query(query).validate(EntityQueryOperation::Query),
+                    Err(ParameterError::SelectorRequired(_))
+                ),
                 "{query} must be too wide"
             );
         }
@@ -527,7 +564,10 @@ mod tests {
 
     #[test]
     fn a_query_with_no_parameter_at_all_is_too_wide() {
-        assert!(matches!(params_from_query("").validate(), Err(ParameterError::SelectorRequired(_))));
+        assert!(matches!(
+            params_from_query("").validate(EntityQueryOperation::Query),
+            Err(ParameterError::SelectorRequired(_))
+        ));
     }
 
     #[test]
@@ -536,9 +576,9 @@ mod tests {
         assert!(params_from_query("type=*&local=true").is_local());
         assert!(!params_from_query("type=Vehicle").is_local());
         assert!(params_from_query("type=Vehicle&local=true").is_local());
-        assert!(params_from_query("type=*").validate().is_ok());
+        assert!(params_from_query("type=*").validate(EntityQueryOperation::Query).is_ok());
         assert!(matches!(
-            params_from_query("type=*&local=false").validate(),
+            params_from_query("type=*&local=false").validate(EntityQueryOperation::Query),
             Err(ParameterError::WildcardTypeWithLocalFalse)
         ));
     }
@@ -599,13 +639,17 @@ mod tests {
         // boundary, never a failure once the query reaches compilation.
         assert!(serde_urlencoded::from_str::<EntityQueryParameters>("type=(Building").is_err());
         assert!(serde_urlencoded::from_str::<EntityQueryParameters>("scopeQ=(/A;/B").is_err());
-        assert!(params_from_query("type=Vehicle&scopeQ=/A;/B&q=speed%3E50").validate().is_ok());
+        assert!(
+            params_from_query("type=Vehicle&scopeQ=/A;/B&q=speed%3E50")
+                .validate(EntityQueryOperation::Query)
+                .is_ok()
+        );
     }
 
     #[test]
     fn validate_rejects_drop_and_keep_together() {
         let p = params_from_query("type=Vehicle&drop=A&keep=B");
-        let err = p.validate().expect_err("expected mutual exclusivity error");
+        let err = p.validate(EntityQueryOperation::Query).expect_err("expected mutual exclusivity error");
         assert!(matches!(err, ParameterError::DropKeepExclusive));
         assert!(err.to_string().contains("mutually exclusive"));
     }
@@ -613,13 +657,13 @@ mod tests {
     #[test]
     fn validate_accepts_drop_alone() {
         let p = params_from_query("type=Vehicle&drop=speed");
-        assert!(p.validate().is_ok());
+        assert!(p.validate(EntityQueryOperation::Query).is_ok());
     }
 
     #[test]
     fn validate_accepts_keep_alone() {
         let p = params_from_query("type=Vehicle&keep=speed");
-        assert!(p.validate().is_ok());
+        assert!(p.validate(EntityQueryOperation::Query).is_ok());
     }
 
     /// Clause 5.6.13: `deleteAll` and `datasetId` are contradictory, so the pair
@@ -628,7 +672,7 @@ mod tests {
     #[test]
     fn validate_rejects_dataset_id_with_delete_all() {
         let p = params_from_query("type=Vehicle&drop=speed&datasetId=urn:ngsi-ld:Dataset:1&deleteAll=true");
-        let err = p.validate().expect_err("datasetId and deleteAll contradict");
+        let err = p.validate(EntityQueryOperation::Query).expect_err("datasetId and deleteAll contradict");
         assert!(matches!(err, ParameterError::DatasetIdWithDeleteAll), "got {err:?}");
         assert!(err.to_string().contains("mutually exclusive"));
     }
@@ -637,7 +681,15 @@ mod tests {
     /// own, so each validates alone.
     #[test]
     fn validate_accepts_delete_all_or_dataset_id_alone() {
-        assert!(params_from_query("type=Vehicle&drop=speed&deleteAll=true").validate().is_ok());
-        assert!(params_from_query("type=Vehicle&drop=speed&datasetId=urn:ngsi-ld:Dataset:1").validate().is_ok());
+        assert!(
+            params_from_query("type=Vehicle&drop=speed&deleteAll=true")
+                .validate(EntityQueryOperation::Query)
+                .is_ok()
+        );
+        assert!(
+            params_from_query("type=Vehicle&drop=speed&datasetId=urn:ngsi-ld:Dataset:1")
+                .validate(EntityQueryOperation::Query)
+                .is_ok()
+        );
     }
 }

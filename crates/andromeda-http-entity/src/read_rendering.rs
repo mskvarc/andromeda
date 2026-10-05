@@ -16,6 +16,7 @@ use andromeda_entity::query::{EntityQueryService, simplified_names::apply_simpli
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_http_response::{problem_response::ProblemResponse, rendered_response::RenderedResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_linked_retrieval::join::RetrievingJoin;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_render::{
@@ -24,7 +25,6 @@ use andromeda_ngsi_ld_render::{
     structural_projection::StructuralProjection,
 };
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
-use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
 use axum::http::Uri as HttpUri;
 use std::slice::from_ref;
 

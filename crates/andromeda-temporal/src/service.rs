@@ -12,6 +12,7 @@ use andromeda_entity::{
     port::{reader::EntityReader, retry_delay::RetryDelay},
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
@@ -52,6 +53,9 @@ pub struct TemporalService {
     /// broker does not hold (clause 4.5.23.1). Absent in a composition without
     /// federation, which resolves joins purely against its own history.
     pub(crate) remote_temporal_linked: Option<Arc<dyn RemoteTemporalLinkedSource>>,
+    /// Whether the temporal operations retrieve Linked Entities, which the
+    /// `temporal_linked_retrieval` extension decides (clauses 5.7.3.4, 5.7.4.4).
+    pub(crate) linked_retrieval: TemporalJoin,
 }
 
 /// Result of `create_or_update` operation.
@@ -125,7 +129,8 @@ impl TemporalService {
     ///
     /// `remote_temporal_linked` is the clause 4.5.23.1 half of a join that this
     /// broker's own history cannot answer. `None` confines every join to local
-    /// history.
+    /// history. `linked_retrieval` says whether the temporal operations join at
+    /// all.
     #[must_use]
     pub fn new(
         ports: TemporalServicePorts,
@@ -133,6 +138,7 @@ impl TemporalService {
         notifier: Arc<ChangeNotifier>,
         limits: TemporalServiceLimits,
         remote_temporal_linked: Option<Arc<dyn RemoteTemporalLinkedSource>>,
+        linked_retrieval: TemporalJoin,
     ) -> TemporalService {
         let TemporalServicePorts {
             entity_reader,
@@ -153,6 +159,7 @@ impl TemporalService {
             notifier,
             limits,
             remote_temporal_linked,
+            linked_retrieval,
         }
     }
 
@@ -160,6 +167,12 @@ impl TemporalService {
     #[must_use]
     pub const fn engine(&self) -> &JsonLdEngine {
         &self.engine
+    }
+
+    /// Whether the temporal operations retrieve Linked Entities.
+    #[must_use]
+    pub const fn linked_retrieval(&self) -> TemporalJoin {
+        self.linked_retrieval
     }
 
     /// The limits a temporal query's reference geometry stays within (clause

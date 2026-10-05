@@ -30,12 +30,9 @@ pub mod entity;
 pub mod entity_operations;
 pub mod error;
 pub mod fragment_entity_id;
-pub mod join_traversal;
 pub mod jsonld_context;
 pub mod language_filter;
 pub mod language_tag;
-pub mod linked_retrieval_consistency;
-pub mod linked_retrieval_term;
 pub mod local;
 pub mod options;
 pub mod options_token;
@@ -53,6 +50,7 @@ pub mod unsupported_representation;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-http-headers",
+        "andromeda-linked-retrieval",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-query",

@@ -24,6 +24,12 @@ const TEMPORAL_DELETE_BY_QUERY_TOKEN: &str = "temporal-delete-by-query";
 const PURGE_DATASET_SCOPE_TOKEN: &str = "purge-dataset-scope";
 /// The advertised token for the grouped temporal aggregation extension.
 const TEMPORAL_AGGREGATION_GROUPING_TOKEN: &str = "temporal-aggregation-grouping";
+/// The advertised token for Linked Entity retrieval on the temporal operations.
+///
+/// A federating broker reads it off a Context Source's identity before it
+/// forwards a temporal `join` there: a source that does not list it answers
+/// the standard temporal operations only.
+pub const TEMPORAL_LINKED_RETRIEVAL_TOKEN: &str = "temporal-linked-retrieval";
 /// The advertised token for the tenant-management extension.
 const TENANT_MANAGEMENT_TOKEN: &str = "tenant-management";
 /// The advertised token for the cursor-pagination extension.
@@ -69,6 +75,9 @@ fn enabled_tokens(enabled: EnabledExtensions) -> Vec<&'static str> {
     if enabled.temporal_aggregation_grouping_enabled() {
         tokens.push(TEMPORAL_AGGREGATION_GROUPING_TOKEN);
     }
+    if enabled.temporal_linked_retrieval_enabled() {
+        tokens.push(TEMPORAL_LINKED_RETRIEVAL_TOKEN);
+    }
     if enabled.tenant_management_enabled() {
         tokens.push(TENANT_MANAGEMENT_TOKEN);
     }
@@ -87,6 +96,7 @@ mod tests {
             PURGE_DATASET_SCOPE_TOKEN,
             TEMPORAL_AGGREGATION_GROUPING_TOKEN,
             TEMPORAL_DELETE_BY_QUERY_TOKEN,
+            TEMPORAL_LINKED_RETRIEVAL_TOKEN,
             TENANT_MANAGEMENT_TOKEN,
             enabled_extension_extras,
         },
@@ -102,6 +112,7 @@ mod tests {
             temporal_delete_by_query: HttpFeatureMode::Enabled,
             purge_dataset_scope: HttpFeatureMode::Enabled,
             temporal_aggregation_grouping: HttpFeatureMode::Enabled,
+            temporal_linked_retrieval: HttpFeatureMode::Enabled,
             tenant_management: HttpFeatureMode::Enabled,
             cursor_pagination: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 100,
@@ -118,6 +129,7 @@ mod tests {
         assert!(rendered.contains(&TEMPORAL_DELETE_BY_QUERY_TOKEN), "{rendered:?}");
         assert!(rendered.contains(&PURGE_DATASET_SCOPE_TOKEN), "{rendered:?}");
         assert!(rendered.contains(&TEMPORAL_AGGREGATION_GROUPING_TOKEN), "{rendered:?}");
+        assert!(rendered.contains(&TEMPORAL_LINKED_RETRIEVAL_TOKEN), "{rendered:?}");
         assert!(rendered.contains(&TENANT_MANAGEMENT_TOKEN), "{rendered:?}");
         assert!(rendered.contains(&CURSOR_PAGINATION_TOKEN), "{rendered:?}");
     }
@@ -140,6 +152,29 @@ mod tests {
             ..ExtensionsConfig::default()
         };
         assert!(enabled_extension_extras(None, neither.resolve()).is_none());
+    }
+
+    #[test]
+    fn temporal_linked_retrieval_is_advertised_only_when_enabled() {
+        let config = ExtensionsConfig {
+            temporal_linked_retrieval: HttpFeatureMode::Enabled,
+            cursor_pagination: HttpFeatureMode::Disabled,
+            ..ExtensionsConfig::default()
+        };
+        let extras = enabled_extension_extras(None, config.resolve()).expect("extras present");
+        let tokens = extras.get(EXTENSION_KEY).and_then(Value::as_array).expect("token array");
+        let rendered: Vec<&str> = tokens.iter().filter_map(Value::as_str).collect();
+        pretty_assertions::assert_eq!(rendered, vec![TEMPORAL_LINKED_RETRIEVAL_TOKEN]);
+
+        let default_tokens = enabled_extension_extras(None, ExtensionsConfig::default().resolve()).expect("extras present");
+        let default_rendered: Vec<&str> = default_tokens
+            .get(EXTENSION_KEY)
+            .and_then(Value::as_array)
+            .expect("token array")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(!default_rendered.contains(&TEMPORAL_LINKED_RETRIEVAL_TOKEN), "{default_rendered:?}");
     }
 
     /// A default broker serves cursor pagination, and says so.

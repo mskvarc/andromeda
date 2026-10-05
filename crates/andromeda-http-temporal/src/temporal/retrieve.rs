@@ -7,7 +7,7 @@
 
 use crate::{
     error::temporal_problem,
-    grouping_gate::GroupingGate,
+    extension_gate::TemporalExtensionGate,
     history_read::TemporalHistoryRead,
     join::{apply_temporal_join, single_retrieval_payload},
     request_context_admission::admit_request_context,
@@ -37,7 +37,8 @@ use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::{admitted_temporal_query::AdmittedTemporalQuery, context_target, response_context_request::ResponseContextRequest};
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{collection::NgsiLdCollectionResponse, content_range::build_content_range};
-use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
+use andromeda_linked_retrieval::join::RetrievingJoin;
+use andromeda_ngsi_ld_request::query::temporal::operation::TemporalQueryOperation;
 use andromeda_temporal::{error::TemporalError, linked::candidates::TemporalLinkedCandidate, temporal_invariant::TemporalInvariant};
 use axum::http::Uri as RequestUri;
 
@@ -52,7 +53,7 @@ pub async fn get(
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     protocol: NgsiLdProtocolHeaders,
     TypedPath(id): TypedPath<Identifier>,
-    AdmittedTemporalQuery { mut params, .. }: AdmittedTemporalQuery<GroupingGate>,
+    AdmittedTemporalQuery { mut params, .. }: AdmittedTemporalQuery<TemporalExtensionGate>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     // Clause 5.5.7: a request `@context` declaring a JSON-LD Scoped Context is
@@ -60,7 +61,9 @@ pub async fn get(
     // expanded against it.
     admit_request_context(service.engine(), &context, &uri).await?;
     protocol.extensions().apply_to_temporal_query(&mut params).with_instance(&uri)?;
-    params.validate(false).with_instance(&uri)?;
+    params
+        .validate(TemporalQueryOperation::Retrieve, service.linked_retrieval())
+        .with_instance(&uri)?;
 
     // Clause 5.7.3.4: a local retrieval contacts no source and uses no map.
     let is_local = !target.permits_federation() || params.is_local();

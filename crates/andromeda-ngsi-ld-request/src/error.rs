@@ -10,8 +10,9 @@
 //! a parameter is parsed by the language wherever the language defines its
 //! grammar, and there is one error chain either way.
 
-use crate::{linked_retrieval_term::LinkedRetrievalTerm, query_narrowing::LocalScopeNarrowing, unsupported_representation::UnsupportedRepresentation};
+use crate::{query_narrowing::LocalScopeNarrowing, unsupported_representation::UnsupportedRepresentation};
 use andromeda_http_headers::ngsild_response_format::NgsiLdResponseFormat;
+use andromeda_linked_retrieval::admission::{AdmissionError, LinkedMember, LinkedOperation, ReachingMember};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict, temporal::grouping::GroupingParseError};
 use andromeda_ngsi_ld_representation::merge_representation::MergeRepresentationError;
@@ -121,10 +122,17 @@ pub enum ParameterError {
         /// How many hops the requested traversal walks.
         join_level: u32,
     },
-    /// A delete-by-query named a Linked Entity, which the operation cannot
-    /// reach at all (clause 5.6.21.4 defines no `join` for it).
-    #[error("delete by query must not name Linked Entities: {0}")]
-    PurgeNamesLinkedEntities(LinkedRetrievalTerm),
+    /// A request referenced a Linked Entity on an operation that retrieves
+    /// none: Purge Entities (clause 5.6.21.4), and the temporal operations
+    /// without the `temporal_linked_retrieval` extension (clauses 5.7.3.4,
+    /// 5.7.4.4 and 5.14.5.4).
+    #[error("{operation} does not retrieve Linked Entities, but {member}")]
+    LinkedRetrievalUnavailable {
+        /// The operation the request is.
+        operation: LinkedOperation,
+        /// The member that referenced a Linked Entity.
+        member: LinkedMember,
+    },
     /// `join=inline` was combined with a temporal representation that has no
     /// per-instance nesting site.
     #[error("join=inline is not applicable to the {0} representation, which has no attribute instance to nest a linked entity under")]
@@ -203,4 +211,102 @@ pub enum ParameterError {
         /// The method the attribute's values cannot be aggregated by.
         method: AggrMethod,
     },
+}
+
+// Hand-written because each admission failure keeps the parameter error, and
+// so the problem type and wording, a client has always received for it; no
+// derive maps one enum's variants onto another's.
+impl From<AdmissionError> for ParameterError {
+    fn from(error: AdmissionError) -> ParameterError {
+        match error {
+            AdmissionError::NotRetrievable { operation, member } => ParameterError::LinkedRetrievalUnavailable { operation, member },
+            AdmissionError::WithoutJoin(ReachingMember::Projection) => ParameterError::ProjectionLinkedTermsWithoutJoin,
+            AdmissionError::WithoutJoin(ReachingMember::Filter) => ParameterError::FilterTraversalWithoutJoin,
+            AdmissionError::DeeperThanJoinLevel {
+                member: ReachingMember::Projection,
+                depth,
+                join_level,
+            } => ParameterError::ProjectionDepthExceedsJoinLevel {
+                depth: depth.get(),
+                join_level: join_level.get(),
+            },
+            AdmissionError::DeeperThanJoinLevel {
+                member: ReachingMember::Filter,
+                depth,
+                join_level,
+            } => ParameterError::FilterDepthExceedsJoinLevel {
+                depth: depth.get(),
+                join_level: join_level.get(),
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::ParameterError;
+    use andromeda_linked_retrieval::admission::{AdmissionError, LinkedMember, LinkedOperation, ReachingMember, TemporalJoin};
+    use std::num::NonZeroU32;
+
+    fn depth(value: u32) -> NonZeroU32 {
+        NonZeroU32::new(value).expect("a positive depth")
+    }
+
+    /// An operation that retrieves no Linked Entity names itself and the
+    /// member that referenced one.
+    #[test]
+    fn a_refused_reference_keeps_its_operation_and_member() {
+        let operation = LinkedOperation::QueryTemporal(TemporalJoin::Spec);
+        let error = ParameterError::from(AdmissionError::NotRetrievable {
+            operation,
+            member: LinkedMember::Join,
+        });
+        assert!(
+            matches!(error, ParameterError::LinkedRetrievalUnavailable { operation: o, member: LinkedMember::Join } if o == operation),
+            "got {error:?}"
+        );
+    }
+
+    /// A nesting without a join keeps its projection error.
+    #[test]
+    fn a_nesting_without_a_join_keeps_its_projection_error() {
+        let error = ParameterError::from(AdmissionError::WithoutJoin(ReachingMember::Projection));
+        assert!(matches!(error, ParameterError::ProjectionLinkedTermsWithoutJoin), "got {error:?}");
+    }
+
+    /// A hop without a join keeps its filter error.
+    #[test]
+    fn a_hop_without_a_join_keeps_its_filter_error() {
+        let error = ParameterError::from(AdmissionError::WithoutJoin(ReachingMember::Filter));
+        assert!(matches!(error, ParameterError::FilterTraversalWithoutJoin), "got {error:?}");
+    }
+
+    /// A nesting past `joinLevel` keeps its depth and level.
+    #[test]
+    fn a_nesting_too_deep_keeps_its_depth_and_level() {
+        let error = ParameterError::from(AdmissionError::DeeperThanJoinLevel {
+            member: ReachingMember::Projection,
+            depth: depth(2),
+            join_level: depth(1),
+        });
+        assert!(
+            matches!(error, ParameterError::ProjectionDepthExceedsJoinLevel { depth: 2, join_level: 1 }),
+            "got {error:?}"
+        );
+    }
+
+    /// A hop chain past `joinLevel` is the clause 5.7.2.4 "too deep query".
+    #[test]
+    fn a_hop_chain_too_deep_is_a_too_deep_query() {
+        let error = ParameterError::from(AdmissionError::DeeperThanJoinLevel {
+            member: ReachingMember::Filter,
+            depth: depth(3),
+            join_level: depth(2),
+        });
+        assert!(
+            matches!(error, ParameterError::FilterDepthExceedsJoinLevel { depth: 3, join_level: 2 }),
+            "got {error:?}"
+        );
+        assert!(error.to_string().starts_with("too deep query"));
+    }
 }

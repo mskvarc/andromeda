@@ -173,7 +173,6 @@ async fn create_from_temporal_query(
     rendering: &CreationRendering<'_>,
     triggering: TriggeringRequest<'_>,
 ) -> Result<Response, ProblemResponse> {
-    validate_temporal_entity_map_query(params, rendering.uri)?;
     let fingerprint = fingerprint_of(FingerprintedRequest::QueryTemporal(params)).with_entity_map_instance(rendering.uri)?;
     // Table 6.18.3.2-1: the temporal window, `timeproperty` and `lastN` bound
     // the candidates the same way they bound a temporal query.
@@ -284,6 +283,7 @@ pub async fn create_temporal_from_query(
     RequestPagination(pagination): RequestPagination,
     TemporalQuery(params): TemporalQuery,
 ) -> Result<Response, ProblemResponse> {
+    validate_temporal_entity_map_query(&params, state.temporal.linked_retrieval(), &uri)?;
     let window = membership_window(pagination, &params.page, &params.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(params.split_entities).is_split());
     let forwarded_query = forwarded_temporal_query_string(&uri, filters);
@@ -320,8 +320,7 @@ pub async fn create_temporal_from_query_post(
     // Clause 6.3.5: the query is read against the one context the body
     // extractor resolved.
     let params = TemporalQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
-    // Clause 5.14.5.4: a temporal query and one selection criterion are mandatory.
-    params.validate(true).with_entity_map_instance(&uri)?;
+    validate_temporal_entity_map_query(&params, state.temporal.linked_retrieval(), &uri)?;
     let window = membership_window(pagination, &params.page, &params.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(params.split_entities).is_split());
     let forwarded_query = temporal_body_query_string(&params, filters);

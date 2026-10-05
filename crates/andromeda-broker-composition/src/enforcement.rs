@@ -46,6 +46,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-tenancy",
         "andromeda-http3-server",
         "andromeda-jsonld",
+        "andromeda-linked-retrieval",
         "andromeda-ngsi-ld-compaction",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",

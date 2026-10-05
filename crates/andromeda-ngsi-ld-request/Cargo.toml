@@ -16,6 +16,7 @@ workspace = true
 
 [dependencies]
 andromeda-http-headers.workspace = true
+andromeda-linked-retrieval.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true

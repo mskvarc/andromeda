@@ -18,6 +18,7 @@ andromeda-http-extraction.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true
 andromeda-jsonld.workspace = true
+andromeda-linked-retrieval.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true

@@ -12,10 +12,10 @@
 
 use crate::{error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_linked_retrieval::join::RetrievingJoin;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection};
-use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
 use indexmap::IndexMap;
 use std::collections::HashMap;
 

@@ -24,6 +24,8 @@ pub enum Extension {
     PurgeDatasetScope,
     /// Grouped temporal aggregation (`aggrGroupBy`).
     TemporalAggregationGrouping,
+    /// Linked Entity retrieval (`join`) on the temporal operations.
+    TemporalLinkedRetrieval,
     /// Tenant management on `/tenants` (introspection and suspend/resume).
     TenantManagement,
     /// Opaque, keyset-backed cursor pagination (clause 5.5.9.1).
@@ -56,6 +58,7 @@ impl ExtensionsConfig {
             (self.temporal_delete_by_query, Extension::TemporalDeleteByQuery),
             (self.purge_dataset_scope, Extension::PurgeDatasetScope),
             (self.temporal_aggregation_grouping, Extension::TemporalAggregationGrouping),
+            (self.temporal_linked_retrieval, Extension::TemporalLinkedRetrieval),
             (self.tenant_management, Extension::TenantManagement),
             (self.cursor_pagination, Extension::CursorPagination),
         ] {
@@ -105,6 +108,12 @@ impl EnabledExtensions {
         self.enabled.contains(Extension::TemporalAggregationGrouping)
     }
 
+    /// Whether Linked Entity retrieval on the temporal operations is enabled.
+    #[must_use]
+    pub fn temporal_linked_retrieval_enabled(&self) -> bool {
+        self.enabled.contains(Extension::TemporalLinkedRetrieval)
+    }
+
     /// Whether the tenant-management extension is enabled.
     #[must_use]
     pub fn tenant_management_enabled(&self) -> bool {
@@ -135,6 +144,7 @@ mod tests {
             temporal_delete_by_query: HttpFeatureMode::Enabled,
             purge_dataset_scope: HttpFeatureMode::Enabled,
             temporal_aggregation_grouping: HttpFeatureMode::Enabled,
+            temporal_linked_retrieval: HttpFeatureMode::Enabled,
             tenant_management: HttpFeatureMode::Enabled,
             cursor_pagination: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 100,
@@ -148,6 +158,7 @@ mod tests {
         assert!(!enabled.temporal_delete_by_query_enabled());
         assert!(!enabled.purge_dataset_scope_enabled());
         assert!(!enabled.temporal_aggregation_grouping_enabled());
+        assert!(!enabled.temporal_linked_retrieval_enabled());
         assert!(!enabled.tenant_management_enabled());
         assert!(enabled.cursor_pagination_enabled());
     }
@@ -158,6 +169,7 @@ mod tests {
         assert!(enabled.temporal_delete_by_query_enabled());
         assert!(enabled.purge_dataset_scope_enabled());
         assert!(enabled.temporal_aggregation_grouping_enabled());
+        assert!(enabled.temporal_linked_retrieval_enabled());
         assert!(enabled.tenant_management_enabled());
         assert!(enabled.cursor_pagination_enabled());
         assert!(enabled.any_enabled());
@@ -174,8 +186,22 @@ mod tests {
         assert!(!enabled.temporal_delete_by_query_enabled());
         assert!(!enabled.purge_dataset_scope_enabled());
         assert!(!enabled.temporal_aggregation_grouping_enabled());
+        assert!(!enabled.temporal_linked_retrieval_enabled());
         assert!(!enabled.tenant_management_enabled());
         assert!(!enabled.cursor_pagination_enabled());
+    }
+
+    /// Clause 5.7.3.4 and 5.7.4.4 refuse Linked Entity retrieval on the
+    /// temporal operations, so conformance mode switches the temporal join
+    /// off even when the operator enabled it.
+    #[test]
+    fn conformance_mode_forces_temporal_linked_retrieval_off() {
+        let config = ExtensionsConfig {
+            conformance_mode: HttpFeatureMode::Enabled,
+            temporal_linked_retrieval: HttpFeatureMode::Enabled,
+            ..ExtensionsConfig::default()
+        };
+        assert!(!config.resolve().temporal_linked_retrieval_enabled());
     }
 
     /// The conformance override forces the default-on cursor pagination off
@@ -202,6 +228,7 @@ mod tests {
         assert!(enabled.temporal_delete_by_query_enabled());
         assert!(enabled.purge_dataset_scope_enabled());
         assert!(enabled.temporal_aggregation_grouping_enabled());
+        assert!(enabled.temporal_linked_retrieval_enabled());
         assert!(enabled.tenant_management_enabled());
     }
 }

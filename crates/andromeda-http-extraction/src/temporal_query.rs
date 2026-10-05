@@ -1,36 +1,28 @@
 //! Temporal query extractor for the `EntityMap` creation resource (clause 6.35.3.1).
 //!
 //! `GET /temporal/entityMaps` takes the parameters of a temporal query
-//! (Table 6.18.3.2-1): the temporal window is mandatory and at least one entity
-//! selection criterion must narrow the query (clause 5.14.5.4), which is the
-//! validation a temporal query itself undergoes.
+//! (Table 6.18.3.2-1). They are read here and validated by the binding, which
+//! knows whether the broker retrieves Linked Entities on the temporal
+//! operations (clause 5.14.5.4).
 
 use crate::{addressed_uri::addressed_uri, query::classify_query_parse_error};
-use andromeda_http_response::{extraction_rejection::ExtractorRejection, parameter_failure::classify_parameter_error};
+use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use std::future::{Future, ready};
 
-/// Axum extractor for NGSI-LD temporal query parameters with a mandatory window.
+/// Axum extractor for NGSI-LD temporal query parameters.
 #[derive(Debug)]
 pub struct TemporalQuery(pub TemporalQueryParameters);
 
-/// Deserialize the temporal query string and validate it as a temporal query.
+/// Deserialize the temporal query string.
 fn resolve_temporal_query(parts: &Parts) -> Result<TemporalQuery, ExtractorRejection> {
-    let uri = addressed_uri(parts);
     let query_str = parts.uri.query().unwrap_or("");
     let params = serde_urlencoded::from_str::<TemporalQueryParameters>(query_str).map_err(|error| {
         let error_text = error.to_string();
         let message = format!("invalid query parameters: {error_text}");
-        classify_query_parse_error(&error_text, message, uri.clone())
+        classify_query_parse_error(&error_text, message, addressed_uri(parts))
     })?;
-
-    // Clause 5.14.5.4: a temporal query and one selection criterion are mandatory.
-    params.validate(true).map_err(|error| {
-        let report = classify_parameter_error(&error);
-        ExtractorRejection::Classified(report.with_instance(uri.clone()))
-    })?;
-
     Ok(TemporalQuery(params))
 }
 
@@ -57,17 +49,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_query_without_a_temporal_window_is_rejected() {
-        assert!(extract("/ngsi-ld/v1/temporal/entityMaps?type=Vehicle").await.is_err());
-    }
-
-    #[tokio::test]
-    async fn a_windowed_query_without_a_selection_criterion_is_rejected() {
-        assert!(
-            extract("/ngsi-ld/v1/temporal/entityMaps?timerel=after&timeAt=2020-01-01T00:00:00Z")
-                .await
-                .is_err()
-        );
+    async fn a_query_string_that_does_not_decode_is_rejected() {
+        assert!(extract("/ngsi-ld/v1/temporal/entityMaps?type=Vehicle&lastN=abc").await.is_err());
     }
 
     #[tokio::test]

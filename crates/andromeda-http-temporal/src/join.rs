@@ -10,9 +10,9 @@
 use crate::history_read::TemporalHistoryRead;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::linked_resolution_warning::with_linked_resolution_warnings;
+use andromeda_linked_retrieval::join::{RetrievingJoin, TraversalBounds};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_render::{response::ResponsePayload, temporal::inline_join::apply_temporal_inline_join};
-use andromeda_ngsi_ld_request::join_traversal::{RetrievingJoin, traversal_bounds};
 use andromeda_temporal::{
     error::TemporalError,
     linked::{ResolvedLinkedTemporalEntities, TemporalJoinRequest, candidates::TemporalLinkedCandidate},
@@ -62,7 +62,10 @@ pub(crate) async fn apply_temporal_join(
     warnings: Vec<NgsiLdWarning>,
 ) -> Result<AppliedTemporalJoin, TemporalError> {
     let params = read.params;
-    let (join_level, contained_by) = traversal_bounds(params.join_level, params.contained_by.as_deref());
+    let TraversalBounds {
+        depth: join_level,
+        contained_by,
+    } = TraversalBounds::of(params.join_level, params.contained_by.as_deref());
 
     let resolved = read
         .service
@@ -131,9 +134,9 @@ pub(crate) fn single_retrieval_payload(join: RetrievingJoin, joined: Vec<Value>)
 mod tests {
     use crate::join::{fold_resolution, single_retrieval_payload};
     use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+    use andromeda_linked_retrieval::join::RetrievingJoin;
     use andromeda_ngsi_ld_render::response::ResponsePayload;
     use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
-    use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
     use andromeda_temporal::linked::ResolvedLinkedTemporalEntities;
     use serde_json::{Value, json};
 

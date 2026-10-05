@@ -8,11 +8,11 @@
 use crate::{
     attribute_selection::{AttrsAdmission, validate_attrs},
     error::ParameterError,
-    linked_retrieval_consistency::{validate_filter_join_depth, validate_projection_join_depth},
-    query::temporal::TemporalQueryParameters,
+    query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
     query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing},
     representation_parameter::{WrittenValue, resolve_representation, selected_representation},
 };
+use andromeda_linked_retrieval::admission::{LinkedRequest, TemporalJoin, admit_request};
 use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
@@ -25,7 +25,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, sys_attrs::SysAttrsInclusion};
 
-/// Which Entity members `attrs` admits at each of the two temporal endpoints.
+/// Which Entity members `attrs` admits at each of the temporal operations.
 ///
 /// Both tables restrict `attrs` to "an Attribute (Property or Relationship)
 /// name", and clause 4.18 makes the Scope "a special scope Property that is
@@ -35,11 +35,10 @@ use andromeda_ngsi_ld_representation::{join_mode::JoinMode, sys_attrs::SysAttrsI
 /// 6.19.3.1-1 excludes it explicitly on the retrieval, "except that id, type,
 /// scope are not allowed", and an explicit prohibition beats an inference from
 /// the representation, so the same spelling is a bad request there.
-const fn attrs_admission(require_temporal: bool) -> AttrsAdmission {
-    if require_temporal {
-        AttrsAdmission::ReifiedScopeAdmitted
-    } else {
-        AttrsAdmission::AttributeNamesOnly
+const fn attrs_admission(operation: TemporalQueryOperation) -> AttrsAdmission {
+    match operation {
+        TemporalQueryOperation::Query | TemporalQueryOperation::EntityMap => AttrsAdmission::ReifiedScopeAdmitted,
+        TemporalQueryOperation::Retrieve => AttrsAdmission::AttributeNamesOnly,
     }
 }
 
@@ -135,17 +134,20 @@ impl TemporalQueryParameters {
         false
     }
 
-    /// Validate parameters.
-    /// - For query endpoint (`require_temporal=true)`: timerel and timeAt are REQUIRED.
-    /// - For single-entity GET (`require_temporal=false)`: timerel and timeAt are optional (both or neither).
+    /// Validate the parameters for `operation`, with temporal Linked Entity
+    /// retrieval as `linked_retrieval` says.
+    ///
+    /// The query and the Entity Map it creates require `timerel` and `timeAt`;
+    /// the single-entity retrieval takes both or neither.
     ///
     /// # Errors
     ///
     /// Returns [`ParameterError::AttrsReservedMember`] when `attrs` names an
     /// Entity member, [`ParameterError::Projection`] for the clause 4.21
-    /// selector conflicts, the clause 5.7.2.4 depth errors when a nested projection
-    /// term or a `q` hop names a Linked Entity the requested traversal does
-    /// not reach, [`ParameterError::InlineJoinWithoutInstances`] when
+    /// selector conflicts, the Linked Entity admission errors when a nested
+    /// projection term, a `q` hop or a retrieving `join` references a Linked
+    /// Entity the operation does not reach (clauses 5.7.3.4, 5.7.4.4 and
+    /// 5.14.5.4), [`ParameterError::InlineJoinWithoutInstances`] when
     /// `join=inline` meets a representation with no instance to nest under,
     /// [`ParameterError::Query`] carrying a temporal-ordering failure for an
     /// ordering clause 5.7.4.3 does not admit,
@@ -155,12 +157,12 @@ impl TemporalQueryParameters {
     /// [`ParameterError::Query`] when the `timerel`, `timeAt` and `endTimeAt`
     /// group is incomplete, and [`ParameterError::AggrMethodsRequired`] when
     /// `format=aggregatedValues` carries no aggregation methods.
-    pub fn validate(&self, require_temporal: bool) -> Result<(), ParameterError> {
+    pub fn validate(&self, operation: TemporalQueryOperation, linked_retrieval: TemporalJoin) -> Result<(), ParameterError> {
         // Clause 6.3.20: a `format` or `options` value Table 6.3.12-1 does not
         // define is refused here rather than during deserialisation, where the
         // error type would have been lost (see `crate::representation_parameter`).
         self.parse_format()?;
-        validate_attrs(self.attrs.as_deref(), attrs_admission(require_temporal))?;
+        validate_attrs(self.attrs.as_deref(), attrs_admission(operation))?;
         // Clause 4.21: the temporal API carries the same three selectors and
         // inherits the rule about combining them unchanged.
         check_projection_exclusivity(ProjectionSelectors {
@@ -168,14 +170,14 @@ impl TemporalQueryParameters {
             omit: Presence::of(self.omit.as_deref()),
             attrs: Presence::of(self.attrs.as_deref()),
         })?;
-        // Clauses 5.7.3.4 and 5.7.4.4 admit no Linked Entity retrieval on the
-        // temporal operations at all, raising an error where projection
-        // attributes or filter conditions indicate one. Andromeda's join
-        // extension accepts them instead, and holds them to the bound clause
-        // 5.7.2.4 sets on the entity bindings: a nested projection term and a
-        // `q` hop each reach only as far as the requested join walks.
-        validate_projection_join_depth(self.pick.as_deref(), self.omit.as_deref(), self.join, self.join_level)?;
-        validate_filter_join_depth(self.q.as_ref(), self.join, self.join_level)?;
+        let linked = LinkedRequest::builder()
+            .pick(self.pick.as_deref())
+            .omit(self.omit.as_deref())
+            .q(self.q.as_ref())
+            .join(self.join)
+            .join_level(self.join_level)
+            .build();
+        admit_request(operation.linked(linked_retrieval), &linked)?;
         // Clause 4.5.23 nests a linked entity under the attribute instance that
         // names it. The simplified representation of clause 4.5.5 and the
         // aggregated one of clause 4.5.19 both collapse instances into value
@@ -198,7 +200,7 @@ impl TemporalQueryParameters {
         // itself; the request seam asks the compiled form rather than
         // restating the rule, and compilation later reads the same answer.
         TemporalEntityOrdering::of_parameters(&self.ordering).map_err(ParameterError::Query)?;
-        if require_temporal {
+        if matches!(operation, TemporalQueryOperation::Query | TemporalQueryOperation::EntityMap) {
             if self.timerel.is_none() || self.time_at.is_none() {
                 return Err(ParameterError::TimerelTimeatRequired);
             }

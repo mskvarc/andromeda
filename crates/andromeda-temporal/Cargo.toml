@@ -20,6 +20,7 @@ andromeda-context-commit.workspace = true
 andromeda-context-space.workspace = true
 andromeda-entity.workspace = true
 andromeda-jsonld.workspace = true
+andromeda-linked-retrieval.workspace = true
 andromeda-ngsi-ld-compaction.workspace = true
 andromeda-ngsi-ld-entity.workspace = true
 andromeda-ngsi-ld-expansion.workspace = true

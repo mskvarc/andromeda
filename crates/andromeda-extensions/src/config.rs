@@ -95,6 +95,18 @@ pub struct ExtensionsConfig {
     /// and `groupedValues` are rejected with `InvalidRequest`.
     #[toml_comment(inline)]
     pub temporal_aggregation_grouping: HttpFeatureMode,
+    /// Linked Entity retrieval on the temporal operations (non-standard).
+    ///
+    /// Clauses 5.7.3.4, 5.7.4.4 and 5.14.5.4 refuse Linked Entity retrieval on
+    /// Retrieve and Query Temporal Evolution and on the temporal Entity Map.
+    /// When enabled, those operations accept `join`, `joinLevel` and
+    /// `containedBy` and retrieve the Linked Entities' temporal evolution over
+    /// the request's window by the clause 4.5.23 rules of the Core API. When
+    /// disabled, the parameters are rejected with `InvalidRequest` on the
+    /// temporal URL bindings, and a nested projection, a `q` hop or a
+    /// retrieving `join` in a query body with `BadRequestData`.
+    #[toml_comment(inline)]
+    pub temporal_linked_retrieval: HttpFeatureMode,
     /// Tenant management on `/tenants` (non-standard).
     ///
     /// ETSI GS CIM 009 v1.9.1 leaves tenant management implementation-specific
@@ -136,6 +148,7 @@ impl Default for ExtensionsConfig {
             temporal_delete_by_query: HttpFeatureMode::Disabled,
             purge_dataset_scope: HttpFeatureMode::Disabled,
             temporal_aggregation_grouping: HttpFeatureMode::Disabled,
+            temporal_linked_retrieval: HttpFeatureMode::Disabled,
             tenant_management: HttpFeatureMode::Disabled,
             cursor_pagination: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: DEFAULT_TEMPORAL_DELETE_MAX_MATCHES,
@@ -179,6 +192,7 @@ impl ExtensionsConfig {
         matches!(self.temporal_delete_by_query, HttpFeatureMode::Enabled)
             || matches!(self.purge_dataset_scope, HttpFeatureMode::Enabled)
             || matches!(self.temporal_aggregation_grouping, HttpFeatureMode::Enabled)
+            || matches!(self.temporal_linked_retrieval, HttpFeatureMode::Enabled)
             || matches!(self.tenant_management, HttpFeatureMode::Enabled)
             || matches!(self.cursor_pagination, HttpFeatureMode::Enabled)
     }
@@ -197,6 +211,7 @@ mod tests {
         pretty_assertions::assert_eq!(config.temporal_delete_by_query, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(config.purge_dataset_scope, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(config.temporal_aggregation_grouping, HttpFeatureMode::Disabled);
+        pretty_assertions::assert_eq!(config.temporal_linked_retrieval, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(config.tenant_management, HttpFeatureMode::Disabled);
     }
 
@@ -237,6 +252,7 @@ mod tests {
             temporal_delete_by_query: HttpFeatureMode::Enabled,
             purge_dataset_scope: HttpFeatureMode::Enabled,
             temporal_aggregation_grouping: HttpFeatureMode::Enabled,
+            temporal_linked_retrieval: HttpFeatureMode::Enabled,
             tenant_management: HttpFeatureMode::Enabled,
             cursor_pagination: HttpFeatureMode::Disabled,
             temporal_delete_by_query_max_matches: 42,
@@ -247,6 +263,7 @@ mod tests {
         pretty_assertions::assert_eq!(parsed.temporal_delete_by_query, HttpFeatureMode::Enabled);
         pretty_assertions::assert_eq!(parsed.purge_dataset_scope, HttpFeatureMode::Enabled);
         pretty_assertions::assert_eq!(parsed.temporal_aggregation_grouping, HttpFeatureMode::Enabled);
+        pretty_assertions::assert_eq!(parsed.temporal_linked_retrieval, HttpFeatureMode::Enabled);
         pretty_assertions::assert_eq!(parsed.cursor_pagination, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(parsed.temporal_delete_by_query_max_matches, 42);
         pretty_assertions::assert_eq!(parsed.temporal_aggregation_grouping_max_groups, 7);
@@ -259,6 +276,7 @@ mod tests {
         assert!(rendered.contains("temporal_delete_by_query"), "{rendered}");
         assert!(rendered.contains("purge_dataset_scope"), "{rendered}");
         assert!(rendered.contains("temporal_aggregation_grouping"), "{rendered}");
+        assert!(rendered.contains("temporal_linked_retrieval"), "{rendered}");
         assert!(rendered.contains("cursor_pagination"), "{rendered}");
     }
 
@@ -274,6 +292,18 @@ mod tests {
         assert!(config.any_feature_requested());
         config.conformance_mode = HttpFeatureMode::Enabled;
         assert!(config.conformance_mode_enabled());
+    }
+
+    /// The temporal Linked Entity retrieval extension is a requested feature
+    /// like any other, so the conformance override reports it.
+    #[test]
+    fn temporal_linked_retrieval_counts_as_a_requested_feature() {
+        let config = ExtensionsConfig {
+            cursor_pagination: HttpFeatureMode::Disabled,
+            temporal_linked_retrieval: HttpFeatureMode::Enabled,
+            ..ExtensionsConfig::default()
+        };
+        assert!(config.any_feature_requested());
     }
 
     /// The default-on cursor pagination is a requested feature, so conformance

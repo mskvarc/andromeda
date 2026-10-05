@@ -27,14 +27,27 @@ use axum::{
 use std::marker::PhantomData;
 use thiserror::Error;
 
+/// Where a temporal query's parameters were written.
+///
+/// An extension parameter is undefined on the URL bindings when its extension
+/// is off, while a member of the clause 5.2.23 `Query` body is defined whatever
+/// the broker enables, so the two are refused differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemporalQueryBinding {
+    /// The URL query string of a `GET` (clauses 6.18.3.2 and 6.19.3.1).
+    QueryString,
+    /// The clause 5.2.23 body of a `POST` (clause 6.24.3.1).
+    Body,
+}
+
 /// A route's admission of the temporal queries it answers.
 pub trait TemporalQueryAdmission: Clone + Send + Sync + 'static {
-    /// Admit `params`, or refuse them.
+    /// Admit `params`, written on `binding`, or refuse them.
     ///
     /// # Errors
     ///
     /// Returns the report the refused query is answered with.
-    fn admit(&self, params: &TemporalQueryParameters) -> Result<(), ClassifiedReport>;
+    fn admit(&self, params: &TemporalQueryParameters, binding: TemporalQueryBinding) -> Result<(), ClassifiedReport>;
 }
 
 /// The route installed no admission of the type its binding names: a wiring
@@ -63,7 +76,7 @@ where
         let ValidatedQuery(params) = ValidatedQuery::<TemporalQueryParameters>::from_request_parts(parts, state).await?;
         let uri = addressed_uri(parts);
         installed_admission::<A>(parts)?
-            .admit(&params)
+            .admit(&params, TemporalQueryBinding::QueryString)
             .map_err(|report| ExtractorRejection::Classified(report.with_instance(uri)))?;
         Ok(AdmittedTemporalQuery {
             params,
@@ -104,7 +117,7 @@ where
         // The body's `aggrParams.aggrGroupBy` is folded into `params` by now,
         // so the admission sees the whole query.
         admission
-            .admit(&params)
+            .admit(&params, TemporalQueryBinding::Body)
             .map_err(|report| ExtractorRejection::Classified(report.with_instance(uri)))?;
         Ok(AdmittedTemporalPostQuery {
             params,

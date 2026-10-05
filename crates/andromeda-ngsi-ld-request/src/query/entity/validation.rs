@@ -1,13 +1,16 @@
 //! Entity-query semantic validation and option resolution.
 
-use super::parameters::{EntityQueryParameters, EntityQueryParametersOptions};
 use crate::{
     attribute_selection::{AttrsAdmission, validate_attrs},
     error::ParameterError,
-    linked_retrieval_consistency::{validate_filter_join_depth, validate_projection_join_depth},
+    query::entity::{
+        operation::EntityQueryOperation,
+        parameters::{EntityQueryParameters, EntityQueryParametersOptions},
+    },
     query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing},
     representation_parameter::{resolve_representation, supported_option},
 };
+use andromeda_linked_retrieval::admission::{LinkedRequest, admit_request};
 use andromeda_ngsi_ld_query::{
     projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
     type_selection::grammar::TypeExprRaw,
@@ -73,7 +76,7 @@ impl EntityQueryParameters {
         matches!(self.entity_type, Some(TypeExprRaw::Wildcard))
     }
 
-    /// Validate entity-query semantic constraints.
+    /// Validate entity-query semantic constraints for `operation`.
     ///
     /// # Errors
     ///
@@ -83,10 +86,10 @@ impl EntityQueryParameters {
     /// [`ParameterError::DropKeepExclusive`] when `drop` and `keep` are both
     /// present, [`ParameterError::Projection`] for the clause 4.21 selector
     /// conflicts, [`ParameterError::LimitZeroWithoutCount`] for `limit=0`
-    /// without the `count` option, and the clause 5.7.2.4 depth errors when a
-    /// nested projection term or a `q` hop names a Linked Entity the requested
-    /// traversal does not reach.
-    pub fn validate(&self) -> Result<(), ParameterError> {
+    /// without the `count` option, and the Linked Entity admission errors when
+    /// a nested projection term or a `q` hop references a Linked Entity the
+    /// operation does not reach (clauses 5.6.21.4, 5.7.2.4 and 5.14.4.4).
+    pub fn validate(&self, operation: EntityQueryOperation) -> Result<(), ParameterError> {
         // Clause 6.3.20: a `format` or `options` value Table 6.3.7-1 does not
         // define is refused here rather than during deserialisation, where the
         // error type would have been lost (see `crate::representation_parameter`).
@@ -120,10 +123,14 @@ impl EntityQueryParameters {
             omit: Presence::of(self.omit.as_deref()),
             attrs: Presence::of(self.attrs.as_deref()),
         })?;
-        validate_projection_join_depth(self.pick.as_deref(), self.omit.as_deref(), self.join, self.join_level)?;
-        // Clause 5.7.2.4: a `q` hop walks into a Linked Entity, and how far the
-        // broker may walk is what the join parameters state.
-        validate_filter_join_depth(self.q.as_ref(), self.join, self.join_level)?;
+        let linked = LinkedRequest::builder()
+            .pick(self.pick.as_deref())
+            .omit(self.omit.as_deref())
+            .q(self.q.as_ref())
+            .join(self.join)
+            .join_level(self.join_level)
+            .build();
+        admit_request(operation.linked(), &linked)?;
         Ok(())
     }
 }

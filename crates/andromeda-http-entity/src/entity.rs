@@ -48,7 +48,6 @@ use andromeda_ngsi_ld_render::geometry_selection::GeometrySelection;
 use andromeda_ngsi_ld_request::{
     attribute_deletion::DeleteAttrParams,
     entity::{AppendParams, GetEntityParams, MergeParams, PartialUpdateAttrParams, ReplaceAttrParams},
-    linked_retrieval_consistency::reject_linked_retrieval,
     local::LocalOnlyParams,
     options::OverwritePolicy as RequestOverwritePolicy,
 };

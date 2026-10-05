@@ -268,6 +268,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-commit",
         "andromeda-federation",
         "andromeda-jsonld",
+        "andromeda-linked-retrieval",
         "andromeda-ngsi-ld-compaction",
         "andromeda-ngsi-ld-entity",
         "andromeda-ngsi-ld-expansion",

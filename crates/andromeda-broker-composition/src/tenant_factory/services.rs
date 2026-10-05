@@ -35,8 +35,10 @@ use andromeda_entity::{
     query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
 };
 use andromeda_entity_map::service::EntityMapService;
+use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::FederationService;
 use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
+use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_postgresql_context_store::jsonld_context::repo::JsonLdContextRepository;
 use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook};
 use andromeda_snapshot::{
@@ -235,7 +237,18 @@ fn compose_temporal_service(
             Arc::clone(forwarding),      // clone: request handling and linked resolution share one forwarding service.
             storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
         )) as Arc<dyn RemoteTemporalLinkedSource>),
+        temporal_linked_retrieval(config.extensions.resolve()),
     ))
+}
+
+/// Whether the temporal operations retrieve Linked Entities: only with the
+/// `temporal_linked_retrieval` extension, which conformance mode forces off.
+fn temporal_linked_retrieval(enabled: EnabledExtensions) -> TemporalJoin {
+    if enabled.temporal_linked_retrieval_enabled() {
+        TemporalJoin::Extended
+    } else {
+        TemporalJoin::Spec
+    }
 }
 
 /// Compose the entity query service every entity read is answered from.

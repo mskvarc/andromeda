@@ -20,7 +20,7 @@ use andromeda_federation::{
 };
 use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_http_headers::via::Via;
-use andromeda_ngsi_ld_request::error::ParameterError;
+use andromeda_ngsi_ld_request::{error::ParameterError, query::temporal::operation::TemporalQueryOperation};
 use axum::http::Uri;
 
 /// One temporal query, decoded and admitted: what the protocol headers
@@ -62,7 +62,9 @@ pub(super) async fn admit_request(
     if !target.permits_federation() {
         params.local = Some(true);
     }
-    params.validate(true).with_instance(instance)?;
+    params
+        .validate(TemporalQueryOperation::Query, state.temporal.linked_retrieval())
+        .with_instance(instance)?;
     refuse_inadmissible_ordering(&state.forwarding, target, context, params, EntityMapInUse::from(&map_use), instance).await?;
     Ok(AdmittedQuery {
         prefer: protocol.prefer,

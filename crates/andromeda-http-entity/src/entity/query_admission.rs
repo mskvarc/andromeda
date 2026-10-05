@@ -23,7 +23,10 @@ use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, via::Via};
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
-    query::entity::parameters::{EntityQueryParameters, EntityQueryParametersOptions},
+    query::entity::{
+        operation::EntityQueryOperation,
+        parameters::{EntityQueryParameters, EntityQueryParametersOptions},
+    },
 };
 use axum::http::Uri as HttpUri;
 
@@ -75,7 +78,7 @@ pub(crate) async fn admit_request(
     if !target.permits_federation() {
         query.local = Some(true);
     }
-    query.validate().with_entity_instance(instance)?;
+    query.validate(EntityQueryOperation::Query).with_entity_instance(instance)?;
     let referenced = protocol.entity_map.as_ref().map(NgsiLdEntityMap::as_inner);
     let map_use = resolve_query_map_use(&state.entity_maps, target, query, referenced, instance).await?;
     let opts = query.parse_options().with_entity_instance(instance)?;

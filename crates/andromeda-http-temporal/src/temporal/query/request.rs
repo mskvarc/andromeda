@@ -7,7 +7,7 @@
 //! [`crate::temporal::query::run`] runs.
 
 use crate::{
-    grouping_gate::GroupingGate,
+    extension_gate::TemporalExtensionGate,
     state::TemporalRouteServices,
     temporal::{
         AcceptFormatNoGeo,
@@ -89,7 +89,7 @@ pub async fn query(
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     protocol: NgsiLdProtocolHeaders,
     RequestPagination(pagination): RequestPagination,
-    AdmittedTemporalQuery { params, .. }: AdmittedTemporalQuery<GroupingGate>,
+    AdmittedTemporalQuery { params, .. }: AdmittedTemporalQuery<TemporalExtensionGate>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 6.18.3.2 carries the whole query in the request URI, so a
     // pointer built from it retrieves the next page on its own.

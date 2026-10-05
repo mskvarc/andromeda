@@ -6,7 +6,6 @@ use crate::{
     error::ParameterError,
     language_filter::deserialize_optional_language_filter,
     language_tag::deserialize_optional_language_tag,
-    linked_retrieval_consistency::validate_projection_join_depth,
     options::{EntityRepresentationOptions, OverwritePolicy},
     query::deserialization::{
         deserialize_optional_attribute_names,
@@ -19,6 +18,7 @@ use crate::{
     representation_parameter::{WrittenValue, resolve_representation, supported_option},
 };
 use andromeda_http_headers::language::LanguageFilter;
+use andromeda_linked_retrieval::admission::{LinkedOperation, LinkedRequest, admit_request};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
@@ -244,9 +244,15 @@ impl GetEntityParams {
             omit: Presence::of(self.omit.as_deref()),
             attrs: Presence::of(self.attrs.as_deref()),
         })?;
-        // Clause 5.7.2.4: a nested sub-projection describes a Linked Entity,
+        // Clause 5.7.1.4: a nested sub-projection describes a Linked Entity,
         // so it is only meaningful as far as the requested join reaches.
-        validate_projection_join_depth(self.pick.as_deref(), self.omit.as_deref(), self.join, self.join_level)?;
+        let linked = LinkedRequest::builder()
+            .pick(self.pick.as_deref())
+            .omit(self.omit.as_deref())
+            .join(self.join)
+            .join_level(self.join_level)
+            .build();
+        admit_request(LinkedOperation::RetrieveEntity, &linked)?;
         Ok(())
     }
 }

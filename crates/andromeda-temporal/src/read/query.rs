@@ -24,7 +24,7 @@ use andromeda_ngsi_ld_query::{
         contributed_entities::{ContributedEntities, ContributedRendering},
     },
 };
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -62,7 +62,7 @@ impl TemporalService {
     ) -> Result<TemporalQueryResult, TemporalError> {
         let timer = temporal::start(TemporalOperation::Query);
         let result = async {
-            params.validate(true)?;
+            params.validate(TemporalQueryOperation::Query, self.linked_retrieval)?;
 
             let mut compiled = self.compile_temporal_query(params, context).await?;
             compiled.contributed = contributed;

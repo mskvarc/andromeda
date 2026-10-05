@@ -38,7 +38,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::ProjectionDepthExceedsJoinLevel { .. }
         | ParameterError::FilterTraversalWithoutJoin
         | ParameterError::FilterDepthExceedsJoinLevel { .. }
-        | ParameterError::PurgeNamesLinkedEntities(_)
+        | ParameterError::LinkedRetrievalUnavailable { .. }
         | ParameterError::InlineJoinWithoutInstances(_)
         | ParameterError::AttrsReservedMember(_)
         | ParameterError::TimerelTimeatRequired

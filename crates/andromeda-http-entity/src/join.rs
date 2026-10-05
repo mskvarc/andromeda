@@ -13,15 +13,13 @@ use andromeda_entity::{
     query::{EntityQueryService, join_projection::PreparedJoinProjection, linked_entity::ResolvedLinkedEntities},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_linked_retrieval::join::{RetrievingJoin, TraversalBounds};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_render::{nested_projection::LinkedProjection, structural_projection::StructuralProjection};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, linked_resolution_failure::LinkedResolutionFailure, sys_attrs::SysAttrsInclusion};
-use andromeda_ngsi_ld_request::{
-    join_traversal::{RetrievingJoin, traversal_bounds},
-    query::entity::parameters::EntityQueryParameters,
-};
+use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use indexmap::IndexMap;
 use std::num::NonZeroU32;
 
@@ -84,13 +82,13 @@ impl<'a> ResolvedJoin<'a> {
         let Some(join) = RetrievingJoin::from_mode(request.join) else {
             return Ok(None);
         };
-        let (join_level, contained_by) = traversal_bounds(request.join_level, request.contained_by);
+        let TraversalBounds { depth, contained_by } = TraversalBounds::of(request.join_level, request.contained_by);
 
         let ResolvedLinkedEntities {
             entities: mut linked,
             failures,
         } = service
-            .resolve_linked_entities(target, roots, join_level, request.sys_attrs, context, &contained_by)
+            .resolve_linked_entities(target, roots, depth, request.sys_attrs, context, &contained_by)
             .await?;
 
         // Clause 4.21: a `pick`/`omit` term may carry a nested sub-projection

@@ -45,7 +45,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     page_window::{PageStart, PageWindow},
 };
-use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+use andromeda_ngsi_ld_request::query::entity::{operation::EntityQueryOperation, parameters::EntityQueryParameters};
 use chrono::{DateTime, Utc};
 use std::{collections::HashSet, sync::Arc};
 use tracing::warn;
@@ -126,7 +126,7 @@ impl SnapshotExecutor {
             Ok(params) => params,
             Err(error) => return Ok(failure_detail(error.to_string())),
         };
-        if let Err(error) = params.validate() {
+        if let Err(error) = params.validate(EntityQueryOperation::Query) {
             return Ok(failure_detail(format!("Snapshot query translation failed validation: {error}")));
         }
 

@@ -1,7 +1,7 @@
 //! Typed, state-complete inventory of temporal HTTP routes.
 
 use crate::{
-    grouping_gate::GroupingGate,
+    extension_gate::TemporalExtensionGate,
     operation_query,
     state::{TemporalRouteState, TemporalStateResolver},
     temporal,
@@ -55,11 +55,12 @@ impl TemporalRoutes {
             .nest("/entities", entity_routes)
             .nest("/entityOperations", operation_routes)
             .layer(from_fn(echo_scope_headers))
-            // The aggregation query bindings read their parameters through the
-            // grouping gate installed here: they reject `aggrGroupBy` and
-            // `groupedValues` when the extension is off, exactly as a broker
-            // that never implemented them does.
-            .layer(Extension(GroupingGate::new(enabled)))
+            // The temporal query bindings read their parameters through the
+            // extension gate installed here: they reject `aggrGroupBy`,
+            // `groupedValues` and the join parameters when the extension
+            // defining them is off, exactly as a broker that never
+            // implemented them does.
+            .layer(Extension(TemporalExtensionGate::new(enabled)))
             .with_state(state);
         TemporalRoutes { router }
     }

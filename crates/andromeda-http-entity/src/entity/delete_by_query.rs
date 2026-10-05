@@ -22,7 +22,6 @@ use crate::entity::{
     forwarded_write_error,
     multi_status,
     purge_entity_map::resolve_purge_map,
-    reject_linked_retrieval,
     single_source_failure,
 };
 use andromeda_entity::side_effect::SideEffectPlacement;
@@ -32,7 +31,7 @@ use andromeda_http_extraction::{context::ContextUrl, context_target};
 use andromeda_http_response::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, page_window::PageWindow, projection::purge::DatasetPurgeScope};
-use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+use andromeda_ngsi_ld_request::query::entity::{operation::EntityQueryOperation, parameters::EntityQueryParameters};
 use axum::{Extension, http::Uri as RequestUri};
 use std::slice;
 
@@ -89,16 +88,14 @@ pub(crate) async fn delete_by_query(
     if !target.permits_federation() {
         query.local = Some(true);
     }
-    query.validate().with_entity_instance(&uri)?;
+    // Clause 5.6.21.4 gives this operation no `join`: it renders nothing and
+    // retrieves nothing, so validating it as a purge refuses a Linked Entity
+    // reference in `q` or in `pick`/`omit` outright.
+    query.validate(EntityQueryOperation::Purge).with_entity_instance(&uri)?;
     // Table 6.4.3.3-1 defines no pagination parameter for Purge Entities: it
     // acts on every match, and clause 6.3.20 answers a parameter the operation
     // does not define with `InvalidRequest` rather than paging a purge.
     query.page.require_absent().with_entity_instance(&uri)?;
-    // Clause 5.6.21.4 gives this operation no `join`: it renders nothing and
-    // retrieves nothing, so a Linked Entity reference in `q` or in `pick`/`omit`
-    // can never be satisfied and is rejected outright rather than measured
-    // against a traversal that does not exist here.
-    reject_linked_retrieval(query.pick.as_deref(), query.omit.as_deref(), query.q.as_ref()).with_entity_instance(&uri)?;
 
     let is_local = !target.permits_federation() || query.is_local();
 

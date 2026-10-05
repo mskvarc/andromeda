@@ -190,6 +190,7 @@ dependencies = [
  "andromeda-http-tenancy",
  "andromeda-http3-server",
  "andromeda-jsonld",
+ "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-compaction",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -373,6 +374,7 @@ dependencies = [
  "andromeda-context-space",
  "andromeda-federation",
  "andromeda-jsonld",
+ "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-compaction",
  "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-expansion",
@@ -620,6 +622,7 @@ dependencies = [
  "andromeda-http-headers",
  "andromeda-http-response",
  "andromeda-jsonld",
+ "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-expansion",
  "andromeda-ngsi-ld-geometry",
@@ -665,6 +668,7 @@ dependencies = [
  "andromeda-http-headers",
  "andromeda-http-response",
  "andromeda-jsonld",
+ "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-problem-details",
@@ -1036,6 +1040,7 @@ dependencies = [
  "andromeda-http-headers",
  "andromeda-http-response",
  "andromeda-jsonld",
+ "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-expansion",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
@@ -1153,6 +1158,20 @@ dependencies = [
  "tracing",
  "typed-builder",
  "url",
+]
+
+[[package]]
+name = "andromeda-linked-retrieval"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
+ "derive_more",
+ "pretty_assertions",
+ "thiserror 2.0.21",
+ "typed-builder",
 ]
 
 [[package]]
@@ -1436,6 +1455,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-http-headers",
+ "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
@@ -2103,6 +2123,7 @@ dependencies = [
  "andromeda-context-space",
  "andromeda-entity",
  "andromeda-jsonld",
+ "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-compaction",
  "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-expansion",

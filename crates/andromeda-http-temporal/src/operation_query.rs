@@ -11,7 +11,7 @@
 
 use crate::{
     error::TemporalResultExt,
-    grouping_gate::GroupingGate,
+    extension_gate::TemporalExtensionGate,
     state::TemporalTenantState,
     temporal::query::{page::QueriedPage, request::TemporalQueryRequest, run},
 };
@@ -42,7 +42,7 @@ pub async fn query(
     api_root: ApiRoot,
     protocol: NgsiLdProtocolHeaders,
     RequestPagination(pagination): RequestPagination,
-    AdmittedTemporalPostQuery { params, context, .. }: AdmittedTemporalPostQuery<GroupingGate>,
+    AdmittedTemporalPostQuery { params, context, .. }: AdmittedTemporalPostQuery<TemporalExtensionGate>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 6.3.10 asks for a Link Target "that could be dereferenced by an
     // NGSI-LD Client to retrieve the next page of NGSI-LD Elements", and clause
