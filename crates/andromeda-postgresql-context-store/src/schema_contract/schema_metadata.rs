@@ -127,14 +127,8 @@ async fn applied_migrations_digest_up_to(pool: &PgPool, up_to_version: SchemaVer
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(pool).await?;
     let records = rows
         .iter()
-        .map(|row| {
-            (
-                row.get::<i64, _>("version"),
-                row.get::<String, _>("description"),
-                row.get::<Vec<u8>, _>("checksum"),
-            )
-        })
-        .collect::<Vec<_>>();
+        .map(|row| -> Result<(i64, String, Vec<u8>), sqlx::Error> { Ok((row.try_get("version")?, row.try_get("description")?, row.try_get("checksum")?)) })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(MigrationsDigest::of_records(
         records
             .iter()
@@ -222,8 +216,8 @@ async fn read_stamp(pool: &PgPool) -> Result<Option<StampedContract>, SchemaCont
     let Some(row) = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(pool).await? else {
         return Ok(None);
     };
-    let version = SchemaVersion::try_from(i64::from(row.get::<i32, _>("schema_version")))?;
-    let digest = MigrationsDigest::try_from(row.get::<String, _>("migrations_sha256").as_str())?;
+    let version = SchemaVersion::try_from(i64::from(row.try_get::<i32, _>("schema_version")?))?;
+    let digest = MigrationsDigest::try_from(row.try_get::<String, _>("migrations_sha256")?.as_str())?;
     Ok(Some(StampedContract { version, digest }))
 }
 

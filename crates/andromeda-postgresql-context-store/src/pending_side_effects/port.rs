@@ -76,7 +76,7 @@ impl SideEffectQueue for PendingSideEffectsRepository {
             let claimed = self.claim_rows(worker_id, remaining, lease_seconds).await?;
             let claimed_count = claimed.len();
             for row in claimed {
-                let id = SideEffectJobId::from_uuid(row.get("id"));
+                let id = SideEffectJobId::from_uuid(stored_column(&row, "id")?);
                 match leased_effect(id, &row) {
                     Ok(effect) => leased.push(effect),
                     Err(err) => {
@@ -157,20 +157,29 @@ impl PendingSideEffectsRepository {
 
 /// Decode one claimed row into the leased job the entity policy consumes.
 fn leased_effect(id: SideEffectJobId, row: &PgRow) -> Result<LeasedSideEffect, EntityError> {
-    let payload: JsonbText<'_> = row.try_get("payload").map_err(|error| EntityError::from(undecodable(&error)))?;
+    let payload: JsonbText<'_> = stored_column(row, "payload")?;
     let job = decode_job(payload)?;
-    let write_id = WriteId::from_uuid(row.get("write_id"));
-    let recorded_at: DateTime<Utc> = row.get("recorded_at");
+    let write_id = WriteId::from_uuid(stored_column(row, "write_id")?);
+    let recorded_at: DateTime<Utc> = stored_column(row, "recorded_at")?;
     let record = WriteRecord::restored(write_id, recorded_at);
-    let stored_base: i32 = row.get("base_ordinal");
+    let stored_base: i32 = stored_column(row, "base_ordinal")?;
     let base_ordinal = WriteOrdinal::try_from(stored_base).map_err(|error| EntityError::from(undecodable(&error)))?;
     Ok(LeasedSideEffect {
         id,
-        attempts: row.get("attempt_count"),
+        attempts: stored_column(row, "attempt_count")?,
         job,
         record,
         base_ordinal,
     })
+}
+
+/// Read one column of a claimed row; a column that does not decode is an
+/// undecodable record.
+fn stored_column<'r, T>(row: &'r PgRow, column: &str) -> Result<T, EntityError>
+where
+    T: sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
+{
+    row.try_get(column).map_err(|error| EntityError::from(undecodable(&error)))
 }
 
 /// Map a driver failure into the entity port's persistence category.

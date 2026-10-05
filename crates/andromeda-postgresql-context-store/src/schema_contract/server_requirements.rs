@@ -168,7 +168,8 @@ pub enum ExtensionVersionError {
 /// # Errors
 ///
 /// Returns [`SchemaContractError::Database`] when the introspection query
-/// fails, [`SchemaContractError::ExtensionVersionValue`] when a reported
+/// fails or a column it returns does not decode,
+/// [`SchemaContractError::ExtensionVersionValue`] when a reported
 /// extension version cannot be read,
 /// [`SchemaContractError::ServerEncodingNotUtf8`] when the server encoding is
 /// not UTF-8, and [`SchemaContractError::PostgresBelowMinimum`],
@@ -179,16 +180,16 @@ pub async fn verify_server_requirements(pool: &PgPool) -> Result<(), SchemaContr
     let (sql, values) = server_requirements_statement().build_sqlx(PostgresQueryBuilder);
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;
 
-    check_postgres(PostgresVersion::new(row.get("server_version_num")))?;
-    check_server_encoding(row.get::<&str, _>("server_encoding"))?;
+    check_postgres(PostgresVersion::new(row.try_get("server_version_num")?))?;
+    check_server_encoding(row.try_get::<&str, _>("server_encoding")?)?;
     check_extension(
         REQUIRED_POSTGIS_VERSION,
-        ExtensionPresence::try_from(row.get::<Option<String>, _>("postgis_version"))?,
+        ExtensionPresence::try_from(row.try_get::<Option<String>, _>("postgis_version")?)?,
         |required, found| SchemaContractError::PostGisBelowMinimum { required, found },
     )?;
     check_extension(
         REQUIRED_TIMESCALEDB_VERSION,
-        ExtensionPresence::try_from(row.get::<Option<String>, _>("timescaledb_version"))?,
+        ExtensionPresence::try_from(row.try_get::<Option<String>, _>("timescaledb_version")?)?,
         |required, found| SchemaContractError::TimescaleDbBelowMinimum { required, found },
     )
 }

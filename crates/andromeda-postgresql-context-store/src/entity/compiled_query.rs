@@ -115,7 +115,10 @@ impl EntityRepository {
 
         let (sql, values) = statement.select.build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
-        let mut ids: Vec<Identifier> = rows.iter().map(|row| stored_uri(row.get("id"))).collect::<Result<_, _>>()?;
+        let mut ids: Vec<Identifier> = rows
+            .iter()
+            .map(|row| -> Result<Identifier, ContextStoreError> { stored_uri(row.try_get("id")?) })
+            .collect::<Result<_, _>>()?;
         statement.read_order.present(&mut ids);
         let ids = ids;
         Ok(planned.outcome(ids, None))

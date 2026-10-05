@@ -207,10 +207,10 @@ impl EntityRepository {
         rows.into_iter()
             .map(|row| {
                 Ok(DeletedEntity {
-                    id: stored_uri(row.get("id"))?,
-                    created_at: row.get("created_at"),
-                    modified_at: row.get("modified_at"),
-                    expires_at: row.get("expires_at"),
+                    id: stored_uri(row.try_get("id")?)?,
+                    created_at: row.try_get("created_at")?,
+                    modified_at: row.try_get("modified_at")?,
+                    expires_at: row.try_get("expires_at")?,
                 })
             })
             .collect()

@@ -17,10 +17,10 @@ pub async fn discover(pool: &PgPool) -> Result<Vec<ComponentReport>, sqlx::Error
     let (sql, values) = discover_statement().build_sqlx(PostgresQueryBuilder);
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;
 
-    let pg_version: String = row.get("pg_version");
-    let postgis_version: Option<String> = row.get("postgis_version");
-    let timescaledb_version: Option<String> = row.get("timescaledb_version");
-    let timescaledb_license: Option<String> = row.get("timescaledb_license");
+    let pg_version: String = row.try_get("pg_version")?;
+    let postgis_version: Option<String> = row.try_get("postgis_version")?;
+    let timescaledb_version: Option<String> = row.try_get("timescaledb_version")?;
+    let timescaledb_license: Option<String> = row.try_get("timescaledb_license")?;
     let mut reports = vec![ComponentReport::PostgreSql {
         version: ComponentVersion::from(format!("v{pg_version}")),
     }];
