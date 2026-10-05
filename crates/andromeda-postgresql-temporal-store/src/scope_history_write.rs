@@ -9,7 +9,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
-use andromeda_postgresql_query::ltree::scope_to_ltree;
+use andromeda_postgresql_query::ltree::StoredScopePath;
 use andromeda_postgresql_schema::temporal::{ScopeHistory, TemporalEntities};
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -35,7 +35,7 @@ struct Te;
 
 /// The staging columns of a scope-history row, named as the `AS d(…)` alias
 /// spells them rather than as the `scope_history` columns they land in: the
-/// entity id resolves the narrow key, and the scope path is cast to `ltree`.
+/// entity id resolves the narrow key, and the label path is cast to `ltree`.
 #[derive(Iden, Clone, Copy)]
 enum Staged {
     /// Write clock of the row.
@@ -62,6 +62,8 @@ enum Staged {
     VerbatimInstanceId,
     /// Scope path in `ltree` label notation, absent on a tombstone.
     ScopePath,
+    /// Scope as it was written, absent on a tombstone.
+    VerbatimScopePath,
 }
 
 impl TemporalRepository {
@@ -109,6 +111,7 @@ impl TemporalRepository {
             .bind(&binds.generated_instance_ids)
             .bind(&binds.verbatim_instance_ids)
             .bind(&binds.scope_paths)
+            .bind(&binds.verbatim_scope_path)
             .execute(&mut **tx)
             .await?;
         Ok(())
@@ -141,6 +144,8 @@ struct ScopeHistoryBinds<'a> {
     verbatim_instance_ids: Vec<Option<&'a str>>,
     /// Scope paths in `ltree` label notation, absent on tombstones.
     scope_paths: Vec<Option<String>>,
+    /// Scopes as they were written, absent on tombstones.
+    verbatim_scope_path: Vec<Option<&'a str>>,
 }
 
 /// Spread one scope-history batch into its column-major binds.
@@ -158,6 +163,7 @@ fn scope_history_binds(entries: &[ScopeHistoryEntry]) -> Result<ScopeHistoryBind
         generated_instance_ids: Vec::with_capacity(entries.len()),
         verbatim_instance_ids: Vec::with_capacity(entries.len()),
         scope_paths: Vec::with_capacity(entries.len()),
+        verbatim_scope_path: Vec::with_capacity(entries.len()),
     };
     for entry in entries {
         binds.recorded_ats.push(entry.recorded_at);
@@ -173,7 +179,9 @@ fn scope_history_binds(entries: &[ScopeHistoryEntry]) -> Result<ScopeHistoryBind
         binds.deleted_ats.push(entry.value.deleted_at());
         binds.generated_instance_ids.push(generated_instance_id(&entry.instance));
         binds.verbatim_instance_ids.push(verbatim_instance_id(&entry.instance));
-        binds.scope_paths.push(entry.value.path().map(scope_to_ltree));
+        let stored = entry.value.path().map(StoredScopePath::from);
+        binds.verbatim_scope_path.push(stored.as_ref().map(|stored| stored.written));
+        binds.scope_paths.push(stored.map(|stored| stored.label_path));
     }
     Ok(binds)
 }
@@ -224,7 +232,7 @@ fn scope_history_dedup_sql(target: &ContextTarget) -> String {
 /// The bulk scope-history insert, its narrow key resolved by a join so a caller
 /// holding only the entity identifier does not read the catalogue first.
 ///
-/// The twelve staging arrays carry NULLs and bind through `sqlx`. The conflict
+/// The thirteen staging arrays carry NULLs and bind through `sqlx`. The conflict
 /// target names the columns `uq_scope_history_write_identity` covers, so a row replayed
 /// under its original write identity is a no-op rather than a duplicate.
 fn scope_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalStoreError> {
@@ -241,6 +249,7 @@ fn scope_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalSt
         UnnestColumn::new(Staged::GeneratedInstanceId, PostgresType::UuidArray),
         UnnestColumn::new(Staged::VerbatimInstanceId, PostgresType::TextArray),
         UnnestColumn::new(Staged::ScopePath, PostgresType::TextArray),
+        UnnestColumn::new(Staged::VerbatimScopePath, PostgresType::TextArray),
     ];
     let call = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))));
 
@@ -258,6 +267,7 @@ fn scope_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalSt
         .expr(Expr::col((D, Staged::GeneratedInstanceId)))
         .expr(Expr::col((D, Staged::VerbatimInstanceId)))
         .expr(cast(Expr::col((D, Staged::ScopePath)), PostgresType::Ltree))
+        .expr(Expr::col((D, Staged::VerbatimScopePath)))
         .from_function(call, D)
         .join_as(
             JoinType::InnerJoin,
@@ -281,6 +291,7 @@ fn scope_history_insert_sql(target: &ContextTarget) -> Result<String, TemporalSt
         ScopeHistory::GeneratedInstanceId,
         ScopeHistory::VerbatimInstanceId,
         ScopeHistory::ScopePath,
+        ScopeHistory::VerbatimScopePath,
     ]);
     insert.select_from(select).map_err(TemporalStoreError::StatementBuild)?.on_conflict(
         OnConflict::columns([ScopeHistory::RecordedAt, ScopeHistory::WriteId, ScopeHistory::WriteOrdinal])
@@ -318,6 +329,16 @@ mod tests {
             "{insert}"
         );
         assert!(insert.contains(r#""d"."scope_path"::ltree"#), "{insert}");
+    }
+
+    /// Clause 4.6.4: the Scope is read back as written, so the insert stores
+    /// the written text beside the label path it is matched by.
+    #[test]
+    fn the_insert_stores_the_written_scope_beside_its_label_path() {
+        let insert = scope_history_insert_sql(&ContextTarget::Live).expect("the fixed scope-history insert builds");
+        assert!(insert.contains(r#""scope_path", "verbatim_scope_path")"#), "{insert}");
+        assert!(insert.contains(r#""d"."verbatim_scope_path""#), "{insert}");
+        assert!(insert.contains("$13::text[]"), "{insert}");
     }
 
     /// A commit replayed under its original write identity re-inserts every row

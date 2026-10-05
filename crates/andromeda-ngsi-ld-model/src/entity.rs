@@ -5,86 +5,15 @@ use crate::{
     attribute_strip::AttributeStrip,
     entity_type::EntityTypeValue,
     notification::SysAttrsSnapshot,
+    scope_member::ScopeMember,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, scope::grammar::ScopeBuf};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_with::skip_serializing_none;
-use std::{
-    slice::{Iter, from_ref},
-    vec::IntoIter,
-};
 use typed_builder::TypedBuilder;
-
-/// Single or multiple scope values on an entity (ETSI GS CIM 009 clause 5.2.4).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ScopeValue {
-    /// Exactly one scope.
-    Single(ScopeBuf),
-    /// Several scopes declared together.
-    Multiple(Vec<ScopeBuf>),
-}
-
-impl ScopeValue {
-    /// Iterate the contained scopes uniformly regardless of variant.
-    pub fn iter(&self) -> Iter<'_, ScopeBuf> {
-        match self {
-            ScopeValue::Single(s) => from_ref(s).iter(),
-            ScopeValue::Multiple(v) => v.iter(),
-        }
-    }
-
-    /// Fold another representation's scopes into these, dropping duplicates.
-    ///
-    /// Clause 4.18: "In case multiple representations of the same Entity have
-    /// to be merged, e.g. when combining the results of distributed queries,
-    /// the values of scope are merged." The same clause allows "at most be one
-    /// instance of the scope property per Entity", so the fold is a set union
-    /// and never a pair of competing instances.
-    #[must_use]
-    pub fn merged_with(self, other: ScopeValue) -> ScopeValue {
-        let mut scopes: Vec<ScopeBuf> = self.into_iter().collect();
-        for scope in other {
-            if !scopes.contains(&scope) {
-                scopes.push(scope);
-            }
-        }
-        // Clause 4.18: "The value of scope is represented as a JSON array in
-        // case there is more than one Scope", so a single survivor stays bare.
-        match <[ScopeBuf; 1]>::try_from(scopes) {
-            Ok([single]) => ScopeValue::Single(single),
-            Err(several) => ScopeValue::Multiple(several),
-        }
-    }
-}
-
-// Owned iteration is what the clause 4.18 merge folds over; the borrowed form
-// below serves read-only callers.
-impl IntoIterator for ScopeValue {
-    type Item = ScopeBuf;
-    type IntoIter = IntoIter<ScopeBuf>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        match self {
-            ScopeValue::Single(scope) => vec![scope].into_iter(),
-            ScopeValue::Multiple(scopes) => scopes.into_iter(),
-        }
-    }
-}
-
-// Borrowed iteration goes through the inherent `iter`; the impl is what lets a
-// `&ScopeValue` be used directly in a `for` loop or an iterator adapter.
-impl<'a> IntoIterator for &'a ScopeValue {
-    type Item = &'a ScopeBuf;
-    type IntoIter = Iter<'a, ScopeBuf>;
-
-    fn into_iter(self) -> Iter<'a, ScopeBuf> {
-        self.iter()
-    }
-}
 
 /// NGSI-LD Entity representation (ETSI GS CIM 009 clause 5.2.4, Table 5.2.4-1).
 ///
@@ -107,7 +36,7 @@ pub struct Entity {
     pub type_: EntityTypeValue,
     /// Scopes the entity belongs to (clause 4.18).
     #[builder(default = Default::default())]
-    pub scope: Option<ScopeValue>,
+    pub scope: Option<ScopeMember>,
 
     /// Entity expiration timestamp (clause 4.22).
     #[builder(default = Default::default())]
@@ -298,7 +227,7 @@ pub struct EntityPatch {
     #[serde(rename = "type")]
     pub type_: Option<EntityTypeValue>,
     /// Scopes the entity belongs to (clause 4.18).
-    pub scope: Option<ScopeValue>,
+    pub scope: Option<ScopeMember>,
 
     /// Entity expiration timestamp (clause 4.22).
     pub expires_at: Option<DateTime<Utc>>,

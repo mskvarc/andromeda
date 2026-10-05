@@ -8,9 +8,10 @@
 
 use crate::{
     attribute::instance::AttributeValue,
-    entity::{Entity, EntityPatch, ScopeValue},
+    entity::{Entity, EntityPatch},
     entity_type::EntityTypeValue,
     node_refusal::RefusedMember,
+    scope_member::ScopeMember,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
@@ -94,7 +95,7 @@ pub(crate) struct SharedMembers {
     /// `type`, when read.
     pub(crate) type_: Option<EntityTypeValue>,
     /// `scope`.
-    pub(crate) scope: Option<ScopeValue>,
+    pub(crate) scope: Option<ScopeMember>,
     /// `expiresAt`.
     pub(crate) expires_at: Option<DateTime<Utc>>,
     /// `location`.

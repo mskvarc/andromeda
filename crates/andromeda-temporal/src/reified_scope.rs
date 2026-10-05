@@ -16,7 +16,6 @@ use andromeda_ngsi_ld_entity::{
     },
     expanded_value::ExpandedValue,
     literal::LiteralValue,
-    ngsi_ld_null::is_ngsi_ld_null,
     scope_refusal::ScopeRefusal,
     scope_slot::{ScopeItem, scope_slot},
     value_mode::Fragment,
@@ -60,7 +59,6 @@ fn scope_item(value: &ExpandedValue<Fragment>) -> ScopeItem<'_> {
         return ScopeItem::NotAString;
     };
     match literal.value() {
-        LiteralValue::String(text) if is_ngsi_ld_null(text) => ScopeItem::Null,
         LiteralValue::String(text) => ScopeItem::Text(text),
         LiteralValue::Number(_) | LiteralValue::Boolean(_) => ScopeItem::NotAString,
     }

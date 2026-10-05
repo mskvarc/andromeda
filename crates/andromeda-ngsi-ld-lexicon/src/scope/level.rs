@@ -7,6 +7,7 @@
 #![expect(missing_docs, reason = "generated grammar items are documented by the source grammar")]
 
 use static_regular_grammar::RegularGrammar;
+use thiserror::Error;
 
 /// The greatest number of characters one level of an NGSI-LD scope may carry.
 ///
@@ -26,24 +27,52 @@ use static_regular_grammar::RegularGrammar;
 /// too long. DETAIL: Label length is 1001, must be at most 1000`.
 pub const LEVEL_CHARACTER_LIMIT: usize = 1000;
 
+/// Why a string is not one level of a scope.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum ScopeLevelError {
+    /// The string is outside the clause 4.18 `ScopeLevel` production.
+    #[error("value does not satisfy the NGSI-LD scope level grammar")]
+    Malformed,
+    /// The level carries more characters than [`LEVEL_CHARACTER_LIMIT`].
+    #[error("a scope level of {0} characters exceeds the {LEVEL_CHARACTER_LIMIT} characters a scope level may carry")]
+    TooLong(usize),
+}
+
+/// Admit `raw` as one level of a scope.
+///
+/// The only admission of a level: a scope path and a scope pattern both read
+/// their levels through it, so the clause 4.18 production and the character
+/// bound hold the same way wherever a level is written.
+///
+/// # Errors
+///
+/// Returns [`ScopeLevelError::TooLong`] for a level beyond
+/// [`LEVEL_CHARACTER_LIMIT`] and [`ScopeLevelError::Malformed`] for one outside
+/// the production.
+pub fn checked_level(raw: &str) -> Result<&ScopeLevel, ScopeLevelError> {
+    if let Some(characters) = level_characters_beyond_limit(raw) {
+        return Err(ScopeLevelError::TooLong(characters));
+    }
+    ScopeLevel::new(raw).map_err(|_| ScopeLevelError::Malformed)
+}
+
 /// The number of characters `level` carries, when that is beyond
 /// [`LEVEL_CHARACTER_LIMIT`].
 ///
 /// `None` says the level is within the bound. The count is what a refusal
 /// reports, so the caller learns by how much rather than only that it failed.
-#[must_use]
-pub fn level_characters_beyond_limit(level: &str) -> Option<usize> {
+fn level_characters_beyond_limit(level: &str) -> Option<usize> {
     let characters = level.chars().count();
     (characters > LEVEL_CHARACTER_LIMIT).then_some(characters)
 }
 
 /// A validated level name inside a scope path (clause 4.18).
 ///
-/// A Unicode letter followed by Unicode letters, digits or underscores. This is
-/// the same production `Scope` is built from, derived once so that a scope
-/// pattern — where the wildcards `+` and `#` stand in for a level — can validate
-/// the levels it does carry without a second, hand-written reading of the
-/// character classes.
+/// A Unicode letter followed by Unicode letters, digits or underscores. The
+/// clause 4.18 `Scope` production is levels of this production joined by `/`
+/// behind an optional leading `/`, so this is the one character-level grammar
+/// a scope path and a scope pattern share. Admit a level through
+/// [`checked_level`], which adds the character bound.
 ///
 /// This is an unsized type. Use [`ScopeLevelBuf`] for owned values.
 #[derive(RegularGrammar, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -56,12 +85,12 @@ pub struct ScopeLevel(str);
 
 #[cfg(test)]
 mod tests {
-    use crate::scope::level::{LEVEL_CHARACTER_LIMIT, ScopeLevel, level_characters_beyond_limit};
+    use crate::scope::level::{LEVEL_CHARACTER_LIMIT, ScopeLevel, ScopeLevelError, checked_level};
 
     #[test]
     fn a_level_starts_with_a_letter_and_continues_with_letters_digits_or_underscores() {
         for raw in ["Madrid", "Level_2", "M\u{00fc}nchen", "a1"] {
-            assert!(ScopeLevel::new(raw).is_ok(), "{raw} must be accepted");
+            pretty_assertions::assert_eq!(checked_level(raw).map(ScopeLevel::as_str), Ok(raw));
         }
     }
 
@@ -71,15 +100,18 @@ mod tests {
     /// the bound does not whatever its letters weigh.
     #[test]
     fn the_character_bound_admits_the_widest_level_and_refuses_the_next() {
-        pretty_assertions::assert_eq!(level_characters_beyond_limit(&"a".repeat(LEVEL_CHARACTER_LIMIT)), None);
-        pretty_assertions::assert_eq!(level_characters_beyond_limit(&"\u{00fc}".repeat(LEVEL_CHARACTER_LIMIT)), None);
-        pretty_assertions::assert_eq!(level_characters_beyond_limit(&"a".repeat(LEVEL_CHARACTER_LIMIT + 1)), Some(1001));
+        assert!(checked_level(&"a".repeat(LEVEL_CHARACTER_LIMIT)).is_ok());
+        assert!(checked_level(&"\u{00fc}".repeat(LEVEL_CHARACTER_LIMIT)).is_ok());
+        pretty_assertions::assert_eq!(
+            checked_level(&"a".repeat(LEVEL_CHARACTER_LIMIT + 1)).map(ScopeLevel::as_str),
+            Err(ScopeLevelError::TooLong(1001))
+        );
     }
 
     #[test]
     fn a_level_outside_the_grammar_is_rejected() {
         for raw in ["", "1Floor", "_hidden", "A-B", "A B", "A/B"] {
-            assert!(ScopeLevel::new(raw).is_err(), "{raw} must be rejected");
+            pretty_assertions::assert_eq!(checked_level(raw).map(ScopeLevel::as_str), Err(ScopeLevelError::Malformed), "{raw}");
         }
     }
 }

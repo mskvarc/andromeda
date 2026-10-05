@@ -119,6 +119,12 @@ macro_rules! workspace_architecture {
                 );
             }
 
+            /// The NGSI-LD Scope grammar is read by its one owner only.
+            #[test]
+            fn scope_grammar_has_one_owner() {
+                $crate::scope_grammar::assert_scope_grammar_has_one_owner(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// No production source lets a string stand in for a typed error.
             #[test]
             fn errors_carry_typed_values_not_strings() {

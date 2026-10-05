@@ -2,7 +2,7 @@
 
 use crate::scope::{
     grammar::Scope,
-    level::{LEVEL_CHARACTER_LIMIT, level_characters_beyond_limit},
+    level::{LEVEL_CHARACTER_LIMIT, ScopeLevelError, checked_level},
 };
 use andromeda_ngsi_ld_vocabulary::NULL_URI;
 use compact_str::CompactString;
@@ -61,7 +61,14 @@ pub enum ScopePathError {
 /// scopes". A deletion is not a place an entity can be, so it is not a value of
 /// this type — code holding a `ScopePath` holds somewhere an entity is, which
 /// is what a label-path index stores and a `scopeQ` of clause 4.19 matches.
-/// [`Scope`] remains the wire grammar, admitting both.
+///
+/// The path keeps the spelling it was written in, the optional leading `/`
+/// included, because clause 4.6.4 has a broker "return the original content";
+/// equality, ordering and hashing compare that spelling, so `Madrid` and
+/// `/Madrid` are two values. They are one place: [`ScopePath::levels`] yields
+/// the same levels for both, and every match against a scope query reads the
+/// levels. [`FromStr`] is the only way to build one, so no path escapes the
+/// clause 4.18 grammar ([`Scope`]) or the storage bounds.
 #[derive(AsRef, Clone, Debug, Deserialize, Display, Eq, Hash, Into, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(try_from = "String", into = "String")]
 #[as_ref(str)]
@@ -76,30 +83,35 @@ impl ScopePath {
         self.0.as_str()
     }
 
-    /// The levels of the path, outermost first.
-    ///
-    /// Clause 4.18 makes the leading `/` optional and every scope absolute, so
-    /// both spellings of one path yield the same levels.
+    /// The levels of the path, outermost first: the place the path names,
+    /// whichever of the two clause 4.18 spellings it was written in.
     #[must_use]
     pub fn levels(&self) -> Split<'_, char> {
-        levels_of(self.as_str())
+        split_levels(self.as_str())
     }
 }
 
-/// The levels of a scope path spelled `raw`, outermost first.
-fn levels_of(raw: &str) -> Split<'_, char> {
+/// The levels `raw` spells, outermost first, read as clause 4.18 writes a
+/// scope: `[%x2F] ScopeLevel *(%x2F ScopeLevel)`.
+///
+/// The only reading of the optional leading `/`: exactly one is stripped, so
+/// `/A/B` and `A/B` both yield `A` and `B`, while `//A` yields an empty first
+/// level that no level production admits. A scope path and a scope pattern
+/// both split through it, so the two can never disagree about where a level
+/// starts.
+#[must_use]
+pub fn split_levels(raw: &str) -> Split<'_, char> {
     raw.strip_prefix(LEVEL_SEPARATOR).unwrap_or(raw).split(LEVEL_SEPARATOR)
 }
 
 /// The bytes a scope path spelled `raw` occupies in a label-path index: each
 /// level's own bytes plus the length PostgreSQL prefixes it with.
 fn encoded_bytes(raw: &str) -> usize {
-    levels_of(raw).map(|level| level.len() + LEVEL_LENGTH_BYTES).sum()
+    split_levels(raw).map(|level| level.len() + LEVEL_LENGTH_BYTES).sum()
 }
 
-// Validating parser: the grammar check, the NGSI-LD Null and the level bound
-// are what make the newtype worth having, and no derive expresses a fallible
-// parse.
+// Validating parser: the grammar check, the NGSI-LD Null and the bounds are
+// what make the newtype worth having, and no derive expresses a fallible parse.
 impl FromStr for ScopePath {
     type Err = ScopePathError;
 
@@ -108,10 +120,11 @@ impl FromStr for ScopePath {
             return Err(ScopePathError::NullSentinel);
         }
         Scope::new(raw).map_err(|_| ScopePathError::Malformed)?;
-        for level in levels_of(raw) {
-            if let Some(characters) = level_characters_beyond_limit(level) {
-                return Err(ScopePathError::LevelTooLong(characters));
-            }
+        for level in split_levels(raw) {
+            checked_level(level).map_err(|error| match error {
+                ScopeLevelError::Malformed => ScopePathError::Malformed,
+                ScopeLevelError::TooLong(characters) => ScopePathError::LevelTooLong(characters),
+            })?;
         }
         let encoded = encoded_bytes(raw);
         if encoded > PATH_ENCODED_BYTE_LIMIT {
@@ -135,7 +148,7 @@ impl TryFrom<String> for ScopePath {
 mod tests {
     use crate::scope::{
         level::LEVEL_CHARACTER_LIMIT,
-        path::{PATH_ENCODED_BYTE_LIMIT, ScopePath, ScopePathError},
+        path::{PATH_ENCODED_BYTE_LIMIT, ScopePath, ScopePathError, split_levels},
     };
 
     #[test]
@@ -252,5 +265,34 @@ mod tests {
     fn the_wire_form_refuses_a_value_that_is_not_a_scope_path() {
         assert!(serde_json::from_str::<ScopePath>("\"urn:ngsi-ld:null\"").is_err());
         assert!(serde_json::from_str::<ScopePath>("\"//invalid\"").is_err());
+    }
+
+    /// Clause 4.18 `[%x2F] ScopeLevel *(%x2F ScopeLevel)`: one optional leading
+    /// separator, never two.
+    #[test]
+    fn split_levels_strips_exactly_one_leading_separator() {
+        pretty_assertions::assert_eq!(split_levels("/A/B").collect::<Vec<&str>>(), vec!["A", "B"]);
+        pretty_assertions::assert_eq!(split_levels("A/B").collect::<Vec<&str>>(), vec!["A", "B"]);
+        pretty_assertions::assert_eq!(split_levels("//A").collect::<Vec<&str>>(), vec!["", "A"]);
+        pretty_assertions::assert_eq!(split_levels("").collect::<Vec<&str>>(), vec![""]);
+    }
+
+    /// Clause 4.18 EXAMPLE 2 is `Madrid`, and clause 4.6.4 has the broker
+    /// "return the original content": the bare spelling survives the parse and
+    /// the wire.
+    #[test]
+    fn a_bare_scope_keeps_its_spelling() {
+        let path = "Madrid".parse::<ScopePath>().expect("a valid scope path");
+        pretty_assertions::assert_eq!(path.as_str(), "Madrid");
+        pretty_assertions::assert_eq!(serde_json::to_string(&path).expect("a scope path serialises"), "\"Madrid\"");
+    }
+
+    /// The two spellings are distinct values that name one place.
+    #[test]
+    fn the_two_spellings_are_different_values_of_one_place() {
+        let bare = "Madrid".parse::<ScopePath>().expect("a valid scope path");
+        let rooted = "/Madrid".parse::<ScopePath>().expect("a valid scope path");
+        assert_ne!(bare, rooted);
+        pretty_assertions::assert_eq!(bare.levels().collect::<Vec<&str>>(), rooted.levels().collect::<Vec<&str>>());
     }
 }

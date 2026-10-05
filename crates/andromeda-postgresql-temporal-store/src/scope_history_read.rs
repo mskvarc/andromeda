@@ -21,14 +21,13 @@ use crate::{
     semantic_time_axes::SemanticTimeAxes,
     stored_history_error::{HistoryColumn, HistoryTable, StoredHistoryError},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::{
     scope_instance_value::scope_instance_value,
     temporal::{TemporalHistoryRow, TemporalValue},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
-use andromeda_postgresql_query::ltree::ltree_to_scope;
 use andromeda_temporal::{append_intent::TemporalObservationIdentity, port::history_reader::TemporalHistoryObservation};
 use chrono::{DateTime, Utc};
 use sqlx::{Row, postgres::PgRow};
@@ -184,8 +183,13 @@ fn decode_scope_value(row: &PgRow) -> Result<ScopeHistoryValue, TemporalStoreErr
             deleted_at: required_column(row, TABLE, HistoryColumn::DeletedAt)?,
         }),
         ScopeValueKind::ScopePath => {
-            let stored: String = required_column(row, TABLE, HistoryColumn::ScopePathText)?;
-            Ok(ltree_to_scope(&stored).map(ScopeHistoryValue::Path).map_err(StoredHistoryError::ScopePath)?)
+            // Parsed by the one clause 4.18 parser from the text it was
+            // written in; the label path beside it is only ever matched.
+            let stored: String = required_column(row, TABLE, HistoryColumn::VerbatimScopePath)?;
+            Ok(stored
+                .parse::<ScopePath>()
+                .map(ScopeHistoryValue::Path)
+                .map_err(StoredHistoryError::ScopePath)?)
         }
     }
 }
@@ -207,7 +211,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_model::temporal::TemporalValue;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-    use andromeda_postgresql_temporal_query::scope_history::{SCOPE_EVENT_AT, SCOPE_PATH_TEXT};
+    use andromeda_postgresql_schema::temporal::ScopeHistory;
+    use andromeda_postgresql_temporal_query::scope_history::SCOPE_EVENT_AT;
     use andromeda_temporal::append_intent::TemporalObservationIdentity;
     use chrono::{DateTime, TimeZone, Utc};
     use uuid::Uuid;
@@ -296,15 +301,15 @@ mod tests {
         assert!(folded.row.partition_total.is_none());
     }
 
-    /// The scope statement projects its event instant and its label path under
-    /// aliases the query crate names; the decoder reads them through the typed
-    /// columns, which must spell the same aliases.
+    /// The scope statement projects its event instant under an alias the query
+    /// crate names and the written Scope under its column name; the decoder
+    /// reads both through the typed columns, which must spell the same names.
     #[test]
-    fn the_scope_columns_read_the_aliases_the_scope_statement_projects() {
+    fn the_scope_columns_read_the_names_the_scope_statement_projects() {
         let event_at: &'static str = HistoryColumn::ScopeEventAt.into();
-        let path_text: &'static str = HistoryColumn::ScopePathText.into();
+        let written: &'static str = HistoryColumn::VerbatimScopePath.into();
         pretty_assertions::assert_eq!(event_at, SCOPE_EVENT_AT);
-        pretty_assertions::assert_eq!(path_text, SCOPE_PATH_TEXT);
+        pretty_assertions::assert_eq!(written, sea_query::Iden::to_string(&ScopeHistory::VerbatimScopePath));
     }
 
     /// Clause 4.18 gives an Entity at most one instance of the scope Property,

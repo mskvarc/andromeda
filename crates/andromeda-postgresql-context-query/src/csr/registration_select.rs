@@ -14,7 +14,7 @@
 //! predicates callers add on registration columns stay unambiguous.
 
 use andromeda_postgresql_schema::csr::{Csr, RegistrationDeliveryState};
-use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType, postgis::geometry_as_geojson};
+use andromeda_postgresql_seaquery::postgis::geometry_as_geojson;
 use sea_query::{Expr as SeaExpr, ExprTrait, JoinType, Query, SelectStatement};
 
 /// A registration select with the canonical projection, `FROM` the
@@ -38,7 +38,9 @@ pub fn registration_select() -> SelectStatement {
         .column((Csr::Table, Csr::Accept))
         .column((Csr::Table, Csr::Mode))
         .column((Csr::Table, Csr::Operations))
-        .expr_as(cast(SeaExpr::col((Csr::Table, Csr::Scope)), PostgresType::TextArray), Csr::Scope)
+        // The Scopes as written: the `scope_paths` label paths beside them are only
+        // matched, since they forget the optional leading `/` of clause 4.18.
+        .column((Csr::Table, Csr::VerbatimScopePaths))
         .column((Csr::Table, Csr::RefreshRate))
         .column((Csr::Table, Csr::Management))
         .column((Csr::Table, Csr::ContextSourceInfo))
@@ -84,14 +86,15 @@ mod tests {
     }
 
     #[test]
-    fn the_projection_reads_codes_and_text_scopes_and_no_type_column() {
+    fn the_projection_reads_codes_and_written_scopes_and_no_type_column() {
         let sql = registration_select().to_string(PostgresQueryBuilder);
         assert!(!sql.contains("\"type\""), "no registration type column remains: {sql}");
         assert!(
             sql.contains("\"context_source_registrations\".\"mode\","),
             "the mode is read as its code: {sql}"
         );
-        assert!(sql.contains("\"context_source_registrations\".\"scope\"::text[] AS \"scope\""), "{sql}");
+        assert!(sql.contains("\"context_source_registrations\".\"verbatim_scope_paths\""), "{sql}");
+        assert!(!sql.contains("\"scope_paths\"::text[]"), "a Scope is never rebuilt from its label path: {sql}");
         assert!(!sql.contains("::csr_"), "no enum cast remains: {sql}");
     }
 }

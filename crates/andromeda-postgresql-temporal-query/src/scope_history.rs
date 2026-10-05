@@ -22,12 +22,8 @@ use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_query::scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis};
 use andromeda_postgresql_schema::temporal::{ScopeHistory, TemporalEntities};
-use andromeda_postgresql_seaquery::{branch::qualified, cast::cast, pg_type::PostgresType};
+use andromeda_postgresql_seaquery::branch::qualified;
 use sea_query::{Alias, Condition, DynIden, Expr, ExprTrait, JoinType, Order, Query, SelectStatement};
-
-/// The name the statement projects the `ltree` scope path under, decoded back
-/// into a clause 4.18 path by the store.
-pub const SCOPE_PATH_TEXT: &str = "scope_path_text";
 
 /// The name the statement projects the requested axis under.
 ///
@@ -88,16 +84,13 @@ pub fn build_scope_history_query(schema: Option<&DynIden>, entity_id: &Identifie
         ScopeHistory::DeletedAt,
         ScopeHistory::GeneratedInstanceId,
         ScopeHistory::VerbatimInstanceId,
+        // The Scope as it was written: the `ltree` label path beside it forgets
+        // the optional leading `/` of clause 4.18, and clause 4.6.4 has the
+        // broker "return the original content".
+        ScopeHistory::VerbatimScopePath,
     ] {
         select.expr(Expr::col((ScopeEvent, column)));
     }
-    // The path is held as an `ltree` label path, which no wire decoder reads;
-    // the statement renders it to text and the store turns the labels back into
-    // the clause 4.18 path they were stored from.
-    select.expr_as(
-        cast(Expr::col((ScopeEvent, ScopeHistory::ScopePath)), PostgresType::Text),
-        Alias::new(SCOPE_PATH_TEXT),
-    );
     // The requested axis under a fixed name: it is what separates one scope
     // event from the next, and clause 4.5.7 lets one write state several
     // instances of a Property "at a particular point in time" each.
@@ -199,12 +192,13 @@ mod tests {
         assert!(sql.contains("\"sh\".\"write_ordinal\""), "{sql}");
     }
 
-    /// The label path is rendered to text, because the `ltree` wire form has no
-    /// decoder and the clause 4.18 path is rebuilt from the labels.
+    /// The Scope is read back from the text it was written in, never rebuilt
+    /// from its label path.
     #[test]
-    fn the_label_path_is_projected_as_text() {
+    fn the_written_scope_is_projected() {
         let sql = sql_of(&minimal_compiled());
-        assert!(sql.contains("\"sh\".\"scope_path\"::text AS \"scope_path_text\""), "{sql}");
+        assert!(sql.contains("\"sh\".\"verbatim_scope_path\""), "{sql}");
+        assert!(!sql.contains("\"scope_path\"::text"), "{sql}");
     }
 
     /// Clause 4.18: a Scope set before the window and never removed is valid

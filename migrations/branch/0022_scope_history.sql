@@ -18,6 +18,12 @@
 -- its value kinds are its own. A Scope deletion is a row with `deleted_at` and
 -- no path, never an invented sentinel path.
 --
+-- A recorded Scope is held twice: `scope_path`, the `ltree` label path every
+-- clause 4.19 `scopeQ` is matched against, and `verbatim_scope_path`, the
+-- Scope as it was written, which is what a Temporal Evolution reads back.
+-- Clause 4.18 makes the leading `/` optional and the label path forgets it,
+-- while clause 4.6.4 has the broker "return the original content".
+--
 -- A broker-minted instance identifier is rendered through the permanently
 -- stable template `urn:ngsi-ld:scope:instance:{uuid}`; a client-supplied one
 -- is kept exactly as received.
@@ -39,11 +45,12 @@ create table scope_history (
     generated_instance_id uuid,
     verbatim_instance_id text compression lz4 collate "C",
     scope_path ltree compression lz4,
+    verbatim_scope_path text compression lz4 collate "C",
     constraint uq_scope_history_write_identity unique (recorded_at, write_id, write_ordinal),
     constraint chk_scope_history_write_ordinal check (write_ordinal >= 0),
     constraint chk_scope_history_instance_identity check (num_nonnulls (generated_instance_id, verbatim_instance_id) = 1),
     constraint chk_scope_history_verbatim_instance_id_length check (octet_length(verbatim_instance_id) <= 1024),
-    constraint chk_scope_history_value_presence check ((value_kind = 0 and deleted_at is not null and scope_path is null) or (value_kind = 1 and scope_path is not null))
+    constraint chk_scope_history_value_presence check ((value_kind = 0 and deleted_at is not null and scope_path is null and verbatim_scope_path is null) or (value_kind = 1 and scope_path is not null and verbatim_scope_path is not null))
 );
 
 create index idx_scope_history_entity_recorded_at on scope_history (temporal_entity_key, recorded_at desc);

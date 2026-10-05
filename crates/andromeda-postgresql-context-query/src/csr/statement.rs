@@ -139,7 +139,7 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
     // label paths current entities carry, so a `scopeQ` compiles to the same
     // `lquery` match.
     if let Some(scope_q) = &query.scope_q {
-        condition = condition.add(scope_condition(scope_q, &ScopeTarget::current_paths((Csr::Table, Csr::Scope))));
+        condition = condition.add(scope_condition(scope_q, &ScopeTarget::current_paths((Csr::Table, Csr::ScopePaths))));
     }
 
     if !query.dataset_id.is_empty() {
@@ -579,7 +579,7 @@ mod tests {
         let mut q = empty_query();
         q.scope_q = Some(ScopeQuery::parse("/Madrid/#").unwrap());
         let built = build(&q);
-        assert!(built.sql.contains("\"context_source_registrations\".\"scope\" ~"), "{}", built.sql);
+        assert!(built.sql.contains("\"context_source_registrations\".\"scope_paths\" ~"), "{}", built.sql);
         assert!(built.sql.contains("'Madrid.*'::lquery"), "{}", built.sql);
         assert!(!built.sql.contains("UNNEST"), "{}", built.sql);
     }

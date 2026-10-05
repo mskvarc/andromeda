@@ -5,17 +5,19 @@
 //! member of a Core write, the stored entity, and the `value` of a reified
 //! Scope instance of a Temporal Evolution (clause 4.5.6). Each item is a scope
 //! path, or the NGSI-LD Null that clause 4.18 admits "only in case of deleted
-//! scopes", so the Null stands alone or not at all.
+//! scopes", so the Null stands alone or not at all. Every reader of a `scope`
+//! member -- the expanded document, the stored entity, a reified Scope, the
+//! compact request model -- hands its items here, so the rule is read once.
 
 use crate::{document::slot::Slot, scope_refusal::ScopeRefusal, scopes::Scopes};
-use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
+use andromeda_ngsi_ld_lexicon::scope::path::{ScopePath, ScopePathError};
 
 /// One item of a `scope` member, as its holder reads it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ScopeItem<'a> {
     /// The NGSI-LD Null.
     Null,
-    /// A string, which has to be a scope path.
+    /// A string, which has to be a scope path or the NGSI-LD Null.
     Text(&'a str),
     /// Anything that is not a string.
     NotAString,
@@ -35,7 +37,16 @@ pub fn scope_slot<'a>(items: impl IntoIterator<Item = ScopeItem<'a>>) -> Result<
     for item in items {
         match item {
             ScopeItem::Null => deletions += 1,
-            ScopeItem::Text(text) => paths.push(text.parse::<ScopePath>().map_err(|source| ScopeRefusal::NotAScopePath { source })?),
+            // The one scope parser tells the Null spelled as text apart, so a
+            // reader need not test for its spelling before handing the text
+            // over.
+            ScopeItem::Text(text) => match text.parse::<ScopePath>() {
+                Ok(path) => paths.push(path),
+                Err(ScopePathError::NullSentinel) => deletions += 1,
+                Err(source @ (ScopePathError::Malformed | ScopePathError::LevelTooLong(_) | ScopePathError::PathTooLong(_))) => {
+                    return Err(ScopeRefusal::NotAScopePath { source });
+                }
+            },
             ScopeItem::NotAString => return Err(ScopeRefusal::NotAString),
         }
     }
@@ -75,6 +86,17 @@ mod tests {
     #[test]
     fn the_null_alone_deletes_the_scope() {
         pretty_assertions::assert_eq!(scope_slot([ScopeItem::Null]), Ok(Slot::Remove));
+    }
+
+    /// The Null reaches a reader as text as often as it does as a decoded
+    /// sentinel; it is the same deletion either way.
+    #[test]
+    fn the_null_spelled_as_text_deletes_the_scope() {
+        pretty_assertions::assert_eq!(scope_slot([ScopeItem::Text("urn:ngsi-ld:null")]), Ok(Slot::Remove));
+        pretty_assertions::assert_eq!(
+            scope_slot([ScopeItem::Text("/A"), ScopeItem::Text("urn:ngsi-ld:null")]),
+            Err(ScopeRefusal::NullBesidePath)
+        );
     }
 
     #[test]

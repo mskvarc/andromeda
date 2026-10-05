@@ -1,7 +1,10 @@
 //! One scope path pattern of a `scopeQ` expression (clause 4.19).
 
 use crate::{error::QueryError, scope::pattern_fault::ScopePatternFault};
-use andromeda_ngsi_ld_lexicon::scope::level::{ScopeLevel, ScopeLevelBuf, level_characters_beyond_limit};
+use andromeda_ngsi_ld_lexicon::scope::{
+    level::{ScopeLevelBuf, ScopeLevelError, checked_level},
+    path::{ScopePath, split_levels},
+};
 use std::fmt::{self, Write};
 
 /// The `+` wildcard: exactly one level, whatever it is named.
@@ -22,11 +25,11 @@ pub enum ScopeSegment {
 
 /// A validated level name inside a scope path.
 ///
-/// Validation is [`ScopeLevel`], the derived clause 4.18 production the scope
-/// path itself is built from, rather than a second reading of the character
-/// classes here. That is what makes the `ltree` translation total — an
-/// unvalidated label reaches PostgreSQL as an `lquery` cast and fails there,
-/// which is a 500 for what is a malformed request.
+/// Admission is the lexicon's [`checked_level`], the one a scope path admits
+/// its levels through, rather than a second reading of the character classes
+/// or the length bound here. That is what makes the `ltree` translation total
+/// — an unvalidated label reaches PostgreSQL as an `lquery` cast and fails
+/// there, which is a 500 for what is a malformed request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeLabel(ScopeLevelBuf);
 
@@ -40,12 +43,12 @@ impl ScopeLabel {
     /// label the pattern is answered through can hold — which would otherwise
     /// reach PostgreSQL as an `lquery` cast and fail there.
     pub fn parse(raw: &str) -> Result<ScopeLabel, QueryError> {
-        if let Some(characters) = level_characters_beyond_limit(raw) {
-            return Err(QueryError::ScopePatternInvalid(ScopePatternFault::LevelTooLong { characters }));
-        }
-        ScopeLevel::new(raw)
-            .map(|level| ScopeLabel(level.to_owned()))
-            .map_err(|_| QueryError::ScopePatternInvalid(ScopePatternFault::InvalidLevel))
+        checked_level(raw).map(|level| ScopeLabel(level.to_owned())).map_err(|error| {
+            QueryError::ScopePatternInvalid(match error {
+                ScopeLevelError::Malformed => ScopePatternFault::InvalidLevel,
+                ScopeLevelError::TooLong(characters) => ScopePatternFault::LevelTooLong { characters },
+            })
+        })
     }
 
     /// The label as written.
@@ -62,9 +65,11 @@ pub struct ScopePattern(Vec<ScopeSegment>);
 impl ScopePattern {
     /// Parse one pattern.
     ///
-    /// A leading `/` is optional and carries no meaning: every scope is
-    /// absolute. `#` matches one or more remaining levels and therefore only
-    /// makes sense last.
+    /// The levels are split as a scope path splits them
+    /// ([`split_levels`]), so a pattern written without its leading `/` --
+    /// clause 4.19 EXAMPLE 5 queries a bare `CompanyB` -- names the same levels
+    /// as the rooted one. `#` matches one or more remaining levels and
+    /// therefore only makes sense last.
     ///
     /// # Errors
     ///
@@ -72,16 +77,13 @@ impl ScopePattern {
     /// carries a level outside the clause 4.18 production, or places `#`
     /// anywhere but last.
     pub fn parse(raw: &str) -> Result<ScopePattern, QueryError> {
-        // Exactly one leading slash is stripped: `//B` has an empty first
-        // level, which is not a label.
         let trimmed = raw.trim();
-        let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);
-        if trimmed.is_empty() {
+        if split_levels(trimmed).eq([""]) {
             return Err(QueryError::ScopePatternInvalid(ScopePatternFault::Empty));
         }
 
         let mut segments = Vec::new();
-        let mut parts = trimmed.split('/').peekable();
+        let mut parts = split_levels(trimmed).peekable();
         while let Some(part) = parts.next() {
             let segment = match part {
                 SINGLE_LEVEL_TOKEN => ScopeSegment::SingleLevel,
@@ -113,38 +115,36 @@ impl ScopePattern {
     /// exactly one level of any name, and `#` matches one *or more* remaining
     /// levels. A pattern with no `#` matches only a path of the same length.
     ///
-    /// Subscription matching used to carry its own reading in which `#`
-    /// consumed exactly one further level, so `/A/#` matched `/A/B` and not
-    /// `/A/B/C` while the same subscription's stored query matched both.
+    /// The path is read by its levels ([`ScopePath::levels`]), never by its
+    /// spelling, so a rooted pattern matches a Scope written without its
+    /// leading `/`: clause 4.19 can only spell rooted patterns, and a bare
+    /// clause 4.18 Scope would otherwise be unreachable.
     #[must_use]
-    pub fn matches(&self, scope_path: &str) -> bool {
-        let trimmed = scope_path.trim();
-        let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);
-        let levels: Vec<&str> = trimmed.split('/').collect();
-
+    pub fn matches(&self, path: &ScopePath) -> bool {
+        let mut levels = path.levels();
         for (index, segment) in self.0.iter().enumerate() {
             match segment {
                 // `#` is last by construction, so it consumes the remainder.
-                // A prefix `#` (something precedes it) matches the anchor
-                // levels[0..index] — already verified above — *or* any
-                // descendant of it, so `/Madrid/Gardens/#` matches
-                // `/Madrid/Gardens` itself (clause 4.19 Example 2). A bare `/#`
-                // (nothing precedes it) is the separate `ScopesQ =/ "/" "#"`
-                // production: any non-empty scope, so it needs a level present.
-                ScopeSegment::MultiLevel => return if index == 0 { levels.len() > index } else { levels.len() >= index },
+                // A prefix `#` (something precedes it) matches the anchor the
+                // earlier segments verified *or* any descendant of it, so
+                // `/Madrid/Gardens/#` matches `/Madrid/Gardens` itself (clause
+                // 4.19 Example 2). A bare `/#` (nothing precedes it) is the
+                // separate `ScopesQ =/ "/" "#"` production: any non-empty
+                // scope, so it needs a level present.
+                ScopeSegment::MultiLevel => return index > 0 || levels.next().is_some(),
                 ScopeSegment::SingleLevel => {
-                    if levels.get(index).is_none() {
+                    if levels.next().is_none() {
                         return false;
                     }
                 }
                 ScopeSegment::Label(label) => {
-                    if levels.get(index) != Some(&label.as_str()) {
+                    if levels.next() != Some(label.as_str()) {
                         return false;
                     }
                 }
             }
         }
-        levels.len() == self.0.len()
+        levels.next().is_none()
     }
 }
 
@@ -172,6 +172,10 @@ mod tests {
 
     fn segments(raw: &str) -> Vec<ScopeSegment> {
         ScopePattern::parse(raw).expect("valid pattern").segments().to_vec()
+    }
+
+    fn path(raw: &str) -> ScopePath {
+        raw.parse().expect("a valid scope path")
     }
 
     /// A label beyond the widest one the label-path index can hold is a
@@ -211,18 +215,18 @@ mod tests {
     #[test]
     fn a_literal_pattern_matches_only_the_path_it_names() {
         let pattern = ScopePattern::parse("/A/B").expect("valid pattern");
-        assert!(pattern.matches("/A/B"));
-        assert!(!pattern.matches("/A"));
-        assert!(!pattern.matches("/A/B/C"));
-        assert!(!pattern.matches("/A/C"));
+        assert!(pattern.matches(&path("/A/B")));
+        assert!(!pattern.matches(&path("/A")));
+        assert!(!pattern.matches(&path("/A/B/C")));
+        assert!(!pattern.matches(&path("/A/C")));
     }
 
     #[test]
     fn the_single_level_wildcard_consumes_exactly_one_level() {
         let pattern = ScopePattern::parse("/A/+/C").expect("valid pattern");
-        assert!(pattern.matches("/A/B/C"));
-        assert!(!pattern.matches("/A/C"));
-        assert!(!pattern.matches("/A/B/D/C"));
+        assert!(pattern.matches(&path("/A/B/C")));
+        assert!(!pattern.matches(&path("/A/C")));
+        assert!(!pattern.matches(&path("/A/B/D/C")));
     }
 
     #[test]
@@ -231,11 +235,11 @@ mod tests {
         // as every path below it. An earlier reading required at least one
         // further level, so it wrongly rejected `/A`.
         let pattern = ScopePattern::parse("/A/#").expect("valid pattern");
-        assert!(pattern.matches("/A"));
-        assert!(pattern.matches("/A/B"));
-        assert!(pattern.matches("/A/B/C"));
-        assert!(pattern.matches("/A/B/C/D"));
-        assert!(!pattern.matches("/B/C"));
+        assert!(pattern.matches(&path("/A")));
+        assert!(pattern.matches(&path("/A/B")));
+        assert!(pattern.matches(&path("/A/B/C")));
+        assert!(pattern.matches(&path("/A/B/C/D")));
+        assert!(!pattern.matches(&path("/B/C")));
     }
 
     #[test]
@@ -243,15 +247,26 @@ mod tests {
         // The `ScopesQ =/ "/" "#"` production: `/#` matches any scope with at
         // least one level.
         let pattern = ScopePattern::parse("/#").expect("valid pattern");
-        assert!(pattern.matches("/A"));
-        assert!(pattern.matches("/A/B/C"));
+        assert!(pattern.matches(&path("/A")));
+        assert!(pattern.matches(&path("/A/B/C")));
     }
 
     #[test]
     fn a_pattern_matches_a_path_written_without_its_leading_slash() {
         let pattern = ScopePattern::parse("/Madrid").expect("valid pattern");
-        assert!(pattern.matches("Madrid"));
-        assert!(pattern.matches("/Madrid"));
+        assert!(pattern.matches(&path("Madrid")));
+        assert!(pattern.matches(&path("/Madrid")));
+    }
+
+    /// Clause 4.19 spells only rooted patterns, so each wildcard reaches a
+    /// clause 4.18 Scope written without its leading `/` by its levels.
+    #[test]
+    fn a_rooted_pattern_matches_a_bare_scope() {
+        assert!(ScopePattern::parse("/Madrid").expect("valid pattern").matches(&path("Madrid")));
+        assert!(ScopePattern::parse("/Madrid/#").expect("valid pattern").matches(&path("Madrid/Gardens")));
+        assert!(ScopePattern::parse("/+/Gardens").expect("valid pattern").matches(&path("Madrid/Gardens")));
+        assert!(ScopePattern::parse("/#").expect("valid pattern").matches(&path("Madrid")));
+        assert!(!ScopePattern::parse("/Madrid").expect("valid pattern").matches(&path("Madrid/Gardens")));
     }
 
     #[test]

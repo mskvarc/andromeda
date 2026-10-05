@@ -13,7 +13,7 @@ use crate::csource_registration::{
 use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
 use andromeda_ngsi_ld_model::registration::{forwarding_mode::ForwardingMode, operation::CsrOperation, status::CsrStatus};
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
-use andromeda_postgresql_query::ltree::scope_to_ltree;
+use andromeda_postgresql_query::ltree::StoredScopePath;
 use andromeda_postgresql_schema::csr::{Csr, RegistrationDeliveryState};
 use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, placeholder::external_placeholder, postgis::validated_geom_from_ewkb};
 use andromeda_registration::{error::RegistrationError, store::forwarding_outcome::ForwardingOutcome};
@@ -53,7 +53,7 @@ pub(super) fn csr_create_sql() -> Result<String, RegistrationError> {
         Csr::Accept,
         Csr::Mode,
         Csr::Operations,
-        Csr::Scope,
+        Csr::ScopePaths,
         Csr::RefreshRate,
         Csr::Management,
         Csr::ContextSourceInfo,
@@ -62,6 +62,7 @@ pub(super) fn csr_create_sql() -> Result<String, RegistrationError> {
         Csr::AdditionalProperties,
         Csr::EntityIdPatternForms,
         Csr::EntityIdPatternFormsRevision,
+        Csr::VerbatimScopePaths,
         Csr::CreatedAt,
         Csr::ModifiedAt,
     ]);
@@ -92,6 +93,7 @@ pub(super) fn csr_create_sql() -> Result<String, RegistrationError> {
             external_placeholder(23),
             external_placeholder(24),
             external_placeholder(25),
+            external_placeholder(26),
             now(),
             now(),
         ])
@@ -120,7 +122,7 @@ pub(super) fn csr_update_sql() -> String {
             (Csr::Accept, external_placeholder(14)),
             (Csr::Mode, external_placeholder(15)),
             (Csr::Operations, external_placeholder(16)),
-            (Csr::Scope, cast(external_placeholder(17), PostgresType::LtreeArray)),
+            (Csr::ScopePaths, cast(external_placeholder(17), PostgresType::LtreeArray)),
             (Csr::RefreshRate, external_placeholder(18)),
             (Csr::Management, external_placeholder(19)),
             (Csr::ContextSourceInfo, external_placeholder(20)),
@@ -129,6 +131,7 @@ pub(super) fn csr_update_sql() -> String {
             (Csr::AdditionalProperties, external_placeholder(23)),
             (Csr::EntityIdPatternForms, external_placeholder(24)),
             (Csr::EntityIdPatternFormsRevision, external_placeholder(25)),
+            (Csr::VerbatimScopePaths, external_placeholder(26)),
             (Csr::ModifiedAt, now()),
         ])
         .and_where(SeaExpr::col(Csr::Id).eq(external_placeholder(1)));
@@ -165,9 +168,30 @@ pub(super) const fn mode_code(mode: ForwardingMode) -> i16 {
     stored_mode(mode).code()
 }
 
-/// Encode a registration's scopes as the `ltree` label paths they are stored as.
-pub(super) fn scope_label_paths(scopes: Option<&[ScopePath]>) -> Option<Vec<String>> {
-    scopes.map(|values| values.iter().map(scope_to_ltree).collect())
+/// A registration's clause 4.18 scopes in the two columns they are stored in:
+/// `scope_paths`, the label paths a `scopeQ` matches, and `verbatim_scope_paths`, the text
+/// read back. Both are absent together, and both hold the scopes in order.
+pub(super) struct StoredScopes<'a> {
+    /// The `ltree` label paths, bound to `scope_paths`.
+    pub(super) label_paths: Option<Vec<String>>,
+    /// The scopes as written, bound to `verbatim_scope_paths`.
+    pub(super) written: Option<Vec<&'a str>>,
+}
+
+/// Encode a registration's scopes through the one stored form of a Scope.
+pub(super) fn stored_scopes(scopes: Option<&[ScopePath]>) -> StoredScopes<'_> {
+    let (label_paths, written) = scopes
+        .map(|values| {
+            values
+                .iter()
+                .map(|scope| {
+                    let stored = StoredScopePath::from(scope);
+                    (stored.label_path, stored.written)
+                })
+                .unzip()
+        })
+        .unzip();
+    StoredScopes { label_paths, written }
 }
 
 /// Encode the `datasetId` list in its clause 4.5.5 wire form.
@@ -216,7 +240,7 @@ mod tests {
         delivery_state_insert_sql,
         health_update_sql,
         proxied_mode,
-        scope_label_paths,
+        stored_scopes,
     };
     use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
     use andromeda_registration::store::forwarding_outcome::ForwardingOutcome;
@@ -225,18 +249,22 @@ mod tests {
 
     /// Clause 4.18 scopes are stored as `ltree` label paths, the encoding
     /// `entity_search.scope_paths` uses, so the clause 4.19 `scopeQ` compiles to
-    /// one `lquery` predicate for both relations.
+    /// one `lquery` predicate for both relations; the text beside them is what
+    /// reads back, so each Scope keeps the spelling it was written in.
     #[test]
-    fn registration_scopes_bind_as_ltree_label_paths_in_declared_order() {
+    fn registration_scopes_bind_as_label_paths_and_written_text_in_declared_order() {
         let scopes: Vec<ScopePath> = ["/Madrid/Gardens", "Madrid", "/a/b/c"]
             .into_iter()
             .map(|raw| raw.parse::<ScopePath>().expect("valid scope path"))
             .collect();
+        let stored = stored_scopes(Some(&scopes));
         assert_eq!(
-            scope_label_paths(Some(&scopes)),
+            stored.label_paths,
             Some(vec!["Madrid.Gardens".to_owned(), "Madrid".to_owned(), "a.b.c".to_owned()])
         );
-        assert_eq!(scope_label_paths(None), None, "an absent scope stays NULL");
+        assert_eq!(stored.written, Some(vec!["/Madrid/Gardens", "Madrid", "/a/b/c"]));
+        let absent = stored_scopes(None);
+        assert_eq!((absent.label_paths, absent.written), (None, None), "an absent scope stays NULL in both columns");
     }
 
     #[test]
@@ -253,7 +281,8 @@ mod tests {
             );
         }
         assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
-        for marker in 1..=25 {
+        assert!(sql.contains(r#""verbatim_scope_paths""#), "{sql}");
+        for marker in 1..=26 {
             assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
         }
     }
@@ -275,7 +304,8 @@ mod tests {
         let sql = csr_update_sql();
         assert!(sql.contains(r#""id" = ($1)"#), "{sql}");
         assert!(sql.contains(r#""mode" = $15"#), "{sql}");
-        assert!(sql.contains(r#""scope" = $17::ltree[]"#), "{sql}");
+        assert!(sql.contains(r#""scope_paths" = $17::ltree[]"#), "{sql}");
+        assert!(sql.contains(r#""verbatim_scope_paths" = $26"#), "{sql}");
         assert!(sql.contains(r#""modified_at" = NOW()"#), "{sql}");
         assert!(sql.contains("ST_MakeValid(ST_GeomFromEWKB($9))"), "{sql}");
     }

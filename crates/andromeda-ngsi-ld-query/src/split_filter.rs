@@ -153,7 +153,7 @@ impl<'q> SplitFilter<'q> {
                 .map(|leaf| match leaf {
                     FilterLeaf::Term(pred) => predicate_holds_in(pred, entity, linked),
                     FilterLeaf::Geo(geo) => geo.matches_entity(entity),
-                    FilterLeaf::ScopeRequirement(pattern) => entity.scopes().any(|scope| pattern.matches(scope.as_str())),
+                    FilterLeaf::ScopeRequirement(pattern) => entity.scopes().any(|scope| pattern.matches(scope)),
                 })
                 .collect(),
         )

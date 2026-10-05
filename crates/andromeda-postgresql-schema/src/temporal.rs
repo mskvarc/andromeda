@@ -136,6 +136,8 @@ pub enum ScopeHistory {
     VerbatimInstanceId,
     /// The scope as an `ltree` label path, absent on a tombstone
     ScopePath,
+    /// The scope as it was written, absent on a tombstone
+    VerbatimScopePath,
 }
 
 #[cfg(test)]

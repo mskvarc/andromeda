@@ -52,8 +52,10 @@ pub enum Csr {
     Mode,
     /// The operation codes the source serves (`CsrOperationCode`).
     Operations,
-    /// The registration's scopes, as `ltree` label paths.
-    Scope,
+    /// The registration's scopes, as `ltree` label paths a `scopeQ` matches.
+    ScopePaths,
+    /// The registration's scopes as they were written, in the order of `scope_paths`.
+    VerbatimScopePaths,
     /// The refresh rate the source advertises.
     RefreshRate,
     /// Management endpoint metadata.

@@ -28,7 +28,6 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_postgresql_codes::{csr_mode::CsrModeCode, csr_operation::CsrOperationCode, csr_status::CsrStatusCode};
-use andromeda_postgresql_query::ltree::ltree_to_scope;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
@@ -90,13 +89,14 @@ fn row_to_coverage(row: &PgRow) -> Result<RegistrationCoverage, ContextStoreErro
         .map(|values| values.iter().map(|raw| DatasetSelector::parse(raw)).collect::<Result<Vec<_>, _>>())
         .transpose()
         .map_err(|error| StoredRegistrationError::DatasetId(Box::new(error)))?;
-    // Projected as the `ltree` label paths the scopes are stored as.
+    // Read from the text each Scope was written in, by the one clause 4.18
+    // parser; the label paths beside it are only ever matched.
     let scope: Option<Vec<ScopePath>> = row
-        .try_get::<Option<Vec<String>>, _>("scope")?
+        .try_get::<Option<Vec<String>>, _>("verbatim_scope_paths")?
         .map(|values| {
             values
                 .iter()
-                .map(|stored| ltree_to_scope(stored).map_err(StoredRegistrationError::Scope))
+                .map(|stored| stored.parse::<ScopePath>().map_err(StoredRegistrationError::Scope))
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;

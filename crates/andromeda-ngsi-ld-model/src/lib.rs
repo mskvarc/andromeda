@@ -39,6 +39,7 @@ pub mod registration_management;
 pub mod registration_matching;
 pub mod request_body;
 pub mod scope_instance_value;
+pub mod scope_member;
 pub mod snapshot;
 pub mod snapshot_clone;
 pub mod snapshot_filter;

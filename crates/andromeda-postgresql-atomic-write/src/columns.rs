@@ -13,7 +13,7 @@ use andromeda_context_commit::{
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::stored_attribute_kind};
 use andromeda_postgresql_context_store::entity::{params::PreparedEntityColumns, staged_geometry::StagedGeometry};
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, ltree::scope_to_ltree};
+use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, ltree::StoredScopePath};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::{collections::HashMap, hash::Hash};
@@ -41,7 +41,14 @@ pub(crate) fn columns_for(writes: &[IndexedWrite<'_>], names: &ResolvedWriteName
         columns.push_attribute_instances(instance_keys(&projection.attributes, &attribute_keys));
         columns.push_attribute_name_keys(attribute_keys);
         columns.scope_paths_json.push(Value::Array(
-            projection.scopes.iter().map(|scope| Value::String(scope_to_ltree(scope))).collect(),
+            // `entity_search.scope_paths` is only matched against: the
+            // Entity's Scope is read back from its stored document, which keeps
+            // the written text, so the label path alone is stored here.
+            projection
+                .scopes
+                .iter()
+                .map(|scope| Value::String(StoredScopePath::from(scope).label_path))
+                .collect(),
         ));
         columns
             .push_payload(&record.state)

@@ -75,10 +75,7 @@ mod tests {
                 .any(|subject| matches(&geo.georel, &PlanarGeometry::project(subject), &reference))
         });
         let scopes: &[ScopePath] = entity.scope().map_or(&[], Scopes::as_slice);
-        let scope_holds = selection
-            .scope_q
-            .as_ref()
-            .is_none_or(|scope_q| scope_q.matches(scopes.iter().map(ScopePath::as_str)));
+        let scope_holds = selection.scope_q.as_ref().is_none_or(|scope_q| scope_q.matches(scopes));
         // Clause 5.5.14: an EntityMap "fixes the Entities to be considered", so
         // a request left considering none admits no entity at all.
         let considered_holds = match selection.considered {

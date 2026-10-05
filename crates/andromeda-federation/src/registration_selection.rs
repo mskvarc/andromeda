@@ -23,7 +23,7 @@
 //! comparison is the fallback for a context the write body does not share.
 
 use crate::{error::FederationError, term_resolver::TermResolver};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, scope::path::ScopePath};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, info::RegistrationInfo};
 use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
 use iri_rs::IriBuf;
@@ -266,11 +266,7 @@ pub(crate) fn registration_scope_admits(registration: &ContextSourceRegistration
     let Some(scope_q) = scope_q else {
         return true;
     };
-    registration
-        .coverage
-        .scope
-        .as_ref()
-        .is_none_or(|scopes| scope_q.matches(scopes.iter().map(ScopePath::as_str)))
+    registration.coverage.scope.as_ref().is_none_or(|scopes| scope_q.matches(scopes))
 }
 
 /// Whether the entity selector axis of one information entry matches.

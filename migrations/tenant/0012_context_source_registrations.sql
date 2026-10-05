@@ -78,7 +78,10 @@ create table context_source_registrations (
     -- Stored in the label-path encoding of `entity_search.scope_paths`, so a
     -- clause 4.19 `scopeQ` against registrations compiles to the same `lquery`
     -- match that selects entities.
-    scope ltree[] compression lz4,
+    scope_paths ltree[] compression lz4,
+    -- The same Scopes as written, in the same order: the label path forgets
+    -- the optional leading `/` of clause 4.18, and this is what reads back.
+    verbatim_scope_paths text[] compression lz4 collate "C",
     refresh_rate text compression lz4,
     management jsonb compression lz4,
     context_source_info jsonb compression lz4,
@@ -106,7 +109,8 @@ create table context_source_registrations (
     constraint chk_csr_observation_space_zm check (observation_space is null or st_zmflag(observation_space) in (0, 2)),
     constraint chk_csr_operation_space_valid check (operation_space is null or st_isvalid(operation_space)),
     constraint chk_csr_operation_space_srid check (operation_space is null or st_srid(operation_space) = 4326),
-    constraint chk_csr_operation_space_zm check (operation_space is null or st_zmflag(operation_space) in (0, 2))
+    constraint chk_csr_operation_space_zm check (operation_space is null or st_zmflag(operation_space) in (0, 2)),
+    constraint chk_csr_scope_spelling check ((scope_paths is null) = (verbatim_scope_paths is null) and (scope_paths is null or cardinality(scope_paths) = cardinality(verbatim_scope_paths)))
 );
 
 -- The three spatial indexes preselect registrations by geography for
@@ -123,7 +127,7 @@ create index idx_csr_operation_space on context_source_registrations using gist 
 where
     operation_space is not null;
 
-create index idx_csr_scope on context_source_registrations using gist (scope);
+create index idx_csr_scope_paths on context_source_registrations using gist (scope_paths);
 
 create index idx_csr_expires_at on context_source_registrations (expires_at)
 where

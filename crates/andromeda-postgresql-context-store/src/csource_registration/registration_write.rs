@@ -13,7 +13,7 @@ use crate::csource_registration::{
         health_update_sql,
         mode_code,
         operation_codes,
-        scope_label_paths,
+        stored_scopes,
     },
     registration_store::{PostgresRegistrationStore, create_error, mutation_outcome, persistence_error},
     routing_rewrite::replace_registration_information,
@@ -98,7 +98,7 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
     let context_source_info = params.context_source_info.as_ref().map(serde_json::to_value).transpose()?;
     let operations = operation_codes(&params.operations);
     let dataset_id = dataset_selectors(params.dataset_id.as_deref());
-    let scopes = scope_label_paths(params.scope.as_deref());
+    let scopes = stored_scopes(params.scope.as_deref());
     let mut transaction = store.pool.begin().await.map_err(|error| persistence_error(error))?;
     let create_sql = csr_create_sql()?;
     sqlx::query(sqlx::AssertSqlSafe(create_sql.as_str()))
@@ -118,7 +118,7 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
         .bind(params.accept.as_ref().map(ToString::to_string))
         .bind(mode_code(params.mode))
         .bind(operations.as_deref())
-        .bind(scopes.as_deref())
+        .bind(scopes.label_paths.as_deref())
         .bind(params.refresh_rate.as_ref().map(ToString::to_string))
         .bind(management)
         .bind(context_source_info)
@@ -127,6 +127,7 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
         .bind(&params.additional_properties)
         .bind(pattern_forms.as_ref().map(|stored| &stored.forms))
         .bind(pattern_forms.as_ref().map(|stored| stored.revision.get()))
+        .bind(scopes.written.as_deref())
         .execute(&mut *transaction)
         .await
         .map_err(|error| create_error(error, id))?;
@@ -153,7 +154,7 @@ pub(super) async fn update(store: &PostgresRegistrationStore, id: &Identifier, v
     let context_source_info = values.context_source_info.as_ref().map(serde_json::to_value).transpose()?;
     let operations = operation_codes(&values.operations);
     let dataset_id = dataset_selectors(values.dataset_id.as_deref());
-    let scopes = scope_label_paths(values.scope.as_deref());
+    let scopes = stored_scopes(values.scope.as_deref());
     let mut transaction = store.pool.begin().await.map_err(|error| persistence_error(error))?;
     let update_sql = csr_update_sql();
     let result = sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
@@ -173,7 +174,7 @@ pub(super) async fn update(store: &PostgresRegistrationStore, id: &Identifier, v
         .bind(values.accept.as_ref().map(ToString::to_string))
         .bind(mode_code(values.mode))
         .bind(operations.as_deref())
-        .bind(scopes.as_deref())
+        .bind(scopes.label_paths.as_deref())
         .bind(values.refresh_rate.as_ref().map(ToString::to_string))
         .bind(management)
         .bind(context_source_info)
@@ -182,6 +183,7 @@ pub(super) async fn update(store: &PostgresRegistrationStore, id: &Identifier, v
         .bind(&values.additional_properties)
         .bind(pattern_forms.as_ref().map(|stored| &stored.forms))
         .bind(pattern_forms.as_ref().map(|stored| stored.revision.get()))
+        .bind(scopes.written.as_deref())
         .execute(&mut *transaction)
         .await
         .map_err(|error| persistence_error(error))?;

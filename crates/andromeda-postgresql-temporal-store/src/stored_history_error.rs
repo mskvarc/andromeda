@@ -46,8 +46,8 @@ pub enum HistoryColumn {
     ModifiedAt,
     /// The instant a scope event is keyed by on the requested axis.
     ScopeEventAt,
-    /// The label path of a scope row, projected as text.
-    ScopePathText,
+    /// The Scope a scope row holds, as it was written.
+    VerbatimScopePath,
     /// The value of a String row.
     ValueString,
     /// The value of a Boolean row.
@@ -193,7 +193,7 @@ mod tests {
     fn a_history_column_renders_as_the_name_its_statement_projects() {
         let projected: &'static str = HistoryColumn::ValueGeometryEwkb.into();
         pretty_assertions::assert_eq!(projected, "value_geometry_ewkb");
-        pretty_assertions::assert_eq!(HistoryColumn::ScopePathText.to_string(), "scope_path_text");
+        pretty_assertions::assert_eq!(HistoryColumn::VerbatimScopePath.to_string(), "verbatim_scope_path");
         let bound: &'static str = UnitCodeColumn::UnitCodeIdLowest.into();
         pretty_assertions::assert_eq!(bound, "unit_code_id_lowest");
     }

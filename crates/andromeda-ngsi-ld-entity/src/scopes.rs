@@ -46,6 +46,14 @@ impl Scopes {
         }
     }
 
+    /// Fold another set into this one, keeping each spelling once: the clause
+    /// 4.18 merge of two representations of one Entity, whose "values of
+    /// scope are merged". Values are compared as written, so `Madrid` and
+    /// `/Madrid` both survive, as two Scopes naming one place.
+    pub fn merge(&mut self, other: Scopes) {
+        self.extend(other.0.into_vec());
+    }
+
     /// The paths as a slice, in order.
     #[must_use]
     pub fn as_slice(&self) -> &[ScopePath] {
@@ -66,6 +74,13 @@ mod tests {
     fn a_repeated_path_is_kept_once() {
         let scopes = Scopes::try_from_paths([path("/a"), path("/b"), path("/a")]).expect("two paths");
         pretty_assertions::assert_eq!(scopes.as_slice(), &[path("/a"), path("/b")]);
+    }
+
+    #[test]
+    fn merging_appends_only_the_paths_held_nowhere_yet() {
+        let mut held = Scopes::try_from_paths([path("/a"), path("b")]).expect("two paths");
+        held.merge(Scopes::try_from_paths([path("b"), path("/b"), path("c")]).expect("three paths"));
+        pretty_assertions::assert_eq!(held.as_slice(), &[path("/a"), path("b"), path("/b"), path("c")]);
     }
 
     #[test]

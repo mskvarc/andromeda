@@ -169,7 +169,7 @@ mod tests {
     use crate::attribute_instance_merge::{MergePolicy, merge_entity_attributes};
     use andromeda_ngsi_ld_model::{
         attribute::instance::{Attribute, AttributeValue},
-        entity::{Entity, ScopeValue},
+        entity::Entity,
     };
     use serde_json::{Value, json};
 
@@ -284,18 +284,15 @@ mod tests {
         let remote = entity(&json!({"scope": ["/madrid/gardens", "/berlin/parks"]}));
         merge_entity_attributes(&mut local, remote, MergePolicy::Instances);
         pretty_assertions::assert_eq!(
-            local
-                .scope
-                .as_ref()
-                .map(|scope| scope.iter().map(|level| level.as_str().to_owned()).collect::<Vec<String>>()),
-            Some(vec!["/madrid/gardens".to_owned(), "/berlin/parks".to_owned()])
+            serde_json::to_value(&local.scope).expect("a scope serializes"),
+            json!(["/madrid/gardens", "/berlin/parks"])
         );
 
         // A lone survivor stays bare: "The value of scope is represented as a
         // JSON array in case there is more than one Scope."
         let mut single = entity(&json!({"scope": "/madrid/gardens"}));
         merge_entity_attributes(&mut single, entity(&json!({"scope": "/madrid/gardens"})), MergePolicy::Instances);
-        assert!(matches!(single.scope, Some(ScopeValue::Single(_))));
+        pretty_assertions::assert_eq!(serde_json::to_value(&single.scope).expect("a scope serializes"), json!("/madrid/gardens"));
 
         // A representation with no scope contributes nothing and removes nothing.
         let mut held = entity(&json!({"scope": "/madrid/gardens"}));
@@ -317,13 +314,7 @@ mod tests {
         let mut local = entity(&json!({"scope": "/madrid/gardens"}));
         let auxiliary = entity(&json!({"scope": ["/berlin/parks", "/oslo/forests"]}));
         merge_entity_attributes(&mut local, auxiliary, MergePolicy::SupplementMissing);
-        pretty_assertions::assert_eq!(
-            local
-                .scope
-                .as_ref()
-                .map(|scope| scope.iter().map(|level| level.as_str().to_owned()).collect::<Vec<String>>()),
-            Some(vec!["/madrid/gardens".to_owned()])
-        );
+        pretty_assertions::assert_eq!(serde_json::to_value(&local.scope).expect("a scope serializes"), json!("/madrid/gardens"));
     }
 
     /// Clause 4.3.6.2: an auxiliary Context Source Registration "never
@@ -360,12 +351,6 @@ mod tests {
     fn an_auxiliary_source_supplies_a_scope_no_other_source_held() {
         let mut local = entity(&json!({}));
         merge_entity_attributes(&mut local, entity(&json!({"scope": "/berlin/parks"})), MergePolicy::SupplementMissing);
-        pretty_assertions::assert_eq!(
-            local
-                .scope
-                .as_ref()
-                .map(|scope| scope.iter().map(|level| level.as_str().to_owned()).collect::<Vec<String>>()),
-            Some(vec!["/berlin/parks".to_owned()])
-        );
+        pretty_assertions::assert_eq!(serde_json::to_value(&local.scope).expect("a scope serializes"), json!("/berlin/parks"));
     }
 }
