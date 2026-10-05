@@ -17,13 +17,13 @@ use crate::{
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
-use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_model::{attribute::member_reading::MemberReading, entity::Entity};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 /// A single-entity batch input built from compact attribute members.
-fn building(attributes: &Value) -> Entity {
+fn building<M: MemberReading>(attributes: &Value) -> Entity<M> {
     let mut entity = json!({"id": ENTITY_ID, "type": "Building"});
     if let (Some(entity), Some(attributes)) = (entity.as_object_mut(), attributes.as_object()) {
         entity.extend(attributes.clone());

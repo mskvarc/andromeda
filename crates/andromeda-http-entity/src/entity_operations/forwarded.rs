@@ -19,7 +19,7 @@ use axum::http::{StatusCode, Uri as HttpUri};
 
 /// The type a registration is matched against for an entity: its single
 /// type, or the first of several.
-fn matching_type(entity: &Entity) -> Option<&EntityTypeName> {
+fn matching_type<M>(entity: &Entity<M>) -> Option<&EntityTypeName> {
     match &entity.type_ {
         EntityTypeValue::Single(name) => Some(name),
         EntityTypeValue::Multiple(names) => names.first(),

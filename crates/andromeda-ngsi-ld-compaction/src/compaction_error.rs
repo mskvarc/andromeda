@@ -1,6 +1,7 @@
 //! Why an entity could not be compacted.
 
 use andromeda_jsonld::error::JsonLdError;
+use andromeda_ngsi_ld_model::node_refusal::RefusedNode;
 use thiserror::Error;
 
 /// A compaction that produced no compact entity.
@@ -17,13 +18,8 @@ pub enum CompactionError {
     /// processor.
     #[error("the entity could not be written in expanded form: {0}")]
     Encode(#[source] serde_json::Error),
-    /// The compacted entity is not a JSON object.
-    #[error("the compacted entity is not a JSON object")]
-    NotAnObject,
-    /// The compacted entity names no `id`.
-    #[error("the compacted entity carries no id")]
-    MissingId,
-    /// The compact entity refuses the compacted document.
+    /// The compact model refuses the compacted entity: stored data that does
+    /// not read back, which is a fault of the broker, not of a request.
     #[error(transparent)]
-    Decode(serde_json::Error),
+    Refused(RefusedNode),
 }

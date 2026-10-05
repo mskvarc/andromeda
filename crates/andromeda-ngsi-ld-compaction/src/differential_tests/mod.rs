@@ -17,7 +17,7 @@ use crate::{
     compacted::Compacted,
     differential_tests::contexts::{Decision, test_contexts},
     entity_compactor::{EntityCompactor, EntityRead},
-    state_reading::{WalkError, reads_without_document, walk_entity},
+    state_reading::{WalkError, walk_entity},
     term_context::TermContext,
     walk::{GeometryOutput, Walk},
 };
@@ -170,8 +170,8 @@ async fn every_document_is_read_from_the_walk_with_its_geometries_kept_typed_und
                 .compact_state(&state, SysAttrsInclusion::Include)
                 .expect("the walk decides the core context"),
         );
-        assert!(reads_without_document(&terms, &tree), "{}", document.name);
-        assert!(Entity::from_node(&tree).is_ok(), "{}", document.name);
+        let read = <Entity>::from_node(&tree);
+        assert!(read.is_ok(), "{}: {read:?}", document.name);
         kept += typed_geometries(&tree);
     }
     pretty_assertions::assert_eq!(kept, 10);

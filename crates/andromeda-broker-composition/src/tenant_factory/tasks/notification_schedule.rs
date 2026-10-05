@@ -157,9 +157,7 @@ pub(super) const fn classify_notification_failure(error: NotificationError) -> T
         NotificationError::Persistence { .. } | NotificationError::Compaction(CompactionError::JsonLd(_)) => FailureClass::Transient,
         NotificationError::Representation { .. }
         | NotificationError::Rendering(_)
-        | NotificationError::Compaction(CompactionError::Encode(_) | CompactionError::NotAnObject | CompactionError::MissingId | CompactionError::Decode(_)) => {
-            FailureClass::Permanent
-        }
+        | NotificationError::Compaction(CompactionError::Encode(_) | CompactionError::Refused(_)) => FailureClass::Permanent,
         NotificationError::Invariant { .. } => FailureClass::InvariantViolation,
     };
     TaskFailure::new(class, error)

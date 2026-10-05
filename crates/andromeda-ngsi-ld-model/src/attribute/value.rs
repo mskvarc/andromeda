@@ -1,9 +1,16 @@
 //! The NGSI-LD value family (ETSI GS CIM 009 clause 4.6.3).
 
-use crate::compact_node::CompactNode;
-use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError};
-use serde_json::Value;
+use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
+use andromeda_ngsi_ld_geometry::{form::GeometryForm, geojson::GeometryError, geometry::Geometry};
+use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeMembers, NodeShape};
+use serde::{Serialize, Serializer};
+use thiserror::Error;
+
+/// The member a geometry names its kind in.
+const TYPE_MEMBER: &str = "type";
+
+/// The member a geometry carries its positions in.
+const COORDINATES_MEMBER: &str = "coordinates";
 
 /// NGSI-LD value family from clause 4.6.3.
 ///
@@ -11,35 +18,46 @@ use serde_json::Value;
 /// representation of the content of the values provided by the context
 /// information providers and return the original content when replying to
 /// context consumption requests", so this type is the client's own document and
-/// carries the value in the spelling the client wrote it in. The one value that
-/// is not carried as raw JSON is a `GeoJSON` geometry, and that is not a
-/// re-spelling: clause 4.7 adopts IETF RFC 7946 whole and a geometry that is not
-/// one is a clause 5.5.4 `BadRequestData` the decode has to be able to raise.
+/// carries the value as the JSON it was written as: admitted text, its members
+/// in written order, which expansion reads in place. The one value that is not
+/// carried as JSON is a `GeoJSON` geometry, and that is not a re-spelling:
+/// clause 4.7 adopts IETF RFC 7946 whole and a geometry that is not one is a
+/// clause 5.5.4 `BadRequestData` the decode has to be able to raise.
 ///
 /// What a value *is* under clause 4.6.3 is a separate question from how it is
 /// written, and it is decided once, in the lexicon, where the write projection
-/// and the clause 4.9 operand parser both read it.
+/// and the clause 4.9 operand parser both read it. No string is sniffed into a
+/// typed variant here for that reason: every such type canonicalises through
+/// `Display`, so recognising one would rewrite the spelling the client wrote
+/// (`URN:NGSI-LD:Building:001`, `2024-01-01T01:00:00+01:00`), which clause
+/// 4.6.4 forbids.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NgsiLdValue {
-    /// A plain JSON-native value, in the spelling the client wrote.
-    Json(Value),
+    /// A JSON value, as written.
+    Json(JsonLiteral),
     /// A `GeoJSON` geometry value (clause 4.7).
     Geometry(Geometry),
 }
 
-// Same unit-variant limitation as `OneOrMany`: `Json(Value)` cannot carry
-// `#[default]`, so this one impl stands in for the one `Property` would need.
-impl Default for NgsiLdValue {
-    fn default() -> NgsiLdValue {
-        NgsiLdValue::Json(Value::Null)
-    }
+/// Why a compact node is no value.
+#[derive(Debug, Error)]
+pub enum ValueRefusal {
+    /// The node carries `type` and `coordinates` and is no `GeoJSON`
+    /// geometry: a value shaped as one is a geometry or an error, never
+    /// demoted to plain JSON.
+    #[error(transparent)]
+    Geometry(#[from] GeometryError),
+    /// The node carries `type` and `coordinates` and is no `GeoJSON`
+    /// geometry object the reader reads.
+    #[error("the GeoJSON-shaped value is no geometry object: {0}")]
+    Written(#[source] serde_json::Error),
+    /// The JSON is no value the broker admits.
+    #[error(transparent)]
+    Literal(#[from] JsonLiteralError),
 }
 
-// Hand-written on both halves: the wire form is an untagged JSON value whose
-// variant is decided by inspecting the payload for a GeoJSON geometry object.
-// Serde has no derive for "sniff the shape and pick a variant", and
-// `#[serde(untagged)]` would try each variant's own Deserialize in declaration
-// order instead.
+// Hand-written: the wire form is the JSON value itself, whichever variant
+// holds it, which `#[serde(untagged)]` writes only by buffering.
 impl Serialize for NgsiLdValue {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
@@ -49,200 +67,58 @@ impl Serialize for NgsiLdValue {
     }
 }
 
-impl<'de> Deserialize<'de> for NgsiLdValue {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<NgsiLdValue, D::Error> {
-        NgsiLdValue::from_json(Value::deserialize(deserializer)?).map_err(DeserializeError::custom)
-    }
-}
-
 impl NgsiLdValue {
-    /// The value a JSON value is: a geometry when it carries both `type` and
-    /// `coordinates`, the JSON value as written otherwise.
-    ///
-    /// This is the one reading of a value, shared by the decoding of a
-    /// document and by the reading of a compact node.
-    ///
-    /// # Errors
-    ///
-    /// Returns the [`GeometryError`] of a `GeoJSON`-shaped value that is no
-    /// geometry: a value carrying both members is a geometry or an error,
-    /// never demoted to plain JSON.
-    pub fn from_json(value: Value) -> Result<NgsiLdValue, GeometryError> {
-        if let Some(geometry) = try_geometry(&value)? {
-            return Ok(NgsiLdValue::Geometry(geometry));
-        }
-        // No string value is sniffed into a typed variant here, and the reason
-        // is the same for all of them: every such type canonicalises through
-        // `Display`, so recognising one rewrites the spelling the client wrote.
-        // Clause 4.6.4 forbids exactly that — "implementations shall preserve
-        // the representation of the content of the values provided by the
-        // context information providers and return the original content when
-        // replying to context consumption requests" — and nothing anywhere in
-        // clause 4.6 licenses a broker to substitute one conformant spelling for
-        // another. Sniffing a URI rewrote `URN:NGSI-LD:Building:001` into
-        // `urn:ngsi-ld:Building:001` and lowercased the scheme, host and default
-        // port of a URL value; sniffing a `DateTime` through a looser RFC 3339
-        // parse than clause 4.6.3 admits rewrote `2024-01-01T01:00:00+01:00`,
-        // which the clause makes a plain string, into `2024-01-01T00:00:00Z`.
-        //
-        // What the value *is* under clause 4.6.3 is decided once, by
-        // `andromeda_ngsi_ld_lexicon::time_value::TimeValue`, where the write
-        // projection and the clause 4.9 `q` operand parser both read it, and
-        // that is what makes a stored timestamp findable by the timestamp that
-        // wrote it. Normalisation of an identifier belongs where the
-        // specification declares one — an Entity `id`, a Relationship `object`,
-        // a `datasetId` — not on a Property value that merely resembles one.
-        Ok(NgsiLdValue::Json(value))
-    }
-
-    /// The value a compact node is, read as [`NgsiLdValue::from_json`] reads
-    /// the JSON value the node stands for.
+    /// The value a compact node is: a geometry when it carries both `type`
+    /// and `coordinates`, or is held as a typed geometry, the JSON value as
+    /// written otherwise.
     ///
     /// # Errors
     ///
     /// Returns the node's [`CompactNode::Unreadable`] when it has no JSON form;
-    /// the inner result is [`NgsiLdValue::from_json`]'s.
-    pub fn from_node<N: CompactNode>(node: &N) -> Result<Result<NgsiLdValue, GeometryError>, N::Unreadable> {
-        node.to_json().map(NgsiLdValue::from_json)
+    /// the inner result refuses a `GeoJSON`-shaped value that is no geometry
+    /// and JSON no literal admits.
+    pub fn from_node<'n, N: CompactNode<'n>>(node: N) -> Result<Result<NgsiLdValue, ValueRefusal>, N::Unreadable> {
+        match node.shape() {
+            NodeShape::Geometry(form) => Ok(Ok(NgsiLdValue::Geometry(typed(form)))),
+            NodeShape::Object(members) if is_geojson_shaped(&members) => Ok(node
+                .read_geometry()?
+                .map_err(ValueRefusal::Written)
+                .and_then(|written| written.into_geometry().map_err(ValueRefusal::from))
+                .map(NgsiLdValue::Geometry)),
+            NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Object(_) => {
+                Ok(node.literal()?.map(NgsiLdValue::Json).map_err(ValueRefusal::from))
+            }
+        }
+    }
+
+    /// The value as one JSON literal: the literal it holds, or the geometry
+    /// written out.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`JsonLiteralError`] of a geometry whose text no literal
+    /// admits, which a typed geometry never is.
+    pub fn to_literal(&self) -> Result<JsonLiteral, JsonLiteralError> {
+        match self {
+            // clone: the caller owns the literal it asked for
+            NgsiLdValue::Json(literal) => Ok(literal.clone()),
+            NgsiLdValue::Geometry(geometry) => serde_json::to_string(geometry)
+                .map_err(|source| JsonLiteralError::Syntax { source })
+                .and_then(|text| JsonLiteral::admit(&text)),
+        }
     }
 }
 
-/// Decode a JSON value that carries both `type` and `coordinates` as a geometry.
-///
-/// `Ok(None)` says the value is not GeoJSON-shaped at all, which leaves the
-/// caller free to fall through to the plain-JSON variant. A value that *is*
-/// GeoJSON-shaped and still fails to decode is an error rather than a
-/// fall-through: silently demoting, say, a Point whose position carries four
-/// ordinates to an ordinary Property would store an unusable geometry under a
-/// `GeoProperty` and hide a clause 5.5.4 `BadRequestData` from the client.
-///
-/// # Errors
-///
-/// Returns [`GeometryError::Position`] when a position carries an ordinate
-/// count IETF RFC 7946 section 3.1.1 gives no meaning to, and the
-/// [`GeometryError`] naming what is missing or misplaced when the
-/// `type`/`coordinates` pair is not a `GeoJSON` geometry object.
-fn try_geometry(value: &Value) -> Result<Option<Geometry>, GeometryError> {
-    let Some(object) = value.as_object() else {
-        return Ok(None);
-    };
-    if object.get("type").zip(object.get("coordinates")).is_none() {
-        return Ok(None);
-    }
-    Geometry::from_geojson_value(value).map(Some)
+/// Whether an object carries both members a `GeoJSON` geometry is made of.
+fn is_geojson_shaped<'n, N: CompactNode<'n>>(members: &NodeMembers<'n, N>) -> bool {
+    members.contains(TYPE_MEMBER) && members.contains(COORDINATES_MEMBER)
+}
+
+/// The geometry a node holds typed.
+fn typed(form: &GeometryForm) -> Geometry {
+    // clone: the compact value owns its geometry, the tree keeps the one it was written from
+    Geometry::new(form.clone())
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::attribute::value::{NgsiLdValue, try_geometry};
-    use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geojson::GeometryError, position::PositionError};
-    use serde_json::json;
-
-    /// Clause 4.6.4: "implementations shall preserve the representation of the
-    /// content of the values provided by the context information providers and
-    /// return the original content when replying to context consumption
-    /// requests." A Property value that happens to parse as a URI is still a
-    /// value and not an identifier — clause 4.6.3 declares no datatype for it,
-    /// clause 4.6.2 declares one only for the members the specification names as
-    /// identifiers — so the URI equivalence rules that lowercase a URN's scheme
-    /// and NID, or a URL's scheme, host and default port, have nothing to
-    /// operate on here. Recognising one rewrote the client's text.
-    #[test]
-    fn a_value_that_parses_as_a_uri_is_served_back_in_the_spelling_the_client_wrote() {
-        for literal in [
-            "URN:NGSI-LD:Building:001",
-            "urn:ngsi-ld:Building:001",
-            "HTTPS://Example.COM:443/Path",
-            "https://example.com",
-            "mailto:someone@example.org",
-        ] {
-            let value: NgsiLdValue = serde_json::from_value(json!(literal)).expect("a string value");
-            pretty_assertions::assert_eq!(value, NgsiLdValue::Json(json!(literal)), "{literal}");
-            pretty_assertions::assert_eq!(serde_json::to_value(&value).expect("serialize"), json!(literal), "{literal}");
-        }
-    }
-
-    /// Clause 4.6.3 admits several spellings of one time value — a fraction of
-    /// "one or more fractional digits, up to a maximum of six", and "in
-    /// requests, also a comma instead of a decimal point" — and licenses no
-    /// broker to re-render the conformant one a client chose. The document
-    /// representation therefore carries the text; what the value *is* is
-    /// decided once, in the lexicon, where the write projection and the clause
-    /// 4.9 operand parser read it.
-    #[test]
-    fn a_time_value_is_carried_in_the_spelling_the_client_wrote() {
-        for literal in ["2024-01-01T00:00:00.250000Z", "2024-01-01T00:00:00Z", "12:00:00Z", "2024-01-01"] {
-            let value: NgsiLdValue = serde_json::from_value(json!(literal)).expect("a string value");
-            pretty_assertions::assert_eq!(value, NgsiLdValue::Json(json!(literal)), "{literal}");
-            pretty_assertions::assert_eq!(serde_json::to_value(&value).expect("serialize"), json!(literal), "{literal}");
-        }
-    }
-
-    /// A numeric zone offset is not a clause 4.6.3 `DateTime` at all — "the
-    /// trailing timestamp component [...] shall always be equal to the
-    /// character 'Z'" — so it is an ordinary string. Sniffing it through a
-    /// looser RFC 3339 parse rewrote it to UTC and served a value the client
-    /// never wrote.
-    #[test]
-    fn an_offset_bearing_timestamp_is_not_rewritten_to_utc() {
-        let value: NgsiLdValue = serde_json::from_value(json!("2024-01-01T01:00:00+01:00")).expect("a string value");
-        pretty_assertions::assert_eq!(serde_json::to_value(&value).expect("serialize"), json!("2024-01-01T01:00:00+01:00"));
-    }
-
-    #[test]
-    fn a_two_dimensional_geojson_object_decodes_as_a_geometry() {
-        let geometry = try_geometry(&json!({"type": "Point", "coordinates": [13.38, 52.52]}))
-            .expect("a well-formed Point decodes")
-            .expect("a GeoJSON-shaped value yields a geometry");
-        pretty_assertions::assert_eq!(geometry.dimension(), GeometryDimension::TwoD);
-    }
-
-    #[test]
-    fn a_three_dimensional_geojson_object_decodes_with_its_altitude() {
-        // Clause 4.7 adopts IETF RFC 7946 whole, altitude included.
-        let geometry = try_geometry(&json!({"type": "Point", "coordinates": [13.38, 52.52, 34.5]}))
-            .expect("an elevated Point decodes")
-            .expect("a GeoJSON-shaped value yields a geometry");
-        pretty_assertions::assert_eq!(geometry.dimension(), GeometryDimension::ThreeD);
-    }
-
-    #[test]
-    fn a_geojson_object_whose_position_carries_four_ordinates_is_an_error() {
-        // Refusing here is what stops a clause 5.5.4 BadRequestData from being
-        // silently demoted to an ordinary Property carrying raw JSON.
-        let error = try_geometry(&json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]})).expect_err("four ordinates have no meaning");
-        assert!(
-            matches!(
-                error,
-                GeometryError::Position {
-                    source: PositionError::TooManyOrdinates { ordinates: 4 },
-                    ..
-                }
-            ),
-            "got {error:?}"
-        );
-    }
-
-    #[test]
-    fn a_value_that_is_not_geojson_shaped_is_left_to_the_plain_json_variant() {
-        pretty_assertions::assert_eq!(try_geometry(&json!({"type": "Point"})).expect("no coordinates member").is_none(), true);
-        pretty_assertions::assert_eq!(try_geometry(&json!("a string")).expect("not an object").is_none(), true);
-        pretty_assertions::assert_eq!(try_geometry(&json!({"speed": 42})).expect("an ordinary object").is_none(), true);
-    }
-
-    #[test]
-    fn deserializing_a_geometry_past_a_pole_fails_rather_than_demoting_to_json() {
-        // RFC 7946 section 4: a GeoJSON-shaped value is a geometry or an error,
-        // never an ordinary Property carrying a position that names no point.
-        let error = serde_json::from_value::<NgsiLdValue>(json!({"type": "Point", "coordinates": [0.0, 91.0]}))
-            .expect_err("the value family must refuse a position off the CRS84 axes");
-        assert!(error.to_string().contains("latitude 91 is outside [-90, 90]"), "got {error}");
-    }
-
-    #[test]
-    fn deserializing_a_four_ordinate_geometry_fails_rather_than_demoting_to_json() {
-        let error = serde_json::from_value::<NgsiLdValue>(json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}))
-            .expect_err("the value family must refuse an unusable geometry");
-        assert!(error.to_string().contains("4 ordinates"), "got {error}");
-    }
-}
+mod tests;

@@ -23,6 +23,7 @@ use andromeda_ngsi_ld_model::{
     attribute::{
         common_fields::CommonAttributeFields,
         geo_property::GeoProperty,
+        geo_property_value::GeoPropertyValue,
         instance::{Attribute, AttributeValue},
     },
     entity::Entity,
@@ -58,7 +59,7 @@ fn polygon_entity() -> Option<Entity> {
         .collect::<Option<Vec<Position>>>()?;
     let form = GeometryForm::Polygon(PolygonRings::new(vec![LinearRing::try_new(ring).ok()?]));
     let location = GeoProperty {
-        value: Geometry::new(form),
+        value: GeoPropertyValue::Geometry(Geometry::new(form)),
         value_type: None,
         previous_value: None,
         common: CommonAttributeFields::default(),

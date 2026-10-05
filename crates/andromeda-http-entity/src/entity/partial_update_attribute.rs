@@ -9,7 +9,7 @@ use crate::{
         ForwardingOperation,
         Identifier,
         IntoResponse,
-        JsonLdDocument,
+        JsonLd,
         LocalOutcome,
         NgsiLdRequestEnvelope,
         PartialUpdateAttrParams,
@@ -30,6 +30,7 @@ use andromeda_entity::write_kind::PartialUpdateAttribute;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
+use andromeda_ngsi_ld_model::attribute::{merge_member::MergeMember, written_attribute::WrittenAttribute};
 use axum::http::Method;
 
 pub(crate) async fn partial_update_attr(
@@ -41,11 +42,12 @@ pub(crate) async fn partial_update_attr(
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     TypedPath((id, attr_id)): TypedPath<(Identifier, AttributeName)>,
     ValidatedQuery(params): ValidatedQuery<PartialUpdateAttrParams>,
-    JsonLdDocument { document: fragment, context }: JsonLdDocument,
+    JsonLd { body, context }: JsonLd<WrittenAttribute>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
+    let fragment: MergeMember = body.read_attribute(&attr_id).admitted(&context)?;
     let service = &state.entities;
     let dataset_id = selected_dataset_uri(params.dataset_id.as_ref());
     let path_suffix = format!("/attrs/{attr_id}");
@@ -72,7 +74,7 @@ pub(crate) async fn partial_update_attr(
     // registration the plan sends the fragment to reads it again, so it is
     // serialised for them before it moves into the admission.
     let payload = plan.payload(&fragment).with_entity_instance(&uri)?;
-    let admitted = admit_written_attribute::<PartialUpdateAttribute>(service, &attr_id, fragment, &context)
+    let admitted = admit_written_attribute::<PartialUpdateAttribute>(service, &attr_id, &fragment, &context)
         .await
         .with_entity_instance(&uri)?;
     let forwarded = state

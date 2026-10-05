@@ -111,21 +111,6 @@ fn decode_entity(entity: &mut Map<String, Value>) {
         .for_each(|(_, member)| decode_attribute_targets(member));
 }
 
-/// A member the broker carries verbatim, with its targets decoded under
-/// `decoding`.
-pub(crate) fn decoded_attribute(member: &Value, decoding: UriDecoding) -> Cow<'_, Value> {
-    match decoding {
-        UriDecoding::Keep => Cow::Borrowed(member),
-        UriDecoding::Decode => {
-            // clone: a member carried verbatim is decoded in a copy of its own;
-            // such members are small and rare, unlike typed instances.
-            let mut decoded = member.clone();
-            decode_attribute_targets(&mut decoded);
-            Cow::Owned(decoded)
-        }
-    }
-}
-
 /// Decode the targets of one rendered attribute member: one instance, or the
 /// array of its instances.
 fn decode_attribute_targets(member: &mut Value) {

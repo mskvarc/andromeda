@@ -16,7 +16,10 @@ use andromeda_jsonld::{
     user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_model::{
+    attribute::member_reading::MemberReading,
+    entity::{Entity, EntityPatch},
+};
 use serde_json::Value;
 
 /// Admit `context` as a request handler admits the context it was submitted,
@@ -30,13 +33,24 @@ pub(crate) async fn admitted_context(service: &EntityService, context: &ContextS
 
 /// Admit an entity-shaped payload for the write `W`, failing the test when it
 /// is refused.
-pub(crate) async fn admitted_entity<W: EntityWriteKind>(service: &EntityService, payload: impl WritePayload, context: &ContextSpec) -> AdmittedEntity<W> {
+pub(crate) async fn admitted_entity<W: EntityWriteKind>(
+    service: &EntityService,
+    payload: impl WritePayload<Member = W::Member>,
+    context: &ContextSpec,
+) -> AdmittedEntity<W> {
     let context = admitted_context(service, context).await;
     service.admit_entity_write(payload, &context).await.expect("the payload is admitted")
 }
 
+/// Admit the entity-shaped payload `written`, decoded as the transport decodes
+/// it for the write `W`, failing the test when it is refused.
+pub(crate) async fn admitted_written<W: EntityWriteKind>(service: &EntityService, written: Value, context: &ContextSpec) -> AdmittedEntity<W> {
+    let payload: EntityPatch<W::Member> = serde_json::from_value(written).expect("the payload decodes");
+    admitted_entity::<W>(service, &payload, context).await
+}
+
 /// Admit an Attribute Fragment written to `attribute` for the write `W`,
-/// failing the test when it is refused.
+/// decoded as the transport decodes it, failing the test when it is refused.
 pub(crate) async fn admitted_attribute<'a, W: AttributeWriteKind>(
     service: &EntityService,
     attribute: &'a AttributeName,
@@ -44,14 +58,20 @@ pub(crate) async fn admitted_attribute<'a, W: AttributeWriteKind>(
     context: &ContextSpec,
 ) -> AdmittedAttribute<'a, W> {
     let context = admitted_context(service, context).await;
+    let member = W::Member::from_fragment_node(attribute.as_str(), &payload).expect("the fragment decodes");
     service
-        .admit_attribute_write(attribute, payload, &context)
+        .admit_attribute_write::<W>(attribute, &member, &context)
         .await
         .expect("the fragment is admitted")
 }
 
 /// Admit a batch's entities for `kind`, failing the test when any is refused.
-pub(crate) async fn admitted_batch<W: BatchWriteKind>(service: &EntityService, kind: W, entities: Vec<Entity>, context: &ContextSpec) -> AdmittedBatch<W> {
+pub(crate) async fn admitted_batch<W: BatchWriteKind>(
+    service: &EntityService,
+    kind: W,
+    entities: Vec<Entity<W::Member>>,
+    context: &ContextSpec,
+) -> AdmittedBatch<W> {
     let (admitted, refused) = service.admit_batch_write(kind, submitted(service, entities, context).await).await;
     assert!(refused.is_empty(), "every entity is admitted: {refused:?}");
     admitted
@@ -59,7 +79,7 @@ pub(crate) async fn admitted_batch<W: BatchWriteKind>(service: &EntityService, k
 
 /// Submit each entity as the transport layer does before it admits a batch,
 /// every entity read against `context`, admitted once.
-pub(crate) async fn submitted(service: &EntityService, entities: Vec<Entity>, context: &ContextSpec) -> Vec<SubmittedEntity> {
+pub(crate) async fn submitted<M>(service: &EntityService, entities: Vec<Entity<M>>, context: &ContextSpec) -> Vec<SubmittedEntity<M>> {
     // clone: every entity of the fixture batch shares one context
     let shared = BatchContexts::shared(context.clone()).context_of(None);
     let admitted = shared.admit(&service.engine).await.expect("the context is admitted");

@@ -62,10 +62,18 @@ use crate::{
     write_kind::{BatchCreate, BatchMerge, BatchUpdate, BatchUpsert},
 };
 use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
+use andromeda_ngsi_ld_expansion::written_member::WrittenMember;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use futures::{StreamExt, stream};
 use std::collections::HashSet;
+
+/// What a batch entity holds under an attribute name, as the batch moves it
+/// between the tasks that prepare it: the members of an entity, or the
+/// members of a merge fragment (clause 5.6.20).
+pub trait BatchMember: WrittenMember + Send + Sync + 'static {}
+
+impl<M: WrittenMember + Send + Sync + 'static> BatchMember for M {}
 
 /// How an upsert treats attributes already held by an existing entity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -122,12 +130,12 @@ impl EntityService {
     /// round: a round holds each identifier at most once, so no two chunks can
     /// carry two instances of the same entity and land them out of array order
     /// (clause 5.5.11.0).
-    fn round_chunks(&self, round: Vec<AdmittedBatchEntity>) -> Vec<Vec<AdmittedBatchEntity>> {
+    fn round_chunks<M>(&self, round: Vec<AdmittedBatchEntity<M>>) -> Vec<Vec<AdmittedBatchEntity<M>>> {
         let chunk_len = self.batch_chunk_len(round.len());
         let mut entries = round.into_iter();
         let mut chunks = Vec::new();
         loop {
-            let chunk: Vec<AdmittedBatchEntity> = entries.by_ref().take(chunk_len).collect();
+            let chunk: Vec<AdmittedBatchEntity<M>> = entries.by_ref().take(chunk_len).collect();
             if chunk.is_empty() {
                 return chunks;
             }

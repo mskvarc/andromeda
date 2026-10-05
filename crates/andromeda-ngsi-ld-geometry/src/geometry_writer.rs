@@ -56,6 +56,17 @@ impl Serialize for Geometry {
     }
 }
 
+// Hand-written for the same reason: a bare form is the geometry object of its
+// type and positions alone.
+impl Serialize for GeometryForm {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut object = serializer.serialize_map(Some(2))?;
+        object.serialize_entry(TYPE_MEMBER, &self.geometry_type())?;
+        object.serialize_entry(COORDINATES_MEMBER, &Coordinates(self))?;
+        object.end()
+    }
+}
+
 /// The numbers of a bounding box, south-west corner first (IETF RFC 7946
 /// section 5).
 struct BoundingBoxBody<'a>(&'a BoundingBox);
@@ -132,6 +143,15 @@ mod tests {
         let geometry = Geometry::from_geojson_value(&written).expect("a valid geometry");
         let streamed: serde_json::Value = serde_json::from_str(&serde_json::to_string(&geometry).expect("renders")).expect("JSON");
         pretty_assertions::assert_eq!(streamed, written);
+    }
+
+    /// A bare form writes its type and positions.
+    #[test]
+    fn a_form_writes_its_type_and_positions() {
+        let written = json!({"type": "Point", "coordinates": [1.0, 2.0], "bbox": [1.0, 2.0, 1.0, 2.0]});
+        let geometry = Geometry::from_geojson_value(&written).expect("a valid geometry");
+        let streamed: serde_json::Value = serde_json::from_str(&serde_json::to_string(geometry.form()).expect("renders")).expect("JSON");
+        pretty_assertions::assert_eq!(streamed, json!({"type": "Point", "coordinates": [1.0, 2.0]}));
     }
 
     /// Every geometry type renders as the `geojson` rendering of the same

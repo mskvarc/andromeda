@@ -105,15 +105,17 @@ pub fn merge_attribute_value(local: &mut AttributeValue, remote: AttributeValue,
             let remote_instances = match remote {
                 AttributeValue::Single(instance) => vec![*instance],
                 AttributeValue::Multiple(instances) => instances,
-                // A member carried verbatim has no instances to merge in.
-                AttributeValue::Raw(_) => return,
+                // A remote member reported deleted by the NGSI-LD Null has no
+                // instance to merge in.
+                AttributeValue::NgsiLdNull => return,
             };
             let held = match replace(local, AttributeValue::Multiple(Vec::new())) {
                 AttributeValue::Single(instance) => vec![*instance],
                 AttributeValue::Multiple(instances) => instances,
-                // A member held verbatim stays as it is.
-                AttributeValue::Raw(value) => {
-                    *local = AttributeValue::Raw(value);
+                // A member held deleted by the NGSI-LD Null (clause 5.8.6) is a
+                // deletion no remote instance overrides.
+                AttributeValue::NgsiLdNull => {
+                    *local = AttributeValue::NgsiLdNull;
                     return;
                 }
             };
@@ -188,7 +190,16 @@ mod tests {
             .map(AttributeValue::instances)
             .into_iter()
             .flatten()
-            .map(Attribute::value)
+            .filter_map(|instance| match instance {
+                Attribute::Property(property) => serde_json::to_value(&property.value).ok(),
+                Attribute::Relationship(_)
+                | Attribute::VocabProperty(_)
+                | Attribute::GeoProperty(_)
+                | Attribute::LanguageProperty(_)
+                | Attribute::JsonProperty(_)
+                | Attribute::ListProperty(_)
+                | Attribute::ListRelationship(_) => None,
+            })
             .collect()
     }
 

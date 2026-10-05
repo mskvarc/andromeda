@@ -11,7 +11,10 @@
 
 use crate::{
     EntityService,
-    batch::execution::{BatchExecution, decide_batch_execution},
+    batch::{
+        BatchMember,
+        execution::{BatchExecution, decide_batch_execution},
+    },
     compact_geometry_admission::admit_compact_geometries,
     entity_invariant::EntityInvariant,
     error::EntityError,
@@ -56,11 +59,11 @@ impl PreparedEntity {
 }
 
 /// One entity waiting for its preparation, at its position in the batch.
-pub(super) struct PendingEntity {
+pub(super) struct PendingEntity<M> {
     /// The entity's position in the batch.
     pub(super) idx: usize,
     /// The entity as submitted.
-    pub(super) entity: Entity,
+    pub(super) entity: Entity<M>,
 }
 
 /// What preparing one entity produced: the entity handed back with its
@@ -68,23 +71,23 @@ pub(super) struct PendingEntity {
 ///
 /// The failure is boxed so a prepared slot is not sized for the much larger
 /// broker error.
-pub(super) type PreparationOutcome = Result<(Entity, EntityDocument), Box<(Identifier, EntityError)>>;
+pub(super) type PreparationOutcome<M> = Result<(Entity<M>, EntityDocument), Box<(Identifier, EntityError)>>;
 
 /// What the typed walk made of one entity.
 ///
 /// Both outcomes are boxed: they are collected per task and moved between
 /// threads, and an entity with its document is large.
-enum WalkOutcome {
+enum WalkOutcome<M> {
     /// The walk expanded and screened the entity, or refused it.
     Done {
         /// The entity's position in the batch.
         idx: usize,
         /// The prepared entity or its failure.
-        result: Box<PreparationOutcome>,
+        result: Box<PreparationOutcome<M>>,
     },
     /// The entity uses something the walk does not model; the JSON-LD
     /// processor expands it.
-    Declined(Box<PendingEntity>),
+    Declined(Box<PendingEntity<M>>),
 }
 
 /// The expansion and screening every entity of one batch write goes through.
@@ -98,18 +101,18 @@ pub(super) struct Screening {
 }
 
 /// One share of a batch's typed walk, run on a blocking worker.
-struct WalkTask {
+struct WalkTask<M> {
     /// The entities this task walks.
-    entries: Vec<PendingEntity>,
+    entries: Vec<PendingEntity<M>>,
     /// The processed context they are expanded against.
     context: Arc<ExpansionContext>,
     /// What every expanded entity is screened under.
     screening: Screening,
     /// Where every task leaves what it made of its entities.
-    outputs: Arc<Mutex<Vec<WalkOutcome>>>,
+    outputs: Arc<Mutex<Vec<WalkOutcome<M>>>>,
 }
 
-impl BlockingTask for WalkTask {
+impl<M: BatchMember> BlockingTask for WalkTask<M> {
     fn run(self: Box<Self>) -> Result<(), EntityError> {
         let WalkTask {
             entries,
@@ -132,7 +135,7 @@ impl BlockingTask for WalkTask {
 /// Merge Entity of clause 5.6.17 per entity (clause 5.6.20.4), so it keeps a
 /// first-level NGSI-LD Null member as the deletion of that member, which every
 /// other batch write reads as a concise value.
-fn walk(entry: PendingEntity, context: &ExpansionContext, screening: Screening) -> WalkOutcome {
+fn walk<M: BatchMember>(entry: PendingEntity<M>, context: &ExpansionContext, screening: Screening) -> WalkOutcome<M> {
     let PendingEntity { idx, entity } = entry;
     // Clause 6.3.2: a geometry past the budget is refused before the walk
     // copies it into the written document.
@@ -162,7 +165,7 @@ fn walk(entry: PendingEntity, context: &ExpansionContext, screening: Screening) 
 /// behaviour defined in clause 5.5.4 on JSON-LD validation". The failure
 /// attributes itself to this one entity, so the multi-status answer of clause
 /// 5.6.7 reports it without failing its siblings.
-fn screened(entity: Entity, document: EntityDocument, screening: Screening) -> PreparationOutcome {
+fn screened<M>(entity: Entity<M>, document: EntityDocument, screening: Screening) -> PreparationOutcome<M> {
     match admit_written_entity(screening.budget, &document, screening.write.null_sentinel_admission()) {
         Ok(()) => Ok((entity, document)),
         Err(error) => Err(Box::new((entity.id, error))),
@@ -185,13 +188,13 @@ impl EntityService {
 
     /// Expand and screen the `entries` naming `context`, answering each with
     /// its position.
-    pub(super) async fn prepare_group(
+    pub(super) async fn prepare_group<M: BatchMember>(
         &self,
-        entries: Vec<PendingEntity>,
+        entries: Vec<PendingEntity<M>>,
         context: &ContextSpec,
         execution: BatchExecution,
         screening: Screening,
-    ) -> Vec<(usize, PreparationOutcome)> {
+    ) -> Vec<(usize, PreparationOutcome<M>)> {
         let (processed, entries, mut prepared) = self.process_group_context(entries, context).await;
         let Some(processed) = processed else {
             return prepared;
@@ -213,11 +216,11 @@ impl EntityService {
     /// A context that does not process is processed again for the next entity
     /// rather than reported once for the group, so each entity carries the
     /// failure of its own expansion.
-    async fn process_group_context(
+    async fn process_group_context<M>(
         &self,
-        entries: Vec<PendingEntity>,
+        entries: Vec<PendingEntity<M>>,
         context: &ContextSpec,
-    ) -> (Option<Arc<ExpansionContext>>, Vec<PendingEntity>, Vec<(usize, PreparationOutcome)>) {
+    ) -> (Option<Arc<ExpansionContext>>, Vec<PendingEntity<M>>, Vec<(usize, PreparationOutcome<M>)>) {
         let mut failures = Vec::new();
         let mut entries = entries.into_iter();
         while let Some(entry) = entries.next() {
@@ -231,13 +234,13 @@ impl EntityService {
 
     /// Walk `entries` on the calling task, or spread across the blocking pool
     /// when `execution` says so.
-    async fn run_walk(
+    async fn run_walk<M: BatchMember>(
         &self,
-        entries: Vec<PendingEntity>,
+        entries: Vec<PendingEntity<M>>,
         context: &Arc<ExpansionContext>,
         execution: BatchExecution,
         screening: Screening,
-    ) -> Vec<WalkOutcome> {
+    ) -> Vec<WalkOutcome<M>> {
         match execution {
             BatchExecution::Inline => entries.into_iter().map(|entry| walk(entry, context, screening)).collect(),
             BatchExecution::Offload { concurrency } => {
@@ -245,8 +248,8 @@ impl EntityService {
                 let outputs = Arc::new(Mutex::new(Vec::with_capacity(entries.len())));
                 let mut owners = Vec::with_capacity(entries.len());
                 let mut tasks: Vec<Box<dyn BlockingTask>> = Vec::new();
-                let mut chunk: Vec<PendingEntity> = Vec::with_capacity(chunk_size);
-                let walk_task = |entries: Vec<PendingEntity>| -> Box<dyn BlockingTask> {
+                let mut chunk: Vec<PendingEntity<M>> = Vec::with_capacity(chunk_size);
+                let walk_task = |entries: Vec<PendingEntity<M>>| -> Box<dyn BlockingTask> {
                     Box::new(WalkTask {
                         entries,
                         context: Arc::clone(context), // clone: every task shares the processed context.
@@ -287,7 +290,12 @@ impl EntityService {
     /// Expand the entities the typed walk declined with the JSON-LD processor,
     /// starting from the group's processed context, under the same concise
     /// rewrite the walk applies, and screen them.
-    async fn expand_declined(&self, declined: Vec<PendingEntity>, context: Arc<ExpansionContext>, screening: Screening) -> Vec<(usize, PreparationOutcome)> {
+    async fn expand_declined<M: BatchMember>(
+        &self,
+        declined: Vec<PendingEntity<M>>,
+        context: Arc<ExpansionContext>,
+        screening: Screening,
+    ) -> Vec<(usize, PreparationOutcome<M>)> {
         let expansion = EntityExpansion::from_context(&self.engine, context);
         let mut prepared = Vec::with_capacity(declined.len());
         for PendingEntity { idx, entity } in declined {
@@ -316,16 +324,17 @@ mod tests {
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, written_value::ValueSlot};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_model::attribute::instance::AttributeValue;
     use serde_json::{Value, json};
 
-    fn pending(idx: usize, written: Value) -> PendingEntity {
+    fn pending(idx: usize, written: Value) -> PendingEntity<AttributeValue> {
         PendingEntity {
             idx,
             entity: serde_json::from_value(written).expect("the fixture is a valid entity"),
         }
     }
 
-    fn vehicle(idx: usize) -> PendingEntity {
+    fn vehicle(idx: usize) -> PendingEntity<AttributeValue> {
         pending(
             idx,
             json!({"id": format!("urn:ngsi-ld:Vehicle:{idx}"), "type": "Vehicle", "speed": {"type": "Property", "value": idx}}),
@@ -333,7 +342,7 @@ mod tests {
     }
 
     /// The expanded attribute names of a prepared entity.
-    fn attribute_names(preparation: &PreparationOutcome) -> Vec<String> {
+    fn attribute_names(preparation: &PreparationOutcome<AttributeValue>) -> Vec<String> {
         let (_, document) = preparation.as_ref().expect("the entity is prepared");
         document.attributes().keys().map(AttributeName::to_string).collect()
     }

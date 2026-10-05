@@ -13,13 +13,17 @@ use crate::attribute::{
     vocab_property::VocabProperty,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
+use andromeda_ngsi_ld_vocabulary::NULL_URI;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::{Serialize, Serializer};
 use std::slice::{Iter, IterMut, from_mut, from_ref};
 
-/// One instance of any NGSI-LD attribute family, discriminated by its `type` member.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// One instance of any NGSI-LD attribute family, discriminated by its `type`
+/// member.
+///
+/// Decoding is `crate::attribute::member_decoding`'s, which reads an instance
+/// as the compact model reads every attribute node.
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub enum Attribute {
     /// A Property instance (clause 5.2.5).
@@ -41,28 +45,6 @@ pub enum Attribute {
 }
 
 impl Attribute {
-    /// Returns the family-specific payload member as raw JSON.
-    ///
-    /// Each family names its payload differently (`value`, `object`, `vocab`,
-    /// …); this collapses them to the single JSON value a caller that does not
-    /// care about the family needs.
-    #[must_use]
-    pub fn value(&self) -> Value {
-        match self {
-            Attribute::Property(p) => serde_json::to_value(&p.value).unwrap_or_default(),
-            Attribute::Relationship(r) => serde_json::to_value(&r.object).unwrap_or_default(),
-            Attribute::VocabProperty(v) => serde_json::to_value(&v.vocab).unwrap_or_default(),
-            Attribute::GeoProperty(g) => g.value.to_geojson_value().unwrap_or_default(),
-            // Serialization of IndexMap<LanguageMapKey, LanguageMapValue> to JSON cannot fail
-            // (keys serialize to strings, values to strings or arrays of strings).
-            Attribute::LanguageProperty(l) => serde_json::to_value(&l.language_map).unwrap_or_default(),
-            // An admitted literal is JSON text, so it always reads as a tree.
-            Attribute::JsonProperty(j) => serde_json::from_str(j.json.text()).unwrap_or_default(),
-            Attribute::ListProperty(lp) => serde_json::to_value(&lp.value_list).unwrap_or_default(),
-            Attribute::ListRelationship(lr) => serde_json::to_value(&lr.object_list).unwrap_or_default(),
-        }
-    }
-
     /// The attribute family this instance belongs to.
     ///
     /// The discriminant of the enum, exposed so a renderer can decide the shape
@@ -135,47 +117,57 @@ impl Attribute {
 
 /// The value side of one entry in an entity's attribute map.
 ///
-/// A single attribute, a multi-attribute (clause 5.2.5), or a member the broker
-/// carries through without interpreting.
+/// A single attribute instance, a multi-attribute (clause 4.5.5), or the
+/// NGSI-LD Null written in place of the whole member: the short form clause
+/// 5.8.6 notifies a deleted attribute with, and the member deletion of a
+/// partial update (clause 5.5.8). Every node written where an attribute stands
+/// reads as one of the three or is refused.
 ///
-/// Decoding is `crate::attribute::member_decoding`'s, which reads a member
-/// the way an untagged decoding would without buffering it per variant.
-#[derive(Debug, Clone, Serialize)]
-#[serde(untagged)]
+/// Decoding is `crate::attribute::member_decoding`'s.
+#[derive(Debug, Clone)]
 pub enum AttributeValue {
     /// Exactly one attribute instance.
     Single(Box<Attribute>),
     /// Several instances of the same attribute, separated by `datasetId`.
     Multiple(Vec<Attribute>),
-    /// A member that is not an attribute instance, preserved verbatim.
-    Raw(Value),
+    /// The NGSI-LD Null in place of the whole member (clauses 5.5.8 and
+    /// 5.8.6).
+    NgsiLdNull,
+}
+
+// Hand-written: the NGSI-LD Null is written as the string clause 4.5.0 spells
+// it, which an untagged derive would write as `null`.
+impl Serialize for AttributeValue {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            AttributeValue::Single(instance) => instance.serialize(serializer),
+            AttributeValue::Multiple(instances) => instances.serialize(serializer),
+            AttributeValue::NgsiLdNull => serializer.serialize_str(NULL_URI.as_str()),
+        }
+    }
 }
 
 impl AttributeValue {
     /// Iterate the attribute instances this member holds, uniformly across the
-    /// single, multi-instance and verbatim shapes.
+    /// single and multi-instance shapes.
     ///
-    /// A [`AttributeValue::Raw`] member is not an attribute instance at all
-    /// (clause 4.5.5 keeps unrecognised members verbatim), so it yields
-    /// nothing rather than being reported as an untyped instance.
+    /// The NGSI-LD Null holds no instance: it reports the member deleted.
     pub fn instances(&self) -> Iter<'_, Attribute> {
         match self {
             AttributeValue::Single(attr) => from_ref(attr.as_ref()).iter(),
             AttributeValue::Multiple(attrs) => attrs.iter(),
-            AttributeValue::Raw(_) => Iter::default(),
+            AttributeValue::NgsiLdNull => Iter::default(),
         }
     }
 
     /// Iterate the attribute instances this member holds, for mutation.
     ///
-    /// The mutable twin of [`AttributeValue::instances`], and it makes the
-    /// same distinction: a [`AttributeValue::Raw`] member is not an attribute
-    /// instance, so it yields nothing and is left exactly as it was.
+    /// The mutable twin of [`AttributeValue::instances`].
     pub fn instances_mut(&mut self) -> IterMut<'_, Attribute> {
         match self {
             AttributeValue::Single(attr) => from_mut(attr.as_mut()).iter_mut(),
             AttributeValue::Multiple(attrs) => attrs.iter_mut(),
-            AttributeValue::Raw(_) => IterMut::default(),
+            AttributeValue::NgsiLdNull => IterMut::default(),
         }
     }
 }
@@ -184,6 +176,7 @@ impl AttributeValue {
 mod tests {
     use crate::attribute::instance::*;
     use chrono::TimeZone;
+    use serde_json::Value;
 
     #[test]
     fn property_round_trip_with_expires_at() {
@@ -433,21 +426,17 @@ mod tests {
         ]
     }
 
+    /// A unit code decodes however the instance arrives: from text and from
+    /// a parsed document, which hands its strings over owned.
     #[test]
-    fn a_unit_code_survives_a_string_round_trip_but_not_a_value_one() {
-        // `cefact_units::UnitCode` deserializes only from a borrowed string, so
-        // `serde_json::from_value` (used by the batch extractor and the CSR
-        // forwarder) cannot supply one. Recorded here so the limitation is
-        // visible rather than surfacing as a rejected entity.
+    fn a_unit_code_survives_a_string_and_a_value_round_trip() {
         let json = r#"{"type":"Property","value":25,"unitCode":"CEL"}"#;
         let from_str: Attribute = serde_json::from_str(json).expect("parses from a string");
-        pretty_assertions::assert_eq!(
-            serde_json::to_value(&from_str).expect("serialises"),
-            serde_json::from_str::<Value>(json).expect("json")
-        );
-
-        let value: Value = serde_json::from_str(json).expect("json");
-        assert!(serde_json::from_value::<Attribute>(value).is_err());
+        let expected = serde_json::from_str::<Value>(json).expect("json");
+        pretty_assertions::assert_eq!(serde_json::to_value(&from_str).expect("serialises"), expected);
+        // clone: the document is decoded and compared
+        let from_value: Attribute = serde_json::from_value(expected.clone()).expect("parses from a value");
+        pretty_assertions::assert_eq!(serde_json::to_value(&from_value).expect("serialises"), expected);
     }
 
     #[test]

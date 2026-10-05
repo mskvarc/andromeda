@@ -74,6 +74,21 @@ impl NullSentinelAdmission {
             NullSentinelAdmission::MergeFragment => MemberAdmission::Admitted,
         }
     }
+
+    /// Whether an instance that names its family may leave out the value
+    /// member the family requires (clauses 5.2.5 and its siblings): only in a
+    /// merge fragment, which clause 5.5.12 merges "up to an arbitrary depth"
+    /// into the instance it targets. The merge itself refuses such an
+    /// instance where it would create an attribute.
+    #[must_use]
+    pub const fn value_omission(self) -> MemberAdmission {
+        match self {
+            NullSentinelAdmission::Refused | NullSentinelAdmission::PartialUpdateFragment | NullSentinelAdmission::TemporalEvolution => {
+                MemberAdmission::Forbidden
+            }
+            NullSentinelAdmission::MergeFragment => MemberAdmission::Admitted,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -105,5 +120,18 @@ mod tests {
                 (NullSentinelAdmission::TemporalEvolution, MemberAdmission::Admitted, MemberAdmission::Forbidden),
             ]
         );
+    }
+
+    /// Clause 5.5.12: only a merge fragment may leave an instance's value out.
+    #[test]
+    fn only_a_merge_fragment_may_omit_a_value() {
+        for (admission, omission) in [
+            (NullSentinelAdmission::Refused, MemberAdmission::Forbidden),
+            (NullSentinelAdmission::PartialUpdateFragment, MemberAdmission::Forbidden),
+            (NullSentinelAdmission::MergeFragment, MemberAdmission::Admitted),
+            (NullSentinelAdmission::TemporalEvolution, MemberAdmission::Forbidden),
+        ] {
+            pretty_assertions::assert_eq!(admission.value_omission(), omission, "{admission:?}");
+        }
     }
 }

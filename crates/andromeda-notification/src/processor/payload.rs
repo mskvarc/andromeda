@@ -335,10 +335,7 @@ mod tests {
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
-    use andromeda_ngsi_ld_model::attribute::{
-        instance::{Attribute, AttributeValue},
-        value::NgsiLdValue,
-    };
+    use andromeda_ngsi_ld_model::attribute::instance::{Attribute, AttributeValue};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::Utc;
     use serde_json::json;
@@ -396,7 +393,7 @@ mod tests {
         let Attribute::Property(speed) = speed.as_ref() else {
             panic!("the speed is a Property: {speed:?}");
         };
-        pretty_assertions::assert_eq!(speed.value, NgsiLdValue::Json(json!(80)));
+        pretty_assertions::assert_eq!(serde_json::to_value(&speed.value).expect("a written value"), json!(80));
 
         let identity_key = second_rendering.key(NotifiedSource::Notified, Selection::identity(), reading, SysAttrsInclusion::Strip);
         let identity = second_rendering.render(&identity_key, &state).await.expect("another selection's rendering");

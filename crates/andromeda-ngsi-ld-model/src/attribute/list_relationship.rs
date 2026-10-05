@@ -2,12 +2,12 @@
 
 use crate::attribute::{common_fields::CommonAttributeFields, inline_entity::InlineEntity, object_list::RelationshipObjectList, one_or_many::OneOrMany};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_with::skip_serializing_none;
 
 /// NGSI-LD `ListRelationship` representation (ETSI GS CIM 009 clause 5.2.37).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListRelationship {
     /// Ordered list of target object URIs.

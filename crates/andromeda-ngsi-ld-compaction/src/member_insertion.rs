@@ -85,7 +85,7 @@ mod tests {
     }
 
     fn rendered(object: CompactedObject<'_>) -> serde_json::Value {
-        serde_json::Value::Object(object.into_written_json().expect("no geometry"))
+        serde_json::to_value(Compacted::Object(object)).expect("a compacted object renders")
     }
 
     #[test]

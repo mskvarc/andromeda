@@ -28,7 +28,7 @@ use typed_builder::TypedBuilder;
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
-pub struct Entity {
+pub struct Entity<M = AttributeValue> {
     /// Entity identifier (clause 5.2.4).
     pub id: Identifier,
     /// One or more entity types.
@@ -44,15 +44,15 @@ pub struct Entity {
 
     /// Default geospatial property (clause 4.7).
     #[builder(default = Default::default())]
-    pub location: Option<AttributeValue>,
+    pub location: Option<M>,
 
     /// Observation space geometry (clause 5.2.4).
     #[builder(default = Default::default())]
-    pub observation_space: Option<AttributeValue>,
+    pub observation_space: Option<M>,
 
     /// Operation space geometry (clause 5.2.4).
     #[builder(default = Default::default())]
-    pub operation_space: Option<AttributeValue>,
+    pub operation_space: Option<M>,
 
     /// System-generated creation timestamp (clause 4.8, Table 5.2.2-1).
     #[builder(default = Default::default())]
@@ -69,17 +69,17 @@ pub struct Entity {
     /// Every other attribute the entity carries, keyed by attribute name.
     #[serde(flatten)]
     #[builder(default = Default::default())]
-    pub attrs: IndexMap<AttributeName, AttributeValue>,
+    pub attrs: IndexMap<AttributeName, M>,
 }
 
-impl Entity {
+impl<M> Entity<M> {
     /// Populate system attribute fields from a repository snapshot.
     ///
     /// Sets `created_at` and `modified_at` unconditionally. Sets `expires_at`
     /// only if the field is not already populated (user-provided value takes
     /// precedence).
     #[must_use]
-    pub const fn with_sys_attrs(mut self, snapshot: &SysAttrsSnapshot) -> Entity {
+    pub const fn with_sys_attrs(mut self, snapshot: &SysAttrsSnapshot) -> Entity<M> {
         self.created_at = Some(snapshot.created_at);
         self.modified_at = Some(snapshot.modified_at);
         if self.expires_at.is_none() {
@@ -113,7 +113,7 @@ impl Entity {
     /// Every Attribute member with its name, from wherever this type keeps it:
     /// [`Entity::attrs`] in order, then `location`, `observationSpace` and
     /// `operationSpace` where present.
-    pub fn attribute_members(&self) -> impl Iterator<Item = (&str, &AttributeValue)> {
+    pub fn attribute_members(&self) -> impl Iterator<Item = (&str, &M)> {
         self.attrs.iter().map(|(name, value)| (name.as_str(), value)).chain(
             self.geo_property_members()
                 .into_iter()
@@ -123,7 +123,7 @@ impl Entity {
 
     /// The Attribute member named `name`, from wherever this type keeps it.
     #[must_use]
-    pub fn attribute_member(&self, name: &str) -> Option<&AttributeValue> {
+    pub fn attribute_member(&self, name: &str) -> Option<&M> {
         match self.geo_property_members().into_iter().find(|(geo_name, _)| *geo_name == name) {
             Some((_, member)) => member.as_ref(),
             None => self.attrs.get(name),
@@ -160,14 +160,16 @@ impl Entity {
 
     /// The three clause 5.2.4 geo-property members, each paired with the field
     /// this type keeps it in.
-    const fn geo_property_members(&self) -> [(&'static str, &Option<AttributeValue>); 3] {
+    const fn geo_property_members(&self) -> [(&'static str, &Option<M>); 3] {
         [
             (compact_properties::LOCATION, &self.location),
             (compact_properties::OBSERVATION_SPACE, &self.observation_space),
             (compact_properties::OPERATION_SPACE, &self.operation_space),
         ]
     }
+}
 
+impl Entity {
     /// Remove attribute instances whose `expiresAt` has passed (clause 4.22).
     ///
     /// Filters out expired instances from both regular attributes and the
@@ -186,7 +188,7 @@ impl Entity {
                     instances.retain(|attr| !is_expired(attr, now));
                     instances.is_empty()
                 }
-                Some(AttributeValue::Raw(_)) | None => false,
+                Some(AttributeValue::NgsiLdNull) | None => false,
             };
             if should_remove {
                 *value = None;
@@ -203,7 +205,7 @@ impl Entity {
                 instances.retain(|attr| !is_expired(attr, now));
                 !instances.is_empty()
             }
-            AttributeValue::Raw(_) => true,
+            AttributeValue::NgsiLdNull => true,
         });
     }
 }
@@ -220,7 +222,7 @@ impl Entity {
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EntityPatch {
+pub struct EntityPatch<M = AttributeValue> {
     /// Entity identifier, when the payload repeats it.
     pub id: Option<Identifier>,
     /// Entity types, when the payload repeats them.
@@ -233,20 +235,20 @@ pub struct EntityPatch {
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Default geospatial property (clause 4.7).
-    pub location: Option<AttributeValue>,
+    pub location: Option<M>,
 
     /// Observation space geometry (clause 5.2.4).
-    pub observation_space: Option<AttributeValue>,
+    pub observation_space: Option<M>,
 
     /// Operation space geometry (clause 5.2.4).
-    pub operation_space: Option<AttributeValue>,
+    pub operation_space: Option<M>,
 
     /// Every other attribute the patch carries, keyed by attribute name.
     #[serde(flatten)]
-    pub attrs: IndexMap<AttributeName, AttributeValue>,
+    pub attrs: IndexMap<AttributeName, M>,
 }
 
-impl EntityPatch {
+impl<M> EntityPatch<M> {
     /// Remove the named attributes (those a proxied registration owns per
     /// clause 4.3.6.3), reporting what the removal left.
     pub fn strip_attributes(&mut self, attributes: &[AttributeName]) -> AttributeStrip {
@@ -257,11 +259,25 @@ impl EntityPatch {
         AttributeStrip::from_counts(before, self.attrs.len())
     }
 
+    /// Every Attribute member the patch carries with its name, in the order
+    /// of [`EntityPatch::attribute_members`], each open to rewriting.
+    pub fn attribute_members_mut(&mut self) -> impl Iterator<Item = (&str, &mut M)> {
+        self.attrs.iter_mut().map(|(name, value)| (name.as_str(), value)).chain(
+            [
+                (compact_properties::LOCATION, &mut self.location),
+                (compact_properties::OBSERVATION_SPACE, &mut self.observation_space),
+                (compact_properties::OPERATION_SPACE, &mut self.operation_space),
+            ]
+            .into_iter()
+            .filter_map(|(name, value)| value.as_mut().map(|value| (name, value))),
+        )
+    }
+
     /// Every Attribute member the patch carries with its name, as
     /// [`Entity::attribute_members`] yields an entity's: [`EntityPatch::attrs`]
     /// in order, then `location`, `observationSpace` and `operationSpace` where
     /// present.
-    pub fn attribute_members(&self) -> impl Iterator<Item = (&str, &AttributeValue)> {
+    pub fn attribute_members(&self) -> impl Iterator<Item = (&str, &M)> {
         self.attrs.iter().map(|(name, value)| (name.as_str(), value)).chain(
             [
                 (compact_properties::LOCATION, &self.location),
@@ -401,8 +417,8 @@ mod tests {
         });
 
         let entity: Entity = serde_json::from_value(payload).expect("entity with concise attrs");
-        assert!(matches!(entity.attrs.get("A1"), Some(AttributeValue::Raw(Value::String(_)))));
-        assert!(matches!(entity.attrs.get("A2"), Some(AttributeValue::Raw(Value::Number(_)))));
+        assert!(matches!(entity.attrs.get("A1"), Some(AttributeValue::Single(_))));
+        assert!(matches!(entity.attrs.get("A2"), Some(AttributeValue::Single(_))));
     }
 
     #[test]

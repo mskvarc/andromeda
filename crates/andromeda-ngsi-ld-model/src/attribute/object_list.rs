@@ -1,12 +1,11 @@
 //! The `objectList` / `previousObjectList` member (ETSI GS CIM 009 clause 5.2.37).
 
-use andromeda_ngsi_ld_lexicon::uri::{Uri, UriParseError};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_vocabulary::{NULL_IRI, NULL_URI, compact::properties as compact_properties};
 use derive_more::{AsRef, Deref, From};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeError};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
-use std::{slice::Iter, str::FromStr, vec::IntoIter};
-use thiserror::Error;
+use std::{slice::Iter, vec::IntoIter};
 
 /// `objectList` / `previousObjectList` value as defined by clause 5.2.37.
 ///
@@ -102,17 +101,43 @@ impl Serialize for RelationshipObjectList {
     }
 }
 
+// Hand-written: each entry is read in whichever spelling clause 4.5.22 gives
+// it, and the list holds the targets alone.
 impl<'de> Deserialize<'de> for RelationshipObjectList {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<RelationshipObjectList, D::Error> {
-        let value = Value::deserialize(deserializer)?;
-        let items = value
-            .as_array()
-            .ok_or_else(|| DeError::custom("objectList must be an array"))?
-            .iter()
-            .map(parse_relationship_object_entry)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(DeError::custom)?;
-        Ok(RelationshipObjectList(items))
+        Vec::<ObjectListEntry>::deserialize(deserializer).map(|entries| RelationshipObjectList(entries.into_iter().map(ObjectListEntry::into_target).collect()))
+    }
+}
+
+/// One entry of an `objectList` as written: the bare URI of the concise form,
+/// the Relationship Object of the normalized form (clause 4.5.22.2), or the
+/// node reference a concise entry was expanded to and compacted back as.
+#[derive(Deserialize)]
+#[serde(
+    untagged,
+    expecting = "a relationship target URI, an {\"object\": ...} object or an {\"id\": ...} node reference"
+)]
+enum ObjectListEntry {
+    /// The bare URI.
+    Bare(Uri),
+    /// The Relationship Object.
+    Object {
+        /// The target.
+        object: Uri,
+    },
+    /// The node reference.
+    Node {
+        /// The target.
+        id: Uri,
+    },
+}
+
+impl ObjectListEntry {
+    /// The target the entry names.
+    fn into_target(self) -> Uri {
+        match self {
+            ObjectListEntry::Bare(target) | ObjectListEntry::Object { object: target } | ObjectListEntry::Node { id: target } => target,
+        }
     }
 }
 
@@ -132,41 +157,6 @@ impl IntoIterator for RelationshipObjectList {
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
-}
-
-/// Failures parsing one entry of an NGSI-LD `objectList` (clause 5.2.37).
-#[derive(Debug, Error)]
-pub enum RelationshipObjectEntryError {
-    /// The entry was neither a URI string nor an `{"object": …}` wrapper.
-    #[error("relationship object list entries must be strings or {{\"object\": ...}} objects")]
-    NotAnObjectReference,
-    /// The entry held a value that is not a valid URI.
-    #[error("invalid relationship object URI: {source}")]
-    Uri {
-        /// Underlying URI parse failure.
-        #[source]
-        source: UriParseError,
-    },
-}
-
-/// Read one `objectList` entry, accepting both the bare URI string and the
-/// `{"object": "…"}` wrapper clause 5.2.37 permits.
-///
-/// # Errors
-///
-/// Returns [`RelationshipObjectEntryError::NotAnObjectReference`] when neither
-/// shape matches, or [`RelationshipObjectEntryError::Uri`] when the extracted
-/// text is not a URI.
-pub fn parse_relationship_object_entry(value: &Value) -> Result<Uri, RelationshipObjectEntryError> {
-    let raw = match value.as_str() {
-        Some(uri) => uri,
-        None => value
-            .as_object()
-            .and_then(|object| object.get("object"))
-            .and_then(Value::as_str)
-            .ok_or(RelationshipObjectEntryError::NotAnObjectReference)?,
-    };
-    Uri::from_str(raw).map_err(|source| RelationshipObjectEntryError::Uri { source })
 }
 
 #[cfg(test)]
@@ -227,6 +217,16 @@ mod tests {
     fn relationship_object_list_deserializes_string_entries() {
         let value: RelationshipObjectList = serde_json::from_value(serde_json::json!(["urn:ngsi-ld:Entity:1"])).expect("objectList");
         pretty_assertions::assert_eq!(value.0.len(), 1);
+    }
+
+    /// A concise entry expanded to a node reference and compacted back reads
+    /// as the target it names.
+    #[test]
+    fn relationship_object_list_deserializes_node_reference_entries() {
+        let value: RelationshipObjectList =
+            serde_json::from_value(serde_json::json!([{"id": "urn:ngsi-ld:Entity:1"}, "urn:ngsi-ld:Entity:2"])).expect("objectList");
+        pretty_assertions::assert_eq!(value.0.len(), 2);
+        assert!(serde_json::from_value::<RelationshipObjectList>(serde_json::json!([{"subject": "urn:ngsi-ld:Entity:1"}])).is_err());
     }
 
     #[test]

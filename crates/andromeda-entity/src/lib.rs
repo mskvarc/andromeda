@@ -74,6 +74,9 @@ mod in_memory_store;
 pub mod merge_fragment;
 /// The Table 6.5.3.4-1 options of a merge.
 pub mod merge_options;
+/// History-recording tests for the whole-entity merge and replace paths.
+#[cfg(test)]
+mod merge_patch_recording;
 /// The write that stores a modified entity, and the notifications it owes.
 mod modification_write;
 /// Whole-entity mutations (clauses 5.6.1 to 5.6.6).
@@ -87,7 +90,6 @@ mod mutation_deletion_recording;
 /// Durable-match recording tests for the whole-entity merge and replace paths.
 #[cfg(test)]
 mod mutation_durable_match_recording;
-/// History-recording tests for the whole-entity merge and replace paths.
 #[cfg(test)]
 mod mutation_history_recording;
 /// Turning one mutation into the subscriptions it matched.

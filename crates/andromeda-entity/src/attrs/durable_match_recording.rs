@@ -9,7 +9,7 @@
 //! `changedAttributes` and snapshot the operation's live emit would carry.
 
 use crate::{
-    admission_fixture::{admitted_attribute, admitted_entity},
+    admission_fixture::{admitted_attribute, admitted_written},
     notification_recording_harness::{
         CATEGORY_IRI,
         NAME_IRI,
@@ -32,7 +32,7 @@ use serde_json::json;
 #[tokio::test]
 async fn append_attrs_records_an_attribute_created_match() {
     let (service, recorded) = recording_service().await;
-    let admitted = admitted_entity::<AppendAttributes>(&service, json!({"name": {"type": "Property", "value": "lobby"}}), &core_context()).await;
+    let admitted = admitted_written::<AppendAttributes>(&service, json!({"name": {"type": "Property", "value": "lobby"}}), &core_context()).await;
     service
         .append_attrs(&live_target(), &entity_uri(), admitted, OverwritePolicy::Overwrite)
         .await
@@ -45,7 +45,7 @@ async fn append_attrs_records_an_attribute_created_match() {
 #[tokio::test]
 async fn update_attrs_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
-    let admitted = admitted_entity::<UpdateAttributes>(&service, json!({"category": {"type": "Property", "value": "retail"}}), &core_context()).await;
+    let admitted = admitted_written::<UpdateAttributes>(&service, json!({"category": {"type": "Property", "value": "retail"}}), &core_context()).await;
     service.update_attrs(&live_target(), &entity_uri(), admitted).await.expect("the update lands");
 
     let write = single_recorded_write(&recorded);

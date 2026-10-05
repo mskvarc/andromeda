@@ -2,14 +2,16 @@
 //!
 //! This is the reading the walk is held to: the stored document with its
 //! attribute-instance system times stripped when the request did not ask for
-//! `sysAttrs`, compacted by the processor, reshaped to the compact model's
-//! `id` and `type` and decoded, its expired instances dropped.
+//! `sysAttrs`, compacted by the processor and read by the compact model
+//! through the terms the context defines for core terms, its expired instances
+//! dropped.
 
+use crate::core_aliases::core_term_aliases;
 use andromeda_jsonld::engine::{context_compactor::ContextCompactor, expanded_input::ExpandedInput, options::CompactOptions};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_number::json_value::deserialize_exact;
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_representation::{compact_node::aliased_node::AliasedNode, sys_attrs::SysAttrsInclusion};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -34,26 +36,15 @@ pub(crate) async fn processor_entity(
         .compact(ExpandedInput::Canonical(expanded), CompactOptions::default())
         .await
         .map_err(|error| error.to_string())?;
-    let mut object = match compacted {
-        Value::Array(mut items) if !items.is_empty() => match items.swap_remove(0) {
-            Value::Object(object) => Some(object),
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => None,
-        },
-        Value::Object(object) => Some(object),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => None,
+    let object = match &compacted {
+        Value::Array(items) => items.first().unwrap_or(&compacted),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => &compacted,
+    };
+    let aliases = core_term_aliases(compactor.processed_context().await.map_err(|error| error.to_string())?.active_context());
+    let mut entity = <Entity>::from_node(AliasedNode::new(object, &aliases)).map_err(|error| error.to_string())?;
+    if let Some(id) = id_override {
+        entity.id = id.parse().map_err(|error: IdentifierParseError| error.to_string())?;
     }
-    .ok_or_else(|| "the compacted entity is not a JSON object".to_owned())?;
-    if let Some(types) = object.remove("@type") {
-        object.insert("type".to_owned(), types);
-    }
-    let id = id_override
-        .map(str::to_owned)
-        .or_else(|| object.get("id").and_then(Value::as_str).map(str::to_owned))
-        .or_else(|| object.get("@id").and_then(Value::as_str).map(str::to_owned))
-        .ok_or_else(|| "the compacted entity carries no id".to_owned())?;
-    object.remove("@id");
-    object.insert("id".to_owned(), Value::String(id));
-    let mut entity: Entity = deserialize_exact(&Value::Object(object)).map_err(|error| error.to_string())?;
     entity.remove_expired_attributes(now);
     Ok(entity)
 }

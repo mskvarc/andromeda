@@ -27,10 +27,10 @@
 //! an instance (clause 4.5.5), as the value of an implicit Property when no
 //! element is, and is refused when it mixes the two.
 
+use crate::compact_node::{CompactNode, NodeMembers, NodeShape};
 use andromeda_ngsi_ld_geometry::geometry_type::GeometryType;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
-use serde_json::{Map, Value};
 use std::str::FromStr;
 
 /// The member an attribute names its type in, and a geometry its kind.
@@ -108,10 +108,12 @@ pub enum ArrayRefusal {
 /// # Errors
 ///
 /// Returns the [`ObjectRefusal`] of an object the clauses do not admit there.
-pub fn read_object(object: &Map<String, Value>) -> Result<ObjectReading, ObjectRefusal> {
-    match object.get(TYPE_MEMBER) {
-        Some(Value::String(token)) => read_declared(object, token),
-        Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => Err(ObjectRefusal::TypeNotAString),
+pub fn read_object<'n, N: CompactNode<'n>>(object: &NodeMembers<'n, N>) -> Result<ObjectReading, ObjectRefusal> {
+    match object.get(TYPE_MEMBER).map(CompactNode::shape) {
+        Some(NodeShape::String(token)) => read_declared(object, &token),
+        Some(NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_)) => {
+            Err(ObjectRefusal::TypeNotAString)
+        }
         None => read_typeless(object),
     }
 }
@@ -122,9 +124,9 @@ pub fn read_object(object: &Map<String, Value>) -> Result<ObjectReading, ObjectR
 ///
 /// Returns the [`ArrayRefusal`] of an array holding a refused element or
 /// mixing instances with values.
-pub fn read_array(items: &[Value]) -> Result<ArrayReading, ArrayRefusal> {
+pub fn read_array<'n, N: CompactNode<'n>>(items: &[N]) -> Result<ArrayReading, ArrayRefusal> {
     let instances = items.iter().enumerate().try_fold(0_usize, |instances, (index, item)| {
-        is_instance(item)
+        is_instance(*item)
             .map(|instance| instances + usize::from(instance))
             .map_err(|refusal| ArrayRefusal::Element { index, refusal })
     })?;
@@ -143,10 +145,10 @@ pub fn read_array(items: &[Value]) -> Result<ArrayReading, ArrayRefusal> {
 ///
 /// Returns [`ObjectRefusal::SeveralValueMembers`] for an object carrying the
 /// value members of two families.
-pub fn value_member_family(object: &Map<String, Value>) -> Result<Option<AttributeType>, ObjectRefusal> {
+pub fn value_member_family<'n, N: CompactNode<'n>>(object: &NodeMembers<'n, N>) -> Result<Option<AttributeType>, ObjectRefusal> {
     AttributeType::ALL
         .into_iter()
-        .filter(|family| family.compact_value_key() != compact_properties::VALUE && object.contains_key(family.compact_value_key()))
+        .filter(|family| family.compact_value_key() != compact_properties::VALUE && object.contains(family.compact_value_key()))
         .try_fold(None, |found, family| match found {
             None => Ok(Some(family)),
             Some(_) => Err(ObjectRefusal::SeveralValueMembers),
@@ -157,11 +159,13 @@ pub fn value_member_family(object: &Map<String, Value>) -> Result<Option<Attribu
 /// `GeoProperty` when the value resolves to a `GeoJSON` geometry, a Property
 /// otherwise (clause 4.5.2.3, "type").
 #[must_use]
-pub fn typeless_value_family(value: &Value) -> AttributeType {
-    if value.as_object().is_some_and(is_geometry) {
-        AttributeType::GeoProperty
-    } else {
-        AttributeType::Property
+pub fn typeless_value_family<'n, N: CompactNode<'n>>(value: N) -> AttributeType {
+    match value.shape() {
+        NodeShape::Geometry(_) => AttributeType::GeoProperty,
+        NodeShape::Object(members) if is_geometry(&members) => AttributeType::GeoProperty,
+        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Object(_) => {
+            AttributeType::Property
+        }
     }
 }
 
@@ -169,33 +173,34 @@ pub fn typeless_value_family(value: &Value) -> AttributeType {
 /// value of: a Property or a `GeoProperty`, or `None` when it reads as
 /// something else or is refused.
 #[must_use]
-pub fn bare_value_family(value: &Value) -> Option<AttributeType> {
-    match value {
-        Value::Object(object) => match read_object(object) {
+pub fn bare_value_family<'n, N: CompactNode<'n>>(value: N) -> Option<AttributeType> {
+    match value.shape() {
+        NodeShape::Object(object) => match read_object(&object) {
             Ok(ObjectReading::PropertyValue) => Some(AttributeType::Property),
             Ok(ObjectReading::GeoPropertyValue) => Some(AttributeType::GeoProperty),
             Ok(ObjectReading::Instance(_)) | Err(_) => None,
         },
-        Value::Array(items) => match read_array(items) {
+        NodeShape::Array(items) => match read_array(&items) {
             Ok(ArrayReading::PropertyValue) => Some(AttributeType::Property),
             Ok(ArrayReading::Instances) | Err(_) => None,
         },
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Some(AttributeType::Property),
+        NodeShape::Geometry(_) => Some(AttributeType::GeoProperty),
+        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) => Some(AttributeType::Property),
     }
 }
 
 /// Read an object whose `type` member is the string `token`.
-fn read_declared(object: &Map<String, Value>, token: &str) -> Result<ObjectReading, ObjectRefusal> {
+fn read_declared<'n, N: CompactNode<'n>>(object: &NodeMembers<'n, N>, token: &str) -> Result<ObjectReading, ObjectRefusal> {
     match (AttributeType::from_str(token), coordinates_member(token)) {
         (Ok(family), _) => Ok(ObjectReading::Instance(family)),
-        (Err(_), Some(member)) if object.contains_key(member) => Ok(ObjectReading::GeoPropertyValue),
+        (Err(_), Some(member)) if object.contains(member) => Ok(ObjectReading::GeoPropertyValue),
         (Err(_), Some(_)) => Err(ObjectRefusal::GeometryWithoutCoordinates),
         (Err(source), None) => Err(ObjectRefusal::NotAnAttributeType(source)),
     }
 }
 
 /// Read an object declaring no `type`.
-fn read_typeless(object: &Map<String, Value>) -> Result<ObjectReading, ObjectRefusal> {
+fn read_typeless<'n, N: CompactNode<'n>>(object: &NodeMembers<'n, N>) -> Result<ObjectReading, ObjectRefusal> {
     Ok(match value_member_family(object)? {
         Some(family) => ObjectReading::Instance(family),
         None => object
@@ -205,21 +210,21 @@ fn read_typeless(object: &Map<String, Value>) -> Result<ObjectReading, ObjectRef
 }
 
 /// Whether one element of an array reads as an attribute instance.
-fn is_instance(item: &Value) -> Result<bool, ObjectRefusal> {
-    match item {
-        Value::Object(object) => read_object(object).map(|reading| matches!(reading, ObjectReading::Instance(_))),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => Ok(false),
+fn is_instance<'n, N: CompactNode<'n>>(item: N) -> Result<bool, ObjectRefusal> {
+    match item.shape() {
+        NodeShape::Object(object) => read_object(&object).map(|reading| matches!(reading, ObjectReading::Instance(_))),
+        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Geometry(_) => Ok(false),
     }
 }
 
 /// Whether an object is a `GeoJSON` geometry: a geometry `type` beside the
 /// member holding its coordinates.
-fn is_geometry(object: &Map<String, Value>) -> bool {
+fn is_geometry<'n, N: CompactNode<'n>>(object: &NodeMembers<'n, N>) -> bool {
     object
         .get(TYPE_MEMBER)
-        .and_then(Value::as_str)
-        .and_then(coordinates_member)
-        .is_some_and(|member| object.contains_key(member))
+        .and_then(CompactNode::text)
+        .and_then(|token| coordinates_member(&token))
+        .is_some_and(|member| object.contains(member))
 }
 
 /// The member a geometry whose `type` is `token` holds its coordinates in, or
@@ -233,25 +238,45 @@ fn coordinates_member(token: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use crate::concise_reading::{ArrayReading, ArrayRefusal, ObjectReading, ObjectRefusal, bare_value_family, read_array, read_object, typeless_value_family};
+    use crate::{
+        compact_node::{CompactNode, NodeMembers, NodeShape},
+        concise_reading::{ArrayReading, ArrayRefusal, ObjectReading, ObjectRefusal, bare_value_family, read_array, read_object, typeless_value_family},
+    };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-    use serde_json::{Map, Value, json};
+    use serde_json::{Value, json};
 
-    /// The object `value` is.
-    fn object(value: &Value) -> &Map<String, Value> {
-        value.as_object().unwrap_or_else(|| panic!("an object: {value}"))
+    /// The members of the object `value` is.
+    fn object(value: &Value) -> NodeMembers<'_, &Value> {
+        match value.shape() {
+            NodeShape::Object(members) => members,
+            other @ (NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Geometry(_)) => {
+                panic!("an object: {other:?}")
+            }
+        }
     }
 
-    /// The array `value` is.
-    fn array(value: &Value) -> &[Value] {
-        value.as_array().unwrap_or_else(|| panic!("an array: {value}"))
+    /// The elements of the array `value` is.
+    fn array(value: &Value) -> Vec<&Value> {
+        value.as_array().unwrap_or_else(|| panic!("an array: {value}")).iter().collect()
+    }
+
+    /// The same reading from the text of `value`, read in place.
+    fn read_from_text(value: &Value) -> Result<ObjectReading, ObjectRefusal> {
+        let literal = JsonLiteral::admit(&value.to_string()).expect("the fixture is JSON");
+        match literal.piece().shape() {
+            NodeShape::Object(members) => read_object(&members),
+            other @ (NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Geometry(_)) => {
+                panic!("an object: {other:?}")
+            }
+        }
     }
 
     #[test]
     fn an_object_declaring_an_attribute_type_is_an_instance_of_it() {
         for family in AttributeType::ALL {
             let node = json!({"type": family.to_string(), family.compact_value_key(): 1});
-            pretty_assertions::assert_eq!(read_object(object(&node)), Ok(ObjectReading::Instance(family)), "{family}");
+            pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::Instance(family)), "{family}");
         }
     }
 
@@ -261,7 +286,7 @@ mod tests {
             json!({"type": "Point", "coordinates": [1.0, 2.0]}),
             json!({"type": "GeometryCollection", "geometries": []}),
         ] {
-            pretty_assertions::assert_eq!(read_object(object(&node)), Ok(ObjectReading::GeoPropertyValue), "{node}");
+            pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::GeoPropertyValue), "{node}");
         }
     }
 
@@ -270,7 +295,7 @@ mod tests {
     #[test]
     fn a_geometry_type_without_its_coordinates_is_refused() {
         for node in [json!({"type": "Point"}), json!({"type": "GeometryCollection", "coordinates": []})] {
-            pretty_assertions::assert_eq!(read_object(object(&node)), Err(ObjectRefusal::GeometryWithoutCoordinates), "{node}");
+            pretty_assertions::assert_eq!(read_object(&object(&node)), Err(ObjectRefusal::GeometryWithoutCoordinates), "{node}");
         }
     }
 
@@ -280,7 +305,7 @@ mod tests {
     fn a_type_naming_no_attribute_type_is_refused() {
         for node in [json!({"type": "Feature", "x": 1}), json!({"type": "Propertyy", "value": 1})] {
             pretty_assertions::assert_eq!(
-                read_object(object(&node)),
+                read_object(&object(&node)),
                 Err(ObjectRefusal::NotAnAttributeType(strum::ParseError::VariantNotFound)),
                 "{node}"
             );
@@ -290,7 +315,7 @@ mod tests {
     #[test]
     fn a_type_that_is_not_a_string_is_refused() {
         for node in [json!({"type": 7, "value": 1}), json!({"type": ["Property"], "value": 1})] {
-            pretty_assertions::assert_eq!(read_object(object(&node)), Err(ObjectRefusal::TypeNotAString), "{node}");
+            pretty_assertions::assert_eq!(read_object(&object(&node)), Err(ObjectRefusal::TypeNotAString), "{node}");
         }
     }
 
@@ -304,14 +329,14 @@ mod tests {
             (json!({"objectList": ["urn:ngsi-ld:X:1"]}), AttributeType::ListRelationship),
             (json!({"json": {"k": 1}}), AttributeType::JsonProperty),
         ] {
-            pretty_assertions::assert_eq!(read_object(object(&node)), Ok(ObjectReading::Instance(family)), "{node}");
+            pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::Instance(family)), "{node}");
         }
     }
 
     #[test]
     fn a_typeless_object_with_two_value_members_is_refused() {
         let node = json!({"object": "urn:ngsi-ld:X:1", "languageMap": {"en": "x"}});
-        pretty_assertions::assert_eq!(read_object(object(&node)), Err(ObjectRefusal::SeveralValueMembers));
+        pretty_assertions::assert_eq!(read_object(&object(&node)), Err(ObjectRefusal::SeveralValueMembers));
     }
 
     /// Clause 4.5.2.3, "type": "If missing, "Property" can be inferred by the
@@ -319,7 +344,7 @@ mod tests {
     #[test]
     fn a_typeless_object_with_value_is_a_property_instance() {
         for node in [json!({"value": 42}), json!({"value": 42, "accuracy": 0.5}), json!({"value": {"value": 5}})] {
-            pretty_assertions::assert_eq!(read_object(object(&node)), Ok(ObjectReading::Instance(AttributeType::Property)), "{node}");
+            pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::Instance(AttributeType::Property)), "{node}");
         }
     }
 
@@ -327,7 +352,7 @@ mod tests {
     #[test]
     fn a_typeless_object_whose_value_is_a_geometry_is_a_geo_property_instance() {
         let node = json!({"value": {"type": "Point", "coordinates": [1.0, 2.0]}});
-        pretty_assertions::assert_eq!(read_object(object(&node)), Ok(ObjectReading::Instance(AttributeType::GeoProperty)));
+        pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::Instance(AttributeType::GeoProperty)));
     }
 
     /// The other family's value member names the family; the `value` it then
@@ -335,20 +360,20 @@ mod tests {
     #[test]
     fn a_typeless_object_with_value_and_another_value_member_is_that_family() {
         let node = json!({"value": 1, "object": "urn:ngsi-ld:X:1"});
-        pretty_assertions::assert_eq!(read_object(object(&node)), Ok(ObjectReading::Instance(AttributeType::Relationship)));
+        pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::Instance(AttributeType::Relationship)));
     }
 
     #[test]
     fn any_other_object_is_a_property_value() {
         for node in [json!({"a": 1}), json!({}), json!({"Type": "Point", "coordinates": [1.0, 2.0]})] {
-            pretty_assertions::assert_eq!(read_object(object(&node)), Ok(ObjectReading::PropertyValue), "{node}");
+            pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::PropertyValue), "{node}");
         }
     }
 
     #[test]
     fn an_array_of_instances_reads_as_instances() {
         let node = json!([{"value": 25, "datasetId": "urn:ngsi-ld:Dataset:a"}, {"type": "Property", "value": 30}]);
-        pretty_assertions::assert_eq!(read_array(array(&node)), Ok(ArrayReading::Instances));
+        pretty_assertions::assert_eq!(read_array(&array(&node)), Ok(ArrayReading::Instances));
     }
 
     #[test]
@@ -359,21 +384,21 @@ mod tests {
             json!([{"a": 1}]),
             json!([{"type": "Point", "coordinates": [1.0, 2.0]}]),
         ] {
-            pretty_assertions::assert_eq!(read_array(array(&node)), Ok(ArrayReading::PropertyValue), "{node}");
+            pretty_assertions::assert_eq!(read_array(&array(&node)), Ok(ArrayReading::PropertyValue), "{node}");
         }
     }
 
     #[test]
     fn an_array_mixing_instances_and_values_is_refused() {
         let node = json!([{"value": 25, "datasetId": "urn:ngsi-ld:Dataset:a"}, 30]);
-        pretty_assertions::assert_eq!(read_array(array(&node)), Err(ArrayRefusal::MixedInstancesAndValues));
+        pretty_assertions::assert_eq!(read_array(&array(&node)), Err(ArrayRefusal::MixedInstancesAndValues));
     }
 
     #[test]
     fn a_refused_element_refuses_its_array() {
         let node = json!([1, {"type": "Feature"}]);
         pretty_assertions::assert_eq!(
-            read_array(array(&node)),
+            read_array(&array(&node)),
             Err(ArrayRefusal::Element {
                 index: 1,
                 refusal: ObjectRefusal::NotAnAttributeType(strum::ParseError::VariantNotFound),
@@ -409,6 +434,22 @@ mod tests {
         );
         for value in [json!(42), json!({"type": "Feature"}), json!(r#"{"type": "Point", "coordinates": [1.0, 2.0]}"#)] {
             pretty_assertions::assert_eq!(typeless_value_family(&value), AttributeType::Property, "{value}");
+        }
+    }
+
+    /// The reading of a request's text and of a parsed document agree.
+    #[test]
+    fn text_and_a_parsed_document_read_alike() {
+        for node in [
+            json!({"type": "Property", "value": 1}),
+            json!({"type": "Point", "coordinates": [1.0, 2.0]}),
+            json!({"type": "Point"}),
+            json!({"type": 7}),
+            json!({"object": "urn:ngsi-ld:X:1", "vocab": "x"}),
+            json!({"value": {"type": "Point", "coordinates": [1.0, 2.0]}}),
+            json!({"a": 1}),
+        ] {
+            pretty_assertions::assert_eq!(read_from_text(&node), read_object(&object(&node)), "{node}");
         }
     }
 }

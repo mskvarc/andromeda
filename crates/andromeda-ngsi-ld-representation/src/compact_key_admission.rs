@@ -41,11 +41,13 @@
 //! decided by those paths: a payload a Context Source or another broker sent
 //! back is not a user `@context` and is never screened.
 
-use crate::embedded_context_admission::is_native_json_member;
-use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, PathSegment};
+use crate::{
+    compact_node::{CompactNode, NodeMembers, NodeShape},
+    embedded_context_admission::is_native_json_member,
+};
+use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, JsonPointerSegment};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use jsonld_syntax::{is_keyword, is_keyword_like};
-use serde_json::{Map, Value};
 use thiserror::Error;
 
 /// The members a node object declares its types in: the core `@context`'s
@@ -105,7 +107,7 @@ impl CompactKeyError {
 /// # Errors
 ///
 /// Returns the [`CompactKeyError`] of the first key refused, in member order.
-pub fn screen_keys_in_fragment(fragment: &Value) -> Result<(), CompactKeyError> {
+pub fn screen_keys_in_fragment<'n, N: CompactNode<'n>>(fragment: N) -> Result<(), CompactKeyError> {
     let mut path = Vec::new();
     screen_top_level_slot(fragment, &mut path)
 }
@@ -121,8 +123,8 @@ pub fn screen_keys_in_fragment(fragment: &Value) -> Result<(), CompactKeyError> 
 ///
 /// Returns the [`CompactKeyError`] of the first key refused, with `attribute`
 /// heading the reported location.
-pub fn screen_keys_in_attribute<'a>(attribute: &'a str, node: &'a Value) -> Result<(), CompactKeyError> {
-    let mut path = vec![PathSegment::Member(attribute)];
+pub fn screen_keys_in_attribute<'n, N: CompactNode<'n>>(attribute: &str, node: N) -> Result<(), CompactKeyError> {
+    let mut path = vec![member_segment(attribute)];
     screen_top_level_slot(node, &mut path)
 }
 
@@ -134,7 +136,7 @@ pub fn screen_keys_in_attribute<'a>(attribute: &'a str, node: &'a Value) -> Resu
 ///
 /// Returns the [`CompactKeyError`] of the first key refused, located from the
 /// value itself.
-pub fn screen_keys_in_nested_value(value: &Value) -> Result<(), CompactKeyError> {
+pub fn screen_keys_in_nested_value<'n, N: CompactNode<'n>>(value: N) -> Result<(), CompactKeyError> {
     let mut path = Vec::new();
     screen_slot(value, KeyReading::Terms, &mut path)
 }
@@ -148,23 +150,28 @@ enum KeyReading {
     LanguageTags,
 }
 
+/// The pointer segment naming the member `name`.
+fn member_segment(name: &str) -> JsonPointerSegment {
+    JsonPointerSegment::Member(Box::from(name))
+}
+
 /// Walk one slot that stands at the document's top level: an object, or the
 /// instances of a multi-instance array.
-fn screen_top_level_slot<'a>(node: &'a Value, path: &mut Vec<PathSegment<'a>>) -> Result<(), CompactKeyError> {
-    match node {
-        Value::Object(members) => screen_top_level_object(members, path),
-        Value::Array(instances) => instances.iter().enumerate().try_for_each(|(index, instance)| {
-            path.push(PathSegment::Index(index));
+fn screen_top_level_slot<'n, N: CompactNode<'n>>(node: N, path: &mut Vec<JsonPointerSegment>) -> Result<(), CompactKeyError> {
+    match node.shape() {
+        NodeShape::Object(members) => screen_top_level_object(&members, path),
+        NodeShape::Array(instances) => instances.into_iter().enumerate().try_for_each(|(index, instance)| {
+            path.push(JsonPointerSegment::Index(index));
             let outcome = screen_top_level_slot(instance, path);
             path.pop();
             outcome
         }),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Ok(()),
+        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Geometry(_) => Ok(()),
     }
 }
 
 /// Walk the members of one top-level object.
-fn screen_top_level_object<'a>(members: &'a Map<String, Value>, path: &mut Vec<PathSegment<'a>>) -> Result<(), CompactKeyError> {
+fn screen_top_level_object<'n, N: CompactNode<'n>>(members: &NodeMembers<'n, N>, path: &mut Vec<JsonPointerSegment>) -> Result<(), CompactKeyError> {
     members.iter().try_for_each(|(member, value)| {
         if is_keyword_form(member) {
             return Err(CompactKeyError::KeywordFormKey {
@@ -179,35 +186,35 @@ fn screen_top_level_object<'a>(members: &'a Map<String, Value>, path: &mut Vec<P
 }
 
 /// Walk one member's value, at any depth below the top level.
-fn screen_member<'a>(member: &'a str, value: &'a Value, path: &mut Vec<PathSegment<'a>>) -> Result<(), CompactKeyError> {
+fn screen_member<'n, N: CompactNode<'n>>(member: &str, value: N, path: &mut Vec<JsonPointerSegment>) -> Result<(), CompactKeyError> {
     let reading = if LANGUAGE_MAP_MEMBERS.contains(&member) {
         KeyReading::LanguageTags
     } else {
         KeyReading::Terms
     };
-    path.push(PathSegment::Member(member));
+    path.push(member_segment(member));
     let outcome = screen_slot(value, reading, path);
     path.pop();
     outcome
 }
 
 /// Walk one value below the top level: an object, or every element of an array.
-fn screen_slot<'a>(value: &'a Value, reading: KeyReading, path: &mut Vec<PathSegment<'a>>) -> Result<(), CompactKeyError> {
-    match value {
-        Value::Object(members) => screen_object(members, reading, path),
-        Value::Array(items) => items.iter().enumerate().try_for_each(|(index, item)| {
-            path.push(PathSegment::Index(index));
+fn screen_slot<'n, N: CompactNode<'n>>(value: N, reading: KeyReading, path: &mut Vec<JsonPointerSegment>) -> Result<(), CompactKeyError> {
+    match value.shape() {
+        NodeShape::Object(members) => screen_object(&members, reading, path),
+        NodeShape::Array(items) => items.into_iter().enumerate().try_for_each(|(index, item)| {
+            path.push(JsonPointerSegment::Index(index));
             let outcome = screen_slot(item, reading, path);
             path.pop();
             outcome
         }),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Ok(()),
+        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Geometry(_) => Ok(()),
     }
 }
 
 /// Refuse an object below the top level that carries a key the rules refuse,
 /// and descend into everything it holds that is not a native JSON literal.
-fn screen_object<'a>(members: &'a Map<String, Value>, reading: KeyReading, path: &mut Vec<PathSegment<'a>>) -> Result<(), CompactKeyError> {
+fn screen_object<'n, N: CompactNode<'n>>(members: &NodeMembers<'n, N>, reading: KeyReading, path: &mut Vec<JsonPointerSegment>) -> Result<(), CompactKeyError> {
     if reading == KeyReading::Terms {
         members.iter().try_for_each(|(member, value)| screen_key(member, value, path))?;
     }
@@ -219,7 +226,7 @@ fn screen_object<'a>(members: &'a Map<String, Value>, reading: KeyReading, path:
 
 /// Refuse one key of an object below the top level, read as a term, that
 /// expansion would drop or rewrite past recovery.
-fn screen_key(member: &str, value: &Value, path: &[PathSegment<'_>]) -> Result<(), CompactKeyError> {
+fn screen_key<'n, N: CompactNode<'n>>(member: &str, value: N, path: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
     if is_keyword_form(member) {
         return Err(CompactKeyError::KeywordFormKey {
             path: pointer_to(path, member),
@@ -245,19 +252,17 @@ fn is_keyword_form(member: &str) -> bool {
 }
 
 /// Whether a `type` member's value is, or holds, the empty string.
-fn names_an_empty_type(value: &Value) -> bool {
-    match value {
-        Value::String(type_name) => type_name.is_empty(),
-        Value::Array(type_names) => type_names.iter().any(|type_name| type_name.as_str() == Some("")),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => false,
+fn names_an_empty_type<'n, N: CompactNode<'n>>(value: N) -> bool {
+    match value.shape() {
+        NodeShape::String(type_name) => type_name.is_empty(),
+        NodeShape::Array(type_names) => type_names.into_iter().any(|type_name| type_name.text().is_some_and(|name| name.is_empty())),
+        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => false,
     }
 }
 
 /// The pointer to the key `member` of the object standing at `path`.
-fn pointer_to(path: &[PathSegment<'_>], member: &str) -> JsonPointer {
-    let mut walk = path.to_vec();
-    walk.push(PathSegment::Member(member));
-    JsonPointer::from_walk(&walk)
+fn pointer_to(path: &[JsonPointerSegment], member: &str) -> JsonPointer {
+    JsonPointer::from_segments(path.iter().cloned().chain([member_segment(member)]).collect())
 }
 
 #[cfg(test)]

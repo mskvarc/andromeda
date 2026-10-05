@@ -1,15 +1,18 @@
-//! Why a compact node is not read as the typed entity or attribute instance
-//! it might have been.
+//! Why a compact node is not read as the typed entity, attribute member or
+//! attribute instance it stands for.
 //!
-//! A refused attribute instance is no failure: the member that held it is
-//! carried verbatim instead, exactly as a decoded document carries it. A node
-//! that has no JSON form is another matter, and is told apart so the reader of
-//! such a tree can write it in full and read it again.
+//! Every node standing where an attribute stands is read into a typed member
+//! the specification defines or refused (clause 5.5.4): a refusal names what is
+//! wrong and where, from the top of the document read. A node that has no JSON
+//! form is another matter, and is told apart: it is a fault of the tree being
+//! read, not of what a client or a peer wrote.
 
 use crate::attribute::geo_property::TypedGeometryRefusal;
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, reference::NgsiLdReferenceError};
+use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, JsonPointerSegment};
+use andromeda_ngsi_ld_representation::attribute_type_validation::AttributeNodeFault;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use derive_more::Display;
 use std::error::Error;
@@ -70,17 +73,29 @@ pub enum RefusedMember {
     /// `observedAt`.
     #[display("{}", compact_properties::OBSERVED_AT)]
     ObservedAt,
+    /// The `entityIdSealed` of an `ngsildproof` Property.
+    #[display("{}", compact_properties::ENTITY_ID_SEALED)]
+    EntityIdSealed,
+    /// The `entityTypeSealed` of an `ngsildproof` Property.
+    #[display("{}", compact_properties::ENTITY_TYPE_SEALED)]
+    EntityTypeSealed,
 }
 
-/// Why a compact node is no typed entity or attribute instance.
+/// What is wrong with a compact node read as an entity, an attribute member
+/// or an attribute instance.
 #[derive(Debug, Error)]
 pub enum NodeRefusal {
     /// The node is no JSON object.
     #[error("an entity or an attribute instance is a JSON object")]
     NotAnObject,
-    /// The instance's `type` member names no attribute family.
-    #[error("the `type` member names no attribute family")]
-    NoFamily,
+    /// A node standing where an attribute stands is none the clauses admit
+    /// (clauses 4.5.2.3, 4.5.5 and 5.2.4).
+    #[error("the attribute {0}")]
+    Shape(AttributeNodeFault),
+    /// A JSON `null` stands where a value is required: no member of an
+    /// NGSI-LD element admits a null value directly (clause 5.2.1).
+    #[error("a JSON null stands where a value is required")]
+    Null,
     /// A member the entity or the instance's family requires is absent.
     #[error("missing field `{member}`")]
     Missing {
@@ -114,7 +129,7 @@ pub enum NodeRefusal {
         #[source]
         source: TypedGeometryRefusal,
     },
-    /// A `JsonProperty` value is no JSON value the broker admits.
+    /// A value held as JSON is no JSON value the broker admits.
     #[error("invalid `{member}` member: {source}")]
     Literal {
         /// The member.
@@ -134,14 +149,62 @@ pub enum NodeRefusal {
     AttributeName(#[source] NgsiLdReferenceError),
 }
 
+/// A refusal and where it stands, from the top of the document read.
+#[derive(Debug, Error)]
+#[error("the node at {path} is refused: {refusal}")]
+pub struct RefusedNode {
+    /// Where the refused node stands.
+    pub path: JsonPointer,
+    /// What is wrong with it.
+    #[source]
+    pub refusal: NodeRefusal,
+}
+
 /// Why a compact node gives no typed value.
 #[derive(Debug, Error)]
 pub enum NodeReadError<U: Error + 'static> {
     /// The node is refused as what it was read as.
     #[error(transparent)]
-    Refused(#[from] NodeRefusal),
+    Refused(RefusedNode),
     /// A node of the tree has no JSON form, see
-    /// [`CompactNode::Unreadable`](crate::compact_node::CompactNode::Unreadable).
+    /// [`CompactNode::Unreadable`](andromeda_ngsi_ld_representation::compact_node::CompactNode::Unreadable).
     #[error(transparent)]
     Unreadable(U),
+}
+
+impl<U: Error + 'static> From<NodeRefusal> for NodeReadError<U> {
+    fn from(refusal: NodeRefusal) -> NodeReadError<U> {
+        NodeReadError::Refused(RefusedNode {
+            path: JsonPointer::from_segments(Vec::new()),
+            refusal,
+        })
+    }
+}
+
+impl<U: Error + 'static> NodeReadError<U> {
+    /// The same failure, read from one step further up the document: a
+    /// refusal found inside the member or element `segment` names is located
+    /// below it.
+    #[must_use]
+    pub fn within(self, segment: JsonPointerSegment) -> NodeReadError<U> {
+        match self {
+            NodeReadError::Refused(RefusedNode { path, refusal }) => NodeReadError::Refused(RefusedNode {
+                path: JsonPointer::from_segments([segment].into_iter().chain(path.segments().iter().cloned()).collect()),
+                refusal,
+            }),
+            NodeReadError::Unreadable(unreadable) => NodeReadError::Unreadable(unreadable),
+        }
+    }
+
+    /// The same failure, read from inside the member `name`.
+    #[must_use]
+    pub fn within_member(self, name: &str) -> NodeReadError<U> {
+        self.within(JsonPointerSegment::Member(Box::from(name)))
+    }
+
+    /// The same failure, read from inside the element `index`.
+    #[must_use]
+    pub fn within_element(self, index: usize) -> NodeReadError<U> {
+        self.within(JsonPointerSegment::Index(index))
+    }
 }

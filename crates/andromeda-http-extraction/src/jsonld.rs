@@ -872,16 +872,16 @@ mod tests {
         }
     }
 
-    /// An Entity decoded straight from the body text renders as the
-    /// document the untyped extraction parses, numbers in canonical spelling
-    /// included, and both refuse the same bodies.
+    /// An Entity written normalized, decoded straight from the body text,
+    /// renders as the document the untyped extraction parses, numbers in
+    /// canonical spelling included, and both refuse the same bodies.
     #[tokio::test]
     async fn an_untyped_document_is_the_document_an_entity_typed_extraction_renders() {
         let bodies = [
             r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":{"type":"Property","value":[21.5,-7,0,18446744073709551616,0.100000000000000005]}}"#,
             r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":{"type":"Property","value":[1e-7,-2.5e-400,1E+20,1e20,0.00001,1.50]}}"#,
             r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":{"type":"Property","value":{"b":1,"$serde_json::private::Number":"5"}}}"#,
-            r#"{"id":"urn:ngsi-ld:T:1","type":"T","s":"text","j":{"type":"JsonProperty","json":{"a":[1.0,{"b":2.50}]}},"raw":{"value":1E+2}}"#,
+            r#"{"id":"urn:ngsi-ld:T:1","type":"T","s":{"type":"Property","value":"text"},"j":{"type":"JsonProperty","json":{"a":[1.0,{"b":2.50}]}},"raw":{"type":"Property","value":1E+2}}"#,
         ];
         for body in bodies {
             let untyped = extract_document(json_request(body)).await.map(|extracted| extracted.document.to_string());

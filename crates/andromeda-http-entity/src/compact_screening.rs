@@ -1,111 +1,102 @@
-//! The two clause 5.5.4 rules decidable only on the compact payload, read off
-//! the typed compact entity.
+//! The clause 4.6.4 key rule, read off the typed compact entity.
 //!
-//! [`validate_fragment_attribute_types`] and [`screen_keys_in_fragment`] state
-//! the rules over the compact JSON of an entity: clause 5.2.4's eight attribute
-//! types together with clause 4.5.2.2's `ngsildproof` seals, and the keys
-//! clause 4.6.4 refuses because JSON-LD expansion would drop or rewrite them.
+//! [`screen_keys_in_fragment`] states the rule over the compact JSON of an
+//! entity: the keys JSON-LD expansion would drop or rewrite past recovery.
 //! Clause 5.5.7's `@context` below the top level is not among them: it is part
 //! of the request's user `@context`, refused by the user `@context` admission
-//! (`andromeda_jsonld::user_context_admission`) before this screening runs. The extractor decodes the request straight
-//! into the typed [`Entity`] or [`EntityPatch`], so the rules are applied here
-//! to what that decode holds, member by member, rather than to a JSON copy of
-//! the whole entity rendered back for them:
+//! (`andromeda_jsonld::user_context_admission`) before this screening runs. The
+//! attribute types of clause 5.2.4 and the seals of clause 4.5.2.2 are not
+//! among them either: the decode of the request refuses a node either rule
+//! refuses, so a decoded payload holds none. The extractor decodes the request
+//! straight into the typed [`Entity`] or [`EntityPatch`], so the rule is
+//! applied here to what that decode holds, member by member, rather than to a
+//! JSON copy of the whole entity rendered back for it:
 //!
-//! - a member the decode carries verbatim, and every client-written JSON value
-//!   inside a typed instance, is read by the representation crate's own walk,
-//!   its location reported from the top of the entity;
-//! - a typed instance declares one of the eight types by construction, holds
-//!   any seal it was written with as a sub-attribute, and is keyed by its
-//!   family's members and by attribute names, so it can carry a refused key
-//!   only inside a JSON value or a sub-attribute, and only those are read;
-//! - a typed geometry is RFC 7946 positions and nothing else, so neither rule
-//!   has anything to read in it, which is what keeps a large geometry out of
-//!   the screening.
+//! - every client-written JSON value inside a typed instance is read by the
+//!   representation crate's own walk, its location reported from the top of
+//!   the entity;
+//! - a typed instance is keyed by its family's members and by attribute names,
+//!   so it can carry a refused key only inside a JSON value or a sub-attribute,
+//!   and only those are read;
+//! - a typed geometry is RFC 7946 positions and nothing else, so the rule has
+//!   nothing to read in it, which is what keeps a large geometry out of the
+//!   screening.
 //!
-//! Each rule reports the first fault in the member order of the compact JSON
-//! it is stated over, and the attribute-type rule is decided over every member
-//! before the key rule, exactly as the two run over a rendered entity.
+//! The rule reports the first fault in the member order of the compact JSON it
+//! is stated over.
 //!
-//! [`validate_fragment_attribute_types`]: andromeda_ngsi_ld_representation::attribute_type_validation::validate_fragment_attribute_types
 //! [`screen_keys_in_fragment`]: andromeda_ngsi_ld_representation::compact_key_admission::screen_keys_in_fragment
 
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_json_literal::JsonLiteral;
+use andromeda_ngsi_ld_expansion::written_member::{WrittenMember, WrittenMemberRef};
 use andromeda_ngsi_ld_model::{
     attribute::{
         inline_entity::InlineEntity,
         instance::{Attribute, AttributeValue},
+        merge_instance::MergeInstance,
+        merge_member::MergeMember,
+        merge_value::MergeValue,
         one_or_many::OneOrMany,
+        patched::Patched,
         value::NgsiLdValue,
     },
     entity::{Entity, EntityPatch},
 };
 use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, JsonPointerSegment};
 use andromeda_ngsi_ld_representation::{
-    attribute_type_validation::{AttributeNodeFault, AttributeTypeError, validate_attribute_node},
     compact_key_admission::{CompactKeyError, screen_keys_in_nested_value},
     embedded_context_admission::is_native_json_member,
-    family_member_admission::MemberAdmission,
-    proof_seal_admission::{ProofSealMember, proof_seal_admission},
 };
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
-use serde_json::Value;
-use thiserror::Error;
 
-/// A compact payload one of the two rules refuses.
-#[derive(Debug, Error)]
-pub(crate) enum CompactRefusal {
-    /// An attribute node is not one clauses 5.2.4 and 4.5.2.2 admit.
-    #[error(transparent)]
-    AttributeType(#[from] AttributeTypeError),
-    /// A key the document cannot be written with: one JSON-LD expansion would
-    /// drop or rewrite (clause 4.6.4).
-    #[error(transparent)]
-    Key(#[from] CompactKeyError),
-}
-
-/// Screen a decoded Entity under both rules.
+/// Screen the attribute members of a decoded Entity.
 ///
 /// # Errors
 ///
-/// Returns the first attribute node clauses 5.2.4 and 4.5.2.2 refuse, else
-/// the first key clause 4.6.4 refuses.
-pub(crate) fn screen_compact_entity(entity: &Entity) -> Result<(), CompactRefusal> {
+/// Returns the first key clause 4.6.4 refuses.
+pub(crate) fn screen_compact_entity<M: WrittenMember>(entity: &Entity<M>) -> Result<(), CompactKeyError> {
     screen_compact_members(entity.attribute_members())
 }
 
-/// Screen a decoded entity Fragment under both rules.
+/// Screen the attribute members of a decoded entity Fragment.
 ///
 /// # Errors
 ///
 /// As [`screen_compact_entity`].
-pub(crate) fn screen_compact_patch(patch: &EntityPatch) -> Result<(), CompactRefusal> {
-    let geo_properties = [
-        (compact_properties::LOCATION, &patch.location),
-        (compact_properties::OBSERVATION_SPACE, &patch.observation_space),
-        (compact_properties::OPERATION_SPACE, &patch.operation_space),
-    ];
-    screen_compact_members(
-        patch.attrs.iter().map(|(name, value)| (name.as_str(), value)).chain(
-            geo_properties
-                .into_iter()
-                .filter_map(|(name, member)| member.as_ref().map(|member| (name, member))),
-        ),
-    )
+pub(crate) fn screen_compact_patch<M: WrittenMember>(patch: &EntityPatch<M>) -> Result<(), CompactKeyError> {
+    screen_compact_members(patch.attribute_members())
 }
 
-/// Screen the attribute members of a decoded payload under both rules.
-fn screen_compact_members<'a>(members: impl Iterator<Item = (&'a str, &'a AttributeValue)>) -> Result<(), CompactRefusal> {
-    let mut members: Vec<_> = members.collect();
-    // The rules walk a JSON object, whose members come in name order.
+/// Screen the one attribute member a bare Attribute Fragment of clauses 5.6.4
+/// and 5.6.19 writes to the attribute `name`.
+///
+/// # Errors
+///
+/// As [`screen_compact_entity`], located from the attribute's name.
+pub(crate) fn screen_compact_attribute<M: WrittenMember>(name: &str, member: &M) -> Result<(), CompactKeyError> {
+    if is_native_json_member(name) {
+        return Ok(());
+    }
+    screen_keys_in_written_member(member, &[segment(name)])
+}
+
+/// Screen the attribute members of a decoded payload.
+fn screen_compact_members<'a, M: WrittenMember + 'a>(members: impl Iterator<Item = (&'a str, &'a M)>) -> Result<(), CompactKeyError> {
+    let mut members: Vec<_> = members.filter(|(name, _)| !is_native_json_member(name)).collect();
+    // The rule walks a JSON object, whose members come in name order.
     members.sort_unstable_by_key(|(name, _)| *name);
-    let members = members;
-    members.iter().try_for_each(|(name, member)| screen_attribute_types(name, member))?;
     members
-        .iter()
-        .filter(|(name, _)| !is_native_json_member(name))
-        .try_for_each(|(name, member)| screen_keys_in_member(member, &[segment(name)]))?;
-    Ok(())
+        .into_iter()
+        .try_for_each(|(name, member)| screen_keys_in_written_member(member, &[segment(name)]))
+}
+
+/// The key rule over one member of an entity or of a merge fragment, standing
+/// at `at`.
+fn screen_keys_in_written_member<M: WrittenMember>(member: &M, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
+    match member.written() {
+        WrittenMemberRef::Attribute(member) => screen_keys_in_member(member, at),
+        WrittenMemberRef::Merge(member) => screen_keys_in_merge_member(member, at),
+    }
 }
 
 /// One member name as a pointer segment.
@@ -113,99 +104,28 @@ fn segment(name: &str) -> JsonPointerSegment {
     JsonPointerSegment::Member(Box::from(name))
 }
 
-/// A pointer the representation crate's walk reported from the node it was
-/// handed, whose own name heads it, located instead from `at`.
-fn rerooted(at: &[JsonPointerSegment], found: &JsonPointer) -> JsonPointer {
-    let below = found.segments().split_first().map_or(&[][..], |(_, below)| below);
-    JsonPointer::from_segments(at.iter().chain(below).cloned().collect())
-}
-
 /// `prefix` followed by one more segment.
 fn extended(prefix: &[JsonPointerSegment], next: JsonPointerSegment) -> Vec<JsonPointerSegment> {
     prefix.iter().cloned().chain([next]).collect()
 }
 
-/// The clause 5.2.4 and 4.5.2.2 rule over one top-level attribute member.
-fn screen_attribute_types(name: &str, member: &AttributeValue) -> Result<(), AttributeTypeError> {
-    match member {
-        AttributeValue::Raw(raw) => validate_attribute_node(name, raw),
-        AttributeValue::Single(instance) => screen_instance(name, instance, &[segment(name)]),
-        AttributeValue::Multiple(instances) => instances
-            .iter()
-            .enumerate()
-            .try_for_each(|(index, instance)| screen_instance(name, instance, &[segment(name), JsonPointerSegment::Index(index)])),
-    }
-}
-
-/// The clause 4.5.2.2 seal rule over one typed instance of the attribute
-/// `name`, standing at `at`, and both rules over everything nested below it.
-fn screen_instance(name: &str, instance: &Attribute, at: &[JsonPointerSegment]) -> Result<(), AttributeTypeError> {
-    let sub_attributes = &instance.common().sub_attributes;
-    let family = instance.attribute_type();
-    let forbidden = sub_attributes
-        .keys()
-        .map(AttributeName::as_str)
-        .filter(|member| proof_seal_admission(name, family, member) == MemberAdmission::Forbidden)
-        .filter_map(|member| ProofSealMember::of(member).map(|seal| (member, seal)))
-        .min_by(|(left, _), (right, _)| left.cmp(right));
-    if let Some((_, member)) = forbidden {
-        return Err(AttributeTypeError {
-            attribute: JsonPointer::from_segments(at.to_vec()),
-            fault: AttributeNodeFault::ProofSealOutsideNgsildproof(member),
-        });
-    }
-    // The family's own members are its envelope, not attributes nested in it.
-    let reserved = family.reserved_fields();
-    let mut nested: Vec<_> = sub_attributes
-        .iter()
-        .filter(|(member, _)| ProofSealMember::of(member.as_str()).is_none() && !reserved.contains(&member.as_str()))
-        .collect();
-    nested.sort_unstable_by_key(|(name, _)| *name);
-    nested
-        .into_iter()
-        .try_for_each(|(member, value)| screen_member(member.as_str(), value, &extended(at, segment(member.as_str()))))
-}
-
-/// Both rules over one nested member, standing at `at`.
-fn screen_member(name: &str, member: &AttributeValue, at: &[JsonPointerSegment]) -> Result<(), AttributeTypeError> {
-    match member {
-        AttributeValue::Single(instance) => screen_instance(name, instance, at),
-        AttributeValue::Multiple(instances) => instances
-            .iter()
-            .enumerate()
-            .try_for_each(|(index, instance)| screen_instance(name, instance, &extended(at, JsonPointerSegment::Index(index)))),
-        AttributeValue::Raw(node) => screen_written_node(name, node, at),
-    }
-}
-
-/// Both rules over one nested node carried as written.
-///
-/// A sub-attribute is an attribute (clause 4.5.2.2), so the representation
-/// crate's walk reads it exactly as it reads a top-level one, and its finding
-/// is located from the top of the entity.
-fn screen_written_node(name: &str, node: &Value, at: &[JsonPointerSegment]) -> Result<(), AttributeTypeError> {
-    validate_attribute_node(name, node).map_err(|error| AttributeTypeError {
-        attribute: rerooted(at, &error.attribute),
-        fault: error.fault,
-    })
-}
-
-/// The key rules over one attribute member standing at `at`.
+/// The key rule over one attribute member standing at `at`; the NGSI-LD Null
+/// carries no key.
 fn screen_keys_in_member(member: &AttributeValue, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
     match member {
-        AttributeValue::Raw(raw) => screen_keys_in_written(raw, at),
         AttributeValue::Single(instance) => screen_keys_in_instance(instance, at),
         AttributeValue::Multiple(instances) => instances
             .iter()
             .enumerate()
             .try_for_each(|(index, instance)| screen_keys_in_instance(instance, &extended(at, JsonPointerSegment::Index(index)))),
+        AttributeValue::NgsiLdNull => Ok(()),
     }
 }
 
-/// The key rules over one typed instance standing at `at`: its client-written
+/// The key rule over one typed instance standing at `at`: its client-written
 /// JSON values and its sub-attributes, in member order. Its own keys are the
-/// typed members of its family and attribute names, none of which the rules
-/// refuse; a `@context` among them is the user `@context` admission's to
+/// typed members of its family and attribute names, none of which the rule
+/// refuses; a `@context` among them is the user `@context` admission's to
 /// refuse, before this is reached.
 fn screen_keys_in_instance(instance: &Attribute, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
     let sub_attributes = &instance.common().sub_attributes;
@@ -225,6 +145,7 @@ fn screen_keys_in_instance(instance: &Attribute, at: &[JsonPointerSegment]) -> R
                 .iter()
                 .enumerate()
                 .try_for_each(|(index, value)| screen_keys_in_value(value, &extended(&at, JsonPointerSegment::Index(index)))),
+            WrittenSlot::Literal(literal) => screen_keys_in_written(literal, &at),
             WrittenSlot::Linked(OneOrMany::One(entity)) => screen_keys_in_entity(entity, &at),
             WrittenSlot::Linked(OneOrMany::Many(entities)) => entities
                 .iter()
@@ -235,12 +156,14 @@ fn screen_keys_in_instance(instance: &Attribute, at: &[JsonPointerSegment]) -> R
     })
 }
 
-/// A member of a typed instance that can carry a key the rules refuse.
+/// A member of a typed instance that can carry a key the rule refuses.
 enum WrittenSlot<'a> {
     /// One client-written value.
     Value(&'a NgsiLdValue),
     /// An ordered list of client-written values.
     Values(&'a [NgsiLdValue]),
+    /// A client-written JSON value the family holds as written.
+    Literal(&'a JsonLiteral),
     /// Inline Linked Entities a client wrote.
     Linked(&'a InlineEntity),
     /// A sub-attribute.
@@ -250,14 +173,24 @@ enum WrittenSlot<'a> {
 /// The members of `instance`'s own family that hold client-written JSON.
 fn written_values(instance: &Attribute) -> Vec<(&'static str, WrittenSlot<'_>)> {
     match instance {
-        Attribute::Property(property) => [Some((compact_properties::VALUE, WrittenSlot::Value(&property.value)))]
-            .into_iter()
-            .chain([property
+        Attribute::Property(property) => [
+            Some((compact_properties::VALUE, WrittenSlot::Value(&property.value))),
+            property
                 .previous_value
                 .as_ref()
-                .map(|previous| (compact_properties::PREVIOUS_VALUE, WrittenSlot::Value(previous)))])
-            .flatten()
-            .collect(),
+                .map(|previous| (compact_properties::PREVIOUS_VALUE, WrittenSlot::Value(previous))),
+            property
+                .entity_id_sealed
+                .as_ref()
+                .map(|seal| (compact_properties::ENTITY_ID_SEALED, WrittenSlot::Literal(seal))),
+            property
+                .entity_type_sealed
+                .as_ref()
+                .map(|seal| (compact_properties::ENTITY_TYPE_SEALED, WrittenSlot::Literal(seal))),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
         Attribute::ListProperty(list_property) => [Some((compact_properties::VALUE_LIST, WrittenSlot::Values(&list_property.value_list)))]
             .into_iter()
             .chain([list_property
@@ -280,7 +213,88 @@ fn written_values(instance: &Attribute) -> Vec<(&'static str, WrittenSlot<'_>)> 
     }
 }
 
-/// The key rules over one inline Linked Entity standing at `at`: its attribute
+/// The key rule over one merge member standing at `at`; the NGSI-LD Null
+/// carries no key.
+fn screen_keys_in_merge_member(member: &MergeMember, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
+    match member {
+        MergeMember::Single(instance) => screen_keys_in_merge_instance(instance, at),
+        MergeMember::Multiple(instances) => instances
+            .iter()
+            .enumerate()
+            .try_for_each(|(index, instance)| screen_keys_in_merge_instance(instance, &extended(at, JsonPointerSegment::Index(index)))),
+        MergeMember::NgsiLdNull => Ok(()),
+    }
+}
+
+/// The key rule over one merge instance standing at `at`: the value it
+/// writes, its seals and its sub-attributes, in member order.
+fn screen_keys_in_merge_instance(instance: &MergeInstance, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
+    let mut slots: Vec<(&str, MergeSlot<'_>)> = [
+        match &instance.value {
+            Some(Patched::Set(value)) => Some((value.family().compact_value_key(), MergeSlot::Value(value))),
+            Some(Patched::Null) | None => None,
+        },
+        instance
+            .entity_id_sealed
+            .as_ref()
+            .map(|seal| (compact_properties::ENTITY_ID_SEALED, MergeSlot::Literal(seal))),
+        instance
+            .entity_type_sealed
+            .as_ref()
+            .map(|seal| (compact_properties::ENTITY_TYPE_SEALED, MergeSlot::Literal(seal))),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    slots.extend(
+        instance
+            .sub_attributes
+            .iter()
+            .filter(|(name, _)| !is_native_json_member(name.as_str()))
+            .map(|(name, member)| (name.as_str(), MergeSlot::SubAttribute(member))),
+    );
+    slots.sort_unstable_by_key(|(name, _)| *name);
+    slots.into_iter().try_for_each(|(name, slot)| {
+        let at = extended(at, segment(name));
+        match slot {
+            MergeSlot::Value(value) => screen_keys_in_merge_value(value, &at),
+            MergeSlot::Literal(literal) => screen_keys_in_written(literal, &at),
+            MergeSlot::SubAttribute(member) => screen_keys_in_merge_member(member, &at),
+        }
+    })
+}
+
+/// A member of a merge instance that can carry a key the rule refuses.
+enum MergeSlot<'a> {
+    /// The value the instance writes.
+    Value(&'a MergeValue),
+    /// A client-written JSON value held as written.
+    Literal(&'a JsonLiteral),
+    /// A sub-attribute.
+    SubAttribute(&'a MergeMember),
+}
+
+/// The key rule over the value a merge instance writes. A JSON literal of a
+/// `JsonProperty` is data the processor never expands, a language map is
+/// keyed by tags, and the identifiers of the relationship and vocabulary
+/// families are strings, so only a Property's values carry keys.
+fn screen_keys_in_merge_value(value: &MergeValue, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
+    match value {
+        MergeValue::Property(value) => screen_keys_in_value(value, at),
+        MergeValue::ListProperty(values) => values
+            .iter()
+            .enumerate()
+            .try_for_each(|(index, value)| screen_keys_in_value(value, &extended(at, JsonPointerSegment::Index(index)))),
+        MergeValue::Relationship(_)
+        | MergeValue::GeoProperty(_)
+        | MergeValue::VocabProperty(_)
+        | MergeValue::LanguageProperty(_)
+        | MergeValue::JsonProperty(_)
+        | MergeValue::ListRelationship(_) => Ok(()),
+    }
+}
+
+/// The key rule over one inline Linked Entity standing at `at`: its attribute
 /// members, in member order.
 fn screen_keys_in_entity(entity: &Entity, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
     let mut members: Vec<_> = entity.attribute_members().filter(|(name, _)| !is_native_json_member(name)).collect();
@@ -290,7 +304,7 @@ fn screen_keys_in_entity(entity: &Entity, at: &[JsonPointerSegment]) -> Result<(
         .try_for_each(|(name, member)| screen_keys_in_member(member, &extended(at, segment(name))))
 }
 
-/// The key rules over one client-written value; a typed geometry holds
+/// The key rule over one client-written value; a typed geometry holds
 /// positions only and carries nothing to refuse.
 fn screen_keys_in_value(value: &NgsiLdValue, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
     match value {
@@ -299,11 +313,11 @@ fn screen_keys_in_value(value: &NgsiLdValue, at: &[JsonPointerSegment]) -> Resul
     }
 }
 
-/// The key rules over one value carried as written, standing at `at` below
-/// the top level, read by the representation crate's own walk and located
-/// from the top of the entity.
-fn screen_keys_in_written(value: &Value, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
-    screen_keys_in_nested_value(value).map_err(|error| error.relocated(|path| located(at, path)))
+/// The key rule over one value carried as written, standing at `at` below the
+/// top level, read by the representation crate's own walk and located from
+/// the top of the entity.
+fn screen_keys_in_written(value: &JsonLiteral, at: &[JsonPointerSegment]) -> Result<(), CompactKeyError> {
+    screen_keys_in_nested_value(value.piece()).map_err(|error| error.relocated(|path| located(at, path)))
 }
 
 /// A pointer the representation crate's walk reported from the value it was
@@ -314,22 +328,16 @@ fn located(at: &[JsonPointerSegment], found: &JsonPointer) -> JsonPointer {
 
 #[cfg(test)]
 mod tests {
-    use crate::compact_screening::{CompactRefusal, screen_compact_entity, screen_compact_patch};
-    use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
-    use andromeda_ngsi_ld_representation::{attribute_type_validation::validate_fragment_attribute_types, compact_key_admission::screen_keys_in_fragment};
+    use crate::compact_screening::{screen_compact_attribute, screen_compact_entity, screen_compact_patch};
+    use andromeda_ngsi_ld_model::{
+        attribute::{instance::AttributeValue, merge_member::MergeMember},
+        entity::{Entity, EntityPatch},
+    };
+    use andromeda_ngsi_ld_representation::{
+        attribute_type_validation::validate_fragment_attribute_types,
+        compact_key_admission::{screen_keys_in_attribute, screen_keys_in_fragment},
+    };
     use serde_json::{Value, json};
-
-    /// What the two rules decide over the compact JSON of a decoded payload,
-    /// as they were run before the payload stayed typed.
-    fn over_rendered_json(rendered: &Value) -> Result<(), String> {
-        validate_fragment_attribute_types(rendered).map_err(|error| error.to_string())?;
-        screen_keys_in_fragment(rendered).map_err(|error| error.to_string())
-    }
-
-    /// The finding of the typed screening, as text.
-    fn typed(outcome: Result<(), CompactRefusal>) -> Result<(), String> {
-        outcome.map_err(|error| error.to_string())
-    }
 
     /// Entities each breaking, or narrowly keeping, one of the rules at a
     /// different depth and in a different shape.
@@ -385,59 +393,71 @@ mod tests {
         ]
     }
 
-    /// Both rules reach the same verdict and name the same location on the
-    /// typed entity as on its compact JSON, for every entity of the corpus.
+    /// The decode refuses every payload the attribute-type rule refuses on
+    /// the compact JSON, and the typed key rule reaches the same verdict at the
+    /// same location as the rule over the compact JSON, for every entity of the
+    /// corpus the decode admits. The decode is the stricter of the two: it reads
+    /// a sub-attribute named `name` as the attribute clause 4.5.2.2 makes it,
+    /// seals included, where the type rule steps over that member.
     #[test]
-    fn the_typed_screening_finds_what_the_rules_find_on_the_compact_json() {
+    fn the_decode_and_the_typed_screening_find_what_the_rules_find_on_the_compact_json() {
         for written in corpus() {
-            let entity: Entity = serde_json::from_value(written.clone()).expect("the corpus entity decodes"); // clone: the expectation names the payload
-            let rendered = serde_json::to_value(&entity).expect("the entity renders");
-            pretty_assertions::assert_eq!(typed(screen_compact_entity(&entity)), over_rendered_json(&rendered), "{written}");
+            // clone: the expectation names the payload
+            if let Ok(entity) = serde_json::from_value::<Entity>(written.clone()) {
+                assert!(
+                    validate_fragment_attribute_types(&written).is_ok(),
+                    "the decode admitted what the type rule refuses: {written}"
+                );
+                pretty_assertions::assert_eq!(screen_compact_entity(&entity), screen_keys_in_fragment(&written), "{written}");
+            }
         }
     }
 
-    /// An entity Fragment is screened over the same members, its three
-    /// geo-properties included.
+    /// An entity Fragment, and a merge fragment, are decoded and screened as
+    /// the entity they patch, their three geo-properties included.
     #[test]
     fn a_fragment_is_screened_as_the_entity_it_patches() {
         for written in corpus() {
-            let patch: EntityPatch = serde_json::from_value(written.clone()).expect("the corpus fragment decodes"); // clone: the expectation names the payload
-            let rendered = serde_json::to_value(&patch).expect("the fragment renders");
-            pretty_assertions::assert_eq!(typed(screen_compact_patch(&patch)), over_rendered_json(&rendered), "{written}");
+            // clone: the payload is decoded three ways
+            let entity = serde_json::from_value::<Entity>(written.clone())
+                .ok()
+                .map(|entity| screen_compact_entity(&entity));
+            let patch = serde_json::from_value::<EntityPatch>(written.clone())
+                .ok()
+                .map(|patch| screen_compact_patch(&patch));
+            let merge = serde_json::from_value::<EntityPatch<MergeMember>>(written.clone())
+                .ok()
+                .map(|patch| screen_compact_patch(&patch));
+            pretty_assertions::assert_eq!(patch, entity, "{written}");
+            pretty_assertions::assert_eq!(merge, entity, "{written}");
         }
     }
 
-    /// A sub-attribute is an attribute (clause 4.5.2.2): one the decode carried
-    /// as written because its `type` names no attribute type is refused where
-    /// it stands, in an Entity and in a Fragment alike.
+    /// A bare Attribute Fragment is screened from the attribute's name, as
+    /// the rule over its compact JSON reports it.
     #[test]
-    fn a_misspelt_type_on_a_written_sub_attribute_is_refused_where_it_stands() {
-        let written = json!({
-            "id": "urn:ngsi-ld:Building:1",
-            "type": "Building",
-            "speed": {"type": "Property", "value": 1, "accuracy": {"type": "Propertyy", "value": 0.5}}
-        });
-        let entity: Entity = serde_json::from_value(written.clone()).expect("the entity decodes"); // clone: the fragment is decoded from the same payload
-        let patch: EntityPatch = serde_json::from_value(written).expect("the fragment decodes");
-        for refusal in [screen_compact_entity(&entity), screen_compact_patch(&patch)] {
-            let refusal = typed(refusal).expect_err("a misspelt sub-attribute type is refused");
-            assert!(refusal.contains("/speed/accuracy"), "{refusal}");
-            assert!(refusal.contains("not an NGSI-LD attribute type"), "{refusal}");
-        }
+    fn an_attribute_fragment_is_screened_from_its_name() {
+        let written = json!({"type": "Property", "value": {"@foo": 1}});
+        let member: AttributeValue = serde_json::from_value(written.clone()).expect("a member"); // clone: the expectation names the payload
+        pretty_assertions::assert_eq!(screen_compact_attribute("p", &member), screen_keys_in_attribute("p", &written));
+        assert!(screen_compact_attribute("p", &member).is_err());
     }
 
-    /// The corpus is not vacuous: it holds payloads each rule refuses.
+    /// The corpus is not vacuous: it holds payloads the decode refuses and
+    /// payloads the key rule refuses.
     #[test]
     fn the_corpus_holds_refusals_of_both_rules() {
-        let findings: Vec<String> = corpus()
+        let (refused, decoded): (Vec<_>, Vec<_>) = corpus().into_iter().map(serde_json::from_value::<Entity>).partition(Result::is_err);
+        let decode: Vec<String> = refused.into_iter().filter_map(Result::err).map(|error| error.to_string()).collect();
+        let keys: Vec<String> = decoded
             .into_iter()
-            .filter_map(|written| serde_json::from_value::<Entity>(written).ok())
+            .filter_map(Result::ok)
             .filter_map(|entity| screen_compact_entity(&entity).err())
             .map(|error| error.to_string())
             .collect();
-        assert!(findings.iter().any(|finding| finding.contains("ngsildproof")), "{findings:?}");
-        assert!(findings.iter().any(|finding| finding.contains("not an NGSI-LD attribute type")), "{findings:?}");
-        assert!(findings.iter().any(|finding| finding.contains("form of a JSON-LD keyword")), "{findings:?}");
-        assert!(findings.iter().any(|finding| finding.contains("is empty")), "{findings:?}");
+        assert!(decode.iter().any(|finding| finding.contains("ngsildproof")), "{decode:?}");
+        assert!(decode.iter().any(|finding| finding.contains("not an NGSI-LD attribute type")), "{decode:?}");
+        assert!(keys.iter().any(|finding| finding.contains("form of a JSON-LD keyword")), "{keys:?}");
+        assert!(keys.iter().any(|finding| finding.contains("is empty")), "{keys:?}");
     }
 }

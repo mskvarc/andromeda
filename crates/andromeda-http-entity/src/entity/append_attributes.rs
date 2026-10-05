@@ -4,13 +4,14 @@ use crate::{
     entity::{
         AppendParams,
         AttributeName,
+        EntityPatch,
         EntityResultExt,
         EntityTenantState,
         ForwardProvisionRequest,
         ForwardingOperation,
         Identifier,
         IntoResponse,
-        JsonLdDocument,
+        JsonLd,
         LocalOutcome,
         NgsiLdRequestEnvelope,
         OverwritePolicy,
@@ -24,7 +25,6 @@ use crate::{
         Value,
         classify_entity_error,
         collect_proxied_attrs,
-        local_remainder_of_payload,
         provision_response,
         update_result::{NotUpdatedReason, update_result_response},
     },
@@ -48,11 +48,12 @@ pub(crate) async fn append_attrs(
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     TypedPath(id): TypedPath<Identifier>,
     ValidatedQuery(params): ValidatedQuery<AppendParams>,
-    JsonLdDocument { document: fragment, context }: JsonLdDocument,
+    JsonLd { body, context }: JsonLd<EntityPatch>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
+    let mut fragment = body.admitted(&context)?;
     let service = &state.entities;
     // The fragment is refused before the options are, so the options are
     // read here and their refusal raised after the admission.
@@ -81,7 +82,7 @@ pub(crate) async fn append_attrs(
     // the plan sends the fragment to reads it again, so it is serialised for
     // them before it moves into the admission.
     let payload = plan.payload(&fragment).with_entity_instance(&uri)?;
-    let admitted = admit_written_entity::<AppendAttributes>(service, fragment, &context)
+    let admitted = admit_written_entity::<AppendAttributes>(service, &fragment, &context)
         .await
         .with_entity_instance(&uri)?;
     let overwrite = match requested_policy.with_entity_instance(&uri)? {
@@ -104,14 +105,13 @@ pub(crate) async fn append_attrs(
     // Clause 5.6.3.4: the attributes proxied registrations cover leave the
     // fragment; whatever remains is appended here. A fragment no registration
     // read was taken over by none of them.
-    let local_append = match payload.as_deref() {
-        None => Some(service.append_attrs(&target, &id, admitted, overwrite).await),
-        Some(payload) => {
-            let (remainder, strip) = local_remainder_of_payload(payload, &collect_proxied_attrs(&forwarded)).with_entity_instance(&uri)?;
-            match service.admit_local_remainder(admitted, strip, remainder, &context).await {
-                Some(remainder) => Some(async { service.append_attrs(&target, &id, remainder?, overwrite).await }.await),
-                None => None,
-            }
+    let local_append = if payload.is_none() {
+        Some(service.append_attrs(&target, &id, admitted, overwrite).await)
+    } else {
+        let strip = fragment.strip_attributes(&collect_proxied_attrs(&forwarded));
+        match service.admit_local_remainder(admitted, strip, &fragment, &context).await {
+            Some(remainder) => Some(async { service.append_attrs(&target, &id, remainder?, overwrite).await }.await),
+            None => None,
         }
     };
     // Clause 5.6.3.5: the status says "whether all the new Attributes were

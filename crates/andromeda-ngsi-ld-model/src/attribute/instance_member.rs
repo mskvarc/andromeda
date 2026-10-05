@@ -1,28 +1,39 @@
 //! What each member of a compact attribute instance is to the instance's
 //! family (ETSI GS CIM 009 clause 5.2 and Tables 5.2.5-1 to 5.2.38-1).
 //!
-//! An instance names its family in `type`. Each family has a member holding
-//! its value and one holding the previous value `showChanges` reports, and
-//! some have members of their own: `unitCode` on a Property, `valueType` on the
-//! property families, `objectType` and the inline `entity` / `entityList` of a
-//! clause 4.5.23 join on the relationship families. The system members of
-//! clauses 4.5.5, 4.5.7, 4.8 and 4.22 belong to every family, and every other
-//! member is a sub-attribute (clause 4.5.6). What a member is depends on the
-//! family alone: a `unitCode` beside a `ListProperty` value is a sub-attribute
-//! of that name, exactly as the family's own members are in a decoded
-//! document.
+//! An instance names its family in `type`, or implies it (clause 4.5.2.3 and
+//! its siblings). Each family has a member holding its value and one holding
+//! the previous value `showChanges` reports, and some have members of their
+//! own: `unitCode` on a Property, `valueType` on the property families,
+//! `objectType` and the inline `entity` / `entityList` of a clause 4.5.23 join
+//! on the relationship families. The system members of clauses 4.5.5, 4.5.7,
+//! 4.8 and 4.22 belong to every family, and every other member is a
+//! sub-attribute (clause 4.5.6). What a member is depends on the family alone:
+//! a `unitCode` beside a `ListProperty` value is a sub-attribute of that name,
+//! exactly as the family's own members are in a decoded document.
 
 use crate::{
-    attribute::{common_fields::CommonAttributeFields, geo_property::TYPE_MEMBER, instance::AttributeValue},
+    attribute::{common_fields::CommonAttributeFields, instance::AttributeValue, member_reading::MemberReading},
     compact_member::decoded_optional,
-    compact_node::CompactNode,
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
+use andromeda_ngsi_ld_representation::{
+    attribute_type_validation::AttributeNodeFault,
+    compact_node::{CompactNode, NodeMembers},
+    family_member_admission::MemberAdmission,
+    proof_seal_admission::{ProofSealMember, proof_seal_admission},
+};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use indexmap::IndexMap;
 use serde::de::DeserializeOwned;
-use std::str::FromStr;
+use std::{borrow::Cow, str::FromStr};
+
+/// The member an attribute instance names its family in.
+pub(crate) const TYPE_MEMBER: &str = "type";
+
+/// The failure of reading a member of a node of type `N`.
+pub(crate) type ReadError<'n, N> = NodeReadError<<N as CompactNode<'n>>::Unreadable>;
 
 /// What one member of a compact instance is to its family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +52,10 @@ enum InstanceMember {
     ObjectType,
     /// `entity` or `entityList`, the linked entities of a join.
     Inline,
+    /// `entityIdSealed` of the `ngsildproof` Property (clause 4.5.2.2).
+    EntityIdSealed,
+    /// `entityTypeSealed` of the `ngsildproof` Property (clause 4.5.2.2).
+    EntityTypeSealed,
     /// `createdAt`.
     CreatedAt,
     /// `datasetId`.
@@ -60,9 +75,24 @@ enum InstanceMember {
 }
 
 impl InstanceMember {
-    /// What the member named `name` is to `family`.
-    fn of(family: AttributeType, name: &str) -> InstanceMember {
-        match (name, family) {
+    /// What the member named `name` is to `family`, in an instance of the
+    /// attribute named `attribute`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the seal `name` spells when it stands where clause 4.5.2.2 does
+    /// not admit it: the seals are "non-reified subproperties" of the
+    /// `ngsildproof` Property alone, so elsewhere one is neither a member of
+    /// the instance nor a sub-attribute it could be read as.
+    fn of(attribute: &str, family: AttributeType, name: &str) -> Result<InstanceMember, ProofSealMember> {
+        if let Some(seal) = ProofSealMember::of(name) {
+            return match (proof_seal_admission(attribute, family, name), seal) {
+                (MemberAdmission::Admitted, ProofSealMember::EntityIdSealed) => Ok(InstanceMember::EntityIdSealed),
+                (MemberAdmission::Admitted, ProofSealMember::EntityTypeSealed) => Ok(InstanceMember::EntityTypeSealed),
+                (MemberAdmission::Forbidden, refused) => Err(refused),
+            };
+        }
+        Ok(match (name, family) {
             (TYPE_MEMBER, _) => InstanceMember::Family,
             (own, family) if own == family.compact_value_key() => InstanceMember::Value,
             (own, family) if own == family.previous_key() => InstanceMember::Previous,
@@ -88,7 +118,7 @@ impl InstanceMember {
             (compact_properties::MODIFIED_AT, _) => InstanceMember::ModifiedAt,
             (compact_properties::OBSERVED_AT, _) => InstanceMember::ObservedAt,
             (_other, _) => InstanceMember::SubAttribute,
-        }
+        })
     }
 }
 
@@ -96,45 +126,56 @@ impl InstanceMember {
 #[derive(Debug)]
 pub(crate) struct InstanceMembers<'n, N> {
     /// The family's value member.
-    pub(crate) value: Option<&'n N>,
+    pub(crate) value: Option<N>,
     /// The family's previous-value member.
-    pub(crate) previous: Option<&'n N>,
+    pub(crate) previous: Option<N>,
     /// `unitCode`.
-    pub(crate) unit_code: Option<&'n N>,
+    pub(crate) unit_code: Option<N>,
     /// `valueType`.
-    pub(crate) value_type: Option<&'n N>,
+    pub(crate) value_type: Option<N>,
     /// `objectType`.
-    pub(crate) object_type: Option<&'n N>,
+    pub(crate) object_type: Option<N>,
     /// `entity` or `entityList`.
-    pub(crate) inline: Option<&'n N>,
+    pub(crate) inline: Option<N>,
+    /// The `entityIdSealed` seal of an `ngsildproof` Property.
+    pub(crate) entity_id_sealed: Option<N>,
+    /// The `entityTypeSealed` seal of an `ngsildproof` Property.
+    pub(crate) entity_type_sealed: Option<N>,
     /// The system members, by kind.
-    system: SystemMembers<'n, N>,
-    /// The sub-attributes, by name, in the order of their names.
-    sub_attributes: Vec<(&'n str, &'n N)>,
+    pub(crate) system: SystemMembers<N>,
+    /// The sub-attributes, by name, in written order.
+    pub(crate) sub_attributes: Vec<(Cow<'n, str>, N)>,
 }
 
 /// The system members every family carries.
 #[derive(Debug)]
-struct SystemMembers<'n, N> {
+pub(crate) struct SystemMembers<N> {
     /// `createdAt`.
-    created_at: Option<&'n N>,
+    pub(crate) created_at: Option<N>,
     /// `datasetId`.
-    dataset_id: Option<&'n N>,
+    pub(crate) dataset_id: Option<N>,
     /// `deletedAt`.
-    deleted_at: Option<&'n N>,
+    pub(crate) deleted_at: Option<N>,
     /// `expiresAt`.
-    expires_at: Option<&'n N>,
+    pub(crate) expires_at: Option<N>,
     /// `instanceId`.
-    instance_id: Option<&'n N>,
+    pub(crate) instance_id: Option<N>,
     /// `modifiedAt`.
-    modified_at: Option<&'n N>,
+    pub(crate) modified_at: Option<N>,
     /// `observedAt`.
-    observed_at: Option<&'n N>,
+    pub(crate) observed_at: Option<N>,
 }
 
-impl<'n, N: CompactNode> InstanceMembers<'n, N> {
-    /// Sort the members of an instance of `family`.
-    pub(crate) fn sorted(family: AttributeType, members: impl Iterator<Item = (&'n str, &'n N)>) -> InstanceMembers<'n, N> {
+impl<'n, N: CompactNode<'n>> InstanceMembers<'n, N> {
+    /// Sort the members of an instance of `family` of the attribute named
+    /// `attribute`; of a member written twice, the last counts, as a parsed
+    /// object keeps it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AttributeNodeFault::ProofSealOutsideNgsildproof`], located at
+    /// the instance, for a seal clause 4.5.2.2 does not admit on it.
+    pub(crate) fn sorted(attribute: &str, family: AttributeType, members: NodeMembers<'n, N>) -> Result<InstanceMembers<'n, N>, ReadError<'n, N>> {
         let mut sorted = InstanceMembers {
             value: None,
             previous: None,
@@ -142,6 +183,8 @@ impl<'n, N: CompactNode> InstanceMembers<'n, N> {
             value_type: None,
             object_type: None,
             inline: None,
+            entity_id_sealed: None,
+            entity_type_sealed: None,
             system: SystemMembers {
                 created_at: None,
                 dataset_id: None,
@@ -154,7 +197,9 @@ impl<'n, N: CompactNode> InstanceMembers<'n, N> {
             sub_attributes: Vec::new(),
         };
         for (name, member) in members {
-            let slot = match InstanceMember::of(family, name) {
+            let member_kind = InstanceMember::of(attribute, family, &name)
+                .map_err(|seal| ReadError::<N>::from(NodeRefusal::Shape(AttributeNodeFault::ProofSealOutsideNgsildproof(seal))))?;
+            let slot = match member_kind {
                 InstanceMember::Family => continue,
                 InstanceMember::Value => &mut sorted.value,
                 InstanceMember::Previous => &mut sorted.previous,
@@ -162,6 +207,8 @@ impl<'n, N: CompactNode> InstanceMembers<'n, N> {
                 InstanceMember::ValueType => &mut sorted.value_type,
                 InstanceMember::ObjectType => &mut sorted.object_type,
                 InstanceMember::Inline => &mut sorted.inline,
+                InstanceMember::EntityIdSealed => &mut sorted.entity_id_sealed,
+                InstanceMember::EntityTypeSealed => &mut sorted.entity_type_sealed,
                 InstanceMember::CreatedAt => &mut sorted.system.created_at,
                 InstanceMember::DatasetId => &mut sorted.system.dataset_id,
                 InstanceMember::DeletedAt => &mut sorted.system.deleted_at,
@@ -170,13 +217,14 @@ impl<'n, N: CompactNode> InstanceMembers<'n, N> {
                 InstanceMember::ModifiedAt => &mut sorted.system.modified_at,
                 InstanceMember::ObservedAt => &mut sorted.system.observed_at,
                 InstanceMember::SubAttribute => {
+                    sorted.sub_attributes.retain(|(written, _)| *written != name);
                     sorted.sub_attributes.push((name, member));
                     continue;
                 }
             };
             *slot = Some(member);
         }
-        sorted
+        Ok(sorted)
     }
 
     /// The members every family shares: the system members and the
@@ -186,13 +234,16 @@ impl<'n, N: CompactNode> InstanceMembers<'n, N> {
     ///
     /// Returns [`NodeRefusal::Member`] for a system member that does not
     /// decode, [`NodeRefusal::AttributeName`] for a sub-attribute named by no
-    /// attribute name, and the node's [`CompactNode::Unreadable`].
-    pub(crate) fn common(&self) -> Result<CommonAttributeFields, NodeReadError<N::Unreadable>> {
+    /// attribute name, the refusal of a sub-attribute, and the node's
+    /// [`CompactNode::Unreadable`].
+    pub(crate) fn common(&self) -> Result<CommonAttributeFields, ReadError<'n, N>> {
         let system = &self.system;
         let mut sub_attributes = IndexMap::with_capacity(self.sub_attributes.len());
         for (name, member) in &self.sub_attributes {
-            let name = AttributeName::from_str(name).map_err(NodeRefusal::AttributeName)?;
-            sub_attributes.insert(name, AttributeValue::from_node(*member).map_err(NodeReadError::Unreadable)?);
+            let attribute_name =
+                AttributeName::from_str(name).map_err(|source| ReadError::<N>::from(NodeRefusal::AttributeName(source)).within_member(name))?;
+            let value = AttributeValue::from_node(name, *member).map_err(|error| error.within_member(name))?;
+            sub_attributes.insert(attribute_name, value);
         }
         Ok(CommonAttributeFields {
             created_at: optional_member(system.created_at, RefusedMember::CreatedAt)?,
@@ -207,17 +258,22 @@ impl<'n, N: CompactNode> InstanceMembers<'n, N> {
     }
 }
 
+/// The refusal of the member `member`, located at it.
+pub(crate) fn refused_member<'n, N: CompactNode<'n>>(member: RefusedMember, refusal: NodeRefusal) -> ReadError<'n, N> {
+    ReadError::<N>::from(refusal).within_member(&member.to_string())
+}
+
 /// Decode an optional member: absent and `null` are no value.
 ///
 /// # Errors
 ///
 /// Returns [`NodeRefusal::Member`] when the member does not decode as a `T`,
 /// and the node's [`CompactNode::Unreadable`].
-pub(crate) fn optional_member<T: DeserializeOwned, N: CompactNode>(member: Option<&N>, name: RefusedMember) -> Result<Option<T>, NodeReadError<N::Unreadable>> {
+pub(crate) fn optional_member<'n, T: DeserializeOwned, N: CompactNode<'n>>(member: Option<N>, name: RefusedMember) -> Result<Option<T>, ReadError<'n, N>> {
     let Some(member) = member else {
         return Ok(None);
     };
     decoded_optional(member)
         .map_err(NodeReadError::Unreadable)?
-        .map_err(|source| NodeRefusal::Member { member: name, source }.into())
+        .map_err(|source| refused_member::<N>(name, NodeRefusal::Member { member: name, source }))
 }

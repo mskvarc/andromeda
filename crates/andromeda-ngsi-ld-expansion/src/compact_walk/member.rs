@@ -12,8 +12,8 @@ use crate::{
     expanded_tree::{ExpandedItem, Scalar, ValueObject},
     term_scope::TermScope,
 };
+use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeMembers, NodeShape};
 use jsonld::{ContainerKind, Nullable, Term, Type, syntax::Keyword};
-use serde_json::{Map, Value};
 
 /// Expand the value written under the member `key`, or `None` when the value
 /// expands to nothing and the member is not created at all.
@@ -22,7 +22,7 @@ use serde_json::{Map, Value};
 ///
 /// Declines a reverse property, a container the walk does not model, and
 /// whatever expanding the value declines.
-pub fn expand_member(scope: &TermScope<'_>, key: &str, value: &Value) -> Result<Option<Vec<ExpandedItem>>, Decline> {
+pub fn expand_member<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, key: &str, value: N) -> Result<Option<Vec<ExpandedItem>>, Decline> {
     let definition = scope.definition(key);
     if definition.is_some_and(|definition| definition.reverse_property()) {
         return Err(Decline::ReverseProperty);
@@ -36,9 +36,15 @@ pub fn expand_member(scope: &TermScope<'_>, key: &str, value: &Value) -> Result<
     if definition.and_then(|definition| definition.typ()) == Some(&Type::Json) {
         return Ok(Some(vec![ExpandedItem::Json(json_literal(value)?)]));
     }
-    let expanded = match value {
-        Value::Object(map) if has(ContainerKind::Language) => Expanded::Many(language_map(scope, key, map)?),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => expand_element(scope, Some(key), value)?,
+    let expanded = match value.shape() {
+        NodeShape::Object(map) if has(ContainerKind::Language) => Expanded::Many(language_map(scope, key, map)?),
+        NodeShape::Null
+        | NodeShape::Boolean(_)
+        | NodeShape::Number(_)
+        | NodeShape::String(_)
+        | NodeShape::Array(_)
+        | NodeShape::Object(_)
+        | NodeShape::Geometry(_) => expand_element(scope, Some(key), value)?,
     };
     Ok(wrap_list(has(ContainerKind::List), expanded))
 }
@@ -104,7 +110,7 @@ fn wrap_list(list_container: bool, expanded: Expanded) -> Option<Vec<ExpandedIte
 
 /// Expand a language map: one value object per string, tagged with the map
 /// key unless the key is `@none` (step 13.7.4).
-fn language_map(scope: &TermScope<'_>, key: &str, map: &Map<String, Value>) -> Result<Vec<ExpandedItem>, Decline> {
+fn language_map<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, key: &str, map: NodeMembers<'n, N>) -> Result<Vec<ExpandedItem>, Decline> {
     let direction = match scope.definition(key).and_then(|definition| definition.direction()) {
         Some(Nullable::Some(direction)) => Some(direction),
         Some(Nullable::Null) => None,
@@ -112,20 +118,22 @@ fn language_map(scope: &TermScope<'_>, key: &str, map: &Map<String, Value>) -> R
     };
     let mut values = Vec::new();
     for (tag, texts) in map {
-        let language = match scope.expand_key(tag)?.as_ref() {
+        let language = match scope.expand_key(&tag)?.as_ref() {
             Term::Keyword(Keyword::None) => None,
-            Term::Null | Term::Id(_) | Term::Keyword(_) => Some(tag.clone()), // clone: the request is borrowed
+            Term::Null | Term::Id(_) | Term::Keyword(_) => Some(tag.into_owned()),
         };
         for text in force_array(texts) {
-            match text {
-                Value::Null => {}
-                Value::String(text) => values.push(ExpandedItem::Value(ValueObject {
-                    scalar: Scalar::String(text.clone()), // clone: the request is borrowed
+            match text.shape() {
+                NodeShape::Null => {}
+                NodeShape::String(text) => values.push(ExpandedItem::Value(ValueObject {
+                    scalar: Scalar::String(text.into_owned()),
                     datatype: None,
                     language: language.clone(), // clone: every string of the entry carries the entry's language
                     direction: direction.map(direction_of),
                 })),
-                Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => return Err(Decline::MalformedJsonLd),
+                NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => {
+                    return Err(Decline::MalformedJsonLd);
+                }
             }
         }
     }

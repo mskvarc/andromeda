@@ -36,7 +36,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::{instance::Instance, operation::selection::OverwritePolicy, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_model::{attribute::merge_member::MergeMember, entity::Entity};
 use chrono::{DateTime, Utc};
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
@@ -87,7 +87,7 @@ fn terms(expected: &[&str]) -> Vec<String> {
 }
 
 /// Merge `entities` in one batch, inline.
-async fn batch_merge(contended: &ContendedService, entities: Vec<Entity>) -> BatchResult {
+async fn batch_merge(contended: &ContendedService, entities: Vec<Entity<MergeMember>>) -> BatchResult {
     let admitted = admitted_batch(&contended.service, BatchMerge, entities, &ContextSpec::core_only()).await;
     contended
         .service

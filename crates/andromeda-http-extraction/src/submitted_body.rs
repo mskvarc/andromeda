@@ -13,6 +13,8 @@
 
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_jsonld::user_context_admission::{AdmittedContext, SubmittedContext};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_model::attribute::{member_reading::MemberReading, written_attribute::WrittenAttribute};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::http::Uri;
 
@@ -60,6 +62,23 @@ impl<T> SubmittedBody<T> {
         let SubmittedBody { decoded, uri } = self;
         let decoded = decoded.and_then(|value| map(value, &uri));
         SubmittedBody { decoded, uri }
+    }
+}
+
+impl SubmittedBody<WrittenAttribute> {
+    /// The member the bare Attribute Fragment of clauses 5.6.4 and 5.6.19 is,
+    /// read under the attribute name `attribute` the request path carries.
+    ///
+    /// A fragment no clause admits where an attribute stands is refused as
+    /// `BadRequestData` (clause 5.5.4), once the request's context was admitted
+    /// like any other refusal of the body.
+    pub fn read_attribute<M: MemberReading>(self, attribute: &AttributeName) -> SubmittedBody<M> {
+        self.and_then(|written, uri| {
+            written.read(attribute).map_err(|refused| {
+                // clone: the refusal names the request, which the held body keeps naming
+                ClassifiedReport::public(NgsiLdErrorType::BadRequestData, refused.to_string()).with_instance(uri.clone())
+            })
+        })
     }
 }
 

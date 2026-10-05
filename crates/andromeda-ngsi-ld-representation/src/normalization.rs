@@ -26,6 +26,7 @@
 //! all. [`crate::proof_seal_admission`] owns both halves of that rule.
 
 use crate::{
+    compact_node::value_node::object_members,
     concise_reading::{ArrayReading, ObjectReading, read_array, read_object, value_member_family},
     entity_members::ENTITY_MEMBERS,
     output_only_member::discard_output_only_member,
@@ -102,31 +103,40 @@ pub fn normalize_attribute_node(attribute_name: &str, value: &mut Value) {
 /// a concise value, as [`crate::concise_reading`] reads it.
 fn normalize_attribute(attribute_name: &str, value: &mut Value) {
     match value {
-        Value::Object(instance) => match read_object(instance) {
-            // A declared type, or one clause 4.5 infers from the value member
-            // it carries, is an attribute instance: name the type where it was
-            // omitted, then normalize its sub-attributes, so the reserved
-            // members such as `unitCode` stay in the envelope.
-            Ok(ObjectReading::Instance(family)) => normalize_inferred_instance(attribute_name, instance, family),
-            // The geospatial exception (clause 4.5.2.3): a bare GeoJSON
-            // geometry is the value of a GeoProperty, not of a Property.
-            Ok(ObjectReading::GeoPropertyValue) => wrap_as_value(value, AttributeType::GeoProperty),
-            Ok(ObjectReading::PropertyValue) => wrap_as_value(value, AttributeType::Property),
-            Err(_) => {}
-        },
-        Value::Array(items) => match read_array(items) {
-            Ok(ArrayReading::Instances) => {
-                for item in items {
-                    if let Value::Object(instance) = item
-                        && let Ok(ObjectReading::Instance(family)) = read_object(instance)
-                    {
-                        normalize_inferred_instance(attribute_name, instance, family);
+        Value::Object(instance) => {
+            // Read before the match, so the members read are released before a
+            // value is wrapped.
+            let reading = read_object(&object_members(instance));
+            match reading {
+                // A declared type, or one clause 4.5 infers from the value member
+                // it carries, is an attribute instance: name the type where it was
+                // omitted, then normalize its sub-attributes, so the reserved
+                // members such as `unitCode` stay in the envelope.
+                Ok(ObjectReading::Instance(family)) => normalize_inferred_instance(attribute_name, instance, family),
+                // The geospatial exception (clause 4.5.2.3): a bare GeoJSON
+                // geometry is the value of a GeoProperty, not of a Property.
+                Ok(ObjectReading::GeoPropertyValue) => wrap_as_value(value, AttributeType::GeoProperty),
+                Ok(ObjectReading::PropertyValue) => wrap_as_value(value, AttributeType::Property),
+                Err(_) => {}
+            }
+        }
+        Value::Array(items) => {
+            let reading = read_array(&items.iter().collect::<Vec<_>>());
+            match reading {
+                Ok(ArrayReading::Instances) => {
+                    for item in items {
+                        if let Value::Object(instance) = item {
+                            let reading = read_object(&object_members(instance));
+                            if let Ok(ObjectReading::Instance(family)) = reading {
+                                normalize_inferred_instance(attribute_name, instance, family);
+                            }
+                        }
                     }
                 }
+                Ok(ArrayReading::PropertyValue) => wrap_as_value(value, AttributeType::Property),
+                Err(_) => {}
             }
-            Ok(ArrayReading::PropertyValue) => wrap_as_value(value, AttributeType::Property),
-            Err(_) => {}
-        },
+        }
         // A bare scalar is the value of an implicit Property (clause 4.5.2.3).
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => wrap_as_value(value, AttributeType::Property),
     }
@@ -148,8 +158,9 @@ fn normalize_inferred_instance(attribute_name: &str, instance: &mut Map<String, 
 /// A fragment carrying `value` without a `type` is left untyped: clause 5.6.17
 /// gives it the family of the attribute it updates.
 fn normalize_concise_instance(attribute_name: &str, instance: &mut Map<String, Value>) {
+    let inferred = value_member_family(&object_members(instance));
     if attribute_type_of(instance).is_none()
-        && let Ok(Some(inferred)) = value_member_family(instance)
+        && let Ok(Some(inferred)) = inferred
     {
         instance.insert("type".to_string(), Value::String(inferred.to_string()));
     }

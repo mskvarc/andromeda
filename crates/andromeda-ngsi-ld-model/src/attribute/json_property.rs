@@ -3,12 +3,12 @@
 use crate::attribute::common_fields::CommonAttributeFields;
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_with::skip_serializing_none;
 
 /// NGSI-LD `JsonProperty` representation (ETSI GS CIM 009 clause 5.2.38).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JsonProperty {
     /// Raw JSON carried as data, never interpreted as JSON-LD (clause

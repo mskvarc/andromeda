@@ -15,11 +15,12 @@ use crate::{
     entity_body::typed_entity::TypedEntity,
     geometry_selection::{GeometrySelection, selects},
 };
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::attribute::{
     common_fields::CommonAttributeFields,
     geo_property::GeoProperty,
+    geo_property_value::GeoPropertyValue,
     instance::{Attribute, AttributeValue},
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
@@ -33,6 +34,8 @@ use serde_json::Map;
 pub(crate) enum FeatureGeometry<'a> {
     /// A `GeoProperty` geometry, written from its positions.
     Typed(&'a Geometry),
+    /// The geometry a clause 4.7.2 string encodes, written from its positions.
+    Form(&'a GeometryForm),
     /// A geometry read out of a rendered member.
     Written(GeoJsonGeometry),
     /// No geometry: clause 4.5.16.1 writes it as `null`.
@@ -43,6 +46,7 @@ impl Serialize for FeatureGeometry<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             FeatureGeometry::Typed(geometry) => geometry.serialize(serializer),
+            FeatureGeometry::Form(form) => form.serialize(serializer),
             FeatureGeometry::Written(geometry) => geometry.serialize(serializer),
             FeatureGeometry::Undefined => serializer.serialize_none(),
         }
@@ -107,7 +111,7 @@ fn plain_geo_properties(member: &AttributeValue) -> Option<PlainGeoProperties<'_
             .map(plain_geo_property)
             .collect::<Option<Vec<_>>>()
             .map(PlainGeoProperties::Several),
-        AttributeValue::Raw(_) => None,
+        AttributeValue::NgsiLdNull => None,
     }
 }
 
@@ -144,12 +148,12 @@ fn sole_instance<'a>(geo_property: &'a GeoProperty, layout: InstanceLayout, sele
     match rendered_dataset_id {
         Some(dataset_id) if !selectors.is_empty() => {
             if selectors.iter().any(|selector| selects(selector, Some(dataset_id.as_str()))) {
-                FeatureGeometry::Typed(&geo_property.value)
+                typed(&geo_property.value)
             } else {
                 FeatureGeometry::Undefined
             }
         }
-        Some(_) | None => FeatureGeometry::Typed(&geo_property.value),
+        Some(_) | None => typed(&geo_property.value),
     }
 }
 
@@ -171,7 +175,17 @@ fn selected_instance<'a>(instances: &[&'a GeoProperty], layout: InstanceLayout, 
     } else {
         selectors.iter().find_map(named)
     };
-    selected.map_or(FeatureGeometry::Undefined, |instance| FeatureGeometry::Typed(&instance.value))
+    selected.map_or(FeatureGeometry::Undefined, |instance| typed(&instance.value))
+}
+
+/// The Feature geometry a `GeoProperty` value is: its geometry however it was
+/// written, none for the NGSI-LD Null of a deleted one.
+const fn typed(value: &GeoPropertyValue) -> FeatureGeometry<'_> {
+    match value {
+        GeoPropertyValue::Geometry(geometry) => FeatureGeometry::Typed(geometry),
+        GeoPropertyValue::Encoded(encoded) => FeatureGeometry::Form(encoded.form()),
+        GeoPropertyValue::Null => FeatureGeometry::Undefined,
+    }
 }
 
 /// The geometry of a member that is no plain `GeoProperty`: the member is

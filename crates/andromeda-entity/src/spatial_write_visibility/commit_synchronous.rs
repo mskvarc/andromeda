@@ -14,7 +14,10 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
+use andromeda_ngsi_ld_model::{
+    attribute::merge_member::MergeMember,
+    entity::{Entity, EntityPatch},
+};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::sync::Arc;
@@ -50,7 +53,7 @@ async fn under_commit_synchronous_a_merge_moving_an_entity_into_range_makes_it_a
         Some(Vec::new())
     );
 
-    let patch: EntityPatch =
+    let patch: EntityPatch<MergeMember> =
         serde_json::from_value(json!({"location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [0.002, 0.0]}}})).expect("a valid patch");
     let admitted = admitted_entity::<MergeEntity>(&service, &patch, &ContextSpec::core_only()).await;
     service

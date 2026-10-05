@@ -175,7 +175,7 @@ mod tests {
             .render()
             .expect("simplified entity");
 
-        pretty_assertions::assert_eq!(simplified, simplify_entity(&entity));
+        pretty_assertions::assert_eq!(simplified, simplify_entity(&entity).expect("the entity simplifies"));
     }
 
     #[test]

@@ -26,6 +26,7 @@ use andromeda_ngsi_ld_entity::{
     system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::attribute::instance::AttributeValue;
 use std::sync::Arc;
 
 /// What an update-mode upsert is built from on each attempt.
@@ -131,7 +132,7 @@ impl EntityService {
     pub(in crate::batch) async fn batch_upsert_update_chunk(
         &self,
         placement: SideEffectPlacement<'_>,
-        chunk: Vec<AdmittedBatchEntity>,
+        chunk: Vec<AdmittedBatchEntity<AttributeValue>>,
         errors: &mut Vec<(Identifier, EntityError)>,
     ) -> Result<UpsertOutcome, EntityError> {
         // Clause 5.6.8.4: "If there were an existing Entity with the same Entity

@@ -8,13 +8,16 @@
 //! it before the body is decoded, so the decoding skips it.
 
 use crate::{
+    attribute::member_reading::MemberReading,
     entity::{Entity, EntityPatch},
-    entity_decoding::{EntityPatchVisitor, EntityVisitor, FromRequestText},
+    node_refusal::NodeReadError,
     query::body::Query,
     snapshot_clone::SnapshotCloneInput,
     snapshot_input::SnapshotInput,
     snapshot_patch::SnapshotPatch,
 };
+use andromeda_json_literal::piece::JsonPiece;
+use andromeda_ngsi_ld_representation::compact_node::produced_node::ProducedNode;
 use serde::{
     Deserialize,
     Deserializer,
@@ -28,8 +31,8 @@ use serde::{
         value::{BorrowedStrDeserializer, MapAccessDeserializer, StringDeserializer},
     },
 };
-use serde_json::Deserializer as JsonReader;
-use std::{fmt, marker::PhantomData};
+use serde_json::{Deserializer as JsonReader, value::RawValue};
+use std::{convert::Infallible, fmt, marker::PhantomData};
 
 /// The member an `application/ld+json` body names its context in.
 const CONTEXT_MEMBER: &str = "@context";
@@ -58,27 +61,33 @@ impl RequestBody for SnapshotPatch {}
 
 impl RequestBody for SnapshotCloneInput {}
 
-impl RequestBody for Entity {
-    /// Decode an Entity from the JSON text of a request body.
+impl<M: MemberReading> RequestBody for Entity<M> {
+    /// Decode an Entity from the JSON text of a request body, read in place
+    /// as a Context Producer wrote it.
     ///
-    /// Each attribute member is decoded from the slice of text it is, a
-    /// `GeoProperty`'s geometry without any JSON tree, and every number the
-    /// entity holds as JSON is given the canonical spelling a request admitted
-    /// as a parsed tree gives it.
-    fn from_request_text(text: &[u8]) -> Result<Entity, serde_json::Error> {
-        let mut entity = read_context_free(text, EntityVisitor::<FromRequestText>::new())?;
-        entity.canonicalize_numbers().map_err(serde_json::Error::custom)?;
-        Ok(entity)
+    /// Each member is read from the slice of text it is, a `GeoProperty`'s
+    /// geometry without any JSON tree, and every value the entity holds as
+    /// JSON is admitted with its numbers in their canonical spelling.
+    fn from_request_text(text: &[u8]) -> Result<Entity<M>, serde_json::Error> {
+        let raw: &RawValue = serde_json::from_slice(text)?;
+        Entity::<M>::from_node(ProducedNode::new(JsonPiece::new(raw))).map_err(refused)
     }
 }
 
-impl RequestBody for EntityPatch {
+impl<M: MemberReading> RequestBody for EntityPatch<M> {
     /// Decode a partial Entity from the JSON text of a request body, as
     /// [`Entity`] is decoded.
-    fn from_request_text(text: &[u8]) -> Result<EntityPatch, serde_json::Error> {
-        let mut patch = read_context_free(text, EntityPatchVisitor::<FromRequestText>::new())?;
-        patch.canonicalize_numbers().map_err(serde_json::Error::custom)?;
-        Ok(patch)
+    fn from_request_text(text: &[u8]) -> Result<EntityPatch<M>, serde_json::Error> {
+        let raw: &RawValue = serde_json::from_slice(text)?;
+        EntityPatch::<M>::from_node(ProducedNode::new(JsonPiece::new(raw))).map_err(refused)
+    }
+}
+
+/// The reader's error for a body the compact model's reading refuses.
+fn refused(error: NodeReadError<Infallible>) -> serde_json::Error {
+    match error {
+        NodeReadError::Refused(refused) => serde_json::Error::custom(refused),
+        NodeReadError::Unreadable(never) => match never {},
     }
 }
 

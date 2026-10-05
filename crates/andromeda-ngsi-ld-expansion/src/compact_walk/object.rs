@@ -11,20 +11,20 @@ use crate::{
     expanded_tree::{ExpandedItem, ExpandedNode},
     term_scope::{ExpandedTerm, TermScope, id_text, identifier_text},
 };
+use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeMembers, NodeShape};
 use iri_rs::IriBuf;
 use jsonld::{Id, Term, syntax::Keyword};
 use rdfx::BlankIdBuf;
-use serde_json::{Map, Value};
-use std::slice::from_ref;
+use std::borrow::Cow;
 
 /// One member of an object with its key expanded.
-pub struct KeyedEntry<'a> {
+pub struct KeyedEntry<'k, N> {
     /// The key as written.
-    pub key: &'a str,
+    pub key: Cow<'k, str>,
     /// What the key expanded to.
     pub term: ExpandedTerm,
     /// The value as written.
-    pub value: &'a Value,
+    pub value: N,
 }
 
 /// Expand an object written as the value of `active_property`, in the scope
@@ -33,10 +33,10 @@ pub struct KeyedEntry<'a> {
 /// # Errors
 ///
 /// Declines whatever the walk does not model.
-pub fn expand_object(scope: &TermScope<'_>, active_property: Option<&str>, members: &Map<String, Value>) -> Result<Expanded, Decline> {
+pub fn expand_object<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, active_property: Option<&str>, members: NodeMembers<'n, N>) -> Result<Expanded, Decline> {
     let mut entries = Vec::with_capacity(members.len());
     for (key, value) in members {
-        let term = scope.expand_key(key)?;
+        let term = scope.expand_key(&key)?;
         match term.as_ref() {
             Term::Keyword(Keyword::Context) => return Err(Decline::EmbeddedContext),
             Term::Keyword(Keyword::Type) if declares_type_scoped_context(scope, value) => return Err(Decline::TypeScopedContext),
@@ -76,15 +76,18 @@ pub fn expand_object(scope: &TermScope<'_>, active_property: Option<&str>, membe
 }
 
 /// Whether one of the `@type` values names a term with a scoped context.
-fn declares_type_scoped_context(scope: &TermScope<'_>, value: &Value) -> bool {
-    force_array(value).iter().filter_map(Value::as_str).any(|term| scope.has_scoped_context(term))
+fn declares_type_scoped_context<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, value: N) -> bool {
+    force_array(value)
+        .into_iter()
+        .filter_map(CompactNode::text)
+        .any(|term| scope.has_scoped_context(&term))
 }
 
 /// The items of a value read as an array (`[value]` for a non-array).
-pub fn force_array(value: &Value) -> &[Value] {
-    match value {
-        Value::Array(items) => items,
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => from_ref(value),
+pub fn force_array<'n, N: CompactNode<'n>>(value: N) -> Vec<N> {
+    match value.shape() {
+        NodeShape::Array(items) => items,
+        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => vec![value],
     }
 }
 
@@ -104,15 +107,15 @@ impl NodeBuilder {
     ///
     /// Declines a keyword the walk does not model and a value the algorithm
     /// refuses.
-    pub fn add_json(&mut self, scope: &TermScope<'_>, entry: &KeyedEntry<'_>) -> Result<(), Decline> {
+    pub fn add_json<'n, N: CompactNode<'n>>(&mut self, scope: &TermScope<'_>, entry: &KeyedEntry<'_, N>) -> Result<(), Decline> {
         match entry.term.as_ref() {
             Term::Null => Ok(()),
             Term::Keyword(Keyword::Id) => {
                 if self.has_id {
                     return Err(Decline::MalformedJsonLd);
                 }
-                let id = entry.value.as_str().ok_or(Decline::MalformedJsonLd)?;
-                self.node.id = identifier_text(scope.expand_id(id)?.as_ref());
+                let id = entry.value.text().ok_or(Decline::MalformedJsonLd)?;
+                self.node.id = identifier_text(scope.expand_id(&id)?.as_ref());
                 self.has_id = true;
                 Ok(())
             }
@@ -121,8 +124,8 @@ impl NodeBuilder {
                     return Err(Decline::TypeScopedContext);
                 }
                 for type_name in force_array(entry.value) {
-                    let type_name = type_name.as_str().ok_or(Decline::MalformedJsonLd)?;
-                    match scope.expand_vocab(type_name)?.as_ref() {
+                    let type_name = type_name.text().ok_or(Decline::MalformedJsonLd)?;
+                    match scope.expand_vocab(&type_name)?.as_ref() {
                         expanded @ Term::Id(_) => self.node.types.extend(identifier_text(expanded)),
                         Term::Null | Term::Keyword(_) => return Err(Decline::MalformedJsonLd),
                     }
@@ -132,7 +135,7 @@ impl NodeBuilder {
             Term::Keyword(_) => Err(Decline::UnsupportedKeyword),
             Term::Id(property) => {
                 if let Some(name) = property_name(property)
-                    && let Some(values) = expand_member(scope, entry.key, entry.value)?
+                    && let Some(values) = expand_member(scope, &entry.key, entry.value)?
                 {
                     self.node.add_member(name, values);
                 }

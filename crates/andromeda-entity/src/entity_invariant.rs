@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_lexicon::{
     ngsi_ld_urn::{AttributeListIdParseError, EntityTypeListIdParseError},
     reference::NgsiLdReferenceError,
 };
+use andromeda_ngsi_ld_model::node_refusal::RefusedNode;
 use andromeda_unit_catalog::unit_code_registry::UnitCodeSnapshotMalformed;
 use std::num::TryFromIntError;
 use thiserror::Error;
@@ -25,6 +26,10 @@ pub enum EntityInvariant {
     /// An entity state could not be written in its expanded form.
     #[error("an entity state could not be written in expanded form: {0}")]
     StateEncoding(#[source] serde_json::Error),
+    /// A stored entity, compacted, did not read back as a compact entity: data
+    /// the write path admitted is always readable.
+    #[error("a stored entity did not read back as a compact entity: {0}")]
+    CompactReading(#[source] RefusedNode),
     /// A store applied a query's result window while leaving part of its
     /// filter unapplied, so the page would be short and every later page
     /// misaligned.

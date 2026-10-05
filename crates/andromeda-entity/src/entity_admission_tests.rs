@@ -13,17 +13,20 @@ use crate::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::{admission::null_sentinel_admission::NullSentinelAdmission, document::EntityDocument};
 use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
-use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
+use andromeda_ngsi_ld_model::{
+    attribute::{member_reading::MemberReading, merge_member::MergeMember},
+    entity::{Entity, EntityPatch},
+};
 use serde_json::{Value, json};
 
 /// One `Building` carrying `attribute`, as a client writes it before
 /// expansion.
-fn written_entity(attribute: &str, node: &Value) -> Entity {
+fn written_entity<M: MemberReading>(attribute: &str, node: &Value) -> Entity<M> {
     serde_json::from_value(json!({"id": ENTITY_ID, "type": "Building", attribute: node})).expect("the fixture is a valid entity")
 }
 
 /// The same payload as a fragment, for the operations that take one.
-fn written_patch(attribute: &str, node: &Value) -> EntityPatch {
+fn written_patch<M: MemberReading>(attribute: &str, node: &Value) -> EntityPatch<M> {
     serde_json::from_value(json!({attribute: node})).expect("the fixture is a valid entity fragment")
 }
 
@@ -34,18 +37,20 @@ fn admit_expanded(expanded: &Value) -> Result<(), EntityError> {
     Ok(())
 }
 
-/// Admit a Building whose `attribute` is `node` as a creation.
-async fn admit_created(attribute: &str, node: &Value) -> Result<(), EntityError> {
+/// Decode a Building whose `attribute` is `node` as the transport does and
+/// admit it as a creation, reporting the decode's refusal or the admission's.
+async fn admit_created(attribute: &str, node: &Value) -> Result<(), String> {
     let (service, _recorded) = recording_service().await;
-    let payload = json!({"id": ENTITY_ID, "type": "Building", attribute: node});
+    let entity: Entity = serde_json::from_value(json!({"id": ENTITY_ID, "type": "Building", attribute: node})).map_err(|error| error.to_string())?;
     service
-        .admit_entity_write::<CreateEntity>(payload, &admitted_context(&service, &ContextSpec::core_only()).await)
+        .admit_entity_write::<CreateEntity>(&entity, &admitted_context(&service, &ContextSpec::core_only()).await)
         .await
         .map(drop)
+        .map_err(|error| error.to_string())
 }
 
 /// Admit a Building located by `geometry` as a creation.
-async fn admit_located(attribute: &str, geometry: &Value) -> Result<(), EntityError> {
+async fn admit_located(attribute: &str, geometry: &Value) -> Result<(), String> {
     admit_created(attribute, &json!({"type": "GeoProperty", "value": geometry})).await
 }
 
@@ -231,18 +236,16 @@ async fn a_location_whose_position_carries_four_ordinates_is_rejected() {
     let error = admit_located("location", &json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}))
         .await
         .expect_err("four ordinates have no meaning");
-    assert!(matches!(error, EntityError::Validation(_)), "{error:?}");
-    assert!(error.to_string().contains("4 ordinates"), "{error}");
+    assert!(error.contains("4 ordinates"), "{error}");
 }
 
 /// RFC 7946 section 3.1.1 requires two or more elements; what matters for
 /// clause 5.5.4 is that the write is refused.
 #[tokio::test]
 async fn a_location_whose_position_carries_one_ordinate_is_rejected() {
-    let error = admit_located("location", &json!({"type": "Point", "coordinates": [1.0]}))
+    admit_located("location", &json!({"type": "Point", "coordinates": [1.0]}))
         .await
         .expect_err("one ordinate is not a position");
-    assert!(matches!(error, EntityError::Validation(_)), "{error:?}");
 }
 
 #[test]
@@ -272,7 +275,7 @@ async fn a_nested_polygon_vertex_with_four_ordinates_is_rejected() {
     let error = admit_located("location", &polygon)
         .await
         .expect_err("an interior-ring vertex is still a position");
-    assert!(error.to_string().contains("4 ordinates"), "got {error}");
+    assert!(error.contains("4 ordinates"), "got {error}");
 }
 
 /// Clause 4.7.1 lets any attribute be a `GeoProperty`; the three well-known ones
@@ -282,8 +285,8 @@ async fn a_custom_geo_property_with_four_ordinates_is_rejected_and_named() {
     let error = admit_located("site", &json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}))
         .await
         .expect_err("a user-defined GeoProperty is validated too");
-    assert!(error.to_string().contains("site"), "got {error}");
-    assert!(error.to_string().contains("4 ordinates"), "got {error}");
+    assert!(error.contains("site"), "got {error}");
+    assert!(error.contains("4 ordinates"), "got {error}");
 }
 
 #[tokio::test]
@@ -291,7 +294,7 @@ async fn an_operation_space_with_four_ordinates_is_rejected() {
     let error = admit_located("operationSpace", &json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}))
         .await
         .expect_err("operationSpace is a GeoProperty");
-    assert!(error.to_string().contains("operationSpace"), "got {error}");
+    assert!(error.contains("operationSpace"), "got {error}");
 }
 
 /// Clause 4.7.2 permits the `GeoJSON` document to arrive as a string.
@@ -300,7 +303,7 @@ async fn a_geo_property_written_as_a_json_string_is_validated() {
     let error = admit_located("location", &json!("{\"type\":\"Point\",\"coordinates\":[1.0,2.0,3.0,4.0]}"))
         .await
         .expect_err("a stringified document is still a geometry");
-    assert!(error.to_string().contains("4 ordinates"), "got {error}");
+    assert!(error.contains("4 ordinates"), "got {error}");
 }
 
 #[test]
@@ -330,16 +333,23 @@ fn a_valid_geo_property_in_the_fully_expanded_node_form_is_accepted() {
     admit_expanded(&entity).expect("a closed ring of valid positions");
 }
 
-/// Only instances typed `GeoProperty` are geometries; a Property whose value
-/// happens to be four numbers is untouched.
-#[tokio::test]
-async fn an_ordinary_property_carrying_a_coordinate_like_array_is_not_validated_as_a_geometry() {
-    admit_created(
-        "readings",
-        &json!({"type": "Property", "value": {"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}}),
-    )
-    .await
-    .expect("a Property value is no geometry");
+/// Only instances typed `GeoProperty` are geometries to the expanded
+/// admission; a Property whose expanded value happens to carry four numbers
+/// is untouched.
+#[test]
+fn an_ordinary_property_carrying_a_coordinate_like_array_is_not_validated_as_a_geometry() {
+    let entity = json!([{
+        "@id": "urn:ngsi-ld:Building:001",
+        "@type": ["https://example.org/Building"],
+        "https://example.org/readings": [{
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                "@type": ["https://purl.org/geojson/vocab#Point"],
+                "https://purl.org/geojson/vocab#coordinates": [{"@list": [ordinate(1.0), ordinate(2.0), ordinate(3.0), ordinate(4.0)]}]
+            }]
+        }]
+    }]);
+    admit_expanded(&entity).expect("a Property value is no geometry");
 }
 
 /// Clause 4.5.5: the default instance passing is not enough, because a
@@ -351,22 +361,17 @@ async fn every_instance_of_a_multi_instance_geo_property_is_validated() {
         {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}, "datasetId": "urn:ngsi-ld:Dataset:A"}
     ]);
     let error = admit_created("location", &instances).await.expect_err("a tagged instance is validated too");
-    assert!(error.to_string().contains("4 ordinates"), "got {error}");
+    assert!(error.contains("4 ordinates"), "got {error}");
 }
 
-/// Merge and partial update expand to a fragment rather than to a whole
-/// entity, and the fragment's geometries are read all the same.
-#[tokio::test]
-async fn a_patch_fragment_is_validated() {
-    let (service, _recorded) = recording_service().await;
-    let patch = written_patch(
-        "location",
-        &json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}}),
-    );
-    let error = service
-        .admit_entity_write::<MergeEntity>(&patch, &admitted_context(&service, &ContextSpec::core_only()).await)
-        .await
-        .expect_err("a fragment is validated");
+/// Merge and partial update write a fragment rather than a whole entity, and
+/// the fragment's geometries are read all the same.
+#[test]
+fn a_patch_fragment_is_validated() {
+    let error = serde_json::from_value::<EntityPatch<MergeMember>>(json!({
+        "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}}
+    }))
+    .expect_err("a fragment is validated");
     assert!(error.to_string().contains("4 ordinates"), "got {error}");
 }
 
@@ -383,8 +388,7 @@ async fn a_location_that_is_a_geometry_collection_is_rejected() {
     let error = admit_located("location", &collection)
         .await
         .expect_err("a collection is not an allowed GeoProperty geometry");
-    assert!(matches!(error, EntityError::Validation(_)), "{error:?}");
-    assert!(error.to_string().contains("GeometryCollection"), "got {error}");
+    assert!(error.contains("GeometryCollection"), "got {error}");
 }
 
 #[tokio::test]
@@ -392,7 +396,7 @@ async fn a_custom_geo_property_that_is_a_geometry_collection_is_rejected() {
     let error = admit_located("site", &json!({"type": "GeometryCollection", "geometries": []}))
         .await
         .expect_err("a user-defined GeoProperty is validated too");
-    assert!(error.to_string().contains("GeometryCollection"), "got {error}");
+    assert!(error.contains("GeometryCollection"), "got {error}");
 }
 
 #[test]
@@ -423,10 +427,40 @@ async fn a_geometry_collection_written_as_a_json_string_is_rejected() {
     let error = admit_located("location", &json!("{\"type\":\"GeometryCollection\",\"geometries\":[]}"))
         .await
         .expect_err("a stringified collection is still a collection");
-    assert!(error.to_string().contains("GeometryCollection"), "got {error}");
+    assert!(error.contains("GeometryCollection"), "got {error}");
 }
 
 #[test]
 fn an_entity_carrying_no_geo_property_is_accepted() {
     admit_expanded(&json!([{"@id": "urn:ngsi-ld:Building:001", "@type": ["https://example.org/Building"]}])).expect("nothing to read as a geometry");
+}
+
+/// S9: the NGSI-LD Null in place of a whole member deletes it only in a
+/// partial update or a merge; a creation refuses it (clause 5.2.1).
+#[tokio::test]
+async fn a_bare_null_member_is_refused_on_create() {
+    let error = admit_created("owner", &json!("urn:ngsi-ld:null"))
+        .await
+        .expect_err("a creation admits no NGSI-LD Null");
+    assert!(error.contains("urn:ngsi-ld:null"), "{error}");
+}
+
+/// S10: a `GeoProperty` whose value is the NGSI-LD Null is a deletion, which
+/// a creation refuses (clause 5.2.1).
+#[tokio::test]
+async fn a_geo_property_null_value_is_refused_on_create() {
+    let error = admit_created("location", &json!({"type": "GeoProperty", "value": "urn:ngsi-ld:null"}))
+        .await
+        .expect_err("a creation admits no NGSI-LD Null");
+    assert!(error.contains("urn:ngsi-ld:null"), "{error}");
+}
+
+/// S11: outside a merge, the NGSI-LD Null on an instance member is no value
+/// of that member, refused where it stands (clause 5.2.1).
+#[tokio::test]
+async fn a_null_on_an_instance_member_is_refused_outside_a_merge() {
+    let error = admit_created("temperature", &json!({"type": "Property", "value": 1, "observedAt": "urn:ngsi-ld:null"}))
+        .await
+        .expect_err("observedAt holds a date-time");
+    assert!(error.contains("/temperature/observedAt"), "{error}");
 }

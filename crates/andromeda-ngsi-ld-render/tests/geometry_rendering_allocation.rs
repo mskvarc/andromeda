@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_model::{
     attribute::{
         common_fields::CommonAttributeFields,
         geo_property::GeoProperty,
+        geo_property_value::GeoPropertyValue,
         instance::{Attribute, AttributeValue},
     },
     entity::Entity,
@@ -79,7 +80,7 @@ fn ring_positions() -> Result<Vec<Position>, PositionError> {
 /// An entity whose `location` is the Polygon of the one ring `ring`.
 fn polygon_entity(id: Identifier, entity_type: EntityTypeName, ring: LinearRing) -> Entity {
     let location = GeoProperty {
-        value: Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![ring]))),
+        value: GeoPropertyValue::Geometry(Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![ring])))),
         value_type: None,
         previous_value: None,
         common: CommonAttributeFields::default(),

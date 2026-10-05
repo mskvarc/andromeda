@@ -64,7 +64,7 @@ fn polygon_body() -> Result<String, FormatError> {
 fn location_positions(entity: &Entity) -> Option<usize> {
     match entity.location.as_ref()? {
         AttributeValue::Single(instance) => match instance.as_ref() {
-            Attribute::GeoProperty(property) => Some(property.value.form().position_count().get()),
+            Attribute::GeoProperty(property) => property.value.form().map(|form| form.position_count().get()),
             Attribute::Property(_)
             | Attribute::Relationship(_)
             | Attribute::VocabProperty(_)
@@ -73,7 +73,7 @@ fn location_positions(entity: &Entity) -> Option<usize> {
             | Attribute::ListProperty(_)
             | Attribute::ListRelationship(_) => None,
         },
-        AttributeValue::Multiple(_) | AttributeValue::Raw(_) => None,
+        AttributeValue::Multiple(_) | AttributeValue::NgsiLdNull => None,
     }
 }
 

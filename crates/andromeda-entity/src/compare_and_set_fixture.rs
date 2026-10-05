@@ -25,7 +25,7 @@ use andromeda_context_commit::{
 };
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_model::{attribute::member_reading::MemberReading, entity::Entity};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 use std::sync::{Arc, Mutex};
@@ -69,7 +69,7 @@ pub(crate) fn stored_building(id: &Identifier, attributes: &[&str]) -> EntitySta
 }
 
 /// The request Building `id`, in compact form, carrying `attributes`.
-pub(crate) fn request_building(id: &Identifier, attributes: &Value) -> Entity {
+pub(crate) fn request_building<M: MemberReading>(id: &Identifier, attributes: &Value) -> Entity<M> {
     let mut entity = json!({"id": id.as_str(), "type": "Building"});
     if let (Some(entity), Some(attributes)) = (entity.as_object_mut(), attributes.as_object()) {
         // clone: the fixture's attributes are borrowed and the entity owns its members

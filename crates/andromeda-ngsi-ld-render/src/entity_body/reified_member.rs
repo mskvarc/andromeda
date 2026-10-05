@@ -12,24 +12,21 @@
 //! - the concise `objectList` holds bare URIs where the normalized one holds
 //!   `object`-keyed Relationship Objects (Table 5.2.37-1).
 //!
-//! A member is one instance, the instances of a multi-attribute, or a member
-//! the broker carries verbatim; each instance is written by
-//! [`crate::entity_body::reified_instance`].
+//! A member is one instance, the instances of a multi-attribute, or the bare
+//! NGSI-LD Null a notification reports a deleted member by (clause 5.8.6); each
+//! instance is written by [`crate::entity_body::reified_instance`].
 
 use crate::{
-    concise::{InstanceStanding, concise_attr_value, concise_instance},
+    concise::InstanceStanding,
     entity_body::{
         member_walk::MemberWalk,
-        notified_member::{InstanceReport, InstanceSource, MemberInstances, NotifiedInstance, NotifiedMember, reported_verbatim},
+        notified_member::{InstanceReport, MemberInstances, NotifiedInstance, NotifiedMember, NullValue},
         reified_instance::ReifiedInstance,
     },
-    object_list::normalized_verbatim_member,
-    uri_decoding::{UriDecoding, decoded_attribute},
 };
 use andromeda_ngsi_ld_model::attribute::instance::{Attribute, AttributeValue};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde::{Serialize, Serializer};
-use serde_json::Value;
 
 /// Which reified representation a member is written in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,17 +79,8 @@ impl<'a> ReifiedMember<'a> {
     }
 
     /// One instance a notification reports, standing as `standing` says.
-    const fn notified(&self, instance: NotifiedInstance<'a>, standing: InstanceStanding) -> ReifiedNotified<'a> {
-        match instance.source {
-            InstanceSource::Typed(attribute) => ReifiedNotified::Typed(self.instance(attribute, instance.report, standing)),
-            InstanceSource::Verbatim(value) => ReifiedNotified::Verbatim(VerbatimInstance {
-                value,
-                report: instance.report,
-                reification: self.reification,
-                decoding: self.walk.decoding,
-                extent: VerbatimExtent::Instance(standing),
-            }),
-        }
+    const fn notified(&self, instance: NotifiedInstance<'a>, standing: InstanceStanding) -> ReifiedInstance<'a> {
+        self.instance(instance.source, instance.report, standing)
     }
 }
 
@@ -107,72 +95,13 @@ impl Serialize for ReifiedMember<'_> {
                     .iter()
                     .map(|attribute| self.instance(attribute, InstanceReport::default(), InstanceStanding::AmongInstances)),
             ),
-            MemberInstances::Held(AttributeValue::Raw(raw)) => VerbatimInstance {
-                value: raw,
-                report: InstanceReport::default(),
-                reification: self.reification,
-                decoding: self.walk.decoding,
-                extent: VerbatimExtent::Member,
-            }
-            .serialize(serializer),
+            // Clause 5.8.6: the member reported deleted is written bare, as the
+            // short form names no family.
+            MemberInstances::Held(AttributeValue::NgsiLdNull) | MemberInstances::Notified(NotifiedMember::NgsiLdNull) => NullValue::Uri.serialize(serializer),
             MemberInstances::Notified(NotifiedMember::One(instance)) => self.notified(*instance, InstanceStanding::Alone).serialize(serializer),
             MemberInstances::Notified(NotifiedMember::Many(instances)) => {
                 serializer.collect_seq(instances.iter().map(|instance| self.notified(*instance, InstanceStanding::AmongInstances)))
             }
-        }
-    }
-}
-
-/// One instance a notification reports, typed or carried verbatim.
-enum ReifiedNotified<'a> {
-    /// A typed instance.
-    Typed(ReifiedInstance<'a>),
-    /// An instance carried verbatim.
-    Verbatim(VerbatimInstance<'a>),
-}
-
-impl Serialize for ReifiedNotified<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            ReifiedNotified::Typed(instance) => instance.serialize(serializer),
-            ReifiedNotified::Verbatim(instance) => instance.serialize(serializer),
-        }
-    }
-}
-
-/// A member, or one instance of it, the broker carries verbatim.
-struct VerbatimInstance<'a> {
-    /// The value carried.
-    value: &'a Value,
-    /// What a notification reports of it.
-    report: InstanceReport<'a>,
-    /// The representation it is written in.
-    reification: Reification,
-    /// Whether its Relationship targets are decoded.
-    decoding: UriDecoding,
-    /// Whether the value is the whole member or one instance of it.
-    extent: VerbatimExtent,
-}
-
-/// How much of a member a value carried verbatim is.
-#[derive(Debug, Clone, Copy)]
-enum VerbatimExtent {
-    /// The whole member: one instance, or the array of a multi-attribute.
-    Member,
-    /// One instance of the member, standing as the variant says.
-    Instance(InstanceStanding),
-}
-
-impl Serialize for VerbatimInstance<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let reported = reported_verbatim(self.value, &self.report);
-        let decoded = decoded_attribute(&reported, self.decoding);
-        match (self.reification, self.extent) {
-            (Reification::Normalized, VerbatimExtent::Member | VerbatimExtent::Instance(_)) => normalized_verbatim_member(decoded).serialize(serializer),
-            // The document reading of clause 4.5.2.3 takes the member owned;
-            // one carried verbatim is small and rare.
-            (Reification::Concise, VerbatimExtent::Member) => concise_attr_value(decoded.into_owned()).serialize(serializer),
-            (Reification::Concise, VerbatimExtent::Instance(standing)) => concise_instance(decoded.into_owned(), standing).serialize(serializer),
         }
     }
 }

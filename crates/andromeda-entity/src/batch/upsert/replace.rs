@@ -20,6 +20,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, history::written_observation::AddressedInstances, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::attribute::instance::AttributeValue;
 use std::sync::Arc;
 
 /// What a replacement is built from on each attempt.
@@ -86,7 +87,7 @@ impl EntityService {
     pub(in crate::batch) async fn batch_upsert_replace_chunk(
         &self,
         placement: SideEffectPlacement<'_>,
-        chunk: Vec<AdmittedBatchEntity>,
+        chunk: Vec<AdmittedBatchEntity<AttributeValue>>,
         errors: &mut Vec<(Identifier, EntityError)>,
     ) -> Result<UpsertOutcome, EntityError> {
         // Clause 5.6.8.4 gives replace mode two branches and neither admits the

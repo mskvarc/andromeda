@@ -7,12 +7,13 @@
 //! carry. The typed reading used to live on `Entity` itself, in the
 //! specification model crate — a resource does not render itself.
 
-use crate::object_list::bare_uri_object_list;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, rfc3339::sub_second};
-use andromeda_ngsi_ld_model::{
-    attribute::instance::{Attribute, AttributeValue},
-    entity::Entity,
+use crate::{
+    entity_body::{member_walk::MemberWalk, notified_member::MemberInstances, simplified_member::SimplifiedMember},
+    object_list::bare_uri_object_list,
+    uri_decoding::UriDecoding,
 };
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, rfc3339::sub_second};
+use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
 use andromeda_ngsi_ld_query::dataset::DEFAULT_INSTANCE_TOKEN;
 use andromeda_ngsi_ld_representation::entity_members::ENTITY_MEMBERS;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
@@ -59,19 +60,18 @@ fn wrap_value_member(attr_type: AttributeType, value: Value) -> Value {
     Value::Object(wrapper)
 }
 
-/// The clause 4.5.4 simplified value of one typed attribute instance.
-fn simplify_instance(attr: &Attribute) -> Value {
-    simplified_family_value(attr.attribute_type(), attr.value())
-}
-
 /// Render an entity in the clause 4.5.4 simplified (`keyValues`) form.
 ///
 /// Walks the typed [`Entity`] directly, which is what lets the simplified path
 /// skip a full serialise round-trip. It lived on `Entity` itself until this
 /// module existed: a resource is what the specification defines, and how it is
 /// rendered is a decision above it.
-#[must_use]
-pub fn simplify_entity(entity: &Entity) -> Value {
+///
+/// # Errors
+///
+/// Returns the serialization failure of an attribute member, which a typed
+/// member never has.
+pub fn simplify_entity(entity: &Entity) -> Result<Value, serde_json::Error> {
     let mut map = Map::new();
     map.insert("id".to_string(), serde_json::json!(entity.id));
     map.insert("type".to_string(), serde_json::json!(entity.type_));
@@ -85,15 +85,15 @@ pub fn simplify_entity(entity: &Entity) -> Value {
     }
 
     if let Some(ref location) = entity.location {
-        map.insert("location".to_string(), simplify_attribute_value(location));
+        map.insert("location".to_string(), simplify_attribute_value(location)?);
     }
 
     if let Some(ref observation_space) = entity.observation_space {
-        map.insert("observationSpace".to_string(), simplify_attribute_value(observation_space));
+        map.insert("observationSpace".to_string(), simplify_attribute_value(observation_space)?);
     }
 
     if let Some(ref operation_space) = entity.operation_space {
-        map.insert("operationSpace".to_string(), simplify_attribute_value(operation_space));
+        map.insert("operationSpace".to_string(), simplify_attribute_value(operation_space)?);
     }
 
     if let Some(ref created_at) = entity.created_at {
@@ -109,50 +109,16 @@ pub fn simplify_entity(entity: &Entity) -> Value {
     }
 
     for (key, attr) in &entity.attrs {
-        map.insert(key.to_string(), simplify_attribute_value(attr));
+        map.insert(key.to_string(), simplify_attribute_value(attr)?);
     }
 
-    Value::Object(map)
+    Ok(Value::Object(map))
 }
 
-/// Simplify a single `AttributeValue` to its key-value form.
-fn simplify_attribute_value(attr: &AttributeValue) -> Value {
-    match attr {
-        AttributeValue::Single(a) => simplify_instance(a),
-        AttributeValue::Multiple(list) => {
-            // Clause 4.5.4 dataset map: {"dataset": {"<datasetId>": v, "@none": v}}.
-            let mut dataset_map = Map::new();
-            for attr in list {
-                let ds_key = attr.dataset_id().map_or_else(|| DEFAULT_INSTANCE_TOKEN.to_string(), ToString::to_string);
-                dataset_map.insert(ds_key, simplify_instance(attr));
-            }
-            dataset_map_member(dataset_map)
-        }
-        AttributeValue::Raw(v) => simplify_raw_envelope(v),
-    }
-}
-
-/// Simplify a raw (already-serialised) attribute envelope that reached the typed
-/// path — a language-negotiated value, or a member the broker carries through.
-///
-/// The value member is read through [`AttributeType::compact_value_key`] rather
-/// than a hand-written key list, so a `VocabProperty` reads its `vocab` member
-/// rather than a `value` it never carries, and each family is rendered by
-/// [`simplified_family_value`].
-pub(crate) fn simplify_raw_envelope(envelope: &Value) -> Value {
-    // clone: the simplified form is owned and the envelope is only borrowed.
-    let Some(obj) = envelope.as_object() else {
-        return envelope.clone();
-    };
-    // The `type` member of a raw envelope is unvalidated JSON, so it is read
-    // through `AttributeType`'s own parser; anything it rejects keeps the envelope.
-    let Some(attr_type) = obj.get("type").and_then(|kind| kind.as_str()).and_then(|raw| AttributeType::from_str(raw).ok()) else {
-        return envelope.clone();
-    };
-    let Some(value) = obj.get(attr_type.compact_value_key()) else {
-        return envelope.clone();
-    };
-    simplified_family_value(attr_type, value.clone()) // clone: the simplified value is handed back owned
+/// Simplify a single `AttributeValue` to its key-value form, as the typed walk
+/// of the simplified representation writes it.
+fn simplify_attribute_value(attr: &AttributeValue) -> Result<Value, serde_json::Error> {
+    serde_json::to_value(SimplifiedMember::new(MemberInstances::Held(attr), MemberWalk::new(UriDecoding::Keep, None)))
 }
 
 /// Render an already-serialised entity in the clause 4.5.4 simplified form.
@@ -269,7 +235,7 @@ mod tests {
     fn both_readings_agree(entity: Value) {
         let entity = parse_entity(entity);
         let serialised = serde_json::to_value(&entity).expect("serialised entity");
-        pretty_assertions::assert_eq!(simplify_entity(&entity), simplify_value(serialised));
+        pretty_assertions::assert_eq!(simplify_entity(&entity).expect("the entity simplifies"), simplify_value(serialised));
     }
 
     #[test]
@@ -297,7 +263,10 @@ mod tests {
             "type": "Vehicle",
             "hasParts": {"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:Part:1"}]}
         }));
-        pretty_assertions::assert_eq!(simplify_entity(&entity)["hasParts"], json!(["urn:ngsi-ld:Part:1"]));
+        pretty_assertions::assert_eq!(
+            simplify_entity(&entity).expect("the entity simplifies")["hasParts"],
+            json!(["urn:ngsi-ld:Part:1"])
+        );
     }
 
     #[test]
@@ -351,7 +320,7 @@ mod tests {
             "spec": {"type": "JsonProperty", "json": {"a": 1}},
             "kind": {"type": "VocabProperty", "vocab": "commercial"}
         }));
-        let typed = simplify_entity(&entity);
+        let typed = simplify_entity(&entity).expect("the entity simplifies");
         let serialised = simplify_value(serde_json::to_value(&entity).expect("serialised entity"));
         for rendered in [&typed, &serialised] {
             pretty_assertions::assert_eq!(rendered["street"], json!({"languageMap": {"fr": "Grand Place"}}));
@@ -421,7 +390,7 @@ mod tests {
                 {"type": "Property", "value": 30}
             ]
         }));
-        let typed = simplify_entity(&entity);
+        let typed = simplify_entity(&entity).expect("the entity simplifies");
         let serialised = simplify_value(serde_json::to_value(&entity).expect("serialised entity"));
         let expected = json!({"dataset": {"urn:ngsi-ld:Dataset:a": 25, "@none": 30}});
         pretty_assertions::assert_eq!(typed["speed"], expected);

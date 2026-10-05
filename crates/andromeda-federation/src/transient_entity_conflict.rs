@@ -436,7 +436,7 @@ mod tests {
                 .map(|at| at.to_rfc3339());
             pretty_assertions::assert_eq!(expiry, Some("2030-01-01T00:00:00+00:00".to_string()));
         }
-        assert!(matches!(version.attrs.get("unstructured"), Some(AttributeValue::Raw(_))));
+        assert!(matches!(version.attrs.get("unstructured"), Some(AttributeValue::Single(_))));
     }
 
     /// Every instance of a multi-attribute is an Attribute of the Entity, so

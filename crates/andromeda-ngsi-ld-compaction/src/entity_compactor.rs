@@ -11,6 +11,7 @@
 //! what the processor gives.
 
 use crate::{
+    compacted::Compacted,
     compaction_error::CompactionError,
     processor_fallback::{document_through_processor, entity_through_processor},
     state_reading::{WalkError, walk_entity},
@@ -67,10 +68,9 @@ impl<'a> EntityCompactor<'a> {
     /// # Errors
     ///
     /// Returns [`CompactionError::JsonLd`] when the request context does not
-    /// resolve or process or the processor refuses the entity,
-    /// [`CompactionError::MissingId`] or [`CompactionError::NotAnObject`] for
-    /// a compacted document that names no entity, and
-    /// [`CompactionError::Decode`] when the compact model refuses it.
+    /// resolve or process or the processor refuses the entity, and
+    /// [`CompactionError::Refused`] when the compact model refuses the
+    /// compacted entity.
     pub async fn entity(&self, state: &EntityState, read: &EntityRead<'_>) -> Result<Entity, CompactionError> {
         let terms = self.terms().await?;
         let mut entity = match walk_entity(terms, state, read.id_override, read.sys_attrs) {
@@ -78,7 +78,7 @@ impl<'a> EntityCompactor<'a> {
             Err(WalkError::Refused(refusal)) => return Err(refusal),
             Err(WalkError::Undecidable(reason)) => {
                 tracing::debug!(%reason, entity_id = state.id().as_str(), "compacting the entity through the processor");
-                entity_through_processor(self.compactor, state, read.id_override, read.sys_attrs).await?
+                entity_through_processor(self.compactor, terms, state, read.id_override, read.sys_attrs).await?
             }
         };
         // Clause 4.22: an instance whose `expiresAt` has passed is not part of
@@ -101,9 +101,9 @@ impl<'a> EntityCompactor<'a> {
         let terms = self.terms().await?;
         match Walk::new(terms, GeometryOutput::Written)
             .compact_document(document)
-            .and_then(|node| node.into_written_json().map_err(|_unwritten| Undecidable::UnrepresentableValue))
+            .and_then(|node| serde_json::to_value(Compacted::Object(node)).map_err(|_unwritten| Undecidable::UnrepresentableValue))
         {
-            Ok(node) => Ok(Value::Object(node)),
+            Ok(node) => Ok(node),
             Err(reason) => {
                 tracing::debug!(%reason, "compacting the document through the processor");
                 document_through_processor(self.compactor, document).await

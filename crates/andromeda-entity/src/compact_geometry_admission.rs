@@ -6,12 +6,18 @@
 //! fragment already holds each `GeoProperty` geometry as its positions, so the
 //! position budget is read off it before the expansion copies a geometry into
 //! the written document: an oversized geometry costs its decoding and nothing
-//! after it. A JSON payload has no typed geometry to read and is counted on the
-//! document it expands to ([`crate::document_census`]).
+//! after it.
 
-use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_census::GeometryPositionLimit};
+use andromeda_ngsi_ld_expansion::written_member::{WrittenMember, WrittenMemberRef};
+use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry_census::GeometryPositionLimit};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::attribute::instance::{Attribute, AttributeValue};
+use andromeda_ngsi_ld_model::attribute::{
+    geo_property_value::GeoPropertyValue,
+    instance::{Attribute, AttributeValue},
+    merge_member::MergeMember,
+    merge_value::MergeValue,
+    patched::Patched,
+};
 use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
 use std::str::FromStr;
 
@@ -23,11 +29,14 @@ use std::str::FromStr;
 ///
 /// Returns [`PayloadBudgetExceeded::GeometryPositions`] naming the first
 /// attribute, as written, whose geometry is past `limit`.
-pub fn admit_compact_geometries<'a>(
+pub fn admit_compact_geometries<'a, M: WrittenMember + 'a>(
     limit: GeometryPositionLimit,
-    members: impl IntoIterator<Item = (&'a str, &'a AttributeValue)>,
+    members: impl IntoIterator<Item = (&'a str, &'a M)>,
 ) -> Result<(), PayloadBudgetExceeded> {
-    members.into_iter().try_for_each(|(name, member)| admit_member(limit, name, member))
+    members.into_iter().try_for_each(|(name, member)| match member.written() {
+        WrittenMemberRef::Attribute(member) => admit_member(limit, name, member),
+        WrittenMemberRef::Merge(member) => admit_merge_member(limit, name, member),
+    })
 }
 
 /// Admit every instance of the attribute member `name`.
@@ -37,7 +46,8 @@ fn admit_member(limit: GeometryPositionLimit, name: &str, member: &AttributeValu
             [Some(&geo_property.value), geo_property.previous_value.as_ref()]
                 .into_iter()
                 .flatten()
-                .try_for_each(|geometry| admit_geometry(limit, name, geometry))?;
+                .filter_map(GeoPropertyValue::form)
+                .try_for_each(|form| admit_form(limit, name, form))?;
         }
         instance
             .common()
@@ -47,9 +57,24 @@ fn admit_member(limit: GeometryPositionLimit, name: &str, member: &AttributeValu
     })
 }
 
+/// Admit every instance of the merge member `name`.
+fn admit_merge_member(limit: GeometryPositionLimit, name: &str, member: &MergeMember) -> Result<(), PayloadBudgetExceeded> {
+    member.instances().try_for_each(|instance| {
+        if let Some(Patched::Set(MergeValue::GeoProperty(value))) = &instance.value
+            && let Some(form) = value.form()
+        {
+            admit_form(limit, name, form)?;
+        }
+        instance
+            .sub_attributes
+            .iter()
+            .try_for_each(|(sub_name, sub_member)| admit_merge_member(limit, sub_name.as_str(), sub_member))
+    })
+}
+
 /// Admit one geometry of the attribute `name`.
-fn admit_geometry(limit: GeometryPositionLimit, name: &str, geometry: &Geometry) -> Result<(), PayloadBudgetExceeded> {
-    if limit.admits(geometry.form().position_count()) {
+fn admit_form(limit: GeometryPositionLimit, name: &str, form: &GeometryForm) -> Result<(), PayloadBudgetExceeded> {
+    if limit.admits(form.position_count()) {
         return Ok(());
     }
     Err(PayloadBudgetExceeded::GeometryPositions {
@@ -62,7 +87,10 @@ fn admit_geometry(limit: GeometryPositionLimit, name: &str, geometry: &Geometry)
 mod tests {
     use crate::compact_geometry_admission::admit_compact_geometries;
     use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
-    use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
+    use andromeda_ngsi_ld_model::{
+        attribute::merge_member::MergeMember,
+        entity::{Entity, EntityPatch},
+    };
     use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
     use serde_json::{Value, json};
     use std::num::NonZeroUsize;
@@ -147,5 +175,22 @@ mod tests {
             owner(admit_compact_geometries(limit(4), patch.attribute_members()).expect_err("over")),
             "observationSpace"
         );
+    }
+
+    /// A merge fragment is counted as an entity is: a concise `GeoProperty`,
+    /// and one nested as a sub-attribute of an instance that leaves its own
+    /// value out (clause 5.5.12).
+    #[test]
+    fn a_merge_fragment_is_counted_as_an_entity_is() {
+        let fragment: EntityPatch<MergeMember> = serde_json::from_value(json!({
+            "location": square(),
+            "site": {"type": "Property", "footprint": {"type": "GeoProperty", "value": square()}}
+        }))
+        .expect("a valid merge fragment");
+        pretty_assertions::assert_eq!(
+            owner(admit_compact_geometries(limit(4), fragment.attribute_members()).expect_err("over")),
+            "footprint"
+        );
+        admit_compact_geometries(limit(5), fragment.attribute_members()).expect("each geometry is within five");
     }
 }

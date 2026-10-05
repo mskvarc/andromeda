@@ -1,10 +1,11 @@
-//! One value inside an admitted literal, read in place from its text.
+//! One JSON value read in place from its text: a literal, a value nested in
+//! one, or a value of the text a request or a peer sent.
 //!
-//! A piece is a slice of the literal's text; looking inside it parses only
-//! the level asked for, and every nested value stays a slice. Nothing here
-//! builds a tree.
+//! A piece is a slice of JSON text; looking inside it parses only the level
+//! asked for, and every nested value stays a slice. Nothing here builds a
+//! tree.
 
-use crate::JsonLiteral;
+use crate::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_number::JsonNumber;
 use serde::de::{Deserialize, Deserializer, Error as DeserializeError, MapAccess, Visitor};
 use serde_json::value::RawValue;
@@ -27,14 +28,15 @@ pub enum JsonKind {
     Object,
 }
 
-/// One value of an admitted literal: the literal itself, or a value nested in
-/// it.
+/// One JSON value read in place: a literal, a value nested in one, or a value
+/// of a JSON text the broker received.
 #[derive(Clone, Copy, Debug)]
 pub struct JsonPiece<'a>(&'a RawValue);
 
 impl<'a> JsonPiece<'a> {
-    /// The piece the raw text of an admitted value is.
-    pub(crate) const fn new(raw: &'a RawValue) -> JsonPiece<'a> {
+    /// The piece the raw text of one JSON value is.
+    #[must_use]
+    pub const fn new(raw: &'a RawValue) -> JsonPiece<'a> {
         JsonPiece(raw)
     }
 
@@ -120,10 +122,12 @@ impl<'a> JsonPiece<'a> {
         serde_json::from_str::<Members<'a>>(self.text()).map(|members| members.0)
     }
 
-    /// The member of the object the piece is named `name`.
+    /// The member of the object the piece is named `name`; of a name written
+    /// twice in text no literal admitted, the last, as a parsed object keeps
+    /// it.
     #[must_use]
     pub fn member(self, name: &str) -> Option<JsonPiece<'a>> {
-        self.members()?.into_iter().find_map(|(key, value)| (key == name).then_some(value))
+        self.members()?.into_iter().rev().find_map(|(key, value)| (key == name).then_some(value))
     }
 
     /// The value the member path `names` leads to from this piece, each name
@@ -145,13 +149,15 @@ impl<'a> JsonPiece<'a> {
         }
     }
 
-    /// The piece as a literal of its own.
+    /// The piece as a literal of its own, admitted as every literal is.
     ///
-    /// The piece was admitted with the literal it belongs to, so its text is
-    /// taken as it stands.
-    #[must_use]
-    pub fn to_literal(self) -> JsonLiteral {
-        JsonLiteral(self.0.to_owned())
+    /// # Errors
+    ///
+    /// Returns [`JsonLiteralError`] for a piece of text no literal holds: a
+    /// member named twice in one object, a number outside the supported
+    /// range, or nesting deeper than the reader accepts.
+    pub fn to_literal(self) -> Result<JsonLiteral, JsonLiteralError> {
+        JsonLiteral::admit_raw(self.0)
     }
 }
 

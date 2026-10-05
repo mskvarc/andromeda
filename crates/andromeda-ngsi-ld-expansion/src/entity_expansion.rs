@@ -12,6 +12,7 @@ use crate::{
     processor_decoding::{decode_attribute_fragment, decode_entity},
     typed_expander::TypedExpander,
     typed_expansion::TypedExpansion,
+    written_member::WrittenMember,
 };
 use andromeda_jsonld::{
     context_spec::ContextSpec,
@@ -21,6 +22,7 @@ use andromeda_ngsi_ld_entity::document::EntityDocument;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
 use andromeda_ngsi_ld_representation::normalization::normalize_attribute_node;
+use indexmap::IndexMap;
 use iri_rs::IriBuf;
 use jsonld::{ExpandedDocument, syntax::Value as JsonLdValue};
 use rdfx::BlankIdBuf;
@@ -68,7 +70,7 @@ impl<'e> EntityExpansion<'e> {
     ///
     /// Returns [`ExpansionError::Refused`] for an expanded document that is no
     /// write, and the processor's failure for a request it expanded.
-    pub async fn entity(&self, entity: &Entity, normalization: Normalization) -> Result<EntityDocument, ExpansionError> {
+    pub async fn entity<M: WrittenMember>(&self, entity: &Entity<M>, normalization: Normalization) -> Result<EntityDocument, ExpansionError> {
         match TypedExpander::new(&self.context).entity(entity, normalization)? {
             TypedExpansion::Expanded(document) => Ok(document),
             TypedExpansion::Declined(_) => self.processor_entity(serialized(entity, normalization)?).await,
@@ -80,7 +82,7 @@ impl<'e> EntityExpansion<'e> {
     /// # Errors
     ///
     /// As [`EntityExpansion::entity`].
-    pub async fn entity_patch(&self, patch: &EntityPatch, normalization: Normalization) -> Result<EntityDocument, ExpansionError> {
+    pub async fn entity_patch<M: WrittenMember>(&self, patch: &EntityPatch<M>, normalization: Normalization) -> Result<EntityDocument, ExpansionError> {
         match TypedExpander::new(&self.context).entity_patch(patch, normalization)? {
             TypedExpansion::Expanded(document) => Ok(document),
             TypedExpansion::Declined(_) => self.processor_entity(serialized(patch, normalization)?).await,
@@ -100,8 +102,28 @@ impl<'e> EntityExpansion<'e> {
         }
     }
 
-    /// Expand the attribute fragment of clauses 5.6.4 and 5.6.19, written for
-    /// the attribute the request path names, after its concise rewrite.
+    /// Expand the attribute fragment of clauses 5.6.4 and 5.6.19 the transport
+    /// decoded into the typed compact model, written for the attribute the
+    /// request path names.
+    ///
+    /// # Errors
+    ///
+    /// As [`EntityExpansion::entity`].
+    pub async fn attribute<M: WrittenMember>(&self, attribute: &AttributeName, member: &M) -> Result<AttributeFragment, ExpansionError> {
+        match TypedExpander::new(&self.context).attribute(attribute, member)? {
+            TypedExpansion::Expanded(expanded) => Ok(expanded),
+            // The member serializes normalized but for the NGSI-LD Null in
+            // place of the whole member, which the entity rewrite reads as the
+            // concise Property the walk writes for it.
+            TypedExpansion::Declined(_) => {
+                let document = serialized(&IndexMap::from([(attribute.as_str(), member)]), Normalization::Entity)?;
+                Ok(decode_attribute_fragment(attribute, self.processor(document).await?)?)
+            }
+        }
+    }
+
+    /// Expand the attribute fragment of a temporal write held as JSON, written
+    /// for the attribute the request path names, after its concise rewrite.
     ///
     /// # Errors
     ///

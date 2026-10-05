@@ -5,16 +5,15 @@
 //! borrowed from the entity state, rather than being written out position by
 //! position only for the model to read the positions back. Such a tree is read
 //! straight into the compact model ([`crate::compacted_node`]); written out as
-//! JSON, every geometry has to have been written in full.
+//! JSON, a typed geometry is written as its type and positions.
 //!
 //! Objects keep their members in the order of their names, which is the order
 //! the JSON object of the document holds them in.
 
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use jsonld_syntax::{NumberBuf, Value as JsonValue};
-use serde_json::{Map, Value};
+use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, btree_map::Iter as MemberIter};
-use thiserror::Error;
 
 /// One value of a compacted document.
 #[derive(Debug, Clone)]
@@ -39,11 +38,6 @@ pub(crate) enum Compacted<'a> {
 /// The members of one compacted object, by name.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CompactedObject<'a>(BTreeMap<String, Compacted<'a>>);
-
-/// A geometry written as its typed form, which no JSON document holds.
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
-#[error("the compacted document holds a geometry that has not been written out")]
-pub(crate) struct UnwrittenGeometry;
 
 impl<'a> CompactedObject<'a> {
     /// An object without members.
@@ -75,16 +69,6 @@ impl<'a> CompactedObject<'a> {
     pub(crate) fn iter(&self) -> MemberIter<'_, String, Compacted<'a>> {
         self.0.iter()
     }
-
-    /// The object as the JSON object it stands for.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`UnwrittenGeometry`] when it holds a geometry that has not
-    /// been written out.
-    pub(crate) fn into_written_json(self) -> Result<Map<String, Value>, UnwrittenGeometry> {
-        self.0.into_iter().map(|(key, value)| Ok((key, value.into_written_json()?))).collect()
-    }
 }
 
 impl Compacted<'_> {
@@ -107,25 +91,24 @@ impl Compacted<'_> {
     }
 }
 
-impl<'a> Compacted<'a> {
-    /// The value as the JSON value it stands for, exactly as written.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`UnwrittenGeometry`] when it holds a geometry that has not
-    /// been written out.
-    pub(crate) fn into_written_json(self) -> Result<Value, UnwrittenGeometry> {
-        Ok(match self {
-            Compacted::Null => Value::Null,
-            Compacted::Boolean(flag) => Value::Bool(flag),
-            Compacted::Number(number) => Value::Number(number.into()),
-            Compacted::String(text) => Value::String(text.into_string()),
-            Compacted::Array(items) => Value::Array(items.into_iter().map(Compacted::into_written_json).collect::<Result<_, _>>()?),
-            Compacted::Object(members) => Value::Object(members.into_written_json()?),
-            Compacted::Geometry(_) => return Err(UnwrittenGeometry),
-        })
+// Hand-written: a compacted value is written as the JSON it stands for, a
+// number in its compacted spelling and a typed geometry as its type and
+// positions, which no derive over the variants writes.
+impl Serialize for Compacted<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Compacted::Null => serializer.serialize_unit(),
+            Compacted::Boolean(flag) => serializer.serialize_bool(*flag),
+            Compacted::Number(number) => serde_json::Number::from(number.clone()).serialize(serializer), // clone: the written number is the document's own
+            Compacted::String(text) => serializer.serialize_str(text),
+            Compacted::Array(items) => serializer.collect_seq(items),
+            Compacted::Object(members) => serializer.collect_map(members.iter()),
+            Compacted::Geometry(form) => form.serialize(serializer),
+        }
     }
+}
 
+impl<'a> Compacted<'a> {
     /// The value as an object, for mutation, when it is one.
     pub(crate) const fn as_object_mut(&mut self) -> Option<&mut CompactedObject<'a>> {
         match self {

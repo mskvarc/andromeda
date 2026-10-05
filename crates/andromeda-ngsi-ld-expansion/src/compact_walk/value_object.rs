@@ -12,16 +12,15 @@ use crate::{
     term_scope::TermScope,
 };
 use andromeda_json_literal::JsonLiteral;
+use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
 use jsonld::{Direction as JsonLdDirection, Id, Term, ValidId, syntax::Keyword};
-use serde::Serialize;
-use serde_json::Value;
 
 /// Expand the entries of a value object.
 ///
 /// # Errors
 ///
 /// Declines every combination the algorithm refuses, and `@index`.
-pub fn expand_value_object(scope: &TermScope<'_>, entries: &[KeyedEntry<'_>]) -> Result<Expanded, Decline> {
+pub fn expand_value_object<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, entries: &[KeyedEntry<'_, N>]) -> Result<Expanded, Decline> {
     let mut value = None;
     let mut datatype = None;
     let mut json = false;
@@ -31,24 +30,24 @@ pub fn expand_value_object(scope: &TermScope<'_>, entries: &[KeyedEntry<'_>]) ->
         match entry.term.as_ref() {
             Term::Keyword(Keyword::Value) => value = Some(entry.value),
             Term::Keyword(Keyword::Type) => {
-                let type_name = entry.value.as_str().ok_or(Decline::MalformedJsonLd)?;
-                match scope.expand_vocab(type_name)?.as_ref() {
+                let type_name = entry.value.text().ok_or(Decline::MalformedJsonLd)?;
+                match scope.expand_vocab(&type_name)?.as_ref() {
                     Term::Keyword(Keyword::Json) => json = true,
                     Term::Id(Id::Valid(ValidId::Iri(iri))) => datatype = Some(iri.as_str().to_owned()),
                     Term::Null | Term::Id(Id::Valid(ValidId::Blank(_)) | Id::Invalid(_)) | Term::Keyword(_) => return Err(Decline::MalformedJsonLd),
                 }
             }
             Term::Keyword(Keyword::Language) => {
-                let tag = entry.value.as_str().ok_or(Decline::MalformedJsonLd)?;
+                let tag = entry.value.text().ok_or(Decline::MalformedJsonLd)?;
                 if tag != "@none" {
-                    language = Some(tag.to_owned());
+                    language = Some(tag.into_owned());
                 }
             }
             Term::Keyword(Keyword::Direction) => {
                 let base = entry
                     .value
-                    .as_str()
-                    .and_then(|text| JsonLdDirection::try_from(text).ok())
+                    .text()
+                    .and_then(|text| JsonLdDirection::try_from(text.as_ref()).ok())
                     .ok_or(Decline::MalformedJsonLd)?;
                 direction = Some(direction_of(base));
             }
@@ -63,12 +62,14 @@ pub fn expand_value_object(scope: &TermScope<'_>, entries: &[KeyedEntry<'_>]) ->
         }
         return Ok(Expanded::One(ExpandedItem::Json(json_literal(value)?)));
     }
-    if value.is_null() {
+    let shape = value.shape();
+    if matches!(shape, NodeShape::Null) {
         return Ok(Expanded::Null);
     }
-    let scalar = scalar(value)?;
+    let is_string = matches!(shape, NodeShape::String(_));
+    let scalar = scalar(shape)?;
     let tagged = language.is_some() || direction.is_some();
-    if tagged && (datatype.is_some() || !matches!(value, Value::String(_))) {
+    if tagged && (datatype.is_some() || !is_string) {
         return Err(Decline::MalformedJsonLd);
     }
     Ok(Expanded::One(ExpandedItem::Value(ValueObject {
@@ -86,7 +87,9 @@ pub fn expand_value_object(scope: &TermScope<'_>, entries: &[KeyedEntry<'_>]) ->
 ///
 /// Declines a value the literal does not admit, which the processor then
 /// refuses with the precise error.
-pub(crate) fn json_literal<T: Serialize>(value: &T) -> Result<JsonLiteral, Decline> {
-    let text = serde_json::to_string(value).map_err(|_| Decline::MalformedJsonLd)?;
-    JsonLiteral::admit(&text).map_err(|_| Decline::MalformedJsonLd)
+pub(crate) fn json_literal<'n, N: CompactNode<'n>>(value: N) -> Result<JsonLiteral, Decline> {
+    value
+        .literal()
+        .map_err(|_| Decline::CompactSerialization)?
+        .map_err(|_| Decline::MalformedJsonLd)
 }

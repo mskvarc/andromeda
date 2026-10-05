@@ -51,7 +51,11 @@ impl JsonLiteral {
     }
 
     /// Admit the text of one raw JSON value.
-    fn admit_raw(raw: &RawValue) -> Result<JsonLiteral, JsonLiteralError> {
+    ///
+    /// # Errors
+    ///
+    /// As [`JsonLiteral::admit`], for text that is one JSON value already.
+    pub fn admit_raw(raw: &RawValue) -> Result<JsonLiteral, JsonLiteralError> {
         JsonLiteral::from_admitted_text(canonical_text(raw)?)
     }
 

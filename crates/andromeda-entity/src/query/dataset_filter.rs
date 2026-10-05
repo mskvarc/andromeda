@@ -25,7 +25,8 @@ pub(super) fn filter_entity_by_dataset_id(entity: &mut Entity, dataset_ids: &[Da
                     *attr_val = AttributeValue::Single(Box::new(list.remove(0)));
                 }
             }
-            AttributeValue::Raw(_) => {}
+            // The NGSI-LD Null in place of a whole member names no dataset.
+            AttributeValue::NgsiLdNull => {}
         }
     }
     for key in keys_to_remove {

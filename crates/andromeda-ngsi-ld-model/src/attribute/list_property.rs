@@ -2,12 +2,12 @@
 
 use crate::attribute::{common_fields::CommonAttributeFields, value::NgsiLdValue};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_with::skip_serializing_none;
 
 /// NGSI-LD `ListProperty` representation (ETSI GS CIM 009 clause 5.2.36).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListProperty {
     /// Ordered list of values.
@@ -24,6 +24,7 @@ pub struct ListProperty {
 #[cfg(test)]
 mod tests {
     use crate::attribute::{instance::Attribute, value::NgsiLdValue};
+    use andromeda_json_literal::JsonLiteral;
 
     #[test]
     fn a_list_property_keeps_its_value_list_in_order() {
@@ -40,9 +41,9 @@ mod tests {
         pretty_assertions::assert_eq!(
             values,
             vec![
-                &NgsiLdValue::Json(serde_json::json!(1)),
-                &NgsiLdValue::Json(serde_json::json!(2)),
-                &NgsiLdValue::Json(serde_json::json!(3))
+                &NgsiLdValue::Json(JsonLiteral::admit("1").expect("a number")),
+                &NgsiLdValue::Json(JsonLiteral::admit("2").expect("a number")),
+                &NgsiLdValue::Json(JsonLiteral::admit("3").expect("a number"))
             ]
         );
         assert!(lp.previous_value_list.is_some());

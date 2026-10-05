@@ -16,6 +16,9 @@ pub enum TemporalSimplifyError {
     /// A collection result was requested as one entity.
     #[error("temporal simplification expected one entity, but produced a collection")]
     ExpectedSingle,
+    /// A simplified attribute member could not be written.
+    #[error("temporal simplification could not write an attribute: {0}")]
+    Simplification(serde_json::Error),
     /// A single result was requested as a collection.
     #[error("temporal simplification expected a collection, but produced one entity")]
     ExpectedCollection,
@@ -104,7 +107,7 @@ impl TemporalSimplifyRenderer {
 /// Simplify one compacted temporal entity.
 fn simplify_value(entity_value: &Value) -> Result<Value, TemporalSimplifyError> {
     let entity: Entity = deserialize_exact(entity_value).map_err(TemporalSimplifyError::InvalidEntity)?;
-    Ok(simplify_entity(&entity))
+    simplify_entity(&entity).map_err(TemporalSimplifyError::Simplification)
 }
 
 #[cfg(test)]

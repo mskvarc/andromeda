@@ -14,6 +14,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, spec_version::SpecVersion};
 use andromeda_ngsi_ld_representation::{
+    compact_node::value_node::object_members,
     concise_reading::{ArrayReading, ObjectReading, read_array, read_object},
     response_format::ResponseFormat,
 };
@@ -32,7 +33,7 @@ pub(crate) fn adapt_reified_attribute(value: &mut Value, target: SpecVersion, fo
         // Only an array the clause 4.5.2.3 reading takes for instances is the
         // multi-instance form: an array of values is the value of one
         // attribute, written bare.
-        Value::Array(instances) if read_array(instances) == Ok(ArrayReading::Instances) => {
+        Value::Array(instances) if read_array(&instances.iter().collect::<Vec<_>>()) == Ok(ArrayReading::Instances) => {
             // Notes 2 and 3 of Table 4.3.6.8-1: multi-instance attributes exist
             // from 1.3 onwards; an older target receives the default instance
             // alone, as the bare object a 1.0 attribute is. The default instance
@@ -75,7 +76,7 @@ pub(crate) fn adapt_reified_attribute(value: &mut Value, target: SpecVersion, fo
 /// names neither is not an attribute this rendering understands, and is left
 /// alone.
 fn reified_family(obj: &Map<String, Value>) -> Option<AttributeType> {
-    match read_object(obj) {
+    match read_object(&object_members(obj)) {
         Ok(ObjectReading::Instance(family)) => Some(family),
         Ok(ObjectReading::GeoPropertyValue | ObjectReading::PropertyValue) | Err(_) => None,
     }

@@ -100,7 +100,7 @@ fn a_member_path_is_read_lazily() {
     );
     assert!(document.piece().member_path(["a", "c"]).is_none());
     assert!(document.piece().member_path(["a", "b", "c"]).is_none());
-    pretty_assertions::assert_eq!(found.to_literal(), literal("[3]"));
+    pretty_assertions::assert_eq!(found.to_literal().expect("an admitted piece is admitted again"), literal("[3]"));
 }
 
 /// A scalar takes no level; each array or object one more than its deepest

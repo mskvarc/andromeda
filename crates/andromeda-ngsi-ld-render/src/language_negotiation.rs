@@ -29,7 +29,7 @@ pub(crate) fn render_attribute_value(attr: &AttributeValue, language_filter: Opt
             .map(|attribute| render_attribute(attribute, language_filter))
             .collect::<Result<Vec<_>, _>>()
             .map(Value::Array),
-        AttributeValue::Raw(value) => Ok(value.clone()),
+        AttributeValue::NgsiLdNull => serialize_value(attr),
     }
 }
 

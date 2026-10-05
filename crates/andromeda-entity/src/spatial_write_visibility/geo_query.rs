@@ -2,7 +2,7 @@
 
 use crate::{
     EntityService,
-    admission_fixture::admitted_entity,
+    admission_fixture::admitted_written,
     query::service_test_double::service_narrowing_through,
     spatial_acceleration::SpatialAcceleration,
     spatial_placement::LocationPlacement,
@@ -119,6 +119,6 @@ pub(super) async fn narrowed_ids(spatial: SpatialAcceleration, query: &Arc<Compi
 /// Create the entity `payload` describes through the entity service.
 pub(super) async fn create(service: &EntityService, payload: Value) {
     let id = uri(payload["id"].as_str().expect("the payload names its entity"));
-    let admitted = admitted_entity::<CreateEntity>(service, payload, &ContextSpec::core_only()).await;
+    let admitted = admitted_written::<CreateEntity>(service, payload, &ContextSpec::core_only()).await;
     service.create(&ContextTarget::Live, &id, admitted).await.expect("the create lands");
 }

@@ -10,6 +10,7 @@ use crate::{
 use andromeda_context_commit::precondition::Precondition;
 use andromeda_ngsi_ld_entity::system_instant::SystemInstant;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::attribute::instance::AttributeValue;
 use chrono::Utc;
 use std::collections::HashSet;
 
@@ -19,7 +20,9 @@ impl EntityService {
     /// A batch that names one entity twice is asking to create it twice, and
     /// the second is a conflict exactly as it would be in a separate request
     /// (NGSI-LD 6.4.3.1).
-    pub(super) fn dedupe_create_entities(entities: Vec<AdmittedBatchEntity>) -> (Vec<AdmittedBatchEntity>, Vec<(Identifier, EntityError)>) {
+    pub(super) fn dedupe_create_entities(
+        entities: Vec<AdmittedBatchEntity<AttributeValue>>,
+    ) -> (Vec<AdmittedBatchEntity<AttributeValue>>, Vec<(Identifier, EntityError)>) {
         let first_instances = {
             let mut seen = HashSet::with_capacity(entities.len());
             entities.iter().map(|entity| seen.insert(entity.id())).collect::<Vec<_>>()
@@ -37,7 +40,11 @@ impl EntityService {
         (deduped, errors)
     }
 
-    pub(super) async fn batch_create_chunk(&self, placement: SideEffectPlacement<'_>, chunk: Vec<AdmittedBatchEntity>) -> Result<BatchResult, EntityError> {
+    pub(super) async fn batch_create_chunk(
+        &self,
+        placement: SideEffectPlacement<'_>,
+        chunk: Vec<AdmittedBatchEntity<AttributeValue>>,
+    ) -> Result<BatchResult, EntityError> {
         let target = placement.target();
         // Clause 5.6.7.4 runs the behaviour of Create Entity for each item, and
         // clause 5.5.4 excepts only the fragments of a partial update or a

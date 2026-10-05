@@ -31,12 +31,12 @@ use crate::{
     write_kind::{MergeEntity, ReplaceEntity},
 };
 use andromeda_ngsi_ld_entity::reads::attribute_change::AttributeChangeKind;
-use andromeda_ngsi_ld_model::entity::EntityPatch;
+use andromeda_ngsi_ld_model::{attribute::member_reading::MemberReading, entity::EntityPatch};
 use serde_json::json;
 
 /// Build an [`EntityPatch`] from a compact fixture payload; short-form terms
 /// expand through the NGSI-LD default `@vocab` under the empty context.
-fn patch(payload: serde_json::Value) -> EntityPatch {
+fn patch<M: MemberReading>(payload: serde_json::Value) -> EntityPatch<M> {
     serde_json::from_value(payload).expect("the fixture patch is a valid entity patch")
 }
 

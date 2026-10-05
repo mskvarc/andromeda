@@ -1,253 +1,439 @@
-//! The reading of attribute members from a compact node, held to the decoding
-//! it replaced.
-//!
-//! The oracle is the member decoding as it stood before the reading was
-//! shared with compaction: an object member decoded as one instance -- a
-//! `GeoProperty` by its geometry-aware reader, every other family by the
-//! derived decoding -- an array as instances, and anything that fails carried
-//! verbatim. Every member of the corpus must read to the same variant holding
-//! the same content, which covers every way an instance falls back to the
-//! verbatim member.
+//! The reading of attribute members from a compact node: every node written
+//! where an attribute stands is read into a typed member the specification
+//! defines (clauses 4.5.2.3, 4.5.5, 4.7.3 and their siblings) or refused where
+//! it stands (clause 5.5.4). Each shape of the phase-0 inventory of untyped
+//! members has its case here.
 
 use crate::{
     attribute::{
-        geo_property::GeoProperty,
+        geo_property_value::GeoPropertyValue,
         instance::{Attribute, AttributeValue},
+        member_reading::MemberReading,
+        value::NgsiLdValue,
     },
     entity::Entity,
+    node_refusal::{NodeReadError, NodeRefusal, RefusedNode},
+    request_body::RequestBody,
 };
+use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-use andromeda_ngsi_ld_number::json_value::deserialize_exact;
+use andromeda_ngsi_ld_representation::attribute_type_validation::AttributeNodeFault;
 use pretty_assertions::assert_eq;
-use serde_json::{Number, Value, json};
+use serde_json::{Value, json, value::RawValue};
+use std::{convert::Infallible, thread};
 
-/// One instance as the replaced decoding read it.
-fn oracle_instance(instance: &Value) -> Result<Attribute, serde_json::Error> {
-    match instance.as_object() {
-        Some(members) if members.get("type").and_then(Value::as_str) == Some(AttributeType::GeoProperty.short_name()) => {
-            GeoProperty::from_instance(instance).map(Attribute::GeoProperty)
-        }
-        Some(_) | None => deserialize_exact(instance),
+/// The member `member` reads as under the name `name`, read from its text.
+fn read(name: &str, member: &Value) -> Result<AttributeValue, NodeReadError<Infallible>> {
+    let text = RawValue::from_string(member.to_string()).expect("the member is JSON");
+    let from_text = <AttributeValue as MemberReading>::from_node(name, JsonPiece::new(&text));
+    let from_tree = <AttributeValue as MemberReading>::from_node(name, member);
+    // A parsed document and its text read alike.
+    match (&from_text, &from_tree) {
+        (Ok(text), Ok(tree)) => assert_eq!(rendered(text), rendered(tree), "{member}"),
+        (Err(NodeReadError::Refused(text)), Err(NodeReadError::Refused(tree))) => assert_eq!(text.path, tree.path, "{member}"),
+        (text, tree) => panic!("text read as {text:?} and the tree as {tree:?}: {member}"),
+    }
+    from_text
+}
+
+/// The member as the JSON it renders back to.
+fn rendered(member: &AttributeValue) -> Value {
+    serde_json::to_value(member).expect("an attribute member renders")
+}
+
+/// The one instance a member read as.
+fn single(member: &Value) -> Attribute {
+    match read("member", member) {
+        Ok(AttributeValue::Single(instance)) => *instance,
+        other => panic!("one instance: {other:?} from {member}"),
     }
 }
 
-/// One member as the replaced decoding read it.
-fn oracle(member: Value) -> AttributeValue {
-    match member {
-        Value::Object(_) => match oracle_instance(&member) {
-            Ok(instance) => AttributeValue::Single(Box::new(instance)),
-            Err(_) => AttributeValue::Raw(member),
-        },
-        Value::Array(items) => match items.iter().map(oracle_instance).collect::<Result<Vec<Attribute>, serde_json::Error>>() {
-            Ok(instances) => AttributeValue::Multiple(instances),
-            Err(_) => AttributeValue::Raw(Value::Array(items)),
-        },
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => AttributeValue::Raw(member),
+/// The refusal a member reads as.
+fn refused(member: &Value) -> RefusedNode {
+    match read("member", member) {
+        Err(NodeReadError::Refused(refused)) => refused,
+        Ok(read) => panic!("refused, not {read:?}: {member}"),
+        Err(NodeReadError::Unreadable(never)) => match never {},
     }
 }
 
-/// The variant a member read as, and its content rendered back to JSON.
-fn reading(value: &AttributeValue) -> (&'static str, String) {
-    let variant = match value {
-        AttributeValue::Single(_) => "single",
-        AttributeValue::Multiple(_) => "multiple",
-        AttributeValue::Raw(_) => "raw",
+/// A JSON literal of `text`.
+fn literal(text: &str) -> JsonLiteral {
+    JsonLiteral::admit(text).expect("a literal")
+}
+
+/// The value a Property instance holds.
+fn property_value(instance: &Attribute) -> &NgsiLdValue {
+    let Attribute::Property(property) = instance else {
+        panic!("a Property: {instance:?}");
     };
-    (variant, serde_json::to_string(value).expect("an attribute member renders"))
+    &property.value
 }
 
-/// Read `member` both ways, assert they agree, and answer the variant.
-fn read_alike(member: &Value) -> &'static str {
-    // clone: each reading consumes or borrows its own copy of the member
-    let expected = reading(&oracle(member.clone()));
-    let from_member = reading(&AttributeValue::from_member(member.clone()));
-    let from_node = reading(&AttributeValue::from_node(member).expect("a JSON tree is readable"));
-    assert_eq!(from_member, expected, "{member}");
-    // A member carried verbatim keeps its own spelling in `from_member` and the
-    // reader's in `from_node`; the corpus is spelled as the reader spells it.
-    assert_eq!(from_node, expected, "{member}");
-    expected.0
+/// S1: a bare scalar is a concise Property (clause 4.5.2.3), at the top level
+/// and as a sub-attribute.
+#[test]
+fn a_bare_scalar_member_reads_as_a_concise_property() {
+    for (member, value) in [(json!(42), "42"), (json!("x"), r#""x""#), (json!(true), "true"), (json!(1.50), "1.5")] {
+        assert_eq!(property_value(&single(&member)), &NgsiLdValue::Json(literal(value)), "{member}");
+    }
+    let instance = single(&json!({"type": "Property", "value": 1, "accuracy": 0.5}));
+    let accuracy = instance.common().sub_attributes.get("accuracy").expect("the sub-attribute");
+    let AttributeValue::Single(accuracy) = accuracy else {
+        panic!("one instance: {accuracy:?}");
+    };
+    assert_eq!(property_value(accuracy), &NgsiLdValue::Json(literal("0.5")));
 }
 
-/// Every family's instance with every member it may carry.
-fn full_instances() -> Vec<Value> {
-    vec![
+/// S2: an array none of whose items is an instance is the value of a concise
+/// Property, the empty array included.
+#[test]
+fn an_array_of_values_reads_as_a_concise_property_value() {
+    for member in [json!([1, 2, 3]), json!([[1]]), json!([{"a": 1}]), json!([])] {
+        let expected = literal(&member.to_string());
+        assert_eq!(property_value(&single(&member)), &NgsiLdValue::Json(expected), "{member}");
+    }
+}
+
+/// S3: an object with no `type` and no value member is a Property value.
+#[test]
+fn a_typeless_object_without_a_value_member_reads_as_a_property_value() {
+    let instance = single(&json!({"street": "Main", "no": 1}));
+    assert_eq!(property_value(&instance), &NgsiLdValue::Json(literal(r#"{"street":"Main","no":1}"#)));
+}
+
+/// S4: an object with no `type` carrying `value` is a Property, or a
+/// `GeoProperty` when the value is a geometry (clauses 4.5.2.3 and 4.7.3).
+#[test]
+fn a_typeless_object_with_value_reads_as_a_property_or_geo_property() {
+    let Attribute::Property(property) = single(&json!({"value": 21, "unitCode": "CEL"})) else {
+        panic!("a Property");
+    };
+    assert_eq!(property.unit_code.map(|code| code.0.as_str().to_owned()).as_deref(), Some("CEL"));
+    let geo = single(&json!({"value": {"type": "Point", "coordinates": [1, 2]}, "accuracy": 3}));
+    let Attribute::GeoProperty(geo) = geo else {
+        panic!("a GeoProperty: {geo:?}");
+    };
+    assert!(geo.common.sub_attributes.contains_key("accuracy"));
+}
+
+/// S5: an object with no `type` is the family its value member names.
+#[test]
+fn a_typeless_object_reads_as_the_family_its_value_member_names() {
+    for (member, family) in [
+        (json!({"object": "urn:ngsi-ld:A:1"}), AttributeType::Relationship),
+        (json!({"languageMap": {"en": "a"}}), AttributeType::LanguageProperty),
+        (json!({"vocab": "x"}), AttributeType::VocabProperty),
+        (json!({"valueList": [1]}), AttributeType::ListProperty),
+        (json!({"objectList": ["urn:ngsi-ld:A:1"]}), AttributeType::ListRelationship),
+        (json!({"json": {"k": 1}}), AttributeType::JsonProperty),
+    ] {
+        assert_eq!(single(&member).attribute_type(), family, "{member}");
+    }
+}
+
+/// S6: a bare geometry is a concise `GeoProperty` (clause 4.7.3).
+#[test]
+fn a_bare_geometry_reads_as_a_concise_geo_property() {
+    let Attribute::GeoProperty(geo) = single(&json!({"type": "Point", "coordinates": [13.4, 52.5]})) else {
+        panic!("a GeoProperty");
+    };
+    assert!(matches!(geo.value, GeoPropertyValue::Geometry(_)));
+}
+
+/// S7: an array of instances, some of them concise, is a multi-attribute.
+#[test]
+fn an_array_of_concise_instances_reads_as_a_multi_attribute() {
+    let member = json!([{"value": 1, "datasetId": "urn:ngsi-ld:Dataset:a"}, {"type": "Property", "value": 2}]);
+    let Ok(AttributeValue::Multiple(instances)) = read("speed", &member) else {
+        panic!("a multi-attribute");
+    };
+    assert_eq!(instances.len(), 2);
+    assert_eq!(
+        instances[0].dataset_id().map(|id| id.as_str().to_owned()).as_deref(),
+        Some("urn:ngsi-ld:Dataset:a")
+    );
+}
+
+/// S8: a geometry written as a JSON string is kept as its text (clause
+/// 4.7.2); a string that is no geometry is refused.
+#[test]
+fn a_string_encoded_geometry_reads_as_a_geo_property() {
+    let text = json!({"type": "Point", "coordinates": [1, 2]}).to_string();
+    let Attribute::GeoProperty(geo) = single(&json!({"type": "GeoProperty", "value": text})) else {
+        panic!("a GeoProperty");
+    };
+    let GeoPropertyValue::Encoded(encoded) = &geo.value else {
+        panic!("the string form: {:?}", geo.value);
+    };
+    assert_eq!(encoded.as_str(), text);
+    assert_eq!(refused(&json!({"type": "GeoProperty", "value": "not json"})).path.to_string(), "/value");
+}
+
+/// S9: the NGSI-LD Null in place of the whole member.
+#[test]
+fn a_bare_null_member_reads_as_the_ngsi_ld_null() {
+    assert!(matches!(read("owner", &json!("urn:ngsi-ld:null")), Ok(AttributeValue::NgsiLdNull)));
+}
+
+/// S10: a `GeoProperty` whose value is the NGSI-LD Null (clause 4.5.0).
+#[test]
+fn a_geo_property_null_value_reads_typed() {
+    for spelling in ["urn:ngsi-ld:null", "https://uri.etsi.org/ngsi-ld/null"] {
+        let Attribute::GeoProperty(geo) = single(&json!({"type": "GeoProperty", "value": spelling})) else {
+            panic!("a GeoProperty");
+        };
+        assert_eq!(geo.value, GeoPropertyValue::Null);
+    }
+}
+
+/// S12: no member admits a JSON `null` directly (clause 5.2.1).
+#[test]
+fn a_json_null_member_or_family_value_is_refused() {
+    assert!(matches!(refused(&Value::Null).refusal, NodeRefusal::Null));
+    for (member, at) in [
+        (json!({"type": "Property", "value": null}), "/value"),
+        (json!({"type": "GeoProperty", "value": null}), "/value"),
+        (json!({"type": "Relationship", "object": null}), "/object"),
+        (json!({"type": "VocabProperty", "vocab": null}), "/vocab"),
+        (json!({"type": "LanguageProperty", "languageMap": null}), "/languageMap"),
+        (json!({"type": "ListProperty", "valueList": null}), "/valueList"),
+        (json!({"type": "JsonProperty", "json": null}), "/json"),
+    ] {
+        let refusal = refused(&member);
+        assert!(matches!(refusal.refusal, NodeRefusal::Null), "{member}: {refusal}");
+        assert_eq!(refusal.path.to_string(), at, "{member}");
+    }
+}
+
+/// S13, S14, S20, S21: nodes no clause admits where an attribute stands.
+#[test]
+fn a_node_no_clause_admits_is_refused_with_its_fault() {
+    for (member, fault) in [
+        (json!({"type": 7}), AttributeNodeFault::TypeNotAString),
+        (
+            json!({"type": "Propertyy", "value": 1}),
+            AttributeNodeFault::NotAnAttributeType(strum::ParseError::VariantNotFound),
+        ),
+        (
+            json!({"type": "Feature"}),
+            AttributeNodeFault::NotAnAttributeType(strum::ParseError::VariantNotFound),
+        ),
+        (
+            json!({"type": "https://uri.etsi.org/ngsi-ld/Property", "value": 1}),
+            AttributeNodeFault::NotAnAttributeType(strum::ParseError::VariantNotFound),
+        ),
+        (json!({"type": "Point"}), AttributeNodeFault::GeometryWithoutCoordinates),
+        (json!({"object": "urn:ngsi-ld:A:1", "vocab": "x"}), AttributeNodeFault::SeveralValueMembers),
+        (json!([{"type": "Property", "value": 1}, 1]), AttributeNodeFault::MixedInstancesAndValues),
+    ] {
+        let NodeRefusal::Shape(found) = refused(&member).refusal else {
+            panic!("a shape refusal: {member}");
+        };
+        assert_eq!(found, fault, "{member}");
+    }
+}
+
+/// S15: an instance missing its family's value member.
+#[test]
+fn an_instance_without_its_value_member_is_refused() {
+    for family in AttributeType::ALL {
+        let refusal = refused(&json!({"type": family.to_string()}));
+        assert!(matches!(refusal.refusal, NodeRefusal::Missing { .. }), "{family}: {refusal}");
+    }
+}
+
+/// S16, S17: a family value or an envelope member that does not decode is
+/// refused at the member.
+#[test]
+fn a_malformed_family_value_or_envelope_member_is_refused_where_it_stands() {
+    for (member, at) in [
+        (json!({"type": "Relationship", "object": "not a uri"}), "/object"),
+        (json!({"type": "VocabProperty", "vocab": "bad ref"}), "/vocab"),
+        (json!({"type": "LanguageProperty", "languageMap": {"en us": "a"}}), "/languageMap"),
+        (json!({"type": "LanguageProperty", "languageMap": "urn:ngsi-ld:null"}), "/languageMap"),
+        (json!({"type": "ListProperty", "valueList": 1}), "/valueList"),
+        (
+            json!({"type": "ListProperty", "valueList": [1, {"type": "Point", "coordinates": [1, 99]}]}),
+            "/valueList/1",
+        ),
+        (
+            json!({"type": "ListRelationship", "objectList": [{"subject": "urn:ngsi-ld:A:1"}]}),
+            "/objectList",
+        ),
+        (json!({"type": "Property", "value": {"type": "Point", "coordinates": [200, 0]}}), "/value"),
+        (
+            json!({"type": "GeoProperty", "value": {"type": "GeometryCollection", "geometries": []}}),
+            "/value",
+        ),
+        (
+            json!({"type": "Property", "value": 1, "previousValue": {"type": "Point", "coordinates": [1]}}),
+            "/previousValue",
+        ),
+        (json!({"type": "Property", "value": 1, "unitCode": "XYZ"}), "/unitCode"),
+        (json!({"type": "Property", "value": 1, "valueType": "bad ref"}), "/valueType"),
+        (json!({"type": "Property", "value": 1, "observedAt": "yesterday"}), "/observedAt"),
+        (json!({"type": "Property", "value": 1, "expiresAt": "2030-01-01"}), "/expiresAt"),
+        (json!({"type": "Property", "value": 1, "datasetId": "not a uri"}), "/datasetId"),
+        (json!({"type": "Property", "value": 1, "instanceId": 3}), "/instanceId"),
+    ] {
+        assert_eq!(refused(&member).path.to_string(), at, "{member}");
+    }
+}
+
+/// S18: a system member a Context Producer wrote is ignored, whatever it holds
+/// (clause 5.2.2); a peer's malformed one is refused.
+#[test]
+fn a_system_member_a_producer_writes_is_ignored() {
+    let text = json!({
+        "id": "urn:ngsi-ld:T:1",
+        "type": "T",
+        "createdAt": true,
+        "speed": {"type": "Property", "value": 1, "createdAt": true, "modifiedAt": "x"}
+    })
+    .to_string();
+    let entity = <Entity>::from_request_text(text.as_bytes()).expect("the system members are ignored");
+    assert!(entity.created_at.is_none());
+    let speed = entity.attrs.get("speed").and_then(|speed| speed.instances().next()).expect("the attribute");
+    assert!(speed.common().created_at.is_none() && speed.common().modified_at.is_none());
+    assert!(serde_json::from_str::<Entity>(&text).is_err(), "a peer's malformed system member is refused");
+}
+
+/// S19: a sub-attribute named by no attribute name is refused at its name.
+#[test]
+fn a_sub_attribute_named_by_no_attribute_name_is_refused() {
+    let refusal = refused(&json!({"type": "Property", "value": 1, "bad name": {"type": "Property", "value": 1}}));
+    assert!(matches!(refusal.refusal, NodeRefusal::AttributeName(_)), "{refusal}");
+    assert_eq!(refusal.path.to_string(), "/bad name");
+}
+
+/// S22: a geometry carrying a JSON-LD keyword is no `GeoJSON` geometry.
+#[test]
+fn a_geometry_carrying_a_json_ld_keyword_is_refused() {
+    let refusal = refused(&json!({"type": "GeoProperty", "value": {"@context": {}, "type": "Point", "coordinates": [13.4, 52.5]}}));
+    assert!(matches!(refusal.refusal, NodeRefusal::Geometry { .. }), "{refusal}");
+}
+
+/// A refusal is located from the top of the member, through sub-attributes
+/// and the elements of a multi-attribute.
+#[test]
+fn a_refusal_names_where_it_stands() {
+    let member = json!([
+        {"type": "Property", "value": 1, "datasetId": "urn:ngsi-ld:Dataset:a"},
+        {"type": "Property", "value": 2, "accuracy": {"type": "Propertyy", "value": 0.5}}
+    ]);
+    assert_eq!(refused(&member).path.to_string(), "/1/accuracy");
+}
+
+/// Clause 4.5.2.2: the seals of the `ngsildproof` Property are its own
+/// non-reified members; anywhere else they "shall never be present" and are
+/// refused where they stand, not read as sub-attributes of that name.
+#[test]
+fn the_seals_of_ngsildproof_are_members_of_the_property() {
+    let proof = json!({"type": "Property", "value": {"proofValue": "z"}, "entityIdSealed": "urn:ngsi-ld:Store:2", "entityTypeSealed": "Store"});
+    let Ok(AttributeValue::Single(instance)) = read("ngsildproof", &proof) else {
+        panic!("one instance");
+    };
+    let Attribute::Property(property) = *instance else {
+        panic!("a Property");
+    };
+    assert_eq!(property.entity_id_sealed, Some(literal(r#""urn:ngsi-ld:Store:2""#)));
+    assert_eq!(property.entity_type_sealed, Some(literal(r#""Store""#)));
+    assert!(property.common.sub_attributes.is_empty());
+    assert_eq!(rendered(&AttributeValue::Single(Box::new(Attribute::Property(property)))), proof);
+    for (name, member, at) in [
+        ("member", proof, "/"),
+        (
+            "ngsildproof",
+            json!({"type": "Relationship", "object": "urn:ngsi-ld:Proof:1", "entityIdSealed": "urn:x:1"}),
+            "/",
+        ),
+        ("ngsildproof", json!({"object": "urn:ngsi-ld:Proof:1", "entityTypeSealed": "T"}), "/"),
+        (
+            "speed",
+            json!({"type": "Property", "value": 1, "accuracy": {"value": 0.5, "entityIdSealed": "urn:x:1"}}),
+            "/accuracy",
+        ),
+    ] {
+        let Err(NodeReadError::Refused(refusal)) = read(name, &member) else {
+            panic!("a seal outside ngsildproof is refused: {member}");
+        };
+        assert!(
+            matches!(refusal.refusal, NodeRefusal::Shape(AttributeNodeFault::ProofSealOutsideNgsildproof(_))),
+            "{member}: {refusal}"
+        );
+        assert_eq!(refusal.path.to_string(), at, "{member}");
+    }
+}
+
+/// A Property that carries every member it may carry reads back as written.
+#[test]
+fn every_family_with_every_member_renders_as_it_was_written() {
+    for instance in [
         json!({"type": "Property", "value": 1.5, "unitCode": "CEL", "valueType": "Number", "previousValue": 2, "datasetId": "urn:ngsi-ld:Dataset:a",
-            "observedAt": "2024-01-01T00:00:00Z", "expiresAt": "2030-01-01T00:00:00.120Z", "createdAt": "2024-01-01T00:00:00Z",
-            "modifiedAt": "2024-01-02T00:00:00Z", "deletedAt": "2024-01-03T00:00:00Z", "instanceId": "urn:ngsi-ld:attribute:instance:1",
-            "accuracy": {"type": "Property", "value": 0.5, "precision": {"type": "Property", "value": 1}}}),
+            "observedAt": "2024-01-01T00:00:00Z", "instanceId": "urn:ngsi-ld:attribute:instance:1",
+            "accuracy": {"type": "Property", "value": 0.5}}),
         json!({"type": "Relationship", "object": ["urn:ngsi-ld:A:1", "urn:ngsi-ld:A:2"], "objectType": ["A", "ex:B"], "previousObject": "urn:ngsi-ld:A:0",
             "entity": {"id": "urn:ngsi-ld:A:1", "type": "A", "name": {"type": "Property", "value": "a"}}}),
-        json!({"type": "VocabProperty", "vocab": ["commercial", "ex:Offer"], "valueType": "xsd:string", "previousVocab": "private"}),
-        json!({"type": "GeoProperty", "value": {"type": "Polygon", "coordinates": [[[0.0, 0.0], [4.0, 0.0], [4.0, 4.0, 12.5], [0.0, 0.0]]]},
-            "previousValue": {"type": "Point", "coordinates": [1.0, 2.0]}, "valueType": "geojson:Polygon", "accuracy": {"type": "Property", "value": 3}}),
-        json!({"type": "LanguageProperty", "languageMap": {"en": "a", "@none": "b", "de": ["c", "d"]}, "previousLanguageMap": {"en": "x"}, "valueType": "langString"}),
-        json!({"type": "JsonProperty", "json": {"id": "x", "n": [1, 2.25]}, "previousJson": [1], "valueType": "json"}),
-        json!({"type": "ListProperty", "valueList": [1, "a", {"type": "Point", "coordinates": [1.0, 2.0]}, [3]], "previousValueList": [0], "valueType": "Integer"}),
-        json!({"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:A:1"}, "urn:ngsi-ld:A:2"], "objectType": "A",
-            "previousObjectList": ["urn:ngsi-ld:null"], "entityList": [{"id": "urn:ngsi-ld:A:1", "type": "A"}]}),
-    ]
-}
-
-#[test]
-fn every_family_with_every_member_reads_as_the_replaced_decoding_did() {
-    for instance in full_instances() {
-        assert_eq!(read_alike(&instance), "single");
-    }
-    assert_eq!(read_alike(&Value::Array(full_instances())), "multiple");
-}
-
-/// Every way an instance is refused carries the member verbatim.
-#[test]
-fn every_refused_instance_is_carried_verbatim_as_the_replaced_decoding_did() {
-    let refused = [
-        // No family, or no family by that name.
-        json!({"value": 1}),
-        json!({"type": 7, "value": 1}),
-        json!({"type": "Foo", "value": 1}),
-        json!({"type": "https://uri.etsi.org/ngsi-ld/Property", "value": 1}),
-        // A family's own member missing.
-        json!({"type": "Property"}),
-        json!({"type": "Relationship"}),
-        json!({"type": "VocabProperty"}),
-        json!({"type": "GeoProperty"}),
-        json!({"type": "LanguageProperty"}),
-        json!({"type": "JsonProperty"}),
-        json!({"type": "ListProperty"}),
-        json!({"type": "ListRelationship"}),
-        // A family's own member that is not what the family holds.
-        json!({"type": "Property", "value": {"type": "Point", "coordinates": [200.0, 0.0]}}),
-        json!({"type": "Property", "value": 1, "unitCode": "XYZ"}),
-        json!({"type": "Property", "value": 1, "unitCode": 5}),
-        json!({"type": "Property", "value": 1, "valueType": "bad ref"}),
-        json!({"type": "Property", "value": 1, "previousValue": {"type": "Point", "coordinates": [1.0]}}),
-        json!({"type": "Relationship", "object": "not a uri"}),
-        json!({"type": "Relationship", "object": null}),
-        json!({"type": "Relationship", "object": 5}),
-        json!({"type": "Relationship", "object": ["urn:ngsi-ld:A:1", 5]}),
-        json!({"type": "Relationship", "object": "urn:ngsi-ld:A:1", "objectType": "bad ref"}),
-        json!({"type": "Relationship", "object": "urn:ngsi-ld:A:1", "previousObject": "not a uri"}),
-        json!({"type": "Relationship", "object": "urn:ngsi-ld:A:1", "entity": {"type": "A"}}),
-        json!({"type": "Relationship", "object": "urn:ngsi-ld:A:1", "entity": "urn:ngsi-ld:A:1"}),
-        json!({"type": "VocabProperty", "vocab": "bad ref"}),
-        json!({"type": "VocabProperty", "vocab": null}),
-        json!({"type": "VocabProperty", "vocab": "a", "previousVocab": 1}),
-        json!({"type": "GeoProperty", "value": json!({"type": "Point", "coordinates": [1.0, 2.0]}).to_string()}),
-        json!({"type": "GeoProperty", "value": {"@context": {}, "type": "Point", "coordinates": [13.4, 52.5]}}),
-        json!({"type": "GeoProperty", "value": {"type": "Point"}}),
-        json!({"type": "GeoProperty", "value": {"type": "GeometryCollection", "geometries": []}}),
-        json!({"type": "GeoProperty", "value": null}),
-        json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}, "previousValue": "x"}),
-        json!({"type": "LanguageProperty", "languageMap": {"en us": "a"}}),
-        json!({"type": "LanguageProperty", "languageMap": {"en": 1}}),
-        json!({"type": "LanguageProperty", "languageMap": "urn:ngsi-ld:null"}),
-        json!({"type": "LanguageProperty", "languageMap": null}),
-        json!({"type": "ListProperty", "valueList": 1}),
-        json!({"type": "ListProperty", "valueList": null}),
-        json!({"type": "ListProperty", "valueList": [{"type": "Point", "coordinates": [1.0, 99.0]}]}),
-        json!({"type": "ListProperty", "valueList": [1], "previousValueList": 2}),
-        json!({"type": "ListRelationship", "objectList": "urn:ngsi-ld:A:1"}),
-        json!({"type": "ListRelationship", "objectList": [{"subject": "urn:ngsi-ld:A:1"}]}),
-        json!({"type": "ListRelationship", "objectList": ["not a uri"]}),
-        json!({"type": "ListRelationship", "objectList": ["urn:ngsi-ld:A:1"], "entityList": [{"id": "urn:ngsi-ld:A:1"}]}),
-        // A shared member that is not what every family holds in it.
-        json!({"type": "Property", "value": 1, "observedAt": "yesterday"}),
-        json!({"type": "Property", "value": 1, "observedAt": 5}),
-        json!({"type": "Property", "value": 1, "expiresAt": "2030-01-01"}),
-        json!({"type": "Property", "value": 1, "createdAt": true}),
-        json!({"type": "Property", "value": 1, "datasetId": "not a uri"}),
-        json!({"type": "Property", "value": 1, "instanceId": 3}),
-        // A sub-attribute named by no attribute name.
-        json!({"type": "Property", "value": 1, "bad name": {"type": "Property", "value": 1}}),
-        json!({"type": "Property", "value": 1, "": 1}),
-    ];
-    for member in &refused {
-        assert_eq!(read_alike(member), "raw");
-    }
-    // An array holding one refused instance, or anything but instances, is
-    // carried whole.
-    for member in [
-        json!([{"type": "Property", "value": 1}, {"type": "Property"}]),
-        json!([{"type": "Property", "value": 1}, 1]),
-        json!([1, 2, 3]),
-        json!([[{"type": "Property", "value": 1}]]),
+        json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}, "valueType": "geojson:Point"}),
+        json!({"type": "JsonProperty", "json": {"id": "x", "n": [1, 2.25]}, "previousJson": {"a": 1}, "valueType": "json"}),
+        json!({"type": "ListProperty", "valueList": [1, "a", [3]], "previousValueList": [0], "valueType": "Integer"}),
     ] {
-        assert_eq!(read_alike(&member), "raw");
-    }
-    for member in [json!(42), json!(1.25), json!("text"), json!(true), Value::Null] {
-        assert_eq!(read_alike(&member), "raw");
+        assert_eq!(rendered(&AttributeValue::Single(Box::new(single(&instance)))), instance);
     }
 }
 
-/// `null` is no value for every member a family may leave out, and a member
-/// one family owns is a sub-attribute of any other.
-#[test]
-fn optional_nulls_and_foreign_members_read_as_the_replaced_decoding_did() {
-    let accepted = [
-        json!({"type": "Property", "value": null}),
-        json!({"type": "Property", "value": 1, "unitCode": null, "valueType": null, "previousValue": null, "datasetId": null, "observedAt": null,
-            "expiresAt": null, "createdAt": null, "modifiedAt": null, "deletedAt": null, "instanceId": null}),
-        json!({"type": "Relationship", "object": "urn:ngsi-ld:A:1", "objectType": null, "previousObject": null, "entity": null}),
-        json!({"type": "JsonProperty", "json": null, "previousJson": null}),
-        json!({"type": "ListProperty", "valueList": [], "previousValueList": null}),
-        json!({"type": "ListRelationship", "objectList": [], "previousObjectList": null, "entityList": null}),
-        json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0], "title": "a foreign member"}, "previousValue": null}),
-        json!({"type": "LanguageProperty", "languageMap": {}, "previousLanguageMap": null}),
-        // `unitCode` beside a list, `valueType` beside a Relationship, `entity`
-        // beside a Property, `objectType` beside a Property: sub-attributes.
-        json!({"type": "ListProperty", "valueList": [1], "unitCode": "CEL"}),
-        json!({"type": "Relationship", "object": "urn:ngsi-ld:A:1", "valueType": "Integer"}),
-        json!({"type": "Property", "value": 1, "entity": {"id": "urn:ngsi-ld:A:1", "type": "A"}}),
-        json!({"type": "Property", "value": 1, "objectType": "A", "object": "urn:ngsi-ld:A:1"}),
-        json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}, "unitCode": "MTR"}),
-        // A sub-attribute that is itself refused is carried verbatim inside a
-        // typed instance.
-        json!({"type": "Property", "value": 1, "note": {"type": "Property"}, "concise": "x", "deep": {"type": "Property", "value": 1, "deeper": {"type": "Relationship", "object": "x y"}}}),
-    ];
-    for member in &accepted {
-        assert_eq!(read_alike(member), "single");
-    }
-    assert_eq!(read_alike(&json!([])), "multiple");
+/// A Property carrying a chain of `levels` sub-attributes, each a Property
+/// of a scalar.
+fn sub_attribute_chain(levels: usize) -> Value {
+    (0..levels).fold(
+        json!({"type": "Property", "value": 1}),
+        |inner, _| json!({"type": "Property", "value": 1, "s": inner}),
+    )
 }
 
-/// A number the reader spells otherwise is held in the reader's spelling, as
-/// the replaced decoding held it.
-#[test]
-fn a_number_is_held_as_the_reader_spells_it() {
-    let respelled = Value::Number(Number::from_string_unchecked("1E+2".to_owned()));
-    let member = json!({"type": "Property", "value": [respelled], "sub": {"type": "Property", "value": 1}});
-    let expected = reading(&oracle(member.clone())); // clone: the oracle consumes its copy
-    assert_eq!(reading(&AttributeValue::from_member(member)), expected);
+/// How many sub-attributes `member` nests.
+fn chain_length(member: &AttributeValue) -> usize {
+    let AttributeValue::Single(instance) = member else {
+        panic!("one instance: {member:?}");
+    };
+    instance.common().sub_attributes.get("s").map_or(0, |inner| 1 + chain_length(inner))
 }
 
-/// An entity reads from a node as it decodes from a document.
+/// The reading recurses once per sub-attribute, and every level runs on
+/// sufficient stack: a chain as long as the reader admits in one attribute is
+/// read from request text on a 512 KiB thread.
 #[test]
-fn an_entity_reads_from_a_node_as_it_decodes() {
-    let documents = [
-        json!({"id": "urn:ngsi-ld:T:1", "type": ["T", "U"], "scope": ["/a", "/b"], "expiresAt": "2030-01-01T00:00:00Z",
-            "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}}, "observationSpace": null,
-            "operationSpace": "concise", "createdAt": "2024-01-01T00:00:00Z", "modifiedAt": "2024-01-01T00:00:00Z", "deletedAt": null,
-            "name": {"type": "Property", "value": "a"}, "raw": [1, 2]}),
-        json!({"id": "urn:ngsi-ld:T:1", "type": "T", "scope": "/a"}),
-    ];
-    for document in &documents {
-        let decoded: Entity = deserialize_exact(document).expect("the document decodes");
-        let read = Entity::from_node(document).expect("the node reads");
-        assert_eq!(
-            serde_json::to_string(&read).expect("renders"),
-            serde_json::to_string(&decoded).expect("renders")
-        );
-    }
-    for refused in [
-        json!({"type": "T"}),
-        json!({"id": "urn:ngsi-ld:T:1"}),
-        json!({"id": "not a uri", "type": "T"}),
-        json!({"id": "urn:ngsi-ld:T:1", "type": "T", "bad name": 1}),
-        json!({"id": "urn:ngsi-ld:T:1", "type": "T", "scope": "no scope"}),
-        json!({"id": "urn:ngsi-ld:T:1", "type": "T", "expiresAt": "soon"}),
-        json!([{"id": "urn:ngsi-ld:T:1", "type": "T"}]),
+fn a_chain_of_sub_attributes_as_long_as_the_reader_admits_is_read_on_a_small_stack() {
+    let text = json!({"id": "urn:ngsi-ld:Probe:1", "type": "Probe", "p": sub_attribute_chain(124)}).to_string();
+    let length = thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(move || {
+            let entity = <Entity>::from_request_text(text.as_bytes()).expect("the entity is read");
+            chain_length(entity.attrs.get("p").expect("the attribute is read"))
+        })
+        .expect("the thread starts")
+        .join()
+        .expect("the reading stays within the stack");
+    assert_eq!(length, 124);
+}
+
+/// An entity that is none is refused, located at the member at fault.
+#[test]
+fn an_entity_that_is_none_is_refused() {
+    for (refused_entity, at) in [
+        (json!({"type": "T"}), "/"),
+        (json!({"id": "urn:ngsi-ld:T:1"}), "/"),
+        (json!({"id": "not a uri", "type": "T"}), "/id"),
+        (json!({"id": "urn:ngsi-ld:T:1", "type": "T", "bad name": 1}), "/bad name"),
+        (json!({"id": "urn:ngsi-ld:T:1", "type": "T", "scope": "no scope"}), "/scope"),
+        (json!({"id": "urn:ngsi-ld:T:1", "type": "T", "speed": {"type": "Property"}}), "/speed"),
     ] {
-        assert!(deserialize_exact::<Entity>(&refused).is_err(), "{refused}");
-        assert!(Entity::from_node(&refused).is_err(), "{refused}");
+        let Err(NodeReadError::Refused(refusal)) = <Entity>::from_node(&refused_entity) else {
+            panic!("refused: {refused_entity}");
+        };
+        assert_eq!(refusal.path.to_string(), at, "{refused_entity}");
     }
+    assert!(<Entity>::from_node(&json!([{"id": "urn:ngsi-ld:T:1", "type": "T"}])).is_err());
 }

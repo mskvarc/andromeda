@@ -21,12 +21,10 @@ use andromeda_ngsi_ld_entity::{
     system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::entity::EntityPatch;
+use andromeda_ngsi_ld_model::{attribute::merge_member::MergeMember, entity::EntityPatch};
 use andromeda_ngsi_ld_query::type_selection::expansion::expand_type_expression;
-use andromeda_ngsi_ld_representation::entity_members::ENTITY_MEMBERS;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
-use serde_json::Value;
 use std::sync::Arc;
 
 impl EntityService {
@@ -45,7 +43,7 @@ impl EntityService {
     /// # Errors
     ///
     /// Reports [`EntityError::Validation`] when a rewritten patch cannot be
-    /// serialised, cannot be adapted to the attribute families the target
+    /// adapted to the attribute families the target
     /// holds, or sets a `datasetId` to the NGSI-LD Null (clause 5.5.12),
     /// [`EntityError::JsonLd`] when the patch or the type expression cannot be
     /// expanded against `context`, [`EntityError::NotFound`] when no entity
@@ -57,7 +55,7 @@ impl EntityService {
         &self,
         target: &ContextTarget,
         id: &Identifier,
-        patch: &EntityPatch,
+        patch: &EntityPatch<MergeMember>,
         admitted: AdmittedEntity<MergeEntity>,
         context: &AdmittedContext,
         options: MergeOptions<'_>,
@@ -70,14 +68,14 @@ impl EntityService {
                 None => None,
             };
             let fragment = if options.rewrites_fragment() {
-                let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::Validation(EntityValidationReason::CompactDocument(err)))?;
-                self.adapt_merge_fragment(target, id, &mut patch_json, &prepared_context, options).await?;
+                let mut adapted = patch.clone(); // clone: the caller keeps the fragment as written, for the registrations it forwards it to
+                self.adapt_merge_fragment(target, id, &mut adapted, &prepared_context, options).await?;
                 // Clause 5.5.12 lets a merge fragment carry the NGSI-LD Null at
                 // any depth, but "a datasetId cannot be deleted by setting it to
                 // the value urn:ngsi-ld:null". Clause 4.18 admits the sentinel as
                 // the whole value of `scope`, which clause 5.5.12 then reads as
                 // the deletion of that member.
-                self.admit_remaining_entity::<MergeEntity>(patch_json, context).await?.into_document()
+                self.admit_remaining_entity::<MergeEntity>(&adapted, context).await?.into_document()
             } else {
                 admitted.into_document()
             };
@@ -126,20 +124,14 @@ impl EntityService {
         &self,
         target: &ContextTarget,
         id: &Identifier,
-        fragment: &mut Value,
+        fragment: &mut EntityPatch<MergeMember>,
         prepared_context: &PreparedTermContext,
         options: MergeOptions<'_>,
     ) -> Result<(), EntityError> {
-        let Some(members) = fragment.as_object_mut() else {
-            return Ok(());
-        };
         let Some(existing) = self.reader.get(target, id).await? else {
             return Ok(());
         };
-        for (member, value) in members.iter_mut() {
-            if ENTITY_MEMBERS.contains(&member.as_str()) {
-                continue;
-            }
+        for (member, value) in fragment.attribute_members_mut() {
             let iri = self.engine.expand_term(member, prepared_context).await?;
             let attribute = member
                 .parse::<AttributeName>()

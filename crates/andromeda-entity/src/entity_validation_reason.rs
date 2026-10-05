@@ -64,15 +64,6 @@ pub enum EntityValidationReason {
     /// expansion reads.
     #[error("the request could not be serialized as JSON: {0}")]
     CompactDocument(#[source] serde_json::Error),
-    /// The compacted entity could not be read back as an entity.
-    #[error("entity data is not valid: {0}")]
-    EntityData(#[source] serde_json::Error),
-    /// The entity representation was not a JSON object.
-    #[error("entity data is not a JSON object")]
-    EntityDataNotObject,
-    /// The entity representation omitted its `id`.
-    #[error("entity is missing an id")]
-    EntityMissingId,
     /// A Replace Entity payload names an entity other than the one it replaces:
     /// clause 5.6.18.4 replaces the target "with the same Entity ID".
     #[error("the replacement names the entity '{named}', not the entity its URL names")]

@@ -13,6 +13,7 @@
 use crate::{
     EntityService,
     batch::{
+        BatchMember,
         context_groups::{ExpandedEntity, PreparedBatch},
         prepare::{PendingEntity, PreparedEntity},
     },
@@ -26,9 +27,9 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, entity::Entity};
 
 /// A batch entity as submitted, with the context it is read against.
-pub struct SubmittedEntity {
+pub struct SubmittedEntity<M> {
     /// The decoded entity.
-    pub entity: Entity,
+    pub entity: Entity<M>,
     /// The context the entity is read against: its own `@context` in an
     /// `application/ld+json` batch, the request's `Link` context otherwise
     /// (clause 5.5.7), admitted before the entity is. Entities naming the same
@@ -50,9 +51,9 @@ enum Preparation {
 }
 
 /// One entity the admission let through.
-pub(super) struct AdmittedBatchEntity {
+pub(super) struct AdmittedBatchEntity<M> {
     /// The entity as it stands, forwarded as it is and narrowed in place.
-    entity: Entity,
+    entity: Entity<M>,
     /// Its local write document.
     preparation: Preparation,
     /// The context the entity was submitted with, which a narrowed entity is
@@ -60,7 +61,7 @@ pub(super) struct AdmittedBatchEntity {
     context: BatchContext,
 }
 
-impl AdmittedBatchEntity {
+impl<M> AdmittedBatchEntity<M> {
     /// The entity's identifier.
     pub(super) const fn id(&self) -> &Identifier {
         &self.entity.id
@@ -72,11 +73,11 @@ impl AdmittedBatchEntity {
 ///
 /// Only [`EntityService::admit_batch_write`] constructs a non-empty one, so
 /// holding one proves every entity in it passed the screening of `W`.
-pub struct AdmittedBatch<W> {
+pub struct AdmittedBatch<W: BatchWriteKind> {
     /// The operation, in the mode the request selected.
     kind: W,
     /// The admitted entities, in submission order.
-    entities: Vec<AdmittedBatchEntity>,
+    entities: Vec<AdmittedBatchEntity<W::Member>>,
 }
 
 impl<W: BatchWriteKind> AdmittedBatch<W> {
@@ -102,7 +103,7 @@ impl<W: BatchWriteKind> AdmittedBatch<W> {
     /// The admitted entities, as the forwarding phase sends them, each with
     /// the context it was submitted under (a top-level node's `@context`
     /// applies to that node alone).
-    pub fn entities(&self) -> impl Iterator<Item = (&Entity, &BatchContext)> {
+    pub fn entities(&self) -> impl Iterator<Item = (&Entity<W::Member>, &BatchContext)> {
         self.entities.iter().map(|admitted| (&admitted.entity, &admitted.context))
     }
 
@@ -128,7 +129,7 @@ impl<W: BatchWriteKind> AdmittedBatch<W> {
     }
 
     /// The operation and the admitted entities, for the local phase.
-    pub(super) fn into_parts(self) -> (W, Vec<AdmittedBatchEntity>) {
+    pub(super) fn into_parts(self) -> (W, Vec<AdmittedBatchEntity<W::Member>>) {
         (self.kind, self.entities)
     }
 }
@@ -147,7 +148,11 @@ impl EntityService {
     /// `BatchEntityError` [...] containing the failed Entity ID and the related
     /// `ProblemDetails`" rather than failing the request. An identifier that
     /// fails is refused for every entity carrying it.
-    pub async fn admit_batch_write<W: BatchWriteKind>(&self, kind: W, submitted: Vec<SubmittedEntity>) -> (AdmittedBatch<W>, Vec<(Identifier, EntityError)>) {
+    pub async fn admit_batch_write<W: BatchWriteKind>(
+        &self,
+        kind: W,
+        submitted: Vec<SubmittedEntity<W::Member>>,
+    ) -> (AdmittedBatch<W>, Vec<(Identifier, EntityError)>) {
         let slot_count = submitted.len();
         let mut groups = ContextGroups::default();
         for (idx, SubmittedEntity { entity, context }) in submitted.into_iter().enumerate() {
@@ -176,9 +181,9 @@ impl EntityService {
     /// admission prepared it; a narrowed one is prepared again for the batch
     /// operation `write`, against the context it was submitted with, and a
     /// failure of that is reported against its identifier.
-    pub(super) async fn prepare_admitted_chunk(
+    pub(super) async fn prepare_admitted_chunk<M: BatchMember>(
         &self,
-        chunk: Vec<AdmittedBatchEntity>,
+        chunk: Vec<AdmittedBatchEntity<M>>,
         write: BatchWrite,
     ) -> (Vec<PreparedEntity>, Vec<(Identifier, EntityError)>) {
         let mut slots: Vec<Option<PreparedEntity>> = Vec::with_capacity(chunk.len());
@@ -237,7 +242,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_entity::document::EntityDocument;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-    use andromeda_ngsi_ld_model::entity::Entity;
+    use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
     use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
     use serde_json::{Value, json};
 
@@ -409,7 +414,7 @@ mod tests {
             .collect()
     }
 
-    fn submitted_under(id: &str, context: &AdmittedBatchContext) -> SubmittedEntity {
+    fn submitted_under(id: &str, context: &AdmittedBatchContext) -> SubmittedEntity<AttributeValue> {
         SubmittedEntity {
             entity: vehicle(id),
             context: context.clone(), // clone: each entity holds the shared handle

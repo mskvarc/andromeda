@@ -28,14 +28,14 @@
 //! decided there instead, against [`crate::family_member_admission`].
 
 use crate::{
+    compact_node::{CompactNode, NodeMembers, NodeShape},
     concise_reading::{ArrayRefusal, ObjectReading, ObjectRefusal, read_array, read_object},
     entity_members::ENTITY_MEMBERS,
     family_member_admission::MemberAdmission,
     proof_seal_admission::{ProofSealMember, is_proof_seal, proof_seal_admission},
 };
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, PathSegment};
-use serde_json::{Map, Value};
+use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, JsonPointerSegment};
 use thiserror::Error;
 
 /// A compact attribute node the specification does not admit, and where it
@@ -77,6 +77,19 @@ pub enum AttributeNodeFault {
     ProofSealOutsideNgsildproof(ProofSealMember),
 }
 
+impl AttributeNodeFault {
+    /// The fault an object the concise reading refuses is reported with.
+    #[must_use]
+    pub const fn of_object(refusal: ObjectRefusal) -> AttributeNodeFault {
+        match refusal {
+            ObjectRefusal::NotAnAttributeType(source) => AttributeNodeFault::NotAnAttributeType(source),
+            ObjectRefusal::TypeNotAString => AttributeNodeFault::TypeNotAString,
+            ObjectRefusal::GeometryWithoutCoordinates => AttributeNodeFault::GeometryWithoutCoordinates,
+            ObjectRefusal::SeveralValueMembers => AttributeNodeFault::SeveralValueMembers,
+        }
+    }
+}
+
 /// Check every attribute node of an entity or entity fragment.
 ///
 /// Entity members (`id`, `type`, `scope`, ...) are skipped. A payload that is
@@ -85,13 +98,13 @@ pub enum AttributeNodeFault {
 /// # Errors
 ///
 /// The first node the specification does not admit.
-pub fn validate_fragment_attribute_types(fragment: &Value) -> Result<(), AttributeTypeError> {
-    let Some(members) = fragment.as_object() else {
+pub fn validate_fragment_attribute_types<'n, N: CompactNode<'n>>(fragment: N) -> Result<(), AttributeTypeError> {
+    let NodeShape::Object(members) = fragment.shape() else {
         return Ok(());
     };
     members
         .iter()
-        .filter(|(member, _)| !ENTITY_MEMBERS.contains(&member.as_str()))
+        .filter(|(member, _)| !ENTITY_MEMBERS.contains(member))
         .try_for_each(|(member, value)| validate_attribute_node(member, value))
 }
 
@@ -102,36 +115,41 @@ pub fn validate_fragment_attribute_types(fragment: &Value) -> Result<(), Attribu
 /// # Errors
 ///
 /// The first node the specification does not admit.
-pub fn validate_attribute_node(attribute: &str, node: &Value) -> Result<(), AttributeTypeError> {
-    let mut path = vec![PathSegment::Member(attribute)];
+pub fn validate_attribute_node<'n, N: CompactNode<'n>>(attribute: &str, node: N) -> Result<(), AttributeTypeError> {
+    let mut path = vec![member_segment(attribute)];
     validate_slot(attribute, node, &mut path)
+}
+
+/// The pointer segment naming the member `name`.
+fn member_segment(name: &str) -> JsonPointerSegment {
+    JsonPointerSegment::Member(Box::from(name))
 }
 
 /// Check one attribute slot: a single node, the instances of a multi-attribute,
 /// or a value.
-fn validate_slot<'a>(attribute: &'a str, node: &'a Value, path: &mut Vec<PathSegment<'a>>) -> Result<(), AttributeTypeError> {
-    match node {
-        Value::Object(object) => validate_object(attribute, object, path),
-        Value::Array(items) => {
-            read_array(items).map_err(|refusal| refused_array(refusal, path))?;
+fn validate_slot<'n, N: CompactNode<'n>>(attribute: &str, node: N, path: &mut Vec<JsonPointerSegment>) -> Result<(), AttributeTypeError> {
+    match node.shape() {
+        NodeShape::Object(object) => validate_object(attribute, &object, path),
+        NodeShape::Array(items) => {
+            read_array(&items).map_err(|refusal| refused_array(refusal, path))?;
             items.iter().enumerate().try_for_each(|(index, item)| {
-                let Value::Object(object) = item else {
+                let NodeShape::Object(object) = item.shape() else {
                     return Ok(());
                 };
-                path.push(PathSegment::Index(index));
-                let outcome = validate_object(attribute, object, path);
+                path.push(JsonPointerSegment::Index(index));
+                let outcome = validate_object(attribute, &object, path);
                 path.pop();
                 outcome
             })
         }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Ok(()),
+        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Geometry(_) => Ok(()),
     }
 }
 
 /// Check one object standing in an attribute slot, and, when it is an
 /// instance, everything nested in it.
-fn validate_object<'a>(attribute: &'a str, object: &'a Map<String, Value>, path: &mut Vec<PathSegment<'a>>) -> Result<(), AttributeTypeError> {
-    match read_object(object).map_err(|refusal| refused(path, object_fault(refusal)))? {
+fn validate_object<'n, N: CompactNode<'n>>(attribute: &str, object: &NodeMembers<'n, N>, path: &mut Vec<JsonPointerSegment>) -> Result<(), AttributeTypeError> {
+    match read_object(object).map_err(|refusal| refused(path, AttributeNodeFault::of_object(refusal)))? {
         ObjectReading::Instance(family) => validate_instance(attribute, family, object, path),
         ObjectReading::GeoPropertyValue | ObjectReading::PropertyValue => Ok(()),
     }
@@ -144,25 +162,26 @@ fn validate_object<'a>(attribute: &'a str, object: &'a Map<String, Value>, path:
 /// envelope rather than to a sub-attribute, which is why the family is needed:
 /// without it a Property's value object would be walked as if it were a nested
 /// attribute.
-fn validate_instance<'a>(
-    attribute: &'a str,
+fn validate_instance<'n, N: CompactNode<'n>>(
+    attribute: &str,
     family: AttributeType,
-    instance: &'a Map<String, Value>,
-    path: &mut Vec<PathSegment<'a>>,
+    instance: &NodeMembers<'n, N>,
+    path: &mut Vec<JsonPointerSegment>,
 ) -> Result<(), AttributeTypeError> {
     if let Some(member) = instance
-        .keys()
+        .iter()
+        .map(|(member, _)| member)
         .filter(|member| proof_seal_admission(attribute, family, member) == MemberAdmission::Forbidden)
-        .find_map(|member| ProofSealMember::of(member))
+        .find_map(ProofSealMember::of)
     {
         return Err(refused(path, AttributeNodeFault::ProofSealOutsideNgsildproof(member)));
     }
     let reserved = family.reserved_fields();
     instance
         .iter()
-        .filter(|(member, _)| member.as_str() != "type" && !reserved.contains(&member.as_str()) && !is_proof_seal(member))
+        .filter(|(member, _)| *member != "type" && !reserved.contains(member) && !is_proof_seal(member))
         .try_for_each(|(member, node)| {
-            path.push(PathSegment::Member(member));
+            path.push(member_segment(member));
             let outcome = validate_slot(member, node, path);
             path.pop();
             outcome
@@ -170,34 +189,24 @@ fn validate_instance<'a>(
 }
 
 /// The refusal of the node standing at `path`.
-fn refused(path: &[PathSegment<'_>], fault: AttributeNodeFault) -> AttributeTypeError {
+fn refused(path: &[JsonPointerSegment], fault: AttributeNodeFault) -> AttributeTypeError {
     AttributeTypeError {
-        attribute: JsonPointer::from_walk(path),
+        attribute: JsonPointer::from_segments(path.to_vec()),
         fault,
     }
 }
 
 /// The refusal of the array standing at `path`, located at the element it
 /// names when it names one.
-fn refused_array(refusal: ArrayRefusal, path: &mut Vec<PathSegment<'_>>) -> AttributeTypeError {
+fn refused_array(refusal: ArrayRefusal, path: &mut Vec<JsonPointerSegment>) -> AttributeTypeError {
     match refusal {
         ArrayRefusal::Element { index, refusal } => {
-            path.push(PathSegment::Index(index));
-            let error = refused(path, object_fault(refusal));
+            path.push(JsonPointerSegment::Index(index));
+            let error = refused(path, AttributeNodeFault::of_object(refusal));
             path.pop();
             error
         }
         ArrayRefusal::MixedInstancesAndValues => refused(path, AttributeNodeFault::MixedInstancesAndValues),
-    }
-}
-
-/// The fault an object the reading refuses is reported with.
-const fn object_fault(refusal: ObjectRefusal) -> AttributeNodeFault {
-    match refusal {
-        ObjectRefusal::NotAnAttributeType(source) => AttributeNodeFault::NotAnAttributeType(source),
-        ObjectRefusal::TypeNotAString => AttributeNodeFault::TypeNotAString,
-        ObjectRefusal::GeometryWithoutCoordinates => AttributeNodeFault::GeometryWithoutCoordinates,
-        ObjectRefusal::SeveralValueMembers => AttributeNodeFault::SeveralValueMembers,
     }
 }
 

@@ -625,6 +625,7 @@ dependencies = [
  "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-response",
+ "andromeda-json-literal",
  "andromeda-jsonld",
  "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-entity",
@@ -1472,6 +1473,7 @@ name = "andromeda-ngsi-ld-representation"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-json-literal",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-number",

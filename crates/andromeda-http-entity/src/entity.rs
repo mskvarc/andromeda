@@ -7,7 +7,7 @@ use crate::{
 use andromeda_entity::{merge_options::MergeOptions, query::retrieval::RetrievalNarrowing};
 use andromeda_entity_map::contribution::SourceContribution;
 use andromeda_federation::{
-    entity_result::{collect_proxied_attrs, collect_warnings, contributions_of, local_remainder_of_payload},
+    entity_result::{collect_proxied_attrs, collect_warnings, contributions_of},
     operation::{ForwardingOperation, ProvisionResource},
     provision_purge::{ForwardPurgeRequest, ForwardedPurgeResult},
     request::{CsrModeFilter, ForwardProvisionRequest, ForwardQueryRequest},
@@ -18,7 +18,7 @@ use andromeda_http_extraction::{
     accept::AcceptFormat,
     context::ContextUrl,
     entity_query::EntityQuery,
-    jsonld::{JsonLd, JsonLdDocument},
+    jsonld::JsonLd,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,

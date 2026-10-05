@@ -22,18 +22,18 @@
 //! only:
 //!
 //! - Two are decidable only on the compact payload a client wrote, before
-//!   JSON-LD expansion rewrites the member names, and
-//!   [`validate_fragment_attribute_types`] holds both: the attribute types of
-//!   clause 5.2.4, and the rule that `entityIdSealed` and `entityTypeSealed`
-//!   belong to the `ngsildproof` Property of clause 4.5.2.2 alone. Clauses
-//!   4.5.3.2 and 4.5.3.3 sharpen the second one for a Relationship, normalized
-//!   and concise alike, into "'entityIdSealed' and 'entityTypeSealed' shall
-//!   never be present" -- an unconditional prohibition, since the `ngsildproof`
-//!   exception is a Property's.
+//!   JSON-LD expansion rewrites the member names, and the decode of the
+//!   request holds both, so a decoded payload satisfies them: the attribute
+//!   types of clause 5.2.4, and the rule that `entityIdSealed` and
+//!   `entityTypeSealed` belong to the `ngsildproof` Property of clause 4.5.2.2
+//!   alone. Clauses 4.5.3.2 and 4.5.3.3 sharpen the second one for a
+//!   Relationship, normalized and concise alike, into "'entityIdSealed' and
+//!   'entityTypeSealed' shall never be present" -- an unconditional
+//!   prohibition, since the `ngsildproof` exception is a Property's.
 //! - A third is decidable on the compact payload because no context can define
 //!   the keys it refuses: the clause 4.6.4 refusal of a key JSON-LD expansion
-//!   would drop or rewrite past recovery, which [`screen_keys_in_fragment`]
-//!   holds. Clause 5.5.7's two rules on the user `@context` -- no JSON-LD
+//!   would drop or rewrite past recovery, which `crate::compact_screening`
+//!   reads off the decoded payload. Clause 5.5.7's two rules on the user `@context` -- no JSON-LD
 //!   Scoped Context, and no part of it below the document's top level -- are
 //!   the request's, not the payload's: `andromeda_jsonld::user_context_admission`
 //!   owns both, every admission here takes the context it admitted, and a
@@ -56,12 +56,12 @@
 //!
 //! What the screening expanded is what the local write stores: each admission
 //! hands back the admitted payload `andromeda_entity` defines, and the write
-//! path consumes it rather than expanding the payload again. A payload the
-//! extractor decoded into its typed compact form is screened and expanded from
+//! path consumes it rather than expanding the payload again. Every payload is
+//! the typed compact form the extractor decoded, screened and expanded from
 //! that form, never rendered back into JSON for either.
 
 use crate::{
-    compact_screening::{CompactRefusal, screen_compact_entity, screen_compact_patch},
+    compact_screening::{screen_compact_attribute, screen_compact_entity, screen_compact_patch},
     error::EntityHttpClassify,
 };
 use andromeda_entity::{
@@ -79,23 +79,20 @@ use andromeda_jsonld::{
     error::JsonLdError,
     user_context_admission::AdmittedContext,
 };
+use andromeda_ngsi_ld_expansion::written_member::WrittenMember;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
-use andromeda_ngsi_ld_representation::{
-    attribute_type_validation::{validate_attribute_node, validate_fragment_attribute_types},
-    compact_key_admission::{screen_keys_in_attribute, screen_keys_in_fragment},
-};
-use serde_json::Value;
+use andromeda_ngsi_ld_representation::compact_key_admission::CompactKeyError;
 use std::collections::{HashMap, hash_map::Entry};
 use thiserror::Error;
 
 /// Why a payload a client wrote is not admitted.
 #[derive(Debug, Error)]
 pub(crate) enum WrittenPayloadRefusal {
-    /// The compact payload breaks clause 5.2.4, 4.5.2.2 or 4.6.4.
+    /// The compact payload carries a key clause 4.6.4 refuses.
     #[error(transparent)]
-    Compact(#[from] CompactRefusal),
+    Key(#[from] CompactKeyError),
     /// The expanded payload puts an NGSI-LD Null, a `scope`, an attribute
     /// envelope or a geometry where the operation does not admit it.
     #[error(transparent)]
@@ -108,7 +105,7 @@ impl EntityHttpClassify for WrittenPayloadRefusal {
             // Clause 5.5.4: data that is not syntactically correct according to
             // the API data type definitions is BadRequestData, as clause 4.6.4
             // makes a value it refuses.
-            WrittenPayloadRefusal::Compact(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
+            WrittenPayloadRefusal::Key(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
             WrittenPayloadRefusal::Placement(source) => source.classify_for_entity_http(),
         }
     }
@@ -117,30 +114,23 @@ impl EntityHttpClassify for WrittenPayloadRefusal {
 /// An entity-shaped payload as the transport decoded it, which the compact
 /// half of the screening reads before the expanded half runs.
 pub(crate) trait WrittenEntityPayload: WritePayload {
-    /// Screen the payload under the rules decidable only on its compact form.
+    /// Screen the payload under the key rule decidable only on its compact
+    /// form.
     ///
     /// # Errors
     ///
-    /// Returns the first refusal of clause 5.2.4, 4.5.2.2 or 4.6.4.
-    fn screen(&self) -> Result<(), CompactRefusal>;
+    /// Returns the first key clause 4.6.4 refuses.
+    fn screen(&self) -> Result<(), CompactKeyError>;
 }
 
-impl WrittenEntityPayload for Value {
-    fn screen(&self) -> Result<(), CompactRefusal> {
-        validate_fragment_attribute_types(self)?;
-        screen_keys_in_fragment(self)?;
-        Ok(())
-    }
-}
-
-impl WrittenEntityPayload for &Entity {
-    fn screen(&self) -> Result<(), CompactRefusal> {
+impl<M: WrittenMember + Sync> WrittenEntityPayload for &Entity<M> {
+    fn screen(&self) -> Result<(), CompactKeyError> {
         screen_compact_entity(self)
     }
 }
 
-impl WrittenEntityPayload for &EntityPatch {
-    fn screen(&self) -> Result<(), CompactRefusal> {
+impl<M: WrittenMember + Sync> WrittenEntityPayload for &EntityPatch<M> {
+    fn screen(&self) -> Result<(), CompactKeyError> {
         screen_compact_patch(self)
     }
 }
@@ -150,11 +140,11 @@ impl WrittenEntityPayload for &EntityPatch {
 ///
 /// # Errors
 ///
-/// Returns the first attribute node clauses 5.2.4 and 4.5.2.2 do not admit, and
-/// the first placement clause 5.5.4 refuses for `W`.
+/// Returns the first key clause 4.6.4 refuses, and the first placement clause
+/// 5.5.4 refuses for `W`.
 pub(crate) async fn admit_written_entity<W: EntityWriteKind>(
     service: &EntityService,
-    payload: impl WrittenEntityPayload,
+    payload: impl WrittenEntityPayload<Member = W::Member>,
     context: &AdmittedContext,
 ) -> Result<AdmittedEntity<W>, WrittenPayloadRefusal> {
     payload.screen()?;
@@ -170,12 +160,11 @@ pub(crate) async fn admit_written_entity<W: EntityWriteKind>(
 pub(crate) async fn admit_written_attribute<'a, W: AttributeWriteKind>(
     service: &EntityService,
     attribute: &'a AttributeName,
-    payload: Value,
+    payload: &W::Member,
     context: &AdmittedContext,
 ) -> Result<AdmittedAttribute<'a, W>, WrittenPayloadRefusal> {
-    validate_attribute_node(attribute.as_str(), &payload).map_err(CompactRefusal::from)?;
-    screen_keys_in_attribute(attribute.as_str(), &payload).map_err(CompactRefusal::from)?;
-    Ok(service.admit_attribute_write(attribute, payload, context).await?)
+    screen_compact_attribute(attribute.as_str(), payload)?;
+    Ok(service.admit_attribute_write::<W>(attribute, payload, context).await?)
 }
 
 /// Keep the batch entities the write rules admit, reporting each refused one
@@ -202,7 +191,7 @@ pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
     service: &EntityService,
     engine: &JsonLdEngine,
     kind: W,
-    items: Vec<BatchItem>,
+    items: Vec<BatchItem<W::Member>>,
     refused: &mut Vec<BatchEntityError>,
 ) -> Result<AdmittedBatch<W>, WrittenPayloadRefusal> {
     let submitted = screened_batch_entities(
@@ -229,11 +218,11 @@ pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
 ///
 /// As [`admitted_batch_entities`]: a context refused for anything but being
 /// unretrievable fails the operation.
-async fn screened_batch_entities(
+async fn screened_batch_entities<M: WrittenMember>(
     mut admit_context: impl AsyncFnMut(&BatchContext) -> Result<AdmittedBatchContext, EntityError>,
-    items: Vec<BatchItem>,
+    items: Vec<BatchItem<M>>,
     refused: &mut Vec<BatchEntityError>,
-) -> Result<Vec<SubmittedEntity>, WrittenPayloadRefusal> {
+) -> Result<Vec<SubmittedEntity<M>>, WrittenPayloadRefusal> {
     let mut decided: HashMap<BatchContextId, ContextAdmission> = HashMap::new();
     let mut submitted = Vec::with_capacity(items.len());
     for BatchItem {
@@ -277,7 +266,7 @@ async fn screened_batch_entities(
             }),
             Err(refusal) => refused.push(batch_entity_error(
                 entity.id.into(),
-                &WrittenPayloadRefusal::Compact(refusal),
+                &WrittenPayloadRefusal::Key(refusal),
                 EntityHttpClassify::classify_for_entity_http,
             )),
         }
@@ -318,7 +307,7 @@ fn context_admission(outcome: Result<AdmittedBatchContext, EntityError>) -> Resu
 #[cfg(test)]
 mod tests {
     use crate::{
-        compact_screening::{CompactRefusal, screen_compact_entity},
+        compact_screening::screen_compact_entity,
         written_payload_admission::{WrittenPayloadRefusal, screened_batch_entities},
     };
     use andromeda_entity::error::EntityError;
@@ -332,10 +321,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_model::{entity::Entity, request_body::RequestBody};
     use andromeda_ngsi_ld_problem_details::batch_operation::BatchEntityError;
-    use andromeda_ngsi_ld_representation::{
-        attribute_type_validation::{AttributeNodeFault, AttributeTypeError},
-        embedded_context_admission::find_embedded_context,
-    };
+    use andromeda_ngsi_ld_representation::embedded_context_admission::find_embedded_context;
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
 
@@ -450,7 +436,7 @@ mod tests {
             .map(|item| BatchItem {
                 entity: if undecodable.contains(&item.entity_id.as_str()) {
                     let text = br#"{"id": "urn:ngsi-ld:Building:x", "type": 5}"#;
-                    let source = Entity::from_request_text(text).expect_err("a numeric type is no entity");
+                    let source = <Entity>::from_request_text(text).expect_err("a numeric type is no entity");
                     Err(BatchItemRefusal::from(UndecodableBody::of_text::<Entity>(text, source)))
                 } else {
                     item.entity
@@ -608,7 +594,7 @@ mod tests {
 
     /// Clause 4.5.3.2, "Prohibited": on a Relationship in the normalized
     /// representation, "'entityIdSealed' and 'entityTypeSealed' shall never be
-    /// present".
+    /// present", so the decode refuses it.
     #[test]
     fn a_seal_on_a_normalized_relationship_is_refused() {
         for member in ["entityIdSealed", "entityTypeSealed"] {
@@ -617,7 +603,7 @@ mod tests {
                 "type": "Building",
                 "belongsTo": {"type": "Relationship", "object": "urn:ngsi-ld:Site:1", member: "urn:ngsi-ld:Building:1"}
             });
-            let refusal = screen_compact_entity(&entity(&payload)).expect_err("a seal on a Relationship is refused");
+            let refusal = serde_json::from_value::<Entity>(payload).expect_err("a seal on a Relationship is refused");
             assert!(refusal.to_string().contains(member), "{member}: {refusal}");
         }
     }
@@ -633,7 +619,7 @@ mod tests {
                 "type": "Building",
                 "belongsTo": {"object": "urn:ngsi-ld:Site:1", member: "urn:ngsi-ld:Building:1"}
             });
-            let refusal = screen_compact_entity(&entity(&payload)).expect_err("a seal on a concise Relationship is refused");
+            let refusal = serde_json::from_value::<Entity>(payload).expect_err("a seal on a concise Relationship is refused");
             assert!(refusal.to_string().contains(member), "{member}: {refusal}");
         }
     }
@@ -669,17 +655,8 @@ mod tests {
             "type": "Building",
             "temperature": {"type": "NotAnAttributeType", "value": 21.5}
         });
-        let refusal = screen_compact_entity(&entity(&payload)).expect_err("an unknown attribute type is refused");
-        assert!(
-            matches!(
-                refusal,
-                CompactRefusal::AttributeType(AttributeTypeError {
-                    fault: AttributeNodeFault::NotAnAttributeType(_),
-                    ..
-                })
-            ),
-            "{refusal:?}"
-        );
+        let refusal = serde_json::from_value::<Entity>(payload).expect_err("an unknown attribute type is refused");
+        assert!(refusal.to_string().contains("not an NGSI-LD attribute type"), "{refusal}");
         assert!(refusal.to_string().contains("/temperature"), "{refusal}");
     }
 }

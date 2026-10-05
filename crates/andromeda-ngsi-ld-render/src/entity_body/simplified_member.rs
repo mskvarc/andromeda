@@ -14,38 +14,20 @@ use crate::{
     entity_body::{
         linked_entities::{list_relationship_entities, relationship_entities},
         member_walk::MemberWalk,
-        notified_member::{InstanceReport, InstanceSource, MemberInstances, NotifiedInstance, NotifiedMember, NullValue, reported_verbatim},
+        notified_member::{InstanceReport, MemberInstances, NotifiedInstance, NotifiedMember, NullValue},
         object_list_body::ObjectListBody,
         reified_member::Reification,
         value_body::{ValueBody, ValueListBody},
     },
     language_negotiation::negotiated_entry,
-    simplify::{simplify_attr_value, simplify_raw_envelope},
-    uri_decoding::{DecodedTargets, decoded_attribute},
+    uri_decoding::DecodedTargets,
 };
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_model::attribute::instance::{Attribute, AttributeValue};
 use andromeda_ngsi_ld_query::dataset::DEFAULT_INSTANCE_TOKEN;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde::{Serialize, Serializer, ser::SerializeMap};
-
-/// Which of the two clause 4.5.4 readings a member carried verbatim takes.
-///
-/// The simplified rendering of a typed entity and that of an already-rendered
-/// document agree on every typed instance and differ on a member the broker
-/// carries verbatim: the entity reading simplifies only an attribute envelope
-/// and keeps anything else as it stands, while the document reading also
-/// gathers an array of instances into a `dataset` map. A request that asks for
-/// nothing beyond the representation is answered by the first, one that also
-/// negotiates a language or projects members by the second.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VerbatimReading {
-    /// The typed entity's reading.
-    Envelope,
-    /// The rendered document's reading.
-    Document,
-}
 
 /// One attribute member in the simplified representation.
 #[derive(Debug, Clone, Copy)]
@@ -54,23 +36,20 @@ pub(crate) struct SimplifiedMember<'a> {
     value: MemberInstances<'a>,
     /// What the walk applies on the way.
     walk: MemberWalk<'a>,
-    /// How a member carried verbatim is read.
-    verbatim: VerbatimReading,
 }
 
 impl<'a> SimplifiedMember<'a> {
-    /// The member, written under `walk`, a verbatim one read by `verbatim`.
-    pub(crate) const fn new(value: MemberInstances<'a>, walk: MemberWalk<'a>, verbatim: VerbatimReading) -> SimplifiedMember<'a> {
-        SimplifiedMember { value, walk, verbatim }
+    /// The member, written under `walk`.
+    pub(crate) const fn new(value: MemberInstances<'a>, walk: MemberWalk<'a>) -> SimplifiedMember<'a> {
+        SimplifiedMember { value, walk }
     }
 
     /// One instance with what is reported of it.
-    const fn instance(&self, source: InstanceSource<'a>, report: InstanceReport<'a>) -> SimplifiedInstance<'a> {
+    const fn instance(&self, source: &'a Attribute, report: InstanceReport<'a>) -> SimplifiedInstance<'a> {
         SimplifiedInstance {
             source,
             report,
             walk: self.walk,
-            verbatim: self.verbatim,
         }
     }
 }
@@ -79,9 +58,11 @@ impl Serialize for SimplifiedMember<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let held = InstanceReport::default();
         match self.value {
-            MemberInstances::Held(AttributeValue::Single(attribute)) => self.instance(InstanceSource::Typed(attribute), held).serialize(serializer),
+            MemberInstances::Held(AttributeValue::Single(attribute)) => self.instance(attribute, held).serialize(serializer),
             MemberInstances::Held(AttributeValue::Multiple(instances)) => dataset_map(serializer, DatasetInstances::Held(instances), self),
-            MemberInstances::Held(AttributeValue::Raw(raw)) => self.instance(InstanceSource::Verbatim(raw), held).serialize(serializer),
+            // Clause 4.5.4 keeps the bare NGSI-LD Null a member is reported
+            // deleted by.
+            MemberInstances::Held(AttributeValue::NgsiLdNull) | MemberInstances::Notified(NotifiedMember::NgsiLdNull) => NullValue::Uri.serialize(serializer),
             MemberInstances::Notified(NotifiedMember::One(instance)) => self.instance(instance.source, instance.report).serialize(serializer),
             MemberInstances::Notified(NotifiedMember::Many(instances)) => dataset_map(serializer, DatasetInstances::Notified(instances), self),
         }
@@ -99,13 +80,13 @@ enum DatasetInstances<'a> {
 
 impl<'a> DatasetInstances<'a> {
     /// Each instance with what is reported of it, in order.
-    fn sources(self) -> impl Iterator<Item = (InstanceSource<'a>, InstanceReport<'a>)> {
+    fn sources(self) -> impl Iterator<Item = (&'a Attribute, InstanceReport<'a>)> {
         let (held, notified) = match self {
             DatasetInstances::Held(instances) => (instances, &[][..]),
             DatasetInstances::Notified(instances) => (&[][..], instances),
         };
         held.iter()
-            .map(|attribute| (InstanceSource::Typed(attribute), InstanceReport::default()))
+            .map(|attribute| (attribute, InstanceReport::default()))
             .chain(notified.iter().map(|instance| (instance.source, instance.report)))
     }
 }
@@ -132,12 +113,12 @@ impl Serialize for DatasetMap<'_, '_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
         for (index, (source, report)) in self.instances.sources().enumerate() {
-            let key = dataset_key(source.dataset_id());
+            let key = dataset_key(source.dataset_id().map(Identifier::as_str));
             let superseded = self
                 .instances
                 .sources()
                 .skip(index + 1)
-                .any(|(later, _)| dataset_key(later.dataset_id()) == key);
+                .any(|(later, _)| dataset_key(later.dataset_id().map(Identifier::as_str)) == key);
             if !superseded {
                 map.serialize_entry(key, &self.member.instance(source, report))?;
             }
@@ -154,35 +135,23 @@ fn dataset_key(dataset_id: Option<&str>) -> &str {
 /// One attribute instance in the simplified representation.
 struct SimplifiedInstance<'a> {
     /// The instance written.
-    source: InstanceSource<'a>,
+    source: &'a Attribute,
     /// What a notification reports of it; the simplified representation
     /// keeps only the Null of a reported deletion.
     report: InstanceReport<'a>,
     /// What the walk applies on the way.
     walk: MemberWalk<'a>,
-    /// How an instance carried verbatim is read.
-    verbatim: VerbatimReading,
 }
 
 impl Serialize for SimplifiedInstance<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self.source {
-            InstanceSource::Typed(attribute) => match self.report.null {
-                Some(null) => simplified_null(serializer, attribute.attribute_type(), null),
-                None => SimplifiedTyped { attribute, walk: self.walk }.serialize(serializer),
-            },
-            InstanceSource::Verbatim(value) => {
-                // A simplified member keeps nothing that tells a target from a
-                // value, so its targets are decoded before it is simplified.
-                let reported = reported_verbatim(value, &self.report);
-                let decoded = decoded_attribute(&reported, self.walk.decoding);
-                match self.verbatim {
-                    VerbatimReading::Envelope => simplify_raw_envelope(&decoded).serialize(serializer),
-                    // The document reading takes the member owned; one carried
-                    // verbatim is small and rare.
-                    VerbatimReading::Document => simplify_attr_value(decoded.into_owned()).serialize(serializer),
-                }
+        match self.report.null {
+            Some(null) => simplified_null(serializer, self.source.attribute_type(), null),
+            None => SimplifiedTyped {
+                attribute: self.source,
+                walk: self.walk,
             }
+            .serialize(serializer),
         }
     }
 }

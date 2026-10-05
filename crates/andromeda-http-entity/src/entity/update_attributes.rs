@@ -2,6 +2,7 @@
 
 use crate::{
     entity::{
+        EntityPatch,
         EntityResultExt,
         EntityTenantState,
         ForwardProvisionRequest,
@@ -9,7 +10,7 @@ use crate::{
         Identifier,
         IncomingVia,
         IntoResponse,
-        JsonLdDocument,
+        JsonLd,
         LocalOutcome,
         OriginalUri,
         ProblemResponse,
@@ -20,7 +21,6 @@ use crate::{
         ValidatedQuery,
         classify_entity_error,
         collect_proxied_attrs,
-        local_remainder_of_payload,
         provision_response,
         update_result::{NotUpdatedReason, update_result_response},
     },
@@ -46,11 +46,12 @@ pub(crate) async fn update_attrs(
     TypedPath(id): TypedPath<Identifier>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
-    JsonLdDocument { document: fragment, context }: JsonLdDocument,
+    JsonLd { body, context }: JsonLd<EntityPatch>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
+    let mut fragment = body.admitted(&context)?;
     let service = &state.entities;
     let request = ForwardProvisionRequest {
         resource: ProvisionResource::Entities,
@@ -74,7 +75,7 @@ pub(crate) async fn update_attrs(
     // the plan sends the fragment to reads it again, so it is serialised for
     // them before it moves into the admission.
     let payload = plan.payload(&fragment).with_entity_instance(&uri)?;
-    let admitted = admit_written_entity::<UpdateAttributes>(service, fragment, &context)
+    let admitted = admit_written_entity::<UpdateAttributes>(service, &fragment, &context)
         .await
         .with_entity_instance(&uri)?;
     let forwarded = state
@@ -100,14 +101,13 @@ pub(crate) async fn update_attrs(
     // Clause 5.6.2.4: the attributes proxied registrations cover leave the
     // fragment; whatever remains is updated here. A fragment no registration
     // read was taken over by none of them.
-    let local_update = match payload.as_deref() {
-        None => Some(service.update_attrs(&target, &id, admitted).await),
-        Some(payload) => {
-            let (remainder, strip) = local_remainder_of_payload(payload, &collect_proxied_attrs(&forwarded)).with_entity_instance(&uri)?;
-            match service.admit_local_remainder(admitted, strip, remainder, &context).await {
-                Some(remainder) => Some(async { service.update_attrs(&target, &id, remainder?).await }.await),
-                None => None,
-            }
+    let local_update = if payload.is_none() {
+        Some(service.update_attrs(&target, &id, admitted).await)
+    } else {
+        let strip = fragment.strip_attributes(&collect_proxied_attrs(&forwarded));
+        match service.admit_local_remainder(admitted, strip, &fragment, &context).await {
+            Some(remainder) => Some(async { service.update_attrs(&target, &id, remainder?).await }.await),
+            None => None,
         }
     };
 

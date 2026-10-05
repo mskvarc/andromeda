@@ -237,13 +237,24 @@ fn a_concise_previous_object_list_holds_bare_uris() {
     );
 }
 
-/// A member the broker carries verbatim is reported deleted in its own value
-/// member, as a typed one is.
+/// A member written concisely is the family it abbreviates, and is reported
+/// deleted in that family's value member, in the representation asked for.
 #[test]
-fn a_verbatim_member_is_nullified_in_the_member_it_carries() {
+fn a_concise_member_is_nullified_in_the_value_member_of_its_family() {
     let notified = entity(json!({"id": "urn:ngsi-ld:A:1", "type": "A", "conciseLink": {"object": "urn:ngsi-ld:B:1"}}));
     let document = rendered(&notified, entity_deletion(None), ResponseFormat::Normalized);
-    assert_eq!(document["conciseLink"], json!({"object": "urn:ngsi-ld:null"}));
+    assert_eq!(document["conciseLink"], json!({"type": "Relationship", "object": "urn:ngsi-ld:null"}));
+}
+
+/// Clause 5.8.6: a member reported deleted by the bare NGSI-LD Null is
+/// written as that Null in every representation.
+#[test]
+fn a_member_reported_by_the_bare_null_is_written_bare() {
+    let notified = entity(json!({"id": "urn:ngsi-ld:A:1", "type": "A", "owner": "urn:ngsi-ld:null"}));
+    for format in [ResponseFormat::Normalized, ResponseFormat::Concise, ResponseFormat::Simplified] {
+        let document = rendered(&notified, entity_deletion(None), format);
+        assert_eq!(document["owner"], json!("urn:ngsi-ld:null"), "{format:?}");
+    }
 }
 
 /// Clause 4.21 narrows `type` and `scope` of a notified entity; clause 5.8.6

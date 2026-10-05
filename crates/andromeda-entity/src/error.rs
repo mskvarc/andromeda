@@ -246,17 +246,14 @@ impl From<ExpansionError> for EntityError {
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
-/// A stored entity that cannot be written for the processor is the broker's
-/// fault; a compacted document the compact model refuses is reported as the
-/// entity data it is.
+/// A stored entity that cannot be written for the processor, or does not read
+/// back once compacted, is the broker's fault.
 impl From<CompactionError> for EntityError {
     fn from(error: CompactionError) -> EntityError {
         match error {
             CompactionError::JsonLd(failure) => EntityError::JsonLd(failure),
             CompactionError::Encode(source) => EntityError::Internal(EntityInvariant::StateEncoding(source)),
-            CompactionError::NotAnObject => EntityError::Validation(EntityValidationReason::EntityDataNotObject),
-            CompactionError::MissingId => EntityError::Validation(EntityValidationReason::EntityMissingId),
-            CompactionError::Decode(source) => EntityError::Validation(EntityValidationReason::EntityData(source)),
+            CompactionError::Refused(refused) => EntityError::Internal(EntityInvariant::CompactReading(refused)),
         }
     }
 }

@@ -16,9 +16,8 @@ use crate::{
     uri_decoding::{DecodedTargets, UriDecoding},
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
-use andromeda_ngsi_ld_model::attribute::{instance::Attribute, language_property::LanguageMap, one_or_many::OneOrMany};
+use andromeda_ngsi_ld_model::attribute::{geo_property_value::GeoPropertyValue, instance::Attribute, language_property::LanguageMap, one_or_many::OneOrMany};
 use serde::{Serialize, Serializer};
 
 /// One family's value, written as its value member or its previous member.
@@ -31,7 +30,7 @@ pub(crate) enum FamilyValue<'a> {
     /// A `VocabProperty`'s vocabulary terms.
     Vocab(&'a OneOrMany<NgsiLdReference>),
     /// A `GeoProperty`'s geometry.
-    Geometry(&'a Geometry),
+    Geometry(&'a GeoPropertyValue),
     /// A `LanguageProperty`'s language map.
     LanguageMap(&'a LanguageMap),
     /// A `JsonProperty`'s JSON value.

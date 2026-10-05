@@ -1,7 +1,7 @@
 //! A request body decoded straight from its text is the body the parsed-tree
-//! route decoded: the tree parsed, its numbers respelled, its `@context`
-//! removed, and the domain type read from the tree as `serde_json`'s reader
-//! reads its serialization.
+//! route reads: the tree parsed, its numbers respelled, its `@context`
+//! removed, and the domain type read from the tree by the compact model's
+//! reading of a Context Producer's node.
 //!
 //! The corpus is every entity and entity patch body the integration suites
 //! write as a plain JSON literal, kept in the spelling they wrote it in, and
@@ -12,8 +12,9 @@ use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     request_body::RequestBody,
 };
-use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact, number_range::refuse_numbers_out_of_range};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, number_range::refuse_numbers_out_of_range};
+use andromeda_ngsi_ld_representation::compact_node::produced_node::ProducedNode;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json, value::RawValue};
 use std::{collections::BTreeMap, fmt::Debug};
 
@@ -31,14 +32,32 @@ struct CorpusBody {
     text: String,
 }
 
+/// A body the compact model reads from a node.
+trait ReadFromNode: Sized {
+    /// Read the body from a Context Producer's parsed document.
+    fn read(document: &Value) -> Result<Self, String>;
+}
+
+impl ReadFromNode for Entity {
+    fn read(document: &Value) -> Result<Entity, String> {
+        <Entity>::from_node(ProducedNode::new(document)).map_err(|error| error.to_string())
+    }
+}
+
+impl ReadFromNode for EntityPatch {
+    fn read(document: &Value) -> Result<EntityPatch, String> {
+        <EntityPatch>::from_node(ProducedNode::new(document)).map_err(|error| error.to_string())
+    }
+}
+
 /// Decode `text` the parsed-tree way.
-fn through_tree<T: DeserializeOwned>(text: &str) -> Result<T, String> {
+fn through_tree<T: ReadFromNode>(text: &str) -> Result<T, String> {
     let mut document: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
     canonicalize_numbers(&mut document).map_err(|error| error.to_string())?;
     if let Value::Object(members) = &mut document {
         members.remove("@context");
     }
-    deserialize_exact(&document).map_err(|error| error.to_string())
+    T::read(&document)
 }
 
 /// Decode `text` straight from the text, its numbers checked first as the
@@ -54,7 +73,7 @@ fn member_shape(member: &AttributeValue) -> Value {
     let variant = match member {
         AttributeValue::Single(_) => "single",
         AttributeValue::Multiple(_) => "multiple",
-        AttributeValue::Raw(_) => "raw",
+        AttributeValue::NgsiLdNull => "null",
     };
     let instances: Vec<Value> = member.instances().map(instance_shape).collect();
     json!({"variant": variant, "instances": instances})
@@ -97,7 +116,7 @@ fn rendered<T: Serialize>(value: &T) -> Result<Value, String> {
 }
 
 /// How the two routes disagree on `text` decoded as a `T`, if they do.
-fn disagreement<T: RequestBody + Debug>(text: &str, source: &str, shape: impl Fn(&T) -> Result<Shape, String>) -> Option<String> {
+fn disagreement<T: RequestBody + ReadFromNode + Debug>(text: &str, source: &str, shape: impl Fn(&T) -> Result<Shape, String>) -> Option<String> {
     match (through_text::<T>(text), through_tree::<T>(text)) {
         (Ok(streamed), Ok(parsed)) => match (shape(&streamed), shape(&parsed)) {
             (Ok(streamed), Ok(parsed)) if streamed == parsed => None,
@@ -193,5 +212,5 @@ fn a_number_held_as_json_is_respelled() {
     let entity: Entity = through_text(r#"{"id":"urn:ngsi-ld:T:1","type":"T","n":{"type":"Property","value":[1.50,1E+2,-0]},"raw":2.0}"#).expect("an entity");
     let rendered = serde_json::to_string(&entity).expect("an entity renders");
     assert!(rendered.contains("[1.5,100,0]"), "{rendered}");
-    assert!(rendered.contains(r#""raw":2"#), "{rendered}");
+    assert!(rendered.contains(r#""raw":{"type":"Property","value":2}"#), "{rendered}");
 }

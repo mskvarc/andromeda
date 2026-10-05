@@ -15,7 +15,7 @@ use crate::{
         member_walk::MemberWalk,
         notified_member::{MemberInstances, NotifiedMember},
         reified_member::{Reification, ReifiedMember},
-        simplified_member::{SimplifiedMember, VerbatimReading},
+        simplified_member::SimplifiedMember,
     },
     notification_entity::StampedInstants,
     notified_changes::NotifiedChanges,
@@ -120,11 +120,6 @@ impl TypedEntity<'_> {
             InstantSpelling::Typed
         }
     }
-
-    /// How a member the broker carries verbatim is read under clause 4.5.4.
-    const fn verbatim_reading(&self) -> VerbatimReading {
-        if self.plain() { VerbatimReading::Envelope } else { VerbatimReading::Document }
-    }
 }
 
 impl Serialize for TypedEntity<'_> {
@@ -228,7 +223,7 @@ impl<'a> TypedEntity<'a> {
             ResponseFormat::Normalized => AttributeMember::Reified(ReifiedMember::new(member, Reification::Normalized, walk)),
             ResponseFormat::Concise => AttributeMember::Reified(ReifiedMember::new(member, Reification::Concise, walk)),
             // Clause 4.5.4 gives `keyValues` and `simplified` one rendering.
-            ResponseFormat::KeyValues | ResponseFormat::Simplified => AttributeMember::Simplified(SimplifiedMember::new(member, walk, self.verbatim_reading())),
+            ResponseFormat::KeyValues | ResponseFormat::Simplified => AttributeMember::Simplified(SimplifiedMember::new(member, walk)),
         }
     }
 }

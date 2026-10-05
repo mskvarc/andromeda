@@ -12,23 +12,22 @@ use crate::{
         family_value::FamilyValue,
         linked_entities::{list_relationship_entities, relationship_entities},
         member_walk::MemberWalk,
-        notified_member::{InstanceReport, MemberInstances, NullValue, PreviousValue},
+        notified_member::{InstanceReport, MemberInstances, NullValue, previous_value_of},
         reified_member::{Reification, ReifiedMember},
         value_body::ValueBody,
     },
     language_negotiation::{NegotiatedEntry, negotiated_entry},
 };
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, rfc3339::sub_second};
 use andromeda_ngsi_ld_model::attribute::{
     common_fields::CommonAttributeFields,
+    geo_property_value::GeoPropertyValue,
     instance::{Attribute, AttributeValue},
 };
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Serialize, Serializer, ser::SerializeMap};
-use serde_json::Value;
 
 /// One attribute instance in a reified representation.
 #[derive(Debug, Clone, Copy)]
@@ -90,16 +89,15 @@ impl<'a> ReifiedInstance<'a> {
     /// replace an attribute's family, and each family prohibits the other
     /// families' previous members (clauses 4.5.2.2 and 4.5.21.2), so a value
     /// in another family's spelling is no previous value of this one.
-    fn previous_member(&self) -> Option<PreviousMember<'a>> {
+    fn previous_member(&self) -> Option<FamilyValue<'a>> {
         let (reification, decoding) = (self.reification, self.walk.decoding);
         match self
             .report
             .previous
-            .and_then(|previous| previous.previous_value_of(self.attribute.attribute_type()))
+            .and_then(|previous| previous_value_of(previous, self.attribute.attribute_type()))
         {
-            Some(PreviousValue::Typed(previous)) => Some(PreviousMember::Family(FamilyValue::current(previous, reification, decoding))),
-            Some(PreviousValue::Verbatim(previous)) => Some(PreviousMember::Verbatim(previous)),
-            None => FamilyValue::previous(self.attribute, reification, decoding).map(PreviousMember::Family),
+            Some(previous) => Some(FamilyValue::current(previous, reification, decoding)),
+            None => FamilyValue::previous(self.attribute, reification, decoding),
         }
     }
 
@@ -229,30 +227,12 @@ impl ReifiedInstance<'_> {
     }
 }
 
-/// A previous member, read from a typed instance or one carried verbatim.
-#[derive(Debug, Clone, Copy)]
-enum PreviousMember<'a> {
-    /// A family's value.
-    Family(FamilyValue<'a>),
-    /// A value read out of an instance carried verbatim.
-    Verbatim(&'a Value),
-}
-
-impl Serialize for PreviousMember<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            PreviousMember::Family(value) => value.serialize(serializer),
-            PreviousMember::Verbatim(value) => value.serialize(serializer),
-        }
-    }
-}
-
 /// What clause 4.5.2.3 collapses a bare instance to.
 enum BareValue<'a> {
     /// A Property's value.
     Value(ValueBody<'a>),
     /// A `GeoProperty`'s geometry.
-    Geometry(&'a Geometry),
+    Geometry(&'a GeoPropertyValue),
     /// The Null a reported deletion puts in place of either.
     Null(NullValue),
 }

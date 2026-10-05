@@ -7,7 +7,6 @@
 //! [`SharedMembers`], so the two readings cannot place a member differently.
 
 use crate::{
-    attribute::instance::AttributeValue,
     entity::{Entity, EntityPatch},
     entity_type::EntityTypeValue,
     node_refusal::RefusedMember,
@@ -88,8 +87,8 @@ impl EntityMember {
 }
 
 /// The members every form of the entity shares, read so far.
-#[derive(Debug, Default)]
-pub(crate) struct SharedMembers {
+#[derive(Debug)]
+pub(crate) struct SharedMembers<M> {
     /// `id`, when read.
     pub(crate) id: Option<Identifier>,
     /// `type`, when read.
@@ -99,11 +98,11 @@ pub(crate) struct SharedMembers {
     /// `expiresAt`.
     pub(crate) expires_at: Option<DateTime<Utc>>,
     /// `location`.
-    pub(crate) location: Option<AttributeValue>,
+    pub(crate) location: Option<M>,
     /// `observationSpace`.
-    pub(crate) observation_space: Option<AttributeValue>,
+    pub(crate) observation_space: Option<M>,
     /// `operationSpace`.
-    pub(crate) operation_space: Option<AttributeValue>,
+    pub(crate) operation_space: Option<M>,
     /// `createdAt`, where the form names it.
     pub(crate) created_at: Option<DateTime<Utc>>,
     /// `modifiedAt`, where the form names it.
@@ -111,7 +110,7 @@ pub(crate) struct SharedMembers {
     /// `deletedAt`, where the form names it.
     pub(crate) deleted_at: Option<DateTime<Utc>>,
     /// Every attribute member, in the order first written.
-    pub(crate) attrs: IndexMap<AttributeName, AttributeValue>,
+    pub(crate) attrs: IndexMap<AttributeName, M>,
 }
 
 /// The member a whole entity requires and was not given.
@@ -124,14 +123,6 @@ pub(crate) enum MissingMember {
 }
 
 impl MissingMember {
-    /// The name the member is written under.
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            MissingMember::Id => ID_MEMBER,
-            MissingMember::Type => TYPE_MEMBER,
-        }
-    }
-
     /// The member, as a refusal names it.
     pub(crate) const fn member(self) -> RefusedMember {
         match self {
@@ -141,13 +132,32 @@ impl MissingMember {
     }
 }
 
-impl SharedMembers {
+// `#[derive(Default)]` would require `M: Default`, which no member type is.
+impl<M> Default for SharedMembers<M> {
+    fn default() -> SharedMembers<M> {
+        SharedMembers {
+            id: None,
+            type_: None,
+            scope: None,
+            expires_at: None,
+            location: None,
+            observation_space: None,
+            operation_space: None,
+            created_at: None,
+            modified_at: None,
+            deleted_at: None,
+            attrs: IndexMap::new(),
+        }
+    }
+}
+
+impl<M> SharedMembers<M> {
     /// The whole entity these members are.
     ///
     /// # Errors
     ///
     /// Returns the [`MissingMember`] `id` or `type` when it was not read.
-    pub(crate) fn into_entity(self) -> Result<Entity, MissingMember> {
+    pub(crate) fn into_entity(self) -> Result<Entity<M>, MissingMember> {
         Ok(Entity {
             id: self.id.ok_or(MissingMember::Id)?,
             type_: self.type_.ok_or(MissingMember::Type)?,
@@ -164,7 +174,7 @@ impl SharedMembers {
     }
 
     /// The partial entity these members are.
-    pub(crate) fn into_patch(self) -> EntityPatch {
+    pub(crate) fn into_patch(self) -> EntityPatch<M> {
         EntityPatch {
             id: self.id,
             type_: self.type_,

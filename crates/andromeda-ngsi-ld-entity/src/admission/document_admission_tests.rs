@@ -294,11 +294,17 @@ fn every_family_still_accepts_its_own_value_member() {
     }
 }
 
+/// Clause 5.2.5 requires a Property's value, except in a merge fragment,
+/// which clause 5.5.12 merges "up to an arbitrary depth" into the instance it
+/// targets.
 #[test]
-fn a_property_missing_its_value_is_refused() {
+fn a_property_missing_its_value_is_refused_outside_a_merge_fragment() {
     let instance = json!({"@type": [AttributeType::Property.iri().as_str()]});
-    let error = admit(&entity_with_instance(&instance), NullSentinelAdmission::MergeFragment).expect_err("clause 5.2.5 requires a value");
-    assert!(error.to_string().contains("value"), "{error}");
+    for admission in [NullSentinelAdmission::Refused, NullSentinelAdmission::PartialUpdateFragment] {
+        let error = admit(&entity_with_instance(&instance), admission).expect_err("clause 5.2.5 requires a value");
+        assert!(error.to_string().contains("value"), "{admission:?}: {error}");
+    }
+    admit(&entity_with_instance(&instance), NullSentinelAdmission::MergeFragment).expect("a merge fragment may leave the value out");
 }
 
 #[test]

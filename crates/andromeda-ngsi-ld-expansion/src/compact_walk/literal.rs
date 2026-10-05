@@ -7,30 +7,30 @@ use crate::{
     term_scope::{TermScope, identifier_text},
 };
 use andromeda_ngsi_ld_entity::literal::Direction;
+use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
 use jsonld::{Direction as JsonLdDirection, Nullable, Type};
-use serde_json::Value;
 
 /// Expand the scalar `value` written under `property`.
 ///
 /// # Errors
 ///
 /// Declines a type mapping the algorithm refuses for a scalar.
-pub fn expand_scalar(scope: &TermScope<'_>, property: &str, value: &Value) -> Result<ExpandedItem, Decline> {
+pub fn expand_scalar<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, property: &str, value: N) -> Result<ExpandedItem, Decline> {
     let definition = scope.definition(property);
     let type_mapping = definition.and_then(|definition| definition.typ());
-    match (type_mapping, value) {
+    match (type_mapping, value.shape()) {
         // An `@id`-typed term makes a string a node reference (step 1).
-        (Some(Type::Id), Value::String(text)) => Ok(node_reference(identifier_text(scope.expand_id(text)?.as_ref()))),
+        (Some(Type::Id), NodeShape::String(text)) => Ok(node_reference(identifier_text(scope.expand_id(&text)?.as_ref()))),
         // A `@vocab`-typed term expands it with the vocabulary mapping (step 2).
-        (Some(Type::Vocab), Value::String(text)) => Ok(node_reference(identifier_text(scope.expand_vocab(text)?.as_ref()))),
-        (Some(Type::Iri(datatype)), _) => Ok(ExpandedItem::Value(ValueObject {
-            scalar: scalar(value)?,
+        (Some(Type::Vocab), NodeShape::String(text)) => Ok(node_reference(identifier_text(scope.expand_vocab(&text)?.as_ref()))),
+        (Some(Type::Iri(datatype)), shape) => Ok(ExpandedItem::Value(ValueObject {
+            scalar: scalar(shape)?,
             datatype: Some(datatype.as_str().to_owned()),
             language: None,
             direction: None,
         })),
         (Some(Type::Json), _) => Err(Decline::MalformedJsonLd),
-        (None | Some(Type::None), Value::String(text)) => {
+        (None | Some(Type::None), NodeShape::String(text)) => {
             // A string takes the term's language and direction, or the
             // context's defaults (steps 5 and 6).
             let language = match definition.and_then(|definition| definition.language()) {
@@ -44,15 +44,16 @@ pub fn expand_scalar(scope: &TermScope<'_>, property: &str, value: &Value) -> Re
                 None => scope.default_direction(),
             };
             Ok(ExpandedItem::Value(ValueObject {
-                scalar: Scalar::String(text.clone()), // clone: the request is borrowed
+                scalar: Scalar::String(text.into_owned()),
                 datatype: None,
                 language,
                 direction: direction.map(direction_of),
             }))
         }
-        (None | Some(Type::Id | Type::Vocab | Type::None), Value::Bool(_) | Value::Number(_) | Value::Null | Value::Array(_) | Value::Object(_)) => {
-            scalar(value).map(|scalar| ExpandedItem::Value(ValueObject::plain(scalar)))
-        }
+        (
+            None | Some(Type::Id | Type::Vocab | Type::None),
+            shape @ (NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::Null | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_)),
+        ) => scalar(shape).map(|scalar| ExpandedItem::Value(ValueObject::plain(scalar))),
     }
 }
 
@@ -62,12 +63,12 @@ pub fn expand_scalar(scope: &TermScope<'_>, property: &str, value: &Value) -> Re
 /// # Errors
 ///
 /// Declines a value that is no scalar.
-pub fn scalar(value: &Value) -> Result<Scalar, Decline> {
-    match value {
-        Value::Bool(flag) => Ok(Scalar::Boolean(*flag)),
-        Value::Number(number) => Ok(Scalar::Number(number.to_string())),
-        Value::String(text) => Ok(Scalar::String(text.clone())), // clone: the request is borrowed
-        Value::Null | Value::Array(_) | Value::Object(_) => Err(Decline::MalformedJsonLd),
+pub fn scalar<N>(shape: NodeShape<'_, N>) -> Result<Scalar, Decline> {
+    match shape {
+        NodeShape::Boolean(flag) => Ok(Scalar::Boolean(flag)),
+        NodeShape::Number(text) => Ok(Scalar::Number(text.into_owned())),
+        NodeShape::String(text) => Ok(Scalar::String(text.into_owned())),
+        NodeShape::Null | NodeShape::Array(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => Err(Decline::MalformedJsonLd),
     }
 }
 

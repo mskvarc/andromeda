@@ -15,12 +15,12 @@ use andromeda_ngsi_ld_expansion::{
     entity_expansion::EntityExpansion,
     error::ExpansionError,
     normalization::Normalization,
+    written_member::WrittenMember,
 };
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
 use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
-use serde_json::Value;
 use std::marker::PhantomData;
 
 /// An entity-shaped document admitted for the write `W`, expanded as that
@@ -94,16 +94,14 @@ impl<'a, W> AdmittedAttribute<'a, W> {
     }
 }
 
-/// A write payload as the transport decoded it, which the admission expands.
-///
-/// A typed compact entity or fragment is expanded by the typed walk; a payload
-/// held as JSON is expanded after its concise rewrite.
+/// A write payload as the transport decoded it into the typed compact model,
+/// which the admission expands.
 pub trait WritePayload: Send {
+    /// What the payload holds under an attribute name.
+    type Member;
+
     /// Refuse a payload whose typed geometries are past `limit` before it is
     /// expanded.
-    ///
-    /// A JSON payload holds no typed geometry; its geometries are counted on
-    /// the document it expands to.
     ///
     /// # Errors
     ///
@@ -122,24 +120,9 @@ pub trait WritePayload: Send {
         Self: 's;
 }
 
-impl WritePayload for Value {
-    fn admit_geometries(&self, _limit: GeometryPositionLimit) -> Result<(), PayloadBudgetExceeded> {
-        Ok(())
-    }
+impl<M: WrittenMember + Sync> WritePayload for &Entity<M> {
+    type Member = M;
 
-    fn expand<'s>(
-        self,
-        expansion: &'s EntityExpansion<'s>,
-        normalization: Normalization,
-    ) -> impl Future<Output = Result<EntityDocument, ExpansionError>> + Send + 's
-    where
-        Self: 's,
-    {
-        expansion.entity_fragment(self, normalization)
-    }
-}
-
-impl WritePayload for &Entity {
     fn admit_geometries(&self, limit: GeometryPositionLimit) -> Result<(), PayloadBudgetExceeded> {
         admit_compact_geometries(limit, self.attribute_members())
     }
@@ -156,7 +139,9 @@ impl WritePayload for &Entity {
     }
 }
 
-impl WritePayload for &EntityPatch {
+impl<M: WrittenMember + Sync> WritePayload for &EntityPatch<M> {
+    type Member = M;
+
     fn admit_geometries(&self, limit: GeometryPositionLimit) -> Result<(), PayloadBudgetExceeded> {
         admit_compact_geometries(limit, self.attribute_members())
     }
@@ -178,24 +163,28 @@ mod tests {
     use crate::admitted_write::WritePayload;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
-    use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
+    use andromeda_ngsi_ld_model::{
+        attribute::merge_member::MergeMember,
+        entity::{Entity, EntityPatch},
+    };
     use serde_json::json;
 
-    /// A JSON fragment, a decoded entity and a decoded patch of one compact
-    /// document expand to the same written document.
+    /// A decoded entity, a decoded patch and a decoded merge fragment of one
+    /// compact document expand to the same written document.
     #[tokio::test]
     async fn every_payload_form_expands_to_the_same_document() {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("the offline JSON-LD engine builds");
         let expansion = EntityExpansion::prepare(&engine, &ContextSpec::core_only())
             .await
             .expect("the core context processes");
-        let written = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 1}});
+        let written = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 1}, "owner": "urn:ngsi-ld:Person:1"});
         let entity: Entity = serde_json::from_value(written.clone()).expect("an entity"); // clone: the same document is decoded three ways
         let patch: EntityPatch = serde_json::from_value(written.clone()).expect("a patch"); // clone: the same document is decoded three ways
-        let from_json = written.expand(&expansion, Normalization::Entity).await.expect("the JSON expands");
+        let fragment: EntityPatch<MergeMember> = serde_json::from_value(written).expect("a merge fragment");
         let from_entity = (&entity).expand(&expansion, Normalization::Entity).await.expect("the entity expands");
         let from_patch = (&patch).expand(&expansion, Normalization::Entity).await.expect("the patch expands");
-        pretty_assertions::assert_eq!(from_entity, from_json);
-        pretty_assertions::assert_eq!(from_patch, from_json);
+        let from_fragment = (&fragment).expand(&expansion, Normalization::Entity).await.expect("the fragment expands");
+        pretty_assertions::assert_eq!(from_patch, from_entity);
+        pretty_assertions::assert_eq!(from_fragment, from_entity);
     }
 }

@@ -15,6 +15,7 @@
 //! refused rather than stored as a value the stored document could not hold.
 
 use crate::expanded_tree::{ExpandedItem, ExpandedNode};
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_entity::{document::value_carrier::ValueCarrier, ngsi_ld_null::is_ngsi_ld_null};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 
@@ -24,7 +25,7 @@ pub fn is_null(item: &ExpandedItem) -> bool {
     match item {
         ExpandedItem::Value(value) => value.as_str().is_some_and(is_ngsi_ld_null),
         ExpandedItem::Node(node) => node.is_reference() && node.id.as_deref().is_some_and(is_ngsi_ld_null),
-        ExpandedItem::Json(literal) => literal.is_null_sentinel(),
+        ExpandedItem::Json(literal) => is_null_literal(literal),
         ExpandedItem::List(_) | ExpandedItem::Geometry(_) => false,
     }
 }
@@ -50,7 +51,7 @@ pub fn is_deletion(carrier: ValueCarrier, items: &[ExpandedItem]) -> bool {
         (ValueCarrier::ValueList | ValueCarrier::ObjectList, [ExpandedItem::List(members)]) => {
             matches!(members.as_slice(), [member] if is_list_object_null(member))
         }
-        (ValueCarrier::Json, [ExpandedItem::Json(literal)]) => literal.is_null_sentinel(),
+        (ValueCarrier::Json, [ExpandedItem::Json(literal)]) => is_null_literal(literal),
         // Clause 4.5.18 spells the deletion `{"@none": "urn:ngsi-ld:null"}`:
         // the Null under a language deletes that one language of a merged
         // map (clause 5.5.12), not the instance.
@@ -76,6 +77,12 @@ fn is_wrapped_null(member: &ExpandedItem) -> bool {
         }
         ExpandedItem::Node(_) | ExpandedItem::Value(_) | ExpandedItem::Json(_) | ExpandedItem::List(_) | ExpandedItem::Geometry(_) => false,
     }
+}
+
+/// Whether a JSON literal is the NGSI-LD Null string, in either spelling
+/// clause 4.5.0 gives it.
+fn is_null_literal(literal: &JsonLiteral) -> bool {
+    literal.piece().as_str().is_some_and(|text| is_ngsi_ld_null(&text))
 }
 
 #[cfg(test)]

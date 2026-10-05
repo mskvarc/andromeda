@@ -31,6 +31,7 @@ use andromeda_entity::write_kind::MergeEntity;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
+use andromeda_ngsi_ld_model::attribute::merge_member::MergeMember;
 use axum::http::Method;
 
 pub(crate) async fn merge(
@@ -42,7 +43,7 @@ pub(crate) async fn merge(
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     TypedPath(id): TypedPath<Identifier>,
     ValidatedQuery(params): ValidatedQuery<MergeParams>,
-    JsonLd { body, context }: JsonLd<EntityPatch>,
+    JsonLd { body, context }: JsonLd<EntityPatch<MergeMember>>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).

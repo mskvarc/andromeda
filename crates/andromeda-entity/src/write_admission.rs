@@ -39,6 +39,7 @@ use crate::{
     EntityService,
     admitted_write::{AdmittedAttribute, AdmittedEntity, WritePayload},
     batch::UpsertPolicy,
+    compact_geometry_admission::admit_compact_geometries,
     document_census::{admit_entity_document, admit_instance_document},
     error::EntityError,
     write_kind::{AttributeWriteKind, EntityWriteKind},
@@ -55,7 +56,6 @@ use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalizati
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::attribute_strip::AttributeStrip;
 use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
-use serde_json::Value;
 
 /// One of the write operations whose payload is a whole Entity or an
 /// entity-shaped Fragment.
@@ -211,7 +211,7 @@ impl EntityService {
     /// Reports the refusals of [`EntityService::admit_remaining_entity`].
     pub async fn admit_entity_write<W: EntityWriteKind>(
         &self,
-        payload: impl WritePayload,
+        payload: impl WritePayload<Member = W::Member>,
         context: &AdmittedContext,
     ) -> Result<AdmittedEntity<W>, EntityError> {
         self.admit_remaining_entity(payload, context).await
@@ -232,7 +232,7 @@ impl EntityService {
     /// document clause 5.5.4 refuses for `W`.
     pub async fn admit_remaining_entity<W: EntityWriteKind>(
         &self,
-        payload: impl WritePayload,
+        payload: impl WritePayload<Member = W::Member>,
         context: &AdmittedContext,
     ) -> Result<AdmittedEntity<W>, EntityError> {
         // Clause 6.3.2: a typed geometry past the budget is refused before the
@@ -261,7 +261,7 @@ impl EntityService {
         &self,
         admitted: AdmittedEntity<W>,
         strip: AttributeStrip,
-        remainder: impl WritePayload,
+        remainder: impl WritePayload<Member = W::Member>,
         context: &AdmittedContext,
     ) -> Option<Result<AdmittedEntity<W>, EntityError>> {
         match strip {
@@ -275,12 +275,14 @@ impl EntityService {
     /// of clauses 5.6.4 and 5.6.19 written to `attribute`, before the
     /// operation forwards it, and keep what it expanded for the local write.
     ///
-    /// Clauses 5.6.4 and 5.6.19 take a bare Attribute Fragment, so the
-    /// entity-level rewrite does not reach it: the expansion applies the
-    /// concise form and discards the output-only `previous...` member clauses
-    /// 5.2.5 to 5.2.38 require an implementation to ignore, and expands the
-    /// Fragment under the name the request URI carries, because a term's own
-    /// definition decides what the members below it mean.
+    /// Clauses 5.6.4 and 5.6.19 take a bare Attribute Fragment, which the
+    /// transport decoded into the typed member the operation writes: a
+    /// replaced attribute (clause 5.6.19), or the merge member a partial update
+    /// writes (clause 5.6.4). The expansion discards the output-only
+    /// `previous...` member clauses 5.2.5 to 5.2.38 require an implementation
+    /// to ignore, and expands the Fragment under the name the request URI
+    /// carries, because a term's own definition decides what the members below
+    /// it mean.
     ///
     /// # Errors
     ///
@@ -292,11 +294,14 @@ impl EntityService {
     pub async fn admit_attribute_write<'a, W: AttributeWriteKind>(
         &self,
         attribute: &'a AttributeName,
-        payload: Value,
+        payload: &W::Member,
         context: &AdmittedContext,
     ) -> Result<AdmittedAttribute<'a, W>, EntityError> {
+        // Clause 6.3.2: a typed geometry past the budget is refused before the
+        // expansion copies it into the written document.
+        admit_compact_geometries(self.payload_budget.geometry_positions, [(attribute.as_str(), payload)])?;
         let expansion = EntityExpansion::prepare(&self.engine, context).await?;
-        let fragment = expansion.attribute_fragment(attribute, payload).await?;
+        let fragment = expansion.attribute(attribute, payload).await?;
         admit_instance_document(self.payload_budget, fragment.name(), fragment.instance())?;
         admit_instance_nesting(self.payload_budget.attribute_nesting, fragment.name(), fragment.instance())?;
         fragment.instance().admit_fragment(fragment.name(), W::WRITE.null_sentinel_admission())?;
@@ -307,7 +312,7 @@ impl EntityService {
 #[cfg(test)]
 mod tests {
     use crate::{
-        admission_fixture::{admitted_context, admitted_entity},
+        admission_fixture::{admitted_context, admitted_written},
         batch::UpsertPolicy,
         error::EntityError,
         notification_recording_harness::{budgeted_recording_service, geometry_budget, recording_service},
@@ -321,7 +326,10 @@ mod tests {
     };
     use andromeda_ngsi_ld_expansion::normalization::Normalization;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT};
-    use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, entity::Entity};
+    use andromeda_ngsi_ld_model::{
+        attribute_strip::AttributeStrip,
+        entity::{Entity, EntityPatch},
+    };
     use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
     use serde_json::{Value, json};
 
@@ -543,8 +551,9 @@ mod tests {
 
     /// What the forwarding phase left of `written_vehicle` once `speed` was
     /// claimed by a proxied registration.
-    fn remaining_vehicle(brand: &Value) -> Value {
-        json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "brandName": {"type": "Property", "value": brand}})
+    fn remaining_vehicle(brand: &Value) -> EntityPatch {
+        serde_json::from_value(json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "brandName": {"type": "Property", "value": brand}}))
+            .expect("the remainder decodes")
     }
 
     /// Clause 5.6.1.4 and following: a payload the forwarding phase left alone
@@ -554,13 +563,13 @@ mod tests {
     async fn an_untouched_payload_is_the_admitted_one() {
         let (service, _recorded) = recording_service().await;
         let context = ContextSpec::core_only();
-        let expected = admitted_entity::<CreateEntity>(&service, written_vehicle(), &context).await.into_document();
-        let admitted = admitted_entity::<CreateEntity>(&service, written_vehicle(), &context).await;
+        let expected = admitted_written::<CreateEntity>(&service, written_vehicle(), &context).await.into_document();
+        let admitted = admitted_written::<CreateEntity>(&service, written_vehicle(), &context).await;
         let remainder = service
             .admit_local_remainder(
                 admitted,
                 AttributeStrip::Untouched,
-                remaining_vehicle(&json!("ignored")),
+                &remaining_vehicle(&json!("ignored")),
                 &admitted_context(&service, &context).await,
             )
             .await
@@ -575,12 +584,12 @@ mod tests {
     async fn a_narrowed_payload_is_admitted_anew_from_what_remains() {
         let (service, _recorded) = recording_service().await;
         let context = ContextSpec::core_only();
-        let admitted = admitted_entity::<CreateEntity>(&service, written_vehicle(), &context).await;
+        let admitted = admitted_written::<CreateEntity>(&service, written_vehicle(), &context).await;
         let remainder = service
             .admit_local_remainder(
                 admitted,
                 AttributeStrip::Narrowed,
-                remaining_vehicle(&json!("x")),
+                &remaining_vehicle(&json!("x")),
                 &admitted_context(&service, &context).await,
             )
             .await
@@ -597,12 +606,12 @@ mod tests {
     async fn a_narrowed_payload_is_screened_again() {
         let (service, _recorded) = recording_service().await;
         let context = ContextSpec::core_only();
-        let admitted = admitted_entity::<CreateEntity>(&service, written_vehicle(), &context).await;
+        let admitted = admitted_written::<CreateEntity>(&service, written_vehicle(), &context).await;
         let refusal = service
             .admit_local_remainder(
                 admitted,
                 AttributeStrip::Narrowed,
-                remaining_vehicle(&json!("urn:ngsi-ld:null")),
+                &remaining_vehicle(&json!("urn:ngsi-ld:null")),
                 &admitted_context(&service, &context).await,
             )
             .await
@@ -617,12 +626,12 @@ mod tests {
     async fn an_emptied_payload_leaves_the_local_phase_nothing_to_write() {
         let (service, _recorded) = recording_service().await;
         let context = ContextSpec::core_only();
-        let admitted = admitted_entity::<CreateEntity>(&service, written_vehicle(), &context).await;
+        let admitted = admitted_written::<CreateEntity>(&service, written_vehicle(), &context).await;
         let remainder = service
             .admit_local_remainder(
                 admitted,
                 AttributeStrip::Emptied,
-                remaining_vehicle(&json!("x")),
+                &remaining_vehicle(&json!("x")),
                 &admitted_context(&service, &context).await,
             )
             .await;
@@ -630,12 +639,13 @@ mod tests {
     }
 
     /// A Vehicle located by a square: one ring of five positions.
-    fn located_vehicle() -> Value {
-        json!({
+    fn located_vehicle() -> Entity {
+        serde_json::from_value(json!({
             "id": "urn:ngsi-ld:Vehicle:1",
             "type": "Vehicle",
             "location": {"type": "GeoProperty", "value": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}}
-        })
+        }))
+        .expect("a valid entity")
     }
 
     /// Clause 6.3.2: an oversized geometry is refused as such, while the same
@@ -644,7 +654,7 @@ mod tests {
     async fn the_create_admission_refuses_an_oversized_geometry() {
         let tight = budgeted_recording_service(geometry_budget(4));
         let refusal = tight
-            .admit_remaining_entity::<CreateEntity>(located_vehicle(), &admitted_context(&tight, &ContextSpec::core_only()).await)
+            .admit_remaining_entity::<CreateEntity>(&located_vehicle(), &admitted_context(&tight, &ContextSpec::core_only()).await)
             .await
             .expect_err("five positions exceed a budget of four");
         assert!(
@@ -653,7 +663,7 @@ mod tests {
         );
         let roomy = budgeted_recording_service(geometry_budget(5));
         roomy
-            .admit_remaining_entity::<CreateEntity>(located_vehicle(), &admitted_context(&roomy, &ContextSpec::core_only()).await)
+            .admit_remaining_entity::<CreateEntity>(&located_vehicle(), &admitted_context(&roomy, &ContextSpec::core_only()).await)
             .await
             .expect("five positions are within a budget of five");
     }
@@ -663,14 +673,15 @@ mod tests {
     /// positions are budgeted as a normalized one's are.
     #[tokio::test]
     async fn a_concise_geo_property_is_budgeted_after_normalization() {
-        let concise = json!({
+        let concise: Entity = serde_json::from_value(json!({
             "id": "urn:ngsi-ld:Vehicle:1",
             "type": "Vehicle",
             "location": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}
-        });
+        }))
+        .expect("a valid entity");
         let tight = budgeted_recording_service(geometry_budget(4));
         let refusal = tight
-            .admit_remaining_entity::<CreateEntity>(concise.clone(), &admitted_context(&tight, &ContextSpec::core_only()).await) // clone: the same payload is admitted twice
+            .admit_remaining_entity::<CreateEntity>(&concise, &admitted_context(&tight, &ContextSpec::core_only()).await)
             .await
             .expect_err("five positions exceed a budget of four");
         assert!(
@@ -679,7 +690,7 @@ mod tests {
         );
         let roomy = budgeted_recording_service(geometry_budget(5));
         roomy
-            .admit_remaining_entity::<CreateEntity>(concise, &admitted_context(&roomy, &ContextSpec::core_only()).await)
+            .admit_remaining_entity::<CreateEntity>(&concise, &admitted_context(&roomy, &ContextSpec::core_only()).await)
             .await
             .expect("five positions are within a budget of five");
     }
@@ -688,7 +699,7 @@ mod tests {
     /// naming the attribute as the client wrote it.
     #[tokio::test]
     async fn a_typed_geometry_past_the_budget_is_refused_naming_the_written_attribute() {
-        let entity: Entity = serde_json::from_value(located_vehicle()).expect("a valid entity");
+        let entity = located_vehicle();
         let tight = budgeted_recording_service(geometry_budget(4));
         let refusal = tight
             .admit_remaining_entity::<CreateEntity>(&entity, &admitted_context(&tight, &ContextSpec::core_only()).await)

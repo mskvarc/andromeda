@@ -9,8 +9,9 @@
 //! compaction depend on more than the term itself (see
 //! [`Undecidable`](crate::undecidable::Undecidable)).
 
-use crate::{compacted::Compacted, undecidable::Undecidable};
+use crate::{compacted::Compacted, core_aliases::core_term_aliases, undecidable::Undecidable};
 use andromeda_jsonld::engine::compaction_context::CompactionContext;
+use andromeda_ngsi_ld_representation::compact_node::aliased_node::CoreTermAliases;
 use dashmap::DashMap;
 use jsonld::{
     BlankIdBuf,
@@ -55,16 +56,26 @@ pub(crate) struct TermContext {
     /// node: an attribute recurs in every entity of a page, and its key never
     /// depends on the instance.
     attribute_keys: DashMap<Box<str>, Arc<str>>,
+    /// The terms of the context that stand for core terms, which a compacted
+    /// entity is read through.
+    aliases: CoreTermAliases,
 }
 
 impl TermContext {
     /// Ask `context` with the options the processor compacts with.
     pub(crate) fn new(context: Arc<CompactionContext>) -> TermContext {
+        let aliases = core_term_aliases(context.active_context());
         TermContext {
             context,
             options: Options::<IriBuf>::default().compaction_options(),
             attribute_keys: DashMap::new(),
+            aliases,
         }
+    }
+
+    /// The terms of the context that stand for core terms.
+    pub(crate) const fn aliases(&self) -> &CoreTermAliases {
+        &self.aliases
     }
 
     /// The active context.

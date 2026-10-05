@@ -7,8 +7,8 @@ use crate::{
     expanded_tree::ExpandedItem,
     term_scope::TermScope,
 };
+use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
 use jsonld::ContainerKind;
-use serde_json::Value;
 
 /// What one element expands to.
 #[derive(Debug, PartialEq)]
@@ -39,18 +39,21 @@ impl Expanded {
 /// # Errors
 ///
 /// Declines whatever the walk does not model.
-pub fn expand_element(scope: &TermScope<'_>, active_property: Option<&str>, element: &Value) -> Result<Expanded, Decline> {
-    match element {
-        Value::Null => Ok(Expanded::Null),
-        Value::Array(items) => {
+pub fn expand_element<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, active_property: Option<&str>, element: N) -> Result<Expanded, Decline> {
+    match element.shape() {
+        NodeShape::Null => Ok(Expanded::Null),
+        NodeShape::Array(items) => {
             let mut result = Vec::with_capacity(items.len());
             for item in items {
                 result.extend(expand_element(scope, active_property, item)?.into_items());
             }
             Ok(list_or_array(scope, active_property, result))
         }
-        Value::Object(members) => expand_object(&scope.object_scope(active_property)?, active_property, members),
-        Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+        NodeShape::Object(members) => expand_object(&scope.object_scope(active_property)?, active_property, members),
+        // A geometry is held typed only where the typed walk expands it as
+        // the geometry it is; met as JSON, it is not the walk's to expand.
+        NodeShape::Geometry(_) => Err(Decline::CompactSerialization),
+        NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) => {
             let Some(property) = active_property else {
                 return Ok(Expanded::Null);
             };

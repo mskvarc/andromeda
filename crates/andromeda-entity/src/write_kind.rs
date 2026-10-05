@@ -10,34 +10,50 @@ use crate::{
     batch::UpsertPolicy,
     write_admission::{AttributeWrite, BatchWrite, EntityWrite},
 };
+use andromeda_ngsi_ld_expansion::written_member::WrittenMember;
+use andromeda_ngsi_ld_model::attribute::{instance::AttributeValue, member_reading::MemberReading, merge_member::MergeMember};
 
 /// A write operation whose payload is a whole Entity or an entity-shaped
 /// Fragment.
 pub trait EntityWriteKind: Send + Sync {
     /// The operation the marker names.
     const WRITE: EntityWrite;
+    /// What the operation's payload holds under an attribute name: the
+    /// members of a merge fragment for a merge (clause 5.5.12), the members of
+    /// an entity otherwise.
+    type Member: WrittenMember + MemberReading + Send + Sync;
 }
 
 /// A write operation whose payload is a bare Attribute Fragment.
 pub trait AttributeWriteKind: Send + Sync {
     /// The operation the marker names.
     const WRITE: AttributeWrite;
+    /// What the operation's Attribute Fragment is: the member of a merge
+    /// fragment a partial update merges (clause 5.6.4), or the attribute a
+    /// replacement writes (clause 5.6.19).
+    type Member: WrittenMember + MemberReading + Send + Sync;
 }
 
 /// A batch write operation, whose payload is an array of Entities.
 pub trait BatchWriteKind: Copy + Send + Sync {
+    /// What each entity of the batch holds under an attribute name: the
+    /// members of a merge fragment for a batch merge (clause 5.6.20), the
+    /// members of an entity otherwise.
+    type Member: WrittenMember + MemberReading + Send + Sync + 'static;
+
     /// The operation the marker names, in the mode the request selected.
     fn write(self) -> BatchWrite;
 }
 
 /// Declares one unit marker per operation and binds it to the operation's
 /// variant of `$operations` through the associated `WRITE` constant of
-/// `$kind`.
+/// `$kind`, and to the member its payload holds through the associated
+/// `Member` type.
 ///
 /// Expands to a `Copy` unit struct and one `impl $kind for $marker`, carrying
 /// the doc comment written before each marker.
 macro_rules! write_markers {
-    ($kind:ident for $operations:ident { $($(#[$doc:meta])* $marker:ident => $variant:ident),+ $(,)? }) => {
+    ($kind:ident for $operations:ident { $($(#[$doc:meta])* $marker:ident => $variant:ident ($member:ty)),+ $(,)? }) => {
         $(
             $(#[$doc])*
             #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,6 +61,7 @@ macro_rules! write_markers {
 
             impl $kind for $marker {
                 const WRITE: $operations = $operations::$variant;
+                type Member = $member;
             }
         )+
     };
@@ -52,22 +69,22 @@ macro_rules! write_markers {
 
 write_markers!(EntityWriteKind for EntityWrite {
     /// Create Entity (clause 5.6.1).
-    CreateEntity => Create,
+    CreateEntity => Create (AttributeValue),
     /// Append Attributes (clause 5.6.3).
-    AppendAttributes => AppendAttributes,
+    AppendAttributes => AppendAttributes (AttributeValue),
     /// Update Attributes (clause 5.6.2).
-    UpdateAttributes => UpdateAttributes,
+    UpdateAttributes => UpdateAttributes (AttributeValue),
     /// Replace Entity (clause 5.6.18).
-    ReplaceEntity => ReplaceEntity,
+    ReplaceEntity => ReplaceEntity (AttributeValue),
     /// Merge Entity (clause 5.6.17).
-    MergeEntity => MergeEntity,
+    MergeEntity => MergeEntity (MergeMember),
 });
 
 write_markers!(AttributeWriteKind for AttributeWrite {
     /// Partial Update Attribute (clause 5.6.4).
-    PartialUpdateAttribute => PartialUpdate,
+    PartialUpdateAttribute => PartialUpdate (MergeMember),
     /// Replace Attribute (clause 5.6.19).
-    ReplaceAttribute => Replace,
+    ReplaceAttribute => Replace (AttributeValue),
 });
 
 /// Batch Entity Creation (clause 5.6.7).
@@ -88,24 +105,32 @@ pub struct BatchMerge;
 pub struct BatchUpsert(pub UpsertPolicy);
 
 impl BatchWriteKind for BatchCreate {
+    type Member = AttributeValue;
+
     fn write(self) -> BatchWrite {
         BatchWrite::Create
     }
 }
 
 impl BatchWriteKind for BatchUpdate {
+    type Member = AttributeValue;
+
     fn write(self) -> BatchWrite {
         BatchWrite::Update
     }
 }
 
 impl BatchWriteKind for BatchMerge {
+    type Member = MergeMember;
+
     fn write(self) -> BatchWrite {
         BatchWrite::Merge
     }
 }
 
 impl BatchWriteKind for BatchUpsert {
+    type Member = AttributeValue;
+
     fn write(self) -> BatchWrite {
         BatchWrite::Upsert(self.0)
     }

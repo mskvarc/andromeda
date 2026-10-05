@@ -97,7 +97,7 @@ async fn a_geometry_compacts_into_the_compact_entity_without_a_tree_of_its_posit
     let Attribute::GeoProperty(geo_property) = attribute.as_ref() else {
         panic!("the location is no GeoProperty: {attribute:?}");
     };
-    let positions = match geo_property.value.form() {
+    let positions = match geo_property.value.form().expect("the location holds a geometry") {
         GeometryForm::Polygon(rings) => rings.rings().iter().map(|ring| ring.positions().len()).sum::<usize>(),
         GeometryForm::Point(_)
         | GeometryForm::MultiPoint(_)

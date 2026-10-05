@@ -86,7 +86,7 @@ mod tests {
         let attribute = "speed".parse::<AttributeName>().expect("a valid attribute name");
         for (error, expected) in [
             (
-                EntityError::Validation(EntityValidationReason::EntityMissingId),
+                EntityError::Validation(EntityValidationReason::ScopeNotReplaceable),
                 NgsiLdErrorType::BadRequestData,
             ),
             (EntityError::not_found(&identifier), NgsiLdErrorType::ResourceNotFound),

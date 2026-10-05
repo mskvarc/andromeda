@@ -1,6 +1,7 @@
 //! The Property attribute family (ETSI GS CIM 009 clause 5.2.5).
 
 use crate::attribute::{common_fields::CommonAttributeFields, value::NgsiLdValue};
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use cefact_units::UnitCode;
 use derive_more::{Deref, From, Into};
@@ -25,7 +26,7 @@ impl AsRef<str> for UnitCodeRef {
 
 /// NGSI-LD Property representation (ETSI GS CIM 009 clause 5.2.5).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Property {
     /// Property value.
@@ -36,6 +37,12 @@ pub struct Property {
     pub value_type: Option<NgsiLdReference>,
     /// Previous value emitted in notifications when `showChanges` is active.
     pub previous_value: Option<NgsiLdValue>,
+    /// The non-reified `entityIdSealed` subproperty of the `ngsildproof`
+    /// Property, as written (clause 4.5.2.2).
+    pub entity_id_sealed: Option<JsonLiteral>,
+    /// The non-reified `entityTypeSealed` subproperty of the `ngsildproof`
+    /// Property, as written (clause 4.5.2.2).
+    pub entity_type_sealed: Option<JsonLiteral>,
     /// Members shared with every other attribute family.
     #[serde(flatten)]
     pub common: CommonAttributeFields,
@@ -44,8 +51,8 @@ pub struct Property {
 #[cfg(test)]
 mod tests {
     use crate::attribute::{instance::Attribute, value::NgsiLdValue};
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
-    use serde_json::Value;
 
     /// Clause 4.6.3 admits several spellings of one `DateTime`, so the document
     /// representation carries the one the client wrote rather than re-rendering
@@ -67,19 +74,12 @@ mod tests {
         let Attribute::Property(property) = attr else {
             panic!("expected Property");
         };
-        pretty_assertions::assert_eq!(property.value, NgsiLdValue::Json(Value::String("2018-12-04T12:00:00.250000Z".to_owned())));
+        pretty_assertions::assert_eq!(
+            property.value,
+            NgsiLdValue::Json(JsonLiteral::admit(r#""2018-12-04T12:00:00.250000Z""#).expect("a string"))
+        );
         pretty_assertions::assert_eq!(property.value_type.as_ref().map(NgsiLdReference::as_str), Some("DateTime"));
         assert!(property.previous_value.is_some());
         assert!(property.common.instance_id.is_some());
-    }
-
-    #[test]
-    fn the_property_default_matches_the_field_by_field_literal() {
-        use crate::attribute::property::Property;
-        let actual = Property::default();
-        pretty_assertions::assert_eq!(actual.value, NgsiLdValue::Json(Value::Null));
-        assert!(actual.unit_code.is_none() && actual.value_type.is_none() && actual.previous_value.is_none());
-        assert!(actual.common.sub_attributes.is_empty());
-        assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }

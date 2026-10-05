@@ -86,7 +86,7 @@ impl Eq for LanguageMap {}
 
 /// NGSI-LD `LanguageProperty` representation (ETSI GS CIM 009 clause 5.2.32).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageProperty {
     /// Language-indexed string map.

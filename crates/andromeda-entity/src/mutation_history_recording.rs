@@ -10,14 +10,14 @@ use crate::{
     notification_recording_harness::{ACCURACY_IRI, CATEGORY_IRI, NAME_IRI, core_context, entity_uri, live_target, recording_service, single_recorded_write},
     write_kind::{MergeEntity, ReplaceEntity},
 };
-use andromeda_ngsi_ld_model::entity::EntityPatch;
+use andromeda_ngsi_ld_model::{attribute::member_reading::MemberReading, entity::EntityPatch};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 /// Build an [`EntityPatch`] from a compact fixture payload; short-form terms
 /// expand through the NGSI-LD default `@vocab` under the empty context.
-fn patch(payload: Value) -> EntityPatch {
+fn patch<M: MemberReading>(payload: Value) -> EntityPatch<M> {
     serde_json::from_value(payload).expect("the fixture patch is a valid entity patch")
 }
 

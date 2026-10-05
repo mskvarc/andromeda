@@ -37,14 +37,14 @@ use crate::{
 use andromeda_context_commit::{atomic_write::AtomicWrite, subscription_match::SubscriptionMatch};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
-use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationTrigger};
+use andromeda_ngsi_ld_model::{attribute::member_reading::MemberReading, entity::Entity, notification::NotificationTrigger};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::sync::Arc;
 
 /// A single-entity batch input carrying one `category` Property, in the compact
 /// form a request submits.
-fn building_entity(value: &str) -> Entity {
+fn building_entity<M: MemberReading>(value: &str) -> Entity<M> {
     serde_json::from_value(json!({
         "id": ENTITY_ID,
         "type": "Building",

@@ -233,9 +233,7 @@ impl From<CompactionError> for TemporalError {
     fn from(error: CompactionError) -> TemporalError {
         match error {
             CompactionError::JsonLd(failure) => TemporalError::JsonLd(failure),
-            fault @ (CompactionError::Encode(_) | CompactionError::NotAnObject | CompactionError::MissingId | CompactionError::Decode(_)) => {
-                TemporalError::Internal(TemporalInvariant::Compaction(fault))
-            }
+            fault @ (CompactionError::Encode(_) | CompactionError::Refused(_)) => TemporalError::Internal(TemporalInvariant::Compaction(fault)),
         }
     }
 }

@@ -28,10 +28,10 @@
 
 mod carrier_items;
 mod compacted;
-mod compacted_entity;
 mod compacted_mode;
 mod compacted_node;
 pub mod compaction_error;
+mod core_aliases;
 #[cfg(test)]
 mod differential_tests;
 mod document_compaction;

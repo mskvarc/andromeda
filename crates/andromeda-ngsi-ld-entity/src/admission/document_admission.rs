@@ -51,7 +51,7 @@ impl EntityDocument {
     /// and the geometries are checked.
     pub fn admit(&self, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
         for (name, member) in self.attributes() {
-            admit_envelopes(name, member)?;
+            admit_envelopes(name, member, admission.value_omission())?;
         }
         for member in self.attributes().values() {
             member.instances().iter().try_for_each(admit_sub_attribute_identities)?;
@@ -105,7 +105,10 @@ impl InstanceDocument {
     pub fn admit_fragment(&self, attribute: &AttributeName, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
         admit_sub_attribute_identities(self)?;
         for (name, member) in self.sub_attributes() {
-            member.instances().iter().try_for_each(|instance| admit_envelope(name, instance))?;
+            member
+                .instances()
+                .iter()
+                .try_for_each(|instance| admit_envelope(name, instance, admission.value_omission()))?;
         }
         admit_family_members(None, self)?;
         admit_json_shapes(attribute, self)?;
@@ -130,12 +133,12 @@ impl InstanceDocument {
 
 /// The envelope rules of one attribute member: distinct instance identities
 /// (clause 4.5.5.1), the value member a declared family requires (clause
-/// 5.2.5), and no `unitCode` on a unitless family (clauses 4.5.3, 4.5.18,
-/// 4.5.20, 4.5.24).
-fn admit_envelopes(name: &AttributeName, member: &AttributeMember) -> Result<(), EntityRefusal> {
+/// 5.2.5) unless `value_omission` admits leaving it out, and no `unitCode` on
+/// a unitless family (clauses 4.5.3, 4.5.18, 4.5.20, 4.5.24).
+fn admit_envelopes(name: &AttributeName, member: &AttributeMember, value_omission: MemberAdmission) -> Result<(), EntityRefusal> {
     let instances = member.instances();
     admit_distinct_identities(name, instances)?;
-    instances.iter().try_for_each(|instance| admit_envelope(name, instance))
+    instances.iter().try_for_each(|instance| admit_envelope(name, instance, value_omission))
 }
 
 /// The written instances of the attribute `name` name distinct instances: no
@@ -170,20 +173,21 @@ fn admit_sub_attribute_identities(instance: &InstanceDocument) -> Result<(), Ent
     })
 }
 
-/// The envelope rules of one instance.
-fn admit_envelope(name: &AttributeName, instance: &InstanceDocument) -> Result<(), EntityRefusal> {
+/// The envelope rules of one instance, which may leave its value out where
+/// `value_omission` admits it.
+fn admit_envelope(name: &AttributeName, instance: &InstanceDocument, value_omission: MemberAdmission) -> Result<(), EntityRefusal> {
     let Some(family) = instance.family() else {
         return Ok(());
     };
-    let value_absent = matches!(instance.value(), ValueSlot::Absent);
+    let missing_value = matches!(instance.value(), ValueSlot::Absent) && value_omission == MemberAdmission::Forbidden;
     match family {
-        AttributeType::Property | AttributeType::GeoProperty if value_absent => {
+        AttributeType::Property | AttributeType::GeoProperty if missing_value => {
             return Err(EntityRefusal::MissingValue {
                 attribute_type: family,
                 attribute: name.clone(),
             });
         }
-        AttributeType::Relationship if value_absent => return Err(EntityRefusal::MissingObject { attribute: name.clone() }),
+        AttributeType::Relationship if missing_value => return Err(EntityRefusal::MissingObject { attribute: name.clone() }),
         AttributeType::Property
         | AttributeType::GeoProperty
         | AttributeType::Relationship

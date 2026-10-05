@@ -32,6 +32,7 @@ use andromeda_ngsi_ld_entity::{
     system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::attribute::merge_member::MergeMember;
 
 /// Merging each entity of a chunk into the entity as an attempt read it
 /// (clause 5.6.20.4 runs the merge of clause 5.6.17 per entity).
@@ -83,7 +84,11 @@ impl ChunkRewrite for MergeRewrite<'_> {
 }
 
 impl EntityService {
-    pub(super) async fn batch_merge_chunk(&self, placement: SideEffectPlacement<'_>, chunk: Vec<AdmittedBatchEntity>) -> Result<BatchResult, EntityError> {
+    pub(super) async fn batch_merge_chunk(
+        &self,
+        placement: SideEffectPlacement<'_>,
+        chunk: Vec<AdmittedBatchEntity<MergeMember>>,
+    ) -> Result<BatchResult, EntityError> {
         // Clause 5.6.20 is the batch form of Merge Entity, whose fragments carry
         // the NGSI-LD Null to arbitrary depth (clause 5.5.12).
         let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Merge).await;

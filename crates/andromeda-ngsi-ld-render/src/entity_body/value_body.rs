@@ -16,7 +16,7 @@ impl ValueBody<'_> {
     /// else.
     pub(crate) fn bare_family(self) -> Option<AttributeType> {
         match self.0 {
-            NgsiLdValue::Json(json) => bare_value_family(json),
+            NgsiLdValue::Json(json) => bare_value_family(json.piece()),
             NgsiLdValue::Geometry(_) => Some(AttributeType::GeoProperty),
         }
     }
@@ -25,7 +25,7 @@ impl ValueBody<'_> {
     /// back as (clause 4.5.2.3, "type").
     pub(crate) fn typeless_family(self) -> AttributeType {
         match self.0 {
-            NgsiLdValue::Json(json) => typeless_value_family(json),
+            NgsiLdValue::Json(json) => typeless_value_family(json.piece()),
             NgsiLdValue::Geometry(_) => AttributeType::GeoProperty,
         }
     }

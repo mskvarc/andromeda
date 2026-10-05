@@ -1,12 +1,15 @@
 //! Reading one attribute member of an entity from a compact node (ETSI GS CIM
-//! 009 clauses 4.5.5 and 5.2.4).
+//! 009 clauses 4.5.2.3, 4.5.5 and 5.2.4).
 //!
-//! A member is one attribute instance, an array of them, or a value carried
-//! through verbatim, tried in that order: an object that is no instance of the
-//! family it names, and an array holding anything but instances, are carried
-//! as written. This is the reading a decoded document's members get
-//! ([`AttributeValue::from_member`]) and the one a compacted entity's members
-//! get, so the two cannot disagree on which members are typed.
+//! A node written where an attribute stands is read as clause 4.5.2.3 and its
+//! siblings read it ([`andromeda_ngsi_ld_representation::concise_reading`]):
+//! an object is an instance of the family its `type` names or its value
+//! member implies, a bare geometry a concise `GeoProperty`, anything else the
+//! value of a concise Property; an array is the instances of a multi-attribute
+//! or one value; the NGSI-LD Null in place of the whole member is that Null. A
+//! node no clause admits is refused where it stands. This is the reading every
+//! compact document gets -- a request, a peer's answer, a notification, a
+//! compacted entity -- so they cannot disagree on what a member is.
 //!
 //! An instance's sub-attributes are members too (clause 4.5.2), read by the
 //! reading of the instance, so the reading recurses once per level of nesting,
@@ -14,77 +17,103 @@
 //! sufficient stack.
 
 use crate::{
-    attribute::instance::{Attribute, AttributeValue},
-    compact_node::{CompactNode, NodeShape},
-    node_refusal::NodeReadError,
+    attribute::{
+        instance::{Attribute, AttributeValue},
+        instance_member::ReadError,
+        member_reading::MemberReading,
+    },
+    node_refusal::{NodeRefusal, RefusedMember},
 };
 use andromeda_native_stack::on_sufficient_stack;
+use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_representation::{
+    attribute_type_validation::AttributeNodeFault,
+    compact_node::{CompactNode, NodeShape},
+    concise_reading::{ArrayReading, ArrayRefusal, ObjectReading, read_array, read_object},
+};
+use andromeda_ngsi_ld_vocabulary::NULL_URI;
 
-/// What an attribute member reads as.
-#[derive(Debug)]
-pub(crate) enum MemberForm {
-    /// One attribute instance.
-    Single(Box<Attribute>),
-    /// Several instances of the attribute.
-    Multiple(Vec<Attribute>),
-    /// Neither: the member is carried as written.
-    Verbatim,
-}
+impl MemberReading for AttributeValue {
+    fn from_node<'n, N: CompactNode<'n>>(name: &str, member: N) -> Result<AttributeValue, ReadError<'n, N>> {
+        on_sufficient_stack(|| member_value(name, member))
+    }
 
-/// Read one attribute member.
-///
-/// # Errors
-///
-/// Returns the node's [`CompactNode::Unreadable`] when a node of the member
-/// has no JSON form.
-pub(crate) fn read_member<N: CompactNode>(member: &N) -> Result<MemberForm, N::Unreadable> {
-    on_sufficient_stack(|| member_form(member))
-}
-
-/// Read one attribute member on the stack the caller left.
-fn member_form<N: CompactNode>(member: &N) -> Result<MemberForm, N::Unreadable> {
-    match member.shape() {
-        NodeShape::Object(_) => Ok(match instance(member)? {
-            Some(instance) => MemberForm::Single(Box::new(instance)),
-            None => MemberForm::Verbatim,
-        }),
-        NodeShape::Array(items) => {
-            let mut instances = Vec::with_capacity(items.len());
-            for item in items {
-                let Some(instance) = instance(item)? else {
-                    return Ok(MemberForm::Verbatim);
-                };
-                instances.push(instance);
+    fn from_fragment_node<'n, N: CompactNode<'n>>(name: &str, fragment: N) -> Result<AttributeValue, ReadError<'n, N>> {
+        on_sufficient_stack(|| {
+            let NodeShape::Object(members) = fragment.shape() else {
+                return member_value(name, fragment);
+            };
+            match read_object(&members).map_err(|refusal| ReadError::<N>::from(NodeRefusal::Shape(AttributeNodeFault::of_object(refusal))))? {
+                ObjectReading::Instance(family) => Attribute::from_members(name, family, members).map(single),
+                ObjectReading::GeoPropertyValue => Attribute::concise_geo_property(fragment).map(single),
+                // The fragment is the instance itself, and a whole attribute
+                // requires the value its family holds (clause 5.2.5).
+                ObjectReading::PropertyValue => Err(NodeRefusal::Missing {
+                    member: RefusedMember::Value(AttributeType::Property),
+                }
+                .into()),
             }
-            Ok(MemberForm::Multiple(instances))
-        }
-        // A geometry names its `GeoJSON` type, never an attribute family.
-        NodeShape::Null | NodeShape::Boolean | NodeShape::Number | NodeShape::String(_) | NodeShape::Geometry(_) => Ok(MemberForm::Verbatim),
+        })
     }
 }
 
-/// The instance `node` is, or `None` when it is refused as one.
-fn instance<N: CompactNode>(node: &N) -> Result<Option<Attribute>, N::Unreadable> {
-    match Attribute::from_node(node) {
-        Ok(instance) => Ok(Some(instance)),
-        Err(NodeReadError::Refused(_)) => Ok(None),
-        Err(NodeReadError::Unreadable(unreadable)) => Err(unreadable),
-    }
-}
-
-impl AttributeValue {
-    /// The attribute member a compact node is: an instance, an array of
-    /// instances, or, when it is neither, the JSON value the node stands for.
+impl Attribute {
+    /// The attribute instance a compact node written under the attribute
+    /// name `name`, where one instance stands, is.
     ///
     /// # Errors
     ///
-    /// Returns the node's [`CompactNode::Unreadable`] when a node of the
-    /// member has no JSON form.
-    pub fn from_node<N: CompactNode>(member: &N) -> Result<AttributeValue, N::Unreadable> {
-        Ok(match read_member(member)? {
-            MemberForm::Single(instance) => AttributeValue::Single(instance),
-            MemberForm::Multiple(instances) => AttributeValue::Multiple(instances),
-            MemberForm::Verbatim => AttributeValue::Raw(member.to_json()?),
-        })
+    /// As [`MemberReading::from_node`].
+    pub fn from_node<'n, N: CompactNode<'n>>(name: &str, node: N) -> Result<Attribute, ReadError<'n, N>> {
+        on_sufficient_stack(|| instance(name, node))
+    }
+}
+
+/// Read one attribute member on the stack the caller left.
+fn member_value<'n, N: CompactNode<'n>>(name: &str, member: N) -> Result<AttributeValue, ReadError<'n, N>> {
+    match member.shape() {
+        NodeShape::String(text) if text == NULL_URI.as_str() => Ok(AttributeValue::NgsiLdNull),
+        NodeShape::Array(items) => match read_array(&items).map_err(array_refusal::<N>)? {
+            ArrayReading::Instances => items
+                .into_iter()
+                .enumerate()
+                .map(|(index, item)| instance(name, item).map_err(|error| error.within_element(index)))
+                .collect::<Result<Vec<_>, _>>()
+                .map(AttributeValue::Multiple),
+            ArrayReading::PropertyValue => Attribute::concise_property(member).map(single),
+        },
+        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => {
+            instance(name, member).map(single)
+        }
+    }
+}
+
+/// Read one node written where one attribute instance stands.
+fn instance<'n, N: CompactNode<'n>>(name: &str, node: N) -> Result<Attribute, ReadError<'n, N>> {
+    match node.shape() {
+        NodeShape::Null => Err(NodeRefusal::Null.into()),
+        NodeShape::Geometry(_) => Attribute::concise_geo_property(node),
+        NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) => Attribute::concise_property(node),
+        NodeShape::Object(members) => {
+            match read_object(&members).map_err(|refusal| ReadError::<N>::from(NodeRefusal::Shape(AttributeNodeFault::of_object(refusal))))? {
+                ObjectReading::Instance(family) => Attribute::from_members(name, family, members),
+                ObjectReading::GeoPropertyValue => Attribute::concise_geo_property(node),
+                ObjectReading::PropertyValue => Attribute::concise_property(node),
+            }
+        }
+    }
+}
+
+/// One instance as the member it is alone.
+fn single(instance: Attribute) -> AttributeValue {
+    AttributeValue::Single(Box::new(instance))
+}
+
+/// The refusal of an array no clause admits where an attribute stands,
+/// located at the element at fault when one is.
+pub(crate) fn array_refusal<'n, N: CompactNode<'n>>(refusal: ArrayRefusal) -> ReadError<'n, N> {
+    match refusal {
+        ArrayRefusal::Element { index, refusal } => ReadError::<N>::from(NodeRefusal::Shape(AttributeNodeFault::of_object(refusal))).within_element(index),
+        ArrayRefusal::MixedInstancesAndValues => NodeRefusal::Shape(AttributeNodeFault::MixedInstancesAndValues).into(),
     }
 }

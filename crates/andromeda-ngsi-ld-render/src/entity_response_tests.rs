@@ -109,7 +109,7 @@ fn typed_entities() -> Vec<Value> {
     ]
 }
 
-/// The corpus entities carrying verbatim members, showChanges members and instance members.
+/// The corpus entities carrying concise members, showChanges members and instance members.
 fn verbatim_and_change_entities() -> Vec<Value> {
     vec![
         json!({
@@ -120,8 +120,7 @@ fn verbatim_and_change_entities() -> Vec<Value> {
             "conciseGeometry": {"type": "Point", "coordinates": [3.0, 4.0]},
             "plainNumber": 42,
             "plainText": "text",
-            "rawArray": [{"value": 1}, {"value": 2, "datasetId": "urn:ngsi-ld:Dataset:raw"}],
-            "unknownFamily": {"type": "Propertyy", "value": 1}
+            "rawArray": [{"value": 1}, {"value": 2, "datasetId": "urn:ngsi-ld:Dataset:raw"}]
         }),
         json!({
             "id": "urn:ngsi-ld:Building:changes",
@@ -463,8 +462,8 @@ fn a_requested_version_renders_alike() {
 }
 
 /// The corpus reaches every reading it is meant to: typed instances where a
-/// family is written in full, verbatim members where one is not, and a
-/// Linked Entity carried in.
+/// family is written in full, concise members read as the Property they
+/// abbreviate, and a Linked Entity carried in.
 #[test]
 fn the_corpus_reaches_every_reading() {
     let entities = entities();
@@ -482,8 +481,10 @@ fn the_corpus_reaches_every_reading() {
     );
     assert!(matches!(member("urn:ngsi-ld:Building:datasets", "location"), AttributeValue::Multiple(_)));
     assert!(matches!(member("urn:ngsi-ld:Building:nested", "position"), AttributeValue::Single(_)));
-    assert!(matches!(member("urn:ngsi-ld:Building:verbatim", "conciseSpeed"), AttributeValue::Raw(_)));
-    assert!(matches!(member("urn:ngsi-ld:Building:verbatim", "rawArray"), AttributeValue::Raw(_)));
+    assert!(
+        matches!(member("urn:ngsi-ld:Building:verbatim", "conciseSpeed"), AttributeValue::Single(attribute) if matches!(**attribute, Attribute::Property(_)))
+    );
+    assert!(matches!(member("urn:ngsi-ld:Building:verbatim", "rawArray"), AttributeValue::Multiple(_)));
     assert!(
         matches!(member("urn:ngsi-ld:Building:joined", "owner"), AttributeValue::Single(attribute) if matches!(&**attribute, Attribute::Relationship(owner) if owner.entity.is_some()))
     );

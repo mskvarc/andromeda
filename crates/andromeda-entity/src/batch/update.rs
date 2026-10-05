@@ -35,6 +35,7 @@ use andromeda_ngsi_ld_entity::{
     system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::attribute::instance::AttributeValue;
 
 /// Whether a `noOverwrite` append of `fragment` onto `entity` can add nothing:
 /// the fragment names at least one member and every member it names is
@@ -132,7 +133,7 @@ impl EntityService {
     pub(super) async fn batch_update_chunk(
         &self,
         placement: SideEffectPlacement<'_>,
-        chunk: Vec<AdmittedBatchEntity>,
+        chunk: Vec<AdmittedBatchEntity<AttributeValue>>,
         overwrite: OverwritePolicy,
     ) -> Result<BatchResult, EntityError> {
         // Clause 5.5.4 excepts only the fragments "used in partial update and
