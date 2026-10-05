@@ -4,7 +4,7 @@
 use crate::{
     graph::{LinkedGraph, RootEdges},
     join::{RetrievingJoin, TraversalBounds},
-    narrowing::{list::ListInForce, member::MemberRule},
+    narrowing::{list::ListInForce, list_terms::ListTerms, member::MemberRule},
     plan::{InlineCursor, JoinPlan},
     test_graph::{FakeSource, Node, Nodes, graph, id, index, node, term},
     traversal::traverse,
@@ -60,14 +60,18 @@ fn a_flat_plan_lists_each_reachable_entity_once_in_encounter_order() {
 fn an_inline_plan_nests_a_copy_per_relationship() {
     let (graph, index) = (building(1), keys());
     let pick = [term("owner", vec![leaf("name")]), term("manager", vec![leaf("email")])];
-    let plan = JoinPlan::<Nodes>::new(RetrievingJoin::Inline, &graph, MemberRule::new(ListInForce::Pick(&pick), &index));
+    let plan = JoinPlan::<Nodes>::new(
+        RetrievingJoin::Inline,
+        &graph,
+        MemberRule::new(ListInForce::Addressed(ListTerms::Pick(&pick)), &index),
+    );
     let root = id("A");
     let open = cursor(&plan).open(&root);
     let p = id("P");
     let (_, under_owner) = open.nested("owner", &p).expect("P nests under owner");
     let (_, under_manager) = open.nested("manager", &p).expect("P nests under manager");
-    assert_eq!(under_owner.rule().list(), ListInForce::Pick(&[leaf("name")]));
-    assert_eq!(under_manager.rule().list(), ListInForce::Pick(&[leaf("email")]));
+    assert_eq!(under_owner.rule().list(), ListInForce::Addressed(ListTerms::Pick(&[leaf("name")])));
+    assert_eq!(under_manager.rule().list(), ListInForce::Addressed(ListTerms::Pick(&[leaf("email")])));
 }
 
 /// Clause 4.5.23.1: a target open on the path stays a plain URI.
@@ -120,24 +124,49 @@ fn an_inline_plan_keeps_object_order() {
     assert_eq!(nested, vec!["urn:ngsi-ld:T:P", "urn:ngsi-ld:T:Q"]);
 }
 
-/// The list `[owner{name}, manager]` names nothing `P` holds under `manager`,
-/// so that copy is not nested, while `owner`'s is.
+/// The group `manager{size}` names nothing `P` holds, so that copy is not
+/// nested, while `owner`'s is.
 #[test]
 fn an_emptied_linked_entity_is_not_nested() {
     let (graph, index) = (building(1), keys());
-    let pick = [term("owner", vec![leaf("name")]), leaf("manager")];
-    let plan = JoinPlan::<Nodes>::new(RetrievingJoin::Inline, &graph, MemberRule::new(ListInForce::Pick(&pick), &index));
+    let pick = [term("owner", vec![leaf("name")]), term("manager", vec![leaf("size")])];
+    let plan = JoinPlan::<Nodes>::new(
+        RetrievingJoin::Inline,
+        &graph,
+        MemberRule::new(ListInForce::Addressed(ListTerms::Pick(&pick)), &index),
+    );
     let (root, p) = (id("A"), id("P"));
     let open = cursor(&plan).open(&root);
     assert!(open.nested("owner", &p).is_some());
     assert!(open.nested("manager", &p).is_none());
 }
 
+/// Clause 4.21: in `[owner{name}, manager]` the bare `manager` addresses the
+/// root alone, so the copy nested under it is whole.
+#[test]
+fn an_unaddressed_relationship_nests_its_target_whole() {
+    let (graph, index) = (building(1), keys());
+    let pick = [term("owner", vec![leaf("name")]), leaf("manager")];
+    let plan = JoinPlan::<Nodes>::new(
+        RetrievingJoin::Inline,
+        &graph,
+        MemberRule::new(ListInForce::Addressed(ListTerms::Pick(&pick)), &index),
+    );
+    let (root, p) = (id("A"), id("P"));
+    let open = cursor(&plan).open(&root);
+    let (_, under_manager) = open.nested("manager", &p).expect("P nests under manager");
+    assert_eq!(under_manager.rule().list(), ListInForce::Unrestricted);
+}
+
 #[test]
 fn an_emptied_linked_entity_is_not_appended() {
     let (graph, index) = (building(1), keys());
     let pick = [ProjectionTerm::Id, term("locatedIn", vec![leaf("size")])];
-    let plan = JoinPlan::<Nodes>::new(RetrievingJoin::Flat, &graph, MemberRule::new(ListInForce::Pick(&pick), &index));
+    let plan = JoinPlan::<Nodes>::new(
+        RetrievingJoin::Flat,
+        &graph,
+        MemberRule::new(ListInForce::Addressed(ListTerms::Pick(&pick)), &index),
+    );
     assert_eq!(flat_ids(&plan), Vec::<String>::new());
     assert_eq!(plan.linked_ids().len(), 0);
 }
@@ -162,9 +191,13 @@ async fn a_local_target_without_object_type_is_planned() {
 fn an_unnamed_root_still_nests_its_targets() {
     let (graph, index) = (building(1), keys());
     let pick = [term("owner", vec![leaf("name")])];
-    let plan = JoinPlan::<Nodes>::new(RetrievingJoin::Inline, &graph, MemberRule::new(ListInForce::Pick(&pick), &index));
+    let plan = JoinPlan::<Nodes>::new(
+        RetrievingJoin::Inline,
+        &graph,
+        MemberRule::new(ListInForce::Addressed(ListTerms::Pick(&pick)), &index),
+    );
     let open = cursor(&plan).open_unnamed_root();
     let (_, under_owner) = open.nested("owner", &id("P")).expect("P nests under owner");
-    assert_eq!(under_owner.rule().list(), ListInForce::Pick(&[leaf("name")]));
+    assert_eq!(under_owner.rule().list(), ListInForce::Addressed(ListTerms::Pick(&[leaf("name")])));
     assert!(open.nested("locatedIn", &id("C")).is_none(), "locatedIn is not returned");
 }

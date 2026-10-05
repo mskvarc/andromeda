@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn hop_steps_pair_each_object_with_the_rest_of_its_path() {
-        let expr = parse("\"https://example.com/a\"{\"https://example.com/b\"{\"https://example.com/c\"==1}}").expect("parses");
+        let expr = parse("\"https://example.com/a\"{\"https://example.com/b\"{\"https://example.com/c\"}}==1").expect("parses");
         let paths = linked_paths(&expr);
         let entity = entity();
         let steps = hop_steps(&entity, &paths);

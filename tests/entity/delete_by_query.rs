@@ -165,7 +165,7 @@ async fn entity_delete_by_query_rejects_linked_entity_references() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
     let c = client();
 
-    let traversing_q = urlencoding::encode("isParkedIn{category==\"commercial\"}");
+    let traversing_q = urlencoding::encode("isParkedIn{category}==\"commercial\"");
     let nested_pick = urlencoding::encode("isParkedIn{category}");
     // Both requests carry `join=flat`, which is exactly what would make them
     // legal on a query. The rejection is the operation's own, not the clause

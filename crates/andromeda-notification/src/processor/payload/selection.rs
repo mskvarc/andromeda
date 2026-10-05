@@ -239,7 +239,7 @@ fn held_instance(state: &EntityState, key: &AttributeInstanceKey) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::processor::payload::selection::{EntityMembers, Selection, SelectionRule};
-    use andromeda_linked_retrieval::narrowing::list::ListInForce;
+    use andromeda_linked_retrieval::narrowing::{list::ListInForce, list_terms::ListTerms};
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
         reads::{
@@ -391,7 +391,7 @@ mod tests {
     fn the_listed_attributes_travel_with_the_expiry_and_without_the_scope() {
         let state = vehicle();
         let listed = iris(&[SPEED]);
-        let selection = Selection::of(&state, rule(ListInForce::Attributes(&listed), None));
+        let selection = Selection::of(&state, rule(ListInForce::Payload(ListTerms::Attributes(&listed)), None));
         assert!(matches!(
             selection,
             Selection::Narrowed {
@@ -412,7 +412,7 @@ mod tests {
     fn a_list_naming_every_attribute_is_no_whole_selection() {
         let state = vehicle();
         let listed = iris(&[SPEED, NAME, LOCATION]);
-        let selection = Selection::of(&state, rule(ListInForce::Attributes(&listed), None));
+        let selection = Selection::of(&state, rule(ListInForce::Payload(ListTerms::Attributes(&listed)), None));
         assert!(matches!(
             selection,
             Selection::Narrowed {
@@ -429,7 +429,9 @@ mod tests {
     fn a_pick_keeps_only_the_picked_attributes() {
         let state = vehicle();
         let pick = [term(SPEED, Vec::new())];
-        let selected = Selection::of(&state, rule(ListInForce::Pick(&pick), None)).apply(&state).into_owned();
+        let selected = Selection::of(&state, rule(ListInForce::Payload(ListTerms::Pick(&pick)), None))
+            .apply(&state)
+            .into_owned();
         assert_eq!(selected.attributes().names().map(AttributeName::as_str).collect::<Vec<_>>(), vec![SPEED]);
         assert!(selected.scope().is_none());
         assert_eq!(selected.expires_at(), state.expires_at());
@@ -440,7 +442,9 @@ mod tests {
     fn a_pick_naming_scope_keeps_the_scope() {
         let state = vehicle();
         let pick = [term(SPEED, Vec::new()), ProjectionTerm::Scope];
-        let selected = Selection::of(&state, rule(ListInForce::Pick(&pick), None)).apply(&state).into_owned();
+        let selected = Selection::of(&state, rule(ListInForce::Payload(ListTerms::Pick(&pick)), None))
+            .apply(&state)
+            .into_owned();
         assert!(selected.scope().is_some());
     }
 
@@ -450,7 +454,9 @@ mod tests {
     fn an_omit_removes_a_bare_name_and_keeps_a_nested_one() {
         let state = vehicle();
         let omit = [term(NAME, Vec::new()), term(SPEED, vec![term(NAME, Vec::new())])];
-        let selected = Selection::of(&state, rule(ListInForce::Omit(&omit), None)).apply(&state).into_owned();
+        let selected = Selection::of(&state, rule(ListInForce::Addressed(ListTerms::Omit(&omit)), None))
+            .apply(&state)
+            .into_owned();
         assert!(selected.attributes().get(NAME).is_none());
         assert_eq!(datasets_of(&selected, SPEED), vec![None, Some(NAMED)]);
     }
@@ -482,7 +488,9 @@ mod tests {
     fn an_attribute_kept_whole_is_shared_with_the_source() {
         let state = vehicle();
         let listed = iris(&[LOCATION]);
-        let selected = Selection::of(&state, rule(ListInForce::Attributes(&listed), None)).apply(&state).into_owned();
+        let selected = Selection::of(&state, rule(ListInForce::Payload(ListTerms::Attributes(&listed)), None))
+            .apply(&state)
+            .into_owned();
         let (Some(kept), Some(source)) = (selected.attributes().get_shared(LOCATION), state.attributes().get_shared(LOCATION)) else {
             panic!("the location is kept");
         };
@@ -528,7 +536,12 @@ mod tests {
         let current = EntityState::new(previous.id().clone(), previous.types().clone());
         let listed = iris(&[NAME]);
         assert_eq!(
-            Selection::deleted(&previous, &current, &still_held, rule(ListInForce::Attributes(&listed), None)),
+            Selection::deleted(
+                &previous,
+                &current,
+                &still_held,
+                rule(ListInForce::Payload(ListTerms::Attributes(&listed)), None)
+            ),
             None
         );
     }

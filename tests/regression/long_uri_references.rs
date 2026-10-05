@@ -213,7 +213,7 @@ async fn regression_long_uri_references_a_single_relationship_object_of_six_thou
         "an inequality on the long object must exclude its source"
     );
     assert_eq!(
-        queried_ids(client, &format!("{}&join=inline&joinLevel=1", filter(&sources, "link{name==\"x\"}"))).await,
+        queried_ids(client, &format!("{}&join=inline&joinLevel=1", filter(&sources, "link{name}==\"x\""))).await,
         vec![short_source.clone()],
         "a traversal reaches the local target and nothing through the long object"
     );

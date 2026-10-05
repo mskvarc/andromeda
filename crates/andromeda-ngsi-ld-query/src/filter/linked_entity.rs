@@ -7,30 +7,66 @@
 //! LinkedEntityPath    =/ ValuePath
 //! ```
 //!
-//! Only the head of the hop — the optional entity-type guard and how it is told
-//! apart from a prefixed attribute name — lives here. What follows the guard is
-//! a whole predicate, which the expression parser reads and wraps the hop
-//! around.
+//! The braces enclose a path and nothing else: clause 4.9 makes the
+//! `Attribute` of a Query Term this production, and the Operator and its value
+//! follow it, so a comparison is written after the closing brace
+//! (`sensor{humidity}==40`, EXAMPLE 13).
 
 use crate::{
     error::QueryError,
     filter::{
         expectation::{QExpectation, QFound},
         lexer::Token,
+        path::QueryPath,
         quoting::Quoting,
         token_cursor::{TokenCursor, attribute_name},
+        value_path::{check_depth, parse_value_path},
     },
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
+/// Parse the attribute axis of a Query Term whose leading name `leading` has
+/// already been read: a `ValuePath`, or a hop `leading{LinkedEntityPath}`.
+///
+/// `depth` counts the path segments consumed so far — sub-attributes and
+/// linked-entity hops together — so a chain of hops is bounded by the same
+/// budget a chain of sub-attributes is.
+///
+/// # Errors
+///
+/// Returns [`QueryError::QExpected`] when a hop is empty, left unclosed or
+/// holds anything after its path (a comparison written inside the braces), and
+/// the errors of [`parse_value_path`], the entity-type guard and
+/// [`check_depth`].
+pub fn parse_linked_entity_relation<'a>(cursor: &mut TokenCursor<'a>, leading: &'a str, depth: usize) -> Result<QueryPath, QueryError> {
+    if cursor.peek() != Some(&Token::LBrace) {
+        return parse_value_path(cursor, leading, depth).map(QueryPath::Local);
+    }
+    let relationship = attribute_name(leading)?;
+    cursor.advance();
+    check_depth(depth + 1)?;
+    let guard = parse_hop_guard(cursor)?;
+    let inner_leading = match guard.inner_leading {
+        Some(text) => text,
+        None => cursor.parse_ident()?,
+    };
+    let inner = parse_linked_entity_relation(cursor, inner_leading, depth + 1)?;
+    cursor.expect(&Token::RBrace)?;
+    Ok(QueryPath::Linked {
+        relationship,
+        guard_types: guard.types,
+        inner: Box::new(inner),
+    })
+}
+
 /// What the head of a linked-entity hop contributed before its inner path.
 #[derive(Debug)]
-pub struct HopGuard<'a> {
+struct HopGuard<'a> {
     /// The entity types the hop is constrained to, empty when it carried none.
-    pub types: Vec<AttributeName>,
+    types: Vec<AttributeName>,
     /// The inner path's leading name when the tokeniser glued it to the guard's
     /// terminating colon; `None` when the inner path starts at the next token.
-    pub inner_leading: Option<&'a str>,
+    inner_leading: Option<&'a str>,
 }
 
 /// Parse the optional entity-type guard at the head of a linked-entity hop.
@@ -50,7 +86,7 @@ pub struct HopGuard<'a> {
 /// guard's terminating colon is absent, or when a bare last name carries two
 /// colons and so is ambiguous, and [`QueryError::AttributeNameInvalid`] when a
 /// type name is outside the clause 4.6.2 grammar.
-pub fn parse_hop_guard<'a>(cursor: &mut TokenCursor<'a>) -> Result<HopGuard<'a>, QueryError> {
+fn parse_hop_guard<'a>(cursor: &mut TokenCursor<'a>) -> Result<HopGuard<'a>, QueryError> {
     let opens_guard = matches!(cursor.peek(), Some(Token::Ident(_) | Token::QuotedStr(_))) && cursor.peek_ahead(1) == Some(&Token::Comma);
     if !opens_guard {
         return Ok(HopGuard {

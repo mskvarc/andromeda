@@ -46,7 +46,7 @@ mod tests {
     use andromeda_linked_retrieval::{
         graph::{LinkedGraph, RootEdges},
         join::RetrievingJoin,
-        narrowing::{list::ListInForce, member::MemberRule},
+        narrowing::{list::ListInForce, list_terms::ListTerms, member::MemberRule},
         plan::JoinPlan,
         representation::LinkedRepresentation,
     };
@@ -118,7 +118,11 @@ mod tests {
                 linked: Vec::new(),
             },
         ];
-        let plan = JoinPlan::<TemporalEvolutions>::new(RetrievingJoin::Flat, &graph, MemberRule::new(ListInForce::Pick(&pick), &index));
+        let plan = JoinPlan::<TemporalEvolutions>::new(
+            RetrievingJoin::Flat,
+            &graph,
+            MemberRule::new(ListInForce::Payload(ListTerms::Pick(&pick)), &index),
+        );
         let mut roots = vec![root()];
 
         assert_eq!(write_temporal_join(&plan, &mut roots), JoinedShape::Appended);

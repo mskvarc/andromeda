@@ -322,6 +322,73 @@ async fn regression_linked_projection_a_nested_omit_leaves_the_identity_it_does_
     scope.finish().await.expect("cleanup failed");
 }
 
+/// Clause 4.21: a Linked Entity Term `R{N}` names "an Attribute name within
+/// the Linked Entity" `R` reaches, so `N` addresses that entity and no other,
+/// and once the list holds one its plain terms address the roots alone. An
+/// entity reached through a Relationship no group names is whole, at every
+/// level, in both join modes, on retrieval and query alike. A list without a
+/// Linked Entity Term still narrows every Entity in the payload (clauses
+/// 5.7.1.5, 5.7.2.5).
+#[tokio::test]
+async fn regression_linked_projection_a_linked_entity_term_addresses_only_the_entity_its_relationship_reaches() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Building:addressed");
+    let target = scope.id("City:addressed");
+    let onward = scope.id("Country:addressed");
+    create(client, &building(&id, &target)).await;
+    create(client, &city(&target, &onward)).await;
+    create(client, &country(&onward)).await;
+
+    let nested = "joinLevel=2&omit=type,linkedTo%7Bname%7D";
+    for path in [
+        format!("entities/{id}?join=inline&{nested}"),
+        format!("entities?type=Building&id={id}&join=inline&{nested}"),
+    ] {
+        let body = read_ok(client, &path).await;
+        let root = if body.is_array() { &members(&body)[0] } else { &body };
+        assert!(root.get("type").is_none(), "{path}: the root omits `type`: {root}");
+        let linked_city = &root["linkedTo"]["entity"];
+        assert!(linked_city.get("name").is_none(), "{path}: the group omits the City's `name`: {linked_city}");
+        assert_eq!(linked_city["type"], json!("City"), "{path}: the group names no `type`: {linked_city}");
+        let linked_country = &linked_city["linkedTo"]["entity"];
+        assert_eq!(
+            linked_country["name"]["value"],
+            json!("France"),
+            "{path}: no term addresses the Country: {linked_country}"
+        );
+        assert_eq!(
+            linked_country["type"],
+            json!("Country"),
+            "{path}: no term addresses the Country: {linked_country}"
+        );
+    }
+
+    for path in [
+        format!("entities/{id}?join=flat&{nested}"),
+        format!("entities?type=Building&id={id}&join=flat&{nested}"),
+    ] {
+        let body = read_ok(client, &path).await;
+        let flat = members(&body);
+        assert_eq!(flat.len(), 3, "{path}: the Building, the City and the Country: {body}");
+        assert!(flat[0].get("type").is_none(), "{path}: the root omits `type`: {body}");
+        assert!(flat[1].get("name").is_none(), "{path}: the group omits the City's `name`: {body}");
+        assert_eq!(flat[1]["type"], json!("City"), "{path}: {body}");
+        assert_eq!(flat[2]["name"]["value"], json!("France"), "{path}: no term addresses the Country: {body}");
+        assert_eq!(flat[2]["type"], json!("Country"), "{path}: no term addresses the Country: {body}");
+    }
+
+    let plain = read_ok(client, &format!("entities/{id}?join=flat&joinLevel=2&omit=name")).await;
+    let flat = members(&plain);
+    assert_eq!(flat.len(), 3, "{plain}");
+    assert!(
+        flat.iter().all(|entity| entity.get("name").is_none()),
+        "a list without a Linked Entity Term narrows every Entity: {plain}"
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
 /// Clause 5.7.1.5 appends to the flattened array what the *returned* Attributes
 /// name, so a Relationship the projection removed brings nothing along and
 /// whatever was reachable only through it leaves the array with it.

@@ -74,7 +74,7 @@ mod tests {
         // Relationship by dictionary key, exactly as the terminal comparison
         // does.
         assert_eq!(
-            collected("\"https://example.com/outer\"{\"https://example.com/inner\"{\"https://example.com/zone\"==\"north\"}}"),
+            collected("\"https://example.com/outer\"{\"https://example.com/inner\"{\"https://example.com/zone\"}}==\"north\""),
             vec!["https://example.com/inner", "https://example.com/outer", "https://example.com/zone"]
         );
     }

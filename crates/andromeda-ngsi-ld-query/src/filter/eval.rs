@@ -904,7 +904,7 @@ mod tests {
 
     fn linked_predicate(inner_value: &str) -> Expr {
         parse(&format!(
-            "\"https://example.com/isParkedIn\"{{\"https://example.com/category\"==\"{inner_value}\"}}"
+            "\"https://example.com/isParkedIn\"{{\"https://example.com/category\"}}==\"{inner_value}\""
         ))
         .expect("parses")
     }
@@ -929,7 +929,7 @@ mod tests {
         // linked entities the hop descends into.
         let guarded = parse(concat!(
             "\"https://example.com/isParkedIn\"{\"https://example.com/Building\",",
-            "\"https://example.com/Store\":\"https://example.com/category\"==\"commercial\"}"
+            "\"https://example.com/Store\":\"https://example.com/category\"}==\"commercial\""
         ))
         .expect("parses");
         let building = [parking(DOWNTOWN, "commercial", "https://example.com/Building")];
@@ -973,7 +973,7 @@ mod tests {
         ];
         let two_hops = |zone: &str| {
             parse(&format!(
-                "\"https://example.com/outer\"{{\"https://example.com/inner\"{{\"https://example.com/zone\"==\"{zone}\"}}}}"
+                "\"https://example.com/outer\"{{\"https://example.com/inner\"{{\"https://example.com/zone\"}}}}==\"{zone}\""
             ))
             .expect("parses")
         };

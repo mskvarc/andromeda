@@ -2,16 +2,24 @@
 //!
 //! The roots are narrowed by the request's list: `pick`, `omit`, or `attrs` as
 //! the `pick` synonym that keeps `id` and `type` (Tables 6.4.3.2-1, 6.5.3.1-1
-//! and 5.2.14.1-1). A target reached from an entity through an attribute `R`
-//! returned under that entity's list `L` is narrowed by the group `L` gives
-//! `R` when it names it as `R{N}` (clause 4.21), and by `L` itself otherwise,
-//! because the list "applies to all Entities in the payload in the case of
-//! Linked Entity retrieval" (clauses 5.7.1.5, 5.7.2.5 and 5.8.6). `omit`
-//! follows the same shape: a bare `omit=R` removes `R`, so nothing is reached
-//! through it, and `omit=R{N}` keeps `R` and gives the target `omit N`.
+//! and 5.2.14.1-1). How far a list reaches depends on whether it holds a Linked
+//! Entity Term:
+//!
+//! - A list without one "applies to all Entities in the payload in the case of
+//!   Linked Entity retrieval" (clauses 5.7.1.5, 5.7.2.5 and 5.8.6), so every
+//!   Linked Entity is narrowed by it.
+//! - A list with one addresses the entity it was stated for: a Linked Entity
+//!   Term `R{N}` names "an Attribute name within the Linked Entity" `R`
+//!   reaches (clause 4.21), so that entity is narrowed by `N`, and `N`
+//!   addresses it alone in turn. A Linked Entity no term addresses is not
+//!   narrowed.
+//!
+//! Either way a target is reached only through an attribute returned under the
+//! list: a bare `omit=R` removes `R`, so nothing is reached through it, while
+//! `omit=R{N}` keeps `R` and gives the target `omit N`.
 
-use crate::keyword::Keyword;
-use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, matching::matching_term, term::ProjectionTerm};
+use crate::{keyword::Keyword, narrowing::list_terms::ListTerms};
+use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection};
 use iri_rs::IriBuf;
 
 /// The clause 4.21 list one entity of a joined payload is narrowed by.
@@ -19,13 +27,12 @@ use iri_rs::IriBuf;
 pub enum ListInForce<'p> {
     /// Nothing is narrowed.
     Unrestricted,
-    /// Only the named members are kept.
-    Pick(&'p [ProjectionTerm]),
-    /// The named members are removed.
-    Omit(&'p [ProjectionTerm]),
-    /// `attrs` or `notification.attributes`: only the named Attributes are
-    /// kept, with `id` and `type`.
-    Attributes(&'p [IriBuf]),
+    /// A list holding no Linked Entity Term: it narrows every Entity in the
+    /// payload (clauses 5.7.1.5, 5.7.2.5 and 5.8.6).
+    Payload(ListTerms<'p>),
+    /// A list holding a Linked Entity Term, or the group one names: it narrows
+    /// the Entity it addresses and no other (clause 4.21).
+    Addressed(ListTerms<'p>),
 }
 
 impl<'p> ListInForce<'p> {
@@ -34,11 +41,16 @@ impl<'p> ListInForce<'p> {
     /// combined.
     #[must_use]
     pub fn of(projection: Option<&'p Projection>, attrs: &'p [IriBuf]) -> ListInForce<'p> {
-        match projection {
-            Some(projection) if !projection.pick.is_empty() => ListInForce::Pick(&projection.pick),
-            Some(projection) if !projection.omit.is_empty() => ListInForce::Omit(&projection.omit),
-            Some(_) | None if !attrs.is_empty() => ListInForce::Attributes(attrs),
-            Some(_) | None => ListInForce::Unrestricted,
+        let terms = match projection {
+            Some(projection) if !projection.pick.is_empty() => ListTerms::Pick(&projection.pick),
+            Some(projection) if !projection.omit.is_empty() => ListTerms::Omit(&projection.omit),
+            Some(_) | None if !attrs.is_empty() => ListTerms::Attributes(attrs),
+            Some(_) | None => return ListInForce::Unrestricted,
+        };
+        if terms.holds_a_group() {
+            ListInForce::Addressed(terms)
+        } else {
+            ListInForce::Payload(terms)
         }
     }
 
@@ -47,14 +59,7 @@ impl<'p> ListInForce<'p> {
     pub fn returns_attribute(&self, key: &str, index: &AttributeIriIndex) -> bool {
         match self {
             ListInForce::Unrestricted => true,
-            ListInForce::Pick(terms) => matching_term(key, terms, index).is_some(),
-            // Clause 4.21: `omit=R{N}` omits `N` inside what `R` links to, so
-            // only a bare term removes `R` itself.
-            ListInForce::Omit(terms) => matching_term(key, terms, index).is_none_or(|term| !term.linked_terms().is_empty()),
-            ListInForce::Attributes(iris) => match index.expanded(key) {
-                Some(expanded) => iris.contains(expanded),
-                None => iris.iter().any(|iri| iri.as_str() == key),
-            },
+            ListInForce::Payload(terms) | ListInForce::Addressed(terms) => terms.returns_attribute(key, index),
         }
     }
 
@@ -63,14 +68,7 @@ impl<'p> ListInForce<'p> {
     pub fn keeps_keyword(&self, keyword: Keyword) -> bool {
         match self {
             ListInForce::Unrestricted => true,
-            // Tables 6.5.3.1-1 and 5.2.14.1-1 make `attrs` and
-            // `notification.attributes` "a synonym for pick, except that id,
-            // type, scope are not allowed": `scope` goes, as under a `pick`
-            // not naming it, while `id` and `type` stay to identify the
-            // entity whatever Attributes it is narrowed to.
-            ListInForce::Attributes(_) => keyword != Keyword::Scope,
-            ListInForce::Pick(terms) => terms.contains(&keyword.term()),
-            ListInForce::Omit(terms) => !terms.contains(&keyword.term()),
+            ListInForce::Payload(terms) | ListInForce::Addressed(terms) => terms.keeps_keyword(keyword),
         }
     }
 
@@ -78,15 +76,9 @@ impl<'p> ListInForce<'p> {
     /// to.
     #[must_use]
     pub fn through(&self, key: &str, index: &AttributeIriIndex) -> ListInForce<'p> {
-        let group = |terms: &'p [ProjectionTerm]| {
-            matching_term(key, terms, index)
-                .map(ProjectionTerm::linked_terms)
-                .filter(|group| !group.is_empty())
-        };
         match *self {
-            ListInForce::Pick(terms) => group(terms).map_or(*self, ListInForce::Pick),
-            ListInForce::Omit(terms) => group(terms).map_or(*self, ListInForce::Omit),
-            ListInForce::Unrestricted | ListInForce::Attributes(_) => *self,
+            ListInForce::Unrestricted | ListInForce::Payload(_) => *self,
+            ListInForce::Addressed(terms) => terms.group(key, index).map_or(ListInForce::Unrestricted, ListInForce::Addressed),
         }
     }
 
@@ -99,7 +91,10 @@ impl<'p> ListInForce<'p> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{keyword::Keyword, narrowing::list::ListInForce};
+    use crate::{
+        keyword::Keyword,
+        narrowing::{list::ListInForce, list_terms::ListTerms},
+    };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, term::ProjectionTerm};
     use iri_rs::IriBuf;
@@ -111,7 +106,7 @@ mod tests {
 
     fn index() -> AttributeIriIndex {
         let mut index = AttributeIriIndex::new();
-        for key in ["name", "email", "owner", "employer"] {
+        for key in ["name", "email", "owner", "manager", "employer"] {
             index.insert(key.parse::<AttributeName>().expect("valid attribute name"), iri(key));
         }
         index
@@ -129,65 +124,118 @@ mod tests {
     }
 
     #[test]
-    fn a_pick_returns_only_named_attributes() {
-        let pick = [leaf("name")];
-        let list = ListInForce::Pick(&pick);
-        assert!(list.returns_attribute("name", &index()));
-        assert!(!list.returns_attribute("email", &index()));
+    fn a_request_list_without_a_linked_entity_term_reaches_the_payload() {
+        let pick = Projection::builder().pick(vec![leaf("name"), leaf("owner")]).build();
+        assert_eq!(ListInForce::of(Some(&pick), &[]), ListInForce::Payload(ListTerms::Pick(&pick.pick)));
+        let attrs = [iri("name")];
+        assert_eq!(ListInForce::of(None, &attrs), ListInForce::Payload(ListTerms::Attributes(&attrs)));
     }
 
     #[test]
-    fn an_omit_removes_a_bare_name_and_keeps_a_nested_one() {
-        let omit = [leaf("email"), nested("owner", vec![leaf("name")])];
-        let list = ListInForce::Omit(&omit);
-        assert!(!list.returns_attribute("email", &index()));
-        assert!(list.returns_attribute("owner", &index()));
+    fn a_request_list_holding_a_linked_entity_term_addresses_its_roots() {
+        let pick = Projection::builder()
+            .pick(vec![ProjectionTerm::Id, nested("owner", vec![leaf("name")])])
+            .build();
+        assert_eq!(ListInForce::of(Some(&pick), &[]), ListInForce::Addressed(ListTerms::Pick(&pick.pick)));
+        let omit = Projection::builder()
+            .omit(vec![ProjectionTerm::Type, nested("owner", vec![leaf("name")])])
+            .build();
+        assert_eq!(ListInForce::of(Some(&omit), &[]), ListInForce::Addressed(ListTerms::Omit(&omit.omit)));
     }
 
     #[test]
-    fn through_a_nested_term_gives_its_group() {
-        let pick = [nested("owner", vec![leaf("name")])];
-        assert_eq!(ListInForce::Pick(&pick).through("owner", &index()), ListInForce::Pick(&[leaf("name")]));
+    fn a_request_states_its_projection_before_its_attrs() {
+        let projection = Projection::builder().omit(vec![leaf("email")]).build();
+        let attrs = [iri("name")];
+        assert_eq!(
+            ListInForce::of(Some(&projection), &attrs),
+            ListInForce::Payload(ListTerms::Omit(&projection.omit))
+        );
+        assert_eq!(
+            ListInForce::of(Some(&Projection::default()), &attrs),
+            ListInForce::Payload(ListTerms::Attributes(&attrs))
+        );
     }
 
-    /// Clause 5.7.1.5: the list "applies to all Entities in the payload".
+    /// Clause 5.7.1.5: a plain list "applies to all Entities in the payload".
     #[test]
-    fn through_a_bare_term_inherits_the_list() {
+    fn a_payload_list_is_in_force_through_every_relationship() {
         let pick = [leaf("name"), leaf("owner")];
-        assert_eq!(ListInForce::Pick(&pick).through("owner", &index()), ListInForce::Pick(&pick));
-    }
-
-    #[test]
-    fn through_an_omit_not_naming_the_relationship_inherits_the_list() {
+        let list = ListInForce::Payload(ListTerms::Pick(&pick));
+        assert_eq!(list.through("owner", &index()), list);
         let omit = [leaf("email")];
-        assert_eq!(ListInForce::Omit(&omit).through("owner", &index()), ListInForce::Omit(&omit));
+        let list = ListInForce::Payload(ListTerms::Omit(&omit));
+        assert_eq!(list.through("owner", &index()), list);
     }
 
+    /// Clause 4.21: `R{N}` addresses `N` to the entity `R` reaches.
     #[test]
-    fn through_a_nested_omit_gives_its_group() {
+    fn through_a_linked_entity_term_its_group_addresses_the_target() {
+        let pick = [nested("owner", vec![leaf("name")])];
+        assert_eq!(
+            ListInForce::Addressed(ListTerms::Pick(&pick)).through("owner", &index()),
+            ListInForce::Addressed(ListTerms::Pick(&[leaf("name")]))
+        );
         let omit = [nested("owner", vec![leaf("email")])];
-        assert_eq!(ListInForce::Omit(&omit).through("owner", &index()), ListInForce::Omit(&[leaf("email")]));
+        assert_eq!(
+            ListInForce::Addressed(ListTerms::Omit(&omit)).through("owner", &index()),
+            ListInForce::Addressed(ListTerms::Omit(&[leaf("email")]))
+        );
     }
 
-    /// Clause 4.21: a group keeps `id` only when it names it.
+    /// The plain terms of a list holding a group address its own entity only,
+    /// so a target reached through a Relationship it names bare is whole.
     #[test]
-    fn the_keyword_rule_follows_the_list() {
+    fn through_a_relationship_no_group_addresses_the_target_is_unrestricted() {
+        let pick = [nested("owner", vec![leaf("name")]), leaf("manager")];
+        assert_eq!(
+            ListInForce::Addressed(ListTerms::Pick(&pick)).through("manager", &index()),
+            ListInForce::Unrestricted
+        );
+        let omit = [ProjectionTerm::Type, nested("owner", vec![leaf("name")])];
+        assert_eq!(
+            ListInForce::Addressed(ListTerms::Omit(&omit)).through("manager", &index()),
+            ListInForce::Unrestricted
+        );
+    }
+
+    /// A group addresses the one entity its Relationship reaches: it is not
+    /// carried on to the entities reached from there.
+    #[test]
+    fn a_group_without_its_own_group_leaves_the_next_level_unrestricted() {
+        let group = [leaf("name"), leaf("employer")];
+        assert_eq!(
+            ListInForce::Addressed(ListTerms::Pick(&group)).through("employer", &index()),
+            ListInForce::Unrestricted
+        );
+        let omitted = [leaf("name")];
+        assert_eq!(
+            ListInForce::Addressed(ListTerms::Omit(&omitted)).through("employer", &index()),
+            ListInForce::Unrestricted
+        );
+    }
+
+    #[test]
+    fn nested_groups_address_one_level_each() {
+        let pick = [nested("owner", vec![leaf("name"), nested("employer", vec![leaf("email")])])];
+        let owner = ListInForce::Addressed(ListTerms::Pick(&pick)).through("owner", &index());
+        assert_eq!(owner.through("employer", &index()), ListInForce::Addressed(ListTerms::Pick(&[leaf("email")])));
+    }
+
+    #[test]
+    fn the_keyword_rule_follows_the_group() {
         let without = [nested("owner", vec![leaf("name")])];
         let with = [nested("owner", vec![ProjectionTerm::Id, leaf("name")])];
-        assert!(!ListInForce::Pick(&without).through("owner", &index()).keeps_keyword(Keyword::Id));
-        assert!(ListInForce::Pick(&with).through("owner", &index()).keeps_keyword(Keyword::Id));
-    }
-
-    /// Table 6.5.3.1-1: `attrs` is the `pick` synonym that keeps the identity.
-    #[test]
-    fn attrs_keeps_identity_and_drops_scope() {
-        let attrs = [iri("name")];
-        let list = ListInForce::Attributes(&attrs);
-        assert!(list.keeps_keyword(Keyword::Id));
-        assert!(list.keeps_keyword(Keyword::Type));
-        assert!(!list.keeps_keyword(Keyword::Scope));
-        assert!(list.returns_attribute("name", &index()));
-        assert!(!list.returns_attribute("email", &index()));
+        assert!(
+            !ListInForce::Addressed(ListTerms::Pick(&without))
+                .through("owner", &index())
+                .keeps_keyword(Keyword::Id)
+        );
+        assert!(
+            ListInForce::Addressed(ListTerms::Pick(&with))
+                .through("owner", &index())
+                .keeps_keyword(Keyword::Id)
+        );
     }
 
     #[test]
@@ -196,13 +244,6 @@ mod tests {
         assert!(list.is_unrestricted());
         assert!(list.returns_attribute("anything", &AttributeIriIndex::default()));
         assert!(list.keeps_keyword(Keyword::Scope));
-    }
-
-    #[test]
-    fn a_request_states_its_projection_before_its_attrs() {
-        let projection = Projection::builder().omit(vec![leaf("email")]).build();
-        let attrs = [iri("name")];
-        assert_eq!(ListInForce::of(Some(&projection), &attrs), ListInForce::Omit(&projection.omit));
-        assert_eq!(ListInForce::of(Some(&Projection::default()), &attrs), ListInForce::Attributes(&attrs));
+        assert_eq!(list.through("owner", &index()), ListInForce::Unrestricted);
     }
 }

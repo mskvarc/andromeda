@@ -326,8 +326,8 @@ mod tests {
         "temperature.observedAt<2024-01-01T00:00:00Z",
         "address[city]==\"Berlin\"",
         "sensor.rawdata[airquality.particulate]==40",
-        "isParkedIn{Building,Store:category==\"x\"}",
-        "(a|b);c{d{e==5}}",
+        "isParkedIn{Building,Store:category}==\"x\"",
+        "(a|b);c{d{e}}==5",
     ];
 
     /// Clause 5.5.7 in both directions: a filter expanded when the resource
@@ -384,13 +384,13 @@ mod tests {
     #[tokio::test]
     async fn a_hop_compacts_its_relationship_as_a_term_and_its_guard_as_entity_types() {
         let expanded = parser::parse(
-            "\"https://example.com/isParkedIn\"{\"https://example.com/types/Building\",\"https://example.com/types/Store\":\"https://example.com/category\"==\"x\"}",
+            "\"https://example.com/isParkedIn\"{\"https://example.com/types/Building\",\"https://example.com/types/Store\":\"https://example.com/category\"}==\"x\"",
         )
         .expect("parses");
 
         let compacted = compact_q_expr(expanded, &PrefixCompactor).await;
 
-        pretty_assertions::assert_eq!(serialize(&compacted), "isParkedIn{Building,Store:category==\"x\"}");
+        pretty_assertions::assert_eq!(serialize(&compacted), "isParkedIn{Building,Store:category}==\"x\"");
     }
 
     /// A `csf` round-trips with its trailing members exactly as written, even

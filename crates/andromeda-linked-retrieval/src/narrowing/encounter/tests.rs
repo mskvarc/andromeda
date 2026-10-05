@@ -3,7 +3,7 @@
 
 use crate::{
     graph::LinkedGraph,
-    narrowing::{encounter::FlatEncounters, list::ListInForce, member::MemberRule},
+    narrowing::{encounter::FlatEncounters, list::ListInForce, list_terms::ListTerms, member::MemberRule},
     test_graph::{Node, Nodes, graph, index, node, term},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -45,8 +45,8 @@ fn the_first_encounter_decides_the_list() {
     let pick = [term("owner", vec![leaf("name")]), term("manager", vec![leaf("email")])];
     let name = [leaf("name")];
     assert_eq!(
-        written(&graph, ListInForce::Pick(&pick), &index),
-        vec![("urn:ngsi-ld:T:P", ListInForce::Pick(&name))]
+        written(&graph, ListInForce::Addressed(ListTerms::Pick(&pick)), &index),
+        vec![("urn:ngsi-ld:T:P", ListInForce::Addressed(ListTerms::Pick(&name)))]
     );
 }
 
@@ -55,18 +55,44 @@ fn the_first_encounter_decides_the_list() {
 fn a_relationship_the_list_removes_reaches_nothing() {
     let (graph, index) = (building(), keys());
     let pick = [ProjectionTerm::Id, term("owner", vec![leaf("name")])];
-    let reached: Vec<&str> = written(&graph, ListInForce::Pick(&pick), &index).into_iter().map(|(id, _)| id).collect();
+    let reached: Vec<&str> = written(&graph, ListInForce::Addressed(ListTerms::Pick(&pick)), &index)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
     assert_eq!(reached, vec!["urn:ngsi-ld:T:P"]);
 }
 
+/// Clause 4.21: a group addresses the entity its Relationship reaches, so
+/// the entity reached from there through a Relationship no group names is
+/// whole.
 #[test]
-fn an_inherited_group_reaches_the_second_level() {
+fn a_group_reaches_only_the_entity_its_relationship_links_to() {
     let (graph, index) = (building(), keys());
     let pick = [ProjectionTerm::Id, term("owner", vec![leaf("name"), leaf("employer")])];
     let group = [leaf("name"), leaf("employer")];
     assert_eq!(
-        written(&graph, ListInForce::Pick(&pick), &index),
-        vec![("urn:ngsi-ld:T:P", ListInForce::Pick(&group)), ("urn:ngsi-ld:T:K", ListInForce::Pick(&group))]
+        written(&graph, ListInForce::Addressed(ListTerms::Pick(&pick)), &index),
+        vec![
+            ("urn:ngsi-ld:T:P", ListInForce::Addressed(ListTerms::Pick(&group))),
+            ("urn:ngsi-ld:T:K", ListInForce::Unrestricted)
+        ]
+    );
+}
+
+/// Clause 4.21: with a Linked Entity Term in the list, its plain terms
+/// address the roots alone, and every entity no group addresses is whole.
+#[test]
+fn a_nested_omit_leaves_every_unaddressed_entity_whole() {
+    let (graph, index) = (building(), keys());
+    let omit = [ProjectionTerm::Type, term("owner", vec![leaf("name")])];
+    let name = [leaf("name")];
+    assert_eq!(
+        written(&graph, ListInForce::Addressed(ListTerms::Omit(&omit)), &index),
+        vec![
+            ("urn:ngsi-ld:T:P", ListInForce::Addressed(ListTerms::Omit(&name))),
+            ("urn:ngsi-ld:T:C", ListInForce::Unrestricted),
+            ("urn:ngsi-ld:T:K", ListInForce::Unrestricted),
+        ]
     );
 }
 
@@ -76,21 +102,21 @@ fn a_bare_term_passes_its_list_down() {
     let (graph, index) = (building(), keys());
     let pick = [ProjectionTerm::Id, leaf("name"), leaf("owner")];
     assert_eq!(
-        written(&graph, ListInForce::Pick(&pick), &index),
-        vec![("urn:ngsi-ld:T:P", ListInForce::Pick(&pick))]
+        written(&graph, ListInForce::Payload(ListTerms::Pick(&pick)), &index),
+        vec![("urn:ngsi-ld:T:P", ListInForce::Payload(ListTerms::Pick(&pick)))]
     );
 }
 
 #[test]
-fn an_omit_passes_down_until_overridden() {
+fn a_plain_omit_reaches_every_entity() {
     let (graph, index) = (building(), keys());
     let omit = [leaf("email")];
     assert_eq!(
-        written(&graph, ListInForce::Omit(&omit), &index),
+        written(&graph, ListInForce::Payload(ListTerms::Omit(&omit)), &index),
         vec![
-            ("urn:ngsi-ld:T:P", ListInForce::Omit(&omit)),
-            ("urn:ngsi-ld:T:C", ListInForce::Omit(&omit)),
-            ("urn:ngsi-ld:T:K", ListInForce::Omit(&omit)),
+            ("urn:ngsi-ld:T:P", ListInForce::Payload(ListTerms::Omit(&omit))),
+            ("urn:ngsi-ld:T:C", ListInForce::Payload(ListTerms::Omit(&omit))),
+            ("urn:ngsi-ld:T:K", ListInForce::Payload(ListTerms::Omit(&omit))),
         ]
     );
 }
@@ -114,10 +140,10 @@ fn encounter_order_is_breadth_first() {
     let index = keys();
     let pick = [term("owner", vec![term("x", vec![leaf("name")])]), term("linked", vec![leaf("size")])];
     let size = [leaf("size")];
-    let reached = written(&graph, ListInForce::Pick(&pick), &index);
+    let reached = written(&graph, ListInForce::Addressed(ListTerms::Pick(&pick)), &index);
     assert_eq!(
         reached.iter().find(|(id, _)| *id == "urn:ngsi-ld:T:Q").map(|(_, list)| *list),
-        Some(ListInForce::Pick(&size))
+        Some(ListInForce::Addressed(ListTerms::Pick(&size)))
     );
 }
 

@@ -1,6 +1,6 @@
 //! The clause 4.9 linked-entity traversal axis compiled to a correlated probe.
 //!
-//! `rel{attr=="x"}` asks about an attribute of the entity a Relationship points
+//! `rel{attr}=="x"` asks about an attribute of the entity a Relationship points
 //! at, so answering it means leaving the row being filtered. One hop becomes one
 //! `EXISTS`: the Relationship's instances are read from
 //! `current_attribute_values`, `value_uri` is joined to `entities.id` to reach

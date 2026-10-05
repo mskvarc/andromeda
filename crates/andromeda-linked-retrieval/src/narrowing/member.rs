@@ -55,7 +55,7 @@ impl<'p> MemberRule<'p> {
     pub const fn restricting(self) -> Option<MemberRule<'p>> {
         match self.list {
             ListInForce::Unrestricted => None,
-            ListInForce::Pick(_) | ListInForce::Omit(_) | ListInForce::Attributes(_) => Some(self),
+            ListInForce::Payload(_) | ListInForce::Addressed(_) => Some(self),
         }
     }
 
@@ -89,6 +89,7 @@ mod tests {
         keyword::Keyword,
         narrowing::{
             list::ListInForce,
+            list_terms::ListTerms,
             member::{MemberDecision, MemberRule},
         },
         test_graph::{Nodes, node},
@@ -109,14 +110,14 @@ mod tests {
         let index = AttributeIriIndex::default();
         assert!(MemberRule::new(ListInForce::Unrestricted, &index).restricting().is_none());
         let pick = [ProjectionTerm::Id];
-        assert!(MemberRule::new(ListInForce::Pick(&pick), &index).restricting().is_some());
+        assert!(MemberRule::new(ListInForce::Payload(ListTerms::Pick(&pick)), &index).restricting().is_some());
     }
 
     #[test]
     fn a_pick_writes_only_what_it_names() {
         let index = AttributeIriIndex::default();
         let pick = [ProjectionTerm::Id];
-        let rule = MemberRule::new(ListInForce::Pick(&pick), &index);
+        let rule = MemberRule::new(ListInForce::Payload(ListTerms::Pick(&pick)), &index);
         assert_eq!(rule.keyword(Keyword::Id), MemberDecision::Write);
         assert_eq!(rule.keyword(Keyword::Type), MemberDecision::Skip);
         assert_eq!(rule.member("name"), MemberDecision::Skip);
@@ -128,8 +129,8 @@ mod tests {
         let index = AttributeIriIndex::default();
         let pick = [size()];
         let city = node("C", &[]).with_properties(&["name"]);
-        assert!(MemberRule::new(ListInForce::Pick(&pick), &index).empties::<Nodes>(&city));
+        assert!(MemberRule::new(ListInForce::Payload(ListTerms::Pick(&pick)), &index).empties::<Nodes>(&city));
         let keeping_id = [ProjectionTerm::Id, size()];
-        assert!(!MemberRule::new(ListInForce::Pick(&keeping_id), &index).empties::<Nodes>(&city));
+        assert!(!MemberRule::new(ListInForce::Payload(ListTerms::Pick(&keeping_id)), &index).empties::<Nodes>(&city));
     }
 }

@@ -404,7 +404,7 @@ mod tests {
     /// hop joins the linked entity on `value_uri` alone.
     #[test]
     fn a_hop_joins_on_value_uri_alone() {
-        let (sql, _) = render("\"https://example.com/isParkedIn\"{\"https://example.com/name\"==\"x\"}");
+        let (sql, _) = render("\"https://example.com/isParkedIn\"{\"https://example.com/name\"}==\"x\"");
         assert!(sql.contains(r#"."id" = "cav_ln1"."value_uri""#), "{sql}");
         let join = sql.split(" WHERE ").next().unwrap_or_default();
         assert!(!join.contains("value_long_text"), "{join}");
@@ -914,7 +914,7 @@ mod tests {
     #[test]
     fn hops_and_payload_readings_stand_beside_the_shared_probe() {
         let (sql, _) = render(&format!(
-            "{}{{{}==\"x\"}}|\"https://example.com/color\"==\"red\"|\"https://example.com/name\"==\"y\"|\"https://example.com/address\"[street]>\"a\"",
+            "{}{{{}}}==\"x\"|\"https://example.com/color\"==\"red\"|\"https://example.com/name\"==\"y\"|\"https://example.com/address\"[street]>\"a\"",
             quoted(IS_PARKED_IN),
             quoted(CATEGORY)
         ));
@@ -964,7 +964,7 @@ mod tests {
 
     #[test]
     fn a_single_hop_probes_the_relationship_and_joins_the_entity_it_names() {
-        let (sql, binds) = render(&format!("{}{{{}==\"commercial\"}}", quoted(IS_PARKED_IN), quoted(CATEGORY)));
+        let (sql, binds) = render(&format!("{}{{{}}}==\"commercial\"", quoted(IS_PARKED_IN), quoted(CATEGORY)));
         assert!(sql.contains("\"current_attribute_values\" AS \"cav_ln1\""), "{sql}");
         assert!(
             sql.contains("JOIN \"entities\" AS \"le1\" ON \"le1\".\"id\" = \"cav_ln1\".\"value_uri\""),
@@ -988,7 +988,7 @@ mod tests {
         // Clause 4.9 lists the guard's types as alternatives, so one membership
         // test against `entities.entity_type_name_keys` per resolved type, disjoined.
         let (sql, binds) = render(&format!(
-            "{}{{{},{}:{}==\"x\"}}",
+            "{}{{{},{}:{}}}==\"x\"",
             quoted(IS_PARKED_IN),
             quoted("https://example.com/Building"),
             quoted("https://example.com/Store"),
@@ -1035,7 +1035,7 @@ mod tests {
     #[test]
     fn an_unresolved_guard_type_renders_as_an_unsatisfiable_alternative() {
         let (sql, _) = render(&format!(
-            "{}{{{},{}:{}==\"x\"}}",
+            "{}{{{},{}:{}}}==\"x\"",
             quoted(IS_PARKED_IN),
             quoted("https://example.com/Building"),
             quoted("https://example.com/Warehouse"),
@@ -1046,14 +1046,14 @@ mod tests {
 
     #[test]
     fn an_unguarded_hop_emits_no_type_test() {
-        let (sql, _) = render(&format!("{}{{{}==\"commercial\"}}", quoted(IS_PARKED_IN), quoted(CATEGORY)));
+        let (sql, _) = render(&format!("{}{{{}}}==\"commercial\"", quoted(IS_PARKED_IN), quoted(CATEGORY)));
         assert!(!sql.contains("\"entity_type_name_keys\""), "no guard was written: {sql}");
     }
 
     #[test]
     fn nested_hops_number_their_aliases_by_depth() {
         let (sql, _) = render(&format!(
-            "{}{{{}{{{}==\"north\"}}}}",
+            "{}{{{}{{{}}}}}==\"north\"",
             quoted("https://example.com/outer"),
             quoted("https://example.com/inner"),
             quoted("https://example.com/zone")
@@ -1082,7 +1082,7 @@ mod tests {
     fn an_unresolved_relationship_name_makes_the_traversal_unsatisfiable() {
         // No `attribute_names` row means no instance of the Relationship was
         // ever written, so no entity is reachable through it.
-        let (sql, _) = render(&format!("{}{{{}==\"x\"}}", quoted("https://example.com/never-written"), quoted(CATEGORY)));
+        let (sql, _) = render(&format!("{}{{{}}}==\"x\"", quoted("https://example.com/never-written"), quoted(CATEGORY)));
         assert!(sql.contains("FALSE"), "{sql}");
         assert!(!sql.contains("cav_ln1"), "no probe is emitted when no row can exist: {sql}");
     }

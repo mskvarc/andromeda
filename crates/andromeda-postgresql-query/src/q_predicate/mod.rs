@@ -63,7 +63,7 @@
 //!
 //! # Linked-entity traversal
 //!
-//! The clause 4.9 `{}` axis (`rel{attr=="x"}`) compiles to one correlated
+//! The clause 4.9 `{}` axis (`rel{attr}=="x"`) compiles to one correlated
 //! `EXISTS` per hop. Each probe reads the Relationship's instances from
 //! `current_attribute_values`, joins `value_uri` to `entities.id` to reach the
 //! entity each instance names, and compiles the rest of the predicate against

@@ -316,7 +316,7 @@ fn a_hop_reads_the_linked_state() {
             "https://example.com/category": [{"@type": [PROPERTY], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": category}]}]
         }]))
     };
-    let hop = parse("\"https://example.com/isParked\"{\"https://example.com/category\"==\"commercial\"}").expect("the Query Term parses");
+    let hop = parse("\"https://example.com/isParked\"{\"https://example.com/category\"}==\"commercial\"").expect("the Query Term parses");
     let mut commercial = LinkedStates::new();
     commercial.insert(Arc::new(parking("commercial")));
     let mut residential = LinkedStates::new();

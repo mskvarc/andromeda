@@ -387,7 +387,7 @@ mod tests {
     #[tokio::test]
     async fn a_hop_expands_its_relationship_as_a_term_and_its_guard_as_entity_types() {
         let expanded = expand_q_expression(
-            Some("isParkedIn{Building,Store:category==\"x\"}"),
+            Some("isParkedIn{Building,Store:category}==\"x\""),
             &JsonKeyAttributes::default(),
             &PrefixExpander,
         )
@@ -416,7 +416,7 @@ mod tests {
 
     #[tokio::test]
     async fn nested_hops_are_expanded_at_every_level() {
-        let expanded = expand_q_expression(Some("outer{inner{zone==\"north\"}}"), &JsonKeyAttributes::default(), &PrefixExpander)
+        let expanded = expand_q_expression(Some("outer{inner{zone}}==\"north\""), &JsonKeyAttributes::default(), &PrefixExpander)
             .await
             .expect("expands")
             .expect("present");

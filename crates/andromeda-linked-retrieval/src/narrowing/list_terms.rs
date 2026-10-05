@@ -1,0 +1,166 @@
+//! The terms of one clause 4.21 list, and what they keep of the entity they
+//! narrow.
+
+use crate::keyword::Keyword;
+use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, matching::matching_term, term::ProjectionTerm};
+use iri_rs::IriBuf;
+
+/// The terms of a `pick`, `omit` or `attrs` list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListTerms<'p> {
+    /// Only the named members are kept.
+    Pick(&'p [ProjectionTerm]),
+    /// The named members are removed.
+    Omit(&'p [ProjectionTerm]),
+    /// `attrs` or `notification.attributes`: only the named Attributes are
+    /// kept, with `id` and `type`.
+    Attributes(&'p [IriBuf]),
+}
+
+impl<'p> ListTerms<'p> {
+    /// Whether the attribute keyed `key` is returned under these terms.
+    #[must_use]
+    pub fn returns_attribute(&self, key: &str, index: &AttributeIriIndex) -> bool {
+        match self {
+            ListTerms::Pick(terms) => matching_term(key, terms, index).is_some(),
+            // Clause 4.21: `omit=R{N}` omits `N` inside what `R` links to, so
+            // only a bare term removes `R` itself.
+            ListTerms::Omit(terms) => matching_term(key, terms, index).is_none_or(|term| !term.linked_terms().is_empty()),
+            ListTerms::Attributes(iris) => match index.expanded(key) {
+                Some(expanded) => iris.contains(expanded),
+                None => iris.iter().any(|iri| iri.as_str() == key),
+            },
+        }
+    }
+
+    /// Whether the keyword member is kept under these terms (clause 4.21).
+    #[must_use]
+    pub fn keeps_keyword(&self, keyword: Keyword) -> bool {
+        match self {
+            // Tables 6.5.3.1-1 and 5.2.14.1-1 make `attrs` and
+            // `notification.attributes` "a synonym for pick, except that id,
+            // type, scope are not allowed": `scope` goes, as under a `pick`
+            // not naming it, while `id` and `type` stay to identify the
+            // entity whatever Attributes it is narrowed to.
+            ListTerms::Attributes(_) => keyword != Keyword::Scope,
+            ListTerms::Pick(terms) => terms.contains(&keyword.term()),
+            ListTerms::Omit(terms) => !terms.contains(&keyword.term()),
+        }
+    }
+
+    /// The group these terms name for the attribute keyed `key` as its Linked
+    /// Entity Term `key{N}`, as terms of the same kind.
+    #[must_use]
+    pub fn group(&self, key: &str, index: &AttributeIriIndex) -> Option<ListTerms<'p>> {
+        let group = |terms: &'p [ProjectionTerm]| {
+            matching_term(key, terms, index)
+                .map(ProjectionTerm::linked_terms)
+                .filter(|group| !group.is_empty())
+        };
+        match *self {
+            ListTerms::Pick(terms) => group(terms).map(ListTerms::Pick),
+            ListTerms::Omit(terms) => group(terms).map(ListTerms::Omit),
+            ListTerms::Attributes(_) => None,
+        }
+    }
+
+    /// Whether any term is a Linked Entity Term (clause 4.21).
+    #[must_use]
+    pub fn holds_a_group(&self) -> bool {
+        match self {
+            ListTerms::Pick(terms) | ListTerms::Omit(terms) => terms.iter().any(|term| !term.linked_terms().is_empty()),
+            ListTerms::Attributes(_) => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{keyword::Keyword, narrowing::list_terms::ListTerms};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, term::ProjectionTerm};
+    use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
+
+    fn iri(key: &str) -> IriBuf {
+        IriBuf::new(format!("https://example.com/{key}")).expect("valid IRI")
+    }
+
+    fn index() -> AttributeIriIndex {
+        let mut index = AttributeIriIndex::new();
+        for key in ["name", "email", "owner", "employer"] {
+            index.insert(key.parse::<AttributeName>().expect("valid attribute name"), iri(key));
+        }
+        index
+    }
+
+    fn leaf(key: &str) -> ProjectionTerm {
+        ProjectionTerm::Attribute {
+            iri: iri(key),
+            linked: Vec::new(),
+        }
+    }
+
+    fn nested(key: &str, linked: Vec<ProjectionTerm>) -> ProjectionTerm {
+        ProjectionTerm::Attribute { iri: iri(key), linked }
+    }
+
+    #[test]
+    fn a_pick_returns_only_named_attributes() {
+        let pick = [leaf("name")];
+        let terms = ListTerms::Pick(&pick);
+        assert!(terms.returns_attribute("name", &index()));
+        assert!(!terms.returns_attribute("email", &index()));
+    }
+
+    #[test]
+    fn an_omit_removes_a_bare_name_and_keeps_a_nested_one() {
+        let omit = [leaf("email"), nested("owner", vec![leaf("name")])];
+        let terms = ListTerms::Omit(&omit);
+        assert!(!terms.returns_attribute("email", &index()));
+        assert!(terms.returns_attribute("owner", &index()));
+    }
+
+    #[test]
+    fn a_nested_term_names_its_group_in_the_same_kind() {
+        let pick = [nested("owner", vec![leaf("name")])];
+        assert_eq!(ListTerms::Pick(&pick).group("owner", &index()), Some(ListTerms::Pick(&[leaf("name")])));
+        let omit = [nested("owner", vec![leaf("email")])];
+        assert_eq!(ListTerms::Omit(&omit).group("owner", &index()), Some(ListTerms::Omit(&[leaf("email")])));
+    }
+
+    #[test]
+    fn a_bare_term_or_an_unnamed_attribute_names_no_group() {
+        let pick = [leaf("owner"), nested("employer", vec![leaf("name")])];
+        assert_eq!(ListTerms::Pick(&pick).group("owner", &index()), None);
+        assert_eq!(ListTerms::Pick(&pick).group("name", &index()), None);
+        assert_eq!(ListTerms::Attributes(&[iri("owner")]).group("owner", &index()), None);
+    }
+
+    #[test]
+    fn only_a_linked_entity_term_makes_a_list_hold_a_group() {
+        assert!(!ListTerms::Pick(&[leaf("name"), leaf("owner")]).holds_a_group());
+        assert!(ListTerms::Omit(&[ProjectionTerm::Type, nested("owner", vec![leaf("name")])]).holds_a_group());
+        assert!(!ListTerms::Attributes(&[iri("owner")]).holds_a_group());
+    }
+
+    /// Clause 4.21: a list keeps `id` only when it names it.
+    #[test]
+    fn the_keyword_rule_follows_the_terms() {
+        assert!(!ListTerms::Pick(&[leaf("name")]).keeps_keyword(Keyword::Id));
+        assert!(ListTerms::Pick(&[ProjectionTerm::Id, leaf("name")]).keeps_keyword(Keyword::Id));
+        assert!(!ListTerms::Omit(&[ProjectionTerm::Id]).keeps_keyword(Keyword::Id));
+    }
+
+    /// Table 6.5.3.1-1: `attrs` is the `pick` synonym that keeps the identity.
+    #[test]
+    fn attrs_keeps_identity_and_drops_scope() {
+        let attrs = [iri("name")];
+        let terms = ListTerms::Attributes(&attrs);
+        assert!(terms.keeps_keyword(Keyword::Id));
+        assert!(terms.keeps_keyword(Keyword::Type));
+        assert!(!terms.keeps_keyword(Keyword::Scope));
+        assert!(terms.returns_attribute("name", &index()));
+        assert!(!terms.returns_attribute("email", &index()));
+    }
+}

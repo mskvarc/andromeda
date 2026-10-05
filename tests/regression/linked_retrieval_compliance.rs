@@ -281,20 +281,32 @@ async fn regression_linked_compliance_a_change_notification_applies_a_plain_pick
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R3. Inline nests a copy under each Relationship, narrowed by that
-/// Relationship's own list (clause 4.5.23.2); a copy the list empties is not
-/// written, while the Relationship keeps its `object`.
+/// R3. Inline nests a copy under each Relationship, narrowed by the group
+/// that Relationship's Linked Entity Term addresses to it (clauses 4.5.23.2
+/// and 4.21); a copy no group addresses is whole, and a copy its group
+/// empties is not written, while the Relationship keeps its `object`.
 #[tokio::test]
 async fn regression_linked_compliance_an_inline_notification_nests_per_relationship() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let fixture = Fixture::create(&scope, "r3").await;
 
-    let data = notified_data(&scope, &fixture, "r3", &json!({"pick": ["owner{name}", "tenant"], "join": "inline"})).await;
+    let data = notified_data(
+        &scope,
+        &fixture,
+        "r3",
+        &json!({"pick": ["owner{name}", "tenant", "locatedIn{size}"], "join": "inline"}),
+    )
+    .await;
     assert_eq!(members(&data).len(), 1, "inline appends nothing: {data}");
     let building = &data[0];
     assert_eq!(keys(&building["owner"]["entity"]), set(&["name"]), "the owner copy keeps its group: {building}");
-    assert_eq!(building["tenant"]["object"], json!(fixture.person), "the tenant keeps its object: {building}");
-    assert!(building["tenant"].get("entity").is_none(), "the emptied copy is not written: {building}");
+    assert_eq!(
+        keys(&building["tenant"]["entity"]),
+        set(&["id", "type", "name", "email", "employer"]),
+        "no group addresses the tenant copy, so it is whole: {building}"
+    );
+    assert_eq!(building["locatedIn"]["object"], json!(fixture.city), "the City keeps its object: {building}");
+    assert!(building["locatedIn"].get("entity").is_none(), "the emptied copy is not written: {building}");
     scope.finish().await.expect("cleanup failed");
 }
 
@@ -399,7 +411,7 @@ async fn regression_linked_compliance_temporal_operations_refuse_linked_entity_r
     let hop = send(
         client,
         Method::GET,
-        &format!("temporal/entities?type=Building&q={}&{WINDOW}", projection("owner{name==\"x\"}")),
+        &format!("temporal/entities?type=Building&q={}&{WINDOW}", projection("owner{name}==\"x\"")),
         None,
     )
     .await;
@@ -497,10 +509,11 @@ async fn regression_linked_compliance_contained_by_needs_join_level() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R13. A nested group passes on to the next level unless a nested group of
-/// its own overrides it (clause 4.21, clause 5.7.1.5).
+/// R13. A group addresses the one entity its Relationship reaches (clause
+/// 4.21): the entity reached from there is narrowed only by a group of its
+/// own, and is whole without one.
 #[tokio::test]
-async fn regression_linked_compliance_a_nested_group_passes_down_a_level() {
+async fn regression_linked_compliance_a_group_addresses_only_the_entity_its_relationship_reaches() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let fixture = Fixture::create(&scope, "r13").await;
 
@@ -515,7 +528,18 @@ async fn regression_linked_compliance_a_nested_group_passes_down_a_level() {
     .await;
     assert_eq!(members(&body).len(), 3, "the Building, its owner and the owner's employer: {body}");
     assert_eq!(keys(&body[1]), set(&["name", "employer"]), "{body}");
-    assert_eq!(keys(&body[2]), set(&["name"]), "the employer is narrowed by the inherited group: {body}");
+    assert_eq!(keys(&body[2]), set(&["id", "type", "name", "size"]), "no group addresses the employer: {body}");
+
+    let grouped = read_ok(
+        scope.client(),
+        &format!(
+            "entities/{}?pick={}&join=flat&joinLevel=2",
+            fixture.building,
+            projection("id,owner{name,employer{size}}")
+        ),
+    )
+    .await;
+    assert_eq!(keys(&grouped[2]), set(&["size"]), "the employer's own group narrows it: {grouped}");
     scope.finish().await.expect("cleanup failed");
 }
 
@@ -564,11 +588,11 @@ async fn regression_linked_compliance_an_emptied_linked_entity_is_not_written() 
 
     let inline = read_ok(
         client,
-        &format!("entities/{}?pick={}&join=inline", fixture.building, projection("tenant,owner{name}")),
+        &format!("entities/{}?pick={}&join=inline", fixture.building, projection("locatedIn{size},owner{name}")),
     )
     .await;
-    assert_eq!(inline["tenant"]["object"], json!(fixture.person), "(a) the identifier stays: {inline}");
-    assert!(inline["tenant"].get("entity").is_none(), "(a) the emptied copy is not nested: {inline}");
+    assert_eq!(inline["locatedIn"]["object"], json!(fixture.city), "(a) the identifier stays: {inline}");
+    assert!(inline["locatedIn"].get("entity").is_none(), "(a) the emptied copy is not nested: {inline}");
     assert_eq!(keys(&inline["owner"]["entity"]), set(&["name"]), "(a) the owner copy keeps its group: {inline}");
 
     let flat = read_ok(

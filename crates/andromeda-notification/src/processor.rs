@@ -795,7 +795,7 @@ mod tests {
     fn a_queued_delivery_decided_at_commit_still_decides_a_hopping_filter() {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_q = Some(parser::parse("\"https://example.com/isParkedIn\"{\"https://example.com/category\"==\"commercial\"}").expect("valid q"));
+        sub.compiled_q = Some(parser::parse("\"https://example.com/isParkedIn\"{\"https://example.com/category\"}==\"commercial\"").expect("valid q"));
         let subscription_id = sub.id.clone(); // clone: the audience names the subscription the candidates own
         let candidates = vec![Arc::new(sub)];
         let vehicle = EntityState::from_slice(

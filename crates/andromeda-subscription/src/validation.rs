@@ -385,13 +385,13 @@ mod tests {
     /// clause restricts it, so a hop is admitted at creation and update alike.
     #[test]
     fn a_subscription_whose_filter_traverses_a_linked_entity_is_accepted() {
-        let result = validate_common_fields(&serde_json::json!({"q": "isParkedIn{category==\"commercial\"}"}), limits());
+        let result = validate_common_fields(&serde_json::json!({"q": "isParkedIn{category}==\"commercial\""}), limits());
         assert!(result.is_ok(), "got {result:?}");
     }
 
     #[test]
     fn a_traversal_nested_inside_a_boolean_filter_is_accepted_too() {
-        let result = validate_common_fields(&serde_json::json!({"q": "speed>50;isParkedIn{category==\"x\"}"}), limits());
+        let result = validate_common_fields(&serde_json::json!({"q": "speed>50;isParkedIn{category}==\"x\""}), limits());
         assert!(result.is_ok(), "got {result:?}");
     }
 
@@ -559,7 +559,7 @@ mod tests {
             json!({"pick": ["owner{employer{name}}"], "join": "flat", "joinLevel": 1}),
             json!({"omit": ["owner{email}"], "join": "@none"}),
         ] {
-            let result = validate_common_fields(&json!({"q": "owner{name==\"x\"}", "notification": notification}), limits());
+            let result = validate_common_fields(&json!({"q": "owner{name}==\"x\"", "notification": notification}), limits());
             assert!(result.is_ok(), "{notification}: {result:?}");
         }
     }

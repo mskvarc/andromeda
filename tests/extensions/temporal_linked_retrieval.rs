@@ -186,8 +186,9 @@ async fn temporal_linked_retrieval_a_flat_join_narrows_by_the_core_rules() {
     scope.finish().await.expect("cleanup");
 }
 
-/// T3. Inline nests a narrowed copy under every in-window instance of each
-/// Relationship; a copy the list empties is not written.
+/// T3. Inline nests a copy under every in-window instance of each
+/// Relationship, narrowed by the group addressed to it and whole without one;
+/// a copy its group empties is not written.
 #[tokio::test]
 async fn temporal_linked_retrieval_an_inline_join_nests_per_relationship() {
     let scope = TestEnvironment::from_suite("extensions").await.expect("isolated environment");
@@ -198,7 +199,7 @@ async fn temporal_linked_retrieval_an_inline_join_nests_per_relationship() {
         &format!(
             "temporal/entities/{}?pick={}&join=inline&{WINDOW}",
             fixture.building,
-            projection("owner{name},tenant")
+            projection("owner{name},tenant,locatedIn{size}")
         ),
     )
     .await;
@@ -206,21 +207,27 @@ async fn temporal_linked_retrieval_an_inline_join_nests_per_relationship() {
         assert_eq!(keys(&instance["entity"]), set(&["name"]), "each owner copy keeps its group: {body}");
     }
     for instance in instances(&body["tenant"]) {
-        assert_eq!(instance["object"], json!(fixture.person), "the tenant keeps its object: {body}");
+        assert!(instance["entity"].get("name").is_some(), "no group addresses the tenant copy: {body}");
+        assert!(instance["entity"].get("email").is_some(), "no group addresses the tenant copy: {body}");
+    }
+    for instance in instances(&body["locatedIn"]) {
+        assert!(instance["object"].is_string(), "the City keeps its object: {body}");
         assert!(instance.get("entity").is_none(), "the emptied copy is not written: {body}");
     }
     scope.finish().await.expect("cleanup");
 }
 
-/// T4. A nested group passes on to the second level.
+/// T4. A group addresses the one entity its Relationship reaches, so the
+/// entity reached from there is whole.
 #[tokio::test]
-async fn temporal_linked_retrieval_a_nested_group_reaches_the_second_level() {
+async fn temporal_linked_retrieval_a_group_addresses_only_the_entity_its_relationship_reaches() {
     let scope = TestEnvironment::from_suite("extensions").await.expect("isolated environment");
     let fixture = Fixture::create(&scope, "t4").await;
 
     let body = flat_query(&scope, &fixture, &format!("pick={}&joinLevel=2", projection("id,owner{name,employer}"))).await;
     assert_eq!(members(&body).len(), 3, "the Building, its owner and the owner's employer: {body}");
-    assert_eq!(keys(&body[2]), set(&["name"]), "the employer is narrowed by the inherited group: {body}");
+    assert!(body[2].get("name").is_some(), "no group addresses the employer: {body}");
+    assert!(body[2].get("size").is_some(), "no group addresses the employer: {body}");
     scope.finish().await.expect("cleanup");
 }
 

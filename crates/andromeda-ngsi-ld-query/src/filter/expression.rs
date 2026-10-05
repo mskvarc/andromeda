@@ -117,8 +117,8 @@ mod tests {
     fn the_linked_depth_is_the_deepest_hop_chain_the_filter_contains() {
         let cases = [
             ("speed>50", 0),
-            ("isParkedIn{category==\"commercial\"}", 1),
-            ("isParkedIn{inDistrict{zone==\"north\"}}", 2),
+            ("isParkedIn{category}==\"commercial\"", 1),
+            ("isParkedIn{inDistrict{zone}}==\"north\"", 2),
             ("speed>50;isParkedIn{category}", 1),
             ("speed>50|isParkedIn{inDistrict{zone}}", 2),
         ];

@@ -75,6 +75,6 @@ mod tests {
     /// evaluation, so that Relationship is the attribute the filter reads.
     #[test]
     fn a_linked_entity_hop_names_the_relationship_it_descends_through() {
-        pretty_assertions::assert_eq!(names("isParkedIn{name==\"Lot\"}"), vec!["isParkedIn"]);
+        pretty_assertions::assert_eq!(names("isParkedIn{name}==\"Lot\""), vec!["isParkedIn"]);
     }
 }

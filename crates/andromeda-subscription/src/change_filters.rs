@@ -214,7 +214,7 @@ mod tests {
         )
     }
 
-    const COMMERCIAL_HOP: &str = "\"https://example.com/isParkedIn\"{\"https://example.com/category\"==\"commercial\"}";
+    const COMMERCIAL_HOP: &str = "\"https://example.com/isParkedIn\"{\"https://example.com/category\"}==\"commercial\"";
 
     /// The keys of the candidates `hops` admits for the creation of the
     /// Vehicle.

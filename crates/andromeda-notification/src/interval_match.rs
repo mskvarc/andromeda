@@ -177,7 +177,7 @@ mod tests {
             "id": "urn:ngsi-ld:Subscription:parked",
             "type": "Subscription",
             "entities": [{"type": "https://example.org/Vehicle"}],
-            "q": "\"https://example.org/isParkedIn\"{\"https://example.org/category\"==\"commercial\"}",
+            "q": "\"https://example.org/isParkedIn\"{\"https://example.org/category\"}==\"commercial\"",
             "timeInterval": 60,
             "notification": {"endpoint": {"uri": "http://subscriber.example.org/notify", "accept": "application/json"}},
             "status": "active",

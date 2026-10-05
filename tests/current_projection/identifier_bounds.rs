@@ -199,7 +199,7 @@ async fn a_relationship_object_at_the_limit_is_projected_and_traversable() {
 
     // Clause 4.9 `rel{...}`: the hop lands on the target through the object
     // at the bound, and clause 5.7.2.4 admits it under a retrieving join.
-    let traversal = scope.scope_query(&format!("type=Building&q={}&join=inline&joinLevel=1", encode("link{name==\"x\"}")));
+    let traversal = scope.scope_query(&format!("type=Building&q={}&join=inline&joinLevel=1", encode("link{name}==\"x\"")));
     assert_eq!(
         queried_ids(client, &traversal).await,
         vec![source.as_str()],

@@ -35,7 +35,7 @@ pub fn narrowed_temporal_entity(node: &Value, rule: MemberRule<'_>) -> Value {
 #[cfg(test)]
 mod tests {
     use crate::temporal::linked_projection::narrowed_temporal_entity;
-    use andromeda_linked_retrieval::narrowing::{list::ListInForce, member::MemberRule};
+    use andromeda_linked_retrieval::narrowing::{list::ListInForce, list_terms::ListTerms, member::MemberRule};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, term::ProjectionTerm};
     use iri_rs::IriBuf;
@@ -86,7 +86,7 @@ mod tests {
     fn a_list_without_id_drops_the_linked_identity() {
         let index = index();
         let pick = [leaf("category")];
-        let narrowed = narrowed_temporal_entity(&slot(), MemberRule::new(ListInForce::Pick(&pick), &index));
+        let narrowed = narrowed_temporal_entity(&slot(), MemberRule::new(ListInForce::Payload(ListTerms::Pick(&pick)), &index));
         assert_eq!(keys(&narrowed), vec!["@context", "category", "modifiedAt"]);
     }
 
@@ -94,7 +94,7 @@ mod tests {
     fn a_list_naming_the_keywords_keeps_them() {
         let index = index();
         let pick = [ProjectionTerm::Id, ProjectionTerm::Scope, leaf("name")];
-        let narrowed = narrowed_temporal_entity(&slot(), MemberRule::new(ListInForce::Pick(&pick), &index));
+        let narrowed = narrowed_temporal_entity(&slot(), MemberRule::new(ListInForce::Payload(ListTerms::Pick(&pick)), &index));
         assert_eq!(keys(&narrowed), vec!["@context", "id", "modifiedAt", "name", "scope"]);
     }
 
@@ -102,7 +102,7 @@ mod tests {
     fn an_omit_removes_only_what_it_names() {
         let index = index();
         let omit = [leaf("name")];
-        let narrowed = narrowed_temporal_entity(&slot(), MemberRule::new(ListInForce::Omit(&omit), &index));
+        let narrowed = narrowed_temporal_entity(&slot(), MemberRule::new(ListInForce::Payload(ListTerms::Omit(&omit)), &index));
         assert_eq!(keys(&narrowed), vec!["@context", "category", "id", "modifiedAt", "scope", "type"]);
     }
 

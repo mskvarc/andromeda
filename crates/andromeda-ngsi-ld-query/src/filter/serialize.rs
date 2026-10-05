@@ -94,14 +94,11 @@ const fn needs_parentheses(term: &Expr, separator: char) -> bool {
     }
 }
 
-/// Write one leaf predicate.
-///
-/// A linked-entity hop encloses the operator and the operand as well as the
-/// inner path — clause 4.9 writes `rel{attr=="x"}`, not `rel{attr}=="x"` — so
-/// the hops are opened first, the comparison is written at the innermost level,
-/// and the braces are closed afterwards.
+/// Write one leaf predicate: its attribute axis, then its operator and
+/// operand, which clause 4.9 writes after a hop's closing brace
+/// (`rel{attr}=="x"`).
 fn write_predicate(buf: &mut String, pred: &Predicate, spelling: MemberSpelling) {
-    let open_hops = write_query_path(buf, pred.path(), spelling);
+    write_query_path(buf, pred.path(), spelling);
     match pred {
         Predicate::Exists(_) => {}
         Predicate::Equality { membership, rhs, .. } => {
@@ -121,19 +118,12 @@ fn write_predicate(buf: &mut String, pred: &Predicate, spelling: MemberSpelling)
             write_pattern(buf, pattern);
         }
     }
-    for _ in 0..open_hops {
-        buf.push('}');
-    }
 }
 
-/// Write an attribute axis up to and including its terminal local path,
-/// returning how many hop braces the caller has left to close.
-fn write_query_path(buf: &mut String, path: &QueryPath, spelling: MemberSpelling) -> usize {
+/// Write an attribute axis, every hop's braces closed.
+fn write_query_path(buf: &mut String, path: &QueryPath, spelling: MemberSpelling) {
     match path {
-        QueryPath::Local(local) => {
-            write_attr_path(buf, local, spelling);
-            0
-        }
+        QueryPath::Local(local) => write_attr_path(buf, local, spelling),
         QueryPath::Linked {
             relationship,
             guard_types,
@@ -150,7 +140,8 @@ fn write_query_path(buf: &mut String, path: &QueryPath, spelling: MemberSpelling
             if !guard_types.is_empty() {
                 buf.push(':');
             }
-            1 + write_query_path(buf, inner, spelling)
+            write_query_path(buf, inner, spelling);
+            buf.push('}');
         }
     }
 }
@@ -404,19 +395,21 @@ mod tests {
     #[test]
     fn a_linked_entity_traversal_round_trips_with_and_without_its_guard() {
         let shapes = [
-            "isParkedIn{category==\"commercial\"}",
-            "isParkedIn{Building,Store:category==\"x\"}",
-            "a{b{c==5}}",
+            "isParkedIn{category}==\"commercial\"",
+            "isParkedIn{Building,Store:category}==\"x\"",
+            "a{b{c}}==5",
             "a{b}",
-            "a{prefix:name==\"v\"}",
-            "speed>50;isParkedIn{category==\"x\"}",
-            "\"https://example.com/isParkedIn\"{\"https://example.com/Building\",\"https://example.com/Store\":\"https://example.com/category\"==\"x\"}",
-            "\"https://example.com/rel\"{Building,Store:\"https://example.com/category\"==\"x\"}",
-            "rel{Building,Store:\"https://example.com/category\"==\"x\"}",
+            "a{prefix:name}==\"v\"",
+            "speed>50;isParkedIn{category}==\"x\"",
+            "\"https://example.com/isParkedIn\"{\"https://example.com/Building\",\"https://example.com/Store\":\"https://example.com/category\"}==\"x\"",
+            "\"https://example.com/rel\"{Building,Store:\"https://example.com/category\"}==\"x\"",
+            "rel{Building,Store:\"https://example.com/category\"}==\"x\"",
+            "a{b[c.d]}>=1",
+            "a{b{c}}~=\"^n\"",
             // A prefixed guard type is quoted so its own colon cannot be read as
             // the one that ends the guard.
-            "rel{Building,\"ex:Store\":category==\"x\"}",
-            "rel{\"ex:A\",\"ex:B\":category==\"x\"}",
+            "rel{Building,\"ex:Store\":category}==\"x\"",
+            "rel{\"ex:A\",\"ex:B\":category}==\"x\"",
         ];
         for shape in shapes {
             let parsed = parse(shape).unwrap_or_else(|error| panic!("{shape} must parse: {error}"));

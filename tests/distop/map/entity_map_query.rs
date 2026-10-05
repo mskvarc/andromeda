@@ -153,14 +153,14 @@ async fn emq_projection_linked_entity_unspecified_or_deep_returns_400() {
 /// specified by the query includes Linked Entity attributes, and the use of
 /// Linked Entity retrieval is not specified ... an error of type `BadRequestData`
 /// shall be raised (too deep query)"). The hop uses the clause 4.9 brace form
-/// `linkedTo{speed>5}`; a dotted path would address a sub-attribute, not a
+/// `linkedTo{speed}>5`; a dotted path would address a sub-attribute, not a
 /// linked entity. Confirms REQ-MAP-117.
 #[tokio::test]
 async fn emq_query_linked_entity_attrs_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
     let response = create_entity_map(
         topology.broker(BrokerRole::A).expect("topology broker A").client(),
-        "type=Vehicle&q=linkedTo%7Bspeed%3E5%7D",
+        "type=Vehicle&q=linkedTo%7Bspeed%7D%3E5",
     )
     .await;
     assert_status(&response, 400);

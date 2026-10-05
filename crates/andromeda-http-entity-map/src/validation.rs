@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn linked_entity_references_without_a_join_are_refused_on_entity_map_creation() {
         assert!(validate_entity_map_query(&entity_query("type=Vehicle&pick=linkedTo%7Bspeed%7D"), &uri()).is_err());
-        assert!(validate_entity_map_query(&entity_query("type=Vehicle&q=linkedTo%7Bspeed%3E5%7D"), &uri()).is_err());
+        assert!(validate_entity_map_query(&entity_query("type=Vehicle&q=linkedTo%7Bspeed%7D%3E5"), &uri()).is_err());
         assert!(validate_entity_map_query(&entity_query("type=Vehicle&join=inline&pick=linkedTo%7Bspeed%7D"), &uri()).is_ok());
     }
 
@@ -110,7 +110,7 @@ mod tests {
         )
         .expect_err("refused");
         pretty_assertions::assert_eq!(refused.problem().status_code(), StatusCode::BAD_REQUEST);
-        for refused in ["join=flat", "q=linkedTo%7Bspeed%3E5%7D", "pick=linkedTo%7Bspeed%7D"] {
+        for refused in ["join=flat", "q=linkedTo%7Bspeed%7D%3E5", "pick=linkedTo%7Bspeed%7D"] {
             let query = temporal_query(&format!("type=Vehicle&{refused}&{WINDOW}"));
             assert!(validate_temporal_entity_map_query(&query, TemporalJoin::Spec, &uri()).is_err(), "{refused}");
         }

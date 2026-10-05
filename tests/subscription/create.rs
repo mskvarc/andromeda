@@ -151,13 +151,13 @@ async fn subscription_create_with_a_linked_traversal_filter_is_accepted() {
     let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
     let subscription_id = scope.id("Subscription:create-linked-traversal");
     let mut payload = default_subscription(&subscription_id);
-    payload["q"] = json!("isParkedIn{category==\"commercial\"}");
+    payload["q"] = json!("isParkedIn{category}==\"commercial\"");
 
     let (status, _, body) = create_subscription(&http_client, &payload).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED, "{body}");
     let (status, stored) = retrieve_subscription(&http_client, &subscription_id, true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
-    pretty_assertions::assert_eq!(stored["q"], json!("isParkedIn{category==\"commercial\"}"));
+    pretty_assertions::assert_eq!(stored["q"], json!("isParkedIn{category}==\"commercial\""));
     scope.finish().await.expect("cleanup failed");
 }
 

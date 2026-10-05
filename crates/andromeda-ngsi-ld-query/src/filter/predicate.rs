@@ -8,7 +8,6 @@ use crate::{
     },
     pattern::Pattern,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
 /// A single filter predicate within a `q` expression.
 ///
@@ -82,34 +81,6 @@ impl Predicate {
             | Predicate::Ordering { path, .. }
             | Predicate::MatchPattern { path, .. }
             | Predicate::NotMatchPattern { path, .. } => path,
-        }
-    }
-
-    /// Move this predicate one linked-entity hop down (clause 4.9
-    /// `LinkedEntityRelation`): the predicate keeps its operator and operand and
-    /// its axis becomes `relationship{guard_types: previous axis}`.
-    ///
-    /// The parser needs this because the two halves of a hop sit on opposite
-    /// sides of the operator in the query text — `rel{attr=="x"}` states the
-    /// relationship before the inner predicate and closes after its operand — so
-    /// the inner predicate is complete before the hop that wraps it is known.
-    #[must_use]
-    pub fn nest_under_hop(self, relationship: AttributeName, guard_types: Vec<AttributeName>) -> Predicate {
-        let hop = |inner: QueryPath| QueryPath::Linked {
-            relationship,
-            guard_types,
-            inner: Box::new(inner),
-        };
-        match self {
-            Predicate::Exists(path) => Predicate::Exists(hop(path)),
-            Predicate::Equality { path, membership, rhs } => Predicate::Equality {
-                path: hop(path),
-                membership,
-                rhs,
-            },
-            Predicate::Ordering { path, op, rhs } => Predicate::Ordering { path: hop(path), op, rhs },
-            Predicate::MatchPattern { path, pattern } => Predicate::MatchPattern { path: hop(path), pattern },
-            Predicate::NotMatchPattern { path, pattern } => Predicate::NotMatchPattern { path: hop(path), pattern },
         }
     }
 }

@@ -330,16 +330,16 @@ mod tests {
     #[test]
     fn a_linked_entity_traversal_lexes_into_its_braces() {
         assert_eq!(
-            lex("isParkedIn{Building,Store:category==\"x\"}"),
+            lex("isParkedIn{Building,Store:category}==\"x\""),
             vec![
                 ident("isParkedIn"),
                 Token::LBrace,
                 ident("Building"),
                 Token::Comma,
                 ident("Store:category"),
+                Token::RBrace,
                 Token::Eq,
                 Token::QuotedStr("x".to_string()),
-                Token::RBrace,
             ]
         );
     }

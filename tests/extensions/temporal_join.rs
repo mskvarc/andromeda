@@ -227,7 +227,7 @@ async fn temporal_post_query_join() {
 #[tokio::test]
 async fn temporal_query_rejects_a_traversing_filter_without_a_retrieving_join() {
     let scope = TestEnvironment::from_suite("extensions").await.expect("isolated test environment");
-    let filter = urlencoding::encode("isParkedIn{speed>5}");
+    let filter = urlencoding::encode("isParkedIn{speed}>5");
     let path = format!("temporal/entities?{}", scope.scope_query(&format!("type=Vehicle&{WINDOW}&q={filter}")));
     let response = send(scope.client(), Method::GET, &path, None).await;
     assert_eq!(response.status, StatusCode::BAD_REQUEST, "{:?}", response.body);

@@ -116,7 +116,7 @@ mod tests {
     fn the_type_guards_of_a_linked_traversal_are_collected() {
         let selection = selection_with(
             None,
-            Some("\"https://example.com/outer\"{\"https://example.com/A\",\"https://example.com/B\":\"https://example.com/zone\"==\"north\"}"),
+            Some("\"https://example.com/outer\"{\"https://example.com/A\",\"https://example.com/B\":\"https://example.com/zone\"}==\"north\""),
         );
         pretty_assertions::assert_eq!(
             texts(&projected_type_names(&selection)),

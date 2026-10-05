@@ -31,7 +31,7 @@ const SILENCE: Duration = Duration::from_secs(2);
 /// How long a two-second periodic subscription is waited on.
 const PERIODIC_WAIT: Duration = Duration::from_secs(15);
 
-const COMMERCIAL_HOP: &str = "isParkedIn{category==\"commercial\"}";
+const COMMERCIAL_HOP: &str = "isParkedIn{category}==\"commercial\"";
 
 /// Create `entity` under the core context.
 async fn create(http_client: &reqwest::Client, mut entity: Value) {
@@ -156,7 +156,7 @@ async fn notification_q_hop_type_guard() {
     let garage = scope.id("R14Garage:r14_03");
     create(&http_client, parking(&garage, "R14Garage", "commercial")).await;
     let subscription_id = scope.id("Subscription:r14_03");
-    let guarded = "isParkedIn{R14Garage,R14Depot:category==\"commercial\"}";
+    let guarded = "isParkedIn{R14Garage,R14Depot:category}==\"commercial\"";
     subscribe(&http_client, &scope, &receiver, filtered(&subscription_id, &receiver, "R14CarC", guarded)).await;
     receiver.clear_notifications().await;
 
@@ -192,7 +192,7 @@ async fn notification_q_two_hops() {
         parkings_by_zone.push(parking_id);
     }
     let subscription_id = scope.id("Subscription:r14_04");
-    let two_hops = "isParkedIn{locatedIn{zone==\"north\"}}";
+    let two_hops = "isParkedIn{locatedIn{zone}}==\"north\"";
     subscribe(&http_client, &scope, &receiver, filtered(&subscription_id, &receiver, "R14CarD", two_hops)).await;
     receiver.clear_notifications().await;
 

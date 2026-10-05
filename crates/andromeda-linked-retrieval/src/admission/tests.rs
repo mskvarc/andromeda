@@ -90,11 +90,11 @@ fn query_cases() -> Vec<(Case, Result<(), AdmissionError>)> {
     cases.extend([
         // query_refuses_a_hopping_filter_without_join
         (
-            Case::filter("isParkedIn{category==\"x\"}", None, None),
+            Case::filter("isParkedIn{category}==\"x\"", None, None),
             Err(AdmissionError::WithoutJoin(FILTER)),
         ),
         (
-            Case::filter("isParkedIn{category==\"x\"}", Some(JoinMode::None), None),
+            Case::filter("isParkedIn{category}==\"x\"", Some(JoinMode::None), None),
             Err(AdmissionError::WithoutJoin(FILTER)),
         ),
         // query_admits_a_hop_within_join_level
@@ -102,7 +102,7 @@ fn query_cases() -> Vec<(Case, Result<(), AdmissionError>)> {
         (Case::filter("isParkedIn{category}", Some(JoinMode::Inline), None), Ok(())),
         // query_refuses_a_hop_deeper_than_join_level
         (
-            Case::filter("isParkedIn{inDistrict{zone==\"n\"}}", Some(JoinMode::Flat), Some(1)),
+            Case::filter("isParkedIn{inDistrict{zone}}==\"n\"", Some(JoinMode::Flat), Some(1)),
             Err(AdmissionError::DeeperThanJoinLevel {
                 member: FILTER,
                 depth: depth(2),

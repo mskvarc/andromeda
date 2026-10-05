@@ -290,7 +290,7 @@ mod tests {
     #[tokio::test]
     async fn the_entities_a_hop_reaches_are_gathered() {
         let held = cycle();
-        let linked = gather(&held, "\"https://example.com/next\"{\"https://example.com/zone\"==\"north\"}").await;
+        let linked = gather(&held, "\"https://example.com/next\"{\"https://example.com/zone\"}==\"north\"").await;
         pretty_assertions::assert_eq!(held_ids(&linked), vec!["urn:a"]);
         pretty_assertions::assert_eq!(*held.batches.lock().expect("not poisoned"), vec![vec!["urn:a".to_owned()]]);
     }
@@ -300,7 +300,7 @@ mod tests {
         let held = cycle();
         let linked = gather(
             &held,
-            "\"https://example.com/next\"{\"https://example.com/next\"{\"https://example.com/zone\"==\"south\"}}",
+            "\"https://example.com/next\"{\"https://example.com/next\"{\"https://example.com/zone\"}}==\"south\"",
         )
         .await;
         pretty_assertions::assert_eq!(held_ids(&linked), vec!["urn:a", "urn:b"]);

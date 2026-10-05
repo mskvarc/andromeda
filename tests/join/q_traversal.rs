@@ -78,7 +78,7 @@ fn scoped(scope: &TestEnvironment, entity_type: &str, filter: &str, hops: u32) -
     )
 }
 
-/// Clause 4.9: `rel{attr==value}` compares an attribute of the entity the
+/// Clause 4.9: `rel{attr}==value` compares an attribute of the entity the
 /// Relationship names, and keeps the root that owns the Relationship — not the
 /// entity the comparison was made against.
 #[tokio::test]
@@ -95,7 +95,7 @@ async fn q_linked_single_hop_filters_roots() {
     create(client, &typed_with_relationship(&id_car_match, "Car", "isParkedIn", &id_commercial)).await;
     create(client, &typed_with_relationship(&id_car_other, "Car", "isParkedIn", &id_industrial)).await;
 
-    let body = query(client, &scoped(&scope, "Car", "isParkedIn{category==\"commercial\"}", 1)).await;
+    let body = query(client, &scoped(&scope, "Car", "isParkedIn{category}==\"commercial\"", 1)).await;
 
     assert_eq!(ids_from_array(&body), vec![id_car_match]);
     scope.finish().await.expect("cleanup failed");
@@ -119,7 +119,7 @@ async fn q_linked_hop_with_type_guard() {
     create(client, &typed_with_relationship(&id_car_building, "Car", "isParkedIn", &id_building)).await;
     create(client, &typed_with_relationship(&id_car_warehouse, "Car", "isParkedIn", &id_warehouse)).await;
 
-    let body = query(client, &scoped(&scope, "Car", "isParkedIn{Building,Garage:category==\"commercial\"}", 1)).await;
+    let body = query(client, &scoped(&scope, "Car", "isParkedIn{Building,Garage:category}==\"commercial\"", 1)).await;
 
     assert_eq!(
         ids_from_array(&body),
@@ -129,7 +129,7 @@ async fn q_linked_hop_with_type_guard() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.9: hops chain, so `a{b{attr==value}}` crosses two Relationships and
+/// Clause 4.9: hops chain, so `a{b{attr}}==value` crosses two Relationships and
 /// still answers about the outermost root.
 #[tokio::test]
 async fn q_linked_two_level_nesting() {
@@ -149,7 +149,7 @@ async fn q_linked_two_level_nesting() {
     create(client, &typed_with_relationship(&id_car_north, "Car", "isParkedIn", &id_building_north)).await;
     create(client, &typed_with_relationship(&id_car_south, "Car", "isParkedIn", &id_building_south)).await;
 
-    let body = query(client, &scoped(&scope, "Car", "isParkedIn{inDistrict{zone==\"north\"}}", 2)).await;
+    let body = query(client, &scoped(&scope, "Car", "isParkedIn{inDistrict{zone}}==\"north\"", 2)).await;
 
     assert_eq!(ids_from_array(&body), vec![id_car_north]);
     scope.finish().await.expect("cleanup failed");
@@ -200,7 +200,7 @@ async fn q_linked_combined_with_local_predicate() {
     create(client, &car_with_speed(&id_slow, 20, &id_commercial)).await;
     create(client, &car_with_speed(&id_wrong_building, 90, &id_industrial)).await;
 
-    let body = query(client, &scoped(&scope, "Car", "speed>50;isParkedIn{category==\"commercial\"}", 1)).await;
+    let body = query(client, &scoped(&scope, "Car", "speed>50;isParkedIn{category}==\"commercial\"", 1)).await;
 
     assert_eq!(
         ids_from_array(&body),
@@ -238,7 +238,7 @@ async fn q_linked_pagination_counts_filtered_set() {
         .await;
     }
 
-    let request = format!("{}&limit=2&count=true", scoped(&scope, "Car", "isParkedIn{category==\"commercial\"}", 1));
+    let request = format!("{}&limit=2&count=true", scoped(&scope, "Car", "isParkedIn{category}==\"commercial\"", 1));
     let response = client
         .query_entities(&request, "application/ld+json", Some(TEST_SUITE_CONTEXT))
         .await
@@ -291,7 +291,7 @@ async fn q_linked_hop_matches_any_relationship_instance() {
         "the multi-attribute must be stored as two instances: {stored}"
     );
 
-    let body = query(client, &scoped(&scope, "Car", "isParkedIn{category==\"commercial\"}", 1)).await;
+    let body = query(client, &scoped(&scope, "Car", "isParkedIn{category}==\"commercial\"", 1)).await;
 
     assert_eq!(
         ids_from_array(&body),
@@ -322,7 +322,7 @@ async fn q_linked_hop_does_not_match_through_a_deleted_relationship() {
     create(client, &typed_with_relationship(&id_car_live, "Car", "isParkedIn", &id_commercial)).await;
     create(client, &typed_with_relationship(&id_car_tombstoned, "Car", "isParkedIn", &id_commercial)).await;
 
-    let filter = scoped(&scope, "Car", "isParkedIn{category==\"commercial\"}", 1);
+    let filter = scoped(&scope, "Car", "isParkedIn{category}==\"commercial\"", 1);
     let before = query(client, &filter).await;
     let mut before_ids = ids_from_array(&before);
     before_ids.sort();
@@ -368,7 +368,7 @@ async fn q_linked_hop_does_not_match_through_a_deleted_relationship() {
 async fn q_linked_without_a_retrieving_join_is_rejected() {
     let scope = TestEnvironment::from_suite("join").await.expect("isolated test environment");
     let client = scope.client();
-    let filter = encode("isParkedIn{category==\"commercial\"}");
+    let filter = encode("isParkedIn{category}==\"commercial\"");
 
     for query in [format!("type=Car&q={filter}"), format!("type=Car&q={filter}&join={}", encode("@none"))] {
         let response = client
@@ -390,7 +390,7 @@ async fn q_linked_without_a_retrieving_join_is_rejected() {
 async fn q_linked_deeper_than_the_join_level_is_rejected() {
     let scope = TestEnvironment::from_suite("join").await.expect("isolated test environment");
     let client = scope.client();
-    let filter = encode("isParkedIn{inDistrict{zone==\"north\"}}");
+    let filter = encode("isParkedIn{inDistrict{zone}}==\"north\"");
 
     let too_deep = client
         .query_entities(
@@ -427,6 +427,30 @@ async fn q_linked_malformed_rejected() {
 
     let response = client
         .query_entities(&format!("type=Car&q={}", encode("rel{")), "application/ld+json", Some(TEST_SUITE_CONTEXT))
+        .await
+        .expect("query_entities failed");
+
+    assert_eq!(response.status, StatusCode::BAD_REQUEST, "{:?}", response.body);
+    let body = response.json_value().expect("response body must be valid JSON");
+    assert_eq!(body["type"].as_str(), Some(BAD_REQUEST_DATA.as_str()));
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 4.9 puts the Operator after the `Attribute`, so a hop's braces
+/// close over the path alone (EXAMPLE 13, `sensor{humidity}==40`): a
+/// comparison written inside them is outside the grammar and refused, with the
+/// retrieving join that would otherwise admit it in place.
+#[tokio::test]
+async fn q_linked_comparison_inside_the_braces_is_rejected() {
+    let scope = TestEnvironment::from_suite("join").await.expect("isolated test environment");
+    let client = scope.client();
+
+    let response = client
+        .query_entities(
+            &scoped(&scope, "Car", "isParkedIn{category==\"commercial\"}", 1),
+            "application/ld+json",
+            Some(TEST_SUITE_CONTEXT),
+        )
         .await
         .expect("query_entities failed");
 

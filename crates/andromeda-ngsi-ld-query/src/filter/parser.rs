@@ -20,12 +20,11 @@ use crate::{
     filter::{
         expression::Expr,
         lexer::{Token, tokenize},
-        linked_entity::parse_hop_guard,
+        linked_entity::parse_linked_entity_relation,
         operand::{parse_compare_value, parse_pattern_string, parse_scalar},
         path::QueryPath,
         predicate::{OrderingOp, Predicate, SetMembership},
-        token_cursor::{TokenCursor, attribute_name},
-        value_path::{check_depth, parse_value_path},
+        token_cursor::TokenCursor,
     },
 };
 
@@ -109,39 +108,12 @@ fn parse_primary(cursor: &mut TokenCursor<'_>) -> Result<Expr, QueryError> {
     }
 }
 
-/// Parse one predicate: an attribute axis optionally followed by an operator.
+/// Parse one Query Term: its attribute axis (clause 4.9 `Attribute`, a hop's
+/// braces included), optionally followed by an operator and its operand.
 fn parse_predicate(cursor: &mut TokenCursor<'_>) -> Result<Predicate, QueryError> {
     let leading = cursor.parse_ident()?;
-    parse_predicate_from(cursor, leading, 0)
-}
-
-/// Parse one predicate whose leading attribute name has already been read.
-///
-/// `depth` counts the path segments consumed so far — sub-attributes and
-/// linked-entity hops together — so a chain of hops is bounded by the same
-/// budget a chain of sub-attributes is.
-///
-/// A `{` after the leading name opens a clause 4.9 `LinkedEntityRelation`.
-/// Its contents are a whole predicate, operator and operand included, so the
-/// inner predicate is parsed first and the hop is wrapped around it.
-fn parse_predicate_from<'a>(cursor: &mut TokenCursor<'a>, leading: &'a str, depth: usize) -> Result<Predicate, QueryError> {
-    if cursor.peek() != Some(&Token::LBrace) {
-        let path = parse_value_path(cursor, leading, depth)?;
-        return parse_operator_and_operand(cursor, QueryPath::Local(path));
-    }
-
-    let relationship = attribute_name(leading)?;
-    cursor.advance();
-    check_depth(depth + 1)?;
-    let guard = parse_hop_guard(cursor)?;
-    let inner = if let Some(text) = guard.inner_leading {
-        parse_predicate_from(cursor, text, depth + 1)?
-    } else {
-        let leading = cursor.parse_ident()?;
-        parse_predicate_from(cursor, leading, depth + 1)?
-    };
-    cursor.expect(&Token::RBrace)?;
-    Ok(inner.nest_under_hop(relationship, guard.types))
+    let path = parse_linked_entity_relation(cursor, leading, 0)?;
+    parse_operator_and_operand(cursor, path)
 }
 
 /// Read the comparison operator and operand that follow an attribute axis,
@@ -670,11 +642,11 @@ mod tests {
     }
 
     #[test]
-    fn a_linked_entity_hop_wraps_the_predicate_written_inside_its_braces() {
-        // Clause 4.9 `LinkedEntityRelation = AttrName %x7B LinkedEntityPath %x7D`:
-        // the operator and its operand sit inside the braces, and the whole
-        // comparison is what the hop applies to the linked entity.
-        let expr = parse("isParkedIn{category==\"commercial\"}").expect("parses");
+    fn a_comparison_after_a_hop_applies_to_the_linked_entity() {
+        // Clause 4.9 `QueryTerm =/ Attribute equal CompEqualityValue` with
+        // `Attribute = LinkedEntityRelation`: the braces close over the path and
+        // the comparison follows them (EXAMPLE 13, `sensor{humidity}==40`).
+        let expr = parse("isParkedIn{category}==\"commercial\"").expect("parses");
         match predicate_of(&expr) {
             Predicate::Equality { path, membership, rhs } => {
                 let (relationship, guard, inner) = hop_of(path);
@@ -694,7 +666,7 @@ mod tests {
     fn a_hop_carrying_two_comma_separated_types_parses_them_as_its_guard() {
         // The clause 4.9 guard production is `*1(EntityType 1*("," EntityType) ":")`,
         // so two or more types followed by a colon constrain the linked entity.
-        let expr = parse("isParkedIn{Building,Store:category==\"x\"}").expect("parses");
+        let expr = parse("isParkedIn{Building,Store:category}==\"x\"").expect("parses");
         match predicate_of(&expr) {
             Predicate::Equality { path, .. } => {
                 let (relationship, guard, inner) = hop_of(path);
@@ -710,7 +682,7 @@ mod tests {
 
     #[test]
     fn hops_nest_and_the_innermost_one_carries_the_comparison() {
-        let expr = parse("a{b{c==5}}").expect("parses");
+        let expr = parse("a{b{c}}==5").expect("parses");
         match predicate_of(&expr) {
             Predicate::Equality { path, rhs, .. } => {
                 let (outer, outer_guard, inner_path) = hop_of(path);
@@ -749,7 +721,7 @@ mod tests {
         // This is what makes the clause 4.9 grammar unambiguous: a guard needs
         // two or more comma-separated types, so a lone `prefix:name` can only be
         // a prefixed attribute name.
-        let expr = parse("a{prefix:name==\"v\"}").expect("parses");
+        let expr = parse("a{prefix:name}==\"v\"").expect("parses");
         match predicate_of(&expr) {
             Predicate::Equality { path, .. } => {
                 let (relationship, guard, inner) = hop_of(path);
@@ -765,7 +737,7 @@ mod tests {
 
     #[test]
     fn a_traversal_predicate_combines_with_a_local_one_through_the_conjunction() {
-        let expr = parse("speed>50;isParkedIn{category==\"x\"}").expect("parses");
+        let expr = parse("speed>50;isParkedIn{category}==\"x\"").expect("parses");
         match expr {
             Expr::And(terms) => {
                 pretty_assertions::assert_eq!(terms.len(), 2);
@@ -787,7 +759,7 @@ mod tests {
         // Only the final type can carry the guard's terminating colon, because a
         // comma says another type follows. A prefixed type written before the
         // last one is therefore unambiguous and must not be split.
-        let expr = parse("rel{ex:A,Store:category==\"x\"}").expect("parses");
+        let expr = parse("rel{ex:A,Store:category}==\"x\"").expect("parses");
         match predicate_of(&expr) {
             Predicate::Equality { path, .. } => {
                 let (relationship, guard, inner) = hop_of(path);
@@ -807,13 +779,13 @@ mod tests {
         // `category`, or the type `ex` followed by the prefixed attribute
         // `Store:category`. Nothing in the clause 4.9 grammar decides between
         // them, so the request is rejected and the client quotes what it meant.
-        let error = parse("rel{Building,ex:Store:category==\"x\"}").expect_err("must reject");
+        let error = parse("rel{Building,ex:Store:category}==\"x\"").expect_err("must reject");
         assert!(matches!(error, QueryError::QAmbiguousTypeGuard), "got {error:?}");
     }
 
     #[test]
     fn quoting_a_guard_type_resolves_the_ambiguity_its_colons_would_create() {
-        let expr = parse("rel{Building,\"ex:Store\":category==\"x\"}").expect("parses");
+        let expr = parse("rel{Building,\"ex:Store\":category}==\"x\"").expect("parses");
         match predicate_of(&expr) {
             Predicate::Equality { path, .. } => {
                 let (_, guard, inner) = hop_of(path);
@@ -828,7 +800,7 @@ mod tests {
 
     #[test]
     fn a_hop_left_unclosed_is_rejected() {
-        let error = parse("a{b==1").expect_err("must reject");
+        let error = parse("a{b").expect_err("must reject");
         assert!(
             matches!(
                 error,
@@ -839,6 +811,41 @@ mod tests {
             ),
             "got {error:?}"
         );
+    }
+
+    /// Clause 4.9 puts no Operator inside a hop's braces: `LinkedEntityPath`
+    /// ends in a `ValuePath`, so the closing brace is expected where the
+    /// comparison starts.
+    #[test]
+    fn a_comparison_written_inside_the_braces_is_rejected() {
+        for written in ["isParkedIn{category==\"commercial\"}", "a{b{c>5}}", "a{b~=\"x\"}"] {
+            let error = parse(written).expect_err("must reject");
+            assert!(
+                matches!(
+                    error,
+                    QueryError::QExpected {
+                        expected: QExpectation::Token(TokenKind::RBrace),
+                        found: QFound::Token(_)
+                    }
+                ),
+                "{written}: got {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hop_ending_in_a_compound_member_compares_that_member() {
+        let expr = parse("a{b[c.d]}>=1").expect("parses");
+        match predicate_of(&expr) {
+            Predicate::Ordering { path, op, .. } => {
+                let (_, _, inner) = hop_of(path);
+                pretty_assertions::assert_eq!(local_of(inner).value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["c", "d"]);
+                pretty_assertions::assert_eq!(*op, OrderingOp::GreaterEq);
+            }
+            other @ (Predicate::Exists(_) | Predicate::Equality { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. }) => {
+                panic!("expected an ordering predicate, got {other:?}")
+            }
+        }
     }
 
     #[test]

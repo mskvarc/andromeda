@@ -2,7 +2,7 @@ use crate::temporal::{inline_join::write_temporal_inline_join, temporal_evolutio
 use andromeda_linked_retrieval::{
     graph::{LinkedGraph, RootEdges},
     join::RetrievingJoin,
-    narrowing::{list::ListInForce, member::MemberRule},
+    narrowing::{list::ListInForce, list_terms::ListTerms, member::MemberRule},
     plan::JoinPlan,
     representation::LinkedRepresentation,
 };
@@ -224,7 +224,7 @@ fn each_relationship_nests_its_own_narrowed_copy() {
         "email": [{"type": "Property", "value": "ada@example.org"}]
     });
     let pick = [nested("owner", vec![leaf("name")]), nested("manager", vec![leaf("email")])];
-    let entity = joined_under(root, &[person], 1, ListInForce::Pick(&pick));
+    let entity = joined_under(root, &[person], 1, ListInForce::Addressed(ListTerms::Pick(&pick)));
     let owner = entity["owner"][0]["entity"].as_object().expect("an owner copy");
     let manager = entity["manager"][0]["entity"].as_object().expect("a manager copy");
     assert_eq!(owner.keys().collect::<Vec<_>>(), vec!["name"]);
@@ -242,11 +242,33 @@ fn an_emptied_linked_entity_is_not_nested() {
         "manager": [{"type": "Relationship", "object": "urn:ngsi-ld:P:1"}]
     });
     let person = json!({"id": "urn:ngsi-ld:P:1", "type": "Person", "name": [{"type": "Property", "value": "Ada"}], "email": [{"type": "Property", "value": "ada@example.org"}]});
-    let pick = [nested("owner", vec![leaf("name")]), leaf("manager")];
-    let entity = joined_under(root, &[person], 1, ListInForce::Pick(&pick));
+    let pick = [nested("owner", vec![leaf("name")]), nested("manager", vec![leaf("size")])];
+    let entity = joined_under(root, &[person], 1, ListInForce::Addressed(ListTerms::Pick(&pick)));
     assert_eq!(entity["owner"][0]["entity"]["name"][0]["value"], "Ada");
     assert!(entity["manager"][0].get("entity").is_none());
     assert_eq!(entity["manager"][0]["object"], "urn:ngsi-ld:P:1");
+}
+
+/// Clause 4.21: once the list holds a Linked Entity Term, its plain terms
+/// address the root alone, so the copy nested under a Relationship no group
+/// names is whole.
+#[test]
+fn a_relationship_no_group_addresses_nests_its_target_whole() {
+    let root = json!({
+        "id": "urn:ngsi-ld:B:1",
+        "type": "Building",
+        "owner": [{"type": "Relationship", "object": "urn:ngsi-ld:P:1"}],
+        "manager": [{"type": "Relationship", "object": "urn:ngsi-ld:P:1"}]
+    });
+    let person = json!({"id": "urn:ngsi-ld:P:1", "type": "Person", "name": [{"type": "Property", "value": "Ada"}], "email": [{"type": "Property", "value": "ada@example.org"}]});
+    let pick = [nested("owner", vec![leaf("name")]), leaf("manager")];
+    let entity = joined_under(root, &[person], 1, ListInForce::Addressed(ListTerms::Pick(&pick)));
+    let owner = entity["owner"][0]["entity"].as_object().expect("an owner copy");
+    let manager = entity["manager"][0]["entity"].as_object().expect("a manager copy");
+    assert_eq!(owner.keys().collect::<Vec<_>>(), vec!["name"]);
+    for member in ["id", "type", "name", "email"] {
+        assert!(manager.contains_key(member), "the manager copy keeps `{member}`: {manager:?}");
+    }
 }
 
 /// Links in the chain the deep inline test nests.
@@ -304,7 +326,11 @@ fn a_root_written_without_its_id_still_nests() {
     let graph = graph(&root, &[linked("urn:ngsi-ld:T:B")], 1);
     let index = index();
     let pick = [leaf("parkedAt"), leaf("reading")];
-    let JoinPlan::Inline(plan) = JoinPlan::<TemporalEvolutions>::new(RetrievingJoin::Inline, &graph, MemberRule::new(ListInForce::Pick(&pick), &index)) else {
+    let JoinPlan::Inline(plan) = JoinPlan::<TemporalEvolutions>::new(
+        RetrievingJoin::Inline,
+        &graph,
+        MemberRule::new(ListInForce::Payload(ListTerms::Pick(&pick)), &index),
+    ) else {
         panic!("an inline join plans inline");
     };
     let mut unnamed = json!({"parkedAt": root["parkedAt"].clone()}); // clone: the written root holds its own instances
