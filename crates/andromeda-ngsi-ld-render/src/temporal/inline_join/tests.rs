@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex
 use iri_rs::IriBuf;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
-use std::num::NonZeroU32;
+use std::{iter::successors, num::NonZeroU32, thread};
 
 fn iri(key: &str) -> IriBuf {
     IriBuf::new(format!("https://example.com/{key}")).expect("valid IRI")
@@ -247,6 +247,53 @@ fn an_emptied_linked_entity_is_not_nested() {
     assert_eq!(entity["owner"][0]["entity"]["name"][0]["value"], "Ada");
     assert!(entity["manager"][0].get("entity").is_none());
     assert_eq!(entity["manager"][0]["object"], "urn:ngsi-ld:P:1");
+}
+
+/// Links in the chain the deep inline test nests.
+const CHAIN: u32 = 2_000;
+
+/// The temporal representation of the `index`th link of the chain, naming the
+/// next one.
+fn chain_link(index: u32) -> Value {
+    parked(&format!("urn:ngsi-ld:T:{index}"), &[&format!("urn:ngsi-ld:T:{}", index + 1)])
+}
+
+/// The ids nested under each other below `root`, outermost first.
+fn nested_ids(root: &Value) -> Vec<&str> {
+    successors(root["parkedAt"][0].get("entity"), |nested| nested["parkedAt"][0].get("entity"))
+        .filter_map(|nested| nested["id"].as_str())
+        .collect()
+}
+
+/// Stack the written chain is inspected and released on. The writer is what
+/// the guard keeps off the stack; the nested `Value` it returns is still
+/// dropped recursively (open follow-up 50), so it leaves the small thread whole.
+const RELEASE_STACK: usize = 64 * 1024 * 1024;
+
+/// Clause 4.5.23 sets no `joinLevel` cap, so the depth of an inline join is
+/// bounded by the data alone: a chain nested far deeper than the thread's
+/// stack holds frames for is still written whole.
+#[test]
+fn a_long_temporal_inline_chain_renders_on_a_nearly_exhausted_stack() {
+    let entity = thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let nodes: Vec<Value> = (1..=CHAIN).map(chain_link).collect();
+            joined(chain_link(0), &nodes, CHAIN)
+        })
+        .expect("the thread starts")
+        .join()
+        .expect("the chain is written without exhausting the stack");
+    let depth = thread::Builder::new()
+        .stack_size(RELEASE_STACK)
+        .spawn(move || {
+            let nested = nested_ids(&entity);
+            (nested.len(), nested.last().map(|id| (*id).to_owned()))
+        })
+        .expect("the thread starts")
+        .join()
+        .expect("the chain is inspected and released");
+    assert_eq!(depth, (2_000, Some(format!("urn:ngsi-ld:T:{CHAIN}"))));
 }
 
 /// Clause 4.21: a root whose list removes `id` is written without it, and

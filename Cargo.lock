@@ -1415,6 +1415,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-http-headers",
  "andromeda-linked-retrieval",
+ "andromeda-native-stack",
  "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",

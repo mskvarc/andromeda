@@ -19,6 +19,7 @@ use crate::entity_body::{
     typed_entity::{IdentifierMember, TypedEntity},
 };
 use andromeda_linked_retrieval::{plan::OpenEntity, typed::TypedEntities};
+use andromeda_native_stack::on_sufficient_stack;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     attribute::{list_relationship::ListRelationship, one_or_many::OneOrMany, relationship::Relationship},
@@ -75,10 +76,14 @@ pub(crate) enum NestedEntities<'a> {
 
 impl Serialize for NestedEntities<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
+        // The one point the walk recurses per nested Linked Entity. Clause
+        // 4.5.23 sets no `joinLevel` cap, so the nesting depth is the data's,
+        // and each level moves to a fresh stack segment once the current one
+        // runs low.
+        on_sufficient_stack(|| match self {
             NestedEntities::One(entity) => entity.serialize(serializer),
             NestedEntities::Many(entities) => serializer.collect_seq(entities),
-        }
+        })
     }
 }
 
@@ -127,3 +132,6 @@ fn carried_entities<'a>(carried: &'a OneOrMany<Entity>, format: ResponseFormat, 
         OneOrMany::Many(entities) => NestedEntities::Many(entities.iter().map(written).collect()),
     }
 }
+
+#[cfg(test)]
+mod tests;

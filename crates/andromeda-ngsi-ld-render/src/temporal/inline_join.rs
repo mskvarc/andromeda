@@ -20,6 +20,7 @@ use andromeda_linked_retrieval::{
     plan::{InlineCursor, OpenEntity},
     representation::LinkedRepresentation,
 };
+use andromeda_native_stack::on_sufficient_stack;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde_json::{Map, Value};
@@ -96,7 +97,11 @@ fn nested_copies(targets: &[Uri], attribute: &str, open: &OpenEntity<'_, Tempora
             let (node, cursor) = open.nested(attribute, target)?;
             let id = Identifier::try_from(target.clone()).ok()?; // clone: the path holds the identifier of the copy it opens
             let mut copy = narrowed_temporal_entity(node, cursor.rule());
-            nest_members(&mut copy, &cursor.open(&id));
+            // The one point the writer recurses per nested Linked Entity.
+            // Clause 4.5.23 sets no `joinLevel` cap, so the nesting depth is
+            // the data's, and each level moves to a fresh stack segment once
+            // the current one runs low.
+            on_sufficient_stack(|| nest_members(&mut copy, &cursor.open(&id)));
             Some(copy)
         })
         .collect()

@@ -57,6 +57,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-http-headers",
         "andromeda-linked-retrieval",
+        "andromeda-native-stack",
         "andromeda-ngsi-ld-entity",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
