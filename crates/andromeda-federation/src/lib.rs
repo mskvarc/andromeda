@@ -100,6 +100,8 @@ pub mod request;
 pub mod single_source_failure;
 /// Where a source's answer to a forwarded read continues.
 mod source_continuation;
+/// What a registered Context Source says about its own configuration.
+pub mod source_identity;
 /// Reads forwarded to one registration and how their answers are read back.
 mod source_read;
 /// Walking every page of a source's answer to a forwarded query.
@@ -133,6 +135,7 @@ use crate::{
     federation_invariant::FederationInvariant,
     local_entity_type::LocalEntityTypeResolver,
     outcome::TransportFailure,
+    source_identity::SourceIdentityCache,
 };
 use andromeda_http_headers::{
     link::{header::Link, relation_type::RelationType},
@@ -222,6 +225,8 @@ pub struct FederationService {
     cooldowns: CooldownRegistry,
     /// Forwarded GET responses reused within a registration's `cacheDuration`.
     cache: ForwardedGetCache,
+    /// What registered sources said about their own configuration.
+    source_identities: SourceIdentityCache,
     /// What an unset `splitEntities` means in this deployment.
     split_entities_default: SplitEntitiesDefault,
     /// Most entities one federated query gathers (clause 4.12).
@@ -267,6 +272,7 @@ impl FederationService {
             default_timeout: config.request_timeout(),
             cooldowns: CooldownRegistry::default(),
             cache: ForwardedGetCache::new(config.cache_max_entries),
+            source_identities: SourceIdentityCache::default(),
             split_entities_default: config.split_entities_default,
             max_query_entities: config.max_query_entities,
             max_query_instances: config.max_query_instances,

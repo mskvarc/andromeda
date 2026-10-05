@@ -136,8 +136,19 @@ impl<'a, R: LinkedRepresentation> InlineCursor<'a, R> {
     pub const fn open(self, id: &'a Identifier) -> OpenEntity<'a, R> {
         OpenEntity {
             cursor: self,
-            path: OpenPath { id, parent: self.path },
+            path: Some(OpenPath { id, parent: self.path }),
         }
+    }
+
+    /// A root being written whose spelling no longer carries its identifier,
+    /// because its list removed `id` (clause 4.21).
+    ///
+    /// No Linked Entity is ever a root -- the traversal never resolves one --
+    /// so a target naming the root stays a plain URI whether or not the root
+    /// is on the path.
+    #[must_use]
+    pub const fn open_unnamed_root(self) -> OpenEntity<'a, R> {
+        OpenEntity { cursor: self, path: None }
     }
 }
 
@@ -156,8 +167,9 @@ impl<R: LinkedRepresentation> Copy for InlineCursor<'_, R> {}
 pub struct OpenEntity<'a, R: LinkedRepresentation> {
     /// Where the writer stands.
     cursor: InlineCursor<'a, R>,
-    /// The path down to and including this entity.
-    path: OpenPath<'a>,
+    /// The path down to and including this entity, absent for a root
+    /// written without its identifier.
+    path: Option<OpenPath<'a>>,
 }
 
 impl<'a, R: LinkedRepresentation> OpenEntity<'a, R> {
@@ -169,7 +181,7 @@ impl<'a, R: LinkedRepresentation> OpenEntity<'a, R> {
     #[must_use]
     pub fn nested<'o>(&'o self, attribute: &str, target: &Uri) -> Option<(&'a R::Node, InlineCursor<'o, R>)> {
         let cursor = &self.cursor;
-        if cursor.rule.member(attribute).is_skip() || cursor.depth >= cursor.graph.depth.get() || self.path.holds(target) {
+        if cursor.rule.member(attribute).is_skip() || cursor.depth >= cursor.graph.depth.get() || self.path.as_ref().is_some_and(|path| path.holds(target)) {
             return None;
         }
         let node = cursor.graph.nodes.get(target)?;
@@ -183,7 +195,7 @@ impl<'a, R: LinkedRepresentation> OpenEntity<'a, R> {
                 graph: cursor.graph,
                 rule,
                 depth: cursor.depth + 1,
-                path: Some(&self.path),
+                path: self.path.as_ref(),
             },
         ))
     }

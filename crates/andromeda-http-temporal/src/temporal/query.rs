@@ -30,11 +30,10 @@ use crate::{
 };
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_linked_retrieval::join::RetrievingJoin;
+use andromeda_linked_retrieval::edge::LinkedEdge;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_temporal::{
     error::TemporalError,
-    linked::candidates::TemporalLinkedCandidate,
     service::{TemporalQueryWarning, TemporalRange},
     temporal_invariant::TemporalInvariant,
 };
@@ -165,7 +164,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         params: &params,
         context: &context,
     };
-    let (warnings, linked_ids) = join_linked_entities(&read, &mut entities, &local_result.linked_candidates, merged.warnings, &uri).await?;
+    let (warnings, linked_ids) = join_linked_entities(&read, &mut entities, &local_result.linked_edges, merged.warnings, &uri).await?;
 
     let map_created = map_use.mints();
     let entity_map_uri = record_query_map(&state.entity_maps, &read, map_use, merged.contributions, linked_ids, &uri).await?;
@@ -251,8 +250,8 @@ fn local_match_count(total: Option<i64>) -> Result<Option<usize>, TemporalError>
 /// Walk the join (clause 4.5.23) the query asked for, appending or inlining the
 /// linked entities and reporting what the traversal could not reach.
 ///
-/// `@none` and an absent `join` retrieve nothing, so neither reaches the
-/// traversal and the merged warnings pass through untouched.
+/// `@none` and an absent `join` retrieve nothing, so the merged warnings pass
+/// through untouched.
 ///
 /// # Errors
 ///
@@ -261,13 +260,10 @@ fn local_match_count(total: Option<i64>) -> Result<Option<usize>, TemporalError>
 async fn join_linked_entities(
     read: &TemporalHistoryRead<'_>,
     entities: &mut Vec<Value>,
-    seed: &[TemporalLinkedCandidate],
+    seed: &[LinkedEdge],
     warnings: Vec<NgsiLdWarning>,
     instance: &Uri,
 ) -> Result<(Vec<NgsiLdWarning>, Vec<Identifier>), ProblemResponse> {
-    let Some(join) = RetrievingJoin::from_mode(read.params.join) else {
-        return Ok((warnings, Vec::new()));
-    };
-    let applied = apply_temporal_join(read, join, entities, seed, warnings).await.with_instance(instance)?;
+    let applied = apply_temporal_join(read, entities, seed, warnings).await.with_instance(instance)?;
     Ok((applied.warnings, applied.linked_ids))
 }

@@ -1,7 +1,6 @@
 //! Temporal lifecycle and query policy service.
 
 use crate::{
-    linked::candidates::TemporalLinkedCandidate,
     port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator, service_ports::TemporalServicePorts},
     remote_linked::RemoteTemporalLinkedSource,
     service_limits::TemporalServiceLimits,
@@ -12,7 +11,7 @@ use andromeda_entity::{
     port::{reader::EntityReader, retry_delay::RetryDelay},
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_linked_retrieval::admission::TemporalJoin;
+use andromeda_linked_retrieval::{admission::TemporalJoin, edge::LinkedEdge};
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
@@ -73,11 +72,11 @@ pub struct TemporalReadResult {
     pub value: Value,
     /// Range metadata, present when the response is a partial page.
     pub range: Option<TemporalRange>,
-    /// The Linked Entities the representation names, read off it before any
-    /// format projection narrowed it (clause 4.5.23). A caller that joins
-    /// hands these back as the traversal's first level; one that does not
+    /// The edges to the Linked Entities the representation names, read off
+    /// it before any format projection narrowed it (clause 4.5.23). A caller
+    /// that joins hands these back as the roots' edges; one that does not
     /// simply drops them.
-    pub linked_candidates: Vec<TemporalLinkedCandidate>,
+    pub linked_edges: Vec<LinkedEdge>,
 }
 
 /// Neutral metadata the HTTP binding builds a temporal `Content-Range` from
@@ -113,10 +112,10 @@ pub struct TemporalQueryResult {
     pub range: Option<TemporalRange>,
     /// Non-fatal warnings encountered during per-entity processing.
     pub warnings: Vec<TemporalQueryWarning>,
-    /// The Linked Entities the results name, in first-encounter order, read
-    /// off each representation before any format projection narrowed it
+    /// The edges to the Linked Entities the results name, in result order,
+    /// read off each representation before any format projection narrowed it
     /// (clause 4.5.23).
-    pub linked_candidates: Vec<TemporalLinkedCandidate>,
+    pub linked_edges: Vec<LinkedEdge>,
 }
 
 impl TemporalService {

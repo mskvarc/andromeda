@@ -1,100 +1,55 @@
-//! The clause 4.21 nested projection applied to a Linked Entity resolved for
-//! the temporal API (clause 4.5.23).
+//! The clause 4.21 list in force applied to one rendered temporal Linked
+//! Entity (clauses 4.5.23, 5.7.1.5).
 //!
-//! `pick=rel{a}` says two things: keep `rel` on the root -- settled by
-//! [`crate::temporal::entity`] before any Linked Entity is even resolved --
-//! and narrow whatever `rel` links to down to `a` plus its identity. This is
-//! the second half.
-//!
-//! Unlike the non-temporal `join=inline` nesting the Linked Entity plan drives,
-//! the temporal join in `andromeda-temporal`'s `crate::linked` resolves each
-//! Linked Entity exactly once regardless of how many roots, attributes or
-//! instances named it, so there is exactly one narrowing to compute and apply
-//! per identifier -- the clause 4.21 union rule the non-temporal API's
-//! `join=flat` applies, and the only rule the temporal API needs.
+//! Which list a Linked Entity is narrowed by is the Linked Entity engine's
+//! decision, handed over as a [`MemberRule`]; this writes a copy of the entity
+//! holding the members the rule keeps. The graph the engine planned stays
+//! untouched, since an inline join nests the same entity under several
+//! Relationships, each narrowed by its own path's list.
 
-use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, matching::matching_term, term::ProjectionTerm};
-use serde_json::Value;
+use crate::temporal::temporal_evolutions::TemporalMember;
+use andromeda_linked_retrieval::narrowing::member::MemberRule;
+use serde_json::{Map, Value};
 
-/// The members of a rendered temporal Linked Entity a nested projection never
-/// removes.
-///
-/// A temporal representation carries no member outside its attribute map
-/// except these three -- the clause 4.8 system timestamps and the clause 4.7
-/// geo-properties are themselves attribute-shaped rows in a temporal
-/// representation, not separate members, so they are narrowed like any other
-/// attribute rather than preserved unconditionally.
-const PRESERVED_MEMBERS: [&str; 3] = ["id", "type", "@context"];
-
-/// Narrow a resolved Linked Entity's temporal representation to the nested
-/// `pick` / `omit` sub-projection that applies to it.
-///
-/// `scope` is governed by the clause 4.21 structural keyword, not by an
-/// attribute term: a non-empty nested `pick` keeps it only when the nested
-/// terms name the `scope` keyword, and a non-empty nested `omit` drops it
-/// when they do.
-pub fn narrow_linked_temporal_entity(value: &mut Value, projection: &Projection, index: &AttributeIriIndex) {
-    let Some(map) = value.as_object_mut() else {
-        return;
+/// A copy of the rendered temporal entity `node` holding the members `rule`
+/// keeps: the `@context` and the clause 4.8 system times always, `id`, `type`
+/// and `scope` by the keyword rule of the list, and the Attributes the list
+/// returns.
+#[must_use]
+pub fn narrowed_temporal_entity(node: &Value, rule: MemberRule<'_>) -> Value {
+    let Some(members) = node.as_object() else {
+        return node.clone(); // clone: the payload owns its copy of the shared node
     };
-    let keeps_scope = keeps_scope(projection);
-
-    if !projection.pick.is_empty() {
-        map.retain(|key, _| {
-            if key == ProjectionTerm::SCOPE_KEYWORD {
-                return keeps_scope;
-            }
-            PRESERVED_MEMBERS.contains(&key.as_str()) || matching_term(key, &projection.pick, index).is_some()
-        });
-    }
-
-    if !projection.omit.is_empty() {
-        map.retain(|key, _| {
-            if key == ProjectionTerm::SCOPE_KEYWORD {
-                return keeps_scope;
-            }
-            PRESERVED_MEMBERS.contains(&key.as_str())
-                || match matching_term(key, &projection.omit, index) {
-                    // Clause 4.21: `omit=rel{a}` omits `a` inside whatever
-                    // `rel` links to, so `rel` itself survives and the
-                    // omission travels one level further down.
-                    Some(term) => !term.linked_terms().is_empty(),
-                    None => true,
-                }
-        });
-    }
-}
-
-/// Whether `scope` survives a nested projection, following the same clause
-/// 4.21 structural rule the root rendering and the non-temporal API's
-/// nested projection both apply.
-fn keeps_scope(projection: &Projection) -> bool {
-    if !projection.pick.is_empty() && !projection.pick.contains(&ProjectionTerm::Scope) {
-        return false;
-    }
-    projection.omit.is_empty() || !projection.omit.contains(&ProjectionTerm::Scope)
+    let kept: Map<String, Value> = members
+        .iter()
+        .filter(|(key, _)| match TemporalMember::of(key) {
+            TemporalMember::Structural => true,
+            TemporalMember::Keyword(keyword) => rule.keyword(keyword).is_write(),
+            TemporalMember::Attribute => rule.member(key).is_write(),
+        })
+        .map(|(key, value)| (key.clone(), value.clone())) // clone: the payload owns its copy of the shared node
+        .collect();
+    Value::Object(kept)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::temporal::linked_projection::narrowed_temporal_entity;
+    use andromeda_linked_retrieval::narrowing::{list::ListInForce, member::MemberRule};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, term::ProjectionTerm};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn iri(name: &str) -> IriBuf {
         IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI")
     }
 
-    fn attribute_name(value: &str) -> AttributeName {
-        value.parse().expect("valid attribute name")
-    }
-
-    fn index(keys: &[&str]) -> AttributeIriIndex {
+    fn index() -> AttributeIriIndex {
         let mut index = AttributeIriIndex::new();
-        for key in keys {
-            index.insert(attribute_name(key), iri(key));
+        for key in ["category", "name"] {
+            index.insert(key.parse::<AttributeName>().expect("valid attribute name"), iri(key));
         }
         index
     }
@@ -106,100 +61,54 @@ mod tests {
         }
     }
 
-    /// Clause 4.21: a nested `pick` reduces a resolved Linked Entity's
-    /// temporal representation to the named attribute plus its identity.
-    #[test]
-    fn a_nested_pick_reduces_the_linked_entity_to_the_named_attribute() {
-        let projection = Projection {
-            pick: vec![leaf("category")],
-            omit: Vec::new(),
-        };
-        let index = index(&["category", "name"]);
-        let mut value = json!({
+    fn slot() -> Value {
+        json!({
             "id": "urn:ngsi-ld:Slot:1",
             "type": "Slot",
+            "scope": "/Madrid",
+            "@context": "https://example.com/context.jsonld",
+            "modifiedAt": "2024-01-01T00:00:00Z",
             "category": [{"type": "Property", "value": "reserved", "observedAt": "2024-01-01T00:00:00Z"}],
             "name": [{"type": "Property", "value": "Bay 3", "observedAt": "2024-01-01T00:00:00Z"}]
-        });
-
-        narrow_linked_temporal_entity(&mut value, &projection, &index);
-
-        assert_eq!(value["id"], "urn:ngsi-ld:Slot:1");
-        assert_eq!(value["type"], "Slot");
-        assert!(value.get("category").is_some());
-        assert!(value.get("name").is_none());
+        })
     }
 
-    /// A nested `omit` removes only the named attribute.
-    #[test]
-    fn a_nested_omit_removes_only_the_named_attribute() {
-        let projection = Projection {
-            pick: Vec::new(),
-            omit: vec![leaf("name")],
-        };
-        let index = index(&["category", "name"]);
-        let mut value = json!({
-            "id": "urn:ngsi-ld:Slot:1",
-            "type": "Slot",
-            "category": [{"type": "Property", "value": "reserved"}],
-            "name": [{"type": "Property", "value": "Bay 3"}]
-        });
-
-        narrow_linked_temporal_entity(&mut value, &projection, &index);
-
-        assert!(value.get("category").is_some());
-        assert!(value.get("name").is_none());
+    /// The member keys of `value`, sorted.
+    fn keys(value: &Value) -> Vec<&str> {
+        let mut keys: Vec<&str> = value.as_object().expect("an object").keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        keys
     }
 
-    /// A nested `pick` that does not name the `scope` keyword drops `scope`.
+    /// Clause 4.21: a list without `id` drops the Linked Entity's identity,
+    /// as it would a root's (D3).
     #[test]
-    fn a_nested_pick_drops_scope_unless_the_scope_keyword_is_nested_too() {
-        let index = index(&["category"]);
-        let value = || {
-            json!({
-                "id": "urn:ngsi-ld:Slot:1",
-                "type": "Slot",
-                "scope": "/Madrid",
-                "category": [{"type": "Property", "value": "reserved"}]
-            })
-        };
-
-        let without_keyword = Projection {
-            pick: vec![leaf("category")],
-            omit: Vec::new(),
-        };
-        let mut narrowed = value();
-        narrow_linked_temporal_entity(&mut narrowed, &without_keyword, &index);
-        assert!(narrowed.get("scope").is_none());
-
-        let with_keyword = Projection {
-            pick: vec![leaf("category"), ProjectionTerm::Scope],
-            omit: Vec::new(),
-        };
-        let mut kept = value();
-        narrow_linked_temporal_entity(&mut kept, &with_keyword, &index);
-        assert_eq!(kept["scope"], "/Madrid");
+    fn a_list_without_id_drops_the_linked_identity() {
+        let index = index();
+        let pick = [leaf("category")];
+        let narrowed = narrowed_temporal_entity(&slot(), MemberRule::new(ListInForce::Pick(&pick), &index));
+        assert_eq!(keys(&narrowed), vec!["@context", "category", "modifiedAt"]);
     }
 
-    /// Identity and `@context` survive every nested projection.
     #[test]
-    fn identity_and_context_survive_every_nested_projection() {
-        let projection = Projection {
-            pick: vec![leaf("category")],
-            omit: Vec::new(),
-        };
-        let index = index(&["category"]);
-        let mut value = json!({
-            "id": "urn:ngsi-ld:Slot:1",
-            "type": "Slot",
-            "@context": "https://example.com/context.jsonld",
-            "category": [{"type": "Property", "value": "reserved"}]
-        });
+    fn a_list_naming_the_keywords_keeps_them() {
+        let index = index();
+        let pick = [ProjectionTerm::Id, ProjectionTerm::Scope, leaf("name")];
+        let narrowed = narrowed_temporal_entity(&slot(), MemberRule::new(ListInForce::Pick(&pick), &index));
+        assert_eq!(keys(&narrowed), vec!["@context", "id", "modifiedAt", "name", "scope"]);
+    }
 
-        narrow_linked_temporal_entity(&mut value, &projection, &index);
+    #[test]
+    fn an_omit_removes_only_what_it_names() {
+        let index = index();
+        let omit = [leaf("name")];
+        let narrowed = narrowed_temporal_entity(&slot(), MemberRule::new(ListInForce::Omit(&omit), &index));
+        assert_eq!(keys(&narrowed), vec!["@context", "category", "id", "modifiedAt", "scope", "type"]);
+    }
 
-        assert_eq!(value["id"], "urn:ngsi-ld:Slot:1");
-        assert_eq!(value["type"], "Slot");
-        assert_eq!(value["@context"], "https://example.com/context.jsonld");
+    #[test]
+    fn an_unrestricted_list_keeps_the_whole_entity() {
+        let index = index();
+        assert_eq!(narrowed_temporal_entity(&slot(), MemberRule::new(ListInForce::Unrestricted, &index)), slot());
     }
 }

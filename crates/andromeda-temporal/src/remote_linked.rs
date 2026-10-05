@@ -21,6 +21,7 @@
 
 use crate::error::TemporalError;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_linked_retrieval::source::RemoteReach;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::temporal::aggregation_period::AggregationPeriod;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
@@ -114,17 +115,26 @@ pub struct RemoteTemporalLinkedEntities {
 /// Fetches the temporal evolution of an `objectType`-annotated Linked Entity
 /// whose history this broker does not hold (clause 4.5.23.1).
 ///
-/// An implementation returns the entity's own temporal representation together
-/// with the ones it resolved for the depth that remains beyond it, so one round
-/// trip answers for a whole remote sub-graph rather than one hop of it.
+/// The temporal operations retrieve Linked Entities only as an extension, so
+/// a holder resolves the levels below the entity itself only when it said it
+/// serves that extension; [`Self::remote_reach`] reports whether it did, and
+/// the traversal asks for the depth that answer allows.
 #[async_trait]
 pub trait RemoteTemporalLinkedSource: fmt::Debug + Send + Sync + 'static {
+    /// How far the holders of `id` resolve on their own: the whole remaining
+    /// depth only when every source a retrieval of `id` reaches advertised the
+    /// temporal Linked Entity retrieval extension, the entity alone otherwise.
+    #[must_use = "how far a holder resolves must be awaited"]
+    async fn remote_reach(&self, id: &Identifier, context: &ContextSpec) -> RemoteReach;
+
     /// Fetch the temporal evolution of the entity `id` names, plus the Linked
     /// Entities reachable from it within the remaining depth.
     ///
     /// `remaining_depth` counts the traversal levels still to be resolved
     /// *including* the level `id` itself sits on, so a value of one means the
-    /// entity alone is wanted and nothing it links to.
+    /// entity alone is wanted and nothing it links to. It is never more than
+    /// one unless [`Self::remote_reach`] answered
+    /// [`RemoteReach::Subgraph`] for `id`.
     ///
     /// `visited` lists, in traversal order, the identifiers the caller has
     /// already resolved or deliberately excluded, and never contains `id`. An

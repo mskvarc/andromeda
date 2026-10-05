@@ -22,11 +22,13 @@ use std::num::NonZeroU32;
 ///
 /// `visited` becomes `containedBy`: the clause 4.5.23 `containedBy` parameter
 /// names the entities the requester already holds, which the remote broker
-/// must not send back. An empty list is omitted rather than sent empty.
+/// must not send back. It is "only applicable if joinLevel is present"
+/// (Tables 6.4.3.2-1 and 6.5.3.1-1), so the entity alone is asked for without
+/// it, and an empty list is omitted rather than sent empty.
 pub(crate) fn traversal_continuation(depth: NonZeroU32, visited: &[Identifier]) -> (Option<JoinMode>, Option<NonZeroU32>, Option<Vec<Identifier>>) {
     let join_level = NonZeroU32::new(depth.get() - 1);
     let join = join_level.map(|_| JoinMode::Flat);
-    let contained_by = (!visited.is_empty()).then(|| visited.to_vec()); // clone: the forwarded parameters own the identifiers they carry
+    let contained_by = (join_level.is_some() && !visited.is_empty()).then(|| visited.to_vec()); // clone: the forwarded parameters own the identifiers they carry
     (join, join_level, contained_by)
 }
 
@@ -64,6 +66,15 @@ mod tests {
         let (join, join_level, contained_by) = traversal_continuation(depth(1), &[]);
         assert!(join.is_none());
         assert!(join_level.is_none());
+        assert!(contained_by.is_none());
+    }
+
+    /// Clause 4.5.23 (D5): `containedBy` applies only beside a `joinLevel`, so
+    /// the entity alone is asked for without it, however much was visited.
+    #[test]
+    fn the_last_level_carries_no_contained_by_whatever_was_visited() {
+        let (join, _, contained_by) = traversal_continuation(depth(1), &[uri("urn:ngsi-ld:Building:1")]);
+        assert!(join.is_none());
         assert!(contained_by.is_none());
     }
 }

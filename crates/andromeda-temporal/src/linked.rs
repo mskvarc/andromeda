@@ -1,363 +1,156 @@
-//! Resolving the entities a temporal result set links to (clause 4.5.23
-//! `join`, applied to the temporal API).
+//! Linked Entity retrieval (clause 4.5.23) over the temporal evolution of
+//! entities, behind the `temporal_linked_retrieval` extension.
 //!
-//! Clause 4.5.23 is written for entities, but nothing in it is specific to the
-//! non-temporal representation: a Relationship names an entity, and `join` asks
-//! for that entity to accompany the response. The temporal API answers the same
-//! question about the same graph, so the traversal is the same walk — with one
-//! addition that changes everything about the result. A temporal answer is a
-//! slice of history, and every Linked Entity is rendered over *the same window*
-//! the roots were rendered over. Joining a January root to a February link
-//! would produce a response no client could interpret.
+//! # An extension beyond ETSI GS CIM 009 v1.9.1
 //!
-//! The walk is breadth-first: the entities the roots name are resolved first,
-//! then the entities those name, one level at a time. Each level is resolved in
-//! two halves — this broker's own history answers for what it recorded, and the
-//! remainder of the distributed system answers for the `objectType`-annotated
-//! ids it did not (clause 4.5.23.1).
-//!
-//! There is no depth cap. Clause 4.5.23 admits any positive `joinLevel`, and
-//! termination is guaranteed by the visited set instead: every candidate is
-//! resolved at most once, so the work is bounded by the number of reachable
-//! entities rather than by the client's number.
-//!
-//! # A deliberate extension beyond ETSI GS CIM 009 v1.9.1
-//!
-//! The specification does not define `join` for the Temporal API. Clauses
-//! 5.7.3.4 and 5.7.4.4 list the parameters the temporal retrieval and query
-//! operations accept, `join`, `joinLevel` and `containedBy` are not among them,
-//! and a strictly conformant broker would answer a request carrying them with
-//! `BadRequestData`. Andromeda deliberately accepts them instead and applies
-//! the clause 4.5.23 semantics unchanged, because the question `join` answers —
-//! "give me the entities this result points at" — is exactly as meaningful over
-//! a slice of history as over the current state, and answering it here saves a
-//! client one round trip per Linked Entity.
-//!
-//! This is an extension, not an interpretation: nothing in clauses 5.7.3.4 or
-//! 5.7.4.4 can be read as permitting it. A client that needs strict conformance
-//! must simply not send the parameters, in which case nothing here runs.
-//!
-//! Clauses 5.7.3.4 and 5.7.4.4 go further than omitting the parameters: they
-//! refuse Linked Entity retrieval on the temporal operations outright, raising
-//! an error where projection attributes or filter conditions indicate one. This
-//! extension does not inherit that refusal — it accepts the references and
-//! bounds them instead, by the rule clause 5.7.2.4 sets on the entity bindings.
-//! A `pick`/`omit` nesting and a clause 4.9 `rel{…}` hop in `q` each require a
-//! join that retrieves (`flat` or `inline`; `@none` is the parameter's default,
-//! not a mode) and may reach no further than `joinLevel` walks.
+//! Clauses 5.7.3.3 and 5.7.4.3 give the temporal operations no Linked Entity
+//! retrieval input, and clauses 5.7.3.4, 5.7.4.4 and 5.14.5.4 refuse a
+//! projection or filter that indicates one. With the extension off that is
+//! exactly what the broker does, and nothing here runs. With it on, the
+//! temporal operations run the one Linked Entity engine every Core read runs,
+//! through [`TemporalLinkedSource`], so the traversal, the list in force, the
+//! first-encounter rule and the nesting are the Core's, applied over the
+//! request's window.
 
 use crate::{
     compilation::compile_projection,
     error::TemporalError,
-    linked::{
-        candidates::{RemoteEligibility, TemporalLinkedCandidate, collect_candidates, identifier_of},
-        level_merge::{expandable, fetch_remote_candidate, merge_candidates},
-    },
-    read::rendered_entity::HistoryPresence,
+    linked::temporal_linked_source::TemporalLinkedSource,
     remote_linked::TemporalLinkedWindow,
     service::TemporalService,
-    temporal_compaction::TemporalCompaction,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::port::retrieved_entity::RetrievedEntity;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_linked_retrieval::{
+    attribute_index::attribute_iri_index,
+    edge::LinkedEdge,
+    graph::{LinkedGraph, RootEdges},
+    join::{RetrievingJoin, TraversalBounds},
+    narrowing::{list::ListInForce, member::MemberRule},
+    plan::JoinPlan,
+    representation::LinkedRepresentation,
+    traversal::traverse,
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{projection::compiled::Projection, temporal::compiled::CompiledTemporalQuery};
+use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, expansion::expand_attrs};
+use andromeda_ngsi_ld_render::temporal::temporal_evolutions::TemporalEvolutions;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexSet;
+use iri_rs::IriBuf;
 use serde_json::Value;
-use std::{collections::HashSet, num::NonZeroU32};
 
-/// Everything a temporal join traversal produced: the temporal
-/// representations it resolved, and the Linked Entities it could not.
-///
-/// The two travel together because a caller that renders the first has to
-/// account for the second — an HTTP binding turns each failure into a clause
-/// 6.3.17 response warning — and neither of them is an error that should fail
-/// the operation.
-#[derive(Debug, Default)]
-pub struct ResolvedLinkedTemporalEntities {
-    /// The linked temporal representations, keyed by identifier in the
-    /// traversal's append order.
-    pub entities: IndexMap<Identifier, Value>,
-    /// Every Linked Entity the traversal left unresolved, in the order the
-    /// attempts were made.
-    pub failures: Vec<LinkedResolutionFailure>,
+/// A traversed temporal join, ready to be planned and written.
+pub struct TemporalLinkedJoin {
+    /// The mode the Linked Entities reach the payload in.
+    join: RetrievingJoin,
+    /// What the traversal reached.
+    graph: LinkedGraph<Value>,
+    /// The request's clause 4.21 projection, expanded.
+    projection: Projection,
+    /// The request's `attrs`, expanded: the `pick` synonym of Tables
+    /// 6.18.3.2-1 and 6.19.3.1-1.
+    attrs: Vec<IriBuf>,
+    /// The expansion of every attribute key the payload carries.
+    index: AttributeIriIndex,
 }
 
-/// How every Linked Entity of one traversal is read.
-///
-/// The three values are fixed once for the whole walk and never vary between
-/// levels, because clause 4.5.23 applied to the temporal API renders every
-/// Linked Entity over the same window as the roots: the compiled query is that
-/// window as this broker's own history answers it, the window itself is that
-/// same slice as a remote broker is asked for it (clause 4.5.23.1), and the
-/// context is the one both were derived against.
-#[derive(Clone, Copy)]
-struct LinkedTemporalRead<'a> {
-    /// The window-scoped query every locally held Linked Entity is rendered
-    /// with.
-    compiled: &'a CompiledTemporalQuery,
-    /// The window a remote broker is asked to answer over.
-    window: &'a TemporalLinkedWindow,
-    /// The JSON-LD context the triggering request resolved to.
-    context: &'a ContextSpec,
-}
+impl TemporalLinkedJoin {
+    /// The Linked Entities the payload carries, as the engine plans them.
+    #[must_use]
+    pub fn plan(&self) -> JoinPlan<'_, TemporalEvolutions> {
+        JoinPlan::new(self.join, &self.graph, MemberRule::new(self.list(), &self.index))
+    }
 
-/// One level of the traversal, as resolved.
-struct ResolvedTemporalLevel {
-    /// The level's representations in append order: the locally held ones in
-    /// candidate order, then the ones fetched from elsewhere.
-    entities: IndexMap<Identifier, Value>,
-    /// What the level could not resolve.
-    failures: Vec<LinkedResolutionFailure>,
-    /// What the locally rendered entities of this level named, reported before
-    /// any format projection erased it.
-    candidates: Vec<TemporalLinkedCandidate>,
-}
+    /// The Linked Entities the traversal could not resolve, each a clause
+    /// 6.3.17 warning on the response.
+    #[must_use]
+    pub fn failures(&self) -> &[LinkedResolutionFailure] {
+        &self.graph.failures
+    }
 
-/// The bounds and request context one join traversal is fixed to.
-///
-/// Clause 4.5.23 fixes these for the whole walk: every level is read under the
-/// same request, to the same remaining depth, against the same `containedBy`
-/// frontier and the same `@context`.
-pub struct TemporalJoinRequest<'a> {
-    /// The request whose window and representation the traversal reads under.
-    pub params: &'a TemporalQueryParameters,
-    /// Remaining depth the traversal may descend.
-    pub join_level: NonZeroU32,
-    /// Identifiers the traversal must not leave.
-    pub contained_by: &'a HashSet<Identifier>,
-    /// Context each level is compiled and rendered against.
-    pub context: &'a ContextSpec,
+    /// The list the request narrows its roots by, which reaches every Linked
+    /// Entity (clause 5.7.1.5).
+    fn list(&self) -> ListInForce<'_> {
+        ListInForce::of(Some(&self.projection), &self.attrs)
+    }
 }
 
 impl TemporalService {
-    /// Resolve the temporal evolution of the entities `rendered` links to, up
-    /// to `join_level` hops away.
+    /// Traverse from the rendered `roots` to their Linked Entities over the
+    /// window `params` selects, when `params` asks for a join that retrieves.
     ///
-    /// Every resolved entity is rendered over the same window `params` selects,
-    /// so the roots and their links describe one consistent slice of history.
-    /// Only the window carries over: the request's `attrs` and `datasetId`
-    /// narrow the roots, not the entities they link to.
-    ///
-    /// `seed` is what the roots named, read off their normalized form before
-    /// any format projection erased it. `rendered` is walked as well, which is
-    /// what covers roots that arrived already rendered from a context source.
-    ///
-    /// The result is keyed by identifier in breadth-first encounter order and
-    /// never contains a root, an id listed in `contained_by` (clause 4.5.23
-    /// excludes the entities the client already holds), or the same id twice.
-    /// An id that nothing backs is simply absent — an unresolvable Relationship
-    /// leaves the plain URI in place rather than failing the request — and,
-    /// when something was reachable but unhelpful, it is named in
-    /// [`ResolvedLinkedTemporalEntities::failures`] so the caller can say so.
-    ///
-    /// # Ordering
-    ///
-    /// Clause 4.5.23.3 requires the linked entities to accompany the roots but
-    /// does not fix their order. Andromeda fixes it, so that the same request
-    /// against the same data always renders the same body: the map's
-    /// first-encounter order *is* the append order, and within one level this
-    /// broker's own answers come first, in candidate order, followed by the
-    /// answers from the remainder of the system (clause 4.5.23.1).
+    /// `seed` is what the locally read roots named, read off their normalized
+    /// form before a clause 4.5.8 or 4.5.19 projection erased the `object`
+    /// members; the rendered roots are read as well, which covers those a
+    /// context source answered with. `@none` and an absent `join` retrieve
+    /// nothing, and answer `None` without a traversal.
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalError`] when the query cannot be compiled or the base
-    /// entity store cannot be read. A single Linked Entity whose history cannot
-    /// be rendered, and a remote source that cannot answer, are reported rather
+    /// Returns [`TemporalError`] when the window or the projection cannot be
+    /// compiled, an attribute key cannot be expanded, or the base entity store
+    /// cannot be read. A single Linked Entity whose history cannot be
+    /// rendered, and a remote source that cannot answer, are reported rather
     /// than propagated.
-    pub async fn resolve_linked_temporal(
+    pub async fn join_linked_temporal(
         &self,
         target: &ContextTarget,
-        rendered: &[Value],
-        seed: &[TemporalLinkedCandidate],
-        request: &TemporalJoinRequest<'_>,
-    ) -> Result<ResolvedLinkedTemporalEntities, TemporalError> {
-        let TemporalJoinRequest {
-            params,
-            join_level,
-            contained_by,
-            context,
-        } = *request;
-        let window = TemporalLinkedWindow::of_request(params);
-        // A Linked Entity is read over the window alone. The request's `attrs`
-        // and `datasetId` narrow what the *roots* show; carrying them into the
-        // traversal would hide a linked entity whose own attributes the client
-        // never named, and would contradict what the forwarded half already
-        // does — a remote broker answers a linked retrieval in full.
-        let compiled = self.compile_temporal_query(&window.to_parameters(), context).await?;
-        let linked_read = LinkedTemporalRead {
-            compiled: &compiled,
-            window: &window,
-            context,
+        roots: &[Value],
+        seed: &[LinkedEdge],
+        params: &TemporalQueryParameters,
+        context: &ContextSpec,
+    ) -> Result<Option<TemporalLinkedJoin>, TemporalError> {
+        let Some(join) = RetrievingJoin::from_mode(params.join) else {
+            return Ok(None);
         };
+        let window = TemporalLinkedWindow::of_request(params);
+        let compiled = self.compile_temporal_query(&window.to_parameters(), context).await?;
+        let source = TemporalLinkedSource::new(self, target, &compiled, &window, context);
+        let bounds = TraversalBounds::of(params.join_level, params.contained_by.as_deref());
+        let graph = traverse(&source, root_edges(roots, seed), &bounds).await?;
 
-        let mut resolved = ResolvedLinkedTemporalEntities::default();
-        // The roots and the client-held ids are excluded from the first level
-        // and from every level after it, so a cycle back into them terminates.
-        // The guard keeps insertion order because it doubles as the list of
-        // already-held ids a non-local fetch hands to the remote broker.
-        let mut visited: IndexSet<Identifier> = contained_by.iter().cloned().collect(); // clone: the guard owns the ids it excludes
-        visited.extend(rendered.iter().filter_map(identifier_of));
-
-        // The seed was read off the roots' normalized form, before any format
-        // projection erased the `object` members; walking the rendered roots as
-        // well is what covers the ones that arrived already rendered from a
-        // context source.
-        let mut candidates = merge_candidates(seed, collect_candidates(rendered.iter(), &visited), &visited);
-        // Kept for the nested-projection pass below: `candidates` itself is
-        // reassigned to each later level as the loop walks deeper, but a
-        // nested projection only ever applies to what the *roots* themselves
-        // named, read here before any format projection could erase the
-        // attribute association it carries.
-        let root_candidates = candidates.clone(); // clone: outlives the loop that reassigns `candidates`
-        let mut remaining = Some(join_level);
-
-        while let Some(depth) = remaining
-            && !candidates.is_empty()
-        {
-            visited.extend(candidates.iter().map(|candidate| candidate.id.clone())); // clone: the guard outlives this level's candidates
-            let level = self.resolve_level(target, &candidates, depth, &visited, linked_read).await?;
-            // Everything the level produced — including the sub-graph a remote
-            // broker returned around a candidate — is now held, so no later
-            // level asks for it again.
-            visited.extend(level.entities.keys().cloned()); // clone: the guard outlives this level's entities
-            remaining = NonZeroU32::new(depth.get() - 1);
-            // The next level's candidates are read before this level is folded
-            // into the result, so the result's insertion order stays exactly
-            // the order the levels were resolved in.
-            candidates = match remaining {
-                // The locally rendered entities reported their own links before
-                // projection; the ones a context source returned are walked as
-                // rendered, which is all there is to walk them with.
-                Some(_) => merge_candidates(&level.candidates, collect_candidates(expandable(&candidates, &level), &visited), &visited),
-                None => Vec::new(),
-            };
-            resolved.entities.extend(level.entities);
-            resolved.failures.extend(level.failures);
-        }
-
-        // Clause 4.21: a root's `pick=rel{a}` / `omit=rel{a}` narrows whatever
-        // `rel` links to. The relationship itself was kept or dropped on the
-        // root before this traversal even ran (`TemporalEntityRenderer`); what
-        // is left is narrowing the resolved targets themselves.
-        //
-        // This reads `root_candidates` rather than `rendered`: `rendered` may
-        // have been projected to `temporalValues` or `aggregatedValues`
-        // (clause 4.5.8, 4.5.19), which collapse an attribute's instances into
-        // a value array and erase the `object` / `objectList` members a
-        // per-attribute walk would need. `root_candidates` was read off the
-        // roots' normalized form before that erasure -- the same reason the
-        // traversal itself takes a `seed` rather than re-deriving candidates
-        // from `rendered` alone -- and each candidate already carries which
-        // attribute named it.
-        let root_projection = self.compile_root_projection(params, context).await?;
-        if !root_projection.pick.is_empty() || !root_projection.omit.is_empty() {
-            let index = self.temporal_attribute_iri_index(&root_candidates, &resolved.entities, context).await;
-            projection::apply_nested_projections(&root_candidates, &root_projection, &index, &mut resolved.entities);
-        }
-
-        Ok(resolved)
-    }
-
-    /// Expand the root request's `pick` / `omit` into a [`Projection`],
-    /// independent of the window-scoped query compiled for the Linked
-    /// Entities themselves.
-    async fn compile_root_projection(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Projection, TemporalError> {
         let prepared = self.engine.prepare_term_context(context);
         let expander = ContextualExpander::new(&self.engine, &prepared);
-        compile_projection(params, &expander).await
-    }
-
-    /// Resolve one level from this broker's own history and, for what it does
-    /// not hold, from the remainder of the system.
-    ///
-    /// `depth` is the number of levels still to resolve, this one included.
-    async fn resolve_level(
-        &self,
-        target: &ContextTarget,
-        candidates: &[TemporalLinkedCandidate],
-        depth: NonZeroU32,
-        visited: &IndexSet<Identifier>,
-        linked_read: LinkedTemporalRead<'_>,
-    ) -> Result<ResolvedTemporalLevel, TemporalError> {
-        let (entities, named) = self
-            .resolve_level_locally(target, candidates, linked_read.compiled, linked_read.context)
-            .await?;
-        let mut level = ResolvedTemporalLevel {
-            entities,
-            failures: Vec::new(),
-            candidates: named,
+        let mut joined = TemporalLinkedJoin {
+            join,
+            graph,
+            projection: compile_projection(params, &expander).await?,
+            attrs: expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?,
+            index: AttributeIriIndex::default(),
         };
-        let Some(source) = target.permits_federation().then_some(self.remote_temporal_linked.as_ref()).flatten() else {
-            return Ok(level);
-        };
-        for candidate in candidates {
-            if candidate.eligibility == RemoteEligibility::LocalOnly || level.entities.contains_key(&candidate.id) {
-                continue;
-            }
-            fetch_remote_candidate(source.as_ref(), candidate, depth, visited, linked_read, &mut level).await;
+        // A list that narrows nothing matches nothing, and needs no index.
+        if !joined.list().is_unrestricted() {
+            let keys = roots
+                .iter()
+                .flat_map(TemporalEvolutions::attribute_keys)
+                .chain(joined.graph.attribute_keys::<TemporalEvolutions>());
+            joined.index = attribute_iri_index(keys, &expander).await?;
         }
-        Ok(level)
-    }
-
-    /// Render one level's candidates from this broker's own history, in
-    /// candidate order.
-    ///
-    /// A candidate the window selects no history for, or whose representation
-    /// cannot be rendered, is dropped from the level: clause 4.5.23 leaves such
-    /// a Relationship as a plain URI rather than failing the whole retrieval.
-    async fn resolve_level_locally(
-        &self,
-        target: &ContextTarget,
-        candidates: &[TemporalLinkedCandidate],
-        compiled: &CompiledTemporalQuery,
-        context: &ContextSpec,
-    ) -> Result<(IndexMap<Identifier, Value>, Vec<TemporalLinkedCandidate>), TemporalError> {
-        let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
-        let retrieved = self.entity_reader.get_batch(target, &ids).await.map_err(TemporalError::from_entity_failure)?;
-
-        let compactor = self.engine.compactor(context);
-        let compaction = TemporalCompaction::new(&compactor);
-        let mut level = IndexMap::with_capacity(candidates.len());
-        let mut named: Vec<TemporalLinkedCandidate> = Vec::new();
-        for candidate in candidates {
-            // An id the base store does not know is not a temporal entity here,
-            // so its history is not this broker's to render.
-            let Some(RetrievedEntity { state, .. }) = retrieved.get(&candidate.id) else {
-                continue;
-            };
-            match self
-                .render_one_temporal_entity(target, &candidate.id, state.types().as_slice(), compiled, &compaction)
-                .await
-            {
-                Ok(rendered) => {
-                    if rendered.presence == HistoryPresence::Present {
-                        level.insert(candidate.id.clone(), rendered.value); // clone: the result map owns its keys
-                        named.extend(rendered.candidates);
-                    }
-                }
-                Err(error) => {
-                    tracing::debug!("Failed to render the temporal evolution of linked entity {}: {}", candidate.id, error);
-                }
-            }
-        }
-        Ok((level, named))
+        Ok(Some(joined))
     }
 }
 
-/// Which Linked Entities a rendered temporal representation names.
-pub mod candidates;
+/// The identifiers and edges of the rendered `roots`: the edges `seed`
+/// reported for the locally read ones, then those the rendered roots still
+/// spell, each edge once.
+///
+/// A root whose list removed `id` (clause 4.21) no longer spells its
+/// identifier, so the roots are also identified by the entities the seed's
+/// edges leave from.
+fn root_edges(roots: &[Value], seed: &[LinkedEdge]) -> RootEdges {
+    let RootEdges { ids, edges: rendered } = RootEdges::of::<TemporalEvolutions>(roots);
+    let mut ids: IndexSet<Identifier> = ids.into_iter().collect();
+    ids.extend(seed.iter().map(|edge| edge.from.clone())); // clone: the traversal owns the roots it starts from
+    let edges: IndexSet<LinkedEdge> = seed.iter().cloned().chain(rendered).collect(); // clone: the traversal owns the edges it starts from
+    RootEdges {
+        ids: ids.into_iter().collect(),
+        edges: edges.into_iter().collect(),
+    }
+}
 
-/// Folding one level of the traversal together.
-mod level_merge;
-
-/// Applying the root request's clause 4.21 nested projection to resolved
-/// Linked Entities.
-mod projection;
+/// Where the temporal operations read their Linked Entities from.
+mod temporal_linked_source;
 
 #[cfg(test)]
 mod tests;

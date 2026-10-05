@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 /// Only a Relationship annotated with an `objectType` declares its object an
 /// Internal Linked Entity that a Context Source may hold; a target the local
 /// store holds is joined either way.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RemoteEligibility {
     /// No naming Relationship carried an `objectType`: only the local store
     /// answers for the target.
@@ -38,7 +38,7 @@ impl RemoteEligibility {
 
 /// One target named by one Relationship or `ListRelationship` instance of one
 /// entity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LinkedEdge {
     /// The entity carrying the Relationship.
     pub from: Identifier,

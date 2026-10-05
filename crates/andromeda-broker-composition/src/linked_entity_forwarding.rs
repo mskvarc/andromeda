@@ -150,14 +150,15 @@ mod tests {
 
     /// The last level asks for the entity alone: the clause 4.5.23 joinLevel
     /// query parameter has no zero-hop join, so the forwarded retrieval
-    /// carries no `join` parameter.
+    /// carries no `join` parameter, and no `containedBy`, which applies only
+    /// beside a `joinLevel` (Table 6.5.3.1-1).
     #[test]
     fn the_last_level_forwards_a_plain_retrieval() {
         let parameters = linked_retrieval_parameters(depth(1), &[uri("urn:ngsi-ld:Building:1")]);
 
         assert!(parameters.join.is_none());
         assert!(parameters.join_level.is_none());
-        pretty_assertions::assert_eq!(parameters.contained_by.as_deref().map(<[Identifier]>::len), Some(1));
+        assert!(parameters.contained_by.is_none());
     }
 
     /// A traversal that has visited nothing yet sends no `containedBy` at all,

@@ -155,3 +155,16 @@ async fn a_local_target_without_object_type_is_planned() {
     let plan = JoinPlan::<Nodes>::new(RetrievingJoin::Flat, &graph, MemberRule::new(ListInForce::Unrestricted, &index));
     assert_eq!(flat_ids(&plan), vec!["urn:ngsi-ld:T:P"]);
 }
+
+/// Clause 4.21: a root whose list removes `id` is written without it, and
+/// still nests what its returned Relationships name.
+#[test]
+fn an_unnamed_root_still_nests_its_targets() {
+    let (graph, index) = (building(1), keys());
+    let pick = [term("owner", vec![leaf("name")])];
+    let plan = JoinPlan::<Nodes>::new(RetrievingJoin::Inline, &graph, MemberRule::new(ListInForce::Pick(&pick), &index));
+    let open = cursor(&plan).open_unnamed_root();
+    let (_, under_owner) = open.nested("owner", &id("P")).expect("P nests under owner");
+    assert_eq!(under_owner.rule().list(), ListInForce::Pick(&[leaf("name")]));
+    assert!(open.nested("locatedIn", &id("C")).is_none(), "locatedIn is not returned");
+}

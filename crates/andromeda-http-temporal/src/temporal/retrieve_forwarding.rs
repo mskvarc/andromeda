@@ -41,9 +41,9 @@ use andromeda_federation::{
 };
 use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
 use andromeda_http_response::{declined_representation::single_source_declined, forwarding_failure::local_federation_failure};
+use andromeda_linked_retrieval::edge::LinkedEdge;
 use andromeda_temporal::{
     error::TemporalError,
-    linked::candidates::TemporalLinkedCandidate,
     service::{TemporalRange, TemporalReadResult},
     temporal_not_found_reason::TemporalNotFoundReason,
 };
@@ -58,9 +58,9 @@ pub(crate) struct RetrievedHistory {
     pub(crate) range: Option<TemporalRange>,
     /// The clause 6.3.17 warnings the forwarding produced.
     pub(crate) warnings: Vec<NgsiLdWarning>,
-    /// The Linked Entities the local representation names, read off it before
-    /// any format projection narrowed it (clause 4.5.23).
-    pub(crate) linked_candidates: Vec<TemporalLinkedCandidate>,
+    /// The edges to the Linked Entities the local representation names, read
+    /// off it before any format projection narrowed it (clause 4.5.23).
+    pub(crate) linked_edges: Vec<LinkedEdge>,
     /// The Entity Map the retrieval ran under, when one applies (clause 5.5.14).
     pub(crate) entity_map_uri: Option<Identifier>,
 }
@@ -173,8 +173,8 @@ pub(crate) async fn distributed_retrieval(
 
     // Clauses 5.6.12.4 and 5.7.3.4: a local not-found beside a matching
     // registration is nothing held here, not an error.
-    let (local_entity, range, linked_candidates) = match local_result {
-        Ok(result) => (Some(result.value), result.range, result.linked_candidates),
+    let (local_entity, range, linked_edges) = match local_result {
+        Ok(result) => (Some(result.value), result.range, result.linked_edges),
         Err(ref error) if error.is_not_found() => (None, None, Vec::new()),
         Err(error) => return Err(temporal_problem(&error, instance)),
     };
@@ -207,7 +207,7 @@ pub(crate) async fn distributed_retrieval(
         value,
         range,
         warnings,
-        linked_candidates,
+        linked_edges,
         entity_map_uri,
     })
 }

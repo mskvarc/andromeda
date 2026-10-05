@@ -37,9 +37,9 @@ use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::{admitted_temporal_query::AdmittedTemporalQuery, context_target, response_context_request::ResponseContextRequest};
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{collection::NgsiLdCollectionResponse, content_range::build_content_range};
-use andromeda_linked_retrieval::join::RetrievingJoin;
+use andromeda_linked_retrieval::edge::LinkedEdge;
 use andromeda_ngsi_ld_request::query::temporal::operation::TemporalQueryOperation;
-use andromeda_temporal::{error::TemporalError, linked::candidates::TemporalLinkedCandidate, temporal_invariant::TemporalInvariant};
+use andromeda_temporal::{error::TemporalError, temporal_invariant::TemporalInvariant};
 use axum::http::Uri as RequestUri;
 
 pub async fn get(
@@ -81,7 +81,7 @@ pub async fn get(
             value: result.value,
             range: result.range,
             warnings: Vec::new(),
-            linked_candidates: result.linked_candidates,
+            linked_edges: result.linked_edges,
             entity_map_uri: None,
         }
     } else {
@@ -109,7 +109,7 @@ pub async fn get(
         value,
         range,
         warnings,
-        linked_candidates,
+        linked_edges,
         entity_map_uri,
     } = retrieved;
 
@@ -120,7 +120,7 @@ pub async fn get(
         params: &params,
         context: &context,
     };
-    let (payload, warnings) = retrieval_payload(&read, value, &linked_candidates, warnings, &uri).await?;
+    let (payload, warnings) = retrieval_payload(&read, value, &linked_edges, warnings, &uri).await?;
 
     // Table 6.19.3.1-1: 201 when an EntityMap has been (re)created, 206 when
     // the history was truncated, 200 otherwise.
@@ -167,12 +167,13 @@ pub async fn get(
 
 /// The payload the retrieval answers with, and the warnings that accompany it.
 ///
-/// Join mode (clause 4.5.23) is parsed at the query boundary. `@none` and an
-/// absent `join` retrieve no linked entity at all, so neither reaches the
-/// traversal. A flat join turns the retrieval into a collection; everything
-/// else about the response — status, `Content-Range`, `NGSILD-EntityMap`,
-/// warnings — is identical either way, which is why only the payload is
-/// decided here and the response is assembled once by the caller.
+/// `@none` and an absent `join` retrieve no linked entity at all (clause
+/// 4.5.23), and the retrieval answers with its one entity, simplified when
+/// the request asked for it. A flat join turns the retrieval into a
+/// collection; everything else about the response -- status, `Content-Range`,
+/// `NGSILD-EntityMap`, warnings -- is identical either way, which is why only
+/// the payload is decided here and the response is assembled once by the
+/// caller.
 ///
 /// # Errors
 ///
@@ -182,28 +183,27 @@ pub async fn get(
 async fn retrieval_payload(
     read: &TemporalHistoryRead<'_>,
     value: Value,
-    linked_candidates: &[TemporalLinkedCandidate],
+    linked_edges: &[LinkedEdge],
     warnings: Vec<NgsiLdWarning>,
     instance: &RequestUri,
 ) -> Result<(ResponsePayload, Vec<NgsiLdWarning>), ProblemResponse> {
-    let Some(join) = RetrievingJoin::from_mode(read.params.join) else {
-        let data: Value = if read.params.is_simplified() {
-            TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Single(value))
-                .render()
-                .with_instance(instance)?
-                .into_single()
-                .with_instance(instance)?
-        } else {
-            value
-        };
-        return Ok((ResponsePayload::Single(data), warnings));
-    };
     let mut roots = vec![value];
-    let warnings = apply_temporal_join(read, join, &mut roots, linked_candidates, warnings)
-        .await
-        .with_instance(instance)?
-        .warnings;
-    let payload =
-        single_retrieval_payload(join, roots).ok_or_else(|| temporal_problem(&TemporalError::from(TemporalInvariant::RetrievalWithoutRoot), instance))?;
-    Ok((payload, warnings))
+    let applied = apply_temporal_join(read, &mut roots, linked_edges, warnings).await.with_instance(instance)?;
+    let without_root = || temporal_problem(&TemporalError::from(TemporalInvariant::RetrievalWithoutRoot), instance);
+    if let Some(shape) = applied.shape {
+        let payload = single_retrieval_payload(shape, roots).ok_or_else(without_root)?;
+        return Ok((payload, applied.warnings));
+    }
+    let value = roots.into_iter().next().ok_or_else(without_root)?;
+    let data: Value = if read.params.is_simplified() {
+        TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Single(value))
+            .render()
+            .with_instance(instance)?
+            .into_single()
+            .with_instance(instance)?
+    } else {
+        value
+    };
+    let payload = ResponsePayload::Single(data);
+    Ok((payload, applied.warnings))
 }

@@ -9,7 +9,7 @@
 //! extension-strategy.md 5.4 "never `ngsi-ld:`" rule guards terms that get
 //! expanded against a context, which an extras key is not.
 
-use crate::enabled::EnabledExtensions;
+use crate::enabled::{EnabledExtensions, Extension};
 use serde_json::{Map, Value};
 
 /// The `contextSourceExtras` key the enabled extension tokens are listed under.
@@ -67,24 +67,51 @@ pub fn enabled_extension_extras(base: Option<Value>, enabled: EnabledExtensions)
 fn enabled_tokens(enabled: EnabledExtensions) -> Vec<&'static str> {
     let mut tokens = Vec::new();
     if enabled.temporal_delete_by_query_enabled() {
-        tokens.push(TEMPORAL_DELETE_BY_QUERY_TOKEN);
+        tokens.push(token(Extension::TemporalDeleteByQuery));
     }
     if enabled.purge_dataset_scope_enabled() {
-        tokens.push(PURGE_DATASET_SCOPE_TOKEN);
+        tokens.push(token(Extension::PurgeDatasetScope));
     }
     if enabled.temporal_aggregation_grouping_enabled() {
-        tokens.push(TEMPORAL_AGGREGATION_GROUPING_TOKEN);
+        tokens.push(token(Extension::TemporalAggregationGrouping));
     }
     if enabled.temporal_linked_retrieval_enabled() {
-        tokens.push(TEMPORAL_LINKED_RETRIEVAL_TOKEN);
+        tokens.push(token(Extension::TemporalLinkedRetrieval));
     }
     if enabled.tenant_management_enabled() {
-        tokens.push(TENANT_MANAGEMENT_TOKEN);
+        tokens.push(token(Extension::TenantManagement));
     }
     if enabled.cursor_pagination_enabled() {
-        tokens.push(CURSOR_PAGINATION_TOKEN);
+        tokens.push(token(Extension::CursorPagination));
     }
     tokens
+}
+
+/// The token one extension is advertised under.
+const fn token(extension: Extension) -> &'static str {
+    match extension {
+        Extension::TemporalDeleteByQuery => TEMPORAL_DELETE_BY_QUERY_TOKEN,
+        Extension::PurgeDatasetScope => PURGE_DATASET_SCOPE_TOKEN,
+        Extension::TemporalAggregationGrouping => TEMPORAL_AGGREGATION_GROUPING_TOKEN,
+        Extension::TemporalLinkedRetrieval => TEMPORAL_LINKED_RETRIEVAL_TOKEN,
+        Extension::TenantManagement => TENANT_MANAGEMENT_TOKEN,
+        Extension::CursorPagination => CURSOR_PAGINATION_TOKEN,
+    }
+}
+
+/// Whether a Context Source's `contextSourceExtras` (Table 5.2.40-1)
+/// advertise `extension`, read the way [`enabled_extension_extras`] writes it.
+///
+/// Extras that are absent, not an object, or list the tokens under anything
+/// but an array advertise nothing: the member is implementation-specific, and
+/// a source that does not follow this spelling has not said it serves the
+/// extension.
+#[must_use]
+pub fn advertises(extras: Option<&Value>, extension: Extension) -> bool {
+    extras
+        .and_then(|extras| extras.get(EXTENSION_KEY))
+        .and_then(Value::as_array)
+        .is_some_and(|tokens| tokens.iter().any(|advertised| advertised.as_str() == Some(token(extension))))
 }
 
 #[cfg(test)]
@@ -98,10 +125,11 @@ mod tests {
             TEMPORAL_DELETE_BY_QUERY_TOKEN,
             TEMPORAL_LINKED_RETRIEVAL_TOKEN,
             TENANT_MANAGEMENT_TOKEN,
+            advertises,
             enabled_extension_extras,
         },
         config::ExtensionsConfig,
-        enabled::EnabledExtensions,
+        enabled::{EnabledExtensions, Extension},
     };
     use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
     use serde_json::{Value, json};
@@ -218,5 +246,28 @@ mod tests {
             assert!(!key.starts_with("ngsi-ld:"), "{key}");
         }
         pretty_assertions::assert_eq!(EXTENSION_KEY.starts_with("ngsi-ld:"), false);
+    }
+
+    /// A broker reads back exactly what another one advertises.
+    #[test]
+    fn an_advertisement_reads_back_as_the_enabled_extensions() {
+        let extras = enabled_extension_extras(None, both_enabled());
+        assert!(advertises(extras.as_ref(), Extension::TemporalLinkedRetrieval));
+        let default_extras = enabled_extension_extras(None, ExtensionsConfig::default().resolve());
+        assert!(!advertises(default_extras.as_ref(), Extension::TemporalLinkedRetrieval));
+        assert!(advertises(default_extras.as_ref(), Extension::CursorPagination));
+    }
+
+    /// Extras spelled any other way advertise nothing.
+    #[test]
+    fn extras_in_another_spelling_advertise_nothing() {
+        for extras in [
+            None,
+            Some(json!("temporal-linked-retrieval")),
+            Some(json!({"extensions": "temporal-linked-retrieval"})),
+            Some(json!({"other": ["temporal-linked-retrieval"]})),
+        ] {
+            assert!(!advertises(extras.as_ref(), Extension::TemporalLinkedRetrieval), "{extras:?}");
+        }
     }
 }

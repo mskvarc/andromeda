@@ -3,7 +3,6 @@
 
 use crate::{
     error::TemporalError,
-    linked::candidates::TemporalLinkedCandidate,
     read::{
         dataset_step::DatasetStep,
         ensure_aggregation_supported,
@@ -15,6 +14,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_linked_retrieval::edge::LinkedEdge;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
@@ -123,7 +123,7 @@ impl TemporalService {
             };
 
             let mut entities = Vec::with_capacity(rendered.len());
-            let mut linked_candidates: Vec<TemporalLinkedCandidate> = Vec::new();
+            let mut linked_edges: Vec<LinkedEdge> = Vec::new();
             let mut cut = None;
             let mut overall_min: Option<DateTime<Utc>> = None;
             let mut overall_max: Option<DateTime<Utc>> = None;
@@ -149,7 +149,7 @@ impl TemporalService {
                     overall_min = Some(overall_min.map_or(min_t, |seen: DateTime<Utc>| seen.min(min_t)));
                     overall_max = Some(overall_max.map_or(max_t, |seen: DateTime<Utc>| seen.max(max_t)));
                 }
-                linked_candidates.extend(rendered.candidates);
+                linked_edges.extend(rendered.edges);
                 entities.push(rendered.value);
             }
 
@@ -166,7 +166,7 @@ impl TemporalService {
                 any_truncated,
                 range,
                 warnings,
-                linked_candidates,
+                linked_edges,
             })
         }
         .await;

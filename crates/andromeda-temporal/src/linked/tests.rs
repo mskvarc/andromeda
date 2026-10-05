@@ -1,12 +1,11 @@
-//! Traversal and candidate-collection behaviour of the temporal join.
+//! The temporal join through the Linked Entity engine: what the temporal
+//! source reads, what it asks the remainder of the system, and how the
+//! request's list narrows what it resolved.
 
 use crate::{
     error::TemporalError,
     instance_limits::TemporalInstanceLimits,
-    linked::{
-        TemporalJoinRequest,
-        candidates::{RemoteEligibility, TemporalLinkedCandidate, collect_candidates},
-    },
+    linked::TemporalLinkedJoin,
     observed_instance::ObservedInstance,
     outcome::{TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
     port::{
@@ -41,7 +40,12 @@ use andromeda_entity::{
     port::{reader::EntityReader, retrieved_entity::RetrievedEntity, retry_delay::RetryDelay},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_linked_retrieval::admission::TemporalJoin;
+use andromeda_linked_retrieval::{
+    admission::TemporalJoin,
+    edge::{LinkedEdge, RemoteEligibility},
+    plan::JoinPlan,
+    source::RemoteReach,
+};
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -64,12 +68,15 @@ use andromeda_ngsi_ld_query::{
     split_filter::LeafTruths,
     temporal::{compiled::CompiledTemporalQuery, history_delete::TemporalHistoryDeleteScope},
 };
-use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
+use andromeda_ngsi_ld_render::temporal::linked_projection::narrowed_temporal_entity;
+use andromeda_ngsi_ld_representation::{
+    join_mode::JoinMode,
+    linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind},
+};
 use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use indexmap::IndexSet;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
@@ -85,219 +92,6 @@ fn uri(value: &str) -> Identifier {
 
 fn live_target() -> ContextTarget {
     ContextTarget::Live
-}
-
-fn attribute_name(value: &str) -> AttributeName {
-    value.parse().expect("valid attribute name")
-}
-
-fn ids(candidates: &[TemporalLinkedCandidate]) -> Vec<&str> {
-    candidates.iter().map(|candidate| candidate.id.as_str()).collect()
-}
-
-fn collect(entity: &Value) -> Vec<TemporalLinkedCandidate> {
-    collect_candidates(iter::once(entity), &IndexSet::new())
-}
-
-/// A temporal representation carries one Relationship instance per
-/// observation, so an attribute that pointed somewhere different at two
-/// instants names two Linked Entities. Both are collected, in the order the
-/// instances appear.
-#[test]
-fn two_relationship_instances_naming_two_objects_collect_both_in_order() {
-    let entity = json!({
-        "id": "urn:ngsi-ld:T:A",
-        "type": "Thing",
-        "parkedAt": [
-            {"type": "Relationship", "object": "urn:ngsi-ld:T:C", "observedAt": "2024-01-01T00:00:00Z"},
-            {"type": "Relationship", "object": "urn:ngsi-ld:T:B", "observedAt": "2024-01-02T00:00:00Z"}
-        ]
-    });
-
-    let candidates = collect(&entity);
-
-    pretty_assertions::assert_eq!(ids(&candidates), vec!["urn:ngsi-ld:T:C", "urn:ngsi-ld:T:B"]);
-}
-
-/// An entity that stayed parked at the same place across two observations is
-/// one Linked Entity, not two: the duplicate is collapsed into the entry
-/// already recorded for it.
-#[test]
-fn a_repeated_object_is_collected_once() {
-    let entity = json!({
-        "id": "urn:ngsi-ld:T:A",
-        "type": "Thing",
-        "parkedAt": [
-            {"type": "Relationship", "object": "urn:ngsi-ld:T:B", "observedAt": "2024-01-01T00:00:00Z"},
-            {"type": "Relationship", "object": "urn:ngsi-ld:T:B", "observedAt": "2024-01-02T00:00:00Z"}
-        ]
-    });
-
-    let candidates = collect(&entity);
-
-    pretty_assertions::assert_eq!(ids(&candidates), vec!["urn:ngsi-ld:T:B"]);
-}
-
-/// A `ListRelationship` names its objects in `objectList`, and the list's order
-/// is the order they are collected in.
-#[test]
-fn an_object_list_is_collected_in_list_order() {
-    let entity = json!({
-        "id": "urn:ngsi-ld:T:A",
-        "type": "Thing",
-        "hasParts": [{
-            "type": "ListRelationship",
-            "objectList": ["urn:ngsi-ld:T:C", "urn:ngsi-ld:T:B"],
-            "observedAt": "2024-01-01T00:00:00Z"
-        }]
-    });
-
-    let candidates = collect(&entity);
-
-    pretty_assertions::assert_eq!(ids(&candidates), vec!["urn:ngsi-ld:T:C", "urn:ngsi-ld:T:B"]);
-}
-
-/// A single-instance attribute may reach the walk as a bare object rather than
-/// a one-element array, and names its Linked Entity just the same.
-#[test]
-fn a_single_instance_rendered_as_a_bare_object_is_walked() {
-    let entity = json!({
-        "id": "urn:ngsi-ld:T:A",
-        "type": "Thing",
-        "parkedAt": {"type": "Relationship", "object": "urn:ngsi-ld:T:B", "observedAt": "2024-01-01T00:00:00Z"}
-    });
-
-    pretty_assertions::assert_eq!(ids(&collect(&entity)), vec!["urn:ngsi-ld:T:B"]);
-}
-
-/// Clause 4.5.23.1: only a Relationship annotated with an `objectType` declares
-/// its object an Internal Linked Entity, which is what admits a non-local
-/// resolution. An unannotated one stays local.
-#[test]
-fn the_object_type_annotation_is_what_admits_a_non_local_resolution() {
-    let entity = json!({
-        "id": "urn:ngsi-ld:T:A",
-        "type": "Thing",
-        "annotated": [{"type": "Relationship", "object": "urn:ngsi-ld:T:R", "objectType": "Thing"}],
-        "plain": [{"type": "Relationship", "object": "urn:ngsi-ld:T:L"}]
-    });
-
-    let candidates = collect(&entity);
-
-    pretty_assertions::assert_eq!(
-        candidates,
-        vec![
-            TemporalLinkedCandidate {
-                id: uri("urn:ngsi-ld:T:R"),
-                eligibility: RemoteEligibility::Eligible,
-                attributes: vec![attribute_name("annotated")],
-            },
-            TemporalLinkedCandidate {
-                id: uri("urn:ngsi-ld:T:L"),
-                eligibility: RemoteEligibility::LocalOnly,
-                attributes: vec![attribute_name("plain")],
-            },
-        ]
-    );
-}
-
-/// One annotated instance is enough: an id first met without an `objectType`
-/// and later with one becomes eligible, rather than staying local because of
-/// the order the instances happened to be in.
-#[test]
-fn a_later_annotated_instance_upgrades_an_already_collected_identifier() {
-    let entity = json!({
-        "id": "urn:ngsi-ld:T:A",
-        "type": "Thing",
-        "parkedAt": [
-            {"type": "Relationship", "object": "urn:ngsi-ld:T:B", "observedAt": "2024-01-01T00:00:00Z"},
-            {"type": "Relationship", "object": "urn:ngsi-ld:T:B", "objectType": "Thing", "observedAt": "2024-01-02T00:00:00Z"}
-        ]
-    });
-
-    let candidates = collect(&entity);
-
-    pretty_assertions::assert_eq!(
-        candidates,
-        vec![TemporalLinkedCandidate {
-            id: uri("urn:ngsi-ld:T:B"),
-            eligibility: RemoteEligibility::Eligible,
-            attributes: vec![attribute_name("parkedAt")],
-        }]
-    );
-}
-
-/// The structural members of a temporal entity are not attributes, so nothing
-/// inside them is mistaken for a Linked Entity, and a Property naming a URI is
-/// not a Relationship.
-#[test]
-fn structural_members_and_properties_name_no_linked_entity() {
-    let entity = json!({
-        "id": "urn:ngsi-ld:T:A",
-        "type": "Thing",
-        "@context": "https://example.com/context.jsonld",
-        "createdAt": "2024-01-01T00:00:00Z",
-        "reading": [{"type": "Property", "value": "urn:ngsi-ld:T:B", "observedAt": "2024-01-01T00:00:00Z"}]
-    });
-
-    pretty_assertions::assert_eq!(collect(&entity), Vec::<TemporalLinkedCandidate>::new());
-}
-
-/// The visited guard is what terminates a cycle: an identifier already walked,
-/// or one the client said it already holds through `containedBy`, is never
-/// collected again (clause 4.5.23).
-#[test]
-fn a_visited_identifier_is_never_collected_again() {
-    let entity = json!({
-        "id": "urn:ngsi-ld:T:B",
-        "type": "Thing",
-        "parkedAt": [
-            {"type": "Relationship", "object": "urn:ngsi-ld:T:A"},
-            {"type": "Relationship", "object": "urn:ngsi-ld:T:C"}
-        ]
-    });
-    let visited: IndexSet<Identifier> = [uri("urn:ngsi-ld:T:A")].into_iter().collect();
-
-    let candidates = collect_candidates(iter::once(&entity), &visited);
-
-    pretty_assertions::assert_eq!(ids(&candidates), vec!["urn:ngsi-ld:T:C"]);
-}
-
-/// An `object` that is not a URI at all degrades rather than failing the
-/// retrieval: it names no Linked Entity and the rest of the walk continues.
-#[test]
-fn an_unusable_object_value_names_no_linked_entity() {
-    let entity = json!({
-        "id": "urn:ngsi-ld:T:A",
-        "type": "T",
-        "broken": [{"type": "Relationship", "object": "not a uri"}],
-        "partly": [{"type": "Relationship", "object": ["urn:ngsi-ld:T:B", 7]}]
-    });
-    pretty_assertions::assert_eq!(ids(&collect(&entity)), vec!["urn:ngsi-ld:T:B"]);
-}
-
-/// Clause 4.5.22.2 renders a normalized `objectList` as `{"object": "urn:…"}`
-/// members and clause 4.5.3.2 renders a multi-target `object` as an array of
-/// URIs, so the traversal finds its Linked Entities in both, in the order the
-/// members declare them.
-#[test]
-fn a_normalized_object_list_and_a_multi_target_object_both_name_linked_entities() {
-    let list_relationship = json!({
-        "id": "urn:ngsi-ld:T:A",
-        "type": "T",
-        "route": [{
-            "type": "ListRelationship",
-            "objectList": [{"object": "urn:ngsi-ld:T:B"}, {"object": "urn:ngsi-ld:T:C"}]
-        }]
-    });
-    pretty_assertions::assert_eq!(ids(&collect(&list_relationship)), vec!["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"]);
-
-    let multi_target = json!({
-        "id": "urn:ngsi-ld:T:A",
-        "type": "T",
-        "passengers": [{"type": "Relationship", "object": ["urn:ngsi-ld:T:D", "urn:ngsi-ld:T:E"]}]
-    });
-    pretty_assertions::assert_eq!(ids(&collect(&multi_target)), vec!["urn:ngsi-ld:T:D", "urn:ngsi-ld:T:E"]);
 }
 
 /// A broker whose history holds, for each entity, one Relationship observation
@@ -635,12 +429,14 @@ fn context() -> ContextSpec {
     }))
 }
 
-/// The window every traversal test runs over: all history, normalized.
-fn window() -> TemporalQueryParameters {
+/// A flat join `join_level` levels deep over all history, normalized.
+fn flat_join(join_level: u32) -> TemporalQueryParameters {
     let mut params = serde_json::from_value::<TemporalQueryParameters>(json!({})).expect("empty temporal query");
     params.timerel = Some(TimeRel::After);
     params.time_at = Some("1970-01-01T00:00:00Z".parse().expect("valid instant"));
     params.format = Some(WrittenValue::Supported(TemporalFormat::Normalized));
+    params.join = Some(JoinMode::Flat);
+    params.join_level = Some(level(join_level));
     params
 }
 
@@ -656,93 +452,6 @@ fn root(id: &str, targets: &[&str]) -> Value {
         .map(|target| json!({"type": "Relationship", "object": target, "observedAt": "2024-01-01T00:00:00Z"}))
         .collect();
     json!({"id": id, "type": "Thing", "linksTo": instances})
-}
-
-async fn resolve(broker: StubBroker, roots: &[Value], join_level: NonZeroU32, contained_by: &HashSet<Identifier>) -> Vec<String> {
-    let resolved = service(broker)
-        .resolve_linked_temporal(
-            &live_target(),
-            roots,
-            &[],
-            &TemporalJoinRequest {
-                params: &window(),
-                join_level,
-                contained_by,
-                context: &context(),
-            },
-        )
-        .await
-        .expect("resolves");
-    resolved.entities.keys().map(ToString::to_string).collect()
-}
-
-/// Clause 4.5.23: the traversal appends linked entities in the order it
-/// encounters them. A root naming C before B, whose B in turn names D,
-/// resolves breadth-first as `[C, B]` then `[D]`.
-#[tokio::test]
-async fn breadth_first_traversal_keeps_first_encounter_order() {
-    let broker = StubBroker::new([
-        (uri("urn:ngsi-ld:T:C"), Vec::new()),
-        (uri("urn:ngsi-ld:T:B"), vec![uri("urn:ngsi-ld:T:D")]),
-        (uri("urn:ngsi-ld:T:D"), Vec::new()),
-    ]);
-    let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:C", "urn:ngsi-ld:T:B"])];
-
-    let resolved = resolve(broker, &roots, level(2), &HashSet::new()).await;
-
-    pretty_assertions::assert_eq!(resolved, vec!["urn:ngsi-ld:T:C", "urn:ngsi-ld:T:B", "urn:ngsi-ld:T:D"]);
-}
-
-/// A cycle A -> B -> A terminates: the visited guard excludes the root, so B
-/// is resolved once and its back-reference resolves nothing.
-#[tokio::test]
-async fn a_cycle_back_to_the_root_terminates() {
-    let broker = StubBroker::new([
-        (uri("urn:ngsi-ld:T:A"), vec![uri("urn:ngsi-ld:T:B")]),
-        (uri("urn:ngsi-ld:T:B"), vec![uri("urn:ngsi-ld:T:A")]),
-    ]);
-    let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
-
-    let resolved = resolve(broker, &roots, level(5), &HashSet::new()).await;
-
-    pretty_assertions::assert_eq!(resolved, vec!["urn:ngsi-ld:T:B"]);
-}
-
-/// Clause 4.5.23 `containedBy`: an entity the client already holds is not
-/// retrieved again, and is not descended into.
-#[tokio::test]
-async fn contained_by_excludes_the_identifiers_it_lists() {
-    let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new()), (uri("urn:ngsi-ld:T:C"), Vec::new())]);
-    let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"])];
-    let contained_by: HashSet<Identifier> = [uri("urn:ngsi-ld:T:B")].into_iter().collect();
-
-    let resolved = resolve(broker, &roots, level(1), &contained_by).await;
-
-    pretty_assertions::assert_eq!(resolved, vec!["urn:ngsi-ld:T:C"]);
-}
-
-/// `joinLevel=1` follows exactly one hop: B is resolved, the D it links to is
-/// not.
-#[tokio::test]
-async fn join_level_one_stops_after_the_first_hop() {
-    let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), vec![uri("urn:ngsi-ld:T:D")]), (uri("urn:ngsi-ld:T:D"), Vec::new())]);
-    let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
-
-    let resolved = resolve(broker, &roots, level(1), &HashSet::new()).await;
-
-    pretty_assertions::assert_eq!(resolved, vec!["urn:ngsi-ld:T:B"]);
-}
-
-/// An id nothing backs is simply absent: clause 4.5.23 leaves the Relationship
-/// that named it a plain URI rather than failing the retrieval.
-#[tokio::test]
-async fn an_unresolvable_identifier_is_absent_rather_than_fatal() {
-    let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]);
-    let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:Missing", "urn:ngsi-ld:T:B"])];
-
-    let resolved = resolve(broker, &roots, level(1), &HashSet::new()).await;
-
-    pretty_assertions::assert_eq!(resolved, vec!["urn:ngsi-ld:T:B"]);
 }
 
 /// One recorded call into the remote Linked Entity source.
@@ -770,14 +479,17 @@ enum RemoteOutcome {
 struct RecordingSource {
     /// Every call, in the order it was made.
     calls: Mutex<Vec<RemoteCall>>,
+    /// How far every holder resolves on its own.
+    reach: RemoteReach,
     /// What every call answers with.
     outcome: RemoteOutcome,
 }
 
 impl RecordingSource {
-    fn returning(entities: impl IntoIterator<Item = (Identifier, Vec<Value>)>) -> Arc<RecordingSource> {
+    fn returning(reach: RemoteReach, entities: impl IntoIterator<Item = (Identifier, Vec<Value>)>) -> Arc<RecordingSource> {
         Arc::new(RecordingSource {
             calls: Mutex::new(Vec::new()),
+            reach,
             outcome: RemoteOutcome::Returns(entities.into_iter().collect()),
         })
     }
@@ -785,6 +497,7 @@ impl RecordingSource {
     fn failing() -> Arc<RecordingSource> {
         Arc::new(RecordingSource {
             calls: Mutex::new(Vec::new()),
+            reach: RemoteReach::Subgraph,
             outcome: RemoteOutcome::Fails,
         })
     }
@@ -796,6 +509,10 @@ impl RecordingSource {
 
 #[async_trait]
 impl RemoteTemporalLinkedSource for RecordingSource {
+    async fn remote_reach(&self, _id: &Identifier, _context: &ContextSpec) -> RemoteReach {
+        self.reach
+    }
+
     async fn fetch_linked_temporal(
         &self,
         id: &Identifier,
@@ -858,31 +575,126 @@ fn annotated_root(id: &str, targets: &[&str]) -> Value {
     json!({"id": id, "type": "Thing", "linksTo": instances})
 }
 
-/// Clause 4.5.23.1: an annotated id this broker records no history for is asked
-/// of the remainder of the system — with the levels still to resolve, and with
-/// the already-walked identifiers so the remote side does not send back what
-/// the requester already holds.
-#[tokio::test]
-async fn an_absent_annotated_candidate_is_fetched_with_the_remaining_depth_and_the_visited_ids() {
-    let source = RecordingSource::returning([(uri("urn:ngsi-ld:T:B"), vec![json!({"id": "urn:ngsi-ld:T:B", "type": "Thing"})])]);
-    let roots = [annotated_root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
+/// The join `params` asks for from `roots`, which named `seed` before they
+/// were rendered.
+async fn joined(service: &TemporalService, roots: &[Value], seed: &[LinkedEdge], params: &TemporalQueryParameters) -> TemporalLinkedJoin {
+    service
+        .join_linked_temporal(&live_target(), roots, seed, params, &context())
+        .await
+        .expect("resolves")
+        .expect("the request asked for a join")
+}
 
-    let resolved = service_with_remote(StubBroker::new([]), &source)
-        .resolve_linked_temporal(
-            &live_target(),
-            &roots,
-            &[],
-            &TemporalJoinRequest {
-                params: &window(),
-                join_level: level(2),
-                contained_by: &HashSet::new(),
-                context: &context(),
-            },
-        )
+/// The Linked Entities a flat join appends, each as it is written.
+fn appended(joined: &TemporalLinkedJoin) -> Vec<Value> {
+    match joined.plan() {
+        JoinPlan::Flat(flat) => flat.linked().map(|linked| narrowed_temporal_entity(linked.node, linked.rule)).collect(),
+        JoinPlan::Inline(_) => panic!("the tests join flat"),
+    }
+}
+
+/// The identifiers of the Linked Entities a flat join appends, in order.
+fn appended_ids(joined: &TemporalLinkedJoin) -> Vec<String> {
+    joined.plan().linked_ids().into_iter().map(ToString::to_string).collect()
+}
+
+/// `@none` and an absent `join` retrieve no Linked Entity, so nothing is
+/// traversed (clause 4.5.23).
+#[tokio::test]
+async fn no_retrieving_join_traverses_nothing() {
+    let mut params = flat_join(1);
+    params.join = Some(JoinMode::None);
+    let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
+    let joined = service(StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]))
+        .join_linked_temporal(&live_target(), &roots, &[], &params, &context())
         .await
         .expect("resolves");
+    assert!(joined.is_none());
+}
 
-    pretty_assertions::assert_eq!(resolved.entities.keys().map(Identifier::as_str).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:B"]);
+/// Clause 4.5.23: the Linked Entities are appended in the order they are
+/// first encountered. A root naming C before B, whose B in turn names D,
+/// resolves breadth-first as `[C, B]` then `[D]`.
+#[tokio::test]
+async fn breadth_first_traversal_keeps_first_encounter_order() {
+    let broker = StubBroker::new([
+        (uri("urn:ngsi-ld:T:C"), Vec::new()),
+        (uri("urn:ngsi-ld:T:B"), vec![uri("urn:ngsi-ld:T:D")]),
+        (uri("urn:ngsi-ld:T:D"), Vec::new()),
+    ]);
+    let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:C", "urn:ngsi-ld:T:B"])];
+
+    let joined = joined(&service(broker), &roots, &[], &flat_join(2)).await;
+
+    pretty_assertions::assert_eq!(appended_ids(&joined), vec!["urn:ngsi-ld:T:C", "urn:ngsi-ld:T:B", "urn:ngsi-ld:T:D"]);
+}
+
+/// A cycle A -> B -> A terminates: the root is never a Linked Entity.
+#[tokio::test]
+async fn a_cycle_back_to_the_root_terminates() {
+    let broker = StubBroker::new([
+        (uri("urn:ngsi-ld:T:A"), vec![uri("urn:ngsi-ld:T:B")]),
+        (uri("urn:ngsi-ld:T:B"), vec![uri("urn:ngsi-ld:T:A")]),
+    ]);
+    let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
+
+    let joined = joined(&service(broker), &roots, &[], &flat_join(5)).await;
+
+    pretty_assertions::assert_eq!(appended_ids(&joined), vec!["urn:ngsi-ld:T:B"]);
+}
+
+/// Clause 4.5.23 `containedBy`: with a `joinLevel`, an entity the client
+/// already holds is not retrieved again.
+#[tokio::test]
+async fn contained_by_excludes_the_identifiers_it_lists() {
+    let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new()), (uri("urn:ngsi-ld:T:C"), Vec::new())]);
+    let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"])];
+    let mut params = flat_join(1);
+    params.contained_by = Some(vec![uri("urn:ngsi-ld:T:B")]);
+
+    let joined = joined(&service(broker), &roots, &[], &params).await;
+
+    pretty_assertions::assert_eq!(appended_ids(&joined), vec!["urn:ngsi-ld:T:C"]);
+}
+
+/// `joinLevel=1` follows exactly one hop.
+#[tokio::test]
+async fn join_level_one_stops_after_the_first_hop() {
+    let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), vec![uri("urn:ngsi-ld:T:D")]), (uri("urn:ngsi-ld:T:D"), Vec::new())]);
+    let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
+
+    let joined = joined(&service(broker), &roots, &[], &flat_join(1)).await;
+
+    pretty_assertions::assert_eq!(appended_ids(&joined), vec!["urn:ngsi-ld:T:B"]);
+}
+
+/// An id nothing backs is simply absent: clause 4.5.23 leaves the
+/// Relationship that named it a plain URI rather than failing the retrieval.
+#[tokio::test]
+async fn an_unresolvable_identifier_is_absent_rather_than_fatal() {
+    let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]);
+    let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:Missing", "urn:ngsi-ld:T:B"])];
+
+    let joined = joined(&service(broker), &roots, &[], &flat_join(1)).await;
+
+    pretty_assertions::assert_eq!(appended_ids(&joined), vec!["urn:ngsi-ld:T:B"]);
+    pretty_assertions::assert_eq!(joined.failures(), &[] as &[LinkedResolutionFailure]);
+}
+
+/// Clause 4.5.23.1: an annotated id this broker records no history for is
+/// asked of a holder that resolves its own sub-graph with the levels still to
+/// resolve, and with the already-walked identifiers.
+#[tokio::test]
+async fn a_subgraph_holder_is_asked_for_the_remaining_depth_and_the_visited_ids() {
+    let source = RecordingSource::returning(
+        RemoteReach::Subgraph,
+        [(uri("urn:ngsi-ld:T:B"), vec![json!({"id": "urn:ngsi-ld:T:B", "type": "Thing"})])],
+    );
+    let roots = [annotated_root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
+
+    let joined = joined(&service_with_remote(StubBroker::new([]), &source), &roots, &[], &flat_join(2)).await;
+
+    pretty_assertions::assert_eq!(appended_ids(&joined), vec!["urn:ngsi-ld:T:B"]);
     pretty_assertions::assert_eq!(
         *source.calls(),
         vec![RemoteCall {
@@ -893,256 +705,185 @@ async fn an_absent_annotated_candidate_is_fetched_with_the_remaining_depth_and_t
     );
 }
 
-/// Clause 4.5.23.1 gates non-local resolution on the `objectType` annotation:
-/// an unannotated Relationship names a plain URI, which stays a plain URI
-/// rather than becoming a forwarded retrieval.
+/// A holder that did not advertise the temporal join is asked for the entity
+/// alone, and the Relationships of what it answers are walked here: B is
+/// fetched for one level, and the C it names is then fetched on its own.
+#[tokio::test]
+async fn a_single_entity_holder_is_asked_for_one_level_and_walked_here() {
+    let source = RecordingSource::returning(
+        RemoteReach::SingleEntity,
+        [
+            (uri("urn:ngsi-ld:T:B"), vec![annotated_root("urn:ngsi-ld:T:B", &["urn:ngsi-ld:T:C"])]),
+            (uri("urn:ngsi-ld:T:C"), vec![json!({"id": "urn:ngsi-ld:T:C", "type": "Thing"})]),
+        ],
+    );
+    let roots = [annotated_root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
+
+    let joined = joined(&service_with_remote(StubBroker::new([]), &source), &roots, &[], &flat_join(2)).await;
+
+    pretty_assertions::assert_eq!(appended_ids(&joined), vec!["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"]);
+    let asked: Vec<(String, u32)> = source.calls().iter().map(|call| (call.id.to_string(), call.remaining_depth.get())).collect();
+    pretty_assertions::assert_eq!(asked, vec![("urn:ngsi-ld:T:B".to_owned(), 1), ("urn:ngsi-ld:T:C".to_owned(), 1)]);
+}
+
+/// Clause 4.5.23.1 gates non-local resolution on the `objectType`
+/// annotation: an unannotated target this broker does not hold stays a plain
+/// URI rather than becoming a forwarded retrieval.
 #[tokio::test]
 async fn an_absent_unannotated_candidate_is_never_fetched_remotely() {
-    let source = RecordingSource::returning([(uri("urn:ngsi-ld:T:B"), vec![json!({"id": "urn:ngsi-ld:T:B", "type": "Thing"})])]);
+    let source = RecordingSource::returning(
+        RemoteReach::Subgraph,
+        [(uri("urn:ngsi-ld:T:B"), vec![json!({"id": "urn:ngsi-ld:T:B", "type": "Thing"})])],
+    );
     let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
-    let resolved = service_with_remote(StubBroker::new([]), &source)
-        .resolve_linked_temporal(
-            &live_target(),
-            &roots,
-            &[],
-            &TemporalJoinRequest {
-                params: &window(),
-                join_level: level(1),
-                contained_by: &HashSet::new(),
-                context: &context(),
-            },
-        )
-        .await
-        .expect("resolves");
+    let joined = joined(&service_with_remote(StubBroker::new([]), &source), &roots, &[], &flat_join(1)).await;
 
-    assert!(resolved.entities.is_empty());
-    pretty_assertions::assert_eq!(resolved.failures, Vec::<LinkedResolutionFailure>::new());
+    pretty_assertions::assert_eq!(appended_ids(&joined), Vec::<String>::new());
+    pretty_assertions::assert_eq!(joined.failures(), &[] as &[LinkedResolutionFailure]);
     assert!(source.calls().is_empty());
 }
 
-/// A remainder of the system that cannot be consulted degrades the join rather
-/// than the request (clause 4.5.23): the retrieval still succeeds, the id stays
-/// unresolved, and the caller is told why so it can raise a clause 6.3.17
-/// warning.
+/// A remainder of the system that cannot be consulted degrades the join
+/// rather than the request (clause 4.5.23), and says why so the caller can
+/// raise a clause 6.3.17 warning.
 #[tokio::test]
 async fn a_failing_remote_source_reports_an_unreachable_failure() {
     let source = RecordingSource::failing();
     let roots = [annotated_root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
-    let resolved = service_with_remote(StubBroker::new([]), &source)
-        .resolve_linked_temporal(
-            &live_target(),
-            &roots,
-            &[],
-            &TemporalJoinRequest {
-                params: &window(),
-                join_level: level(1),
-                contained_by: &HashSet::new(),
-                context: &context(),
-            },
-        )
-        .await
-        .expect("resolves despite the unreachable remainder");
+    let joined = joined(&service_with_remote(StubBroker::new([]), &source), &roots, &[], &flat_join(1)).await;
 
-    assert!(resolved.entities.is_empty());
-    pretty_assertions::assert_eq!(resolved.failures.len(), 1);
-    pretty_assertions::assert_eq!(resolved.failures[0].id, uri("urn:ngsi-ld:T:B"));
-    pretty_assertions::assert_eq!(resolved.failures[0].kind, LinkedResolutionFailureKind::Unreachable);
+    pretty_assertions::assert_eq!(appended_ids(&joined), Vec::<String>::new());
+    pretty_assertions::assert_eq!(joined.failures().len(), 1);
+    pretty_assertions::assert_eq!(joined.failures()[0].id, uri("urn:ngsi-ld:T:B"));
+    pretty_assertions::assert_eq!(joined.failures()[0].kind, LinkedResolutionFailureKind::Unreachable);
 }
 
-/// The sub-graph a remote broker returns around a fetched candidate is already
-/// resolved, with the depth budget that broker was given. Those extra entities
-/// join the result and the visited guard, but they are not walked again: `C`
-/// arrives as `B`'s link at the second and last level, so the `D` it names is
-/// out of range, and `C` itself is never fetched.
+/// The sub-graph a holder returns around a fetched candidate was resolved
+/// with the depth that holder was given: it joins the result but is not
+/// walked again, so the D that C names is out of range and C is never
+/// fetched.
 #[tokio::test]
-async fn a_remote_brokers_extra_entities_are_neither_re_fetched_nor_expanded() {
-    let source = RecordingSource::returning([(
-        uri("urn:ngsi-ld:T:B"),
-        vec![
-            annotated_root("urn:ngsi-ld:T:B", &["urn:ngsi-ld:T:C"]),
-            annotated_root("urn:ngsi-ld:T:C", &["urn:ngsi-ld:T:D"]),
-        ],
-    )]);
+async fn a_remote_holders_extra_entities_are_neither_re_fetched_nor_expanded() {
+    let source = RecordingSource::returning(
+        RemoteReach::Subgraph,
+        [(
+            uri("urn:ngsi-ld:T:B"),
+            vec![
+                annotated_root("urn:ngsi-ld:T:B", &["urn:ngsi-ld:T:C"]),
+                annotated_root("urn:ngsi-ld:T:C", &["urn:ngsi-ld:T:D"]),
+            ],
+        )],
+    );
     let broker = StubBroker::new([(uri("urn:ngsi-ld:T:D"), Vec::new())]);
     let roots = [annotated_root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
-    let resolved = service_with_remote(broker, &source)
-        .resolve_linked_temporal(
-            &live_target(),
-            &roots,
-            &[],
-            &TemporalJoinRequest {
-                params: &window(),
-                join_level: level(2),
-                contained_by: &HashSet::new(),
-                context: &context(),
-            },
-        )
-        .await
-        .expect("resolves");
+    let joined = joined(&service_with_remote(broker, &source), &roots, &[], &flat_join(2)).await;
 
-    pretty_assertions::assert_eq!(
-        resolved.entities.keys().map(Identifier::as_str).collect::<Vec<_>>(),
-        vec!["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"]
-    );
+    pretty_assertions::assert_eq!(appended_ids(&joined), vec!["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"]);
     pretty_assertions::assert_eq!(source.calls().iter().map(|call| call.id.as_str()).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:B"]);
 }
 
-/// Clause 4.5.8 collapses attribute instances into value arrays, which erases
-/// the `object` members a join follows. The seed carries what the roots named,
-/// read off the normalized form before that projection, so a flat join over
-/// `temporalValues` still resolves — where walking the projected root alone
-/// would find nothing.
-#[tokio::test]
-async fn a_seed_resolves_links_the_projected_roots_no_longer_carry() {
-    let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]);
-    // A root as `temporalValues` renders it: no `object` member anywhere.
-    let projected = json!({
+/// The edges a root named before clause 4.5.8 collapsed its instances into a
+/// value array.
+fn seed() -> [LinkedEdge; 1] {
+    [LinkedEdge {
+        from: uri("urn:ngsi-ld:T:A"),
+        attribute: "linksTo".parse::<AttributeName>().expect("valid attribute name"),
+        target: uri("urn:ngsi-ld:T:B"),
+        eligibility: RemoteEligibility::LocalOnly,
+    }]
+}
+
+/// A root as `temporalValues` renders it: no `object` member anywhere.
+fn projected_root() -> Value {
+    json!({
         "id": "urn:ngsi-ld:T:A",
         "type": "Thing",
         "linksTo": {"type": "Relationship", "values": [["urn:ngsi-ld:T:B", "2024-01-01T00:00:00Z"]]}
-    });
-    let seed = [TemporalLinkedCandidate {
-        id: uri("urn:ngsi-ld:T:B"),
-        eligibility: RemoteEligibility::LocalOnly,
-        attributes: vec![attribute_name("linksTo")],
-    }];
-
-    let resolved = service(broker)
-        .resolve_linked_temporal(
-            &live_target(),
-            &[projected],
-            &seed,
-            &TemporalJoinRequest {
-                params: &window(),
-                join_level: level(1),
-                contained_by: &HashSet::new(),
-                context: &context(),
-            },
-        )
-        .await
-        .expect("resolves");
-
-    pretty_assertions::assert_eq!(resolved.entities.keys().map(Identifier::as_str).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:B"]);
+    })
 }
 
-/// Clause 4.21 nested narrowing must not depend on the roots' *final*
-/// rendering: `temporalValues` (clause 4.5.8) collapses an attribute's
-/// instances into a value array, erasing the `object` member a walk over the
-/// rendered root would need to associate a nested sub-projection with an
-/// identifier. The nested projection is instead read off the candidate's
-/// `attribute`, carried since the pre-transform normalized form, so the same
-/// narrowing applies under `temporalValues` too.
+/// Clause 4.5.8 erases the `object` members a join follows; the edges read
+/// off the normalized form before that projection still lead the join.
+#[tokio::test]
+async fn the_seed_resolves_links_the_projected_roots_no_longer_carry() {
+    let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]);
+
+    let joined = joined(&service(broker), &[projected_root()], &seed(), &flat_join(1)).await;
+
+    pretty_assertions::assert_eq!(appended_ids(&joined), vec!["urn:ngsi-ld:T:B"]);
+}
+
+/// Clause 4.21: a root whose list removes `id` is rendered without it, and
+/// the edges its normalized form reported still identify it and lead the
+/// join.
+#[tokio::test]
+async fn a_root_rendered_without_its_id_still_leads_the_join() {
+    let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]);
+    let unnamed = json!({"linksTo": [{"type": "Relationship", "object": "urn:ngsi-ld:T:B", "observedAt": "2024-01-01T00:00:00Z"}]});
+    let mut params = flat_join(1);
+    params.pick = Some(parse_projection_list("linksTo,reading").expect("valid projection list"));
+
+    let joined = joined(&service(broker), &[unnamed], &seed(), &params).await;
+
+    pretty_assertions::assert_eq!(appended_ids(&joined), vec!["urn:ngsi-ld:T:B"]);
+}
+
+/// Clause 4.21 under `temporalValues`: `linksTo{reading}` narrows B to
+/// `reading`, and the group names no `id`, so B's identity is not written
+/// either (D3).
 #[tokio::test]
 async fn a_nested_pick_narrows_the_linked_entity_under_temporal_values() {
-    // `B` has an outgoing link of its own, so its rendering carries two
-    // attributes -- `reading` and `linksTo` -- and the nested pick can be
-    // shown to keep one while dropping the other.
     let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), vec![uri("urn:ngsi-ld:T:C")])]);
-    // A root as `temporalValues` renders it: no `object` member anywhere.
-    let projected = json!({
-        "id": "urn:ngsi-ld:T:A",
-        "type": "Thing",
-        "linksTo": {"type": "Relationship", "values": [["urn:ngsi-ld:T:B", "2024-01-01T00:00:00Z"]]}
-    });
-    let seed = [TemporalLinkedCandidate {
-        id: uri("urn:ngsi-ld:T:B"),
-        eligibility: RemoteEligibility::LocalOnly,
-        attributes: vec![attribute_name("linksTo")],
-    }];
-    let mut params = window();
+    let mut params = flat_join(1);
     params.format = Some(WrittenValue::Supported(TemporalFormat::TemporalValues));
-    params.pick = Some(parse_projection_list("linksTo{reading}").expect("valid projection list"));
+    params.pick = Some(parse_projection_list("id,linksTo{reading}").expect("valid projection list"));
 
-    let resolved = service(broker)
-        .resolve_linked_temporal(
-            &live_target(),
-            &[projected],
-            &seed,
-            &TemporalJoinRequest {
-                params: &params,
-                join_level: level(1),
-                contained_by: &HashSet::new(),
-                context: &context(),
-            },
-        )
-        .await
-        .expect("resolves");
+    let joined = joined(&service(broker), &[projected_root()], &seed(), &params).await;
 
-    let target = resolved.entities.get(&uri("urn:ngsi-ld:T:B")).expect("target resolved");
-    assert!(target.get("reading").is_some(), "the nested pick keeps `reading`: {target}");
-    assert!(target.get("linksTo").is_none(), "the nested pick drops B's own `linksTo`: {target}");
-    assert_eq!(target["id"], "urn:ngsi-ld:T:B");
+    let appended = appended(&joined);
+    pretty_assertions::assert_eq!(appended.len(), 1);
+    assert!(appended[0].get("reading").is_some(), "the group keeps `reading`: {}", appended[0]);
+    assert!(appended[0].get("linksTo").is_none(), "the group drops B's own `linksTo`: {}", appended[0]);
+    assert!(appended[0].get("id").is_none(), "the group names no `id`: {}", appended[0]);
 }
 
-/// Clause 4.21: `omit=rel{a}` omits `a` inside whatever `rel` links to, not
-/// `rel` itself -- the root-side half of that rule (the relationship surviving
-/// on the root) is `TemporalEntityRenderer`'s
-/// `a_nested_omit_term_still_keeps_its_relationship_on_the_root`. This is the
-/// other half: the resolved target is narrowed, dropping `a` and leaving
-/// everything else -- including its identity -- in place.
+/// Clause 4.21: `omit=linksTo{reading}` keeps `linksTo` on the root and omits
+/// `reading` inside what it links to, leaving the rest of B in place.
 #[tokio::test]
 async fn a_nested_omit_narrows_the_resolved_target() {
     let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]);
     let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
-    let mut params = window();
+    let mut params = flat_join(1);
     params.omit = Some(parse_projection_list("linksTo{reading}").expect("valid projection list"));
 
-    let resolved = service(broker)
-        .resolve_linked_temporal(
-            &live_target(),
-            &roots,
-            &[],
-            &TemporalJoinRequest {
-                params: &params,
-                join_level: level(1),
-                contained_by: &HashSet::new(),
-                context: &context(),
-            },
-        )
-        .await
-        .expect("resolves");
+    let joined = joined(&service(broker), &roots, &[], &params).await;
 
-    let target = resolved.entities.get(&uri("urn:ngsi-ld:T:B")).expect("target resolved");
-    assert!(target.get("reading").is_none(), "the nested omit drops `reading` from the target: {target}");
-    assert_eq!(target["id"], "urn:ngsi-ld:T:B");
+    let appended = appended(&joined);
+    pretty_assertions::assert_eq!(appended.len(), 1);
+    assert!(appended[0].get("reading").is_none(), "the nested omit drops `reading`: {}", appended[0]);
+    pretty_assertions::assert_eq!(appended[0]["id"], "urn:ngsi-ld:T:B");
 }
 
-/// The window carries into the traversal but the request's `attrs` does not: a
-/// linked entity that has none of the attributes the client asked the roots for
-/// still appears, rendered with its own.
+/// D3 and Table 6.19.3.1-1: `attrs` is the `pick` synonym that keeps the
+/// identity, and it narrows every entity of the payload, so a Linked Entity
+/// holding none of the named attributes is written with its identity alone.
 #[tokio::test]
-async fn a_linked_entity_lacking_the_requested_attrs_still_appears_with_its_own() {
+async fn attrs_narrow_a_linked_entity_to_its_identity_when_it_has_none_of_them() {
     let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]);
     let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
-    // The roots were narrowed to an attribute the linked entity does not have;
-    // `B` only ever records `reading` and `linksTo`.
-    let mut narrowed = window();
-    narrowed.attrs = Some(vec!["https://example.com/absent".parse().expect("valid attribute name")]);
+    let mut params = flat_join(1);
+    params.attrs = Some(vec!["linksTo".parse().expect("valid attribute name")]);
 
-    let resolved = service(broker)
-        .resolve_linked_temporal(
-            &live_target(),
-            &roots,
-            &[],
-            &TemporalJoinRequest {
-                params: &narrowed,
-                join_level: level(1),
-                contained_by: &HashSet::new(),
-                context: &context(),
-            },
-        )
-        .await
-        .expect("resolves");
+    let joined = joined(&service(broker), &roots, &[], &params).await;
 
-    pretty_assertions::assert_eq!(resolved.entities.keys().map(Identifier::as_str).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:B"]);
-    let linked = resolved.entities.get(&uri("urn:ngsi-ld:T:B")).expect("the linked entity");
-    assert!(
-        linked.get("reading").is_some() || linked.get("https://example.com/reading").is_some(),
-        "the linked entity kept its own attributes: {linked}"
-    );
+    let appended = appended(&joined);
+    pretty_assertions::assert_eq!(appended.len(), 1);
+    let mut kept: Vec<&str> = appended[0].as_object().expect("an entity").keys().map(String::as_str).collect();
+    kept.sort_unstable();
+    pretty_assertions::assert_eq!(kept, vec!["id", "type"]);
 }
 
 /// The stubbed broker's commits never lose, so it never waits between attempts.

@@ -11,14 +11,9 @@
 //! The window arrives already compiled rather than as request parameters, so a
 //! caller that renders many entities compiles once instead of once per entity.
 
-use crate::{
-    error::TemporalError,
-    linked::candidates::{TemporalLinkedCandidate, collect_candidates},
-    service::TemporalService,
-    temporal_compaction::TemporalCompaction,
-    temporal_invariant::TemporalInvariant,
-};
+use crate::{error::TemporalError, service::TemporalService, temporal_compaction::TemporalCompaction, temporal_invariant::TemporalInvariant};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_linked_retrieval::{edge::LinkedEdge, representation::LinkedRepresentation};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
@@ -29,10 +24,11 @@ use andromeda_ngsi_ld_render::{
         entity::TemporalEntityRenderer,
         history_row::TimeRange,
         page_cut::{PageCut, largest_simultaneous_group},
+        temporal_evolutions::TemporalEvolutions,
         values::TemporalValuesRenderer,
     },
 };
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 use serde_json::Value;
 use std::slice;
 
@@ -77,15 +73,15 @@ pub(crate) struct RenderedTemporalEntity {
     pub(crate) cut: Option<PageCut>,
     /// The earliest and latest instants the representation actually carries.
     pub(crate) time_range: Option<TimeRange>,
-    /// The Linked Entities this entity names, read off the representation
-    /// before any format projection narrowed it.
+    /// The edges to the Linked Entities this entity names, read off the
+    /// representation before any format projection narrowed it.
     ///
     /// Clause 4.5.8 collapses each attribute's instances into parallel value
     /// and timestamp arrays, which erases the `object` members a join needs to
     /// follow. Collecting here — while the normalized form still exists — is
     /// what lets `join=flat` work in every representation rather than silently
     /// finding nothing outside the normalized one.
-    pub(crate) candidates: Vec<TemporalLinkedCandidate>,
+    pub(crate) edges: Vec<LinkedEdge>,
 }
 
 /// One entity's history as its page read it, before the response's common cut
@@ -215,15 +211,17 @@ impl TemporalService {
         // and attribute discovery the same way).
         let compacted = compaction.document(&built.entity).await?;
         let mut compacted = TemporalArrayNormalizer::new(compacted).render();
+        // Read the Linked Entities off the normalized form, before the clause
+        // 4.5.8 projection below erases the `object` members they live in, and
+        // before a list without `id` removes the identity the edges leave from.
+        let mut edges = Vec::new();
+        TemporalEvolutions::edges(&compacted, &mut edges);
         // Clause 4.21, `id` / `type` half: the attribute half of the
         // projection already ran inside `TemporalEntityRenderer` on the
         // expanded representation, keyed by attribute IRI; `id` and `type`
         // only exist as such once compaction has turned `@id` / `@type` into
         // them, so their half of the structural rule runs here instead.
         StructuralProjection::from(&compiled.projection).prune(&mut compacted);
-        // Read the Linked Entities off the normalized form, before the clause
-        // 4.5.8 projection below erases the `object` members they live in.
-        let candidates = collect_candidates(slice::from_ref(&compacted), &IndexSet::new());
 
         let value = if compiled.representation.format == TemporalFormat::TemporalValues {
             // The renderer names an attribute the cut emptied by the family its
@@ -248,7 +246,7 @@ impl TemporalService {
             presence,
             cut,
             time_range: built.time_range,
-            candidates,
+            edges,
         })
     }
 
@@ -290,7 +288,7 @@ impl TemporalService {
             // A Relationship has nothing to aggregate and so never appears
             // in an aggregated representation, which leaves a join over one
             // with nothing to follow.
-            candidates: Vec::new(),
+            edges: Vec::new(),
         })
     }
 }

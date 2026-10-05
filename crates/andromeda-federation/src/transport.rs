@@ -51,6 +51,20 @@ impl FederationService {
     /// for: the one context `Link`, `Accept`, the body with its `Content-Type`,
     /// the `contextSourceInfo` custom headers, `NGSILD-Tenant` and `Via`.
     pub(crate) fn build_request(&self, forwarded: ForwardedRequest<'_>) -> Result<reqwest::RequestBuilder, FederationError> {
+        // Clause 5.5.13 through clause 6.3.18: a `localOnly` registration is
+        // asked for its own data only.
+        let url = match forwarded.registration.access.management.as_ref().and_then(|management| management.local_only) {
+            Some(LocalScope::LocalOnly) => with_local_scope(forwarded.url),
+            Some(LocalScope::Cascading) | None => forwarded.url,
+        };
+        self.build_unscoped_request(ForwardedRequest { url, ..forwarded })
+    }
+
+    /// Build a request exactly as [`Self::build_request`] does, except that
+    /// the URL is sent as given: a request about the Context Source itself
+    /// rather than about its data (clause 5.15.1 defines no parameter at all)
+    /// carries no local scope.
+    pub(crate) fn build_unscoped_request(&self, forwarded: ForwardedRequest<'_>) -> Result<reqwest::RequestBuilder, FederationError> {
         let ForwardedRequest {
             method,
             url,
@@ -61,13 +75,6 @@ impl FederationService {
         } = forwarded;
         let access = &registration.access;
         let info = context_source_info(registration)?;
-
-        // Clause 5.5.13 through clause 6.3.18: a `localOnly` registration is
-        // asked for its own data only.
-        let url = match access.management.as_ref().and_then(|management| management.local_only) {
-            Some(LocalScope::LocalOnly) => with_local_scope(url),
-            Some(LocalScope::Cascading) | None => url,
-        };
 
         let mut typed_headers = HeaderMap::new();
         typed_headers.typed_insert(headers::Connection::close());

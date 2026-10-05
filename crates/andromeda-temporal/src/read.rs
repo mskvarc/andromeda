@@ -115,7 +115,7 @@ impl TemporalService {
             Ok(TemporalReadResult {
                 value: rendered.value,
                 range,
-                linked_candidates: rendered.candidates,
+                linked_edges: rendered.edges,
             })
         }
         .await;
