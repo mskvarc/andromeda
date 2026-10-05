@@ -2,21 +2,26 @@
 //! 5.8.6), every part of it by the typed walk.
 
 use crate::processor::payload::notified_entity::{DeletedRendering, NotifiedEntity, rendered_entity};
+use andromeda_linked_retrieval::{
+    graph::{LinkedGraph, RootEdges},
+    join::RetrievingJoin,
+    narrowing::{list::ListInForce, member::MemberRule},
+    plan::JoinPlan,
+    typed::TypedEntities,
+};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
-use andromeda_ngsi_ld_query::projection::compiled::Projection;
+use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection};
 use andromeda_ngsi_ld_render::{
-    entity_response::InlineJoin,
     notification_entity::{StampedInstants, TargetSpelling},
     notified_changes::HeldAttributes,
     structural_projection::StructuralProjection,
 };
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use chrono::{TimeZone, Utc};
-use indexmap::IndexMap;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::{num::NonZeroU32, slice::from_ref, sync::Arc};
 
 /// An entity read from its compact document.
 fn entity(document: &Value) -> Entity {
@@ -134,21 +139,31 @@ fn deleted_instances_join_the_held_ones() {
 /// Relationship naming it, in the notification's format.
 #[test]
 fn an_inline_join_nests_the_linked_entity() {
-    let linked: IndexMap<_, _> = [(
-        "urn:ngsi-ld:Parking:a%2Fb".parse().expect("an identifier"),
-        entity(&json!({"id": "urn:ngsi-ld:Parking:a%2Fb", "type": "Parking", "free": {"type": "Property", "value": 3}})),
-    )]
-    .into_iter()
-    .collect();
+    let notified = current(vehicle());
+    let RootEdges { ids, edges } = RootEdges::of::<TypedEntities>(from_ref(&*notified.entity));
+    let graph = LinkedGraph {
+        roots: ids,
+        nodes: [(
+            "urn:ngsi-ld:Parking:a%2Fb".parse().expect("an identifier"),
+            entity(&json!({"id": "urn:ngsi-ld:Parking:a%2Fb", "type": "Parking", "free": {"type": "Property", "value": 3}})),
+        )]
+        .into_iter()
+        .collect(),
+        edges,
+        failures: Vec::new(),
+        depth: NonZeroU32::MIN,
+    };
+    let index = AttributeIriIndex::default();
+    let plan = JoinPlan::<TypedEntities>::new(RetrievingJoin::Inline, &graph, MemberRule::new(ListInForce::Unrestricted, &index));
+    let JoinPlan::Inline(inline) = &plan else {
+        panic!("an inline join plans inline");
+    };
     let projection = whole();
-    let rendered = current(vehicle())
+    let rendered = notified
         .render(
             ResponseFormat::Simplified,
             TargetSpelling::Decoded,
-            Some(InlineJoin {
-                linked: &linked,
-                projection: None,
-            }),
+            Some(inline.cursor()),
             StructuralProjection::from(&projection),
         )
         .expect("the walk writes it");

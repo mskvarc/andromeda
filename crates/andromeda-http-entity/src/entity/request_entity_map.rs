@@ -7,10 +7,7 @@
 //! Entities and Retrieve Entity — differ only in how the entities this broker
 //! holds itself are listed, which is why that half alone is a parameter here.
 
-use crate::{
-    error::{EntityHttpClassify, EntityResultExt},
-    join::ResolvedJoin,
-};
+use crate::error::{EntityHttpClassify, EntityResultExt};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_entity_map::{
@@ -23,6 +20,7 @@ use andromeda_entity_map::{
 };
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_linked_retrieval::{plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::page_window::PageWindow;
 use andromeda_ngsi_ld_request::{entity::GetEntityParams, query::entity::parameters::EntityQueryParameters};
@@ -48,9 +46,9 @@ pub(crate) enum LocalEntitySource<'a> {
         query: &'a EntityQueryParameters,
         /// The request's JSON-LD context.
         context: &'a ContextSpec,
-        /// The resolved clause 4.5.23 join, whose Linked Entities belong to the
+        /// The planned clause 4.5.23 join, whose Linked Entities belong to the
         /// same unitary request.
-        join: Option<&'a ResolvedJoin<'a>>,
+        join: Option<&'a JoinPlan<'a, TypedEntities>>,
         /// The request URI a failed listing names.
         instance: &'a HttpUri,
     },
@@ -68,7 +66,7 @@ impl<'a> LocalEntitySource<'a> {
         target: &'a ContextTarget,
         query: &'a EntityQueryParameters,
         context: &'a ContextSpec,
-        join: Option<&'a ResolvedJoin<'a>>,
+        join: Option<&'a JoinPlan<'a, TypedEntities>>,
         instance: &'a HttpUri,
     ) -> LocalEntitySource<'a> {
         LocalEntitySource::Queried {
@@ -131,7 +129,7 @@ impl LocalMapEntities for LocalEntitySource<'_> {
                 // Clause 5.5.14: the Linked Entities the join resolved belong to
                 // the same unitary request as the entities that named them.
                 if let Some(join) = join {
-                    identifiers.extend(join.linked.keys().cloned()); // clone: the map owns its identifiers
+                    identifiers.extend(join.linked_ids().into_iter().cloned()); // clone: the map owns its identifiers
                 }
                 identifiers.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
                 identifiers.dedup();

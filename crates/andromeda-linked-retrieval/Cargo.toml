@@ -10,12 +10,18 @@ workspace = true
 
 [dependencies]
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
-derive_more = { version = "2.1.1", features = ["display", "from"] }
+derive_more = { version = "2.1.1", features = ["display", "from", "is_variant"] }
+enumset = "1.1.14"
+indexmap = "2.14.2"
+iri-rs = "3.4.1"
 thiserror = "2.0.21"
 typed-builder = "0.23.2"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
+serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
+tokio = { version = "1.53.2", features = ["macros", "rt"] }

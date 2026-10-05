@@ -32,7 +32,7 @@ use crate::{
         with_linked_resolution_warnings,
     },
     error::public_error,
-    read_rendering::{EntityRepresentation, apply_representation_names, matched_entities},
+    read_rendering::{EntityRepresentation, matched_entities, settle_representation},
     state::EntityRouteServices,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -43,6 +43,7 @@ use andromeda_federation::{
 };
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{api_root::ApiRoot, context_target, pagination_policy::RequestPagination, response_context_request::ResponseContextRequest};
+use andromeda_linked_retrieval::{plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -205,9 +206,9 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let split_survivors = split_entities.then(|| split_match_set(&entities));
         let (mut entities, total_count) = page.cut(entities, local_total);
 
-        // Clause 4.21: the request's `pick`/`omit` govern both the matching
-        // entities' structural members and, through their clause 4.21 nested
-        // terms, the entities the traversal reaches. Both read it off the
+        // Clause 4.21: the request's `pick`/`omit` (or `attrs`) govern both
+        // the matching entities and, through the list in force, every Linked
+        // Entity the traversal reaches (clause 5.7.2.5). Both read it off the
         // compilation the query already ran, which has to outlive the join
         // that borrows its terms.
         let request_projection = RequestProjection::of(service, &query, &context).await.with_entity_instance(&uri)?;
@@ -215,27 +216,27 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
 
         // The join resolves before the EntityMap is recorded so a minted map
         // can include the linked ids (clauses 5.5.14 and 5.7.2.4).
-        let mut resolved = ResolvedJoin::of_query(service, &target, &entities, &context, &query, opts.sys_attrs, projection)
+        let mut resolved = ResolvedJoin::of_query(service, &target, &entities, &context, &query, opts.sys_attrs, request_projection.list())
             .await
             .with_entity_instance(&uri)?;
         // Clause 6.3.17: a Linked Entity the join could not reach leaves the
         // body incomplete, and the warning header is what says so.
-        let warnings = match &resolved {
-            Some(resolved) => with_linked_resolution_warnings(warnings, &resolved.failures),
-            None => warnings,
-        };
+        let warnings = with_linked_resolution_warnings(warnings, ResolvedJoin::failures_of(resolved.as_ref()));
+
+        let representation = EntityRepresentation::new(opts.render_mode, projection);
+        settle_representation(service, &representation, &context, &mut entities, resolved.as_mut(), &uri).await?;
+        let entities = entities;
+        let resolved = resolved;
+        let plan = resolved.as_ref().map(ResolvedJoin::plan);
 
         // Table 6.4.3.2-3 and Table 6.23.3.1-1: 201 when an EntityMap has been
         // (re)created.
         let status = if map_use.mints() { StatusCode::CREATED } else { StatusCode::OK };
-        let map_entities = LocalEntitySource::queried(service, &target, &query, &context, resolved.as_ref(), &uri);
-        let page_matches = split_page_matches(split_survivors, resolved.as_ref());
+        let map_entities = LocalEntitySource::queried(service, &target, &query, &context, plan.as_ref(), &uri);
+        let page_matches = split_page_matches(split_survivors, plan.as_ref());
         let entity_map_uri = record_map_use(&state.entity_maps, map_use, contributions, map_entities, page_matches, &uri).await?;
 
-        let representation = EntityRepresentation::new(opts.render_mode, projection);
-        apply_representation_names(service, &representation, &context, &mut entities, resolved.as_mut(), &uri).await?;
-        let entities = entities;
-        let answer = matched_entities(&entities, resolved.as_ref(), &representation);
+        let answer = matched_entities(&entities, plan.as_ref(), &representation);
         let rendering = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root)
             .start_rendering(accept.media_type(), prefer.rendering_preferences(), opts.render_mode)
             .await
@@ -316,11 +317,11 @@ fn cursor_boundary(entities: &[Entity]) -> Option<(Identifier, Identifier)> {
 /// Entities the join reached join them, since clause 5.5.14 fixes them as part
 /// of the same unitary request rather than as candidates a filter could shed.
 /// A non-split query prunes per source.
-fn split_page_matches(split_survivors: Option<Vec<Identifier>>, resolved: Option<&ResolvedJoin<'_>>) -> PageMatches {
+fn split_page_matches(split_survivors: Option<Vec<Identifier>>, plan: Option<&JoinPlan<'_, TypedEntities>>) -> PageMatches {
     match split_survivors {
         Some(mut survivors) => {
-            if let Some(resolved) = resolved {
-                survivors.extend(resolved.linked.keys().cloned()); // clone: the match set owns its identifiers
+            if let Some(plan) = plan {
+                survivors.extend(plan.linked_ids().into_iter().cloned()); // clone: the match set owns its identifiers
             }
             PageMatches::Merged(survivors)
         }

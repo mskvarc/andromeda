@@ -16,16 +16,15 @@
 
 use crate::{
     entity_body::{
-        linked_entities::EntityJoin,
         member_walk::MemberWalk,
         typed_entity::{IdentifierMember, TypedEntity},
     },
-    entity_response::InlineJoin,
     error::{RenderError, RenderedShape},
     notified_changes::NotifiedChanges,
     structural_projection::StructuralProjection,
     uri_decoding::UriDecoding,
 };
+use andromeda_linked_retrieval::{plan::InlineCursor, typed::TypedEntities};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use chrono::{DateTime, Utc};
@@ -68,7 +67,7 @@ pub struct NotificationEntity<'a> {
     targets: TargetSpelling,
     /// The inline join its Relationships nest their targets by, if the
     /// subscription asked for one.
-    join: Option<InlineJoin<'a>>,
+    join: Option<InlineCursor<'a, TypedEntities>>,
     /// What the notification reports of the change beside the entity's state.
     changes: Option<NotifiedChanges<'a>>,
     /// The clause 4.21 rule the subscription's `pick` and `omit` state for
@@ -95,7 +94,7 @@ impl<'a> NotificationEntity<'a> {
     /// The entity, its Relationships nesting the Linked Entities `join`
     /// resolved (clause 4.5.23.2).
     #[must_use]
-    pub const fn with_inline_join(self, join: InlineJoin<'a>) -> NotificationEntity<'a> {
+    pub const fn with_inline_join(self, join: InlineCursor<'a, TypedEntities>) -> NotificationEntity<'a> {
         NotificationEntity { join: Some(join), ..self }
     }
 
@@ -138,7 +137,7 @@ impl<'a> NotificationEntity<'a> {
             identifier: IdentifierMember::Mandatory,
             context: None,
             stamped: Some(self.stamped),
-            join: self.join.map(|join| EntityJoin::root(join.linked, join.projection)),
+            join: self.join,
             narrowing: None,
             changes: self.changes,
         };

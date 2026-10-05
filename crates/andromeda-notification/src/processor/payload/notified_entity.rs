@@ -9,9 +9,9 @@
 //! the Linked Entities of a `join=inline` subscription included.
 
 use crate::error::NotificationError;
+use andromeda_linked_retrieval::{plan::InlineCursor, typed::TypedEntities};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_render::{
-    entity_response::InlineJoin,
     notification_entity::{NotificationEntity, StampedInstants, TargetSpelling},
     notified_changes::{DeletedInstances, HeldAttributes, NotifiedChanges},
     structural_projection::StructuralProjection,
@@ -63,7 +63,7 @@ impl NotifiedEntity {
 
     /// The entity in `format`, its Relationship targets spelled as `targets`
     /// says, `type` and `scope` narrowed by `projection`, the Linked Entities
-    /// `join` resolved nested into it.
+    /// the plan's cursor answers nested into it.
     ///
     /// # Errors
     ///
@@ -73,7 +73,7 @@ impl NotifiedEntity {
         &self,
         format: ResponseFormat,
         targets: TargetSpelling,
-        join: Option<InlineJoin<'_>>,
+        join: Option<InlineCursor<'_, TypedEntities>>,
         projection: StructuralProjection<'_>,
     ) -> Result<Value, NotificationError> {
         let notified = NotificationEntity::new(&self.entity, &self.stamped, format, targets).with_projection(projection);

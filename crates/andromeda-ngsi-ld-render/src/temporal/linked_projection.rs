@@ -6,7 +6,7 @@
 //! and narrow whatever `rel` links to down to `a` plus its identity. This is
 //! the second half.
 //!
-//! Unlike the non-temporal `join=inline` nesting in [`crate::nested_projection`],
+//! Unlike the non-temporal `join=inline` nesting the Linked Entity plan drives,
 //! the temporal join in `andromeda-temporal`'s `crate::linked` resolves each
 //! Linked Entity exactly once regardless of how many roots, attributes or
 //! instances named it, so there is exactly one narrowing to compute and apply

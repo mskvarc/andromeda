@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
-jsonld = { version = "0.23.5", features = ["vocab"] }
+jsonld = { version = "0.23.6", features = ["vocab"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

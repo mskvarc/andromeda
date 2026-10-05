@@ -1,5 +1,6 @@
-//! Compiling raw `pick` / `omit` terms into the clause 4.21 projection, for
-//! the read path that has no compiled query to take one from.
+//! Compiling raw `pick` / `omit` terms into the clause 4.21 projection, and
+//! raw `attrs` names into expanded ones, for the read path that has no
+//! compiled query to take them from.
 //!
 //! An entity query expands its projection as part of compiling the whole
 //! [`CompiledEntityQuery`], and reads it back off that cached compilation. The
@@ -13,7 +14,13 @@
 
 use crate::{error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_query::projection::{compiled::Projection, expansion::expand_projection_terms, grammar::RawProjectionTerm};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_query::projection::{
+    compiled::Projection,
+    expansion::{expand_attrs, expand_projection_terms},
+    grammar::RawProjectionTerm,
+};
+use iri_rs::IriBuf;
 
 impl EntityQueryService {
     /// Expand a request's `pick` and `omit` terms against the active context.
@@ -43,6 +50,22 @@ impl EntityQueryService {
         let omit = expand_projection_terms(omit.unwrap_or(&[]), &expander).await?;
 
         Ok(Some(Projection::builder().pick(pick).omit(omit).build()))
+    }
+
+    /// Expand a request's `attrs` names (clause 5.7.2) against the active
+    /// context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityError`] when a name cannot be expanded through the
+    /// context.
+    pub async fn expand_attribute_names(&self, names: &[AttributeName], context: &ContextSpec) -> Result<Vec<IriBuf>, EntityError> {
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
+        let prepared_context = self.engine().prepare_term_context(context);
+        let expander = ContextualExpander::new(self.engine(), &prepared_context);
+        Ok(expand_attrs(names, &expander).await?)
     }
 }
 

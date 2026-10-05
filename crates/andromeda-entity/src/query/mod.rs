@@ -7,22 +7,16 @@ pub mod attribute_expansion;
 pub mod attribute_projection;
 /// Compiling request parameters into a [`CompiledEntityQuery`].
 pub mod compilation;
+/// Where the Core reads and notifications read their Linked Entities from
+/// (clause 4.5.23).
+pub mod core_linked_source;
 /// Narrowing an entity's attribute instances by `datasetId`.
 pub mod dataset_filter;
 /// Merging locally held entities with those a context source returned.
 pub mod forwarded_merge;
-/// Preparing the nested projections in the shape the join mode applies them.
-pub mod join_projection;
-/// Resolving the entities a result set links to (clause 4.5.23).
-pub mod linked_entity;
 /// Gathering the entity states the hops of an in-memory filter cross into
 /// (clause 4.9).
 pub mod linked_filter_states;
-/// Deriving the nested projection that applies to each linked entity
-/// (clause 4.21).
-pub(crate) mod linked_projection;
-/// Which Linked Entities a payload's Relationships still name (clause 4.5.23).
-pub mod linked_reachability;
 /// Compiling raw `pick`/`omit` terms into the clause 4.21 projection.
 pub mod projection_compilation;
 /// What a clause 4.21 projection leaves of an entity.

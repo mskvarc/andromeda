@@ -12,7 +12,7 @@ use crate::{
     },
     geometry_selection::GeometrySelection,
 };
-use andromeda_ngsi_ld_query::projection::term::ProjectionTerm;
+use andromeda_linked_retrieval::keyword::Keyword;
 use serde::{Serialize, Serializer, ser::SerializeMap};
 use serde_json::Value;
 
@@ -57,7 +57,7 @@ impl Serialize for FeatureBody<'_> {
         let mut feature = serializer.serialize_map(None)?;
         feature.serialize_entry("type", FEATURE)?;
         feature.serialize_entry("geometry", &self.geometry)?;
-        if self.entity.keeps(&ProjectionTerm::Id) {
+        if self.entity.keeps(Keyword::Id) {
             feature.serialize_entry("id", &self.entity.entity.id)?;
         }
         feature.serialize_entry("properties", &self.entity)?;

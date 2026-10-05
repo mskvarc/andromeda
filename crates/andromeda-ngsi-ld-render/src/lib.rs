@@ -35,7 +35,6 @@ pub mod error;
 pub mod geojson;
 pub mod geometry_selection;
 pub mod language_negotiation;
-pub mod nested_projection;
 pub mod notification_conformance;
 pub mod notification_data;
 pub mod notification_entity;
@@ -57,6 +56,7 @@ pub mod version;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-http-headers",
+        "andromeda-linked-retrieval",
         "andromeda-ngsi-ld-entity",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",

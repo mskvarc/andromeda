@@ -25,7 +25,6 @@ use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     page_window::PageWindow,
     projection::compiled::Projection,
-    term_expander::TermExpander,
     type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -153,12 +152,7 @@ impl EntityQueryService {
         // some of them from the copy's map.
         let mut narrowed = Arc::unwrap_or_clone(state);
         if !narrowing.attrs.is_empty() {
-            let prepared = self.engine().prepare_term_context(context);
-            let expander = ContextualExpander::new(self.engine(), &prepared);
-            let mut wanted_iris = Vec::with_capacity(narrowing.attrs.len());
-            for attr in narrowing.attrs {
-                wanted_iris.push(expander.expand_term(attr.as_str()).await?);
-            }
+            let wanted_iris = self.expand_attribute_names(narrowing.attrs, context).await?;
             retain_wanted_attributes(&mut narrowed, &wanted_iris);
 
             // Clause 5.7.1.4: "If the optional Attribute list is present and

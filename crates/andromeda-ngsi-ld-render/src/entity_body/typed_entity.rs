@@ -11,17 +11,17 @@
 
 use crate::{
     entity_body::{
-        linked_entities::{EntityJoin, JoinPath},
+        linked_entities::AttributeJoin,
         member_walk::MemberWalk,
         notified_member::{MemberInstances, NotifiedMember},
         reified_member::{Reification, ReifiedMember},
         simplified_member::{SimplifiedMember, VerbatimReading},
     },
-    nested_projection::NestedProjection,
     notification_entity::StampedInstants,
     notified_changes::NotifiedChanges,
     structural_projection::StructuralProjection,
 };
+use andromeda_linked_retrieval::{keyword::Keyword, narrowing::member::MemberRule, plan::InlineCursor, typed::TypedEntities};
 use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
 use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
 use andromeda_ngsi_ld_query::projection::term::ProjectionTerm;
@@ -84,21 +84,26 @@ pub(crate) struct TypedEntity<'a> {
     pub(crate) context: Option<&'a Value>,
     /// The entity times a notification writes on the entity, if it is one.
     pub(crate) stamped: Option<&'a StampedInstants>,
-    /// The clause 4.5.23 inline join its Relationships nest their targets by,
-    /// if the response asked for one.
-    pub(crate) join: Option<EntityJoin<'a>>,
-    /// The clause 4.21 sub-projection that narrows its attributes, when it is
-    /// a Linked Entity a Relationship carrying one nested.
-    pub(crate) narrowing: Option<NestedProjection<'a>>,
+    /// Where the clause 4.5.23 inline join stands at this entity, if the
+    /// response asked for one: its Relationships nest what the cursor answers.
+    pub(crate) join: Option<InlineCursor<'a, TypedEntities>>,
+    /// The rule a Linked Entity's members are written by, when its list in
+    /// force narrows anything (clauses 4.21 and 5.7.1.5).
+    pub(crate) narrowing: Option<MemberRule<'a>>,
     /// What a notification reports of the change beside the entity's state
     /// (clause 5.8.6), if it is a notified entity.
     pub(crate) changes: Option<NotifiedChanges<'a>>,
 }
 
 impl TypedEntity<'_> {
-    /// Whether the clause 4.21 rule keeps one structural member.
-    pub(crate) fn keeps(&self, keyword: &ProjectionTerm) -> bool {
-        self.projection.is_none_or(|projection| projection.keeps(keyword))
+    /// Whether the clause 4.21 rule keeps one structural member: a Linked
+    /// Entity's own rule, or else the request's.
+    pub(crate) fn keeps(&self, keyword: Keyword) -> bool {
+        match (self.narrowing, self.projection) {
+            (Some(rule), _) => rule.keyword(keyword).is_write(),
+            (None, Some(projection)) => projection.keeps(&keyword.term()),
+            (None, None) => true,
+        }
     }
 
     /// Whether the request asked for nothing beyond the representation: no
@@ -127,18 +132,18 @@ impl Serialize for TypedEntity<'_> {
         let entity = self.entity;
         let mut object = serializer.serialize_map(None)?;
         let writes_id = match self.identifier {
-            IdentifierMember::Written => self.keeps(&ProjectionTerm::Id),
+            IdentifierMember::Written => self.keeps(Keyword::Id),
             IdentifierMember::Mandatory => true,
             IdentifierMember::Promoted => false,
         };
         if writes_id {
             object.serialize_entry(ProjectionTerm::ID_KEYWORD, &entity.id)?;
         }
-        if self.keeps(&ProjectionTerm::Type) {
+        if self.keeps(Keyword::Type) {
             object.serialize_entry(ProjectionTerm::TYPE_KEYWORD, &entity.type_)?;
         }
         if let Some(scope) = &entity.scope
-            && self.keeps(&ProjectionTerm::Scope)
+            && self.keeps(Keyword::Scope)
         {
             object.serialize_entry(ProjectionTerm::SCOPE_KEYWORD, scope)?;
         }
@@ -174,13 +179,13 @@ impl Serialize for TypedEntity<'_> {
             }
         }
         // The entity is open on the join's path while its own Relationships
-        // nest their targets, so none of them nests it again.
-        let path = JoinPath::new(entity.id.as_uri(), self.join.and_then(|join| join.parent()));
+        // nest their targets.
+        let open = self.join.map(|cursor| cursor.open(&entity.id));
         for (name, member) in entity.attribute_members() {
-            if self.narrowing.is_some_and(|narrowing| !narrowing.keeps_attribute(name)) {
+            if self.narrowing.is_some_and(|rule| rule.member(name).is_skip()) {
                 continue;
             }
-            let walk = self.walk.with_join(self.join.map(|join| join.attribute(name, &path)));
+            let walk = self.walk.with_join(open.as_ref().map(|open| AttributeJoin { open, attribute: name }));
             match &self.changes {
                 None => object.serialize_entry(name, &self.member_under(MemberInstances::Held(member), walk))?,
                 Some(changes) => {

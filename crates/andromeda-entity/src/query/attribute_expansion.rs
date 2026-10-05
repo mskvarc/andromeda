@@ -6,15 +6,12 @@
 //! [`AttributeExpansions`] expands each distinct name once per request and
 //! answers every later lookup from its own index, so narrowing a page costs
 //! one expansion per distinct name rather than one per member, per entity, per
-//! pass. Whatever applies a projection further out — the renderer nesting
-//! linked entities above all — receives the index already resolved instead of
-//! a JSON-LD engine.
+//! pass.
 //!
 //! [`AttributeExpansions`]: crate::query::attribute_expansion::AttributeExpansions
 
-use crate::{entity_validation_reason::EntityValidationReason, error::EntityError, query::EntityQueryService};
+use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
 use andromeda_jsonld::{
-    context_spec::ContextSpec,
     engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
     term_expansion::ContextualExpander,
 };
@@ -85,38 +82,6 @@ impl<'a> AttributeExpansions<'a> {
     pub fn expanded(&self, name: &str) -> Option<&IriBuf> {
         self.index.expanded(name)
     }
-
-    /// Every expansion made, as the index a renderer matches projections with.
-    #[must_use]
-    pub fn into_index(self) -> AttributeIriIndex {
-        self.index
-    }
-}
-
-impl EntityQueryService {
-    /// The expanded IRI of every attribute key the given entities carry.
-    ///
-    /// The context is prepared once and each distinct key expanded once, so a
-    /// key repeated across entities costs one lookup.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EntityError`] when an attribute key cannot be expanded
-    /// through the context.
-    pub async fn attribute_iri_index<'a>(
-        &self,
-        entities: impl IntoIterator<Item = &'a Entity>,
-        context: &ContextSpec,
-    ) -> Result<AttributeIriIndex, EntityError> {
-        let prepared = self.engine().prepare_term_context(context);
-        let mut expansions = AttributeExpansions::new(self.engine(), &prepared);
-        for entity in entities {
-            for key in entity.attrs.keys() {
-                expansions.ensure(key).await?;
-            }
-        }
-        Ok(expansions.into_index())
-    }
 }
 
 #[cfg(test)]
@@ -183,17 +148,5 @@ mod tests {
 
         pretty_assertions::assert_eq!(expansions.expanded("speed"), Some(&iri("https://example.com/speed")));
         pretty_assertions::assert_eq!(expansions.expanded("location"), Some(&iri("https://uri.etsi.org/ngsi-ld/location")));
-    }
-
-    #[tokio::test]
-    async fn the_index_carries_every_expansion_made() {
-        let engine = engine();
-        let prepared = engine.prepare_term_context(&context());
-        let mut expansions = AttributeExpansions::new(&engine, &prepared);
-
-        expansions.ensure(&name("speed")).await.expect("expands");
-        let index = expansions.into_index();
-
-        pretty_assertions::assert_eq!(index.expanded("speed"), Some(&iri("https://example.com/speed")));
     }
 }

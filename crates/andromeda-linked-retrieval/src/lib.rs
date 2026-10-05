@@ -16,12 +16,26 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod admission;
+pub mod attribute_index;
+pub mod candidate;
+pub mod edge;
+pub mod graph;
 pub mod join;
+pub mod keyword;
+pub mod narrowing;
+pub mod plan;
+pub mod representation;
+pub mod source;
+#[cfg(test)]
+mod test_graph;
+pub mod traversal;
+pub mod typed;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-representation",
     ],

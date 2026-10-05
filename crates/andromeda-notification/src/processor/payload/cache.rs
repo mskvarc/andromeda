@@ -12,26 +12,29 @@ use crate::{
     processor::payload::{join::report_unresolved, selection::Selection},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::query::EntityQueryService;
+use andromeda_entity::query::{EntityQueryService, core_linked_source::CoreLinkedSource};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_linked_retrieval::{
+    graph::{LinkedGraph, RootEdges},
+    join::TraversalBounds,
+    traversal::traverse,
+    typed::TypedEntities,
+};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use indexmap::IndexMap;
 use iri_rs::IriBuf;
 use std::{
-    collections::HashSet,
     hash::{Hash, Hasher},
     num::NonZeroU32,
     slice::from_ref,
     sync::Arc,
 };
 
-/// The Linked Entities one notified entity reaches, keyed by identifier in the
-/// traversal's first-encounter order (clause 4.5.23.3).
-pub(super) type LinkedEntities = Arc<IndexMap<Identifier, Entity>>;
+/// The Linked Entities one notified entity reaches, as the engine traversed
+/// them (clause 4.5.23), shared by every notification of one change.
+pub(super) type LinkedEntities = Arc<LinkedGraph<Entity>>;
 
 /// Which state of one change a rendering is read from.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -188,12 +191,13 @@ pub(super) async fn resolve_linked_cached(
     if let Some(hit) = cache.linked_entities.get(&key) {
         return Ok(Arc::clone(&hit));
     }
-    let resolution = entity_query
-        .resolve_linked_entities(target, from_ref(main_entity), key.join_level, key.instants.0, context, &HashSet::new())
+    let source = CoreLinkedSource::new(entity_query, target, key.instants.0, context);
+    let bounds = TraversalBounds::of(Some(key.join_level), None);
+    let graph = traverse(&source, RootEdges::of::<TypedEntities>(from_ref(main_entity)), &bounds)
         .await
         .map_err(NotificationError::from)?;
-    report_unresolved(&resolution.failures);
-    let linked = Arc::new(resolution.entities);
+    report_unresolved(&graph.failures);
+    let linked = Arc::new(graph);
     Ok(Arc::clone(&cache.linked_entities.entry(key).or_insert(linked)))
 }
 

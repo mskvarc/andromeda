@@ -1,32 +1,40 @@
 //! Resolving a clause 4.5.23 join for a read response.
 //!
-//! All three read endpoints — `GET /entities`, `GET /entities/{id}` and
-//! `POST /entityOperations/query` — follow the same two steps before they
-//! render: traverse to the linked entities, then prepare the clause 4.21
-//! nested sub-projections in whichever shape the join mode applies them.
-//! None of the handlers performs either itself; they describe the join with a
-//! [`JoinRequest`], ask for a [`ResolvedJoin`], and render what it holds.
+//! All three read endpoints -- `GET /entities`, `GET /entities/{id}` and
+//! `POST /entityOperations/query` -- run the Linked Entity engine the same way
+//! before they render: traverse from the roots through the Core source, give
+//! every node the names the representation uses, index those names, and ask
+//! the engine for the plan the writer renders. None of the handlers decides
+//! anything about Linked Entities itself; they describe the join with a
+//! [`JoinRequest`] and hand the plan to the writer.
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     error::EntityError,
-    query::{EntityQueryService, join_projection::PreparedJoinProjection, linked_entity::ResolvedLinkedEntities},
+    query::{EntityQueryService, core_linked_source::CoreLinkedSource},
 };
-use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_linked_retrieval::join::{RetrievingJoin, TraversalBounds};
+use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_linked_retrieval::{
+    attribute_index::attribute_iri_index,
+    graph::{LinkedGraph, RootEdges},
+    join::{RetrievingJoin, TraversalBounds},
+    narrowing::{list::ListInForce, member::MemberRule},
+    plan::JoinPlan,
+    representation::LinkedRepresentation,
+    traversal::traverse,
+    typed::TypedEntities,
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::projection::compiled::Projection;
-use andromeda_ngsi_ld_render::{nested_projection::LinkedProjection, structural_projection::StructuralProjection};
+use andromeda_ngsi_ld_query::projection::attribute_iri_index::AttributeIriIndex;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, linked_resolution_failure::LinkedResolutionFailure, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
-use indexmap::IndexMap;
 use std::num::NonZeroU32;
 
 /// The clause 4.5.23 traversal a read request asked for.
 ///
-/// Every read endpoint spells these five out with its own parameter type;
-/// gathering them here is what lets the traversal itself be written once.
+/// Every read endpoint spells these out with its own parameter type;
+/// gathering them here is what lets the join itself be run once.
 pub(crate) struct JoinRequest<'a> {
     /// How the linked entities reach the response, as the request wrote it:
     /// `@none` and an absent `join` ask for no traversal at all.
@@ -35,34 +43,29 @@ pub(crate) struct JoinRequest<'a> {
     /// default depth.
     pub(crate) join_level: Option<NonZeroU32>,
     /// The entities the client already holds, which the traversal never
-    /// retrieves again.
+    /// retrieves again once a `joinLevel` is present.
     pub(crate) contained_by: Option<&'a [Identifier]>,
     /// Whether the linked entities carry the clause 4.8 system timestamps.
     pub(crate) sys_attrs: SysAttrsInclusion,
-    /// The request's compiled clause 4.21 projection, whose terms may carry
-    /// the clause 4.21 sub-projections that narrow the linked entities.
-    pub(crate) projection: Option<&'a Projection>,
+    /// The clause 4.21 list the request narrows its roots by, which reaches
+    /// every Linked Entity (clause 5.7.1.5).
+    pub(crate) list: ListInForce<'a>,
 }
 
-/// A resolved join, ready to render.
+/// A traversed join, ready to be indexed and planned.
 pub(crate) struct ResolvedJoin<'a> {
-    /// The mode the linked entities reach the response in, which the rendering
-    /// reads back off the resolution rather than being told a second time.
-    pub(crate) join: RetrievingJoin,
-    /// The linked entities in breadth-first traversal order, already narrowed
-    /// when the join mode narrows them ahead of rendering.
-    pub(crate) linked: IndexMap<Identifier, Entity>,
-    /// The Linked Entities the traversal could not resolve. Each becomes a
-    /// clause 6.3.17 warning on the response the handler renders.
-    pub(crate) failures: Vec<LinkedResolutionFailure>,
-    /// The projection an inline rendering walks for its sub-projections.
-    projection: Option<&'a Projection>,
-    /// What the join mode's clause 4.21 preparation left for the renderer.
-    prepared: PreparedJoinProjection,
+    /// The mode the linked entities reach the response in.
+    join: RetrievingJoin,
+    /// What the traversal reached.
+    pub(crate) graph: LinkedGraph<Entity>,
+    /// The list the request narrows its roots by.
+    list: ListInForce<'a>,
+    /// The expansion of every attribute key the payload carries, once indexed.
+    index: AttributeIriIndex,
 }
 
 impl<'a> ResolvedJoin<'a> {
-    /// Traverse to the linked entities and prepare the nested projections.
+    /// Traverse to the linked entities.
     ///
     /// A request that asked for no join answers `None`: `@none` and an absent
     /// `join` retrieve no linked entity at all (clause 4.5.23), so nothing is
@@ -70,8 +73,7 @@ impl<'a> ResolvedJoin<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`EntityError`] when the store cannot be read or a nested
-    /// projection cannot be matched against the entities' attribute keys.
+    /// Returns [`EntityError`] when the store cannot be read.
     pub(crate) async fn prepare(
         service: &EntityQueryService,
         target: &ContextTarget,
@@ -82,40 +84,25 @@ impl<'a> ResolvedJoin<'a> {
         let Some(join) = RetrievingJoin::from_mode(request.join) else {
             return Ok(None);
         };
-        let TraversalBounds { depth, contained_by } = TraversalBounds::of(request.join_level, request.contained_by);
-
-        let ResolvedLinkedEntities {
-            entities: mut linked,
-            failures,
-        } = service
-            .resolve_linked_entities(target, roots, depth, request.sys_attrs, context, &contained_by)
-            .await?;
-
-        // Clause 4.21: a `pick`/`omit` term may carry a nested sub-projection
-        // governing how the entities it links to render.
-        let prepared = match request.projection {
-            Some(projection) => service.prepare_join_projection(roots, &mut linked, projection, context, join).await?,
-            None => PreparedJoinProjection::Unrestricted,
-        };
-
+        let bounds = TraversalBounds::of(request.join_level, request.contained_by);
+        let source = CoreLinkedSource::new(service, target, request.sys_attrs, context);
+        let graph = traverse(&source, RootEdges::of::<TypedEntities>(roots), &bounds).await?;
         Ok(Some(ResolvedJoin {
             join,
-            linked,
-            failures,
-            projection: request.projection,
-            prepared,
+            graph,
+            list: request.list,
+            index: AttributeIriIndex::default(),
         }))
     }
 
-    /// The join an entity query asked for, resolved.
+    /// The join an entity query asked for, traversed.
     ///
     /// Both query bindings describe their traversal with the very same
     /// parameter set, so neither spells the request out itself.
     ///
     /// # Errors
     ///
-    /// Returns [`EntityError`] when the store cannot be read or a nested
-    /// projection cannot be matched against the entities' attribute keys.
+    /// Returns [`EntityError`] when the store cannot be read.
     pub(crate) async fn of_query(
         service: &EntityQueryService,
         target: &ContextTarget,
@@ -123,44 +110,51 @@ impl<'a> ResolvedJoin<'a> {
         context: &ContextSpec,
         query: &'a EntityQueryParameters,
         sys_attrs: SysAttrsInclusion,
-        projection: Option<&'a Projection>,
+        list: ListInForce<'a>,
     ) -> Result<Option<ResolvedJoin<'a>>, EntityError> {
         let request = JoinRequest {
             join: query.join,
             join_level: query.join_level,
             contained_by: query.contained_by.as_deref(),
             sys_attrs,
-            projection,
+            list,
         };
         ResolvedJoin::prepare(service, target, roots, context, &request).await
     }
 
-    /// The nested sub-projections an inline rendering applies, if the join mode
-    /// left any for the renderer.
-    pub(crate) fn linked_projection(&self) -> Option<LinkedProjection<'_>> {
-        let projection = self.projection?;
-        match &self.prepared {
-            PreparedJoinProjection::Inline(index) => Some(LinkedProjection { projection, index }),
-            PreparedJoinProjection::Unrestricted | PreparedJoinProjection::Flat(_) => None,
+    /// Expand every attribute key the roots and the graph carry, in the names
+    /// the representation about to be rendered uses.
+    ///
+    /// Runs after the names are settled, so the writer matches the keys it
+    /// actually writes. A list that narrows nothing matches nothing, and needs
+    /// no index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityError`] when a key cannot be expanded through the
+    /// context.
+    pub(crate) async fn index_attributes(&mut self, service: &EntityQueryService, roots: &[Entity], context: &ContextSpec) -> Result<(), EntityError> {
+        if self.list.is_unrestricted() {
+            return Ok(());
         }
+        let prepared = service.engine().prepare_term_context(context);
+        let expander = ContextualExpander::new(service.engine(), &prepared);
+        let keys = roots
+            .iter()
+            .flat_map(TypedEntities::attribute_keys)
+            .chain(self.graph.attribute_keys::<TypedEntities>());
+        self.index = attribute_iri_index(keys, &expander).await?;
+        Ok(())
     }
 
-    /// Each linked entity paired with the clause 4.21 structural rule that
-    /// governs it in a flat rendering.
-    ///
-    /// Clause 5.7.1.5 applies a restrictive list "to all Entities in the
-    /// payload in the case of Linked Entity retrieval", and `id`, `type` and
-    /// `scope` are members of the rendered representation rather than of the
-    /// typed entity, so the terms that narrowed each entity's attributes have
-    /// to reach the renderer to narrow these three as well. An entity no
-    /// nested sub-projection reached is paired with `None` and renders whole.
-    pub(crate) fn flat_linked(&self) -> impl Iterator<Item = (&Entity, Option<StructuralProjection<'_>>)> {
-        let applied = match &self.prepared {
-            PreparedJoinProjection::Flat(applied) => Some(applied),
-            PreparedJoinProjection::Unrestricted | PreparedJoinProjection::Inline(_) => None,
-        };
-        self.linked
-            .iter()
-            .map(move |(id, entity)| (entity, applied.and_then(|applied| applied.get(id)).map(StructuralProjection::from)))
+    /// The Linked Entities the response carries, as the engine plans them.
+    pub(crate) fn plan(&self) -> JoinPlan<'_, TypedEntities> {
+        JoinPlan::new(self.join, &self.graph, MemberRule::new(self.list, &self.index))
+    }
+
+    /// The Linked Entities a join, if one ran, could not resolve. Each becomes
+    /// a clause 6.3.17 warning on the response.
+    pub(crate) fn failures_of<'r>(resolved: Option<&'r ResolvedJoin<'_>>) -> &'r [LinkedResolutionFailure] {
+        resolved.map_or(&[], |resolved| &resolved.graph.failures)
     }
 }

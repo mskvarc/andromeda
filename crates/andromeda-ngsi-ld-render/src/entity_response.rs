@@ -17,22 +17,24 @@ use crate::{
     context::ResponseContext,
     entity_body::{
         feature_body::FeatureBody,
-        linked_entities::EntityJoin,
         member_walk::MemberWalk,
         typed_entity::{IdentifierMember, TypedEntity},
     },
     error::{RenderError, RenderedShape},
-    nested_projection::LinkedProjection,
     response::{ReadyResponse, ResponseHead, ResponsePayload, ResponseRenderer, TargetDecoding},
     structural_projection::StructuralProjection,
     uri_decoding::UriDecoding,
     version::adaptation::VersionAdaptation,
 };
 use andromeda_http_headers::{language::LanguageFilter, media_type::ResponseMediaType};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, spec_version::SpecVersion};
+use andromeda_linked_retrieval::{
+    narrowing::member::MemberRule,
+    plan::{FlatEntity, InlineCursor},
+    typed::TypedEntities,
+};
+use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
-use indexmap::IndexMap;
 use serde::{Serialize, Serializer, ser::SerializeMap};
 use serde_json::Value;
 use std::io::Write;
@@ -40,32 +42,25 @@ use std::io::Write;
 /// The member a JSON-LD document declares its context in.
 const CONTEXT_MEMBER: &str = "@context";
 
-/// The clause 4.5.23 inline join an entity of the response nests its Linked
-/// Entities by.
-#[derive(Debug, Clone, Copy)]
-pub struct InlineJoin<'a> {
-    /// The entities the traversal resolved, keyed by identifier.
-    pub linked: &'a IndexMap<Identifier, Entity>,
-    /// The clause 4.21 sub-projections that narrow the nested copies, if the
-    /// request carried any.
-    pub projection: Option<LinkedProjection<'a>>,
-}
-
 /// One entity of an entity response, with the clause 4.21 structural rule
 /// that governs it.
 ///
 /// The rule travels with each entity because a clause 4.5.23 flat join puts
-/// entities governed by different terms into one collection: the request's own
-/// for the entities it matched, a Relationship's nested sub-terms for a Linked
-/// Entity (clause 5.7.1.5).
+/// entities governed by different lists into one collection: the request's own
+/// for the entities it matched, the list in force of each Linked Entity for
+/// the Linked Entities (clause 5.7.1.5).
 #[derive(Debug, Clone, Copy)]
 pub struct EntityBody<'a> {
     /// The entity, in the attribute names its representation uses.
     entity: &'a Entity,
     /// The clause 4.21 rule over `id`, `type` and `scope`, if any.
     projection: Option<StructuralProjection<'a>>,
-    /// The inline join its Relationships nest their targets by, if any.
-    join: Option<InlineJoin<'a>>,
+    /// The rule a flat Linked Entity's members are written by, if it narrows
+    /// anything.
+    narrowing: Option<MemberRule<'a>>,
+    /// Where the inline join its Relationships nest their targets by starts,
+    /// if any.
+    join: Option<InlineCursor<'a, TypedEntities>>,
 }
 
 impl<'a> EntityBody<'a> {
@@ -75,19 +70,32 @@ impl<'a> EntityBody<'a> {
         EntityBody {
             entity,
             projection,
+            narrowing: None,
             join: None,
         }
     }
 
-    /// The entity, its Relationships nesting the Linked Entities `join`
-    /// resolved (clause 4.5.23.2).
+    /// One Linked Entity a flat join appends, written by the rule its first
+    /// encounter decided (clause 4.5.23.3).
     #[must_use]
-    pub const fn with_inline_join(self, join: InlineJoin<'a>) -> EntityBody<'a> {
+    pub const fn linked(linked: &FlatEntity<'a, TypedEntities>) -> EntityBody<'a> {
+        EntityBody {
+            entity: linked.node,
+            projection: None,
+            narrowing: linked.rule.restricting(),
+            join: None,
+        }
+    }
+
+    /// The entity, its Relationships nesting the Linked Entities the inline
+    /// plan's cursor answers (clause 4.5.23.2).
+    #[must_use]
+    pub const fn with_inline_join(self, join: InlineCursor<'a, TypedEntities>) -> EntityBody<'a> {
         EntityBody { join: Some(join), ..self }
     }
 
     /// The entity written in `format` under the walk's presentation rules.
-    fn typed(&self, format: ResponseFormat, language_filter: Option<&'a LanguageFilter>) -> TypedEntity<'a> {
+    const fn typed(&self, format: ResponseFormat, language_filter: Option<&'a LanguageFilter>) -> TypedEntity<'a> {
         TypedEntity {
             entity: self.entity,
             format,
@@ -96,8 +104,8 @@ impl<'a> EntityBody<'a> {
             identifier: IdentifierMember::Written,
             context: None,
             stamped: None,
-            join: self.join.map(|join| EntityJoin::root(join.linked, join.projection)),
-            narrowing: None,
+            join: self.join,
+            narrowing: self.narrowing,
             changes: None,
         }
     }

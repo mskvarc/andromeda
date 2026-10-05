@@ -29,13 +29,14 @@ use crate::{
         retrieve_forwarding::RetrieveForwarding,
         with_linked_resolution_warnings,
     },
-    read_rendering::{EntityRepresentation, RetrievedAnswer, apply_representation_names, retrieved_entity},
+    read_rendering::{EntityRepresentation, RetrievedAnswer, retrieved_entity, settle_representation},
 };
 use andromeda_entity::error::EntityError;
 use andromeda_entity_map::recording::PageMatches;
 use andromeda_federation::request::{EntityMapInUse, TriggeringRequest};
 use andromeda_http_extraction::{context_target, response_context_request::ResponseContextRequest};
 use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
+use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_render::response::ResponseRenderer;
 use std::slice::{from_mut, from_ref};
 
@@ -181,26 +182,31 @@ pub(crate) async fn get(
     };
 
     let representation = EntityRepresentation::new(params.resolve_render_mode().with_entity_instance(&uri)?, projection.as_ref());
+    // Table 6.5.3.1-1 makes `attrs` the `pick` synonym, so it narrows every
+    // Linked Entity as `pick` would (clause 5.7.1.5).
+    let attrs = service
+        .expand_attribute_names(params.attrs.as_deref().unwrap_or_default(), &context)
+        .await
+        .with_entity_instance(&uri)?;
     let request = JoinRequest {
         join: params.join,
         join_level: params.join_level,
         contained_by: params.contained_by.as_deref(),
         sys_attrs,
-        projection: projection.as_ref(),
+        list: ListInForce::of(projection.as_ref(), &attrs),
     };
     let mut resolved = ResolvedJoin::prepare(service, &target, from_ref(&entity), &context, &request)
         .await
         .with_entity_instance(&uri)?;
     // Clause 6.3.17: a Linked Entity the join could not reach leaves the body
     // incomplete, and the warning header is what says so.
-    let warnings = match &resolved {
-        Some(resolved) => with_linked_resolution_warnings(warnings, &resolved.failures),
-        None => warnings,
-    };
-    apply_representation_names(service, &representation, &context, from_mut(&mut entity), resolved.as_mut(), &uri).await?;
+    let warnings = with_linked_resolution_warnings(warnings, ResolvedJoin::failures_of(resolved.as_ref()));
+    settle_representation(service, &representation, &context, from_mut(&mut entity), resolved.as_mut(), &uri).await?;
     let entity = entity;
+    let resolved = resolved;
+    let plan = resolved.as_ref().map(ResolvedJoin::plan);
 
-    let answer = retrieved_entity(&entity, resolved.as_ref(), &representation);
+    let answer = retrieved_entity(&entity, plan.as_ref(), &representation);
 
     let rendering = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root)
         .start_rendering(accept.media_type(), prefer.rendering_preferences(), representation.mode)

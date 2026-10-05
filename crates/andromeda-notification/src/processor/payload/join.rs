@@ -7,13 +7,17 @@ use crate::processor::payload::{
     cache::{LinkedEntities, LinkedKey, RenderingKey, resolve_linked_cached},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::query::EntityQueryService;
+use andromeda_entity::query::{EntityQueryService, core_linked_source::CoreLinkedSource};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_linked_retrieval::{
+    graph::{LinkedGraph, RootEdges},
+    join::TraversalBounds,
+    traversal::traverse,
+    typed::TypedEntities,
+};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::{linked_resolution_failure::LinkedResolutionFailure, sys_attrs::SysAttrsInclusion};
-use indexmap::IndexMap;
-use std::{collections::HashSet, num::NonZeroU32};
+use std::num::NonZeroU32;
 use tracing::{debug, warn};
 
 /// The linked entities of the notified entity, the rendering `root` names, or
@@ -53,14 +57,13 @@ pub(crate) struct PeriodicJoin<'a> {
 /// none of them an entity the notification already carries, or `None` when
 /// their links cannot be resolved, which leaves the notification with the
 /// entities alone, as a change-driven one is left.
-pub(crate) async fn resolve_periodic_join(entity_query: &EntityQueryService, roots: &[Entity], join: PeriodicJoin<'_>) -> Option<IndexMap<Identifier, Entity>> {
-    match entity_query
-        .resolve_linked_entities(join.target, roots, join.join_level, join.sys_attrs, join.context, &HashSet::new())
-        .await
-    {
-        Ok(resolution) => {
-            report_unresolved(&resolution.failures);
-            Some(resolution.entities)
+pub(crate) async fn resolve_periodic_join(entity_query: &EntityQueryService, roots: &[Entity], join: PeriodicJoin<'_>) -> Option<LinkedGraph<Entity>> {
+    let source = CoreLinkedSource::new(entity_query, join.target, join.sys_attrs, join.context);
+    let bounds = TraversalBounds::of(Some(join.join_level), None);
+    match traverse(&source, RootEdges::of::<TypedEntities>(roots), &bounds).await {
+        Ok(graph) => {
+            report_unresolved(&graph.failures);
+            Some(graph)
         }
         Err(error) => {
             debug!(%error, "Failed to resolve linked entities for a periodic notification payload");

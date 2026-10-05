@@ -16,11 +16,11 @@ use andromeda_entity::query::{EntityQueryService, simplified_names::apply_simpli
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_http_response::{problem_response::ProblemResponse, rendered_response::RenderedResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_linked_retrieval::join::RetrievingJoin;
+use andromeda_linked_retrieval::{plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_render::{
-    entity_response::{EntityBody, EntityPayload, InlineJoin},
+    entity_response::{EntityBody, EntityPayload},
     response::ResponseRenderer,
     structural_projection::StructuralProjection,
 };
@@ -55,20 +55,30 @@ impl<'a> EntityRepresentation<'a> {
     {
         EntityBody::new(entity, self.structural_projection())
     }
+}
 
-    /// One entity the request selected, narrowed by the request's own rule,
-    /// the Linked Entities of an inline join nested into it (clause 4.5.23),
-    /// each narrowed by the sub-projection the naming Relationship carried
-    /// (clause 4.21).
-    fn inline_body<'e>(&self, entity: &'e Entity, resolved: &'e ResolvedJoin<'_>) -> EntityBody<'e>
-    where
-        'a: 'e,
-    {
-        self.body(entity).with_inline_join(InlineJoin {
-            linked: &resolved.linked,
-            projection: resolved.linked_projection(),
-        })
+/// Settle the names the representation about to be rendered uses on every
+/// entity, then index them for the join's plan.
+///
+/// The names come first so the plan matches the keys the writer writes.
+///
+/// # Errors
+///
+/// As [`apply_representation_names`], and a [`ProblemResponse`] when an
+/// attribute key cannot be expanded through the request context.
+pub(crate) async fn settle_representation(
+    service: &EntityQueryService,
+    representation: &EntityRepresentation<'_>,
+    context: &ContextSpec,
+    entities: &mut [Entity],
+    mut resolved: Option<&mut ResolvedJoin<'_>>,
+    instance: &HttpUri,
+) -> Result<(), ProblemResponse> {
+    apply_representation_names(service, representation, context, entities, resolved.as_deref_mut(), instance).await?;
+    if let Some(resolved) = resolved {
+        resolved.index_attributes(service, entities, context).await.with_entity_instance(instance)?;
     }
+    Ok(())
 }
 
 /// Give every entity the Attribute names the representation about to be
@@ -86,7 +96,7 @@ impl<'a> EntityRepresentation<'a> {
 /// Returns a [`ProblemResponse`] when the request context cannot be processed,
 /// or when it declares a term that is not a name the clause 4.6.2 grammar
 /// admits.
-pub(crate) async fn apply_representation_names(
+async fn apply_representation_names(
     service: &EntityQueryService,
     representation: &EntityRepresentation<'_>,
     context: &ContextSpec,
@@ -98,7 +108,7 @@ pub(crate) async fn apply_representation_names(
         return Ok(());
     }
     let names = service.name_compaction(context).await.with_entity_instance(instance)?;
-    let linked = resolved.into_iter().flat_map(|resolved| resolved.linked.values_mut());
+    let linked = resolved.into_iter().flat_map(|resolved| resolved.graph.nodes.values_mut());
     for entity in entities.iter_mut().chain(linked) {
         apply_simplified_names(entity, &names).with_entity_instance(instance)?;
     }
@@ -126,26 +136,22 @@ impl ReadAnswer<'_> {
 }
 
 /// The answer to a read that matched `entities`, together with the Linked
-/// Entities a clause 4.5.23 join reached, in the shape the join mode names.
+/// Entities the engine's plan carries, in the shape the join mode names.
 ///
 /// Without a join the matched entities are the collection. Flat puts the roots
-/// ahead of the linked entities in one collection, each linked entity narrowed
-/// by the sub-projection the naming Relationship carried (clause 5.7.1.5);
-/// inline nests each root's own into it.
+/// ahead of the planned Linked Entities in one collection, each written by the
+/// rule its first encounter decided (clause 5.7.1.5); inline nests into each
+/// root what the plan's cursor answers.
 pub(crate) fn matched_entities<'a>(
     entities: &'a [Entity],
-    resolved: Option<&'a ResolvedJoin<'_>>,
+    plan: Option<&'a JoinPlan<'a, TypedEntities>>,
     representation: &EntityRepresentation<'a>,
 ) -> ReadAnswer<'a> {
     let roots = entities.iter().map(|entity| representation.body(entity));
-    ReadAnswer(EntityPayload::Collection(match resolved {
+    ReadAnswer(EntityPayload::Collection(match plan {
         None => roots.collect(),
-        Some(resolved) => match resolved.join {
-            RetrievingJoin::Flat => roots
-                .chain(resolved.flat_linked().map(|(entity, projection)| EntityBody::new(entity, projection)))
-                .collect(),
-            RetrievingJoin::Inline => entities.iter().map(|entity| representation.inline_body(entity, resolved)).collect(),
-        },
+        Some(JoinPlan::Flat(flat)) => roots.chain(flat.linked().map(EntityBody::linked)).collect(),
+        Some(JoinPlan::Inline(inline)) => roots.map(|root| root.with_inline_join(inline.cursor())).collect(),
     }))
 }
 
@@ -155,15 +161,15 @@ pub(crate) fn matched_entities<'a>(
 /// entity beside them.
 pub(crate) fn retrieved_entity<'a>(
     entity: &'a Entity,
-    resolved: Option<&'a ResolvedJoin<'_>>,
+    plan: Option<&'a JoinPlan<'a, TypedEntities>>,
     representation: &EntityRepresentation<'a>,
 ) -> RetrievedAnswer<'a> {
-    match resolved {
+    match plan {
         None => RetrievedAnswer::Single(ReadAnswer(EntityPayload::Single(representation.body(entity)))),
-        Some(resolved) => match resolved.join {
-            RetrievingJoin::Flat => RetrievedAnswer::Collection(matched_entities(from_ref(entity), Some(resolved), representation)),
-            RetrievingJoin::Inline => RetrievedAnswer::Single(ReadAnswer(EntityPayload::Single(representation.inline_body(entity, resolved)))),
-        },
+        Some(JoinPlan::Flat(_)) => RetrievedAnswer::Collection(matched_entities(from_ref(entity), plan, representation)),
+        Some(JoinPlan::Inline(inline)) => {
+            RetrievedAnswer::Single(ReadAnswer(EntityPayload::Single(representation.body(entity).with_inline_join(inline.cursor()))))
+        }
     }
 }
 

@@ -1,369 +1,179 @@
-//! Resolving the entities a result set links to (clause 4.5.23 `join`).
+//! Where the Core reads and both kinds of notification read their Linked
+//! Entities from (clause 4.5.23).
 //!
-//! The walk is breadth-first: the entities the roots name are resolved first,
-//! then the entities those name, one level at a time. Each level is resolved in
-//! two halves — the local store answers for what it holds, and the remainder of
-//! the distributed system answers for the `objectType`-annotated ids it does
-//! not (clause 4.5.23.1).
-//!
-//! Clause 6.4.3.2 requires `join=flat` to put the linked entities alongside the
-//! roots; it does not dictate the order they arrive in. Andromeda guarantees
-//! one anyway, because an unordered result would make every response body
-//! irreproducible: the traversal's first-encounter order is the append order,
-//! and within a level the locally held entities precede the ones fetched from
-//! elsewhere. [`EntityQueryService::resolve_linked_entities`] states the
-//! contract precisely.
-//!
-//! There is no depth cap. Clause 4.5.23 admits any positive `joinLevel`, and
-//! termination is guaranteed by the visited set instead: every candidate is
-//! resolved at most once, so the work is bounded by the number of reachable
-//! entities rather than by the client's number.
+//! The traversal, its order and its bounds belong to the Linked Entity engine;
+//! this source answers its two questions. The local store answers for what it
+//! holds, each state compacted under the request context, and the remainder of
+//! the distributed system answers through [`RemoteLinkedEntitySource`] for an
+//! `objectType`-annotated identifier the store does not hold (clause
+//! 4.5.23.1). A Core `join` is a spec parameter every conformant holder honours
+//! (Tables 6.4.3.2-1 and 6.5.3.1-1), so a holder is always asked for the whole
+//! remaining depth.
 
 use crate::{
     error::EntityError,
     port::retrieved_entity::RetrievedEntity,
-    query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
+    query::{EntityQueryService, remote_linked::RemoteLinkedEntities},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_linked_retrieval::{
+    candidate::LinkedCandidate,
+    representation::LinkedRepresentation,
+    source::{LevelRead, LinkedSource, RemoteReach, RemoteRead},
+    typed::TypedEntities,
+};
 use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, reference::NgsiLdReference, uri::Uri};
-use andromeda_ngsi_ld_model::{attribute::instance::Attribute, entity::Entity};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::{
     linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind},
     sys_attrs::SysAttrsInclusion,
 };
 use chrono::Utc;
-use indexmap::{IndexMap, IndexSet};
-use std::{collections::HashSet, num::NonZeroU32};
+use indexmap::IndexMap;
+use std::{
+    future::{Future, ready},
+    num::NonZeroU32,
+};
 
-/// One traversal candidate: the id a Relationship names, together with the
-/// `objectType` annotations its referencing Relationships carried.
-///
-/// A non-empty `object_types` is the clause 4.5.23.1 eligibility gate for
-/// resolving the id somewhere other than the local store: only a Relationship
-/// annotated with an `objectType` declares its object to be an Internal Linked
-/// Entity that a registered context source may hold.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LinkedCandidate {
-    /// The linked entity's identifier.
-    pub id: Identifier,
-    /// The entity types every referencing Relationship annotated the object
-    /// with, in first-encounter order. Empty when no referencing Relationship
-    /// carried an `objectType`.
-    pub object_types: Vec<NgsiLdReference>,
+/// The Linked Entities of one Core read or notification: the branch they are
+/// read from, whether they carry their clause 4.8 system times, and the
+/// context they are compacted under.
+#[derive(Clone, Copy)]
+pub struct CoreLinkedSource<'s> {
+    /// The service holding the store and the remote half.
+    service: &'s EntityQueryService,
+    /// The branch the entities are read from.
+    target: &'s ContextTarget,
+    /// Whether the Linked Entities carry their system times.
+    sys_attrs: SysAttrsInclusion,
+    /// The context they are compacted under.
+    context: &'s ContextSpec,
 }
 
-/// Everything a join traversal produced: the entities it resolved, and the
-/// Linked Entities it could not.
-///
-/// The two travel together because a caller that renders the first has to
-/// account for the second — an HTTP binding turns each failure into a clause
-/// 6.3.17 response warning, a notification logs it — and neither of them is an
-/// error that should fail the operation.
-#[derive(Debug, Default)]
-pub struct ResolvedLinkedEntities {
-    /// The linked entities, keyed by identifier in the traversal's append
-    /// order.
-    pub entities: IndexMap<Identifier, Entity>,
-    /// Every Linked Entity the traversal left unresolved, in the order the
-    /// attempts were made.
-    pub failures: Vec<LinkedResolutionFailure>,
-}
-
-/// One level of the traversal, as resolved.
-struct ResolvedLevel {
-    /// The level's entities in append order: the locally held ones in
-    /// candidate order, then the ones fetched from elsewhere.
-    entities: IndexMap<Identifier, Entity>,
-    /// What the level could not resolve.
-    failures: Vec<LinkedResolutionFailure>,
-}
-
-impl EntityQueryService {
-    /// Resolve the entities `entities` link to, up to `join_level` hops away.
-    ///
-    /// The result is keyed by identifier in breadth-first encounter order and
-    /// never contains a root, an id listed in `contained_by` (clause 4.5.23
-    /// excludes the entities the client already holds), or the same id twice.
-    /// An id that nothing backs is simply absent — an unresolvable Relationship
-    /// leaves the plain URI in place rather than failing the request — and,
-    /// when something was reachable but unhelpful, it is named in
-    /// [`ResolvedLinkedEntities::failures`] so the caller can say so.
-    ///
-    /// # Ordering
-    ///
-    /// Clause 6.4.3.2 requires the linked entities to accompany the roots but
-    /// does not fix their order. Andromeda fixes it, so that the same request
-    /// against the same data always renders the same body: the map's
-    /// first-encounter order *is* the append order, and within one level the
-    /// local store's answers come first, in candidate order, followed by the
-    /// answers from the remainder of the system (clause 4.5.23.1), in the order
-    /// their candidates were encountered. Non-local resolution is folded in
-    /// inside the level it belongs to, never appended after the traversal.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EntityError`] when the store cannot be read. A single linked
-    /// entity that fails to compact, and a remote source that cannot answer,
-    /// are reported rather than propagated.
-    pub async fn resolve_linked_entities(
-        &self,
-        target: &ContextTarget,
-        entities: &[Entity],
-        join_level: NonZeroU32,
+impl<'s> CoreLinkedSource<'s> {
+    /// The source reading `target` through `service`, compacting under
+    /// `context`.
+    #[must_use]
+    pub const fn new(
+        service: &'s EntityQueryService,
+        target: &'s ContextTarget,
         sys_attrs: SysAttrsInclusion,
-        context: &ContextSpec,
-        contained_by: &HashSet<Identifier>,
-    ) -> Result<ResolvedLinkedEntities, EntityError> {
-        let mut resolved = ResolvedLinkedEntities::default();
-        // The roots and the client-held ids are excluded from the first level
-        // and from every level after it, so a cycle back into them terminates.
-        // The guard keeps insertion order because it doubles as the list of
-        // already-held ids a non-local fetch hands to the remote broker.
-        let mut visited: IndexSet<Identifier> = contained_by.iter().cloned().collect(); // clone: the guard owns the ids it excludes
-        visited.extend(entities.iter().map(|entity| entity.id.clone())); // clone: the guard outlives this borrow of the roots
-
-        let mut candidates = collect_candidates(entities.iter(), &visited);
-        let mut remaining = Some(join_level);
-
-        while let Some(depth) = remaining
-            && !candidates.is_empty()
-        {
-            visited.extend(candidates.iter().map(|candidate| candidate.id.clone())); // clone: the guard outlives this level's candidates
-            let level = self.resolve_level(target, &candidates, depth, &visited, sys_attrs, context).await?;
-            // Everything the level produced — including the sub-graph a remote
-            // broker returned around a candidate — is now held, so no later
-            // level asks for it again.
-            visited.extend(level.entities.keys().cloned()); // clone: the guard outlives this level's entities
-            remaining = NonZeroU32::new(depth.get() - 1);
-            // The next level's candidates are read before this level is folded
-            // into the result, so the result's insertion order stays exactly
-            // the order the levels were resolved in.
-            let next = match remaining {
-                Some(_) => collect_candidates(expandable(&candidates, &level), &visited),
-                None => Vec::new(),
-            };
-            candidates = next;
-            resolved.entities.extend(level.entities);
-            resolved.failures.extend(level.failures);
+        context: &'s ContextSpec,
+    ) -> CoreLinkedSource<'s> {
+        CoreLinkedSource {
+            service,
+            target,
+            sys_attrs,
+            context,
         }
-
-        Ok(resolved)
     }
 
-    /// Resolve one level from the local store and, for what the store does not
-    /// hold, from the remainder of the system.
-    ///
-    /// Clause 4.5.23.1 gates the second half: only a candidate whose
-    /// referencing Relationship carried an `objectType` is an Internal Linked
-    /// Entity that some other context source may hold. A candidate without one
-    /// that the store does not hold stays a plain URI.
-    ///
-    /// `depth` is the number of levels still to resolve, this one included.
-    async fn resolve_level(
-        &self,
-        target: &ContextTarget,
-        candidates: &[LinkedCandidate],
-        depth: NonZeroU32,
-        visited: &IndexSet<Identifier>,
-        sys_attrs: SysAttrsInclusion,
-        context: &ContextSpec,
-    ) -> Result<ResolvedLevel, EntityError> {
-        let entities = self.resolve_level_locally(target, candidates, sys_attrs, context).await?;
-        let mut level = ResolvedLevel {
-            entities,
-            failures: Vec::new(),
-        };
-        let Some(source) = target.permits_federation().then_some(self.remote_linked.as_ref()).flatten() else {
-            return Ok(level);
-        };
-        for candidate in candidates {
-            if candidate.object_types.is_empty() || level.entities.contains_key(&candidate.id) {
-                continue;
-            }
-            fetch_remote_candidate(source.as_ref(), candidate, depth, visited, context, &mut level).await;
-        }
-        Ok(level)
-    }
-
-    /// Read one level's candidates from the local store, in candidate order.
+    /// Read the candidates the local store holds, in candidate order.
     ///
     /// A candidate the store does not hold, or whose state does not compact
-    /// into an entity, is dropped from the level: clause 4.5.23 leaves such a
-    /// Relationship as a plain URI rather than failing the whole retrieval.
-    async fn resolve_level_locally(
-        &self,
-        target: &ContextTarget,
-        candidates: &[LinkedCandidate],
-        sys_attrs: SysAttrsInclusion,
-        context: &ContextSpec,
-    ) -> Result<IndexMap<Identifier, Entity>, EntityError> {
+    /// into an entity, is left out: clause 4.5.23 leaves such a Relationship a
+    /// plain URI rather than failing the retrieval.
+    async fn read_locally(&self, candidates: &[LinkedCandidate]) -> Result<LevelRead<Entity>, EntityError> {
         let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
         // Clause 4.8: the entity-level system times come back with each state
         // from the same read.
-        let retrieved = self.reader.get_batch(target, &ids).await?;
+        let retrieved = self.service.reader.get_batch(self.target, &ids).await?;
 
-        let compactor = self.engine().compactor(context);
+        let compactor = self.service.engine().compactor(self.context);
         let entity_compactor = EntityCompactor::new(&compactor);
         let now = Utc::now();
-        let mut level = IndexMap::with_capacity(retrieved.len());
+        let mut nodes = IndexMap::with_capacity(retrieved.len());
+        let mut edges = Vec::new();
         for candidate in candidates {
             let Some(RetrievedEntity { state, sys_attrs: times }) = retrieved.get(&candidate.id) else {
                 continue;
             };
             let read = EntityRead {
                 id_override: Some(&candidate.id),
-                sys_attrs,
+                sys_attrs: self.sys_attrs,
                 now,
             };
             match entity_compactor.entity(state, &read).await {
                 Ok(entity) => {
-                    let entity = match sys_attrs {
+                    let entity = match self.sys_attrs {
                         SysAttrsInclusion::Include => entity.with_sys_attrs(times),
                         SysAttrsInclusion::Strip => entity,
                     };
-                    level.insert(candidate.id.clone(), entity); // clone: the result map owns its keys
+                    TypedEntities::edges(&entity, &mut edges);
+                    nodes.insert(candidate.id.clone(), entity); // clone: the level keys its nodes by owned identifiers
                 }
                 Err(error) => {
                     tracing::debug!("Failed to compact linked entity {}: {}", candidate.id, error);
                 }
             }
         }
-        Ok(level)
+        Ok(LevelRead { nodes, edges })
     }
-}
 
-/// The level's entities whose own Relationships the next level walks.
-///
-/// A candidate this level resolved — locally, or by being fetched from a remote
-/// broker — is a next-level root like any other. The extra entities that came
-/// back around a fetched candidate are not: they are the remote broker's
-/// already-resolved sub-tree, walked with the depth budget it was given, and
-/// walking them again here would spend levels twice and reach further than the
-/// client's `joinLevel` allows.
-fn expandable<'a>(candidates: &'a [LinkedCandidate], level: &'a ResolvedLevel) -> impl Iterator<Item = &'a Entity> {
-    candidates.iter().filter_map(|candidate| level.entities.get(&candidate.id))
-}
-
-/// Ask the remainder of the system for one candidate and fold what it answers
-/// into the level it belongs to.
-///
-/// A source that cannot answer degrades the join rather than the request
-/// (clause 4.5.23): the candidate stays unresolved, leaving the Relationship
-/// that named it a plain URI, and the level carries a description of what is
-/// missing back to the caller.
-async fn fetch_remote_candidate(
-    source: &dyn RemoteLinkedEntitySource,
-    candidate: &LinkedCandidate,
-    depth: NonZeroU32,
-    visited: &IndexSet<Identifier>,
-    context: &ContextSpec,
-    level: &mut ResolvedLevel,
-) {
-    // The candidate itself is already in the guard; the remainder of the system
-    // is told about everything except the entity it is being asked for.
-    let held: Vec<Identifier> = visited.iter().filter(|id| **id != candidate.id).cloned().collect(); // clone: the port takes the ids as an owned slice
-    match source.fetch_linked(&candidate.id, depth, &held, context).await {
-        Ok(fetched) => {
-            for entity in fetched.entities {
-                // The remote broker resolved the deeper levels in the same
-                // round trip. Whatever it returns that the requester already
-                // holds is dropped: clause 4.5.23 `containedBy` keeps those out
-                // of the result.
-                if entity.id != candidate.id && visited.contains(&entity.id) {
-                    continue;
+    /// Ask the remainder of the system for one candidate.
+    ///
+    /// A source that cannot be consulted degrades the join rather than the
+    /// request (clause 4.5.23): the candidate stays unresolved, and the read
+    /// says what is missing.
+    async fn fetch(&self, candidate: &LinkedCandidate, depth: NonZeroU32, held: &[Identifier]) -> RemoteRead<Entity> {
+        let Some(remote) = self.service.remote_linked.as_ref() else {
+            return RemoteRead {
+                nodes: Vec::new(),
+                edges: Vec::new(),
+                failures: Vec::new(),
+            };
+        };
+        match remote.fetch_linked(&candidate.id, depth, held, self.context).await {
+            Ok(RemoteLinkedEntities { entities, failures }) => {
+                for failure in &failures {
+                    tracing::warn!("Linked entity {} was not fully resolved: {} ({})", failure.id, failure.detail, failure.kind);
                 }
-                level.entities.entry(entity.id.clone()).or_insert(entity); // clone: the level map owns its keys
-            }
-            for failure in &fetched.failures {
-                tracing::warn!("Linked entity {} was not fully resolved: {} ({})", failure.id, failure.detail, failure.kind);
-            }
-            level.failures.extend(fetched.failures);
-        }
-        Err(error) => {
-            tracing::warn!("Failed to resolve linked entity {} outside the local store: {}", candidate.id, error);
-            level.failures.push(LinkedResolutionFailure {
-                id: candidate.id.clone(), // clone: the failure outlives this level's candidates
-                kind: LinkedResolutionFailureKind::Unreachable,
-                detail: error.to_string(),
-            });
-        }
-    }
-}
-
-/// Collect, in first-encounter order, every not-yet-visited identifier the
-/// given entities' Relationships and `ListRelationships` name.
-///
-/// `objectList` order is preserved, and an id named by several Relationships
-/// appears once, carrying the union of their `objectType` annotations.
-fn collect_candidates<'a>(entities: impl IntoIterator<Item = &'a Entity>, visited: &IndexSet<Identifier>) -> Vec<LinkedCandidate> {
-    let mut seen: IndexSet<Identifier> = IndexSet::new();
-    let mut candidates: Vec<LinkedCandidate> = Vec::new();
-    for entity in entities {
-        for value in entity.attrs.values() {
-            for attr in value.instances() {
-                collect_from_attribute(attr, visited, &mut seen, &mut candidates);
-            }
-        }
-    }
-    candidates
-}
-
-/// Record the identifiers one attribute instance points at.
-///
-/// `seen` and `candidates` are index-aligned: `seen`'s position of an id is
-/// the position of its [`LinkedCandidate`], which is how a repeated id folds
-/// its `objectType` annotation into the entry already recorded for it.
-fn collect_from_attribute(attr: &Attribute, visited: &IndexSet<Identifier>, seen: &mut IndexSet<Identifier>, candidates: &mut Vec<LinkedCandidate>) {
-    let (objects, object_types): (Vec<&Uri>, Vec<NgsiLdReference>) = match attr {
-        Attribute::Relationship(relationship) => (
-            relationship.object.iter().collect(),
-            relationship
-                .object_type
-                .iter()
-                .flat_map(|types| types.iter())
-                .cloned() // clone: the candidate owns the annotations it records
-                .collect(),
-        ),
-        Attribute::ListRelationship(list) => (
-            list.object_list.iter().collect(),
-            list.object_type
-                .iter()
-                .flat_map(|types| types.iter())
-                .cloned() // clone: the candidate owns the annotations it records
-                .collect(),
-        ),
-        Attribute::Property(_)
-        | Attribute::GeoProperty(_)
-        | Attribute::JsonProperty(_)
-        | Attribute::LanguageProperty(_)
-        | Attribute::ListProperty(_)
-        | Attribute::VocabProperty(_) => return,
-    };
-
-    for object in objects {
-        if visited.contains(object) {
-            continue;
-        }
-        if let Some(index) = seen.get_index_of(object) {
-            if let Some(candidate) = candidates.get_mut(index) {
-                for object_type in &object_types {
-                    if !candidate.object_types.contains(object_type) {
-                        candidate.object_types.push(object_type.clone()); // clone: the candidate owns the annotations it records
-                    }
+                let mut edges = Vec::new();
+                for entity in &entities {
+                    TypedEntities::edges(entity, &mut edges);
+                }
+                RemoteRead {
+                    nodes: entities,
+                    edges,
+                    failures,
                 }
             }
-        } else if let Ok(id) = Identifier::try_from(object.clone()) {
-            // clone: the candidate owns its identifier. An object longer than an
-            // identifier may be names no entity any store holds, so it stays a
-            // plain URI rather than becoming a candidate.
-            seen.insert(id.clone()); // clone: the duplicate guard owns the ids it records
-            candidates.push(LinkedCandidate {
-                id,
-                object_types: object_types.clone(), // clone: each candidate owns its own annotation list
-            });
+            Err(error) => {
+                tracing::warn!("Failed to resolve linked entity {} outside the local store: {}", candidate.id, error);
+                RemoteRead {
+                    nodes: Vec::new(),
+                    edges: Vec::new(),
+                    failures: vec![LinkedResolutionFailure {
+                        id: candidate.id.clone(), // clone: the failure outlives this level's candidates
+                        kind: LinkedResolutionFailureKind::Unreachable,
+                        detail: error.to_string(),
+                    }],
+                }
+            }
         }
+    }
+}
+
+impl LinkedSource for CoreLinkedSource<'_> {
+    type Representation = TypedEntities;
+    type Error = EntityError;
+
+    fn read_level(&self, candidates: &[LinkedCandidate]) -> impl Future<Output = Result<LevelRead<Entity>, EntityError>> + Send {
+        self.read_locally(candidates)
+    }
+
+    fn fetch_remote(&self, candidate: &LinkedCandidate, depth: NonZeroU32, held: &[Identifier]) -> impl Future<Output = RemoteRead<Entity>> + Send {
+        self.fetch(candidate, depth, held)
+    }
+
+    fn federates(&self) -> bool {
+        self.target.permits_federation() && self.service.remote_linked.is_some()
+    }
+
+    fn remote_reach(&self, _candidate: &LinkedCandidate) -> impl Future<Output = RemoteReach> + Send {
+        ready(RemoteReach::Subgraph)
     }
 }
 
@@ -372,13 +182,18 @@ mod tests {
     use crate::{
         config::EntityConfig,
         entity_snapshot::EntitySnapshot,
-        port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
-        query::{linked_entity::*, remote_linked::RemoteLinkedEntities},
+        port::{query::EntityQueryStore, reader::EntityReader},
+        query::{core_linked_source::*, remote_linked::RemoteLinkedEntitySource},
         query_outcome::QueryOutcome,
         spatial_acceleration::SpatialAcceleration,
         storage_profile::StorageProfile,
     };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
+    use andromeda_linked_retrieval::{
+        graph::{LinkedGraph, RootEdges},
+        join::TraversalBounds,
+        traversal::traverse,
+    };
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, page_window::PageWindow};
@@ -391,6 +206,16 @@ mod tests {
         collections::HashMap,
         sync::{Arc, Mutex, MutexGuard},
     };
+
+    /// Traverse `depth` levels from `roots` through the Core source, under
+    /// [`context`], excluding `contained_by`.
+    async fn resolve(service: &EntityQueryService, roots: &[Entity], depth: u32, contained_by: &[Identifier]) -> LinkedGraph<Entity> {
+        let context = context();
+        let target = ContextTarget::Live;
+        let source = CoreLinkedSource::new(service, &target, SysAttrsInclusion::Strip, &context);
+        let bounds = TraversalBounds::of(NonZeroU32::new(depth), Some(contained_by));
+        traverse(&source, RootEdges::of::<TypedEntities>(roots), &bounds).await.expect("resolves")
+    }
 
     fn uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
@@ -636,12 +461,8 @@ mod tests {
         NonZeroU32::new(value).expect("positive join level")
     }
 
-    fn live_target() -> ContextTarget {
-        ContextTarget::Live
-    }
-
-    fn ids(resolved: &ResolvedLinkedEntities) -> Vec<&str> {
-        resolved.entities.keys().map(Identifier::as_str).collect()
+    fn ids(resolved: &LinkedGraph<Entity>) -> Vec<&str> {
+        resolved.nodes.keys().map(Identifier::as_str).collect()
     }
 
     /// Clause 4.5.23: the flat representation appends linked entities in the
@@ -656,10 +477,7 @@ mod tests {
         ]);
         let roots = vec![root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:C", "urn:ngsi-ld:T:B"])];
 
-        let resolved = service(store)
-            .resolve_linked_entities(&live_target(), &roots, level(2), SysAttrsInclusion::Strip, &context(), &HashSet::new())
-            .await
-            .expect("resolves");
+        let resolved = resolve(&service(store), &roots, 2, &[]).await;
 
         pretty_assertions::assert_eq!(ids(&resolved), vec!["urn:ngsi-ld:T:C", "urn:ngsi-ld:T:B", "urn:ngsi-ld:T:D"]);
     }
@@ -671,10 +489,7 @@ mod tests {
         let store = StubStore::new([(uri("urn:ngsi-ld:T:B"), stored("urn:ngsi-ld:T:B", &["urn:ngsi-ld:T:A"]))]);
         let roots = vec![root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
-        let resolved = service(store)
-            .resolve_linked_entities(&live_target(), &roots, level(5), SysAttrsInclusion::Strip, &context(), &HashSet::new())
-            .await
-            .expect("resolves");
+        let resolved = resolve(&service(store), &roots, 5, &[]).await;
 
         pretty_assertions::assert_eq!(ids(&resolved), vec!["urn:ngsi-ld:T:B"]);
     }
@@ -688,12 +503,9 @@ mod tests {
             (uri("urn:ngsi-ld:T:C"), stored("urn:ngsi-ld:T:C", &[])),
         ]);
         let roots = vec![root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"])];
-        let contained_by: HashSet<Identifier> = [uri("urn:ngsi-ld:T:B")].into_iter().collect();
+        let contained_by = [uri("urn:ngsi-ld:T:B")];
 
-        let resolved = service(store)
-            .resolve_linked_entities(&live_target(), &roots, level(1), SysAttrsInclusion::Strip, &context(), &contained_by)
-            .await
-            .expect("resolves");
+        let resolved = resolve(&service(store), &roots, 1, &contained_by).await;
 
         pretty_assertions::assert_eq!(ids(&resolved), vec!["urn:ngsi-ld:T:C"]);
     }
@@ -708,10 +520,7 @@ mod tests {
         ]);
         let roots = vec![root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
-        let resolved = service(store)
-            .resolve_linked_entities(&live_target(), &roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
-            .await
-            .expect("resolves");
+        let resolved = resolve(&service(store), &roots, 1, &[]).await;
 
         pretty_assertions::assert_eq!(ids(&resolved), vec!["urn:ngsi-ld:T:B"]);
     }
@@ -735,10 +544,7 @@ mod tests {
         }));
         let roots = vec![root(chain[0], &[chain[1]])];
 
-        let resolved = service(store)
-            .resolve_linked_entities(&live_target(), &roots, level(7), SysAttrsInclusion::Strip, &context(), &HashSet::new())
-            .await
-            .expect("resolves");
+        let resolved = resolve(&service(store), &roots, 7, &[]).await;
 
         pretty_assertions::assert_eq!(ids(&resolved), vec![chain[1], chain[2], chain[3], chain[4], chain[5]]);
     }
@@ -753,10 +559,7 @@ mod tests {
         let source = RecordingSource::returning([(uri("urn:ngsi-ld:T:B"), vec![root("urn:ngsi-ld:T:B", &[])])]);
         let roots = vec![root_with_object_type("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
-        let resolved = service_with_remote(StubStore::new([]), &source)
-            .resolve_linked_entities(&live_target(), &roots, level(2), SysAttrsInclusion::Strip, &context(), &HashSet::new())
-            .await
-            .expect("resolves");
+        let resolved = resolve(&service_with_remote(StubStore::new([]), &source), &roots, 2, &[]).await;
 
         pretty_assertions::assert_eq!(ids(&resolved), vec!["urn:ngsi-ld:T:B"]);
         pretty_assertions::assert_eq!(
@@ -787,10 +590,7 @@ mod tests {
         ];
         let store = StubStore::new([(uri("urn:ngsi-ld:T:L"), stored("urn:ngsi-ld:T:L", &[]))]);
 
-        let resolved = service_with_remote(store, &source)
-            .resolve_linked_entities(&live_target(), &roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
-            .await
-            .expect("resolves");
+        let resolved = resolve(&service_with_remote(store, &source), &roots, 1, &[]).await;
 
         pretty_assertions::assert_eq!(ids(&resolved), vec!["urn:ngsi-ld:T:L", "urn:ngsi-ld:T:R"]);
     }
@@ -803,12 +603,9 @@ mod tests {
         let source = RecordingSource::returning([(uri("urn:ngsi-ld:T:B"), vec![root("urn:ngsi-ld:T:B", &[])])]);
         let roots = vec![root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
-        let resolved = service_with_remote(StubStore::new([]), &source)
-            .resolve_linked_entities(&live_target(), &roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
-            .await
-            .expect("resolves");
+        let resolved = resolve(&service_with_remote(StubStore::new([]), &source), &roots, 1, &[]).await;
 
-        assert!(resolved.entities.is_empty());
+        assert!(resolved.nodes.is_empty());
         assert!(resolved.failures.is_empty(), "resolution reported failures: {:?}", resolved.failures);
         assert!(source.calls().is_empty());
     }
@@ -821,12 +618,9 @@ mod tests {
         let source = RecordingSource::failing();
         let roots = vec![root_with_object_type("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
-        let resolved = service_with_remote(StubStore::new([]), &source)
-            .resolve_linked_entities(&live_target(), &roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
-            .await
-            .expect("resolves despite the unreachable remainder");
+        let resolved = resolve(&service_with_remote(StubStore::new([]), &source), &roots, 1, &[]).await;
 
-        assert!(resolved.entities.is_empty());
+        assert!(resolved.nodes.is_empty());
         pretty_assertions::assert_eq!(source.calls().len(), 1);
         pretty_assertions::assert_eq!(
             resolved.failures,
@@ -847,12 +641,9 @@ mod tests {
         let source = RecordingSource::reporting(LinkedResolutionFailureKind::Refused);
         let roots = vec![root_with_object_type("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
-        let resolved = service_with_remote(StubStore::new([]), &source)
-            .resolve_linked_entities(&live_target(), &roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
-            .await
-            .expect("resolves");
+        let resolved = resolve(&service_with_remote(StubStore::new([]), &source), &roots, 1, &[]).await;
 
-        assert!(resolved.entities.is_empty());
+        assert!(resolved.nodes.is_empty());
         pretty_assertions::assert_eq!(
             resolved.failures,
             vec![LinkedResolutionFailure {
@@ -871,10 +662,7 @@ mod tests {
         let store = StubStore::new([(uri("urn:ngsi-ld:T:C"), stored("urn:ngsi-ld:T:C", &[]))]);
         let roots = vec![root_with_object_type("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
-        let resolved = service_with_remote(store, &source)
-            .resolve_linked_entities(&live_target(), &roots, level(2), SysAttrsInclusion::Strip, &context(), &HashSet::new())
-            .await
-            .expect("resolves");
+        let resolved = resolve(&service_with_remote(store, &source), &roots, 2, &[]).await;
 
         pretty_assertions::assert_eq!(ids(&resolved), vec!["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"]);
     }
@@ -896,10 +684,7 @@ mod tests {
         let store = StubStore::new([(uri("urn:ngsi-ld:T:D"), stored("urn:ngsi-ld:T:D", &[]))]);
         let roots = vec![root_with_object_type("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
-        let resolved = service_with_remote(store, &source)
-            .resolve_linked_entities(&live_target(), &roots, level(2), SysAttrsInclusion::Strip, &context(), &HashSet::new())
-            .await
-            .expect("resolves");
+        let resolved = resolve(&service_with_remote(store, &source), &roots, 2, &[]).await;
 
         pretty_assertions::assert_eq!(ids(&resolved), vec!["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C"]);
         pretty_assertions::assert_eq!(source.calls().iter().map(|call| call.id.as_str()).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:B"]);
