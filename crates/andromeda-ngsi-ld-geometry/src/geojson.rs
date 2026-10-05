@@ -18,6 +18,7 @@ use crate::{
     linear_ring::LinearRingError,
     position::{Position, PositionError},
 };
+use andromeda_json_literal::admission::JsonLiteralError;
 use geojson::{GeometryValue, Position as GeoJsonPosition};
 use strum::Display;
 use thiserror::Error;
@@ -127,6 +128,10 @@ pub enum GeometryError {
     /// this one, and clause 4.6.3 excludes it from reference geometries too.
     #[error("GeometryCollection is not an allowed GeoProperty geometry; every RFC 7946 geometry except GeometryCollection is accepted")]
     GeometryCollectionUnsupported,
+    /// A foreign member (IETF RFC 7946 section 6.1) holds JSON the broker does
+    /// not keep.
+    #[error("a foreign member of the GeoJSON geometry is not admissible JSON: {0}")]
+    ForeignMember(#[source] JsonLiteralError),
 }
 
 impl GeometryForm {

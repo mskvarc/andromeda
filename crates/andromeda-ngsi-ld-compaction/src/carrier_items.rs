@@ -8,11 +8,11 @@
 //! written instance carry the same shapes, so both build their items here.
 
 use crate::{compacted_mode::CompactedMode, expanded_item::ExpandedItem, undecidable::Undecidable};
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_entity::{
     document::value_carrier::ValueCarrier,
     expanded_value::ExpandedValue,
     geo_value::GeoValue,
-    json_literal::JsonLiteral,
     language_entries::LanguageEntries,
     list_object::ListObject,
 };
@@ -42,7 +42,11 @@ pub(crate) fn language_entries<'a, M: CompactedMode>(entries: &LanguageEntries<M
 }
 
 /// One `@json` value object per literal.
-pub(crate) fn json_literals<'a, M: CompactedMode>(literals: &[JsonLiteral]) -> Vec<ExpandedItem<'a, M>> {
+///
+/// # Errors
+///
+/// As [`ExpandedItem::json`].
+pub(crate) fn json_literals<'a, M: CompactedMode>(literals: &[JsonLiteral]) -> Result<Vec<ExpandedItem<'a, M>>, Undecidable> {
     literals.iter().map(ExpandedItem::json).collect()
 }
 

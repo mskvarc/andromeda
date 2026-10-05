@@ -9,12 +9,12 @@
 use crate::{
     expanded_value::ExpandedValue,
     geo_value::GeoValue,
-    json_literal::JsonLiteral,
     language_entries::LanguageEntries,
     list_object::ListObject,
     non_empty::NonEmpty,
     unit_code::UnitCode,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, reference::NgsiLdReference, uri::Uri};
 
 /// One instance's family and value.

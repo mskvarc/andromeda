@@ -20,9 +20,9 @@ use crate::{
     geometry::Geometry,
     geometry_members::{GeometriesMember, GeometryMembers, JsonLdKeywords, TypeMember},
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_number::json_value::value_census::{MemberName, MemberNameSeed};
 use serde::de::{Deserialize, DeserializeSeed, Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor};
-use serde_json::Value;
 use std::fmt;
 
 /// A compact `GeoJSON` geometry object as written: the geometry it reads as,
@@ -182,7 +182,7 @@ fn read_member<'de, A: MapAccess<'de>>(map: &mut A, key: GeometryKey, members: &
         }
         GeometryKey::Other(name) => {
             if let Ok(foreign) = ForeignMemberName::try_from(&*name) {
-                members.foreign.insert(foreign, map.next_value::<Value>()?);
+                members.foreign.insert(foreign, map.next_value::<JsonLiteral>()?);
             } else {
                 members.json_ld_keywords = members.json_ld_keywords.and(JsonLdKeywords::of(&name));
                 map.next_value::<IgnoredAny>()?;
@@ -338,7 +338,7 @@ impl<'de> Visitor<'de> for MemberShapeSeed {
 #[cfg(test)]
 mod tests {
     use crate::{geojson::GeometryError, geometry::Geometry, geometry_members::JsonLdKeywords, written_geometry::WrittenGeometry};
-    use serde_json::{Value, json};
+    use serde_json::Value;
 
     /// Geometry texts covering every refusal and acceptance, written with
     /// their members in more than one order.
@@ -416,8 +416,8 @@ mod tests {
             .expect("a geometry");
         let members = geometry.members().expect("members are kept");
         pretty_assertions::assert_eq!(members.bbox().map(|bbox| bbox.ordinates().collect::<Vec<_>>()), Some(vec![1.0, 2.0, 1.0, 2.0]));
-        let foreign: Vec<(String, Value)> = members.foreign().iter().map(|(name, value)| (name.to_string(), value.clone())).collect(); // clone: the assertion owns what it compares
-        pretty_assertions::assert_eq!(foreign, vec![("title".to_owned(), json!("x")), ("z".to_owned(), json!(1))]);
+        let foreign: Vec<(String, &str)> = members.foreign().iter().map(|(name, value)| (name.to_string(), value.text())).collect();
+        pretty_assertions::assert_eq!(foreign, vec![("title".to_owned(), r#""x""#), ("z".to_owned(), "1")]);
     }
 
     #[test]

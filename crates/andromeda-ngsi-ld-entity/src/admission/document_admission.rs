@@ -26,10 +26,10 @@ use crate::{
         written_value::{ValueSlot, WrittenValue},
     },
     expanded_value::ExpandedValue,
-    json_literal::JsonLiteral,
     refusal::EntityRefusal,
     value_mode::{Fragment, FragmentMember, FragmentText},
 };
+use andromeda_json_literal::{JsonLiteral, piece::JsonKind};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -58,6 +58,9 @@ impl EntityDocument {
         }
         for (name, member) in self.attributes() {
             member.instances().iter().try_for_each(|instance| admit_family_members(Some(name), instance))?;
+        }
+        for (name, member) in self.attributes() {
+            member.instances().iter().try_for_each(|instance| admit_json_shapes(name, instance))?;
         }
         self.admit_null_placements(admission)?;
         for (name, member) in self.attributes() {
@@ -105,6 +108,7 @@ impl InstanceDocument {
             member.instances().iter().try_for_each(|instance| admit_envelope(name, instance))?;
         }
         admit_family_members(None, self)?;
+        admit_json_shapes(attribute, self)?;
         self.admit_null_placements(attribute, admission)?;
         admit_geometry(attribute, self)
     }
@@ -215,6 +219,38 @@ fn admit_family_members(attribute: Option<&AttributeName>, instance: &InstanceDo
         member.instances().iter().try_for_each(|sub| admit_family_members(Some(name), sub))?;
     }
     Ok(())
+}
+
+/// The `json` of a `JsonProperty`, here or on any sub-attribute below it, is
+/// a JSON object or an array of JSON objects (clause 4.5.24.2).
+///
+/// Clause 4.5.24.2 writes "a raw JSON object (or array of objects)" and
+/// clause 4.5.24.3 "a raw JSON object", so a scalar, `null` or an array
+/// holding anything but objects is no `JsonProperty` value. The NGSI-LD Null
+/// that deletes the value is a deletion, not a value, and is held to the
+/// clause 5.5.4 prohibitions instead.
+fn admit_json_shapes(name: &AttributeName, instance: &InstanceDocument) -> Result<(), EntityRefusal> {
+    if let ValueSlot::Set(WrittenValue::Json(literals)) = instance.value()
+        && !literals.iter().all(is_an_object_or_objects)
+    {
+        return Err(EntityRefusal::JsonNotAnObject { attribute: name.clone() });
+    }
+    instance
+        .sub_attributes()
+        .iter()
+        .try_for_each(|(sub_name, member)| member.instances().iter().try_for_each(|sub| admit_json_shapes(sub_name, sub)))
+}
+
+/// Whether a literal is a JSON object, or an array holding only JSON objects.
+fn is_an_object_or_objects(literal: &JsonLiteral) -> bool {
+    let piece = literal.piece();
+    match piece.kind() {
+        JsonKind::Object => true,
+        JsonKind::Array => piece
+            .elements()
+            .is_some_and(|elements| elements.iter().all(|element| element.kind() == JsonKind::Object)),
+        JsonKind::Null | JsonKind::Boolean | JsonKind::Number | JsonKind::String => false,
+    }
 }
 
 /// The NGSI-LD Null placements of one attribute member and everything below

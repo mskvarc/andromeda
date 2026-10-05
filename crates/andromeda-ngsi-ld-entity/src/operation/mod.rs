@@ -14,7 +14,6 @@ pub mod delete_attribute;
 pub mod expiry_removal;
 pub mod family_write;
 pub mod instance_patch;
-pub mod json_literal_merge;
 pub mod merge;
 pub mod mutation_error;
 pub mod partial_update;

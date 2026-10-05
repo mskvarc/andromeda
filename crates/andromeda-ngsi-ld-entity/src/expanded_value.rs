@@ -9,11 +9,11 @@
 
 use crate::{
     expanded_value_name::ExpandedValueName,
-    json_literal::JsonLiteral,
     literal::Literal,
     node_id::NodeId,
     value_mode::{Stored, ValueMode},
 };
+use andromeda_json_literal::JsonLiteral;
 use indexmap::IndexMap;
 
 /// One expanded value.

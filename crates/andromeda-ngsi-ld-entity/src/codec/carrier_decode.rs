@@ -17,7 +17,6 @@ use crate::{
         written_value::{ValueSlot, WrittenValue},
     },
     expanded_value::ExpandedValue,
-    json_literal::JsonLiteral,
     language_entries::{LanguageEntries, LanguageEntry},
     list_object::ListObject,
     literal::{Literal, LiteralValue},
@@ -27,6 +26,7 @@ use crate::{
     refusal::EntityRefusal,
     value_mode::{Fragment, FragmentMember, FragmentText},
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, reference::NgsiLdReference, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 

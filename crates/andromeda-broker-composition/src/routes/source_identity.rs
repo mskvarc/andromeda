@@ -9,6 +9,7 @@ use andromeda_http_source_identity::{
     routes::SourceIdentityRoutes,
     state::SourceIdentityState,
 };
+use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_tenancy::{
     context_source_alias::ContextSourceAliases,
@@ -49,20 +50,32 @@ impl DefaultTenantContextsResolver for BrokerDefaultTenantContexts {
 
 /// The `/info/sourceIdentity` route over the configured identity, answering
 /// under the default tenant's contexts (clause 4.14).
+///
+/// # Errors
+///
+/// Returns the [`JsonLiteralError`] of configured `contextSourceExtras` that
+/// are no admissible JSON, such as a number outside the supported range.
 pub(crate) fn source_identity_routes(
     identity: &InfoConfig,
     started_at: DateTime<Utc>,
     enabled_extensions: EnabledExtensions,
     tenants: &Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
-) -> SourceIdentityRoutes {
-    SourceIdentityRoutes::new(SourceIdentityState::new(
+) -> Result<SourceIdentityRoutes, JsonLiteralError> {
+    // The configuration file is read as a tree; the identity carries the JSON
+    // text it spells.
+    let extras = identity
+        .source_extras
+        .as_ref()
+        .map(|extras| JsonLiteral::admit(&extras.to_string()))
+        .transpose()?;
+    Ok(SourceIdentityRoutes::new(SourceIdentityState::new(
         identity.source_id.clone(), // clone: configuration and immutable route state own the identifier
         // Table 5.2.40-1: the configured alias is the default tenant's, and
         // every other tenant's is derived from it.
         ContextSourceAliases::new(identity.source_alias.clone()), // clone: configuration and the alias family own the configured alias
         started_at,
-        identity.source_extras.clone(), // clone: configuration and immutable route state own the raw extras
+        extras,
         enabled_extensions,
         Arc::new(BrokerDefaultTenantContexts::new(Arc::clone(tenants))),
-    ))
+    )?))
 }

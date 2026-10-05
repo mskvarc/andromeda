@@ -366,6 +366,68 @@ fn a_null_under_a_key_of_a_json_property_is_refused_outside_a_merge() {
     admit(&entity_with(&member), NullSentinelAdmission::MergeFragment).expect("a merge deletes the key");
 }
 
+/// A `JsonProperty` whose `json` is the JSON literal `literal`.
+fn json_property(literal: &Value) -> Value {
+    json!([{"@type": [AttributeType::JsonProperty.iri().as_str()], properties::JSON.as_str(): [{"@type": "@json", "@value": literal}]}])
+}
+
+/// Clause 4.5.24.2: the `json` of a `JsonProperty` is "a raw JSON object (or
+/// array of objects)", under every admission and on an attribute fragment too.
+#[test]
+fn a_json_property_holding_no_object_is_refused() {
+    for literal in [
+        json!(42),
+        json!("x"),
+        json!(true),
+        json!(null),
+        json!([1, 2]),
+        json!([{"a": 1}, "b"]),
+        json!([[{"a": 1}]]),
+    ] {
+        for admission in ADMISSIONS {
+            let error = admit(&entity_with(&json_property(&literal)), admission).expect_err("no object is no JsonProperty value");
+            assert!(matches!(error, EntityRefusal::JsonNotAnObject { .. }), "{literal} {admission:?}: {error:?}");
+        }
+        let fragment = &json_property(&literal)[0];
+        let error = admit_fragment(fragment, NullSentinelAdmission::PartialUpdateFragment).expect_err("no object is no JsonProperty value");
+        assert!(matches!(error, EntityRefusal::JsonNotAnObject { .. }), "{literal}: {error:?}");
+    }
+}
+
+/// Clause 4.5.24.2: an object, an array of objects and the empty array of
+/// none are `JsonProperty` values.
+#[test]
+fn a_json_property_holding_an_object_or_objects_is_accepted() {
+    for literal in [json!({"a": [1, "x", null]}), json!([{"a": 1}, {}]), json!([])] {
+        for admission in ADMISSIONS {
+            admit(&entity_with(&json_property(&literal)), admission).expect("an object or an array of objects");
+        }
+    }
+}
+
+/// A `JsonProperty` sub-attribute is held to clause 4.5.24.2 like an
+/// attribute.
+#[test]
+fn a_json_property_sub_attribute_holding_no_object_is_refused() {
+    let member = json!([{
+        "@type": [AttributeType::Property.iri().as_str()],
+        properties::VALUE.as_str(): [{"@value": 1}],
+        "https://example.org/settings": json_property(&json!("x")),
+    }]);
+    let error = admit(&entity_with(&member), NullSentinelAdmission::Refused).expect_err("the sub-attribute holds no object");
+    assert!(matches!(error, EntityRefusal::JsonNotAnObject { .. }), "{error:?}");
+}
+
+/// The NGSI-LD Null deleting a `JsonProperty` value is a deletion rather than
+/// a value, held to clause 5.5.4 alone.
+#[test]
+fn the_json_property_deletion_is_no_shape_refusal() {
+    let deleted = json_property(&json!("urn:ngsi-ld:null"));
+    admit(&entity_with(&deleted), NullSentinelAdmission::PartialUpdateFragment).expect("a fragment deletes the value");
+    let error = admit(&entity_with(&deleted), NullSentinelAdmission::Refused).expect_err("a create cannot delete");
+    assert!(matches!(error, EntityRefusal::ReservedNullValue { .. }), "{error:?}");
+}
+
 /// A Property whose value is the JSON literal `literal`.
 fn json_literal_property(literal: &Value) -> Value {
     json!([{"@type": [AttributeType::Property.iri().as_str()], properties::VALUE.as_str(): [{"@type": "@json", "@value": literal}]}])

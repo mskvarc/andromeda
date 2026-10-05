@@ -19,6 +19,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-context-registry",
         "andromeda-http-extraction",
         "andromeda-http-response",
+        "andromeda-json-literal",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",

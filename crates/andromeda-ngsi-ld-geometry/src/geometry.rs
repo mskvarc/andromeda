@@ -23,8 +23,7 @@ use crate::{
     planar::PlanarGeometry,
 };
 use geojson::Geometry as GeoJsonGeometry;
-use serde::{Serialize, Serializer};
-use serde_json::{Map, Number, Value};
+use serde_json::{Map, Value};
 
 /// A geometry attached to an NGSI-LD `GeoProperty` (clause 5.2.7).
 ///
@@ -77,7 +76,7 @@ impl Geometry {
     /// [`GeometryError::GeometryCollectionUnsupported`] if it is a
     /// `GeometryCollection`.
     pub fn from_geojson_value(value: &Value) -> Result<Geometry, GeometryError> {
-        GeometryMembers::of_object(value.as_object().ok_or(GeometryError::NotAnObject)?, ForeignMemberReading::Kept).into_geometry()
+        GeometryMembers::of_object(value.as_object().ok_or(GeometryError::NotAnObject)?, ForeignMemberReading::Kept)?.into_geometry()
     }
 
     /// Build from a `GeoProperty` value as written: a `GeoJSON` geometry
@@ -155,50 +154,29 @@ impl Geometry {
         self.form.dimension()
     }
 
-    /// Render as a `GeoJSON` geometry for the wire, with its `bbox` and its
-    /// foreign members.
+    /// The geometry as the `geojson` crate holds one, with its `bbox`.
     ///
-    /// Infallible, and byte-faithful to what was received: a position that
-    /// arrived with two ordinates renders with two, and one that arrived with
-    /// three renders with three.
+    /// Infallible, and faithful to the positions: a position that arrived with
+    /// two ordinates renders with two, and one that arrived with three renders
+    /// with three. The foreign members describe no position and are left out;
+    /// the geometry's own [`Serialize`](serde::Serialize) writes them.
     #[must_use]
     pub fn to_geojson(&self) -> GeoJsonGeometry {
         let mut geometry = GeoJsonGeometry::new(self.form.to_geojson());
-        if let Some(members) = self.members() {
-            geometry.bbox = members.bbox().map(|bbox| bbox.ordinates().collect());
-            geometry.foreign_members = (!members.foreign().is_empty()).then(|| foreign_object(members));
-        }
+        geometry.bbox = self.members().and_then(GeoJsonMembers::bbox).map(|bbox| bbox.ordinates().collect());
         geometry
     }
 
-    /// Render as the compact `GeoJSON` geometry object, with its `bbox` and its
-    /// foreign members.
-    #[must_use]
-    pub fn to_geojson_value(&self) -> Value {
-        let mut object = match Value::from(&self.form.to_geojson()) {
-            Value::Object(object) => object,
-            other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => return other,
-        };
-        if let Some(members) = self.members() {
-            if let Some(bbox) = members.bbox() {
-                object.insert(
-                    "bbox".to_owned(),
-                    Value::Array(bbox.ordinates().filter_map(Number::from_f64).map(Value::Number).collect()),
-                );
-            }
-            object.extend(foreign_object(members));
-        }
-        Value::Object(object)
+    /// The compact `GeoJSON` geometry object, with its `bbox` and its foreign
+    /// members, as a JSON tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `serde_json` failure of writing the geometry, which no
+    /// geometry raises.
+    pub fn to_geojson_value(&self) -> Result<Value, serde_json::Error> {
+        serde_json::to_value(self)
     }
-}
-
-/// The foreign members of `members` as a JSON object.
-fn foreign_object(members: &GeoJsonMembers) -> Map<String, Value> {
-    members
-        .foreign()
-        .iter()
-        .map(|(name, value)| (name.to_string(), value.clone())) // clone: the rendered object owns what the geometry keeps
-        .collect()
 }
 
 /// Narrow arbitrary-precision JSON coordinate numbers to the finite binary64
@@ -215,20 +193,6 @@ fn coordinates_as_f64(value: Value) -> Result<Value, GeometryError> {
         }
         Value::Array(values) => values.into_iter().map(coordinates_as_f64).collect::<Result<Vec<_>, _>>().map(Value::Array),
         Value::Null | Value::Bool(_) | Value::String(_) | Value::Object(_) => Ok(value),
-    }
-}
-
-// Hand-written rather than `#[serde(into = "GeoJsonGeometry")]`: that container
-// attribute requires `Clone` and clones the whole geometry on every serialise,
-// which is the hot path for every entity response carrying a GeoProperty. A
-// geometry with members renders through its JSON object, which writes a foreign
-// member's number as it was written.
-impl Serialize for Geometry {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self.members() {
-            None => self.to_geojson().serialize(serializer),
-            Some(_) => self.to_geojson_value().serialize(serializer),
-        }
     }
 }
 
@@ -263,7 +227,8 @@ mod tests {
             | GeometryError::NotAnArray { .. }
             | GeometryError::NonNumericOrdinate { .. }
             | GeometryError::NonFiniteCoordinate
-            | GeometryError::GeometryCollectionUnsupported) => {
+            | GeometryError::GeometryCollectionUnsupported
+            | GeometryError::ForeignMember(_)) => {
                 panic!("expected a refused position, got {other:?}")
             }
         }
@@ -489,7 +454,7 @@ mod tests {
     #[test]
     fn a_geometry_renders_as_the_compact_geojson_object_it_was_read_from() {
         let geometry = Geometry::from_geojson_value(&elevated_point_json()).expect("elevated point parses");
-        pretty_assertions::assert_eq!(geometry.to_geojson_value(), elevated_point_json());
+        pretty_assertions::assert_eq!(geometry.to_geojson_value().expect("a JSON tree"), elevated_point_json());
     }
 
     /// IETF RFC 7946 sections 5 and 6.1, ETSI GS CIM 009 v1.9.1 clause 4.6.4:
@@ -499,7 +464,7 @@ mod tests {
         let written = serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0], "bbox": [1.0, 2.0, 1.0, 2.0], "title": "x"});
         let geometry = Geometry::from_geojson_value(&written).expect("a point");
         pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), written);
-        pretty_assertions::assert_eq!(geometry.to_geojson_value(), written);
+        pretty_assertions::assert_eq!(geometry.to_geojson_value().expect("a JSON tree"), written);
     }
 
     /// A geometry without members holds one empty pointer for them.

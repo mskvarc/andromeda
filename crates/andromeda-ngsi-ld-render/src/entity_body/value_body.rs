@@ -1,6 +1,5 @@
 //! A Property value written as the client's own JSON or as its typed geometry.
 
-use crate::entity_body::geometry_body::GeometryBody;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_model::attribute::value::NgsiLdValue;
 use andromeda_ngsi_ld_representation::concise_reading::{bare_value_family, typeless_value_family};
@@ -36,7 +35,7 @@ impl Serialize for ValueBody<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self.0 {
             NgsiLdValue::Json(json) => json.serialize(serializer),
-            NgsiLdValue::Geometry(geometry) => GeometryBody(geometry).serialize(serializer),
+            NgsiLdValue::Geometry(geometry) => geometry.serialize(serializer),
         }
     }
 }

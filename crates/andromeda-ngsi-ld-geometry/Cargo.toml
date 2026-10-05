@@ -9,6 +9,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-json-literal.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 derive_more = { version = "2.1.1", features = ["as_ref", "display"] }
 geo = "0.33.1"

@@ -166,9 +166,9 @@ impl<'de> Visitor<'de> for GeoElementSeed<'_> {
 
 /// The members of a geometry element, gathered before it is decided.
 #[derive(Default)]
-struct GeoParts {
+struct GeoParts<'de> {
     /// `@value` of the string form or of the Null.
-    value: Option<RawScalar>,
+    value: Option<RawScalar<'de>>,
     /// The geometry type the node's `@type` names.
     geometry_type: Option<GeometryType>,
     /// The coordinates, read after the type.
@@ -179,7 +179,7 @@ struct GeoParts {
     members: MembersRead,
 }
 
-impl GeoParts {
+impl GeoParts<'_> {
     /// Decide what the gathered members make.
     fn decide(self, seed: GeoValueSeed<'_>) -> Result<GeoDecoded, EntityRefusal> {
         let GeoParts {
@@ -195,11 +195,13 @@ impl GeoParts {
         let geometry = |form| GeoDecoded::Value(GeoValue::Geometry(GeometryValue::with_members(form, members)));
         match (value, geometry_type, form, pending) {
             (Some(_), None, None, None) if beside_value => Err(seed.malformed(MemberShape::Geometry)),
-            (Some(RawScalar::String(text)), None, None, None) if is_ngsi_ld_null(&text) => Ok(GeoDecoded::Null),
-            (Some(RawScalar::String(text)), None, None, None) => EncodedGeometry::parse(text)
-                .map(|encoded| GeoDecoded::Value(GeoValue::Encoded(encoded)))
-                .map_err(|source| seed.geometry(source)),
-            (Some(RawScalar::Number(_) | RawScalar::Boolean(_) | RawScalar::Json(_)), None, None, None) => Err(seed.geometry(GeometryError::NotAnObject)),
+            (Some(value), None, None, None) => match value.into_text() {
+                Some(text) if is_ngsi_ld_null(&text) => Ok(GeoDecoded::Null),
+                Some(text) => EncodedGeometry::parse(text)
+                    .map(|encoded| GeoDecoded::Value(GeoValue::Encoded(encoded)))
+                    .map_err(|source| seed.geometry(source)),
+                None => Err(seed.geometry(GeometryError::NotAnObject)),
+            },
             (None, Some(_), Some(form), None) => Ok(geometry(form)),
             (None, Some(geometry_type), None, Some(pending)) => read_pending(seed, geometry_type, &pending).map(geometry),
             (None, Some(_), None, None) => Err(seed.geometry(GeometryError::MissingCoordinates)),

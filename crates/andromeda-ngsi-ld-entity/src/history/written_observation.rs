@@ -198,7 +198,6 @@ mod tests {
         family_value::FamilyValue,
         history::written_observation::{AddressedInstances, written_observation},
         instance::Instance,
-        json_literal::JsonLiteral,
         non_empty::NonEmpty,
         operation::{
             selection::OverwritePolicy,
@@ -208,6 +207,7 @@ mod tests {
         system_instant::SystemInstant,
         unit_code::UnitCode,
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use indexmap::IndexMap;
     use serde_json::json;
@@ -371,7 +371,7 @@ mod tests {
         let json_property = |value: serde_json::Value| {
             Instance::builder()
                 .value(FamilyValue::JsonProperty {
-                    json: NonEmpty::one(JsonLiteral::new(value)),
+                    json: NonEmpty::one(JsonLiteral::admit(&value.to_string()).expect("a JSON literal")),
                     value_type: None,
                 })
                 .build()

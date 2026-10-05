@@ -92,8 +92,9 @@ pub mod variant;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
-        "andromeda-context-space",
         "andromeda-context-commit",
+        "andromeda-context-space",
+        "andromeda-json-literal",
         "andromeda-jsonld",
         "andromeda-linked-retrieval",
         "andromeda-ngsi-ld-compaction",

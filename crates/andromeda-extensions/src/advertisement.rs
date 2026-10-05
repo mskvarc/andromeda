@@ -10,7 +10,11 @@
 //! expanded against a context, which an extras key is not.
 
 use crate::enabled::{EnabledExtensions, Extension};
-use serde_json::{Map, Value};
+use andromeda_json_literal::{
+    JsonLiteral,
+    admission::JsonLiteralError,
+    piece::{JsonKind, JsonPiece},
+};
 
 /// The `contextSourceExtras` key the enabled extension tokens are listed under.
 ///
@@ -45,22 +49,33 @@ const CURSOR_PAGINATION_TOKEN: &str = "cursor-pagination";
 /// When `base` is a non-object JSON value the operator supplied verbatim, it is
 /// returned unchanged: there is no object to merge a member into, and dropping
 /// the operator's value to advertise a token would lose configured data.
-#[must_use]
-pub fn enabled_extension_extras(base: Option<Value>, enabled: EnabledExtensions) -> Option<Value> {
+///
+/// # Errors
+///
+/// Returns the [`JsonLiteralError`] of writing the merged extras, which no
+/// admitted extras raise.
+pub fn enabled_extension_extras(base: Option<JsonLiteral>, enabled: EnabledExtensions) -> Result<Option<JsonLiteral>, JsonLiteralError> {
     let tokens = enabled_tokens(enabled);
     if tokens.is_empty() {
-        return base;
+        return Ok(base);
     }
-    let mut object = match base {
-        None => Map::new(),
-        Some(Value::Object(members)) => members,
-        Some(other) => return Some(other),
-    };
-    object.insert(
-        EXTENSION_KEY.to_string(),
-        Value::Array(tokens.into_iter().map(|token| Value::String(token.to_string())).collect()),
+    let advertised = advertised_tokens(&tokens)?;
+    match base {
+        None => Ok(Some(advertised)),
+        Some(base) if base.piece().kind() == JsonKind::Object => base.merged(&advertised).map(Some),
+        Some(other) => Ok(Some(other)),
+    }
+}
+
+/// The object listing `tokens` under [`EXTENSION_KEY`].
+fn advertised_tokens(tokens: &[&'static str]) -> Result<JsonLiteral, JsonLiteralError> {
+    let quoted = |written: Result<String, serde_json::Error>| written.map_err(|source| JsonLiteralError::Syntax { source });
+    let text = format!(
+        "{{{}:{}}}",
+        quoted(serde_json::to_string(EXTENSION_KEY))?,
+        quoted(serde_json::to_string(tokens))?
     );
-    Some(Value::Object(object))
+    JsonLiteral::admit(&text)
 }
 
 /// The advertised tokens for the enabled extensions, in a stable order.
@@ -107,11 +122,11 @@ const fn token(extension: Extension) -> &'static str {
 /// a source that does not follow this spelling has not said it serves the
 /// extension.
 #[must_use]
-pub fn advertises(extras: Option<&Value>, extension: Extension) -> bool {
+pub fn advertises(extras: Option<&JsonLiteral>, extension: Extension) -> bool {
     extras
-        .and_then(|extras| extras.get(EXTENSION_KEY))
-        .and_then(Value::as_array)
-        .is_some_and(|tokens| tokens.iter().any(|advertised| advertised.as_str() == Some(token(extension))))
+        .and_then(|extras| extras.piece().member(EXTENSION_KEY))
+        .and_then(JsonPiece::elements)
+        .is_some_and(|tokens| tokens.into_iter().any(|advertised| advertised.as_str().as_deref() == Some(token(extension))))
 }
 
 #[cfg(test)]
@@ -132,7 +147,28 @@ mod tests {
         enabled::{EnabledExtensions, Extension},
     };
     use andromeda_http_stack::config::feature_mode::HttpFeatureMode;
-    use serde_json::{Value, json};
+    use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
+    use std::borrow::Cow;
+
+    fn literal(text: &str) -> JsonLiteral {
+        JsonLiteral::admit(text).expect("a JSON literal")
+    }
+
+    /// The tokens advertised extras list, in order.
+    fn tokens(extras: &JsonLiteral) -> Vec<String> {
+        extras
+            .piece()
+            .member(EXTENSION_KEY)
+            .and_then(JsonPiece::elements)
+            .expect("token array")
+            .into_iter()
+            .filter_map(|token| token.as_str().map(Cow::into_owned))
+            .collect()
+    }
+
+    fn extras(base: Option<JsonLiteral>, enabled: EnabledExtensions) -> Option<JsonLiteral> {
+        enabled_extension_extras(base, enabled).expect("written extras")
+    }
 
     fn both_enabled() -> EnabledExtensions {
         ExtensionsConfig {
@@ -151,15 +187,17 @@ mod tests {
 
     #[test]
     fn both_tokens_are_advertised_when_both_extensions_are_on() {
-        let extras = enabled_extension_extras(None, both_enabled()).expect("extras present");
-        let tokens = extras.get(EXTENSION_KEY).and_then(Value::as_array).expect("token array");
-        let rendered: Vec<&str> = tokens.iter().filter_map(Value::as_str).collect();
-        assert!(rendered.contains(&TEMPORAL_DELETE_BY_QUERY_TOKEN), "{rendered:?}");
-        assert!(rendered.contains(&PURGE_DATASET_SCOPE_TOKEN), "{rendered:?}");
-        assert!(rendered.contains(&TEMPORAL_AGGREGATION_GROUPING_TOKEN), "{rendered:?}");
-        assert!(rendered.contains(&TEMPORAL_LINKED_RETRIEVAL_TOKEN), "{rendered:?}");
-        assert!(rendered.contains(&TENANT_MANAGEMENT_TOKEN), "{rendered:?}");
-        assert!(rendered.contains(&CURSOR_PAGINATION_TOKEN), "{rendered:?}");
+        let rendered = tokens(&extras(None, both_enabled()).expect("extras present"));
+        for token in [
+            TEMPORAL_DELETE_BY_QUERY_TOKEN,
+            PURGE_DATASET_SCOPE_TOKEN,
+            TEMPORAL_AGGREGATION_GROUPING_TOKEN,
+            TEMPORAL_LINKED_RETRIEVAL_TOKEN,
+            TENANT_MANAGEMENT_TOKEN,
+            CURSOR_PAGINATION_TOKEN,
+        ] {
+            assert!(rendered.iter().any(|rendered| rendered == token), "{rendered:?}");
+        }
     }
 
     #[test]
@@ -169,17 +207,14 @@ mod tests {
             cursor_pagination: HttpFeatureMode::Disabled,
             ..ExtensionsConfig::default()
         };
-        let extras = enabled_extension_extras(None, config.resolve()).expect("extras present");
-        let tokens = extras.get(EXTENSION_KEY).and_then(Value::as_array).expect("token array");
-        let rendered: Vec<&str> = tokens.iter().filter_map(Value::as_str).collect();
-        pretty_assertions::assert_eq!(rendered, vec![TENANT_MANAGEMENT_TOKEN]);
+        pretty_assertions::assert_eq!(tokens(&extras(None, config.resolve()).expect("extras present")), vec![TENANT_MANAGEMENT_TOKEN]);
 
         // With the extension off, nothing about it is advertised.
         let neither = ExtensionsConfig {
             cursor_pagination: HttpFeatureMode::Disabled,
             ..ExtensionsConfig::default()
         };
-        assert!(enabled_extension_extras(None, neither.resolve()).is_none());
+        assert!(extras(None, neither.resolve()).is_none());
     }
 
     #[test]
@@ -189,60 +224,49 @@ mod tests {
             cursor_pagination: HttpFeatureMode::Disabled,
             ..ExtensionsConfig::default()
         };
-        let extras = enabled_extension_extras(None, config.resolve()).expect("extras present");
-        let tokens = extras.get(EXTENSION_KEY).and_then(Value::as_array).expect("token array");
-        let rendered: Vec<&str> = tokens.iter().filter_map(Value::as_str).collect();
-        pretty_assertions::assert_eq!(rendered, vec![TEMPORAL_LINKED_RETRIEVAL_TOKEN]);
+        pretty_assertions::assert_eq!(
+            tokens(&extras(None, config.resolve()).expect("extras present")),
+            vec![TEMPORAL_LINKED_RETRIEVAL_TOKEN]
+        );
 
-        let default_tokens = enabled_extension_extras(None, ExtensionsConfig::default().resolve()).expect("extras present");
-        let default_rendered: Vec<&str> = default_tokens
-            .get(EXTENSION_KEY)
-            .and_then(Value::as_array)
-            .expect("token array")
-            .iter()
-            .filter_map(Value::as_str)
-            .collect();
-        assert!(!default_rendered.contains(&TEMPORAL_LINKED_RETRIEVAL_TOKEN), "{default_rendered:?}");
+        let default_rendered = tokens(&extras(None, ExtensionsConfig::default().resolve()).expect("extras present"));
+        assert!(
+            !default_rendered.iter().any(|token| token == TEMPORAL_LINKED_RETRIEVAL_TOKEN),
+            "{default_rendered:?}"
+        );
     }
 
     /// A default broker serves cursor pagination, and says so.
     #[test]
     fn the_advertisement_names_cursor_pagination_by_default() {
-        let extras = enabled_extension_extras(None, ExtensionsConfig::default().resolve()).expect("extras present");
-        let tokens = extras.get(EXTENSION_KEY).and_then(Value::as_array).expect("token array");
-        let rendered: Vec<&str> = tokens.iter().filter_map(Value::as_str).collect();
-        pretty_assertions::assert_eq!(rendered, vec![CURSOR_PAGINATION_TOKEN]);
+        pretty_assertions::assert_eq!(
+            tokens(&extras(None, ExtensionsConfig::default().resolve()).expect("extras present")),
+            vec![CURSOR_PAGINATION_TOKEN]
+        );
     }
 
     #[test]
     fn no_vendor_key_is_added_when_no_extension_is_on() {
         let enabled = EnabledExtensions::none();
-        assert!(enabled_extension_extras(None, enabled).is_none());
+        assert!(extras(None, enabled).is_none());
         // The operator's own extras survive when nothing is advertised.
-        let base = json!({"node": 1});
-        pretty_assertions::assert_eq!(enabled_extension_extras(Some(base.clone()), enabled), Some(base));
+        pretty_assertions::assert_eq!(extras(Some(literal(r#"{"node": 1}"#)), enabled), Some(literal(r#"{"node": 1}"#)));
     }
 
     #[test]
     fn operator_extras_are_preserved_beside_the_advertised_tokens() {
-        let base = json!({"node": 1});
-        let extras = enabled_extension_extras(Some(base), both_enabled()).expect("extras present");
-        pretty_assertions::assert_eq!(extras.get("node"), Some(&json!(1)));
-        assert!(extras.get(EXTENSION_KEY).is_some());
+        let extras = extras(Some(literal(r#"{"node": 1}"#)), both_enabled()).expect("extras present");
+        pretty_assertions::assert_eq!(extras.piece().member("node").map(JsonPiece::text), Some("1"));
+        assert!(extras.piece().member(EXTENSION_KEY).is_some());
     }
 
     /// Clause 5.4 of the extension strategy: no advertised key may squat the
     /// ETSI `ngsi-ld:` namespace.
     #[test]
     fn no_advertised_key_uses_the_ngsi_ld_namespace() {
-        let extras = enabled_extension_extras(Some(json!({"ngsi-ld:vocab": true})), both_enabled()).expect("extras present");
-        let vendor_keys: Vec<&String> = extras
-            .as_object()
-            .expect("object")
-            .keys()
-            .filter(|key| key.as_str() != "ngsi-ld:vocab")
-            .collect();
-        for key in vendor_keys {
+        let extras = extras(Some(literal(r#"{"ngsi-ld:vocab": true}"#)), both_enabled()).expect("extras present");
+        let members = extras.piece().members().expect("object");
+        for (key, _) in members.iter().filter(|(key, _)| key != "ngsi-ld:vocab") {
             assert!(!key.starts_with("ngsi-ld:"), "{key}");
         }
         pretty_assertions::assert_eq!(EXTENSION_KEY.starts_with("ngsi-ld:"), false);
@@ -251,9 +275,9 @@ mod tests {
     /// A broker reads back exactly what another one advertises.
     #[test]
     fn an_advertisement_reads_back_as_the_enabled_extensions() {
-        let extras = enabled_extension_extras(None, both_enabled());
+        let extras = extras(None, both_enabled());
         assert!(advertises(extras.as_ref(), Extension::TemporalLinkedRetrieval));
-        let default_extras = enabled_extension_extras(None, ExtensionsConfig::default().resolve());
+        let default_extras = enabled_extension_extras(None, ExtensionsConfig::default().resolve()).expect("written extras");
         assert!(!advertises(default_extras.as_ref(), Extension::TemporalLinkedRetrieval));
         assert!(advertises(default_extras.as_ref(), Extension::CursorPagination));
     }
@@ -263,9 +287,9 @@ mod tests {
     fn extras_in_another_spelling_advertise_nothing() {
         for extras in [
             None,
-            Some(json!("temporal-linked-retrieval")),
-            Some(json!({"extensions": "temporal-linked-retrieval"})),
-            Some(json!({"other": ["temporal-linked-retrieval"]})),
+            Some(literal(r#""temporal-linked-retrieval""#)),
+            Some(literal(r#"{"extensions": "temporal-linked-retrieval"}"#)),
+            Some(literal(r#"{"other": ["temporal-linked-retrieval"]}"#)),
         ] {
             assert!(!advertises(extras.as_ref(), Extension::TemporalLinkedRetrieval), "{extras:?}");
         }

@@ -127,12 +127,12 @@ impl<'de> Visitor<'de> for InstanceSeed<'_> {
         while let Some(key) = map.next_key::<ObjectKey>()? {
             match key {
                 ObjectKey::Type => parts.family = families(map.next_value::<TypeEntries>()?, attribute).map_err(refuse)?,
-                ObjectKey::Value => match map.next_value::<RawScalar>()? {
-                    RawScalar::String(text) if is_ngsi_ld_null(&text) => parts.null_marker = true,
-                    RawScalar::String(_) | RawScalar::Number(_) | RawScalar::Boolean(_) | RawScalar::Json(_) => {
+                ObjectKey::Value => {
+                    if !map.next_value::<RawScalar<'de>>()?.text().is_some_and(is_ngsi_ld_null) {
                         return Err(refuse(malformed(Some(attribute), MemberShape::Attribute)));
                     }
-                },
+                    parts.null_marker = true;
+                }
                 ObjectKey::Id => {
                     if !is_ngsi_ld_null(&map.next_value::<String>()?) {
                         return Err(refuse(malformed(Some(attribute), MemberShape::Attribute)));

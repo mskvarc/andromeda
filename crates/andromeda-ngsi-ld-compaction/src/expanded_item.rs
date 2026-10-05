@@ -9,12 +9,12 @@
 //! structured values -- stay borrowed from the model and are walked in place.
 
 use crate::{compacted::Compacted, compacted_mode::CompactedMode, undecidable::Undecidable};
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_entity::{
     document::instance_document::InstanceDocument,
     expanded_value::{ExpandedValue, ValueNode},
     geometry_value::GeometryValue,
     instance::Instance,
-    json_literal::JsonLiteral,
     literal::{Direction as LiteralDirection, Literal as ModelLiteral, LiteralValue},
     value_mode::ValueMode,
 };
@@ -30,7 +30,7 @@ use jsonld::{
     Value,
     compaction::ValueKind,
     object::Literal,
-    syntax::{LenientLangTagBuf, NumberBuf, Value as JsonValue},
+    syntax::{LenientLangTagBuf, NumberBuf},
 };
 
 /// A JSON-LD node identifier.
@@ -77,7 +77,7 @@ impl<'a, M: CompactedMode> ExpandedItem<'a, M> {
     pub(crate) fn of_value(value: &'a ExpandedValue<M>) -> Result<ExpandedItem<'a, M>, Undecidable> {
         match value {
             ExpandedValue::Literal(literal) => literal_value(literal).map(ExpandedItem::Value),
-            ExpandedValue::Json(json) => Ok(ExpandedItem::Value(json_value(json))),
+            ExpandedValue::Json(json) => json_value(json).map(ExpandedItem::Value),
             ExpandedValue::Node(node) => Ok(match node.id() {
                 Some(id) if node.is_reference() => ExpandedItem::Reference(node_identifier(id.as_str())),
                 Some(id) => ExpandedItem::Node(node, Some(node_identifier(id.as_str()))),
@@ -111,8 +111,13 @@ impl<M: ValueMode> ExpandedItem<'_, M> {
     }
 
     /// A `@json` value object.
-    pub(crate) fn json(json: &JsonLiteral) -> Self {
-        ExpandedItem::Value(json_value(json))
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Undecidable::UnrepresentableValue`] for a literal the
+    /// processor's JSON reader refuses.
+    pub(crate) fn json(json: &JsonLiteral) -> Result<Self, Undecidable> {
+        json_value(json).map(ExpandedItem::Value)
     }
 
     /// A node reference to `iri`.
@@ -195,9 +200,8 @@ fn literal_value(literal: &ModelLiteral) -> Result<Value<IriBuf>, Undecidable> {
 }
 
 /// The library's `@json` value object for a JSON literal.
-fn json_value(json: &JsonLiteral) -> Value<IriBuf> {
-    // clone: the library's value object owns its JSON document
-    Value::Json(JsonValue::from_serde_json(json.get().clone()))
+fn json_value(json: &JsonLiteral) -> Result<Value<IriBuf>, Undecidable> {
+    json.to_processor_json().map(Value::Json).map_err(|_| Undecidable::UnrepresentableValue)
 }
 
 /// A number in the exact spelling the canonical codec writes it with.

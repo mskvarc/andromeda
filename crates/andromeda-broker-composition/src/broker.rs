@@ -49,6 +49,7 @@ use andromeda_http_subscription::routes::SubscriptionRoutes;
 use andromeda_http_telemetry::{error::TelemetryHttpError, routes::TelemetryRoutes};
 use andromeda_http_temporal::routes::TemporalRoutes;
 use andromeda_http_tenancy::routes::{TenancyRoutes, TenantManagement};
+use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicyError;
 use andromeda_postgresql_context_store::{
     error::ContextStoreError,
@@ -132,6 +133,9 @@ enum BrokerStartupError {
     /// `[pagination]` and `[extensions]` together name no pagination policy.
     #[error(transparent)]
     Pagination(#[from] PaginationPolicyError),
+    /// The configured `contextSourceExtras` are no admissible JSON.
+    #[error("the configured source extras are not admissible JSON: {0}")]
+    SourceExtras(#[from] JsonLiteralError),
 }
 
 /// Construct the broker, serve HTTP, then close process resources in order.
@@ -342,7 +346,7 @@ async fn construct(
         .subscription(subscription_routes)
         .entity_map(entity_map_routes)
         .snapshot(snapshot_routes)
-        .source_identity(source_identity_routes(&config.identity, started_at, enabled_extensions, &tenants))
+        .source_identity(source_identity_routes(&config.identity, started_at, enabled_extensions, &tenants)?)
         .notification_receiver(NotificationReceiverRoutes::new(Arc::new(BrokerNotificationReceiverResolver::new(
             Arc::clone(&tenants),
             forwarded_subscription_router,

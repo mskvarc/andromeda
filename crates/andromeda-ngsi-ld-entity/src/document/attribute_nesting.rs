@@ -23,7 +23,6 @@ use crate::{
     value_mode::ValueMode,
 };
 use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNesting;
-use serde_json::Value;
 
 impl InstanceDocument {
     /// How deeply the instance nests below itself: through its value, and
@@ -56,7 +55,7 @@ fn written_value_levels(value: &WrittenValue) -> usize {
         WrittenValue::Value(values) => deepest(values),
         WrittenValue::ValueList(items) => deepest(items).saturating_add(1),
         WrittenValue::Geometry(geometry) => geometry_levels(geometry),
-        WrittenValue::Json(literals) => literals.as_slice().iter().map(|literal| json_levels(literal.get())).max().unwrap_or(0),
+        WrittenValue::Json(literals) => literals.as_slice().iter().map(|literal| literal.piece().levels()).max().unwrap_or(0),
         WrittenValue::ObjectList(objects) => {
             // A wrapped item is a node holding its target, one level inside
             // the list.
@@ -76,7 +75,7 @@ fn deepest<M: ValueMode>(values: &[ExpandedValue<M>]) -> usize {
 fn value_levels<M: ValueMode>(value: &ExpandedValue<M>) -> usize {
     match value {
         ExpandedValue::Literal(_) => 0,
-        ExpandedValue::Json(literal) => json_levels(literal.get()),
+        ExpandedValue::Json(literal) => literal.piece().levels(),
         ExpandedValue::List(items) => deepest(items).saturating_add(1),
         ExpandedValue::Node(node) => node
             .members()
@@ -102,15 +101,6 @@ fn geometry_levels(geometry: &GeoValue) -> usize {
             });
             coordinates.max(members).saturating_add(1)
         }
-    }
-}
-
-/// The levels of the containers inside a JSON literal.
-fn json_levels(value: &Value) -> usize {
-    match value {
-        Value::Array(items) => items.iter().map(json_levels).max().unwrap_or(0).saturating_add(1),
-        Value::Object(members) => members.values().map(json_levels).max().unwrap_or(0).saturating_add(1),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => 0,
     }
 }
 

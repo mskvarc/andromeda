@@ -9,17 +9,17 @@
 
 use crate::{
     entity_body::{
-        geometry_body::GeometryBody,
         object_list_body::ObjectListBody,
         reified_member::Reification,
         value_body::{ValueBody, ValueListBody},
     },
     uri_decoding::{DecodedTargets, UriDecoding},
 };
+use andromeda_json_literal::JsonLiteral;
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use andromeda_ngsi_ld_model::attribute::{instance::Attribute, language_property::LanguageMap, one_or_many::OneOrMany};
 use serde::{Serialize, Serializer};
-use serde_json::Value;
 
 /// One family's value, written as its value member or its previous member.
 #[derive(Debug, Clone, Copy)]
@@ -31,11 +31,11 @@ pub(crate) enum FamilyValue<'a> {
     /// A `VocabProperty`'s vocabulary terms.
     Vocab(&'a OneOrMany<NgsiLdReference>),
     /// A `GeoProperty`'s geometry.
-    Geometry(GeometryBody<'a>),
+    Geometry(&'a Geometry),
     /// A `LanguageProperty`'s language map.
     LanguageMap(&'a LanguageMap),
     /// A `JsonProperty`'s JSON value.
-    Json(&'a Value),
+    Json(&'a JsonLiteral),
     /// A `ListProperty`'s values.
     ValueList(ValueListBody<'a>),
     /// A `ListRelationship`'s targets.
@@ -49,7 +49,7 @@ impl<'a> FamilyValue<'a> {
             Attribute::Property(property) => FamilyValue::Value(ValueBody(&property.value)),
             Attribute::Relationship(relationship) => FamilyValue::Targets(DecodedTargets::new(&relationship.object, decoding)),
             Attribute::VocabProperty(vocab_property) => FamilyValue::Vocab(&vocab_property.vocab),
-            Attribute::GeoProperty(geo_property) => FamilyValue::Geometry(GeometryBody(&geo_property.value)),
+            Attribute::GeoProperty(geo_property) => FamilyValue::Geometry(&geo_property.value),
             Attribute::LanguageProperty(language_property) => FamilyValue::LanguageMap(&language_property.language_map),
             Attribute::JsonProperty(json_property) => FamilyValue::Json(&json_property.json),
             Attribute::ListProperty(list_property) => FamilyValue::ValueList(ValueListBody(&list_property.value_list)),
@@ -68,10 +68,7 @@ impl<'a> FamilyValue<'a> {
                 .as_ref()
                 .map(|previous| FamilyValue::Targets(DecodedTargets::new(previous, decoding))),
             Attribute::VocabProperty(vocab_property) => vocab_property.previous_vocab.as_ref().map(FamilyValue::Vocab),
-            Attribute::GeoProperty(geo_property) => geo_property
-                .previous_value
-                .as_ref()
-                .map(|previous| FamilyValue::Geometry(GeometryBody(previous))),
+            Attribute::GeoProperty(geo_property) => geo_property.previous_value.as_ref().map(FamilyValue::Geometry),
             Attribute::LanguageProperty(language_property) => language_property.previous_language_map.as_ref().map(FamilyValue::LanguageMap),
             Attribute::JsonProperty(json_property) => json_property.previous_json.as_ref().map(FamilyValue::Json),
             Attribute::ListProperty(list_property) => list_property

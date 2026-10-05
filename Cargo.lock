@@ -189,6 +189,7 @@ dependencies = [
  "andromeda-http-temporal",
  "andromeda-http-tenancy",
  "andromeda-http3-server",
+ "andromeda-json-literal",
  "andromeda-jsonld",
  "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-compaction",
@@ -373,6 +374,7 @@ dependencies = [
  "andromeda-context-commit",
  "andromeda-context-space",
  "andromeda-federation",
+ "andromeda-json-literal",
  "andromeda-jsonld",
  "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-compaction",
@@ -442,6 +444,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-http-stack",
+ "andromeda-json-literal",
  "enumset",
  "pretty_assertions",
  "serde",
@@ -461,6 +464,7 @@ dependencies = [
  "andromeda-context-space",
  "andromeda-entity-map",
  "andromeda-http-headers",
+ "andromeda-json-literal",
  "andromeda-jsonld",
  "andromeda-ngsi-ld-compaction",
  "andromeda-ngsi-ld-entity",
@@ -921,6 +925,7 @@ dependencies = [
  "andromeda-http-context-registry",
  "andromeda-http-extraction",
  "andromeda-http-response",
+ "andromeda-json-literal",
  "andromeda-jsonld",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -1122,6 +1127,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-json-literal"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-ngsi-ld-number",
+ "andromeda-ngsi-ld-vocabulary",
+ "jstrict",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "andromeda-jsonld"
 version = "0.1.0"
 dependencies = [
@@ -1195,6 +1214,7 @@ name = "andromeda-ngsi-ld-compaction"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-json-literal",
  "andromeda-jsonld",
  "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-geometry",
@@ -1224,6 +1244,7 @@ name = "andromeda-ngsi-ld-entity"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-json-literal",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-number",
@@ -1252,6 +1273,7 @@ name = "andromeda-ngsi-ld-expansion"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-json-literal",
  "andromeda-jsonld",
  "andromeda-native-stack",
  "andromeda-ngsi-ld-entity",
@@ -1283,6 +1305,7 @@ name = "andromeda-ngsi-ld-geometry"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-json-literal",
  "andromeda-ngsi-ld-number",
  "derive_more",
  "geo",
@@ -1323,6 +1346,7 @@ name = "andromeda-ngsi-ld-model"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-json-literal",
  "andromeda-native-stack",
  "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-geometry",
@@ -1387,6 +1411,7 @@ name = "andromeda-ngsi-ld-query"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-json-literal",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-number",
@@ -1415,6 +1440,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-http-headers",
+ "andromeda-json-literal",
  "andromeda-linked-retrieval",
  "andromeda-native-stack",
  "andromeda-ngsi-ld-entity",
@@ -1667,6 +1693,7 @@ dependencies = [
  "andromeda-entity",
  "andromeda-entity-map",
  "andromeda-health",
+ "andromeda-json-literal",
  "andromeda-jsonld",
  "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-geometry",
@@ -2024,6 +2051,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
  "andromeda-context-space",
+ "andromeda-json-literal",
  "andromeda-jsonld",
  "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-compaction",
@@ -2134,6 +2162,7 @@ dependencies = [
  "andromeda-context-commit",
  "andromeda-context-space",
  "andromeda-entity",
+ "andromeda-json-literal",
  "andromeda-jsonld",
  "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-compaction",

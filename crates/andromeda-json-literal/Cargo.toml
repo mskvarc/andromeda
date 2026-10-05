@@ -1,0 +1,21 @@
+[package]
+name = "andromeda-json-literal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-ngsi-ld-number.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
+jstrict = "0.15.0"
+serde = "1.0.229"
+serde_json = { version = "1.0.151", features = ["arbitrary_precision", "raw_value"] }
+thiserror = "2.0.21"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+pretty_assertions = "1.4.1"

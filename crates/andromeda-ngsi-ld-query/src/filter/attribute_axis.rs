@@ -113,7 +113,7 @@ fn instance_holds_element<'a, I: QueriedInstance<'a>>(instance: I, path: &AttrPa
         return language_instance.language_values(language).next().is_some();
     }
     walk_member_hops(position.first_family_value(), &path.value_path).is_some()
-        || position.terminal().and_then(|target| json_member(target, &path.value_path_compact)).is_some()
+        || position.terminal().and_then(|target| json_member(&target, &path.value_path_compact)).is_some()
 }
 
 /// Whether a linked entity satisfies a hop's entity-type guard.
@@ -293,7 +293,7 @@ fn resolve_compound_member<'a, I: QueriedInstance<'a>>(position: AxisPosition<'a
     if let Some(target) = resolve_member_hops(position.first_family_value(), &path.value_path) {
         return Some(target);
     }
-    json_member(position.terminal()?, &path.value_path_compact)
+    json_member(&position.terminal()?, &path.value_path_compact)
 }
 
 /// Walk the members of a structured value down to a literal.

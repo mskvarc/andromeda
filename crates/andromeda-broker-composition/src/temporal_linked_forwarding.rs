@@ -166,13 +166,13 @@ impl RemoteTemporalLinkedSource for ForwardedTemporalLinkedSource {
 mod tests {
     use crate::temporal_linked_forwarding::{linked_temporal_retrieval_parameters, reach_of};
     use andromeda_federation::source_identity::SourceConfiguration;
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_linked_retrieval::source::RemoteReach;
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel};
     use andromeda_ngsi_ld_query::temporal::aggregation_period::AggregationPeriod;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use andromeda_ngsi_ld_request::representation_parameter::WrittenValue;
     use andromeda_temporal::remote_linked::TemporalLinkedWindow;
-    use serde_json::json;
     use std::{num::NonZeroU32, slice};
 
     fn uri(value: &str) -> Identifier {
@@ -249,8 +249,10 @@ mod tests {
     /// other answer, or no answer, keeps the retrieval to the entity alone.
     #[test]
     fn remote_reach_is_subgraph_only_for_an_advertising_source() {
-        let advertising = SourceConfiguration::Described(Some(json!({"extensions": ["temporal-linked-retrieval"]})));
-        let other = SourceConfiguration::Described(Some(json!({"extensions": ["cursor-pagination"]})));
+        let advertising = SourceConfiguration::Described(Some(
+            JsonLiteral::admit(r#"{"extensions": ["temporal-linked-retrieval"]}"#).expect("a JSON literal"),
+        ));
+        let other = SourceConfiguration::Described(Some(JsonLiteral::admit(r#"{"extensions": ["cursor-pagination"]}"#).expect("a JSON literal")));
         pretty_assertions::assert_eq!(reach_of(slice::from_ref(&advertising)), RemoteReach::Subgraph);
         pretty_assertions::assert_eq!(reach_of(&[other]), RemoteReach::SingleEntity);
         pretty_assertions::assert_eq!(reach_of(&[SourceConfiguration::Described(None)]), RemoteReach::SingleEntity);

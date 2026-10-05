@@ -19,6 +19,7 @@ use crate::{
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
     source_read::SourceRead,
 };
+use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, context_source_properties::ContextSourceProperties, forwarding_mode::ForwardingMode};
@@ -211,8 +212,18 @@ impl FederationService {
                 }
             }
         }
+        let properties = match serde_json::to_string(&expanded)
+            .map_err(|source| JsonLiteralError::Syntax { source })
+            .and_then(|text| JsonLiteral::admit(&text))
+        {
+            Ok(properties) => properties,
+            Err(error) => {
+                warn!(registration = %registration.id, %error, "a stored registration could not be read as JSON for the context source filter");
+                return false;
+            }
+        };
         // Context Source Properties carry no Relationship a hop could cross.
-        evaluate(filter, ContextSourceProperties::new(&expanded), NoLinkedEntities)
+        ContextSourceProperties::of(properties.piece()).is_some_and(|properties| evaluate(filter, properties, NoLinkedEntities))
     }
 
     /// Send each target the forwarded read it resolved to -- a GET or a POST

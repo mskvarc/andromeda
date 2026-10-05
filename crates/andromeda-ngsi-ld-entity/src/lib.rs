@@ -39,7 +39,6 @@ pub mod geo_value;
 pub mod geometry_value;
 pub mod history;
 pub mod instance;
-pub mod json_literal;
 pub mod language_entries;
 pub mod list_object;
 pub mod literal;
@@ -66,6 +65,7 @@ pub mod value_mode;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-json-literal",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-number",

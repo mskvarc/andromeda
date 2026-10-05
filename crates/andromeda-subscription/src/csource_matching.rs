@@ -6,6 +6,7 @@
 //! and `csf` match the registration's own members as clause 5.11.2.4 describes.
 
 use crate::compiled::CompiledCsrSubscription;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_geometry::{geometry::Geometry, relation::matches as geometry_matches};
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_model::{
@@ -134,11 +135,18 @@ fn context_source_filter_admits(sub: &CompiledCsrSubscription, registration: &Co
     let Some(csf) = &sub.compiled_csf else {
         return true;
     };
-    registration
+    // The registration model holds its Context Source Properties as a parsed
+    // tree, which the filter reads as the JSON text it spells; a parsed tree
+    // names no member twice, nests no deeper than its reader allows and holds
+    // only the numbers its store kept, so its text is always admitted.
+    let Some(properties) = registration
         .additional_properties
         .as_ref()
-        .and_then(ContextSourceProperties::of)
-        .is_some_and(|properties| evaluate(csf, properties, NoLinkedEntities))
+        .and_then(|properties| JsonLiteral::admit(&properties.to_string()).ok())
+    else {
+        return false;
+    };
+    ContextSourceProperties::of(properties.piece()).is_some_and(|properties| evaluate(csf, properties, NoLinkedEntities))
 }
 
 #[cfg(test)]

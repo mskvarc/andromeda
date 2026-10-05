@@ -41,7 +41,7 @@ impl GeometryForm {
     /// positions, and [`GeometryError::LinearRing`] for a Polygon ring that is
     /// open or holds fewer than four.
     pub fn from_compact_value(value: &Value) -> Result<GeometryForm, GeometryError> {
-        GeometryMembers::of_object(value.as_object().ok_or(GeometryError::NotAnObject)?, ForeignMemberReading::Skipped).read()
+        GeometryMembers::of_object(value.as_object().ok_or(GeometryError::NotAnObject)?, ForeignMemberReading::Skipped)?.read()
     }
 }
 

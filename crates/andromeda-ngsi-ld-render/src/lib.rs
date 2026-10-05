@@ -56,6 +56,7 @@ pub mod version;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-http-headers",
+        "andromeda-json-literal",
         "andromeda-linked-retrieval",
         "andromeda-native-stack",
         "andromeda-ngsi-ld-entity",

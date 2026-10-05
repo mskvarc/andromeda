@@ -7,6 +7,7 @@
 //! such a tree can write it in full and read it again.
 
 use crate::attribute::geo_property::TypedGeometryRefusal;
+use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
@@ -112,6 +113,15 @@ pub enum NodeRefusal {
         /// Why the geometry is not read as typed.
         #[source]
         source: TypedGeometryRefusal,
+    },
+    /// A `JsonProperty` value is no JSON value the broker admits.
+    #[error("invalid `{member}` member: {source}")]
+    Literal {
+        /// The member.
+        member: RefusedMember,
+        /// Why the JSON value is not admitted.
+        #[source]
+        source: JsonLiteralError,
     },
     /// A list member is no JSON array.
     #[error("the `{member}` member is no array")]

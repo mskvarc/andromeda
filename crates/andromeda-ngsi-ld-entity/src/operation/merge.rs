@@ -79,7 +79,6 @@ mod tests {
         family_value::FamilyValue,
         geo_value::{EncodedGeometry, GeoValue},
         instance::Instance,
-        json_literal::JsonLiteral,
         language_entries::{LanguageEntries, LanguageEntry},
         list_object::ListObject,
         non_empty::NonEmpty,
@@ -113,6 +112,7 @@ mod tests {
         unit_code::UnitCode,
         value_mode::{Fragment, FragmentMember, FragmentText},
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, scope::path::ScopePath};
     use andromeda_ngsi_ld_vocabulary::expanded::properties;
     use chrono::{DateTime, Utc};
@@ -684,18 +684,18 @@ mod tests {
     fn deep_merge_of_a_json_property_merges_its_object() {
         let stored = Instance::builder()
             .value(FamilyValue::JsonProperty {
-                json: NonEmpty::one(JsonLiteral::new(
-                    json!({"street": "Straße des 17. Juni", "city": "Berlin", "country": "Germany"}),
-                )),
+                json: NonEmpty::one(
+                    JsonLiteral::admit(&json!({"street": "Straße des 17. Juni", "city": "Berlin", "country": "Germany"}).to_string()).expect("a JSON literal"),
+                ),
                 value_type: None,
             })
             .build();
         let mut target = entity(vec![(ADDRESS, instances(vec![(None, stored)]))]);
         let patch = InstanceDocument::builder()
             .family(Some(AttributeType::JsonProperty))
-            .value(ValueSlot::Set(WrittenValue::Json(NonEmpty::one(JsonLiteral::new(
-                json!({"street": "Pariser Platz", "country": "urn:ngsi-ld:null"}),
-            )))))
+            .value(ValueSlot::Set(WrittenValue::Json(NonEmpty::one(
+                JsonLiteral::admit(&json!({"street": "Pariser Platz", "country": "urn:ngsi-ld:null"}).to_string()).expect("a JSON literal"),
+            ))))
             .build();
 
         target
@@ -706,7 +706,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             instance.value(),
             &FamilyValue::JsonProperty {
-                json: NonEmpty::one(JsonLiteral::new(json!({"street": "Pariser Platz", "city": "Berlin"}))),
+                json: NonEmpty::one(JsonLiteral::admit(&json!({"street": "Pariser Platz", "city": "Berlin"}).to_string()).expect("a JSON literal")),
                 value_type: None,
             }
         );

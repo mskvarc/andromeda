@@ -117,6 +117,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-json-literal",
         "andromeda-ngsi-ld-representation",
         "andromeda-test-fixtures",
     ],

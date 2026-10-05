@@ -5,6 +5,7 @@
 //! broken one is answered `InternalError`.
 
 use crate::residual_predicate::ResidualPredicate;
+use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_lexicon::{
     identifier::Identifier,
     ngsi_ld_urn::{AttributeListIdParseError, EntityTypeListIdParseError},
@@ -44,6 +45,9 @@ pub enum EntityInvariant {
         /// The entity the write addressed.
         entity: Identifier,
     },
+    /// A JSON literal merged into a stored one could not be written back.
+    #[error("a merged JSON literal could not be written: {0}")]
+    LiteralMerge(#[source] JsonLiteralError),
     /// The compiled-in UN/CEFACT unit catalog did not parse, so no `unitCode`
     /// can be checked.
     #[error("the unit catalog is unreadable: {0}")]

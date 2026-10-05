@@ -125,7 +125,7 @@ fn family_members(node: &mut NodeBuilder, scope: &TermScope<'_>, instance: &Attr
             add_optional(node, scope, compact_properties::VALUE_TYPE, language_property.value_type.as_ref())
         }
         Attribute::JsonProperty(json_property) => {
-            add_json(node, scope, compact_properties::JSON, &json_property.json)?;
+            add_serialized(node, scope, compact_properties::JSON, &json_property.json)?;
             add_optional(node, scope, compact_properties::VALUE_TYPE, json_property.value_type.as_ref())
         }
         Attribute::ListProperty(list_property) => {
@@ -210,8 +210,9 @@ fn geometry_item(scope: &TermScope<'_>, key: &str, geometry: &Geometry) -> Resul
             let object = members
                 .foreign()
                 .iter()
-                .map(|(name, value)| (name.to_string(), value.clone())) // clone: the walk expands a JSON object the typed request lends
-                .collect::<Map<String, Value>>();
+                .map(|(name, value)| serde_json::from_str(value.text()).map(|tree| (name.to_string(), tree)))
+                .collect::<Result<Map<String, Value>, _>>()
+                .map_err(|_| Decline::CompactSerialization)?;
             match expand_element(scope, Some(key), &Value::Object(object))? {
                 Expanded::One(ExpandedItem::Node(node)) if node.id.is_none() && node.types.is_empty() => expanded.foreign = node.members,
                 Expanded::Null => {}

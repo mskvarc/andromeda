@@ -10,12 +10,12 @@ use crate::{
     expanded_value::{ExpandedValue, ValueNode},
     family_value::FamilyValue,
     geo_value::GeoValue,
-    json_literal::JsonLiteral,
     language_entries::LanguageEntry,
     list_object::ListObject,
     queried::{queried_mode::QueriedMode, value_node_reading::item_of},
     value_mode::{Fragment, Stored},
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
 use andromeda_ngsi_ld_query::queried_entity::value_item::{LiteralValue, ValueItem};
 use std::{borrow::Cow, slice::Iter};
@@ -117,7 +117,7 @@ impl<'a, M: QueriedMode> Iterator for FamilyValues<'a, M> {
             FamilyValues::Entries(entries) => entries
                 .find_map(|entry| M::entry_text(entry.text()))
                 .map(|text| ValueItem::Literal(LiteralValue::Text(Cow::Borrowed(text)))),
-            FamilyValues::Json(literals) => literals.next().map(|literal| ValueItem::Json(literal.get())),
+            FamilyValues::Json(literals) => literals.next().map(|literal| ValueItem::Json(literal.piece())),
             FamilyValues::ListObjects(objects) => objects.next().map(|object| ValueItem::Reference(object.uri().as_str())),
             FamilyValues::Single(item) => item.take(),
         }

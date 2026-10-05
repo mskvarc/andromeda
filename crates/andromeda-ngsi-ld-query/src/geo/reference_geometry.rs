@@ -75,7 +75,7 @@ impl ReferenceGeometry {
         match self {
             ReferenceGeometry::Read(geometry) => {
                 let geometry_type = geometry.form().geometry_type();
-                let Value::Object(mut members) = geometry.to_geojson_value() else {
+                let Value::Object(mut members) = geometry.to_geojson_value()? else {
                     return Ok((geometry_type, Value::Null));
                 };
                 Ok((geometry_type, members.remove("coordinates").unwrap_or(Value::Null)))

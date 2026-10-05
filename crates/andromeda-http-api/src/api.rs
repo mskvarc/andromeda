@@ -307,7 +307,7 @@ mod tests {
                 None,
                 EnabledExtensions::none(),
                 Arc::new(RejectDefaultTenant),
-            )))
+            )?))
             .notification_receiver(NotificationReceiverRoutes::new(Arc::new(RejectReceiver)))
             .tenancy(TenancyRoutes::new(administration, usage, TenantManagement::Enabled))
             .health(HealthRoutes::new(Health::builder().build()))

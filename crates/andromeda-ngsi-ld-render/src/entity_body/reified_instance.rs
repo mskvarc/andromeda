@@ -10,7 +10,6 @@ use crate::{
     concise::InstanceStanding,
     entity_body::{
         family_value::FamilyValue,
-        geometry_body::GeometryBody,
         linked_entities::{list_relationship_entities, relationship_entities},
         member_walk::MemberWalk,
         notified_member::{InstanceReport, MemberInstances, NullValue, PreviousValue},
@@ -19,6 +18,7 @@ use crate::{
     },
     language_negotiation::{NegotiatedEntry, negotiated_entry},
 };
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, rfc3339::sub_second};
 use andromeda_ngsi_ld_model::attribute::{
     common_fields::CommonAttributeFields,
@@ -69,7 +69,7 @@ impl<'a> ReifiedInstance<'a> {
                 bare(BareValue::Value(ValueBody(&property.value)))
             }
             Attribute::GeoProperty(geo_property) if geo_property.value_type.is_none() && carries_nothing(&geo_property.common) => {
-                bare(BareValue::Geometry(GeometryBody(&geo_property.value)))
+                bare(BareValue::Geometry(&geo_property.value))
             }
             Attribute::Property(_)
             | Attribute::GeoProperty(_)
@@ -252,7 +252,7 @@ enum BareValue<'a> {
     /// A Property's value.
     Value(ValueBody<'a>),
     /// A `GeoProperty`'s geometry.
-    Geometry(GeometryBody<'a>),
+    Geometry(&'a Geometry),
     /// The Null a reported deletion puts in place of either.
     Null(NullValue),
 }

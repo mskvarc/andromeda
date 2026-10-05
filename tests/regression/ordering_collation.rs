@@ -248,15 +248,17 @@ async fn regression_ordering_mixed_datatypes_follow_the_clause_4_23_2_comparison
     )
     .await;
 
-    // An NGSI-LD Null: a JSON literal whose value is null, which JSON-LD keeps
-    // rather than dropping during expansion.
+    // An NGSI-LD Null: a Property whose value is a JSON literal of null, which
+    // JSON-LD keeps rather than dropping during expansion. A `JsonProperty`
+    // cannot carry it: clause 4.5.24.2 makes its `json` an object or an array
+    // of objects.
     let null_valued = scope.id(&format!("{FIXTURE_TYPE}:datatype-null"));
     create(
         client,
         &json!({
             "id": null_valued,
             "type": FIXTURE_TYPE,
-            ORDERED_ATTRIBUTE: {"type": "JsonProperty", "json": Value::Null},
+            ORDERED_ATTRIBUTE: {"type": "Property", "value": {"@type": "@json", "@value": Value::Null}},
             "@context": [TEST_SUITE_CONTEXT]
         }),
     )

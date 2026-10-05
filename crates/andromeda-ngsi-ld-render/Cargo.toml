@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 andromeda-http-headers.workspace = true
+andromeda-json-literal.workspace = true
 andromeda-linked-retrieval.workspace = true
 andromeda-native-stack.workspace = true
 andromeda-ngsi-ld-entity.workspace = true

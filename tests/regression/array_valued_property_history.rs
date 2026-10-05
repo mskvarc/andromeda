@@ -236,12 +236,12 @@ async fn regression_array_valued_property_history_a_json_property_array_stays_a_
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let id = scope.id("ArrayProbe:json-property");
 
-    let instance = json!({"type": "JsonProperty", "json": ["a", "b"], "observedAt": OBSERVED_AT});
+    let instance = json!({"type": "JsonProperty", "json": [{"a": 1}, {"b": 2}], "observedAt": OBSERVED_AT});
     create(scope.client(), &evolution(&id, "document", &instance)).await;
 
     let retrieved = temporal(scope.client(), &id, WINDOW).await;
     assert_eq!(retrieved["document"][0]["type"], json!("JsonProperty"), "{retrieved}");
-    assert_eq!(retrieved["document"][0]["json"], json!(["a", "b"]), "{retrieved}");
+    assert_eq!(retrieved["document"][0]["json"], json!([{"a": 1}, {"b": 2}]), "{retrieved}");
     assert_eq!(
         retrieved["document"][0]["value"],
         Value::Null,
@@ -251,10 +251,10 @@ async fn regression_array_valued_property_history_a_json_property_array_stays_a_
     // Clause 4.5.9 wraps a `JsonProperty` value in its own member inside the
     // simplified pair, which is the difference from a Property's bare value.
     let simplified = temporal(scope.client(), &id, &format!("{WINDOW}&format=temporalValues")).await;
-    assert_eq!(simplified["document"]["jsons"][0][0], json!({"json": ["a", "b"]}), "{simplified}");
+    assert_eq!(simplified["document"]["jsons"][0][0], json!({"json": [{"a": 1}, {"b": 2}]}), "{simplified}");
 
     let current = current(scope.client(), &id).await;
-    assert_eq!(current["document"]["json"], json!(["a", "b"]), "{current}");
+    assert_eq!(current["document"]["json"], json!([{"a": 1}, {"b": 2}]), "{current}");
 
     scope.finish().await.expect("cleanup failed");
 }

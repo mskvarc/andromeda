@@ -6,11 +6,12 @@
 //! meeting RFC 7946, and clause 4.6.4 returns the content of a value as
 //! provided, so a foreign member is kept as the JSON value it was written as:
 //! like a `JsonProperty` value (clause 4.5.24), the JSON value is the domain
-//! value. The members are kept by name, as the members of any JSON object are
-//! (IETF RFC 8259 section 4: "An object is an unordered collection").
+//! value, held as a [`JsonLiteral`]. The members are kept by name, as the
+//! members of any JSON object are (IETF RFC 8259 section 4: "An object is an
+//! unordered collection").
 
+use andromeda_json_literal::JsonLiteral;
 use derive_more::{AsRef, Display};
-use serde_json::Value;
 use std::collections::BTreeMap;
 use thiserror::Error;
 
@@ -52,12 +53,12 @@ impl TryFrom<&str> for ForeignMemberName {
 
 /// The foreign members of one geometry object, by name.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct ForeignMembers(BTreeMap<ForeignMemberName, Value>);
+pub struct ForeignMembers(BTreeMap<ForeignMemberName, JsonLiteral>);
 
 impl ForeignMembers {
     /// The members `members` holds.
     #[must_use]
-    pub const fn new(members: BTreeMap<ForeignMemberName, Value>) -> ForeignMembers {
+    pub const fn new(members: BTreeMap<ForeignMemberName, JsonLiteral>) -> ForeignMembers {
         ForeignMembers(members)
     }
 
@@ -68,13 +69,13 @@ impl ForeignMembers {
     }
 
     /// Every member, by name.
-    pub fn iter(&self) -> impl Iterator<Item = (&ForeignMemberName, &Value)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&ForeignMemberName, &JsonLiteral)> {
         self.0.iter()
     }
 
     /// Keep `value` under `name`; a name written again keeps its last value,
     /// as a parsed tree keeps it.
-    pub fn insert(&mut self, name: ForeignMemberName, value: Value) {
+    pub fn insert(&mut self, name: ForeignMemberName, value: JsonLiteral) {
         self.0.insert(name, value);
     }
 }
@@ -82,7 +83,7 @@ impl ForeignMembers {
 #[cfg(test)]
 mod tests {
     use crate::foreign_members::{ForeignMemberName, ForeignMemberNameError, ForeignMembers};
-    use serde_json::json;
+    use andromeda_json_literal::JsonLiteral;
 
     /// RFC 7946 section 6.1: any member the geometry object is not described
     /// with is foreign; a JSON-LD keyword is JSON-LD.
@@ -101,11 +102,12 @@ mod tests {
     #[test]
     fn a_member_written_again_keeps_its_last_value() {
         let name = |name: &str| ForeignMemberName::try_from(name).expect("a foreign member name");
+        let literal = |text: &str| JsonLiteral::admit(text).expect("a JSON literal");
         let mut members = ForeignMembers::default();
-        members.insert(name("b"), json!(2));
-        members.insert(name("a"), json!(1));
-        members.insert(name("a"), json!(3));
-        let written: Vec<(String, serde_json::Value)> = members.iter().map(|(name, value)| (name.to_string(), value.clone())).collect(); // clone: the assertion owns what it compares
-        pretty_assertions::assert_eq!(written, vec![("a".to_owned(), json!(3)), ("b".to_owned(), json!(2))]);
+        members.insert(name("b"), literal("2"));
+        members.insert(name("a"), literal("1"));
+        members.insert(name("a"), literal("3"));
+        let written: Vec<(String, &str)> = members.iter().map(|(name, value)| (name.to_string(), value.text())).collect();
+        pretty_assertions::assert_eq!(written, vec![("a".to_owned(), "3"), ("b".to_owned(), "2")]);
     }
 }

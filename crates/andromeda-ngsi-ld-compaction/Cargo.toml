@@ -9,6 +9,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-entity.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true

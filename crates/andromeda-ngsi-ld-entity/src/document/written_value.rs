@@ -10,12 +10,12 @@ use crate::{
     document::value_carrier::ValueCarrier,
     expanded_value::ExpandedValue,
     geo_value::GeoValue,
-    json_literal::JsonLiteral,
     language_entries::LanguageEntries,
     list_object::ListObject,
     non_empty::NonEmpty,
     value_mode::Fragment,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
 
 /// A written value, by its carrying member.

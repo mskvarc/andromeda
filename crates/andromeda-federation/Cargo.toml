@@ -19,6 +19,7 @@ andromeda-configuration-scalars.workspace = true
 andromeda-context-space.workspace = true
 andromeda-entity-map.workspace = true
 andromeda-http-headers.workspace = true
+andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-compaction.workspace = true
 andromeda-ngsi-ld-entity.workspace = true

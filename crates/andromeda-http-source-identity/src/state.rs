@@ -2,11 +2,11 @@
 
 use crate::default_tenant_contexts::DefaultTenantContextsResolver;
 use andromeda_extensions::{advertisement::enabled_extension_extras, enabled::EnabledExtensions};
+use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::context_source_identity::{ContextSourceIdentity, ContextSourceIdentityType, uptime_duration};
 use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 
 /// What the identity binding knows about this context source.
@@ -43,35 +43,36 @@ struct ConfiguredIdentity {
     aliases: ContextSourceAliases,
     /// The instant the broker became available.
     started_at: DateTime<Utc>,
-    /// Raw, never-expanded operator instance information.
-    extras: Option<Value>,
-    /// The enabled extensions, advertised beside the operator extras under a
-    /// vendor namespace (clause 5.15.1.4).
-    enabled: EnabledExtensions,
+    /// The operator's raw, never-expanded instance information with the
+    /// enabled extensions advertised beside it (clause 5.15.1.4).
+    extras: Option<JsonLiteral>,
 }
 
 impl SourceIdentityState {
     /// Construct the context source identity exposed by the broker, available
     /// since `started_at`.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`JsonLiteralError`] of extras the enabled extensions could
+    /// not be written into, which no admitted extras raise.
     pub fn new(
         id: Identifier,
         aliases: ContextSourceAliases,
         started_at: DateTime<Utc>,
-        extras: Option<Value>,
+        extras: Option<JsonLiteral>,
         enabled: EnabledExtensions,
         contexts: Arc<dyn DefaultTenantContextsResolver>,
-    ) -> SourceIdentityState {
-        SourceIdentityState {
+    ) -> Result<SourceIdentityState, JsonLiteralError> {
+        Ok(SourceIdentityState {
             configured: Arc::new(ConfiguredIdentity {
                 id,
                 aliases,
                 started_at,
-                extras,
-                enabled,
+                extras: enabled_extension_extras(extras, enabled)?,
             }),
             contexts,
-        }
+        })
     }
 
     /// The default tenant's contexts, which the response is resolved and
@@ -96,9 +97,8 @@ impl SourceIdentityState {
             context_source_alias: self.configured.aliases.for_tenant(tenant),
             context_source_uptime: uptime_duration(elapsed),
             context_source_time_at: now,
-            // clone: the merge owns the operator extras it folds the enabled
-            // extension tokens into (clause 5.15.1.4).
-            context_source_extras: enabled_extension_extras(self.configured.extras.clone(), self.configured.enabled),
+            // clone: every response document owns its extras
+            context_source_extras: self.configured.extras.clone(),
         }
     }
 }
@@ -110,6 +110,7 @@ mod tests {
         state::SourceIdentityState,
     };
     use andromeda_extensions::{advertisement::EXTENSION_KEY, enabled::EnabledExtensions};
+    use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
     use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, tenant::TenantName};
     use andromeda_tenancy::{context_source_alias::ContextSourceAliases, error::TenancyError, tenant_ref::TenantRef};
     use chrono::{Duration, Utc};
@@ -135,10 +136,15 @@ mod tests {
             "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Identifier>()?,
             ContextSourceAliases::new("test".parse::<ContextSourcePseudonym>()?),
             Utc::now() - Duration::hours(2),
-            Some(serde_json::json!({"node": 1})),
+            Some(node_extras()?),
             enabled,
             Arc::new(NoDefaultTenant),
-        ))
+        )?)
+    }
+
+    /// The operator's extras every test configures.
+    fn node_extras() -> Result<JsonLiteral, Box<dyn Error>> {
+        Ok(JsonLiteral::admit(r#"{"node": 1}"#)?)
     }
 
     /// The named tenant `raw`.
@@ -170,7 +176,7 @@ mod tests {
     #[test]
     fn the_extras_travel_into_every_document() -> Result<(), Box<dyn Error>> {
         let identity = state()?.identity_at(&TenantRef::UnnamedDefault, Utc::now());
-        pretty_assertions::assert_eq!(identity.context_source_extras, Some(serde_json::json!({"node": 1})));
+        pretty_assertions::assert_eq!(identity.context_source_extras, Some(node_extras()?));
         Ok(())
     }
 
@@ -180,8 +186,8 @@ mod tests {
     fn enabled_extensions_are_advertised_beside_the_operator_extras() -> Result<(), Box<dyn Error>> {
         let identity = state_with(EnabledExtensions::all())?.identity_at(&TenantRef::UnnamedDefault, Utc::now());
         let extras = identity.context_source_extras.ok_or("extras present")?;
-        pretty_assertions::assert_eq!(extras.get("node"), Some(&serde_json::json!(1)));
-        assert!(extras.get(EXTENSION_KEY).is_some(), "{extras}");
+        pretty_assertions::assert_eq!(extras.piece().member("node").map(JsonPiece::text), Some("1"));
+        assert!(extras.piece().member(EXTENSION_KEY).is_some(), "{extras}");
         assert!(!EXTENSION_KEY.starts_with("ngsi-ld:"));
         Ok(())
     }
@@ -191,7 +197,7 @@ mod tests {
     #[test]
     fn a_broker_with_no_extension_advertises_only_the_operator_extras() -> Result<(), Box<dyn Error>> {
         let identity = state_with(EnabledExtensions::none())?.identity_at(&TenantRef::UnnamedDefault, Utc::now());
-        pretty_assertions::assert_eq!(identity.context_source_extras, Some(serde_json::json!({"node": 1})));
+        pretty_assertions::assert_eq!(identity.context_source_extras, Some(node_extras()?));
         Ok(())
     }
 

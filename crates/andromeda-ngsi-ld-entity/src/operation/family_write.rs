@@ -13,14 +13,14 @@ use crate::{
     document::{instance_document::InstanceDocument, slot::Slot, value_carrier::ValueCarrier, written_value::WrittenValue},
     family_value::FamilyValue,
     geo_value::GeoValue,
-    json_literal::JsonLiteral,
     non_empty::{EmptyCollection, NonEmpty},
     operation::{
         mutation_error::MutationError,
-        value_merge::{MemberMerge, merge_json, merge_language_entries, merge_values, settled_entries, settled_json, settled_values},
+        value_merge::{MemberMerge, merge_language_entries, merge_values, settled_entries, settled_values},
     },
     refusal::EntityRefusal,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 
@@ -49,7 +49,7 @@ pub(crate) fn fresh_family_value(attribute: &AttributeName, family: AttributeTyp
         AttributeType::Property => {
             let WrittenValue::Value(values) = written else { return Err(missing()) };
             FamilyValue::Property {
-                values: settled_values(values),
+                values: settled_values(values).map_err(MutationError::LiteralMerge)?,
                 unit_code: None,
                 value_type: None,
             }
@@ -83,14 +83,14 @@ pub(crate) fn fresh_family_value(attribute: &AttributeName, family: AttributeTyp
         AttributeType::JsonProperty => {
             let WrittenValue::Json(json) = written else { return Err(missing()) };
             FamilyValue::JsonProperty {
-                json: NonEmpty::try_from_vec(json.iter().map(settled_json).collect()).map_err(|_| missing())?,
+                json: NonEmpty::try_from_vec(settled_literals(json)?).map_err(|_| missing())?,
                 value_type: None,
             }
         }
         AttributeType::ListProperty => {
             let WrittenValue::ValueList(items) = written else { return Err(missing()) };
             FamilyValue::ListProperty {
-                items: settled_values(items),
+                items: settled_values(items).map_err(MutationError::LiteralMerge)?,
                 unit_code: None,
                 value_type: None,
             }
@@ -123,11 +123,11 @@ pub(crate) fn write_family_value(attribute: &AttributeName, value: &mut FamilyVa
                 return Err(missing());
             };
             let merged = match depth {
-                ValueDepth::Merge => merge_values(values, written_values),
+                ValueDepth::Merge => merge_values(values, written_values).map_err(MutationError::LiteralMerge)?,
                 ValueDepth::Replace => MemberMerge::Replace,
             };
             if merged == MemberMerge::Replace {
-                *values = settled_values(written_values);
+                *values = settled_values(written_values).map_err(MutationError::LiteralMerge)?;
             }
         }
         FamilyValue::GeoProperty { geometry, .. } => *geometry = written_geometry(attribute, written)?,
@@ -152,13 +152,13 @@ pub(crate) fn write_family_value(attribute: &AttributeName, value: &mut FamilyVa
         }
         FamilyValue::JsonProperty { json, .. } => {
             let WrittenValue::Json(written_json) = written else { return Err(missing()) };
-            write_json(json, written_json, depth).map_err(|_| missing())?;
+            write_json(json, written_json, depth, missing)?;
         }
         FamilyValue::ListProperty { items, .. } => {
             let WrittenValue::ValueList(written_items) = written else {
                 return Err(missing());
             };
-            *items = settled_values(written_items);
+            *items = settled_values(written_items).map_err(MutationError::LiteralMerge)?;
         }
         FamilyValue::ListRelationship { objects, .. } => {
             let WrittenValue::ObjectList(written_objects) = written else {
@@ -172,13 +172,28 @@ pub(crate) fn write_family_value(attribute: &AttributeName, value: &mut FamilyVa
 
 /// Write a `JsonProperty`'s literals: a single literal on both sides merges
 /// by IETF RFC 7396 under [`ValueDepth::Merge`], anything else is replaced.
-fn write_json(json: &mut NonEmpty<JsonLiteral>, written: &NonEmpty<JsonLiteral>, depth: ValueDepth) -> Result<(), EmptyCollection> {
+fn write_json(
+    json: &mut NonEmpty<JsonLiteral>,
+    written: &NonEmpty<JsonLiteral>,
+    depth: ValueDepth,
+    missing: impl FnOnce() -> MutationError,
+) -> Result<(), MutationError> {
     if let (ValueDepth::Merge, [held], [patch]) = (depth, json.as_mut_slice(), written.as_slice()) {
-        merge_json(held, patch);
+        *held = held.merged(patch).map_err(MutationError::LiteralMerge)?;
         return Ok(());
     }
-    *json = NonEmpty::try_from_vec(written.iter().map(settled_json).collect())?;
+    *json = NonEmpty::try_from_vec(settled_literals(written)?).map_err(|_: EmptyCollection| missing())?;
     Ok(())
+}
+
+/// Written literals, each with the members it sets to the NGSI-LD Null left
+/// out (IETF RFC 7396 merged into nothing).
+fn settled_literals(written: &NonEmpty<JsonLiteral>) -> Result<Vec<JsonLiteral>, MutationError> {
+    written
+        .iter()
+        .map(JsonLiteral::settled)
+        .collect::<Result<_, _>>()
+        .map_err(MutationError::LiteralMerge)
 }
 
 /// Apply the companion members a written instance names (`unitCode`,

@@ -21,12 +21,12 @@ use crate::{
     },
     family_value::FamilyValue,
     instance::Instance,
-    json_literal::JsonLiteral,
     member_role::MemberRole,
     member_shape::MemberShape,
     refusal::EntityRefusal,
     unit_code::UnitCode,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,

@@ -8,41 +8,32 @@
 //! or an array of either, every element of which is one value of the property
 //! -- and the value is raw JSON whose keys a compound path addresses verbatim.
 
+use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::queried_entity::{
     attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
     instance_metadata::InstanceMetadata,
     value_item::ValueItem,
 };
-use serde_json::{Map, Value};
-use std::{borrow::Cow, iter::empty, slice::from_ref};
+use std::{borrow::Cow, iter::empty};
 
 /// The members of a registration a `csf` filter reads, keyed by expanded name.
 #[derive(Clone, Copy, Debug)]
-pub struct ContextSourceProperties<'a>(&'a Map<String, Value>);
+pub struct ContextSourceProperties<'a>(JsonPiece<'a>);
 
 impl<'a> ContextSourceProperties<'a> {
     /// The properties held by a JSON object; `None` for any other JSON, which
     /// holds no property a filter could name.
     #[must_use]
-    pub const fn of(properties: &'a Value) -> Option<ContextSourceProperties<'a>> {
-        match properties {
-            Value::Object(members) => Some(ContextSourceProperties(members)),
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => None,
-        }
-    }
-
-    /// The properties held by the members of one JSON object.
-    #[must_use]
-    pub const fn new(members: &'a Map<String, Value>) -> ContextSourceProperties<'a> {
-        ContextSourceProperties(members)
+    pub fn of(properties: JsonPiece<'a>) -> Option<ContextSourceProperties<'a>> {
+        (properties.kind() == JsonKind::Object).then_some(ContextSourceProperties(properties))
     }
 }
 
 /// One value of a Context Source Property: a normalized node or a bare JSON
 /// value.
 #[derive(Clone, Copy, Debug)]
-pub struct PropertyValue<'a>(&'a Value);
+pub struct PropertyValue<'a>(JsonPiece<'a>);
 
 /// The keys a property node carries its value under, in the order they are
 /// read: the expanded JSON-LD keywords and the compact `value` of a normalized
@@ -51,21 +42,25 @@ const VALUE_KEYS: [&str; 3] = ["@value", "@id", "value"];
 
 impl<'a> PropertyValue<'a> {
     /// The value the node holds: under its value key, or the node itself when
-    /// it is a bare JSON scalar; nothing for an object without a value.
-    fn held(self) -> Option<&'a Value> {
-        match self.0 {
-            Value::Object(node) => VALUE_KEYS.into_iter().find_map(|key| node.get(key)),
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => Some(self.0),
+    /// it is a bare JSON value; nothing for an object without a value.
+    fn held(self) -> Option<JsonPiece<'a>> {
+        match self.0.kind() {
+            JsonKind::Object => VALUE_KEYS.into_iter().find_map(|key| self.0.member(key)),
+            JsonKind::Null | JsonKind::Boolean | JsonKind::Number | JsonKind::String | JsonKind::Array => Some(self.0),
         }
     }
 
     /// The first value of the member `name` of the node.
     fn member(self, name: &str) -> Option<PropertyValue<'a>> {
-        let member = self.0.as_object()?.get(name)?;
-        match member {
-            Value::Array(values) => values.first().map(PropertyValue),
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => Some(PropertyValue(member)),
-        }
+        member_values(self.0.member(name)?).into_iter().next()
+    }
+}
+
+/// Each value a member holds: every element of an array, or the member itself.
+fn member_values(member: JsonPiece<'_>) -> Vec<PropertyValue<'_>> {
+    match member.elements() {
+        Some(elements) => elements.into_iter().map(PropertyValue).collect(),
+        None => vec![PropertyValue(member)],
     }
 }
 
@@ -89,12 +84,7 @@ impl<'a> QueriedEntity<'a> for ContextSourceProperties<'a> {
     type Instance = PropertyValue<'a>;
 
     fn attribute_instances(self, attribute: &AttributeName) -> impl Iterator<Item = PropertyValue<'a>> {
-        let values = match self.0.get(attribute.as_str()) {
-            Some(Value::Array(values)) => values.as_slice(),
-            Some(value) => from_ref(value),
-            None => &[],
-        };
-        values.iter().map(PropertyValue)
+        self.0.member(attribute.as_str()).map(member_values).into_iter().flatten()
     }
 
     /// A registration names no entity type of its own.
@@ -126,13 +116,14 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
     }
 
     fn metadata(self, member: InstanceMetadata) -> Option<Cow<'a, str>> {
-        self.member(member.iri().as_str())?.held()?.as_str().map(Cow::Borrowed)
+        self.member(member.iri().as_str())?.held()?.as_str()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::registration::context_source_properties::ContextSourceProperties;
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_query::{
         filter::{eval::evaluate, parser::parse},
         queried_entity::linked_entities::NoLinkedEntities,
@@ -143,7 +134,8 @@ mod tests {
     /// traits.
     fn holds(q: &str, properties: &Value) -> bool {
         let expr = parse(q).expect("the filter parses");
-        ContextSourceProperties::of(properties).is_some_and(|properties| evaluate(&expr, properties, NoLinkedEntities))
+        let properties = JsonLiteral::admit(&properties.to_string()).expect("a JSON literal");
+        ContextSourceProperties::of(properties.piece()).is_some_and(|properties| evaluate(&expr, properties, NoLinkedEntities))
     }
 
     #[test]
@@ -193,6 +185,6 @@ mod tests {
     #[test]
     fn json_that_is_no_object_holds_no_property() {
         assert!(!holds("\"https://example.com/sourceGroup\"", &json!("alpha")));
-        assert!(ContextSourceProperties::of(&json!([])).is_none());
+        assert!(ContextSourceProperties::of(JsonLiteral::admit("[]").expect("a JSON literal").piece()).is_none());
     }
 }

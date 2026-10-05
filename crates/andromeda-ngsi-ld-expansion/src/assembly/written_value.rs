@@ -14,13 +14,13 @@ use crate::{
     },
     expanded_tree::{ExpandedItem, ExpandedNode, Scalar, ValueObject},
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_entity::{
     document::{
         value_carrier::ValueCarrier,
         written_value::{ValueSlot, WrittenValue},
     },
     geo_value::{EncodedGeometry, GeoValue},
-    json_literal::JsonLiteral,
     language_entries::{LanguageEntries, LanguageEntry},
     list_object::ListObject,
     literal::LiteralValue,
@@ -163,7 +163,7 @@ fn vocab(attribute: &AttributeName, item: &ExpandedItem) -> Result<NgsiLdReferen
 fn json(attribute: &AttributeName, item: ExpandedItem) -> Result<JsonLiteral, EntityRefusal> {
     data_item(attribute, &item)?;
     match item {
-        ExpandedItem::Json(value) => Ok(JsonLiteral::new(value)),
+        ExpandedItem::Json(value) => Ok(value),
         ExpandedItem::Value(_) | ExpandedItem::Node(_) | ExpandedItem::List(_) | ExpandedItem::Geometry(_) => Err(malformed(attribute, MemberShape::Json)),
     }
 }

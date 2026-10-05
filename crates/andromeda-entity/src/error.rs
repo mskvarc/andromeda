@@ -201,6 +201,7 @@ impl From<EntityRefusal> for EntityError {
             | EntityRefusal::MissingObject { .. }
             | EntityRefusal::MissingFamilyValue { .. }
             | EntityRefusal::UnitCodeForbidden { .. }
+            | EntityRefusal::JsonNotAnObject { .. }
             | EntityRefusal::UnitCodeUnusable { .. }
             | EntityRefusal::RepeatedInstance { .. }
             | EntityRefusal::MultipleDefaultInstances { .. }
@@ -225,6 +226,7 @@ impl From<MutationError> for EntityError {
             }
             MutationError::Refused(refusal) => EntityError::from(*refusal),
             mismatch @ MutationError::AttributeTypeMismatch { .. } => EntityError::Validation(EntityValidationReason::Mutation(mismatch)),
+            MutationError::LiteralMerge(source) => EntityError::Internal(EntityInvariant::LiteralMerge(source)),
         }
     }
 }

@@ -17,7 +17,7 @@ use crate::{
     },
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities},
 };
-use std::cmp::Ordering;
+use std::{borrow::Cow, cmp::Ordering};
 
 /// Evaluate a parsed `q` expression (clause 4.9) against an entity, reading
 /// the entities its `rel{…}` hops cross into from `linked`.
@@ -88,7 +88,7 @@ where
         // only its origin can rule it out.
         Predicate::MatchPattern { path, pattern } => targets_of(path)
             .iter()
-            .any(|target| pattern_targets(target).iter().any(|value| pattern.is_match(value))),
+            .any(|target| pattern_targets(target).iter().any(|value| pattern.is_match(value.as_ref()))),
         // `notPatternOp` also requires the entity to *contain* the target
         // element (clause 4.9); an entity that lacks the attribute, or carries
         // only non-String values, does not match. Where the target is "a value
@@ -97,7 +97,7 @@ where
         // as one value that happens not to.
         Predicate::NotMatchPattern { path, pattern } => targets_of(path).iter().any(|target| {
             let texts = pattern_targets(target);
-            !texts.is_empty() && !texts.iter().any(|value| pattern.is_match(value))
+            !texts.is_empty() && !texts.iter().any(|value| pattern.is_match(value.as_ref()))
         }),
     }
 }
@@ -115,7 +115,7 @@ const fn is_relationship(target: &ResolvedTarget<'_>) -> bool {
 /// one of them the target value. An array that *is* the target value offers
 /// none: "If the target value data type is different than String then it shall
 /// be considered as not matching."
-fn pattern_targets<'t>(target: &'t ResolvedTarget<'_>) -> Vec<&'t str> {
+fn pattern_targets<'t>(target: &'t ResolvedTarget<'_>) -> Vec<Cow<'t, str>> {
     if is_relationship(target) {
         return Vec::new();
     }

@@ -19,6 +19,7 @@ use crate::{
     geometry::Geometry,
     geometry_type::GeometryType,
 };
+use andromeda_json_literal::JsonLiteral;
 use serde_json::{Map, Value};
 use std::str::FromStr;
 
@@ -125,16 +126,21 @@ pub(crate) struct GeometryMembers {
 
 impl GeometryMembers {
     /// The members of a geometry object already parsed into a tree.
-    pub(crate) fn of_object(object: &Map<String, Value>, reading: ForeignMemberReading) -> GeometryMembers {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GeometryError::ForeignMember`] when a kept foreign member is
+    /// not a JSON value the broker admits.
+    pub(crate) fn of_object(object: &Map<String, Value>, reading: ForeignMemberReading) -> Result<GeometryMembers, GeometryError> {
         let mut foreign = ForeignMembers::default();
         if reading == ForeignMemberReading::Kept {
             for (name, value) in object {
                 if let Ok(name) = ForeignMemberName::try_from(name.as_str()) {
-                    foreign.insert(name, value.clone()); // clone: the geometry owns the member the borrowed tree holds
+                    foreign.insert(name, JsonLiteral::admit(&value.to_string()).map_err(GeometryError::ForeignMember)?);
                 }
             }
         }
-        GeometryMembers {
+        Ok(GeometryMembers {
             geometry_type: object.get("type").and_then(Value::as_str).map_or(TypeMember::Missing, TypeMember::of),
             geometries: match object.get("geometries") {
                 Some(Value::Array(_)) => GeometriesMember::Array,
@@ -146,7 +152,7 @@ impl GeometryMembers {
             json_ld_keywords: object
                 .keys()
                 .fold(JsonLdKeywords::Absent, |keywords, name| keywords.and(JsonLdKeywords::of(name))),
-        }
+        })
     }
 
     /// The geometry form the members spell, the `bbox` checked beside it.

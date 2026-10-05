@@ -79,13 +79,6 @@ impl Attribute {
                     .chain([&mut property.value])
                     .try_for_each(NgsiLdValue::canonicalize_numbers)?;
             }
-            Attribute::JsonProperty(property) => {
-                property
-                    .previous_json
-                    .iter_mut()
-                    .chain([&mut property.json])
-                    .try_for_each(canonicalize_numbers)?;
-            }
             Attribute::ListProperty(property) => {
                 property
                     .previous_value_list
@@ -96,7 +89,7 @@ impl Attribute {
             }
             Attribute::Relationship(relationship) => relationship.entity.iter_mut().try_for_each(canonicalize_inline)?,
             Attribute::ListRelationship(relationship) => relationship.entity_list.iter_mut().try_for_each(canonicalize_inline)?,
-            Attribute::VocabProperty(_) | Attribute::GeoProperty(_) | Attribute::LanguageProperty(_) => {}
+            Attribute::VocabProperty(_) | Attribute::GeoProperty(_) | Attribute::LanguageProperty(_) | Attribute::JsonProperty(_) => {}
         }
         self.common_mut().canonicalize_numbers()
     }

@@ -29,12 +29,12 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::media_type::ResponseMediaType;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use dashmap::DashMap;
 use serde::Deserialize;
-use serde_json::Value;
 use std::{
     slice::from_ref,
     time::{Duration, Instant},
@@ -56,7 +56,7 @@ const IDENTITY_PATH: [&str; 2] = ["info", "sourceIdentity"];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceConfiguration {
     /// It answered with its identity, carrying these `contextSourceExtras`.
-    Described(Option<Value>),
+    Described(Option<JsonLiteral>),
     /// It could not be asked, or answered without an identity.
     Undescribed,
 }
@@ -67,7 +67,7 @@ pub enum SourceConfiguration {
 #[serde(rename_all = "camelCase")]
 struct AnsweredIdentity {
     /// The source's instance-specific configuration, raw JSON never expanded.
-    context_source_extras: Option<Value>,
+    context_source_extras: Option<JsonLiteral>,
 }
 
 /// One registered source, as the probe answers are kept: a registration

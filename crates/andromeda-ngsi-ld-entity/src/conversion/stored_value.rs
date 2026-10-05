@@ -61,9 +61,9 @@ mod tests {
     use crate::{
         expanded_value::{ExpandedValue, ValueNode},
         expanded_value_name::ExpandedValueName,
-        json_literal::JsonLiteral,
         value_mode::{Fragment, FragmentMember},
     };
+    use andromeda_json_literal::JsonLiteral;
 
     use indexmap::IndexMap;
     use serde_json::json;
@@ -77,7 +77,7 @@ mod tests {
         let mut members = IndexMap::new();
         members.insert(
             name("https://ex.org/a"),
-            FragmentMember::Values(vec![ExpandedValue::Json(JsonLiteral::new(json!(1)))]),
+            FragmentMember::Values(vec![ExpandedValue::Json(JsonLiteral::admit(&json!(1).to_string()).expect("a JSON literal"))]),
         );
         let value: ExpandedValue<Fragment> = ExpandedValue::Node(ValueNode::new(None, Vec::new(), members));
         assert!(value.into_stored().is_some());

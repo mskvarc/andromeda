@@ -5,6 +5,7 @@
 //! correct broker never breaks, so a broken one is answered `InternalError`.
 
 use crate::outcome::InvalidTemporalOutcome;
+use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 use andromeda_ngsi_ld_render::temporal::history_row::HistoryRowRenderError;
@@ -25,6 +26,9 @@ pub enum TemporalInvariant {
     /// can be checked.
     #[error("the unit catalog is unreadable: {0}")]
     UnitCatalog(#[source] UnitCodeSnapshotMalformed),
+    /// A JSON literal merged into a stored one could not be written back.
+    #[error("a merged JSON literal could not be written: {0}")]
+    LiteralMerge(#[source] JsonLiteralError),
     /// Folding a Temporal Evolution into the current state produced no entity.
     #[error("folding a Temporal Evolution into no entity created none")]
     FoldCreatedNoEntity,

@@ -16,9 +16,11 @@ use crate::{
         value_item::{LiteralValue, ValueItem},
     },
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::OBJECT;
+use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::borrow::Cow;
 use strum::IntoEnumIterator;
@@ -65,7 +67,7 @@ pub(crate) enum FixtureItem {
     /// A literal.
     Literal(FixtureLiteral),
     /// Raw JSON.
-    Json(Value),
+    Json(JsonLiteral),
     /// An IRI reference.
     Reference(String),
     /// A node with IRI-keyed members.
@@ -240,7 +242,9 @@ fn item_of(node: &Value) -> FixtureItem {
             Value::Number(number) if !is_json => FixtureItem::Literal(FixtureLiteral::Number(JsonNumber::try_from(number).expect("an exact number"))),
             Value::String(text) if !is_json => FixtureItem::Literal(FixtureLiteral::Text(text.to_owned())),
             Value::Bool(boolean) if !is_json => FixtureItem::Literal(FixtureLiteral::Boolean(*boolean)),
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => FixtureItem::Json(value.clone()), // clone: the fixture owns its JSON
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => {
+                FixtureItem::Json(JsonLiteral::deserialize(value).expect("a JSON literal"))
+            }
         };
     }
     let id = object.get("@id").and_then(Value::as_str).map(str::to_owned);
@@ -270,7 +274,7 @@ impl FixtureItem {
                 ValueItem::Literal(LiteralValue::Text(Cow::Borrowed(text)))
             }
             FixtureItem::Literal(FixtureLiteral::Boolean(boolean)) => ValueItem::Literal(LiteralValue::Boolean(*boolean)),
-            FixtureItem::Json(json) => ValueItem::Json(json),
+            FixtureItem::Json(json) => ValueItem::Json(json.piece()),
             FixtureItem::Reference(iri) => ValueItem::Reference(iri),
             FixtureItem::Node(node) => ValueItem::Node(node),
             FixtureItem::Opaque => ValueItem::Opaque,
@@ -351,7 +355,7 @@ pub(crate) fn target_json(value: &TargetValue<'_>) -> Value {
         TargetValue::Number(number) => number.to_json_value(),
         TargetValue::Text(text) => Value::String(text.to_string()),
         TargetValue::Boolean(boolean) => Value::Bool(*boolean),
-        TargetValue::Json(json) => json.as_ref().clone(), // clone: the assertion owns the JSON it compares
+        TargetValue::Json(json) => serde_json::from_str(json.text()).expect("the JSON a literal spells"),
         TargetValue::Array(elements) => Value::Array(elements.iter().map(target_json).collect()),
     }
 }

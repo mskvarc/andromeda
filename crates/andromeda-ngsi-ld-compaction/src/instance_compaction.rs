@@ -131,7 +131,7 @@ impl Walk<'_> {
             FamilyValue::Relationship { objects, .. } => carrier_items::references(objects.iter().map(Uri::as_str)),
             FamilyValue::LanguageProperty { entries, .. } => carrier_items::language_entries(entries),
             FamilyValue::VocabProperty { vocab, .. } => carrier_items::references(vocab.iter().map(NgsiLdReference::as_str)),
-            FamilyValue::JsonProperty { json, .. } => carrier_items::json_literals(json.as_slice()),
+            FamilyValue::JsonProperty { json, .. } => carrier_items::json_literals(json.as_slice())?,
             FamilyValue::ListProperty { items, .. } => carrier_items::value_list(items)?,
             FamilyValue::ListRelationship { objects, .. } => carrier_items::object_list(objects),
         };

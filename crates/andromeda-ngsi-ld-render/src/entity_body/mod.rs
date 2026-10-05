@@ -11,7 +11,6 @@
 pub(crate) mod family_value;
 pub(crate) mod feature_body;
 pub(crate) mod feature_geometry;
-pub(crate) mod geometry_body;
 pub(crate) mod linked_entities;
 pub(crate) mod member_walk;
 pub(crate) mod notified_member;

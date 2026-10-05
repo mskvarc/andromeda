@@ -4,8 +4,8 @@
 //! typed output -- objects, nodes, value objects with each number's exact
 //! text, list objects and JSON literals -- is read straight into the expanded
 //! tree the walk would have produced, then through the same assembly. Nothing
-//! passes through `serde_json::Value` on the way; only a JSON literal becomes
-//! the `serde_json::Value` the model carries it as. The reading recurses once
+//! passes through a JSON tree on the way; a JSON literal is printed from the
+//! processor's own JSON and admitted as the model carries it. The reading recurses once
 //! per level of the document, which a nested value or sub-attribute deepens,
 //! so every level runs on sufficient stack.
 
@@ -16,13 +16,13 @@ use crate::{
     expanded_tree::{ExpandedItem, ExpandedNode, Scalar, ValueObject},
     term_scope::id_text,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_native_stack::on_sufficient_stack;
 use andromeda_ngsi_ld_entity::{document::EntityDocument, member_shape::MemberShape, refusal::EntityRefusal};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::IriBuf;
 use jsonld::{ExpandedDocument, IndexedObject, Node, Object, Value as ObjectValue, object::Literal, syntax::Value as JsonLdValue};
 use rdfx::BlankIdBuf;
-use serde_json::{Map, Number, Value};
 
 /// Read the processor's expansion of an entity document.
 ///
@@ -105,7 +105,7 @@ fn value_item(value: ObjectValue<IriBuf>) -> Result<ExpandedItem, EntityRefusal>
                 direction: direction.map(direction_of),
             }))
         }
-        ObjectValue::Json(json) => json_value(json).map(ExpandedItem::Json),
+        ObjectValue::Json(json) => json_value(&json).map(ExpandedItem::Json),
     }
 }
 
@@ -136,23 +136,9 @@ fn node_item(node: Node<IriBuf, BlankIdBuf>) -> Result<ExpandedNode, EntityRefus
     Ok(expanded)
 }
 
-/// A JSON literal as the JSON value the model carries, numbers keeping their
-/// exact text.
-fn json_value(json: JsonLdValue) -> Result<Value, EntityRefusal> {
-    match json {
-        JsonLdValue::Null => Ok(Value::Null),
-        JsonLdValue::Boolean(flag) => Ok(Value::Bool(flag)),
-        JsonLdValue::Number(number) => number.as_str().parse::<Number>().map(Value::Number).map_err(|_| unsupported()),
-        JsonLdValue::String(text) => Ok(Value::String(text.as_str().to_owned())),
-        JsonLdValue::Array(items) => items.into_iter().map(json_value).collect::<Result<Vec<_>, EntityRefusal>>().map(Value::Array),
-        JsonLdValue::Object(object) => {
-            let mut members = Map::new();
-            for entry in object {
-                members.insert(entry.key.as_str().to_owned(), json_value(entry.value)?);
-            }
-            Ok(Value::Object(members))
-        }
-    }
+/// A JSON literal as the model carries it, numbers keeping their exact text.
+fn json_value(json: &JsonLdValue) -> Result<JsonLiteral, EntityRefusal> {
+    JsonLiteral::from_processor_json(json).map_err(|_| unsupported())
 }
 
 /// The refusal of an expanded shape no NGSI-LD document holds.

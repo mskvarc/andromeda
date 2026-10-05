@@ -1,22 +1,23 @@
 //! The `JsonProperty` attribute family (ETSI GS CIM 009 clause 5.2.38).
 
 use crate::attribute::common_fields::CommonAttributeFields;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 /// NGSI-LD `JsonProperty` representation (ETSI GS CIM 009 clause 5.2.38).
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JsonProperty {
-    /// Raw non-expandable JSON payload.
-    pub json: Value,
+    /// Raw JSON carried as data, never interpreted as JSON-LD (clause
+    /// 4.5.24.2).
+    pub json: JsonLiteral,
     /// Optional JSON-LD datatype for `json`.
     pub value_type: Option<NgsiLdReference>,
     /// Previous JSON payload emitted in notifications when `showChanges` is active.
-    pub previous_json: Option<Value>,
+    pub previous_json: Option<JsonLiteral>,
     /// Members shared with every other attribute family.
     #[serde(flatten)]
     pub common: CommonAttributeFields,
@@ -25,7 +26,6 @@ pub struct JsonProperty {
 #[cfg(test)]
 mod tests {
     use crate::attribute::instance::Attribute;
-    use serde_json::Value;
 
     #[test]
     fn json_property_round_trip_supports_previous_json() {
@@ -39,15 +39,5 @@ mod tests {
             panic!("expected JsonProperty");
         };
         assert!(property.previous_json.is_some());
-    }
-
-    #[test]
-    fn the_json_property_default_matches_the_field_by_field_literal() {
-        use crate::attribute::json_property::JsonProperty;
-        let actual = JsonProperty::default();
-        pretty_assertions::assert_eq!(actual.json, Value::Null);
-        assert!(actual.value_type.is_none() && actual.previous_json.is_none());
-        assert!(actual.common.sub_attributes.is_empty());
-        assert!(actual.common.dataset_id.is_none() && actual.common.observed_at.is_none() && actual.common.expires_at.is_none());
     }
 }

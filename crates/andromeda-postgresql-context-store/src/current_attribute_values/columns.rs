@@ -216,7 +216,7 @@ mod tests {
         columns::{ProjectionBinds, typed_value_columns},
         row::{ProjectedAttributeKey, ProjectedAttributeRow, ProjectedAttributeValue},
     };
-    use andromeda_ngsi_ld_entity::json_literal::JsonLiteral;
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey, value_kind::ValueKind};
@@ -254,7 +254,9 @@ mod tests {
             ProjectedAttributeValue::String("text".to_owned()),
             ProjectedAttributeValue::String("x".repeat(3000)),
             ProjectedAttributeValue::Boolean(false),
-            ProjectedAttributeValue::Object(StructuredValue::Json(JsonLiteral::new(serde_json::json!({"a": 1})))),
+            ProjectedAttributeValue::Object(StructuredValue::Json(
+                JsonLiteral::admit(&serde_json::json!({"a": 1}).to_string()).expect("a JSON literal"),
+            )),
             ProjectedAttributeValue::DateTime(instant),
             ProjectedAttributeValue::Uri("urn:ngsi-ld:Entity:target".parse().expect("a valid URI")),
             ProjectedAttributeValue::Uri(format!("urn:ngsi-ld:Entity:{}", "t".repeat(6000)).parse().expect("a valid URI")),

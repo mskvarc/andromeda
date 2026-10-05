@@ -5,6 +5,7 @@ use crate::{
     source_identity::SourceConfiguration,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
@@ -111,7 +112,12 @@ async fn a_source_answering_its_identity_is_described_by_its_extras() {
     source.enqueue(Method::GET, path(IDENTITY_PATH), identity(Some(advertising_extras()))).await;
     let service = service(registration(&source, &["retrieveTemporal"], &json!({})));
 
-    assert_eq!(configurations(&service).await, vec![SourceConfiguration::Described(Some(advertising_extras()))]);
+    assert_eq!(
+        configurations(&service).await,
+        vec![SourceConfiguration::Described(Some(
+            JsonLiteral::admit(&advertising_extras().to_string()).expect("a JSON literal")
+        ))]
+    );
 }
 
 /// Clause 5.15.1.4: a source unable to supply its identity answers

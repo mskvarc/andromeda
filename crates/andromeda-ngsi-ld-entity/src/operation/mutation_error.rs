@@ -6,6 +6,7 @@
 //! entity lacks is a `ResourceNotFound`, everything else a `BadRequestData`.
 
 use crate::refusal::EntityRefusal;
+use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
 use thiserror::Error;
 
@@ -49,6 +50,10 @@ pub enum MutationError {
     /// The written instance cannot become entity state.
     #[error(transparent)]
     Refused(Box<EntityRefusal>),
+    /// A JSON literal could not be written back after a merge, which no
+    /// admitted literal causes.
+    #[error("a merged JSON literal could not be written: {0}")]
+    LiteralMerge(#[source] JsonLiteralError),
 }
 
 impl MutationError {

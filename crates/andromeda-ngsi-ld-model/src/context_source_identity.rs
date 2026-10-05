@@ -1,10 +1,10 @@
 //! The identity a Context Source answers `/info/sourceIdentity` with (clauses 5.2.40 and 6.33.3.1).
 
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{constant_string, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, rfc3339};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::Serialize;
-use serde_json::Value;
 use std::time::Duration;
 
 constant_string!(ContextSourceIdentityType, "ContextSourceIdentity");
@@ -35,7 +35,7 @@ pub struct ContextSourceIdentity {
     /// Table 5.2.40-1 forbids interpreting this member as JSON-LD, so it is
     /// carried as an opaque value and never expanded or compacted.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_source_extras: Option<Value>,
+    pub context_source_extras: Option<JsonLiteral>,
 }
 
 /// Seconds in one day, for decomposing an uptime.
@@ -83,11 +83,13 @@ pub fn uptime_duration(elapsed: Duration) -> Iso8601Duration {
 #[cfg(test)]
 mod tests {
     use crate::context_source_identity::{ContextSourceIdentity, ContextSourceIdentityType, uptime_duration};
+    use andromeda_json_literal::JsonLiteral;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
     use std::time::Duration;
 
     fn identity(extras: Option<serde_json::Value>) -> ContextSourceIdentity {
+        let extras = extras.map(|extras| JsonLiteral::admit(&extras.to_string()).expect("a JSON literal"));
         ContextSourceIdentity {
             id: "urn:ngsi-ld:ContextSourceIdentity:andromeda".parse().expect("valid context source id"),
             type_: ContextSourceIdentityType,

@@ -12,7 +12,7 @@
 //! more than that one member.
 
 use crate::{
-    entity_body::{geometry_body::GeometryBody, typed_entity::TypedEntity},
+    entity_body::typed_entity::TypedEntity,
     geometry_selection::{GeometrySelection, selects},
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
@@ -42,7 +42,7 @@ pub(crate) enum FeatureGeometry<'a> {
 impl Serialize for FeatureGeometry<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
-            FeatureGeometry::Typed(geometry) => GeometryBody(geometry).serialize(serializer),
+            FeatureGeometry::Typed(geometry) => geometry.serialize(serializer),
             FeatureGeometry::Written(geometry) => geometry.serialize(serializer),
             FeatureGeometry::Undefined => serializer.serialize_none(),
         }

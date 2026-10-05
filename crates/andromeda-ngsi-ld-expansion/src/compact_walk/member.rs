@@ -6,6 +6,7 @@ use crate::{
         element::{Expanded, expand_element},
         literal::direction_of,
         object::force_array,
+        value_object::json_literal,
     },
     decline::Decline,
     expanded_tree::{ExpandedItem, Scalar, ValueObject},
@@ -33,7 +34,7 @@ pub fn expand_member(scope: &TermScope<'_>, key: &str, value: &Value) -> Result<
     }
     // A term typed `@json` takes its value verbatim (step 13.7).
     if definition.and_then(|definition| definition.typ()) == Some(&Type::Json) {
-        return Ok(Some(vec![ExpandedItem::Json(value.clone())])); // clone: a JSON literal carries the written value verbatim
+        return Ok(Some(vec![ExpandedItem::Json(json_literal(value)?)]));
     }
     let expanded = match value {
         Value::Object(map) if has(ContainerKind::Language) => Expanded::Many(language_map(scope, key, map)?),

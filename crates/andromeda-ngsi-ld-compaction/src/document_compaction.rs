@@ -145,7 +145,7 @@ fn written_items(value: &WrittenValue) -> Result<WrittenItems<'_>, Undecidable> 
         WrittenValue::Object(objects) => carrier_items::references(objects.iter().map(Uri::as_str)),
         WrittenValue::LanguageMap(entries) => carrier_items::language_entries(entries),
         WrittenValue::Vocab(vocab) => carrier_items::references(vocab.iter().map(NgsiLdReference::as_str)),
-        WrittenValue::Json(json) => carrier_items::json_literals(json.as_slice()),
+        WrittenValue::Json(json) => carrier_items::json_literals(json.as_slice())?,
         WrittenValue::ValueList(items) => carrier_items::value_list(items)?,
         WrittenValue::ObjectList(objects) => carrier_items::object_list(objects),
     })

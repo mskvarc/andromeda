@@ -78,6 +78,7 @@ uuid = { version = "1.27.0", features = ["v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-json-literal.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-test-fixtures.workspace = true
 pretty_assertions = "1.4.1"

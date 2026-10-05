@@ -21,7 +21,7 @@ use std::borrow::Cow;
 pub fn item_of<M: QueriedMode>(value: &ExpandedValue<M>) -> value_item::ValueItem<'_, &ValueNode<M>> {
     match value {
         ExpandedValue::Literal(literal) => value_item::ValueItem::Literal(literal_value(literal.value())),
-        ExpandedValue::Json(json) => value_item::ValueItem::Json(json.get()),
+        ExpandedValue::Json(json) => value_item::ValueItem::Json(json.piece()),
         ExpandedValue::Node(node) => value_item::ValueItem::Node(node),
         ExpandedValue::List(_) => value_item::ValueItem::Opaque,
     }

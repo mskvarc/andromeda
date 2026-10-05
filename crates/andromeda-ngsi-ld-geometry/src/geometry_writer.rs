@@ -1,16 +1,15 @@
 //! A `GeoJSON` geometry written straight from its typed positions.
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 4.7 makes the value of a `GeoProperty` an IETF
-//! RFC 7946 geometry object, and the typed [`Geometry`] already holds it as its
-//! type and positions, its `bbox` and its foreign members (sections 5 and
-//! 6.1). Writing the positions one ordinate at a time into the response
-//! serializer is what keeps a geometry of a million positions from being
-//! copied into any intermediate tree on its way to the wire. Each ordinate is
-//! written as the `f64` it is held as, exactly as the `geojson` rendering of
-//! the same geometry writes it; the `bbox` and the foreign members follow the
+//! RFC 7946 geometry object, and a [`Geometry`] already holds it as its type
+//! and positions, its `bbox` and its foreign members (sections 5 and 6.1).
+//! Writing the positions one ordinate at a time into the serializer is what
+//! keeps a geometry of a million positions from being copied into any
+//! intermediate tree on its way to the wire. Each ordinate is written as the
+//! `f64` it is held as; the `bbox` and the foreign members follow the
 //! coordinates, as clause 4.6.4 returns the content of a value as provided.
 
-use andromeda_ngsi_ld_geometry::{
+use crate::{
     bounding_box::BoundingBox,
     form::{GeometryForm, PolygonRings},
     geometry::Geometry,
@@ -35,14 +34,12 @@ const COORDINATES_MEMBER: &str = "coordinates";
 /// section 5).
 const BBOX_MEMBER: &str = "bbox";
 
-/// One geometry object, written from its typed form and its members.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct GeometryBody<'a>(pub(crate) &'a Geometry);
-
-impl Serialize for GeometryBody<'_> {
+// Hand-written: the geometry object is written member by member from the
+// typed form, which no derive over the fields expresses.
+impl Serialize for Geometry {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let form = self.0.form();
-        let members = self.0.members();
+        let form = self.form();
+        let members = self.members();
         let entries = members.map_or(0, |members| usize::from(members.bbox().is_some()) + members.foreign().iter().count());
         let mut object = serializer.serialize_map(Some(2 + entries))?;
         object.serialize_entry(TYPE_MEMBER, &form.geometry_type())?;
@@ -123,23 +120,22 @@ impl Serialize for PositionBody<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_body::geometry_body::GeometryBody;
-    use andromeda_ngsi_ld_geometry::geometry::Geometry;
+    use crate::geometry::Geometry;
     use serde_json::json;
 
     /// IETF RFC 7946 sections 5 and 6.1, clause 4.5.16.2: the `bbox` and the
     /// foreign members render beside the coordinates, so a Feature's geometry
     /// is the one written.
     #[test]
-    fn a_geometry_body_writes_its_box_and_foreign_members() {
-        let written = json!({"type": "Point", "coordinates": [1.0, 2.0], "bbox": [1.0, 2.0, 1.0, 2.0], "plotName": "x"});
+    fn a_geometry_writes_its_box_and_foreign_members() {
+        let written = json!({"type": "Point", "coordinates": [1.0, 2.0], "bbox": [1.0, 2.0, 1.0, 2.0], "plotName": {"b": 1, "a": [2.5]}});
         let geometry = Geometry::from_geojson_value(&written).expect("a valid geometry");
-        let streamed: serde_json::Value = serde_json::from_str(&serde_json::to_string(&GeometryBody(&geometry)).expect("renders")).expect("JSON");
+        let streamed: serde_json::Value = serde_json::from_str(&serde_json::to_string(&geometry).expect("renders")).expect("JSON");
         pretty_assertions::assert_eq!(streamed, written);
     }
 
-    /// Every geometry type renders exactly as the `geojson` rendering of the
-    /// same typed geometry does, altitude and ordinate spelling included.
+    /// Every geometry type renders as the `geojson` rendering of the same
+    /// positions does, altitude and ordinate spelling included.
     #[test]
     fn every_geometry_type_renders_as_its_geojson_rendering() {
         for written in [
@@ -152,8 +148,8 @@ mod tests {
             json!({"type": "MultiPolygon", "coordinates": [[[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]], [[[5.0, 5.0], [6.0, 5.0], [6.0, 6.0], [5.0, 5.0]]]]}),
         ] {
             let geometry = Geometry::from_geojson_value(&written).expect("a valid geometry");
-            let streamed = serde_json::to_string(&GeometryBody(&geometry)).expect("renders");
-            let reference = serde_json::to_string(&geometry).expect("renders");
+            let streamed = serde_json::to_string(&geometry).expect("renders");
+            let reference = serde_json::to_string(&geometry.form().to_geojson()).expect("renders");
             pretty_assertions::assert_eq!(
                 serde_json::from_str::<serde_json::Value>(&streamed).expect("JSON"),
                 serde_json::from_str::<serde_json::Value>(&reference).expect("JSON"),

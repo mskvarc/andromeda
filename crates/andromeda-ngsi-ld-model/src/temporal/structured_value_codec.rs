@@ -24,6 +24,7 @@
 //! of an instance that carries them.
 
 use crate::temporal::structured_value::StructuredValue;
+use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_entity::{
     document::{
         instance_document::InstanceDocument,
@@ -31,7 +32,6 @@ use andromeda_ngsi_ld_entity::{
         written_value::{ValueSlot, WrittenValue},
     },
     expanded_value::ExpandedValue,
-    json_literal::JsonLiteral,
     literal::LiteralValue,
     non_empty::{EmptyCollection, NonEmpty},
     refusal::EntityRefusal,
@@ -44,10 +44,7 @@ use andromeda_ngsi_ld_lexicon::{
     uri::{Uri, UriParseError},
 };
 use serde::{Serialize, Serializer};
-use serde_json::{
-    Value,
-    value::{RawValue, to_raw_value},
-};
+use serde_json::value::{RawValue, to_raw_value};
 use thiserror::Error;
 
 /// A stored structured value that does not read as the value of its family.
@@ -56,6 +53,10 @@ pub enum StoredValueError {
     /// The stored text is not JSON, or not JSON of the shape the family stores.
     #[error("the stored structured value is not shaped as its family stores it: {0}")]
     Json(#[from] serde_json::Error),
+    /// The stored JSON literal of a `JsonProperty` is not one the broker
+    /// admits.
+    #[error("the stored JSON literal is not admissible: {0}")]
+    Literal(#[from] JsonLiteralError),
     /// The expanded pieces do not read as an expanded value.
     #[error(transparent)]
     Refused(#[from] EntityRefusal),
@@ -92,7 +93,7 @@ impl Serialize for StructuredValue {
             StructuredValue::Objects(targets) => serializer.collect_seq(targets.iter().map(Uri::as_str)),
             StructuredValue::Vocabs(terms) => serializer.collect_seq(terms.iter().map(NgsiLdReference::as_str)),
             StructuredValue::LanguageMap(entries) => entries.serialize(serializer),
-            StructuredValue::Json(literal) => literal.get().serialize(serializer),
+            StructuredValue::Json(literal) => literal.serialize(serializer),
             StructuredValue::List(items) => serializer.collect_seq(items),
             StructuredValue::ObjectList(targets) => serializer.collect_seq(targets.iter().map(Uri::as_str)),
         }
@@ -150,7 +151,7 @@ impl StructuredValue {
                 | WrittenValue::ValueList(_)
                 | WrittenValue::ObjectList(_)) => Err(StoredValueError::Carrier { carrier: other.carrier() }),
             },
-            AttributeType::JsonProperty => Ok(StructuredValue::Json(JsonLiteral::new(serde_json::from_str::<Value>(json)?))),
+            AttributeType::JsonProperty => Ok(StructuredValue::Json(JsonLiteral::admit(json)?)),
             AttributeType::ListProperty => match carried(attribute, ValueCarrier::ValueList, &format!("[{{\"@list\":{json}}}]"))? {
                 WrittenValue::ValueList(items) => Ok(StructuredValue::List(items)),
                 other @ (WrittenValue::Value(_)

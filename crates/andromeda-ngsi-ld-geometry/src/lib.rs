@@ -53,6 +53,7 @@ pub mod geometry;
 pub mod geometry_census;
 pub mod geometry_members;
 pub mod geometry_type;
+pub mod geometry_writer;
 pub mod great_circle;
 pub mod line_string_coordinates;
 pub mod linear_ring;
@@ -68,6 +69,7 @@ pub mod written_geometry;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-json-literal",
         "andromeda-ngsi-ld-number",
     ],
     allow_workspace_dev_dependencies: [

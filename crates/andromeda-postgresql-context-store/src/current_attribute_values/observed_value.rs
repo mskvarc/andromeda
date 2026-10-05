@@ -60,7 +60,8 @@ impl TryFrom<&TemporalValue> for ProjectedAttributeValue {
 #[cfg(test)]
 mod tests {
     use crate::current_attribute_values::{observed_value::ProjectedValueUnrepresentable, row::ProjectedAttributeValue};
-    use andromeda_ngsi_ld_entity::{geometry_value::GeometryValue, json_literal::JsonLiteral};
+    use andromeda_json_literal::JsonLiteral;
+    use andromeda_ngsi_ld_entity::geometry_value::GeometryValue;
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_ngsi_ld_model::temporal::{TemporalValue, structured_value::StructuredValue};
     use andromeda_ngsi_ld_number::JsonNumber;
@@ -90,7 +91,7 @@ mod tests {
                     .into_parts()
                     .0,
             )),
-            TemporalValue::Structured(StructuredValue::Json(JsonLiteral::new(json!({"a": 1})))),
+            TemporalValue::Structured(StructuredValue::Json(JsonLiteral::admit(&json!({"a": 1}).to_string()).expect("a JSON literal"))),
             TemporalValue::DateTime(instant),
             TemporalValue::Uri("urn:ngsi-ld:Entity:target".parse().expect("a valid URI")),
         ];

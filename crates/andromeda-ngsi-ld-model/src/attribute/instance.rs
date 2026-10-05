@@ -52,12 +52,12 @@ impl Attribute {
             Attribute::Property(p) => serde_json::to_value(&p.value).unwrap_or_default(),
             Attribute::Relationship(r) => serde_json::to_value(&r.object).unwrap_or_default(),
             Attribute::VocabProperty(v) => serde_json::to_value(&v.vocab).unwrap_or_default(),
-            Attribute::GeoProperty(g) => g.value.to_geojson_value(),
+            Attribute::GeoProperty(g) => g.value.to_geojson_value().unwrap_or_default(),
             // Serialization of IndexMap<LanguageMapKey, LanguageMapValue> to JSON cannot fail
             // (keys serialize to strings, values to strings or arrays of strings).
             Attribute::LanguageProperty(l) => serde_json::to_value(&l.language_map).unwrap_or_default(),
-            // clone: the payload is already a `Value`, and the signature hands back an owned one.
-            Attribute::JsonProperty(j) => j.json.clone(),
+            // An admitted literal is JSON text, so it always reads as a tree.
+            Attribute::JsonProperty(j) => serde_json::from_str(j.json.text()).unwrap_or_default(),
             Attribute::ListProperty(lp) => serde_json::to_value(&lp.value_list).unwrap_or_default(),
             Attribute::ListRelationship(lr) => serde_json::to_value(&lr.object_list).unwrap_or_default(),
         }

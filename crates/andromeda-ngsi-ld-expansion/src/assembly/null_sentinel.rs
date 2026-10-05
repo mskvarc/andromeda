@@ -17,7 +17,6 @@
 use crate::expanded_tree::{ExpandedItem, ExpandedNode};
 use andromeda_ngsi_ld_entity::{document::value_carrier::ValueCarrier, ngsi_ld_null::is_ngsi_ld_null};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
-use serde_json::Value;
 
 /// Whether one expanded item is the NGSI-LD Null.
 #[must_use]
@@ -25,8 +24,8 @@ pub fn is_null(item: &ExpandedItem) -> bool {
     match item {
         ExpandedItem::Value(value) => value.as_str().is_some_and(is_ngsi_ld_null),
         ExpandedItem::Node(node) => node.is_reference() && node.id.as_deref().is_some_and(is_ngsi_ld_null),
-        ExpandedItem::Json(Value::String(text)) => is_ngsi_ld_null(text),
-        ExpandedItem::Json(_) | ExpandedItem::List(_) | ExpandedItem::Geometry(_) => false,
+        ExpandedItem::Json(literal) => literal.is_null_sentinel(),
+        ExpandedItem::List(_) | ExpandedItem::Geometry(_) => false,
     }
 }
 
@@ -51,7 +50,7 @@ pub fn is_deletion(carrier: ValueCarrier, items: &[ExpandedItem]) -> bool {
         (ValueCarrier::ValueList | ValueCarrier::ObjectList, [ExpandedItem::List(members)]) => {
             matches!(members.as_slice(), [member] if is_list_object_null(member))
         }
-        (ValueCarrier::Json, [ExpandedItem::Json(Value::String(text))]) => is_ngsi_ld_null(text),
+        (ValueCarrier::Json, [ExpandedItem::Json(literal)]) => literal.is_null_sentinel(),
         // Clause 4.5.18 spells the deletion `{"@none": "urn:ngsi-ld:null"}`:
         // the Null under a language deletes that one language of a merged
         // map (clause 5.5.12), not the instance.
@@ -85,8 +84,12 @@ mod tests {
         assembly::null_sentinel::{is_deletion, is_null},
         expanded_tree::{ExpandedItem, ExpandedNode, Scalar, ValueObject},
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_entity::document::value_carrier::ValueCarrier;
-    use serde_json::json;
+
+    fn literal(text: &str) -> JsonLiteral {
+        JsonLiteral::admit(text).expect("a JSON literal")
+    }
 
     fn text(value: &str) -> ExpandedItem {
         ExpandedItem::Value(ValueObject::plain(Scalar::String(value.to_owned())))
@@ -112,9 +115,9 @@ mod tests {
     /// stored-document decoder reads as the Null when it holds the Null string.
     #[test]
     fn a_json_literal_of_the_null_string_is_the_null() {
-        assert!(is_null(&ExpandedItem::Json(json!("urn:ngsi-ld:null"))));
-        assert!(!is_null(&ExpandedItem::Json(json!(["urn:ngsi-ld:null"]))));
-        assert!(!is_null(&ExpandedItem::Json(json!({"k": "urn:ngsi-ld:null"}))));
+        assert!(is_null(&ExpandedItem::Json(literal(r#""urn:ngsi-ld:null""#))));
+        assert!(!is_null(&ExpandedItem::Json(literal(r#"["urn:ngsi-ld:null"]"#))));
+        assert!(!is_null(&ExpandedItem::Json(literal(r#"{"k": "urn:ngsi-ld:null"}"#))));
     }
 
     /// Clauses 4.5.21.2 and 4.5.22.2: a list family is deleted by a list
@@ -137,7 +140,7 @@ mod tests {
     /// `JsonProperty`; a JSON `null` is data.
     #[test]
     fn a_json_literal_of_the_null_string_deletes_a_json_property() {
-        assert!(is_deletion(ValueCarrier::Json, &[ExpandedItem::Json(json!("urn:ngsi-ld:null"))]));
-        assert!(!is_deletion(ValueCarrier::Json, &[ExpandedItem::Json(json!(null))]));
+        assert!(is_deletion(ValueCarrier::Json, &[ExpandedItem::Json(literal(r#""urn:ngsi-ld:null""#))]));
+        assert!(!is_deletion(ValueCarrier::Json, &[ExpandedItem::Json(literal("null"))]));
     }
 }

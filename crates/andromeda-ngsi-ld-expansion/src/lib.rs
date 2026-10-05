@@ -58,6 +58,7 @@ mod structured_value_name_tests;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-json-literal",
         "andromeda-jsonld",
         "andromeda-native-stack",
         "andromeda-ngsi-ld-entity",

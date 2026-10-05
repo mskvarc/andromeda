@@ -1,8 +1,8 @@
 //! One value an attribute instance carries, as the `q` evaluator tells values
 //! apart (clause 4.9).
 
+use andromeda_json_literal::piece::JsonPiece;
 use andromeda_ngsi_ld_number::JsonNumber;
-use serde_json::Value;
 use std::borrow::Cow;
 
 /// One value held by an attribute instance's family member, or by a member of
@@ -23,7 +23,7 @@ pub enum ValueItem<'a, N> {
     /// A JSON literal (`@type: @json`): a `JsonProperty` value (clause
     /// 4.5.24), or a Property value held as raw JSON outside the JSON-LD graph,
     /// whose keys are addressed verbatim.
-    Json(&'a Value),
+    Json(JsonPiece<'a>),
     /// A reference by IRI: a Relationship object, a `VocabProperty` term or a
     /// `ListRelationship` item, as the IRI text clause 4.9 equality compares.
     Reference(&'a str),

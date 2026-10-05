@@ -14,10 +14,10 @@
 //! evolution" from the prohibition of the NGSI-LD Null, so a recorded value may
 //! hold one where the client put one.
 
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_entity::{
     document::written_value::WrittenValue,
     expanded_value::ExpandedValue,
-    json_literal::JsonLiteral,
     language_entries::LanguageEntries,
     list_object::ListObject,
     non_empty::NonEmpty,

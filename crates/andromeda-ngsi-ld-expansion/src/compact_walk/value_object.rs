@@ -11,7 +11,9 @@ use crate::{
     expanded_tree::{ExpandedItem, ValueObject},
     term_scope::TermScope,
 };
+use andromeda_json_literal::JsonLiteral;
 use jsonld::{Direction as JsonLdDirection, Id, Term, ValidId, syntax::Keyword};
+use serde::Serialize;
 use serde_json::Value;
 
 /// Expand the entries of a value object.
@@ -59,7 +61,7 @@ pub fn expand_value_object(scope: &TermScope<'_>, entries: &[KeyedEntry<'_>]) ->
         if language.is_some() || direction.is_some() {
             return Err(Decline::MalformedJsonLd);
         }
-        return Ok(Expanded::One(ExpandedItem::Json(value.clone()))); // clone: a JSON literal carries the written value verbatim
+        return Ok(Expanded::One(ExpandedItem::Json(json_literal(value)?)));
     }
     if value.is_null() {
         return Ok(Expanded::Null);
@@ -75,4 +77,16 @@ pub fn expand_value_object(scope: &TermScope<'_>, entries: &[KeyedEntry<'_>]) ->
         language,
         direction,
     })))
+}
+
+/// The JSON literal a written value is (JSON-LD 1.1 expansion, step 13.7 and
+/// the value object of step 13.4.7.1): the value as written, admitted.
+///
+/// # Errors
+///
+/// Declines a value the literal does not admit, which the processor then
+/// refuses with the precise error.
+pub(crate) fn json_literal<T: Serialize>(value: &T) -> Result<JsonLiteral, Decline> {
+    let text = serde_json::to_string(value).map_err(|_| Decline::MalformedJsonLd)?;
+    JsonLiteral::admit(&text).map_err(|_| Decline::MalformedJsonLd)
 }

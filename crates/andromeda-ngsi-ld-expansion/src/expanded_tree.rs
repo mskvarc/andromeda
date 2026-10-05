@@ -15,9 +15,9 @@
 //! foreign members stand beside them, the foreign members expanded as the
 //! members of any node.
 
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_entity::literal::Direction;
 use andromeda_ngsi_ld_geometry::{bounding_box::BoundingBox, form::GeometryForm};
-use serde_json::Value;
 
 /// One expanded item: what JSON-LD 1.1 expansion yields in a value position.
 #[derive(Clone, Debug, PartialEq)]
@@ -25,7 +25,7 @@ pub enum ExpandedItem {
     /// A value object (`@value`, with `@type`, `@language` or `@direction`).
     Value(ValueObject),
     /// A JSON literal (`"@type": "@json"`), carried verbatim.
-    Json(Value),
+    Json(JsonLiteral),
     /// A node object or a node reference.
     Node(ExpandedNode),
     /// A list object (`@list`), in order.

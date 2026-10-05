@@ -17,7 +17,6 @@ use crate::{
 use andromeda_ngsi_ld_entity::{
     expanded_value::{ExpandedValue, ValueNode},
     expanded_value_name::ExpandedValueName,
-    json_literal::JsonLiteral,
     literal::{Literal, LiteralValue},
     member_shape::MemberShape,
     ngsi_ld_null::is_ngsi_ld_null,
@@ -92,7 +91,7 @@ pub fn expanded_value<M: MemberMode>(attribute: &AttributeName, item: ExpandedIt
     }
     match item {
         ExpandedItem::Value(value) => literal(attribute, value).map(ExpandedValue::Literal),
-        ExpandedItem::Json(json) => Ok(ExpandedValue::Json(JsonLiteral::new(json))),
+        ExpandedItem::Json(json) => Ok(ExpandedValue::Json(json)),
         ExpandedItem::Node(node) => value_node(attribute, node).map(ExpandedValue::Node),
         ExpandedItem::List(items) => expanded_values(attribute, items).map(ExpandedValue::List),
         ExpandedItem::Geometry(geometry) => geometry_value_node(attribute, *geometry),

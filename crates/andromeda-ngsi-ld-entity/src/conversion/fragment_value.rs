@@ -51,11 +51,11 @@ mod tests {
     use crate::{
         expanded_value::{ExpandedValue, ValueNode},
         expanded_value_name::ExpandedValueName,
-        json_literal::JsonLiteral,
         language_entries::{LanguageEntries, LanguageEntry},
         literal::{Literal, LiteralValue},
         value_mode::{Fragment, FragmentMember, FragmentText},
     };
+    use andromeda_json_literal::JsonLiteral;
 
     use indexmap::IndexMap;
     use serde_json::json;
@@ -67,7 +67,10 @@ mod tests {
     #[test]
     fn a_structured_value_reads_as_a_fragment_with_every_member_set_and_back() {
         let mut members = IndexMap::new();
-        members.insert(name("https://ex.org/a"), vec![ExpandedValue::Json(JsonLiteral::new(json!(1)))]);
+        members.insert(
+            name("https://ex.org/a"),
+            vec![ExpandedValue::Json(JsonLiteral::admit(&json!(1).to_string()).expect("a JSON literal"))],
+        );
         members.insert(
             name("https://ex.org/b"),
             vec![ExpandedValue::List(vec![ExpandedValue::Literal(Literal::plain(LiteralValue::Boolean(true)))])],

@@ -85,9 +85,10 @@ mod deferred_history_tests;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-configuration-scalars",
-        "andromeda-context-space",
         "andromeda-context-commit",
+        "andromeda-context-space",
         "andromeda-entity",
+        "andromeda-json-literal",
         "andromeda-jsonld",
         "andromeda-linked-retrieval",
         "andromeda-ngsi-ld-compaction",

@@ -7,21 +7,20 @@
 //! gives its member.
 
 use crate::{
-    codec::value_encode::{IdOut, JsonLiteralOut, ListOut, ModeEncoding, NullValueOut, TextOut, TypedTextOut},
+    codec::value_encode::{IdOut, JsonLiteralOut, ListOut, ModeEncoding, NullJsonOut, NullValueOut, TextOut, TypedTextOut},
     date_time_text::DateTimeText,
     document::{slot::Slot, value_carrier::ValueCarrier},
-    json_literal::JsonLiteral,
     language_entries::{LanguageEntries, LanguageEntry},
     list_object::ListObject,
     value_mode::ValueMode,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::{
     NULL_URI,
     expanded::{classes, properties},
 };
 use serde::{Serialize, Serializer, ser::SerializeMap};
-use serde_json::Value;
 use std::iter::once;
 
 /// `@id` references to URIs.
@@ -152,7 +151,7 @@ pub(crate) fn write_carrier_deletion<M: SerializeMap>(map: &mut M, carrier: Valu
     let key = carrier.iri().into_inner();
     match carrier {
         ValueCarrier::Object | ValueCarrier::Vocab => write_reference(map, key, NULL_URI.as_str()),
-        ValueCarrier::Json => map.serialize_entry(key, &One(JsonLiteralOut(&JsonLiteral::new(Value::String(NULL_URI.as_str().to_owned()))))),
+        ValueCarrier::Json => map.serialize_entry(key, &One(NullJsonOut)),
         ValueCarrier::ValueList | ValueCarrier::ObjectList => map.serialize_entry(key, &One(ListOut(One(NullValueOut)))),
         ValueCarrier::Value | ValueCarrier::LanguageMap => map.serialize_entry(key, &One(NullValueOut)),
     }

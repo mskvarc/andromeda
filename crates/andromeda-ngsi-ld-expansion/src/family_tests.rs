@@ -430,7 +430,11 @@ async fn a_json_array_expands_to_one_literal_holding_the_array() {
             panic!("a JSON value for {written}");
         };
         pretty_assertions::assert_eq!(
-            literals.as_slice().iter().map(|literal| literal.get().clone()).collect::<Vec<_>>(),
+            literals
+                .as_slice()
+                .iter()
+                .map(|literal| serde_json::from_str(literal.text()).expect("JSON"))
+                .collect::<Vec<serde_json::Value>>(),
             vec![written.clone()],
             "{written}"
         );

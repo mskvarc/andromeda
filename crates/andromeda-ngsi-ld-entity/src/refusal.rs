@@ -198,6 +198,14 @@ pub enum EntityRefusal {
         /// The offending attribute.
         attribute: AttributeName,
     },
+    /// The `json` of a `JsonProperty` is neither a JSON object nor an array of
+    /// JSON objects (clause 4.5.24.2: "a raw JSON object (or array of
+    /// objects)").
+    #[error("the 'json' of JsonProperty '{}' must be a JSON object or an array of JSON objects", compact_term(.attribute))]
+    JsonNotAnObject {
+        /// The offending attribute.
+        attribute: AttributeName,
+    },
     /// A `unitCode` names no UN/CEFACT common code the catalog registers, or
     /// is not one plain string (Table 5.2.5-1, clause 4.5.2.2).
     #[error("'{}' carries an unusable 'unitCode': {source}", compact_term(.attribute))]

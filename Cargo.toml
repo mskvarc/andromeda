@@ -151,6 +151,7 @@ andromeda-http-telemetry = { path = "crates/andromeda-http-telemetry" }
 andromeda-http-temporal = { path = "crates/andromeda-http-temporal" }
 andromeda-http-tenancy = { path = "crates/andromeda-http-tenancy" }
 andromeda-http3-server = { path = "crates/andromeda-http3-server" }
+andromeda-json-literal = { path = "crates/andromeda-json-literal" }
 andromeda-jsonld = { path = "crates/andromeda-jsonld" }
 andromeda-linked-retrieval = { path = "crates/andromeda-linked-retrieval" }
 andromeda-native-stack = { path = "crates/andromeda-native-stack" }

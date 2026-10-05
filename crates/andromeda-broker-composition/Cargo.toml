@@ -40,6 +40,7 @@ andromeda-http-telemetry.workspace = true
 andromeda-http-temporal.workspace = true
 andromeda-http-tenancy.workspace = true
 andromeda-http3-server.workspace = true
+andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-linked-retrieval.workspace = true
 andromeda-ngsi-ld-compaction.workspace = true

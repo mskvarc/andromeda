@@ -5,9 +5,9 @@
 //! [`family_target`](crate::filter::family_target)'s.
 
 use crate::queried_entity::value_item::LiteralValue;
+use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_number::JsonNumber;
-use serde_json::Value;
 use std::borrow::Cow;
 
 /// One resolved comparison target: the clause 4.9 target value a predicate
@@ -39,7 +39,7 @@ pub enum TargetValue<'a> {
     /// Raw JSON held outside the JSON-LD graph, never an array: a JSON array is
     /// an [`TargetValue::Array`] of its elements, which [`TargetValue::json`]
     /// guarantees.
-    Json(Cow<'a, Value>),
+    Json(JsonPiece<'a>),
     /// Several values, which clause 4.9 compares by membership.
     Array(Vec<TargetValue<'a>>),
 }
@@ -48,16 +48,10 @@ impl<'a> TargetValue<'a> {
     /// The target value raw JSON holds, a JSON array becoming the array of its
     /// elements.
     #[must_use]
-    pub fn json(value: Cow<'a, Value>) -> TargetValue<'a> {
-        match value {
-            Cow::Borrowed(Value::Array(elements)) => TargetValue::Array(elements.iter().map(|element| TargetValue::json(Cow::Borrowed(element))).collect()),
-            Cow::Owned(Value::Array(elements)) => TargetValue::Array(elements.into_iter().map(|element| TargetValue::json(Cow::Owned(element))).collect()),
-            Cow::Borrowed(scalar @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_))) => {
-                TargetValue::Json(Cow::Borrowed(scalar))
-            }
-            Cow::Owned(scalar @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_))) => {
-                TargetValue::Json(Cow::Owned(scalar))
-            }
+    pub fn json(piece: JsonPiece<'a>) -> TargetValue<'a> {
+        match piece.elements() {
+            Some(elements) => TargetValue::Array(elements.into_iter().map(TargetValue::json).collect()),
+            None => TargetValue::Json(piece),
         }
     }
 
@@ -77,10 +71,10 @@ impl<'a> TargetValue<'a> {
         match self {
             TargetValue::Number(number) => Some(Cow::Borrowed(number.as_ref())),
             TargetValue::Text(text) => text.parse().ok().map(Cow::Owned),
-            TargetValue::Json(json) => match json.as_ref() {
-                Value::Number(number) => JsonNumber::try_from(number).ok().map(Cow::Owned),
-                Value::String(text) => text.parse().ok().map(Cow::Owned),
-                Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
+            TargetValue::Json(json) => match json.kind() {
+                JsonKind::Number => json.as_number().map(Cow::Owned),
+                JsonKind::String => json.as_str().and_then(|text| text.parse().ok()).map(Cow::Owned),
+                JsonKind::Null | JsonKind::Boolean | JsonKind::Array | JsonKind::Object => None,
             },
             TargetValue::Boolean(_) | TargetValue::Array(_) => None,
         }
@@ -92,10 +86,10 @@ impl<'a> TargetValue<'a> {
         match self {
             TargetValue::Boolean(boolean) => Some(*boolean),
             TargetValue::Text(text) => boolean_spelled(text),
-            TargetValue::Json(json) => match json.as_ref() {
-                Value::Bool(boolean) => Some(*boolean),
-                Value::String(text) => boolean_spelled(text),
-                Value::Null | Value::Number(_) | Value::Array(_) | Value::Object(_) => None,
+            TargetValue::Json(json) => match json.kind() {
+                JsonKind::Boolean => json.as_bool(),
+                JsonKind::String => json.as_str().and_then(|text| boolean_spelled(&text)),
+                JsonKind::Null | JsonKind::Number | JsonKind::Array | JsonKind::Object => None,
             },
             TargetValue::Number(_) | TargetValue::Array(_) => None,
         }
@@ -109,11 +103,12 @@ impl<'a> TargetValue<'a> {
             TargetValue::Text(text) => Some(Cow::Borrowed(text.as_ref())),
             TargetValue::Number(number) => Some(Cow::Owned(number.to_string())),
             TargetValue::Boolean(boolean) => Some(Cow::Owned(boolean.to_string())),
-            TargetValue::Json(json) => match json.as_ref() {
-                Value::String(text) => Some(Cow::Borrowed(text.as_str())),
-                Value::Number(number) => Some(Cow::Owned(number.to_string())),
-                Value::Bool(boolean) => Some(Cow::Owned(boolean.to_string())),
-                Value::Null | Value::Array(_) | Value::Object(_) => None,
+            // An admitted literal spells its numbers and booleans canonically,
+            // so their text is their JSON spelling.
+            TargetValue::Json(json) => match json.kind() {
+                JsonKind::String => json.as_str(),
+                JsonKind::Number | JsonKind::Boolean => Some(Cow::Borrowed(json.text())),
+                JsonKind::Null | JsonKind::Array | JsonKind::Object => None,
             },
             TargetValue::Array(_) => None,
         }
@@ -122,9 +117,9 @@ impl<'a> TargetValue<'a> {
     /// The value when it is a String, the only type a pattern operator applies
     /// to (clause 4.9).
     #[must_use]
-    pub fn as_text(&self) -> Option<&str> {
+    pub fn as_text(&self) -> Option<Cow<'_, str>> {
         match self {
-            TargetValue::Text(text) => Some(text.as_ref()),
+            TargetValue::Text(text) => Some(Cow::Borrowed(text.as_ref())),
             TargetValue::Json(json) => json.as_str(),
             TargetValue::Number(_) | TargetValue::Boolean(_) | TargetValue::Array(_) => None,
         }
@@ -187,18 +182,12 @@ pub enum TargetOrigin {
 /// Only a JSON object has members; any other target addresses nothing. The
 /// member keeps the origin and the reading of the target it was found in.
 #[must_use]
-pub fn json_member<'a>(seed: ResolvedTarget<'a>, keys: &[AttributeName]) -> Option<ResolvedTarget<'a>> {
-    let TargetValue::Json(mut json) = seed.value else {
+pub fn json_member<'a>(seed: &ResolvedTarget<'a>, keys: &[AttributeName]) -> Option<ResolvedTarget<'a>> {
+    let TargetValue::Json(json) = seed.value else {
         return None;
     };
-    for key in keys {
-        json = match json {
-            Cow::Borrowed(value) => Cow::Borrowed(value.get(key.as_str())?),
-            Cow::Owned(mut value) => Cow::Owned(value.get_mut(key.as_str())?.take()),
-        };
-    }
     Some(ResolvedTarget {
-        value: TargetValue::json(json),
+        value: TargetValue::json(json.member_path(keys.iter().map(AttributeName::as_str))?),
         origin: seed.origin,
         reading: seed.reading,
     })
@@ -207,12 +196,16 @@ pub fn json_member<'a>(seed: ResolvedTarget<'a>, keys: &[AttributeName]) -> Opti
 #[cfg(test)]
 mod tests {
     use crate::filter::target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue, json_member};
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use serde_json::json;
     use std::borrow::Cow;
 
     fn keys(names: &[&str]) -> Vec<AttributeName> {
         names.iter().map(|name| name.parse().expect("a key")).collect()
+    }
+
+    fn literal(text: &str) -> JsonLiteral {
+        JsonLiteral::admit(text).expect("a literal")
     }
 
     fn seed(value: TargetValue<'_>) -> ResolvedTarget<'_> {
@@ -227,12 +220,13 @@ mod tests {
     /// membership reaches every element.
     #[test]
     fn a_json_array_is_an_array_of_its_elements() {
-        let document = json!([1, [2, "x"]]);
+        let document = literal(r#"[1, [2, "x"]]"#);
+        let (one, two, x) = (literal("1"), literal("2"), literal(r#""x""#));
         pretty_assertions::assert_eq!(
-            TargetValue::json(Cow::Borrowed(&document)),
+            TargetValue::json(document.piece()),
             TargetValue::Array(vec![
-                TargetValue::Json(Cow::Owned(json!(1))),
-                TargetValue::Array(vec![TargetValue::Json(Cow::Owned(json!(2))), TargetValue::Json(Cow::Owned(json!("x")))]),
+                TargetValue::Json(one.piece()),
+                TargetValue::Array(vec![TargetValue::Json(two.piece()), TargetValue::Json(x.piece())]),
             ])
         );
     }
@@ -245,20 +239,24 @@ mod tests {
         pretty_assertions::assert_eq!(number.as_number().map(Cow::into_owned), "0.5".parse().ok());
         pretty_assertions::assert_eq!(TargetValue::Text(Cow::Borrowed("true")).as_boolean(), Some(true));
         pretty_assertions::assert_eq!(TargetValue::Boolean(false).as_lexical().as_deref(), Some("false"));
-        pretty_assertions::assert_eq!(TargetValue::Json(Cow::Owned(json!(12))).as_lexical().as_deref(), Some("12"));
-        pretty_assertions::assert_eq!(TargetValue::Json(Cow::Owned(json!({"a": 1}))).as_lexical(), None);
-        pretty_assertions::assert_eq!(TargetValue::Json(Cow::Owned(json!(12))).as_text(), None);
+        let (twelve, object, text) = (literal("12"), literal(r#"{"a": 1}"#), literal(r#""true""#));
+        pretty_assertions::assert_eq!(TargetValue::Json(twelve.piece()).as_lexical().as_deref(), Some("12"));
+        pretty_assertions::assert_eq!(TargetValue::Json(object.piece()).as_lexical(), None);
+        pretty_assertions::assert_eq!(TargetValue::Json(twelve.piece()).as_text(), None);
+        pretty_assertions::assert_eq!(TargetValue::Json(text.piece()).as_boolean(), Some(true));
+        pretty_assertions::assert_eq!(TargetValue::Json(text.piece()).as_text().as_deref(), Some("true"));
     }
 
     /// Raw JSON members are addressed by their verbatim keys; anything that is
     /// not a JSON object has no members.
     #[test]
     fn a_json_member_is_found_by_its_verbatim_key_in_an_object_only() {
-        let document = json!({"a": {"b": 3}});
-        let found = json_member(seed(TargetValue::json(Cow::Borrowed(&document))), &keys(&["a", "b"])).expect("a member");
-        pretty_assertions::assert_eq!(found.value, TargetValue::Json(Cow::Owned(json!(3))));
-        assert!(json_member(seed(TargetValue::json(Cow::Owned(json!({"a": 1})))), &keys(&["a", "b"])).is_none());
-        assert!(json_member(seed(TargetValue::Text(Cow::Borrowed("a"))), &keys(&["a"])).is_none());
-        assert!(json_member(seed(TargetValue::json(Cow::Owned(json!([{"a": 1}])))), &keys(&["a"])).is_none());
+        let (document, three) = (literal(r#"{"a": {"b": 3}}"#), literal("3"));
+        let found = json_member(&seed(TargetValue::json(document.piece())), &keys(&["a", "b"])).expect("a member");
+        pretty_assertions::assert_eq!(found.value, TargetValue::Json(three.piece()));
+        let (flat, listed) = (literal(r#"{"a": 1}"#), literal(r#"[{"a": 1}]"#));
+        assert!(json_member(&seed(TargetValue::json(flat.piece())), &keys(&["a", "b"])).is_none());
+        assert!(json_member(&seed(TargetValue::Text(Cow::Borrowed("a"))), &keys(&["a"])).is_none());
+        assert!(json_member(&seed(TargetValue::json(listed.piece())), &keys(&["a"])).is_none());
     }
 }

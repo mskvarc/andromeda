@@ -11,6 +11,7 @@
 
 use crate::error::TemporalError;
 use andromeda_context_commit::submission_refusal::SubmissionRefusal;
+use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_entity::{
     document::{
         instance_document::{InstanceDocument, InstanceDocumentParts},
@@ -37,8 +38,7 @@ use andromeda_ngsi_ld_model::temporal::{TemporalValue, observation_metadata::Obs
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_render::uri_decoding::decode_percent_encoded_uri;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
-use std::borrow::Cow;
+use std::{borrow::Cow, str::FromStr};
 
 /// The JSON-LD datatype of a JSON literal, which a time value classification
 /// reads like any other declared datatype.
@@ -239,7 +239,7 @@ fn target(uri: Uri) -> Uri {
 fn property_value(values: Vec<ExpandedValue<Fragment>>) -> Result<TemporalValue, TemporalError> {
     let scalar = match values.as_slice() {
         [ExpandedValue::Literal(literal)] => Some(scalar_value(literal)),
-        [ExpandedValue::Json(literal)] => json_scalar_value(literal.get()),
+        [ExpandedValue::Json(literal)] => json_scalar_value(literal.piece()),
         [ExpandedValue::Node(_) | ExpandedValue::List(_)] | [] | [_, _, ..] => None,
     };
     match scalar {
@@ -259,17 +259,17 @@ fn scalar_value(literal: &Literal) -> Result<TemporalValue, TemporalError> {
 
 /// The column a JSON literal holding a scalar lands in, `None` for one holding
 /// an array or an object, which is kept structured.
-fn json_scalar_value(json: &Value) -> Option<Result<TemporalValue, TemporalError>> {
-    match json {
-        Value::Number(number) => Some(
-            JsonNumber::try_from(number)
+fn json_scalar_value(json: JsonPiece<'_>) -> Option<Result<TemporalValue, TemporalError>> {
+    match json.kind() {
+        JsonKind::Number => Some(
+            JsonNumber::from_str(json.text())
                 .map(TemporalValue::Number)
                 .map_err(|source| TemporalError::from(SubmissionRefusal::PropertyNumber(source))),
         ),
-        Value::String(text) => Some(text_value(Some(JSON_DATATYPE), text)),
-        Value::Bool(flag) => Some(Ok(TemporalValue::Boolean(*flag))),
-        Value::Null => Some(Ok(TemporalValue::String("null".to_owned()))),
-        Value::Array(_) | Value::Object(_) => None,
+        JsonKind::String => json.as_str().map(|text| text_value(Some(JSON_DATATYPE), &text)),
+        JsonKind::Boolean => json.as_bool().map(|flag| Ok(TemporalValue::Boolean(flag))),
+        JsonKind::Null => Some(Ok(TemporalValue::String("null".to_owned()))),
+        JsonKind::Array | JsonKind::Object => None,
     }
 }
 

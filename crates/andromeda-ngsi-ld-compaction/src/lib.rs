@@ -55,6 +55,7 @@ mod walk;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-json-literal",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-entity",
         "andromeda-ngsi-ld-geometry",

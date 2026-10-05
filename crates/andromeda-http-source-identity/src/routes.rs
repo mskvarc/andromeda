@@ -181,7 +181,7 @@ mod tests {
             None,
             EnabledExtensions::none(),
             Arc::new(OfflineDefaultTenant::new(store)?),
-        );
+        )?;
         Ok(SourceIdentityRoutes::new(state))
     }
 

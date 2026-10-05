@@ -11,10 +11,13 @@
 //! clause 5.5.12 deletion of that member.
 
 use crate::{
-    codec::{decode_context::DecodeContext, object_key::ObjectKey, raw_scalar::RawScalar},
+    codec::{
+        decode_context::DecodeContext,
+        object_key::ObjectKey,
+        raw_scalar::{RawScalar, ScalarContent},
+    },
     expanded_value::{ExpandedValue, ValueNode},
     expanded_value_name::ExpandedValueName,
-    json_literal::JsonLiteral,
     literal::{Direction, Literal, LiteralValue},
     member_shape::MemberShape,
     ngsi_ld_null::is_ngsi_ld_null,
@@ -23,7 +26,6 @@ use crate::{
     value_mode::{Fragment, FragmentMember},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
-use andromeda_ngsi_ld_number::JsonNumber;
 use compact_str::CompactString;
 use indexmap::IndexMap;
 use langtag::LangTagBuf;
@@ -127,7 +129,7 @@ impl<'de> Visitor<'de> for ElementSeed<'_> {
         };
         while let Some(key) = map.next_key::<ObjectKey>()? {
             match key {
-                ObjectKey::Value => parts.value = Some(map.next_value::<RawScalar>()?),
+                ObjectKey::Value => parts.value = Some(map.next_value::<RawScalar<'de>>()?),
                 ObjectKey::Type => parts.types = Some(map.next_value::<TypeEntries>()?),
                 ObjectKey::Language => parts.language = Some(map.next_value::<String>()?),
                 ObjectKey::Direction => parts.direction = Some(map.next_value::<String>()?),
@@ -185,9 +187,9 @@ impl<'de> Visitor<'de> for TypeEntriesVisitor {
 
 /// The members of one element object, gathered before it is decided.
 #[derive(Debug, Default)]
-struct ElementParts {
+struct ElementParts<'de> {
     /// `@value`.
-    value: Option<RawScalar>,
+    value: Option<RawScalar<'de>>,
     /// `@type`.
     types: Option<TypeEntries>,
     /// `@language`.
@@ -202,7 +204,7 @@ struct ElementParts {
     members: IndexMap<ExpandedValueName, Vec<Decoded>>,
 }
 
-impl ElementParts {
+impl ElementParts<'_> {
     /// Decide what the gathered members make.
     fn decide(self, owner: Option<&AttributeName>) -> Result<Decoded, EntityRefusal> {
         if self.value.is_some() {
@@ -231,7 +233,7 @@ impl ElementParts {
         let Some(value) = value else {
             return Err(malformed(owner));
         };
-        if matches!(&value, RawScalar::String(text) if is_ngsi_ld_null(text)) {
+        if value.text().is_some_and(is_ngsi_ld_null) {
             return match language {
                 Some(tag) => LangTagBuf::new(tag).map(Decoded::TaggedNull).map_err(|_| malformed(owner)),
                 None => Ok(Decoded::Null),
@@ -243,16 +245,18 @@ impl ElementParts {
                 if language.is_some() || direction.is_some() {
                     return Err(malformed(owner));
                 }
-                return Ok(Decoded::Value(ExpandedValue::Json(JsonLiteral::new(value.into_json()))));
+                return value
+                    .into_json_literal()
+                    .map(|literal| Decoded::Value(ExpandedValue::Json(literal)))
+                    .map_err(|_| malformed(owner));
             }
             Some(TypeEntries::Single(datatype)) => Some(datatype.parse::<NgsiLdReference>().map_err(|_| malformed(owner))?),
             Some(TypeEntries::Array(_)) => return Err(malformed(owner)),
         };
-        let scalar = match value {
-            RawScalar::Number(number) => LiteralValue::Number(JsonNumber::try_from(&number).map_err(|_| malformed(owner))?),
-            RawScalar::String(text) => LiteralValue::String(CompactString::from(text)),
-            RawScalar::Boolean(flag) => LiteralValue::Boolean(flag),
-            RawScalar::Json(_) => return Err(malformed(owner)),
+        let scalar = match value.into_scalar().ok_or_else(|| malformed(owner))? {
+            ScalarContent::Number(number) => LiteralValue::Number(number),
+            ScalarContent::String(text) => LiteralValue::String(CompactString::from(text)),
+            ScalarContent::Boolean(flag) => LiteralValue::Boolean(flag),
         };
         let language = language.map(|tag| LangTagBuf::new(tag).map_err(|_| malformed(owner))).transpose()?;
         let direction = direction.map(|text| text.parse::<Direction>().map_err(|_| malformed(owner))).transpose()?;

@@ -26,10 +26,10 @@ use crate::{
     compact_node::{CompactNode, NodeShape},
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use serde::de::DeserializeOwned;
-use serde_json::Value;
 
 /// The failure of reading a member of a node of type `N`.
 type ReadError<N> = NodeReadError<<N as CompactNode>::Unreadable>;
@@ -87,9 +87,9 @@ impl Attribute {
                 common,
             }),
             AttributeType::JsonProperty => Attribute::JsonProperty(JsonProperty {
-                json: json(value?)?,
+                json: json(value?, value_member)?,
                 value_type,
-                previous_json: optional_present(members.previous, json)?,
+                previous_json: optional_present(members.previous, |previous| json(previous, previous_member))?,
                 common,
             }),
             AttributeType::ListProperty => Attribute::ListProperty(ListProperty {
@@ -152,8 +152,9 @@ fn value_list<N: CompactNode>(node: &N, name: RefusedMember) -> Result<Vec<NgsiL
 }
 
 /// A `JsonProperty` literal: the JSON value as written.
-fn json<N: CompactNode>(node: &N) -> Result<Value, ReadError<N>> {
-    node.to_json().map_err(NodeReadError::Unreadable)
+fn json<N: CompactNode>(node: &N, name: RefusedMember) -> Result<JsonLiteral, ReadError<N>> {
+    let json = node.to_json().map_err(NodeReadError::Unreadable)?;
+    JsonLiteral::admit(&json.to_string()).map_err(|source| NodeRefusal::Literal { member: name, source }.into())
 }
 
 /// A `GeoProperty` geometry: the typed geometry a node holds, or the

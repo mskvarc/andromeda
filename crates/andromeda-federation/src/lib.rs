@@ -421,6 +421,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-space",
         "andromeda-entity-map",
         "andromeda-http-headers",
+        "andromeda-json-literal",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-compaction",
         "andromeda-ngsi-ld-entity",

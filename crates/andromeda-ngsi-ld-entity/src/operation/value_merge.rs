@@ -12,52 +12,51 @@
 
 use crate::{
     expanded_value::{ExpandedValue, ValueNode},
-    json_literal::JsonLiteral,
     language_entries::{LanguageEntries, LanguageEntry},
-    operation::json_literal_merge::merge_json_literal,
     value_mode::{Fragment, FragmentMember, FragmentText},
 };
+use andromeda_json_literal::admission::JsonLiteralError;
 use indexmap::IndexMap;
-use serde_json::Value;
 use std::mem;
 
 /// A written value with every deletion it carries left out.
-pub(crate) fn settled_value(value: &ExpandedValue<Fragment>) -> ExpandedValue {
-    match value {
+///
+/// # Errors
+///
+/// Returns the [`JsonLiteralError`] of a JSON literal that cannot be settled,
+/// which no admitted literal raises.
+pub(crate) fn settled_value(value: &ExpandedValue<Fragment>) -> Result<ExpandedValue, JsonLiteralError> {
+    Ok(match value {
         // clone: the stored value owns its copy of the borrowed fragment.
         ExpandedValue::Literal(literal) => ExpandedValue::Literal(literal.clone()),
-        ExpandedValue::Json(json) => ExpandedValue::Json(settled_json(json)),
-        ExpandedValue::Node(node) => ExpandedValue::Node(settled_node(node)),
-        ExpandedValue::List(items) => ExpandedValue::List(settled_values(items)),
-    }
+        ExpandedValue::Json(json) => ExpandedValue::Json(json.settled()?),
+        ExpandedValue::Node(node) => ExpandedValue::Node(settled_node(node)?),
+        ExpandedValue::List(items) => ExpandedValue::List(settled_values(items)?),
+    })
 }
 
 /// Written values, each with its deletions left out, in order.
-pub(crate) fn settled_values(values: &[ExpandedValue<Fragment>]) -> Vec<ExpandedValue> {
+///
+/// # Errors
+///
+/// As [`settled_value`].
+pub(crate) fn settled_values(values: &[ExpandedValue<Fragment>]) -> Result<Vec<ExpandedValue>, JsonLiteralError> {
     values.iter().map(settled_value).collect()
 }
 
 /// A written node with its deleted members left out.
-fn settled_node(node: &ValueNode<Fragment>) -> ValueNode {
+fn settled_node(node: &ValueNode<Fragment>) -> Result<ValueNode, JsonLiteralError> {
     let members = node
         .members()
         .iter()
         .filter_map(|(name, member)| match member {
             // clone: the stored node owns its member names.
-            FragmentMember::Values(values) => Some((name.clone(), settled_values(values))),
+            FragmentMember::Values(values) => Some(settled_values(values).map(|values| (name.clone(), values))),
             FragmentMember::Remove => None,
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     // clone: the stored node owns its identifier and types.
-    ValueNode::new(node.id().cloned(), node.types().to_vec(), members)
-}
-
-/// A written JSON literal merged into nothing: by IETF RFC 7396 every key set
-/// to the NGSI-LD Null string is left out, at any depth of nested objects.
-pub(crate) fn settled_json(json: &JsonLiteral) -> JsonLiteral {
-    let mut settled = Value::Null;
-    merge_json_literal(&mut settled, json.get());
-    JsonLiteral::new(settled)
+    Ok(ValueNode::new(node.id().cloned(), node.types().to_vec(), members))
 }
 
 /// A written language map with its deleted languages left out (clause
@@ -77,27 +76,36 @@ pub(crate) fn settled_entries(entries: &LanguageEntries<Fragment>) -> LanguageEn
 }
 
 /// Merge one written value into one stored value (clause 5.5.12).
-pub(crate) fn merge_value(base: &mut ExpandedValue, patch: &ExpandedValue<Fragment>) {
+///
+/// # Errors
+///
+/// As [`settled_value`].
+pub(crate) fn merge_value(base: &mut ExpandedValue, patch: &ExpandedValue<Fragment>) -> Result<(), JsonLiteralError> {
     match (base, patch) {
-        (ExpandedValue::Json(base_json), ExpandedValue::Json(patch_json)) => merge_json(base_json, patch_json),
+        (ExpandedValue::Json(base_json), ExpandedValue::Json(patch_json)) => *base_json = base_json.merged(patch_json)?,
         // A node carrying `@id` names a resource and is as atomic as a value
         // object; only two anonymous nodes are structures to merge into.
         (ExpandedValue::Node(base_node), ExpandedValue::Node(patch_node)) if base_node.id().is_none() && patch_node.id().is_none() => {
-            merge_node(base_node, patch_node);
+            merge_node(base_node, patch_node)?;
         }
-        (base, patch) => *base = settled_value(patch),
+        (base, patch) => *base = settled_value(patch)?,
     }
+    Ok(())
 }
 
 /// Merge the values of one written member into the stored member: a single
 /// value on both sides recurses, any other shape is replaced wholesale.
-pub(crate) fn merge_values(base: &mut [ExpandedValue], patch: &[ExpandedValue<Fragment>]) -> MemberMerge {
+///
+/// # Errors
+///
+/// As [`settled_value`].
+pub(crate) fn merge_values(base: &mut [ExpandedValue], patch: &[ExpandedValue<Fragment>]) -> Result<MemberMerge, JsonLiteralError> {
     match (base, patch) {
         ([base_value], [patch_value]) => {
-            merge_value(base_value, patch_value);
-            MemberMerge::Merged
+            merge_value(base_value, patch_value)?;
+            Ok(MemberMerge::Merged)
         }
-        (_, _) => MemberMerge::Replace,
+        (_, _) => Ok(MemberMerge::Replace),
     }
 }
 
@@ -111,15 +119,8 @@ pub(crate) enum MemberMerge {
     Replace,
 }
 
-/// Merge a written `@json` literal into a stored one by IETF RFC 7396.
-pub(crate) fn merge_json(base: &mut JsonLiteral, patch: &JsonLiteral) {
-    let mut raw = mem::replace(base, JsonLiteral::new(Value::Null)).into_inner();
-    merge_json_literal(&mut raw, patch.get());
-    *base = JsonLiteral::new(raw);
-}
-
 /// Merge two anonymous structured nodes member by member.
-fn merge_node(base: &mut ValueNode, patch: &ValueNode<Fragment>) {
+fn merge_node(base: &mut ValueNode, patch: &ValueNode<Fragment>) -> Result<(), JsonLiteralError> {
     if !patch.types().is_empty() {
         // The node's `@type` is a JSON-LD keyword, which the merge copies
         // across verbatim rather than merging into.
@@ -134,17 +135,18 @@ fn merge_node(base: &mut ValueNode, patch: &ValueNode<Fragment>) {
             }
             FragmentMember::Values(values) => match base.members_mut().get_mut(name) {
                 Some(existing) => {
-                    if merge_values(existing, values) == MemberMerge::Replace {
-                        *existing = settled_values(values);
+                    if merge_values(existing, values)? == MemberMerge::Replace {
+                        *existing = settled_values(values)?;
                     }
                 }
                 None => {
                     // clone: the stored node owns the member name it gains.
-                    base.members_mut().insert(name.clone(), settled_values(values));
+                    base.members_mut().insert(name.clone(), settled_values(values)?);
                 }
             },
         }
     }
+    Ok(())
 }
 
 /// Merge a written language map into a stored one, language by language.
@@ -171,18 +173,21 @@ pub(crate) fn merge_language_entries(base: &mut LanguageEntries, patch: &Languag
 mod tests {
     use crate::{
         expanded_value::{ExpandedValue, ValueNode},
-        json_literal::JsonLiteral,
         language_entries::{LanguageEntries, LanguageEntry},
         node_id::NodeId,
         operation::{
             speed_entity::{member_name, number, text},
-            value_merge::{merge_language_entries, merge_value, settled_json, settled_value},
+            value_merge::{merge_language_entries, merge_value, settled_value},
         },
         value_mode::{Fragment, FragmentMember, FragmentText},
     };
+    use andromeda_json_literal::JsonLiteral;
     use indexmap::IndexMap;
     use langtag::LangTagBuf;
-    use serde_json::json;
+
+    fn literal(text: &str) -> JsonLiteral {
+        JsonLiteral::admit(text).expect("a JSON literal")
+    }
 
     fn tag(raw: &str) -> LangTagBuf {
         LangTagBuf::new(raw.to_owned()).expect("a language tag")
@@ -192,8 +197,19 @@ mod tests {
     /// Null string, at any depth of nested objects (IETF RFC 7396).
     #[test]
     fn a_settled_json_literal_leaves_its_deletions_out() {
-        let written = JsonLiteral::new(json!({"a": 1, "b": "urn:ngsi-ld:null", "c": {"d": "urn:ngsi-ld:null", "e": null}}));
-        pretty_assertions::assert_eq!(settled_json(&written), JsonLiteral::new(json!({"a": 1, "c": {"e": null}})));
+        let written: ExpandedValue<Fragment> = ExpandedValue::Json(literal(r#"{"a": 1, "b": "urn:ngsi-ld:null", "c": {"d": "urn:ngsi-ld:null", "e": null}}"#));
+        pretty_assertions::assert_eq!(
+            settled_value(&written).expect("a settled value"),
+            ExpandedValue::Json(literal(r#"{"a": 1, "c": {"e": null}}"#))
+        );
+    }
+
+    /// Two JSON literals merge by IETF RFC 7396.
+    #[test]
+    fn a_json_literal_merges_into_a_stored_one() {
+        let mut held: ExpandedValue = ExpandedValue::Json(literal(r#"{"a": 1, "b": {"c": 2}}"#));
+        merge_value(&mut held, &ExpandedValue::Json(literal(r#"{"b": {"c": "urn:ngsi-ld:null", "d": 3}}"#))).expect("a merge");
+        pretty_assertions::assert_eq!(held, ExpandedValue::Json(literal(r#"{"a": 1, "b": {"d": 3}}"#)));
     }
 
     /// A node naming an identifier is atomic: the written one replaces it.
@@ -206,16 +222,16 @@ mod tests {
             .collect();
         let written: ExpandedValue<Fragment> = ExpandedValue::Node(ValueNode::new(Some(NodeId::from("urn:ngsi-ld:X:2")), Vec::new(), written_members));
 
-        merge_value(&mut held, &written);
+        merge_value(&mut held, &written).expect("a merge");
 
-        pretty_assertions::assert_eq!(held, settled_value(&written));
+        pretty_assertions::assert_eq!(held, settled_value(&written).expect("a settled value"));
     }
 
     /// A value object meeting a structured node is replaced wholesale.
     #[test]
     fn a_literal_is_replaced_by_the_written_value() {
         let mut held: ExpandedValue = text("old");
-        merge_value(&mut held, &number(5));
+        merge_value(&mut held, &number(5)).expect("a merge");
         pretty_assertions::assert_eq!(held, number(5));
     }
 

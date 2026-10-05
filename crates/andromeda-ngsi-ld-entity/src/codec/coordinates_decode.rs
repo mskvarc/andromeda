@@ -195,9 +195,11 @@ impl<'de> Visitor<'de> for OrdinateVisitor {
         while let Some(key) = map.next_key::<ObjectKey>()? {
             match key {
                 ObjectKey::Value => {
-                    if let RawScalar::Number(number) = map.next_value::<RawScalar>()? {
-                        ordinate = number.as_f64().filter(|value| value.is_finite()).map_or(Ordinate::NotANumber, Ordinate::Number);
-                    }
+                    ordinate = map
+                        .next_value::<RawScalar<'de>>()?
+                        .as_f64()
+                        .filter(|value| value.is_finite())
+                        .map_or(Ordinate::NotANumber, Ordinate::Number);
                 }
                 ObjectKey::List => {
                     map.next_value::<IgnoredAny>()?;

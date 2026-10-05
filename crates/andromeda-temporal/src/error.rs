@@ -199,6 +199,7 @@ impl From<EntityRefusal> for TemporalError {
             | EntityRefusal::MissingValue { .. }
             | EntityRefusal::MissingObject { .. }
             | EntityRefusal::MissingFamilyValue { .. }
+            | EntityRefusal::JsonNotAnObject { .. }
             | EntityRefusal::RepeatedInstance { .. }
             | EntityRefusal::MultipleDefaultInstances { .. }
             | EntityRefusal::GeoProperty { .. }
@@ -249,6 +250,7 @@ impl From<CurrentStateFoldError> for TemporalError {
             CurrentStateFoldError::MissingId => TemporalError::Validation(TemporalValidationReason::EntityMissingId),
             CurrentStateFoldError::MissingType => TemporalError::Validation(TemporalValidationReason::EntityMissingType),
             CurrentStateFoldError::Instance(MutationError::Refused(refusal)) => TemporalError::from(*refusal),
+            CurrentStateFoldError::Instance(MutationError::LiteralMerge(source)) => TemporalError::Internal(TemporalInvariant::LiteralMerge(source)),
             CurrentStateFoldError::Instance(
                 mutation @ (MutationError::AttributeNotFound { .. }
                 | MutationError::DatasetNotFound { .. }

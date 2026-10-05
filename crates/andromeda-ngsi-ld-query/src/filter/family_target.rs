@@ -76,7 +76,7 @@ impl TerminalKeyword {
     pub(crate) fn read<'a, N: QueriedValueNode<'a>>(self, item: ValueItem<'a, N>) -> Option<TargetValue<'a>> {
         match (self, item) {
             (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Literal(literal)) => Some(TargetValue::literal(literal)),
-            (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Json(json)) => Some(TargetValue::json(Cow::Borrowed(json))),
+            (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Json(json)) => Some(TargetValue::json(json)),
             (TerminalKeyword::Identifier, ValueItem::Reference(iri)) => Some(TargetValue::Text(Cow::Borrowed(iri))),
             (TerminalKeyword::Identifier, ValueItem::Node(node)) => node.id().map(|iri| TargetValue::Text(Cow::Borrowed(iri))),
             (TerminalKeyword::Literal, ValueItem::Reference(_) | ValueItem::Node(_))
