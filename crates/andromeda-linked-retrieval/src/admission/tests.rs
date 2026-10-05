@@ -1,7 +1,7 @@
 use crate::admission::{AdmissionError, LinkedMember, LinkedOperation, LinkedRequest, ReachingMember, TemporalJoin, admit_request};
 use andromeda_ngsi_ld_query::{
     filter::expression::Expr,
-    projection::grammar::{RawProjectionTerm, parse_projection_list},
+    projection::grammar::{ProjectionList, RawProjectionTerm},
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use pretty_assertions::assert_eq;
@@ -40,7 +40,7 @@ impl Case {
     }
 
     fn admit(&self, operation: LinkedOperation) -> Result<(), AdmissionError> {
-        let pick: Option<Vec<RawProjectionTerm>> = self.pick.map(|raw| parse_projection_list(raw).expect("valid projection list"));
+        let pick: Option<Vec<RawProjectionTerm>> = self.pick.map(|raw| Vec::from(raw.parse::<ProjectionList>().expect("valid projection list")));
         let q: Option<Expr> = self.q.map(|raw| raw.parse().expect("valid filter"));
         let request = LinkedRequest::builder()
             .pick(pick.as_deref())

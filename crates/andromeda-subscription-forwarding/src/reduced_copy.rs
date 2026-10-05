@@ -200,6 +200,11 @@ mod tests {
     const SPEED: &str = "https://example.org/speed";
     const COLOUR: &str = "https://example.org/colour";
 
+    /// The stored term tree of a projection member naming one attribute.
+    fn stored_projection(name: &str) -> serde_json::Value {
+        json!([[{"name": name, "linked": []}]])
+    }
+
     fn subscription() -> Subscription {
         serde_json::from_value(json!({
             "id": "urn:ngsi-ld:Subscription:local",
@@ -209,7 +214,7 @@ mod tests {
             "q": "speed>10",
             "notification": {
                 "attributes": [SPEED, COLOUR],
-                "pick": [SPEED],
+                "pick": stored_projection(SPEED),
                 "format": "keyValues",
                 "endpoint": {"uri": "http://subscriber.example.org/notify", "accept": "application/json"}
             },
@@ -277,9 +282,9 @@ mod tests {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]));
         let projections = [
             json!({"attributes": [SPEED, COLOUR]}),
-            json!({"pick": [SPEED]}),
-            json!({"omit": [COLOUR]}),
-            json!({"attributes": [SPEED], "pick": [SPEED], "omit": [COLOUR]}),
+            json!({"pick": stored_projection(SPEED)}),
+            json!({"omit": stored_projection(COLOUR)}),
+            json!({"attributes": [SPEED], "pick": stored_projection(SPEED), "omit": stored_projection(COLOUR)}),
             json!({}),
         ];
         for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {

@@ -13,7 +13,7 @@ use crate::{
     forwarding_context::Rewording,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
-use andromeda_ngsi_ld_query::{filter::parser, projection::grammar::parse_projection_list, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{filter::parser, projection::grammar::ProjectionList, type_selection::grammar::TypeExprRaw};
 use url::form_urlencoded;
 
 impl ForwardedNames<'_> {
@@ -75,7 +75,7 @@ impl ForwardedNames<'_> {
                 Ok(self.geoproperty(&parsed).await?.to_string())
             }
             ParameterNames::Projection => {
-                let terms = parse_projection_list(value)?;
+                let terms: ProjectionList = value.parse()?;
                 Ok(self.projection(&terms).await?.iter().map(ToString::to_string).collect::<Vec<_>>().join(","))
             }
             ParameterNames::Query => {

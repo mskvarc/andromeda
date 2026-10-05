@@ -166,7 +166,7 @@ impl<'a> RegistrationRenderer<'a> {
 mod tests {
     use crate::registration::RegistrationRenderer;
     use andromeda_http_headers::language::LanguageFilter;
-    use andromeda_ngsi_ld_query::projection::grammar::parse_projection_list;
+    use andromeda_ngsi_ld_query::projection::grammar::ProjectionList;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn pick_narrows_to_the_named_members_and_keeps_id_and_type() {
-        let pick = parse_projection_list("endpoint").expect("valid pick");
+        let pick = Vec::from("endpoint".parse::<ProjectionList>().expect("valid pick"));
         let rendered = RegistrationRenderer::new(registration()).with_pick(Some(&pick)).render();
         assert_eq!(rendered["id"], "urn:ngsi-ld:ContextSourceRegistration:1");
         assert_eq!(rendered["type"], "ContextSourceRegistration");
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn omit_drops_the_named_members_but_never_id_or_type() {
-        let omit = parse_projection_list("endpoint,type").expect("valid omit");
+        let omit = Vec::from("endpoint,type".parse::<ProjectionList>().expect("valid omit"));
         let rendered = RegistrationRenderer::new(registration()).with_omit(Some(&omit)).render();
         assert!(rendered.get("endpoint").is_none(), "omitted member survived: {rendered}");
         assert_eq!(rendered["id"], "urn:ngsi-ld:ContextSourceRegistration:1");
@@ -235,7 +235,7 @@ mod tests {
 
     #[test]
     fn an_empty_projection_leaves_every_member() {
-        let pick = parse_projection_list("").unwrap_or_default();
+        let pick = "".parse::<ProjectionList>().map(Vec::from).unwrap_or_default();
         let rendered = RegistrationRenderer::new(registration()).with_pick(Some(&pick)).render();
         assert_eq!(rendered["endpoint"], "http://source:1026");
         assert_eq!(rendered["information"], json!([{"entities": [{"type": "Vehicle"}]}]));

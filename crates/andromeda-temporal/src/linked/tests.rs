@@ -64,7 +64,7 @@ use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     page_window::PageWindow,
-    projection::grammar::parse_projection_list,
+    projection::grammar::ProjectionList,
     split_filter::LeafTruths,
     temporal::{compiled::CompiledTemporalQuery, history_delete::TemporalHistoryDeleteScope},
 };
@@ -824,7 +824,7 @@ async fn a_root_rendered_without_its_id_still_leads_the_join() {
     let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]);
     let unnamed = json!({"linksTo": [{"type": "Relationship", "object": "urn:ngsi-ld:T:B", "observedAt": "2024-01-01T00:00:00Z"}]});
     let mut params = flat_join(1);
-    params.pick = Some(parse_projection_list("linksTo,reading").expect("valid projection list"));
+    params.pick = Some(Vec::from("linksTo,reading".parse::<ProjectionList>().expect("valid projection list")));
 
     let joined = joined(&service(broker), &[unnamed], &seed(), &params).await;
 
@@ -839,7 +839,7 @@ async fn a_nested_pick_narrows_the_linked_entity_under_temporal_values() {
     let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), vec![uri("urn:ngsi-ld:T:C")])]);
     let mut params = flat_join(1);
     params.format = Some(WrittenValue::Supported(TemporalFormat::TemporalValues));
-    params.pick = Some(parse_projection_list("id,linksTo{reading}").expect("valid projection list"));
+    params.pick = Some(Vec::from("id,linksTo{reading}".parse::<ProjectionList>().expect("valid projection list")));
 
     let joined = joined(&service(broker), &[projected_root()], &seed(), &params).await;
 
@@ -857,7 +857,7 @@ async fn a_nested_omit_narrows_the_resolved_target() {
     let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]);
     let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
     let mut params = flat_join(1);
-    params.omit = Some(parse_projection_list("linksTo{reading}").expect("valid projection list"));
+    params.omit = Some(Vec::from("linksTo{reading}".parse::<ProjectionList>().expect("valid projection list")));
 
     let joined = joined(&service(broker), &roots, &[], &params).await;
 

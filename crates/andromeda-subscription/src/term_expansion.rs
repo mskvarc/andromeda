@@ -8,7 +8,13 @@
 //! Context hosting is not handled here; the entity-subscription variant adds
 //! that on top.
 
-use crate::{error::SubscriptionError, fields::attribute_name_csv_member, subscription_member::SubscriptionMember};
+use crate::{
+    error::SubscriptionError,
+    fields::attribute_name_csv_member,
+    notification_projection::{ProjectionMember, written_projection},
+    subscription_member::SubscriptionMember,
+    subscription_validation_reason::SubscriptionValidationReason,
+};
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
@@ -23,7 +29,10 @@ use andromeda_ngsi_ld_query::{
         parser,
         serialize,
     },
-    projection::term::ProjectionTerm,
+    projection::{
+        expansion::expand_projection_terms,
+        grammar::{ProjectionList, RawProjectionTerm},
+    },
     term_expander::TermExpander,
     type_selection::{
         expansion::expand_type_expression,
@@ -32,37 +41,19 @@ use andromeda_ngsi_ld_query::{
 };
 use serde_json::Value;
 use std::collections::HashSet;
+use strum::IntoEnumIterator;
 use tracing::warn;
-
-/// Which names of an attribute list are left as written rather than expanded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StructuralKeywords {
-    /// Every name is an attribute term and expands.
-    Expand,
-    /// The clause 4.21 `id`, `type` and `scope` name structural members of
-    /// the representation, not attributes, and stay as written.
-    Keep,
-}
 
 /// Expand every string of one attribute-name list in place (clause 5.5.7).
 ///
 /// An unavailable `@context` fails the request; a single name the context
 /// cannot expand is left as written and reported, the same lenience the
 /// attribute lists always had.
-async fn expand_name_list(
-    engine: &JsonLdEngine,
-    prepared_context: &PreparedTermContext,
-    names: &mut [Value],
-    member: &str,
-    keywords: StructuralKeywords,
-) -> Result<(), SubscriptionError> {
+async fn expand_name_list(engine: &JsonLdEngine, prepared_context: &PreparedTermContext, names: &mut [Value], member: &str) -> Result<(), SubscriptionError> {
     for name in names.iter_mut() {
         let Some(term) = name.as_str() else {
             continue;
         };
-        if keywords == StructuralKeywords::Keep && matches!(term, ProjectionTerm::ID_KEYWORD | ProjectionTerm::TYPE_KEYWORD | ProjectionTerm::SCOPE_KEYWORD) {
-            continue;
-        }
         match engine.expand_term(term, prepared_context).await {
             Ok(expanded) => *name = Value::String(expanded.to_string()),
             Err(error) => {
@@ -134,6 +125,38 @@ async fn apply_expand_values_opt_in(expr: Expr, opt_ins: &FilterOptIns, expander
     Ok(apply_expand_values(expr, &opt_ins.expand_values, expander).await?)
 }
 
+/// Replace each clause 4.21 string of `notification.pick` and
+/// `notification.omit` with the term tree it expands to (clause 5.5.7).
+///
+/// Every attribute name expands, at every nesting level, and the clause 4.21
+/// keywords stay as written; the tree is what the subscription stores, since
+/// an expanded name may hold the separators of the clause 4.21 text.
+async fn expand_projection_members(notification: &mut Value, expander: &impl TermExpander) -> Result<(), SubscriptionError> {
+    for member in ProjectionMember::iter() {
+        let Some(lists) = written_projection(notification, member)? else {
+            continue;
+        };
+        let mut trees = Vec::with_capacity(lists.len());
+        for list in &lists {
+            trees.push(expanded_projection_list(list, expander).await?);
+        }
+        let stored = serde_json::to_value(trees).map_err(|source| SubscriptionValidationReason::MemberValue {
+            member: SubscriptionMember::Notification,
+            source,
+        })?;
+        if let Some(object) = notification.as_object_mut() {
+            object.insert(member.key().to_owned(), stored);
+        }
+    }
+    Ok(())
+}
+
+/// One projection list with its attribute names expanded.
+async fn expanded_projection_list(list: &ProjectionList, expander: &impl TermExpander) -> Result<ProjectionList, SubscriptionError> {
+    let terms = expand_projection_terms(list, expander).await?;
+    Ok(terms.iter().map(RawProjectionTerm::try_from).collect::<Result<Vec<_>, _>>()?.into())
+}
+
 /// Expand entities, watchedAttributes, the notification's attributes, pick
 /// and omit, q, and geoQ in a subscription payload. Context hosting is NOT
 /// handled here — the entity-subscription service adds that on top.
@@ -173,21 +196,14 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
     }
 
     if let Some(watched) = payload.get_mut("watchedAttributes").and_then(Value::as_array_mut) {
-        expand_name_list(engine, &prepared_context, watched, "watchedAttributes", StructuralKeywords::Expand).await?;
+        expand_name_list(engine, &prepared_context, watched, "watchedAttributes").await?;
     }
 
-    // Clause 5.2.14: `attributes` names attributes only; `pick` and `omit`
-    // may also name the structural members of clause 4.21.
     if let Some(notification) = payload.get_mut("notification") {
-        for (member, keywords) in [
-            ("attributes", StructuralKeywords::Expand),
-            ("pick", StructuralKeywords::Keep),
-            ("omit", StructuralKeywords::Keep),
-        ] {
-            if let Some(names) = notification.get_mut(member).and_then(Value::as_array_mut) {
-                expand_name_list(engine, &prepared_context, names, member, keywords).await?;
-            }
+        if let Some(names) = notification.get_mut("attributes").and_then(Value::as_array_mut) {
+            expand_name_list(engine, &prepared_context, names, "attributes").await?;
         }
+        expand_projection_members(notification, &term_expander).await?;
     }
 
     let opt_ins = expand_filter_opt_ins(payload, &term_expander).await?;
@@ -251,27 +267,31 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
 
 #[cfg(test)]
 mod tests {
-    use crate::term_expansion::expand_common_subscription_terms;
+    use crate::{error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason, term_expansion::expand_common_subscription_terms};
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_query::filter::serialize::serialize_written_members;
-    use serde_json::{Value, json};
+    use serde_json::json;
+
+    /// The core context's default vocabulary.
+    const DEFAULT: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
 
     /// An engine that resolves only what is embedded, never the network.
     fn offline_engine() -> JsonLdEngine {
         JsonLdEngine::builder().allow_remote(false).build().expect("engine builds")
     }
 
-    /// Clause 5.5.7 for the clause 5.2.14 lists: `attributes`, `pick` and
-    /// `omit` expand their attribute names through the context, and the
-    /// clause 4.21 structural keywords of `pick`/`omit` stay as written.
+    /// Clause 5.5.7 for the clause 5.2.14 lists: `attributes` expands its
+    /// names; `pick` and `omit` expand every attribute name at every nesting
+    /// level into the stored term tree, and the clause 4.21 keywords stay as
+    /// written.
     #[tokio::test]
-    async fn notification_pick_and_omit_expand_attribute_names_and_keep_the_structural_keywords() {
+    async fn nested_projection_terms_expand_every_name_and_keep_keywords() {
         let engine = offline_engine();
         let mut payload = json!({
             "notification": {
                 "attributes": ["speed"],
-                "pick": ["id", "speed"],
-                "omit": ["scope", "type", "colour"]
+                "pick": ["id", "owner{id,name}"],
+                "omit": ["scope,colour"]
             }
         });
 
@@ -280,13 +300,35 @@ mod tests {
             .expect("expands");
 
         let notification = &payload["notification"];
-        let is_iri = |value: &Value| value.as_str().is_some_and(|name| name.starts_with("https://"));
-        assert!(is_iri(&notification["attributes"][0]), "{notification}");
-        pretty_assertions::assert_eq!(notification["pick"][0], json!("id"));
-        assert!(is_iri(&notification["pick"][1]), "{notification}");
-        pretty_assertions::assert_eq!(notification["omit"][0], json!("scope"));
-        pretty_assertions::assert_eq!(notification["omit"][1], json!("type"));
-        assert!(is_iri(&notification["omit"][2]), "{notification}");
+        pretty_assertions::assert_eq!(notification["attributes"], json!([format!("{DEFAULT}speed")]));
+        pretty_assertions::assert_eq!(
+            notification["pick"],
+            json!([
+                [{"name": "id", "linked": []}],
+                [{"name": format!("{DEFAULT}owner"), "linked": [{"name": "id", "linked": []}, {"name": format!("{DEFAULT}name"), "linked": []}]}]
+            ])
+        );
+        pretty_assertions::assert_eq!(
+            notification["omit"],
+            json!([[{"name": "scope", "linked": []}, {"name": format!("{DEFAULT}colour"), "linked": []}]])
+        );
+    }
+
+    /// Table 5.2.14.1-1: a string outside the clause 4.21 grammar is
+    /// `BadRequestData`, never stored.
+    #[tokio::test]
+    async fn a_malformed_projection_string_is_bad_request_data() {
+        let engine = offline_engine();
+        let mut payload = json!({"notification": {"pick": ["owner{"]}});
+
+        let refused = expand_common_subscription_terms(&engine, &mut payload, &ContextSpec::none())
+            .await
+            .expect_err("an unbalanced brace is refused");
+
+        assert!(
+            matches!(refused, SubscriptionError::Validation(SubscriptionValidationReason::ProjectionInvalid { .. })),
+            "got {refused:?}"
+        );
     }
 
     /// Table 5.2.12-1: `expandValues` is stored as the same comma-separated

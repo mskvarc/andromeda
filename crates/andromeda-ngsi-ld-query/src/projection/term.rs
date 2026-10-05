@@ -38,6 +38,19 @@ impl ProjectionTerm {
     /// The `scope` keyword of clause 4.21.
     pub const SCOPE_KEYWORD: &'static str = "scope";
 
+    /// The clause 4.21 keyword term `name` spells, if it spells one.
+    #[must_use]
+    pub fn keyword(name: &str) -> Option<ProjectionTerm> {
+        match name {
+            ProjectionTerm::ID_KEYWORD => Some(ProjectionTerm::Id),
+            ProjectionTerm::TYPE_KEYWORD => Some(ProjectionTerm::Type),
+            ProjectionTerm::SCOPE_KEYWORD => Some(ProjectionTerm::Scope),
+            // `&str` is unbounded, so a catch-all is the only way to close
+            // this match; anything else names an attribute.
+            _ => None,
+        }
+    }
+
     /// Whether this term names the attribute an entity keys as `key` and whose
     /// key expands to `expanded`.
     ///
@@ -92,6 +105,15 @@ mod tests {
         assert!(term.matches_attribute("speed", &iri("https://example.com/speed")));
         assert!(term.matches_attribute("https://example.com/speed", &iri("urn:unrelated")));
         assert!(!term.matches_attribute("colour", &iri("https://example.com/colour")));
+    }
+
+    #[test]
+    fn only_the_three_clause_4_21_keywords_spell_a_keyword_term() {
+        assert_eq!(ProjectionTerm::keyword("id"), Some(ProjectionTerm::Id));
+        assert_eq!(ProjectionTerm::keyword("type"), Some(ProjectionTerm::Type));
+        assert_eq!(ProjectionTerm::keyword("scope"), Some(ProjectionTerm::Scope));
+        assert_eq!(ProjectionTerm::keyword("speed"), None);
+        assert_eq!(ProjectionTerm::keyword("Id"), None);
     }
 
     #[test]

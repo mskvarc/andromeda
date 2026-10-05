@@ -14,6 +14,7 @@ use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     filter::expression::Expr,
     pattern::Pattern,
+    projection::grammar::ProjectionList,
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExprRaw,
 };
@@ -140,12 +141,18 @@ pub struct NotificationParams {
     /// Whether to include previous attribute values in notifications.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub show_changes: Option<bool>,
-    /// Attributes to include (allowlist filter).
+    /// The clause 4.21 projection keeping only the members it names, one
+    /// list per projection-language string the subscriber wrote.
+    ///
+    /// Held, and stored, with every attribute name expanded (clause 5.5.7) as
+    /// the term tree [`ProjectionList`] serializes to; the clause 4.21 text a
+    /// client exchanges is written and read by the subscription service.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pick: Option<Vec<AttributeName>>,
-    /// Attributes to exclude (denylist filter).
+    pub pick: Option<Vec<ProjectionList>>,
+    /// The clause 4.21 projection removing the members it names, held as
+    /// `pick` is.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub omit: Option<Vec<AttributeName>>,
+    pub omit: Option<Vec<ProjectionList>>,
     /// Join mode for linked entity retrieval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub join: Option<JoinMode>,

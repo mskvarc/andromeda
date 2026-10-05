@@ -62,22 +62,15 @@ fn expand_projection_terms_inner<'a, E: TermExpander>(
 /// Expand one raw term, recursing into its linked-entity sub-projection when
 /// it is an attribute term.
 async fn expand_one_term<E: TermExpander>(term: &RawProjectionTerm, expander: &E) -> Result<ProjectionTerm, QueryError> {
-    match term.name.as_str() {
-        // Clause 4.21: these name structural members of the representation,
-        // not attributes, so they have no IRI to expand to and no linked
-        // entity to project — `LinkedEntityTerm` only ever follows `AttrName`.
-        ProjectionTerm::ID_KEYWORD => keyword_term(term, ProjectionTerm::Id),
-        ProjectionTerm::TYPE_KEYWORD => keyword_term(term, ProjectionTerm::Type),
-        ProjectionTerm::SCOPE_KEYWORD => keyword_term(term, ProjectionTerm::Scope),
-        // `&str` is unbounded, so a catch-all is the only way to close this
-        // match; anything that is not one of the three keywords is an
-        // attribute term.
-        _ => {
-            let iri = expander.expand_term(term.name.as_str()).await?;
-            let linked = expand_projection_terms_inner(&term.linked, expander).await?;
-            Ok(ProjectionTerm::Attribute { iri, linked })
-        }
+    // Clause 4.21: the keywords name structural members of the
+    // representation, not attributes, so they have no IRI to expand to and no
+    // linked entity to project — `LinkedEntityTerm` only ever follows `AttrName`.
+    if let Some(keyword) = ProjectionTerm::keyword(term.name.as_str()) {
+        return keyword_term(term, keyword);
     }
+    let iri = expander.expand_term(term.name.as_str()).await?;
+    let linked = expand_projection_terms_inner(&term.linked, expander).await?;
+    Ok(ProjectionTerm::Attribute { iri, linked })
 }
 
 /// Build the expanded keyword term, rejecting a linked-entity sub-projection

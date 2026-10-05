@@ -2023,6 +2023,7 @@ dependencies = [
  "andromeda-context-commit",
  "andromeda-context-space",
  "andromeda-jsonld",
+ "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-compaction",
  "andromeda-ngsi-ld-entity",
  "andromeda-ngsi-ld-geometry",

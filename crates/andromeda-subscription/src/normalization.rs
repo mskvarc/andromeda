@@ -1,5 +1,6 @@
 //! Subscription persistence normalization.
 
+use crate::notification_projection::ProjectionMember;
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{
@@ -11,11 +12,17 @@ use andromeda_ngsi_ld_query::{
         compaction::{compact_csf_expr, compact_q_expr, revert_expand_values},
         expression::Expr,
     },
-    projection::term::ProjectionTerm,
+    projection::{
+        grammar::{ProjectionList, RawProjectionTerm},
+        term::ProjectionTerm,
+    },
 };
 use chrono::{DateTime, Utc};
+use serde::Deserialize;
 use serde_json::{Number, Value};
 use std::{collections::HashSet, sync::Arc};
+use strum::IntoEnumIterator;
+use tracing::warn;
 
 /// Render `timeInterval` and `throttling` as JSON integers whenever they hold
 /// a whole number of seconds.
@@ -82,31 +89,56 @@ pub fn fixup_expired_status(value: &mut Value, expires_at: Option<DateTime<Utc>>
     }
 }
 
-/// Which names of an attribute list are left as written rather than compacted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StructuralKeywords {
-    /// Every name is an attribute IRI and compacts.
-    Compact,
-    /// The clause 4.21 `id`, `type` and `scope` name structural members of
-    /// the representation, not attributes, and stay as written.
-    Keep,
-}
-
 /// Compact every string of one attribute-name list in place.
-fn compact_name_list(compactor: &NameCompaction, names: &mut [Value], keywords: StructuralKeywords) {
+fn compact_name_list(compactor: &NameCompaction, names: &mut [Value]) {
     for name in names.iter_mut() {
         let Some(iri) = name.as_str().map(String::from) else {
             continue;
         };
-        if keywords == StructuralKeywords::Keep
-            && matches!(
-                iri.as_str(),
-                ProjectionTerm::ID_KEYWORD | ProjectionTerm::TYPE_KEYWORD | ProjectionTerm::SCOPE_KEYWORD
-            )
-        {
-            continue;
-        }
         *name = Value::String(compactor.compact_attr_iri(&iri).to_string());
+    }
+}
+
+/// Write each stored projection tree of `notification.pick` and
+/// `notification.omit` back as the clause 4.21 string it was written as, in
+/// the reader's terms (clause 5.5.7).
+fn compact_projection_members(compactor: &NameCompaction, notification: &mut Value) {
+    for member in ProjectionMember::iter() {
+        let Some(stored) = notification.get(member.key()) else {
+            continue;
+        };
+        let lists = match Vec::<ProjectionList>::deserialize(stored) {
+            Ok(lists) => lists,
+            Err(error) => {
+                warn!(member = member.key(), %error, "Stored subscription projection is not a term tree");
+                continue;
+            }
+        };
+        let written = lists
+            .iter()
+            .map(|list| Value::String(ProjectionList::from(list.iter().map(|term| compacted_term(compactor, term)).collect::<Vec<_>>()).to_string()))
+            .collect();
+        if let Some(object) = notification.as_object_mut() {
+            object.insert(member.key().to_owned(), Value::Array(written));
+        }
+    }
+}
+
+/// One stored term with every attribute name compacted, at every nesting
+/// level; the clause 4.21 keywords name no attribute and stay as written.
+fn compacted_term(compactor: &NameCompaction, term: &RawProjectionTerm) -> RawProjectionTerm {
+    let name = match ProjectionTerm::keyword(term.name.as_str()) {
+        Some(_) => term.name.clone(), // clone: the stored term stays in the resource while its compacted copy is written
+        None => match compactor.compact_attr_iri(term.name.as_str()).parse() {
+            Ok(compact) => compact,
+            // A compacted name that is no attribute name is never produced by
+            // the compaction; the expanded name still identifies the attribute.
+            Err(_) => term.name.clone(), // clone: as above
+        },
+    };
+    RawProjectionTerm {
+        name,
+        linked: term.linked.iter().map(|linked| compacted_term(compactor, linked)).collect(),
     }
 }
 
@@ -127,21 +159,14 @@ pub fn compact_subscription_iris(compactor: &NameCompaction, value: &mut Value) 
     }
 
     if let Some(watched) = value.get_mut("watchedAttributes").and_then(Value::as_array_mut) {
-        compact_name_list(compactor, watched, StructuralKeywords::Compact);
+        compact_name_list(compactor, watched);
     }
 
-    // Clause 5.2.14: `attributes` names attributes only; `pick` and `omit`
-    // may also name the structural members of clause 4.21.
     if let Some(notification) = value.get_mut("notification") {
-        for (member, keywords) in [
-            ("attributes", StructuralKeywords::Compact),
-            ("pick", StructuralKeywords::Keep),
-            ("omit", StructuralKeywords::Keep),
-        ] {
-            if let Some(names) = notification.get_mut(member).and_then(Value::as_array_mut) {
-                compact_name_list(compactor, names, keywords);
-            }
+        if let Some(names) = notification.get_mut("attributes").and_then(Value::as_array_mut) {
+            compact_name_list(compactor, names);
         }
+        compact_projection_members(compactor, notification);
     }
 }
 
@@ -313,20 +338,29 @@ mod tests {
         pretty_assertions::assert_eq!(value["jsonKeys"], json!("payload"));
     }
 
-    /// Clause 4.21: the `pick`/`omit` keywords are structural members and
-    /// come back as written beside the compacted attribute IRIs.
+    /// Clause 5.5.7: each stored projection tree reads back as the clause
+    /// 4.21 string it was written as, its attribute names compacted at every
+    /// level and the keywords as written.
     #[tokio::test]
-    async fn pick_and_omit_compact_their_attribute_iris_and_keep_the_keywords() {
+    async fn a_stored_tree_reads_back_as_compact_projection_text() {
         let mut value = json!({
             "notification": {
-                "pick": ["id", "https://uri.etsi.org/ngsi-ld/default-context/speed"],
-                "omit": ["scope", "https://uri.etsi.org/ngsi-ld/default-context/colour"]
+                "pick": [
+                    [{"name": "id", "linked": []}],
+                    [{"name": "https://uri.etsi.org/ngsi-ld/default-context/owner", "linked": [
+                        {"name": "id", "linked": []},
+                        {"name": "https://uri.etsi.org/ngsi-ld/default-context/employer", "linked": [
+                            {"name": "https://uri.etsi.org/ngsi-ld/default-context/size", "linked": []}
+                        ]}
+                    ]}]
+                ],
+                "omit": [[{"name": "scope", "linked": []}, {"name": "https://uri.etsi.org/ngsi-ld/default-context/colour", "linked": []}]]
             }
         });
 
         compact_subscription_iris(&core_names().await, &mut value);
 
-        pretty_assertions::assert_eq!(value["notification"]["pick"], json!(["id", "speed"]));
-        pretty_assertions::assert_eq!(value["notification"]["omit"], json!(["scope", "colour"]));
+        pretty_assertions::assert_eq!(value["notification"]["pick"], json!(["id", "owner{id,employer{size}}"]));
+        pretty_assertions::assert_eq!(value["notification"]["omit"], json!(["scope,colour"]));
     }
 }

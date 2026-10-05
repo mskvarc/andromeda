@@ -129,7 +129,7 @@ pub struct Query {
 /// the pair of functions is the encoding those members have, and a caller
 /// rendering one of them outside a `Query` needs the same encoding.
 pub mod projection_term_list {
-    use andromeda_ngsi_ld_query::projection::grammar::{RawProjectionTerm, parse_projection_list};
+    use andromeda_ngsi_ld_query::projection::grammar::{ProjectionList, RawProjectionTerm};
     use serde::{Deserialize, Deserializer, Serializer, de::Error as DeserializeError};
 
     /// Deserialize the array of projection-language strings into the terms
@@ -148,7 +148,7 @@ pub mod projection_term_list {
             .map(|members| {
                 members
                     .iter()
-                    .map(|member| parse_projection_list(member).map_err(DeserializeError::custom))
+                    .map(|member| member.parse::<ProjectionList>().map(Vec::from).map_err(DeserializeError::custom))
                     .collect::<Result<Vec<Vec<RawProjectionTerm>>, D::Error>>()
                     .map(|groups| groups.into_iter().flatten().collect())
             })

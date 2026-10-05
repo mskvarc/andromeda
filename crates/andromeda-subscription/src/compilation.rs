@@ -12,7 +12,11 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
-    projection::{compiled::Projection, term::ProjectionTerm},
+    projection::{
+        compiled::Projection,
+        grammar::{ProjectionList, RawProjectionTerm},
+        term::ProjectionTerm,
+    },
     temporal::window::TimeInterval,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -165,9 +169,10 @@ pub fn compile_temporal_q(temporal_q: &serde_json::Value, sub_id: &str) -> Optio
 /// query's `pick`/`omit` parameters compile to (clause 4.21).
 ///
 /// The stored names were expanded through the subscription's `@context` when
-/// the resource was written (clause 5.5.7), except the three clause 4.21
-/// keywords, which name structural members of the representation rather than
-/// attributes and are kept as written.
+/// the resource was written (clause 5.5.7), at every nesting level, except the
+/// three clause 4.21 keywords, which name structural members of the
+/// representation rather than attributes and are kept as written. The terms of
+/// every string of one member form one list.
 #[must_use]
 pub fn notification_projection(notification: &NotificationParams, sub_id: &str) -> Projection {
     Projection::builder()
@@ -192,18 +197,22 @@ pub fn notification_attributes(notification: &NotificationParams, sub_id: &str) 
         .collect()
 }
 
-/// The compiled terms of one stored `pick` or `omit` list.
-fn projection_terms(names: &[AttributeName], sub_id: &str) -> Vec<ProjectionTerm> {
-    names
+/// The compiled terms of one stored `pick` or `omit` member.
+fn projection_terms(lists: &[ProjectionList], sub_id: &str) -> Vec<ProjectionTerm> {
+    lists.iter().flat_map(|list| compiled_terms(list, sub_id)).collect()
+}
+
+/// The compiled form of stored terms, recursing into each attribute term's
+/// clause 4.21 linked-entity sub-projection.
+fn compiled_terms(terms: &[RawProjectionTerm], sub_id: &str) -> Vec<ProjectionTerm> {
+    terms
         .iter()
-        .filter_map(|name| match name.as_str() {
-            ProjectionTerm::ID_KEYWORD => Some(ProjectionTerm::Id),
-            ProjectionTerm::TYPE_KEYWORD => Some(ProjectionTerm::Type),
-            ProjectionTerm::SCOPE_KEYWORD => Some(ProjectionTerm::Scope),
-            // `&str` is unbounded, so a catch-all is the only way to close
-            // this match; anything that is not one of the three keywords is
-            // an attribute term.
-            other => expanded_attribute(other, sub_id).map(|iri| ProjectionTerm::Attribute { iri, linked: Vec::new() }),
+        .filter_map(|term| match ProjectionTerm::keyword(term.name.as_str()) {
+            Some(keyword) => Some(keyword),
+            None => expanded_attribute(term.name.as_str(), sub_id).map(|iri| ProjectionTerm::Attribute {
+                iri,
+                linked: compiled_terms(&term.linked, sub_id),
+            }),
         })
         .collect()
 }
@@ -227,11 +236,27 @@ mod tests {
     use crate::compilation::{compile_temporal_q, csource_matching_attributes, notification_attributes, notification_projection};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::subscription::NotificationParams;
-    use andromeda_ngsi_ld_query::{projection::term::ProjectionTerm, temporal::window::TimeInterval};
+    use andromeda_ngsi_ld_query::{
+        projection::{grammar::ProjectionList, term::ProjectionTerm},
+        temporal::window::TimeInterval,
+    };
     use iri_rs::IriBuf;
 
     fn notification(value: serde_json::Value) -> NotificationParams {
         serde_json::from_value(value).expect("valid notification parameters")
+    }
+
+    /// The stored tree of one clause 4.21 string per element.
+    fn stored(text: &[&str]) -> serde_json::Value {
+        let lists: Vec<ProjectionList> = text.iter().map(|raw| raw.parse().expect("valid projection list")).collect();
+        serde_json::to_value(lists).expect("serializes")
+    }
+
+    fn attribute(iri: &str, linked: Vec<ProjectionTerm>) -> ProjectionTerm {
+        ProjectionTerm::Attribute {
+            iri: IriBuf::new(iri.to_owned()).expect("valid IRI"),
+            linked,
+        }
     }
 
     /// Clause 4.21: `id`, `type` and `scope` are structural keywords, every
@@ -240,23 +265,37 @@ mod tests {
     fn pick_and_omit_compile_to_keyword_and_attribute_terms() {
         let notification = notification(serde_json::json!({
             "endpoint": {"uri": "https://receiver.example.com/notify"},
-            "pick": ["id", "https://example.com/speed"],
-            "omit": ["scope", "type"]
+            "pick": stored(&["id", "https://example.com/speed"]),
+            "omit": stored(&["scope,type"])
+        }));
+
+        let projection = notification_projection(&notification, "urn:ngsi-ld:Subscription:test");
+
+        pretty_assertions::assert_eq!(projection.pick, vec![ProjectionTerm::Id, attribute("https://example.com/speed", Vec::new())]);
+        pretty_assertions::assert_eq!(projection.omit, vec![ProjectionTerm::Scope, ProjectionTerm::Type]);
+    }
+
+    /// Clause 4.21: a nested group compiles to the linked sub-projection of
+    /// its Relationship term, at every level.
+    #[test]
+    fn a_nested_pick_compiles_to_a_linked_term() {
+        let notification = notification(serde_json::json!({
+            "endpoint": {"uri": "https://receiver.example.com/notify"},
+            "pick": stored(&["https://example.com/owner{id,https://example.com/employer{https://example.com/size}}"])
         }));
 
         let projection = notification_projection(&notification, "urn:ngsi-ld:Subscription:test");
 
         pretty_assertions::assert_eq!(
             projection.pick,
-            vec![
-                ProjectionTerm::Id,
-                ProjectionTerm::Attribute {
-                    iri: IriBuf::new("https://example.com/speed".to_owned()).expect("valid IRI"),
-                    linked: Vec::new()
-                }
-            ]
+            vec![attribute(
+                "https://example.com/owner",
+                vec![
+                    ProjectionTerm::Id,
+                    attribute("https://example.com/employer", vec![attribute("https://example.com/size", Vec::new())])
+                ]
+            )]
         );
-        pretty_assertions::assert_eq!(projection.omit, vec![ProjectionTerm::Scope, ProjectionTerm::Type]);
     }
 
     #[test]
@@ -272,7 +311,7 @@ mod tests {
     fn a_name_that_is_not_an_expanded_iri_is_left_out_of_the_projection() {
         let notification = notification(serde_json::json!({
             "endpoint": {"uri": "https://receiver.example.com/notify"},
-            "pick": ["speed", "https://example.com/colour"]
+            "pick": stored(&["speed", "https://example.com/colour"])
         }));
 
         let projection = notification_projection(&notification, "urn:ngsi-ld:Subscription:test");
@@ -283,7 +322,7 @@ mod tests {
     /// Table 5.2.14.1-1: `attributes` lists expanded attribute names, and a
     /// name that is no IRI addresses nothing.
     #[test]
-    fn notification_attributes_compile_to_their_expanded_iris() {
+    fn notification_attributes_compile_as_the_pick_synonym() {
         let notification = notification(serde_json::json!({
             "endpoint": {"uri": "https://receiver.example.com/notify"},
             "attributes": ["https://example.com/speed", "colour"]

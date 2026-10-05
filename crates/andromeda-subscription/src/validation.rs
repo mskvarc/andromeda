@@ -2,15 +2,27 @@
 //! clauses around it place on a create body or an update fragment, checked
 //! before any of it is expanded or stored.
 
-use crate::{error::SubscriptionError, geo_filter::admit_geo_q, subscription_validation_reason::SubscriptionValidationReason};
+use crate::{
+    error::SubscriptionError,
+    geo_filter::admit_geo_q,
+    notification_projection::{ProjectionMember, written_projection},
+    subscription_member::SubscriptionMember,
+    subscription_validation_reason::SubscriptionValidationReason,
+};
+use andromeda_linked_retrieval::admission::{LinkedOperation, LinkedRequest, admit_request};
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_query::{
     filter::{expression::Expr, parser, predicate::Predicate},
-    projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
+    projection::{
+        exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
+        grammar::RawProjectionTerm,
+    },
 };
-use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
+use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use chrono::Utc;
+use serde::Deserialize;
 use serde_json::Value;
+use std::num::NonZeroU32;
 
 fn q_has_comparison(expr: &Expr) -> bool {
     match expr {
@@ -137,16 +149,20 @@ pub fn validate_common_fields(payload: &Value, geo_limits: GeometryCensusLimits)
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalNotPositive));
     }
 
-    if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()) {
-        // Clause 5.5.4: a malformed `q` in a valid-JSON body is data that is not
-        // syntactically correct per the API data type definitions, so it is
-        // `BadRequestData` rather than the `InvalidRequest` a query-language
-        // parse error is otherwise classified as.
-        let expr = parser::parse(q_str).map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::QExpressionInvalid { source }))?;
-        if !q_has_comparison(&expr) {
-            return Err(SubscriptionError::Validation(SubscriptionValidationReason::QExpressionNoComparison));
+    let q = match payload.get("q").and_then(|v| v.as_str()) {
+        Some(q_str) => {
+            // Clause 5.5.4: a malformed `q` in a valid-JSON body is data that is
+            // not syntactically correct per the API data type definitions, so it
+            // is `BadRequestData` rather than the `InvalidRequest` a
+            // query-language parse error is otherwise classified as.
+            let expr = parser::parse(q_str).map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::QExpressionInvalid { source }))?;
+            if !q_has_comparison(&expr) {
+                return Err(SubscriptionError::Validation(SubscriptionValidationReason::QExpressionNoComparison));
+            }
+            Some(expr)
         }
-    }
+        None => None,
+    };
 
     admit_geo_q(payload, geo_limits)?;
 
@@ -182,6 +198,7 @@ pub fn validate_common_fields(payload: &Value, geo_limits: GeometryCensusLimits)
     if let Some(notification) = payload.get("notification") {
         validate_show_changes_format(notification)?;
         validate_notification_projection(notification)?;
+        admit_linked_references(notification, q.as_ref())?;
     }
 
     Ok(())
@@ -203,6 +220,52 @@ fn validate_notification_projection(notification: &Value) -> Result<(), Subscrip
         attrs: Presence::of(notification.get("attributes")),
     })
     .map_err(|conflict| SubscriptionError::Validation(SubscriptionValidationReason::Projection(conflict)))
+}
+
+/// Admit the Linked Entity references of a subscription: the clause 4.21
+/// nesting of `pick`/`omit`, the clause 4.9 hops of `q` and the retrieving
+/// `notification.join`.
+///
+/// Clause 5.8.1.4 adds a Subscription that passes the clause 5.2.12 checks,
+/// none of which bounds these references, so the engine admits every one; the
+/// strings still have to be clause 4.21 text, which reading them checks.
+fn admit_linked_references(notification: &Value, q: Option<&Expr>) -> Result<(), SubscriptionError> {
+    let pick = projection_terms(notification, ProjectionMember::Pick)?;
+    let omit = projection_terms(notification, ProjectionMember::Omit)?;
+    let join = notification
+        .get("join")
+        .map(Option::<JoinMode>::deserialize)
+        .transpose()
+        .map_err(notification_member)?
+        .flatten();
+    let join_level = notification
+        .get("joinLevel")
+        .map(Option::<NonZeroU32>::deserialize)
+        .transpose()
+        .map_err(notification_member)?
+        .flatten();
+    let request = LinkedRequest::builder()
+        .pick(pick.as_deref())
+        .omit(omit.as_deref())
+        .q(q)
+        .join(join)
+        .join_level(join_level)
+        .build();
+    admit_request(LinkedOperation::Subscription, &request).map_err(|refusal| SubscriptionError::Validation(refusal.into()))
+}
+
+/// Every term the strings of one projection member hold.
+fn projection_terms(notification: &Value, member: ProjectionMember) -> Result<Option<Vec<RawProjectionTerm>>, SubscriptionError> {
+    Ok(written_projection(notification, member)?.map(|lists| lists.into_iter().flat_map(Vec::<RawProjectionTerm>::from).collect()))
+}
+
+/// A `notification` member whose value is not the JSON shape its data type
+/// requires.
+const fn notification_member(source: serde_json::Error) -> SubscriptionError {
+    SubscriptionError::Validation(SubscriptionValidationReason::MemberValue {
+        member: SubscriptionMember::Notification,
+        source,
+    })
 }
 
 /// Reject a notification asking for `showChanges` under a simplified format
@@ -484,6 +547,35 @@ mod tests {
             let result = validate_create_payload(&payload, limits());
             assert!(result.is_ok(), "{format}: {result:?}");
         }
+    }
+
+    /// Clause 5.8.1.4: no clause 5.2.12 check bounds a Linked Entity
+    /// reference, so a nesting is admitted without a retrieving join and
+    /// deeper than `joinLevel` alike.
+    #[test]
+    fn a_nested_pick_without_join_is_admitted() {
+        for notification in [
+            json!({"pick": ["id", "owner{name}"]}),
+            json!({"pick": ["owner{employer{name}}"], "join": "flat", "joinLevel": 1}),
+            json!({"omit": ["owner{email}"], "join": "@none"}),
+        ] {
+            let result = validate_common_fields(&json!({"q": "owner{name==\"x\"}", "notification": notification}), limits());
+            assert!(result.is_ok(), "{notification}: {result:?}");
+        }
+    }
+
+    /// Table 5.2.14.1-1: each member is "a valid attribute projection language
+    /// string as per clause 4.21".
+    #[test]
+    fn a_malformed_pick_is_refused() {
+        let result = validate_common_fields(&json!({"notification": {"pick": ["owner{"]}}), limits());
+        assert!(
+            matches!(
+                &result,
+                Err(SubscriptionError::Validation(SubscriptionValidationReason::ProjectionInvalid { .. }))
+            ),
+            "got {result:?}"
+        );
     }
 
     #[test]

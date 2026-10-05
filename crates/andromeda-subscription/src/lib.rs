@@ -56,6 +56,8 @@ mod merged_validation;
 mod normalization;
 /// Initialising a subscription's notification `@context` from its creation context.
 mod notification_context;
+/// The clause 5.2.14 `pick` and `omit` members as a payload writes them.
+pub mod notification_projection;
 /// What a subscription's stored delivery instants must satisfy to notify again.
 pub mod notification_slot;
 /// How selectors are placed into the candidate index.
@@ -93,6 +95,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-space",
         "andromeda-context-commit",
         "andromeda-jsonld",
+        "andromeda-linked-retrieval",
         "andromeda-ngsi-ld-compaction",
         "andromeda-ngsi-ld-entity",
         "andromeda-ngsi-ld-geometry",

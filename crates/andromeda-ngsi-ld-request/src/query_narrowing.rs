@@ -207,7 +207,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         filter::expression::Expr,
         geo::input::GeoQueryInput,
-        projection::grammar::parse_projection_list,
+        projection::grammar::ProjectionList,
         type_selection::grammar::TypeExprRaw,
     };
 
@@ -308,8 +308,8 @@ mod tests {
     /// narrows nothing.
     #[test]
     fn a_pick_naming_an_attribute_narrows_and_one_naming_only_members_does_not() {
-        let named = parse_projection_list("id,type,speed").expect("a valid pick");
-        let members = parse_projection_list("id,type").expect("a valid pick");
+        let named = Vec::from("id,type,speed".parse::<ProjectionList>().expect("a valid pick"));
+        let members = Vec::from("id,type".parse::<ProjectionList>().expect("a valid pick"));
         let narrowing = NarrowingInputs::builder().admitted(AdmittedNarrowings::ENTITIES).pick(Some(&named)).build();
         assert!(require_narrowing(&narrowing).is_ok());
         let too_wide = NarrowingInputs::builder().admitted(AdmittedNarrowings::ENTITIES).pick(Some(&members)).build();

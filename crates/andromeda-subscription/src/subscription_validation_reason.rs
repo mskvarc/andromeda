@@ -9,7 +9,8 @@
 //! `timeInterval`, `expiresAt`, `geoQ`, ...) keep their fixed casing, and clause
 //! numbers stay in doc comments.
 
-use crate::{endpoint_refusal::EndpointRefusal, geo_filter::GeoQError, subscription_member::SubscriptionMember};
+use crate::{endpoint_refusal::EndpointRefusal, geo_filter::GeoQError, notification_projection::ProjectionMember, subscription_member::SubscriptionMember};
+use andromeda_linked_retrieval::admission::AdmissionError;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, spec_version::SpecVersionParseError};
 use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict};
 use thiserror::Error;
@@ -164,4 +165,25 @@ pub enum SubscriptionValidationReason {
     /// (clause 4.21).
     #[error(transparent)]
     Projection(#[from] ProjectionConflict),
+    /// A `notification.pick` or `notification.omit` member was not an array
+    /// of strings (Table 5.2.14.1-1).
+    #[error("notification.{member} must be an array of projection strings")]
+    ProjectionNotStrings {
+        /// The member that was not.
+        member: ProjectionMember,
+    },
+    /// A `notification.pick` or `notification.omit` string was not "a valid
+    /// attribute projection language string as per clause 4.21" (Table
+    /// 5.2.14.1-1).
+    #[error("notification.{member}: {source}")]
+    ProjectionInvalid {
+        /// The member holding the string.
+        member: ProjectionMember,
+        /// The clause 4.21 grammar violation.
+        #[source]
+        source: QueryError,
+    },
+    /// A Linked Entity reference the subscription operation does not admit.
+    #[error(transparent)]
+    LinkedRetrieval(#[from] AdmissionError),
 }
