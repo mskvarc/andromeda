@@ -23,6 +23,8 @@ pub mod forwarding_invariant;
 pub mod mapping;
 /// The identifier this broker mints for a subscription it hands to a peer.
 mod minted_subscription_id;
+/// Narrowing a re-assembled entity to what the local subscription delivers.
+mod notification_narrowing;
 /// Re-assembling an inbound notification for the local subscriber.
 pub mod reassembly;
 /// One entity of an inbound notification in the typed model.

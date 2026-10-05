@@ -9,7 +9,10 @@ use crate::{
     delivery_drain::{DeliveryDisposition, NotificationDeliveryTransport},
     delivery_entry::DeliveryEntry,
     notification_event::NotificationEvent,
-    processor::{ChangeAudience, CommitFilters, NotificationProcessor},
+    processor::{
+        NotificationProcessor,
+        change_audience::{ChangeAudience, CommitFilters},
+    },
 };
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -116,7 +119,7 @@ mod tests {
         delivery_drain::DeliveryDisposition,
         notification_event::{NotificationEvent, NotificationEventKey},
         processor::{
-            CommitFilters,
+            change_audience::CommitFilters,
             durable_delivery::{commit_filters, queued_change_event, unreadable_subscription},
         },
     };
