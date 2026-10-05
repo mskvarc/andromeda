@@ -27,6 +27,7 @@
 //! used by NGSI-LD and are silently ignored during parsing for interoperability.
 
 pub mod error;
+pub mod field_layout;
 pub mod header;
 pub mod profile;
 pub mod quoting;

@@ -13,7 +13,11 @@
 use crate::link::error::LinkParseError;
 
 /// Splits a string on the given delimiter characters, ignoring any that fall
-/// inside a double-quoted run.
+/// inside a double-quoted run or inside a `<...>` target.
+///
+/// RFC 8288 section 3 writes a target as `"<" URI-Reference ">"`, and a URI
+/// reference may carry `,` and `;` (RFC 3986 section 2.2), so neither ends a
+/// link-value or a parameter while the target is open.
 pub struct SplitAsciiUnquoted<'a> {
     /// The text being split.
     source: &'a str,
@@ -45,6 +49,7 @@ impl<'a> Iterator for SplitAsciiUnquoted<'a> {
         let start = self.position;
         let mut end = self.position;
         let mut in_quotes = false;
+        let mut in_target = false;
         let mut escaped = false;
 
         for byte in &self.source.as_bytes()[start..] {
@@ -56,8 +61,12 @@ impl<'a> Iterator for SplitAsciiUnquoted<'a> {
                 // A backslash inside a quoted string opens a quoted-pair, so the
                 // next byte -- including `\"` -- does not end the quote.
                 escaped = true;
+            } else if in_target {
+                in_target = *byte != b'>';
             } else if *byte == b'"' {
                 in_quotes = !in_quotes;
+            } else if !in_quotes && *byte == b'<' {
+                in_target = true;
             } else if !in_quotes && self.delimiters.as_bytes().contains(byte) {
                 break;
             }
@@ -97,6 +106,15 @@ mod tests {
     fn a_delimiter_inside_quotes_does_not_split() {
         let segments: Vec<&str> = SplitAsciiUnquoted::new("some, text; \"and, more; in quotes\", or not", ";,").collect();
         pretty_assertions::assert_eq!(segments, vec!["some", " text", " \"and, more; in quotes\"", " or not"]);
+    }
+
+    /// RFC 3986 section 2.2 lets a target carry `,` and `;`, so neither splits
+    /// while the `<...>` target is open.
+    #[test]
+    fn a_delimiter_inside_a_target_does_not_split() {
+        let raw = r#"</entities?type=A,B;C>; rel="next", <https://example.org/a.jsonld>"#;
+        let segments: Vec<&str> = SplitAsciiUnquoted::new(raw, ",").collect();
+        pretty_assertions::assert_eq!(segments, vec![r#"</entities?type=A,B;C>; rel="next""#, " <https://example.org/a.jsonld>"]);
     }
 
     #[test]

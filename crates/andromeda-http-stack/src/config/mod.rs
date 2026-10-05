@@ -28,7 +28,7 @@ use crate::config::{
     server_timing::ServerTimingConfig,
 };
 use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
-use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
+use andromeda_http_headers::{forwarded_header_trust::ForwardedHeaderTrust, link::field_layout::LinkFieldLayout};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 use thiserror::Error;
@@ -98,6 +98,16 @@ pub struct HttpStackConfig {
     /// describes.
     #[toml_comment(inline)]
     pub forwarded_headers: ForwardedHeaderTrust,
+    /// How the link-values of a response or an HTTP notification are laid out
+    /// over `Link` field lines: `combined` (one line), `grouped` (the
+    /// `@context` link and the pagination links on a line each) or `separate`
+    /// (one line per link-value).
+    ///
+    /// Every layout means the same (IETF RFC 9110 section 5.3); they differ in
+    /// which clients read them. `combined` suits clients that read only one
+    /// field line, `separate` clients that never split a line on commas.
+    #[toml_comment(inline)]
+    pub link_field: LinkFieldLayout,
     /// CORS policy for browser-facing clients.
     pub cors: CorsConfig,
     /// Response-compression policy.
@@ -121,6 +131,7 @@ impl Default for HttpStackConfig {
             blocking_decode_threshold: HumanByteSize::kib(256),
             max_concurrent_blocking_decodes: DEFAULT_MAX_CONCURRENT_BLOCKING_DECODES,
             forwarded_headers: ForwardedHeaderTrust::Untrusted,
+            link_field: LinkFieldLayout::Combined,
             cors: CorsConfig::default(),
             compression: CompressionConfig::default(),
             decompression: DecompressionConfig::default(),
@@ -163,7 +174,7 @@ mod tests {
         cors::{CorsConfig, CorsMode},
     };
     use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
-    use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
+    use andromeda_http_headers::{forwarded_header_trust::ForwardedHeaderTrust, link::field_layout::LinkFieldLayout};
     use serde::Deserialize;
     use std::{num::NonZeroUsize, time::Duration};
     use toml_comment::TomlComment;
@@ -188,6 +199,12 @@ mod tests {
     #[test]
     fn forwarded_fields_are_untrusted_in_the_default_configuration() {
         pretty_assertions::assert_eq!(HttpStackConfig::default().forwarded_headers, ForwardedHeaderTrust::Untrusted);
+    }
+
+    /// One `Link` field line is what every client reads, so it is the default.
+    #[test]
+    fn link_fields_are_combined_in_the_default_configuration() {
+        pretty_assertions::assert_eq!(HttpStackConfig::default().link_field, LinkFieldLayout::Combined);
     }
 
     #[test]

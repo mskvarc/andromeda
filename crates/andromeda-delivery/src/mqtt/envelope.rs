@@ -156,4 +156,21 @@ mod tests {
         pretty_assertions::assert_eq!(rendered["metadata"]["Authorization"], json!("Bearer token"));
         pretty_assertions::assert_eq!(rendered["metadata"]["NGSILD-Tenant"], json!("acme"));
     }
+
+    /// The envelope's `metadata` holds one member per name, so a `receiverInfo`
+    /// `Link` joins the `@context` link in one member instead of replacing it.
+    #[test]
+    fn a_receiver_info_link_joins_the_context_link_in_one_member() {
+        let receiver_link = r#"<https://example.org/doc>; rel="describedby"; title="a, b""#;
+        let pairs = vec![KeyValuePair {
+            key: "link".into(),
+            value: receiver_link.into(),
+        }];
+        let rendered = envelope(&request("application/json", Some(&pairs), None));
+
+        let link = rendered["metadata"]["Link"].as_str().expect("a Link member");
+        assert!(link.starts_with(&format!("<{}>", NGSI_LD_CORE_CONTEXT_URL.as_str())), "{link}");
+        assert!(link.ends_with(&format!(", {receiver_link}")), "{link}");
+        assert!(rendered["metadata"].get("link").is_none(), "{}", rendered["metadata"]);
+    }
 }

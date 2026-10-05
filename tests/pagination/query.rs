@@ -5,7 +5,7 @@
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
-use pretty_assertions::{assert_eq, assert_ne};
+use pretty_assertions::assert_eq;
 use reqwest::{StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 
@@ -89,10 +89,6 @@ fn find_pagination_link_header(headers: &HeaderMap) -> Option<String> {
             || lower.contains(" last\""))
             && !lower.contains("json-ld#context")
     })
-}
-
-fn find_context_link_header(headers: &HeaderMap) -> Option<String> {
-    collect_link_headers(headers).into_iter().find(|header| header.contains("json-ld#context"))
 }
 
 async fn query_subscriptions(client: &TestClient, query: &str, accept: &str) -> (StatusCode, HeaderMap, Value) {
@@ -201,8 +197,12 @@ async fn pagination_subscriptions_single_page_has_no_pagination_link() {
     scope.finish().await.expect("cleanup failed");
 }
 
+/// The default `http.link_field` layout writes the clause 6.3.6 `@context`
+/// link and the clause 6.3.10 pagination links on one `Link` field line, the
+/// `@context` link first and the pagination links as first, prev, next, last
+/// (IETF RFC 9110 section 5.3 makes it the same message as several lines).
 #[tokio::test]
-async fn pagination_subscriptions_context_and_pagination_are_separate_link_headers() {
+async fn pagination_subscriptions_context_and_pagination_share_one_link_header() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "sep").await;
 
@@ -210,13 +210,10 @@ async fn pagination_subscriptions_context_and_pagination_are_separate_link_heade
     assert_eq!(status, StatusCode::OK);
 
     let links = collect_link_headers(&headers);
-    assert!(links.len() >= 2, "expected ≥2 Link headers, got {}: {links:?}", links.len());
-
-    let context = find_context_link_header(&headers);
-    let pagination = find_pagination_link_header(&headers);
-    assert!(context.is_some());
-    assert!(pagination.is_some());
-    assert_ne!(context, pagination);
+    assert_eq!(links.len(), 1, "expected one Link field line, got {links:?}");
+    let positions = ["json-ld#context", "rel=\"first\"", "rel=\"prev\"", "rel=\"next\"", "rel=\"last\""]
+        .map(|marker| links[0].find(marker).unwrap_or_else(|| panic!("{marker} missing from {}", links[0])));
+    assert!(positions.is_sorted(), "link-values out of order in {}", links[0]);
     scope.finish().await.expect("cleanup failed");
 }
 

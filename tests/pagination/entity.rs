@@ -38,16 +38,22 @@ async fn create_buildings(client: &TestClient, count: usize, tag: &str) {
     }
 }
 
+/// The pagination link-values of a response, without the `@context` link the
+/// default `http.link_field` layout writes on the same field line.
+///
+/// Every link-value the broker writes opens with `<` and none carries `, <`, so
+/// a field line splits into its link-values at each `, <`.
 fn pagination_link(headers: &HeaderMap) -> Option<String> {
-    headers
+    let values = headers
         .get_all("link")
         .iter()
         .filter_map(|value| value.to_str().ok())
-        .map(str::to_owned)
-        .find(|header| {
-            let lower = header.to_ascii_lowercase();
-            (lower.contains("rel=\"prev\"") || lower.contains("rel=\"next\"")) && !lower.contains("json-ld#context")
-        })
+        .flat_map(|line| line.split(", <").map(|value| if value.starts_with('<') { value.to_owned() } else { format!("<{value}") }))
+        .filter(|value| !value.to_ascii_lowercase().contains("json-ld#context"))
+        .collect::<Vec<_>>();
+    let joined = values.join(", ");
+    let lower = joined.to_ascii_lowercase();
+    (lower.contains("rel=\"prev\"") || lower.contains("rel=\"next\"")).then_some(joined)
 }
 
 async fn query(client: &TestClient, query_str: &str, accept: &str) -> (StatusCode, HeaderMap) {

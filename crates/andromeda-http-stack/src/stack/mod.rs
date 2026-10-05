@@ -23,7 +23,12 @@ use crate::{
     },
 };
 use andromeda_http_extraction::{blocking_decode::BlockingDecodePolicy, request_body_limit::RequestBodyLimit, request_json_value_limit::RequestJsonValueLimit};
-use andromeda_http_headers::{forwarded_header_trust::ForwardedHeaderTrust, ngsild_tenant::NgsiLdTenant, x_request_id::XRequestId};
+use andromeda_http_headers::{
+    forwarded_header_trust::ForwardedHeaderTrust,
+    link::field_layout::LinkFieldLayout,
+    ngsild_tenant::NgsiLdTenant,
+    x_request_id::XRequestId,
+};
 use andromeda_http_tenancy::propagation::echo_tenant_header;
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use axum::{
@@ -78,6 +83,8 @@ pub struct HttpStack {
     blocking_decode: BlockingDecodePolicy,
     /// The operator's forwarded-header trust decision.
     forwarded_headers: ForwardedHeaderTrust,
+    /// How a response's link-values are laid out over `Link` field lines.
+    link_field: LinkFieldLayout,
     /// Maximum wall-clock time for one HTTP request.
     request_timeout: Duration,
     /// `Server-Timing` policy, applied per assembled router.
@@ -117,6 +124,7 @@ impl HttpStack {
             request_json_value_limit: RequestJsonValueLimit::new(JsonValueLimit::new(config.max_request_json_values)),
             blocking_decode,
             forwarded_headers: config.forwarded_headers,
+            link_field: config.link_field,
             request_timeout: config.request_timeout.duration(),
             helmet: build_helmet_layer(config.helmet)?,
             cors: build_cors_layer(&config.cors),
@@ -148,7 +156,14 @@ impl HttpStack {
         if let Some(helmet) = &self.helmet {
             router = router.layer(helmet.clone());
         }
-        router
+        // Applied to the assembled response, so the `@context` link and the
+        // pagination links each handler writes are laid out once, whichever
+        // handler wrote them.
+        let link_field = self.link_field;
+        router.layer(middleware::map_response(move |mut response: Response| async move {
+            link_field.apply(response.headers_mut());
+            response
+        }))
     }
 
     /// Apply the shared diagnostic layers common to every listener.
@@ -283,13 +298,13 @@ mod tests {
     };
     use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
     use andromeda_http_extraction::{blocking_decode::BlockingDecodePolicy, request_json_value_limit::RequestJsonValueLimit};
-    use andromeda_http_headers::forwarded_header_trust::ForwardedHeaderTrust;
+    use andromeda_http_headers::{forwarded_header_trust::ForwardedHeaderTrust, link::field_layout::LinkFieldLayout};
     use axum::{
         Extension,
         Router,
         body::{Body, to_bytes},
         extract::{Request, State},
-        http::StatusCode,
+        http::{HeaderMap, HeaderValue, StatusCode, header},
         middleware::{Next, from_fn_with_state},
         response::Response,
         routing::get,
@@ -308,6 +323,7 @@ mod tests {
             blocking_decode_threshold: HumanByteSize::kib(256),
             max_concurrent_blocking_decodes: NonZeroUsize::MIN,
             forwarded_headers: ForwardedHeaderTrust::Untrusted,
+            link_field: LinkFieldLayout::Combined,
             cors: CorsConfig {
                 mode: CorsMode::Disabled,
                 ..CorsConfig::default()
@@ -487,6 +503,43 @@ mod tests {
             pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
             let body = to_bytes(response.into_body(), usize::MAX).await?;
             pretty_assertions::assert_eq!(String::from_utf8(body.to_vec())?, declared.to_string());
+        }
+        Ok(())
+    }
+
+    /// A handler writes its `@context` link and its pagination links on a line
+    /// each; the API stack lays them out as configured, whichever handler wrote
+    /// them.
+    #[tokio::test]
+    async fn the_api_stack_lays_out_link_fields_as_configured() -> Result<(), Box<dyn Error>> {
+        const CONTEXT: &str = r#"<https://example.org/ctx.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#;
+        const NEXT: &str = r#"</probe?limit=1&offset=1>; rel="next"; type="application/json""#;
+        for (layout, expected) in [
+            (LinkFieldLayout::Combined, vec![format!("{CONTEXT}, {NEXT}")]),
+            (LinkFieldLayout::Grouped, vec![CONTEXT.to_owned(), NEXT.to_owned()]),
+            (LinkFieldLayout::Separate, vec![CONTEXT.to_owned(), NEXT.to_owned()]),
+        ] {
+            let stack = HttpStack::new(HttpStackConfig {
+                link_field: layout,
+                ..disabled_config()
+            })?;
+            let router = stack.apply_api(Router::new().route(
+                "/probe",
+                get(|| async {
+                    let mut headers = HeaderMap::new();
+                    headers.append(header::LINK, HeaderValue::from_static(NEXT));
+                    headers.append(header::LINK, HeaderValue::from_static(CONTEXT));
+                    headers
+                }),
+            ));
+            let response = router.oneshot(Request::get("/probe").body(Body::empty())?).await?;
+            let lines = response
+                .headers()
+                .get_all(header::LINK)
+                .iter()
+                .map(|line| line.to_str().map(str::to_owned))
+                .collect::<Result<Vec<_>, _>>()?;
+            pretty_assertions::assert_eq!(lines, expected, "{layout}");
         }
         Ok(())
     }

@@ -25,6 +25,7 @@ use andromeda_delivery::mqtt::pool::MqttTransportPool;
 use andromeda_entity::{config::EntityConfig, spatial_config::SpatialConfig};
 use andromeda_extensions::config::ExtensionsConfig;
 use andromeda_federation::config::FederationConfig;
+use andromeda_http_headers::link::field_layout::LinkFieldLayout;
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_jsonld::config::JsonLdConfig;
 use andromeda_postgresql_atomic_write::{
@@ -103,6 +104,9 @@ struct TenantFactoryConfig {
     temporal: TemporalConfig,
     tenancy: TenancyConfig,
     extensions: ExtensionsConfig,
+    /// How every HTTP notification lays out its `Link` field lines, as the
+    /// `[http]` table decides for responses.
+    link_field: LinkFieldLayout,
 }
 
 impl From<&RuntimeConfig> for TenantFactoryConfig {
@@ -120,6 +124,7 @@ impl From<&RuntimeConfig> for TenantFactoryConfig {
             temporal: config.temporal.clone(),
             tenancy: config.tenancy.clone(),
             extensions: config.extensions.clone(),
+            link_field: config.http.link_field,
         }
     }
 }
@@ -272,7 +277,7 @@ async fn build_tenant_state(
         consequence_publisher,
     ));
     let writes = indexed_commits(writes, &storage.spatial, tenant)?;
-    let transports = construct_transports(config.notifications.delivery.request_timeout())?;
+    let transports = construct_transports(config.notifications.delivery.request_timeout(), config.link_field)?;
     let services = construct_services(
         config,
         &storage,

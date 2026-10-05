@@ -1,5 +1,6 @@
 //! How the HTTP transport is tuned.
 
+use andromeda_http_headers::link::field_layout::LinkFieldLayout;
 use std::time::Duration;
 
 /// Default per-delivery timeout.
@@ -30,6 +31,8 @@ pub struct HttpTransportConfig {
     pub private_ip_blocking: PrivateIpBlocking,
     /// How long an idle pooled connection is kept for reuse.
     pub pool_idle_timeout: Duration,
+    /// How a notification's link-values are laid out over `Link` field lines.
+    pub link_field: LinkFieldLayout,
 }
 
 /// Whether the SSRF guard is armed.
@@ -54,6 +57,7 @@ impl Default for HttpTransportConfig {
             max_payload_size: DEFAULT_MAX_PAYLOAD_SIZE,
             private_ip_blocking: PrivateIpBlocking::Disabled,
             pool_idle_timeout: DEFAULT_POOL_IDLE_TIMEOUT,
+            link_field: LinkFieldLayout::Combined,
         }
     }
 }

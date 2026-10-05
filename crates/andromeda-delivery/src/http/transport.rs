@@ -14,6 +14,7 @@ use crate::{
     request::DeliveryRequest,
     transport::NotificationTransport,
 };
+use andromeda_http_headers::link::field_layout::LinkFieldLayout;
 use andromeda_telemetry::delivery_ops::DeliveryTimer;
 use async_trait::async_trait;
 use headers::HeaderMapExt;
@@ -236,17 +237,7 @@ impl HttpTransport {
             "delivering HTTP notification"
         );
 
-        let mut header_map = HeaderMap::new();
-        header_map.typed_insert(req.content_type);
-        if let Some(link) = req.context_link() {
-            header_map.typed_insert(link);
-        }
-        if let Some(tenant) = req.tenant.as_ref() {
-            header_map.typed_insert(tenant.clone());
-        }
-        if let Some(snapshot) = req.snapshot.as_ref() {
-            header_map.typed_insert(snapshot.clone());
-        }
+        let header_map = notification_headers(req, self.config.link_field);
         // Table 5.2.15-1: the endpoint's `timeout` is the "maximum period of
         // time in milliseconds which may elapse before a notification is
         // assumed to have failed", and "the NGSI-LD system can override this
@@ -254,32 +245,13 @@ impl HttpTransport {
         // an override runs. The row also confines the member to a binding whose
         // "protocol always returns a response".
         let deadline = delivery_deadline(req.timeout, self.config.timeout);
-        let mut request = self
+        let request = self
             .client
             // clone: `reqwest` takes the `Url` by value, and cloning a parsed URL is cheaper than reparsing the string
             .post(req.endpoint_uri.clone())
             .headers(header_map)
             .timeout(deadline)
             .body(body); // the serialised notification, moved into the request
-
-        for pair in &req.receiver_info {
-            match (HeaderName::from_bytes(pair.key.as_bytes()), HeaderValue::from_str(&pair.value)) {
-                (Ok(name), Ok(value)) => request = request.header(name, value),
-                // A receiverInfo entry that cannot become an HTTP header is not
-                // dropped in silence: a discarded `Authorization` header would
-                // deliver the notification unauthenticated, which the receiver
-                // would refuse or, worse, accept as anonymous. Surface it so the
-                // misconfiguration is visible rather than a quiet auth failure.
-                (Err(_), _) | (_, Err(_)) => {
-                    warn!(
-                        subscription_id = %req.subscription_id,
-                        endpoint = %req.endpoint_uri,
-                        header_key = %pair.key,
-                        "dropping receiverInfo entry that is not a valid HTTP header name/value"
-                    );
-                }
-            }
-        }
 
         let start = Instant::now();
         let response = request.send().await.map_err(|error| send_failure(req.endpoint_uri.clone(), deadline, error))?; // clone: the error path owns the endpoint it names
@@ -311,20 +283,65 @@ impl HttpTransport {
     }
 }
 
+/// The header fields an HTTP notification is sent with.
+///
+/// A `receiverInfo` entry named `Link` joins the `@context` link rather than
+/// standing beside it, and every `Link` field line is then laid out as
+/// `link_field` asks, as every response is.
+fn notification_headers(req: &DeliveryRequest, link_field: LinkFieldLayout) -> HeaderMap {
+    let mut header_map = HeaderMap::new();
+    header_map.typed_insert(req.content_type);
+    if let Some(link) = req.context_link() {
+        header_map.typed_insert(link);
+    }
+    if let Some(tenant) = req.tenant.as_ref() {
+        header_map.typed_insert(tenant.clone());
+    }
+    if let Some(snapshot) = req.snapshot.as_ref() {
+        header_map.typed_insert(snapshot.clone());
+    }
+    for pair in &req.receiver_info {
+        match (HeaderName::from_bytes(pair.key.as_bytes()), HeaderValue::from_str(&pair.value)) {
+            (Ok(name), Ok(value)) => {
+                header_map.append(name, value);
+            }
+            // A receiverInfo entry that cannot become an HTTP header is not
+            // dropped in silence: a discarded `Authorization` header would
+            // deliver the notification unauthenticated, which the receiver
+            // would refuse or, worse, accept as anonymous. Surface it so the
+            // misconfiguration is visible rather than a quiet auth failure.
+            (Err(_), _) | (_, Err(_)) => {
+                warn!(
+                    subscription_id = %req.subscription_id,
+                    endpoint = %req.endpoint_uri,
+                    header_key = %pair.key,
+                    "dropping receiverInfo entry that is not a valid HTTP header name/value"
+                );
+            }
+        }
+    }
+    link_field.apply(&mut header_map);
+    header_map
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         http::{
             config::HttpTransportConfig,
-            transport::{HttpTransport, chain_indicates_tls, error_chain_text},
+            transport::{HttpTransport, chain_indicates_tls, error_chain_text, notification_headers},
         },
         notification_context::NotificationContext,
         outcome::DeliveryOutcome,
         request::NotificationDelivery,
         transport::NotificationTransport,
     };
+    use andromeda_http_headers::link::field_layout::LinkFieldLayout;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use mediatype::MediaTypeBuf;
+    use reqwest::header::LINK;
     use serde_json::json;
     use std::{
         io::{Error, ErrorKind},
@@ -459,5 +476,57 @@ mod tests {
     fn a_plain_connection_refusal_is_not_classified_as_tls() {
         let refused = Error::new(ErrorKind::ConnectionRefused, "Connection refused (os error 61)");
         assert!(!chain_indicates_tls(&refused), "a connection refusal is not a TLS error");
+    }
+
+    /// The `Link` field lines of a JSON notification to a subscription whose
+    /// `receiverInfo` carries `Link: receiver_link`, laid out as `layout` asks.
+    fn notification_link_lines(receiver_link: &str, layout: LinkFieldLayout) -> Vec<String> {
+        let payload = json!({"id": "urn:ngsi-ld:Notification:1", "type": "Notification"});
+        let media = MediaTypeBuf::from_str("application/json").expect("a well-formed media type");
+        let endpoint = Url::parse("http://receiver.example/notify").expect("a well-formed endpoint URI");
+        let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
+        let context = NotificationContext::stated(None, json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        let pairs = vec![KeyValuePair {
+            key: "Link".into(),
+            value: receiver_link.into(),
+        }];
+        let request = NotificationDelivery::builder()
+            .payload(&payload)
+            .endpoint_uri(&endpoint)
+            .accept(Some(&media))
+            .receiver_info(Some(&pairs))
+            .context(&context)
+            .tenant(None)
+            .subscription_id(&subscription)
+            .build()
+            .assemble();
+        notification_headers(&request, layout)
+            .get_all(LINK)
+            .iter()
+            .map(|line| line.to_str().expect("visible ASCII").to_owned())
+            .collect()
+    }
+
+    /// A `receiverInfo` `Link` joins the `@context` link on one field line by
+    /// default, after it, with its parameters unchanged.
+    #[test]
+    fn a_receiver_info_link_joins_the_context_link_on_one_line_by_default() {
+        let receiver_link = r#"<https://example.org/doc>; rel="describedby"; title="a, b""#;
+
+        let lines = notification_link_lines(receiver_link, HttpTransportConfig::default().link_field);
+
+        pretty_assertions::assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with(&format!("<{}>", NGSI_LD_CORE_CONTEXT_URL.as_str())), "{lines:?}");
+        assert!(lines[0].ends_with(&format!(", {receiver_link}")), "{lines:?}");
+    }
+
+    #[test]
+    fn a_receiver_info_link_keeps_its_own_line_when_link_values_are_separate() {
+        let receiver_link = r#"<https://example.org/doc>; rel="describedby""#;
+
+        let lines = notification_link_lines(receiver_link, LinkFieldLayout::Separate);
+
+        pretty_assertions::assert_eq!(lines.len(), 2, "{lines:?}");
+        pretty_assertions::assert_eq!(lines[1], receiver_link);
     }
 }

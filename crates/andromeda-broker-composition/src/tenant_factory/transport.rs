@@ -7,6 +7,7 @@ use andromeda_delivery::{
     mqtt::config::MqttPoolConfig,
     stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage},
 };
+use andromeda_http_headers::link::field_layout::LinkFieldLayout;
 use std::{sync::Arc, time::Duration};
 
 /// Notification transports and connection registries owned by one tenant.
@@ -19,14 +20,16 @@ pub(super) struct TenantTransports {
 /// Construct all transports for one tenant.
 ///
 /// `request_timeout` bounds every outbound notification POST; a subscription's
-/// own Table 5.2.15-1 `timeout` may only shorten it.
-pub(super) fn construct_transports(request_timeout: Duration) -> Result<TenantTransports, TenantAssemblyError> {
+/// own Table 5.2.15-1 `timeout` may only shorten it. `link_field` lays out the
+/// `Link` field lines of every HTTP notification as it does every response.
+pub(super) fn construct_transports(request_timeout: Duration, link_field: LinkFieldLayout) -> Result<TenantTransports, TenantAssemblyError> {
     let sse_registry = Arc::new(ConnectionRegistry::new());
     let ws_registry = Arc::new(ConnectionRegistry::new());
     let dispatcher = Arc::new(
         TransportDispatcher::new(
             HttpTransportConfig {
                 timeout: request_timeout,
+                link_field,
                 ..HttpTransportConfig::default()
             },
             MqttPoolConfig::default(),
