@@ -21,7 +21,7 @@
 //!   `strip_prefix` or similar call on the `/` separator: that source handles
 //!   Scopes, and splitting one is `split_levels`'s job.
 
-use crate::source_scan::{item_is_test_only, workspace_sources};
+use crate::source_scan::{collect_use_paths, item_is_test_only, workspace_sources};
 use std::{collections::BTreeSet, path::Path};
 use syn::{
     Expr,
@@ -31,7 +31,6 @@ use syn::{
     Item,
     ItemUse,
     Lit,
-    UseTree,
     visit::{Visit, visit_expr_method_call, visit_expr_path, visit_item, visit_item_use, visit_path},
 };
 
@@ -161,33 +160,6 @@ impl<'ast> Visit<'ast> for ScopeGrammarVisitor {
             self.separator_splits.push(format!("calls `{method}` on the scope separator `/`"));
         }
         visit_expr_method_call(self, call);
-    }
-}
-
-/// Call `found` with the full segment list of every path a `use` tree imports.
-fn collect_use_paths(tree: &UseTree, prefix: &mut Vec<String>, found: &mut impl FnMut(&[String])) {
-    match tree {
-        UseTree::Path(path) => {
-            prefix.push(path.ident.to_string());
-            collect_use_paths(&path.tree, prefix, found);
-            prefix.pop();
-        }
-        UseTree::Name(name) => {
-            prefix.push(name.ident.to_string());
-            found(prefix);
-            prefix.pop();
-        }
-        UseTree::Rename(rename) => {
-            prefix.push(rename.ident.to_string());
-            found(prefix);
-            prefix.pop();
-        }
-        UseTree::Glob(_) => found(prefix),
-        UseTree::Group(group) => {
-            for item in &group.items {
-                collect_use_paths(item, prefix, found);
-            }
-        }
     }
 }
 

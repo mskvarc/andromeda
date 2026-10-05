@@ -22,7 +22,6 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_linked_retrieval::{
-    attribute_index::attribute_iri_index,
     edge::LinkedEdge,
     graph::{LinkedGraph, RootEdges},
     join::{RetrievingJoin, TraversalBounds},
@@ -125,7 +124,7 @@ impl TemporalService {
                 .iter()
                 .flat_map(TemporalEvolutions::attribute_keys)
                 .chain(joined.graph.attribute_keys::<TemporalEvolutions>());
-            joined.index = attribute_iri_index(keys, &expander).await?;
+            joined.index = AttributeIriIndex::of_keys(keys, &expander).await?;
         }
         Ok(Some(joined))
     }

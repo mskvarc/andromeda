@@ -10,15 +10,14 @@
 //!
 //! [`AttributeExpansions`]: crate::query::attribute_expansion::AttributeExpansions
 
-use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
+use crate::error::EntityError;
 use andromeda_jsonld::{
     engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
     term_expansion::ContextualExpander,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::{projection::attribute_iri_index::AttributeIriIndex, term_expander::TermExpander};
-use iri_rs::IriBuf;
+use andromeda_ngsi_ld_query::projection::attribute_iri_index::AttributeIriIndex;
 
 /// The expanded IRI of every attribute member name one request has met,
 /// under the context that request prepared.
@@ -36,7 +35,7 @@ impl<'a> AttributeExpansions<'a> {
     pub fn new(engine: &'a JsonLdEngine, context: &'a PreparedTermContext) -> AttributeExpansions<'a> {
         AttributeExpansions {
             expander: ContextualExpander::new(engine, context),
-            index: AttributeIriIndex::new(),
+            index: AttributeIriIndex::default(),
         }
     }
 
@@ -47,10 +46,7 @@ impl<'a> AttributeExpansions<'a> {
     /// Returns [`EntityError`] when the name cannot be expanded through the
     /// context.
     pub async fn ensure(&mut self, name: &AttributeName) -> Result<(), EntityError> {
-        if self.index.expanded(name.as_str()).is_none() {
-            let expanded = self.expander.expand_term(name.as_str()).await?;
-            self.index.insert(name.clone(), expanded); // clone: the index owns the names it maps
-        }
+        self.index.cover([name.as_str()], &self.expander).await?;
         Ok(())
     }
 
@@ -62,25 +58,15 @@ impl<'a> AttributeExpansions<'a> {
     /// Returns [`EntityError`] when a member name cannot be expanded through
     /// the context.
     pub async fn cover(&mut self, entity: &Entity) -> Result<(), EntityError> {
-        for name in entity.attribute_member_names() {
-            if self.index.expanded(name).is_some() {
-                continue;
-            }
-            // The geo-properties reach here as the fixed spellings the model
-            // keys them by, so the name is validated once, on first sight.
-            let key: AttributeName = name
-                .parse()
-                .map_err(|source| EntityError::Validation(EntityValidationReason::AttributeMemberName(source)))?;
-            let expanded = self.expander.expand_term(name).await?;
-            self.index.insert(key, expanded);
-        }
+        self.index.cover(entity.attribute_member_names(), &self.expander).await?;
         Ok(())
     }
 
-    /// The IRI `name` expanded to, or `None` when no lookup expanded it.
+    /// Every name expanded so far, the index a clause 4.21 list is matched
+    /// through.
     #[must_use]
-    pub fn expanded(&self, name: &str) -> Option<&IriBuf> {
-        self.index.expanded(name)
+    pub const fn index(&self) -> &AttributeIriIndex {
+        &self.index
     }
 }
 
@@ -117,7 +103,7 @@ mod tests {
 
         expansions.ensure(&name("speed")).await.expect("expands");
 
-        pretty_assertions::assert_eq!(expansions.expanded("speed"), Some(&iri("https://example.com/speed")));
+        pretty_assertions::assert_eq!(expansions.index().expanded("speed"), Some(&iri("https://example.com/speed")));
     }
 
     #[tokio::test]
@@ -126,7 +112,7 @@ mod tests {
         let prepared = engine.prepare_term_context(&context());
         let expansions = AttributeExpansions::new(&engine, &prepared);
 
-        assert!(expansions.expanded("speed").is_none());
+        assert!(expansions.index().expanded("speed").is_none());
     }
 
     /// Clause 5.2.4 keeps the geo-properties outside the attribute map, and a
@@ -146,7 +132,7 @@ mod tests {
 
         expansions.cover(&entity).await.expect("covers");
 
-        pretty_assertions::assert_eq!(expansions.expanded("speed"), Some(&iri("https://example.com/speed")));
-        pretty_assertions::assert_eq!(expansions.expanded("location"), Some(&iri("https://uri.etsi.org/ngsi-ld/location")));
+        pretty_assertions::assert_eq!(expansions.index().expanded("speed"), Some(&iri("https://example.com/speed")));
+        pretty_assertions::assert_eq!(expansions.index().expanded("location"), Some(&iri("https://uri.etsi.org/ngsi-ld/location")));
     }
 }

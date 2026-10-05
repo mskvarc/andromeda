@@ -4,7 +4,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use syn::{Attribute, File, Item};
+use syn::{Attribute, File, Item, UseTree};
 
 /// A parsed Rust source file and its workspace-relative path.
 pub(crate) struct RustSource {
@@ -151,6 +151,33 @@ pub(crate) fn item_is_test_only(item: &Item) -> bool {
         Use,
     );
     false
+}
+
+/// Call `found` with the full segment list of every path a `use` tree imports.
+pub(crate) fn collect_use_paths(tree: &UseTree, prefix: &mut Vec<String>, found: &mut impl FnMut(&[String])) {
+    match tree {
+        UseTree::Path(path) => {
+            prefix.push(path.ident.to_string());
+            collect_use_paths(&path.tree, prefix, found);
+            prefix.pop();
+        }
+        UseTree::Name(name) => {
+            prefix.push(name.ident.to_string());
+            found(prefix);
+            prefix.pop();
+        }
+        UseTree::Rename(rename) => {
+            prefix.push(rename.ident.to_string());
+            found(prefix);
+            prefix.pop();
+        }
+        UseTree::Glob(_) => found(prefix),
+        UseTree::Group(group) => {
+            for item in &group.items {
+                collect_use_paths(item, prefix, found);
+            }
+        }
+    }
 }
 
 /// Read and parse one source, retaining a stable workspace-relative identity.

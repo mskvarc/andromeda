@@ -15,7 +15,6 @@ use andromeda_entity::{
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_linked_retrieval::{
-    attribute_index::attribute_iri_index,
     graph::{LinkedGraph, RootEdges},
     join::{RetrievingJoin, TraversalBounds},
     narrowing::{list::ListInForce, member::MemberRule},
@@ -143,7 +142,7 @@ impl<'a> ResolvedJoin<'a> {
             .iter()
             .flat_map(TypedEntities::attribute_keys)
             .chain(self.graph.attribute_keys::<TypedEntities>());
-        self.index = attribute_iri_index(keys, &expander).await?;
+        self.index = AttributeIriIndex::of_keys(keys, &expander).await?;
         Ok(())
     }
 

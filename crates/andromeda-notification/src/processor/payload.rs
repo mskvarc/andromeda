@@ -10,7 +10,7 @@ use crate::{
         carried_entities::{CarriedShape, NotifiedLinks, carried_entities},
         compaction::compact_notified_state,
         entity_instants::{ExpiryStamp, notified_instants},
-        join::{linked_attribute_index, resolve_join_targets},
+        join::{linked_attribute_index, notified_linked_graph},
         notified_entity::{DeletedRendering, NotifiedEntity},
         selection::{Selection, SelectionRule},
     },
@@ -18,7 +18,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_linked_retrieval::narrowing::list::ListInForce;
+use andromeda_linked_retrieval::join::RetrievingJoin;
 use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_change::AttributeChangeKind};
 use andromeda_ngsi_ld_model::{
@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_model::{
     notification::SysAttrsSnapshot,
 };
 use andromeda_ngsi_ld_render::{notification_entity::TargetSpelling, notified_changes::HeldAttributes, structural_projection::StructuralProjection};
-use andromeda_ngsi_ld_representation::{join_mode::JoinMode, sys_attrs::SysAttrsInclusion};
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::compiled::CompiledSubscription;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
@@ -63,18 +63,10 @@ pub(super) struct NotificationBuildParams<'a> {
     pub(super) cache: &'a NotificationCompactionCache,
 }
 
-/// The list in force a subscription narrows every entity of its
-/// notifications by (clause 5.8.6): its `pick` or `omit`, or else its
-/// `notification.attributes`, which the subscription validation keeps from
-/// being combined.
-pub(crate) fn subscription_list(sub: &CompiledSubscription) -> ListInForce<'_> {
-    ListInForce::of(Some(&sub.notification_projection), &sub.notification_attributes)
-}
-
 /// The selection a subscription applies to every entity it is notified of.
 pub(crate) fn subscription_rule(sub: &CompiledSubscription) -> SelectionRule<'_> {
     SelectionRule {
-        list: subscription_list(sub),
+        list: sub.list_in_force(),
         dataset_ids: sub.dataset_id.as_deref(),
     }
 }
@@ -127,13 +119,10 @@ async fn notification_payload(
     context: &ContextSpec,
 ) -> Result<Vec<Value>, NotificationError> {
     let sub = params.sub;
-    let list = subscription_list(sub);
-    let linked = match (sub.notification_join, params.change.lifecycle) {
-        (Some(JoinMode::Flat | JoinMode::Inline), EntityLifecycle::Created | EntityLifecycle::Modified) => {
-            resolve_join_targets(&rooted.notified.entity, &rooted.root, params, context).await
-        }
-        (Some(JoinMode::Flat | JoinMode::Inline), EntityLifecycle::Deleted)
-        | (Some(JoinMode::None) | None, EntityLifecycle::Created | EntityLifecycle::Modified | EntityLifecycle::Deleted) => None,
+    let list = sub.list_in_force();
+    let linked = match (RetrievingJoin::from_mode(sub.notification_join), params.change.lifecycle) {
+        (Some(_), EntityLifecycle::Created | EntityLifecycle::Modified) => notified_linked_graph(&rooted.notified.entity, &rooted.root, params, context).await,
+        (Some(_), EntityLifecycle::Deleted) | (None, EntityLifecycle::Created | EntityLifecycle::Modified | EntityLifecycle::Deleted) => None,
     };
     let indexed = match &linked {
         Some(graph) => linked_attribute_index(params.engine, context, list, from_ref(&*rooted.notified.entity).iter(), graph)

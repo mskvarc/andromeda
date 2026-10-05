@@ -9,6 +9,7 @@
 
 use crate::geo_filter::SubscriptionGeoFilter;
 use andromeda_context_commit::subscription_key::SubscriptionKey;
+use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     identifier::Identifier,
@@ -173,6 +174,14 @@ pub struct CompiledSubscription {
 }
 
 impl CompiledSubscription {
+    /// The clause 4.21 list every entity this subscription notifies is
+    /// narrowed by (clause 5.8.6): `pick` or `omit`, or else
+    /// `notification.attributes` as the `pick` synonym.
+    #[must_use]
+    pub fn list_in_force(&self) -> ListInForce<'_> {
+        ListInForce::of(Some(&self.notification_projection), &self.notification_attributes)
+    }
+
     /// The filters whose `rel{…}` hops cross into linked entities: the `q`
     /// and, on an entity subscription, the `csf` read over the same entity.
     pub fn hopping_filters(&self) -> impl Iterator<Item = &Expr> {

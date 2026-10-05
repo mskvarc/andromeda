@@ -125,6 +125,12 @@ macro_rules! workspace_architecture {
                 $crate::scope_grammar::assert_scope_grammar_has_one_owner(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// Linked Entity retrieval is decided by its one engine only.
+            #[test]
+            fn linked_retrieval_has_one_owner() {
+                $crate::linked_retrieval::assert_linked_retrieval_has_one_owner(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// No production source lets a string stand in for a typed error.
             #[test]
             fn errors_carry_typed_values_not_strings() {

@@ -13,7 +13,7 @@ use crate::{
         carried_entities::{CarriedShape, NotifiedLinks, carried_entities},
         compaction::compact_notified_state,
         entity_instants::{ExpiryStamp, notified_instants},
-        join::{PeriodicJoin, linked_attribute_index, resolve_periodic_join},
+        join::{PeriodicJoin, linked_attribute_index, periodic_linked_graph},
         notified_entity::NotifiedEntity,
         selection::{Selection, SelectionRule},
     },
@@ -21,14 +21,14 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{port::reader::EntityReader, query::EntityQueryService};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_linked_retrieval::narrowing::list::ListInForce;
+use andromeda_linked_retrieval::{join::RetrievingJoin, narrowing::list::ListInForce};
 use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{notification::SysAttrsSnapshot, subscription::Subscription};
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_render::{notification_entity::TargetSpelling, notified_changes::HeldAttributes, structural_projection::StructuralProjection};
-use andromeda_ngsi_ld_representation::{join_mode::JoinMode, sys_attrs::SysAttrsInclusion};
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::compilation::{notification_attributes, notification_projection};
 use chrono::Utc;
 use iri_rs::IriBuf;
@@ -80,17 +80,17 @@ impl PeriodicPayload<'_> {
             let selected = Selection::of(entity, rule).apply(entity);
             roots.push(compact_notified_state(&compactor, self.engine, &selected, &read).await?);
         }
-        let linked = match sub.notification.join {
-            Some(JoinMode::Flat | JoinMode::Inline) => {
+        let linked = match RetrievingJoin::from_mode(sub.notification.join) {
+            Some(_) => {
                 let join = PeriodicJoin {
                     target: self.target,
                     join_level: sub.notification.effective_join_level(),
                     sys_attrs,
                     context: &context,
                 };
-                resolve_periodic_join(self.entity_query, &roots, join).await
+                periodic_linked_graph(self.entity_query, &roots, join).await
             }
-            Some(JoinMode::None) | None => None,
+            None => None,
         };
         let indexed = match &linked {
             Some(graph) => linked_attribute_index(self.engine, &context, rule.list, roots.iter(), graph)

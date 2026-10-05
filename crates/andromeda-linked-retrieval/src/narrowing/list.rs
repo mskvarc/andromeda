@@ -23,7 +23,8 @@ pub enum ListInForce<'p> {
     Pick(&'p [ProjectionTerm]),
     /// The named members are removed.
     Omit(&'p [ProjectionTerm]),
-    /// `attrs`: only the named Attributes are kept, and every keyword member.
+    /// `attrs` or `notification.attributes`: only the named Attributes are
+    /// kept, with `id` and `type`.
     Attributes(&'p [IriBuf]),
 }
 
@@ -61,7 +62,13 @@ impl<'p> ListInForce<'p> {
     #[must_use]
     pub fn keeps_keyword(&self, keyword: Keyword) -> bool {
         match self {
-            ListInForce::Unrestricted | ListInForce::Attributes(_) => true,
+            ListInForce::Unrestricted => true,
+            // Tables 6.5.3.1-1 and 5.2.14.1-1 make `attrs` and
+            // `notification.attributes` "a synonym for pick, except that id,
+            // type, scope are not allowed": `scope` goes, as under a `pick`
+            // not naming it, while `id` and `type` stay to identify the
+            // entity whatever Attributes it is narrowed to.
+            ListInForce::Attributes(_) => keyword != Keyword::Scope,
             ListInForce::Pick(terms) => terms.contains(&keyword.term()),
             ListInForce::Omit(terms) => !terms.contains(&keyword.term()),
         }
@@ -173,11 +180,12 @@ mod tests {
 
     /// Table 6.5.3.1-1: `attrs` is the `pick` synonym that keeps the identity.
     #[test]
-    fn attrs_keeps_identity() {
+    fn attrs_keeps_identity_and_drops_scope() {
         let attrs = [iri("name")];
         let list = ListInForce::Attributes(&attrs);
         assert!(list.keeps_keyword(Keyword::Id));
         assert!(list.keeps_keyword(Keyword::Type));
+        assert!(!list.keeps_keyword(Keyword::Scope));
         assert!(list.returns_attribute("name", &index()));
         assert!(!list.returns_attribute("email", &index()));
     }

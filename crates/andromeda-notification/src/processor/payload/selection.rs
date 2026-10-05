@@ -11,7 +11,7 @@
 //! reduces "every Entity within the payload body ... down to only contain the
 //! defined entity members listed", clause 5.7.1.5's sentence verbatim.
 
-use andromeda_linked_retrieval::narrowing::list::ListInForce;
+use andromeda_linked_retrieval::{keyword::Keyword, narrowing::list::ListInForce};
 use andromeda_ngsi_ld_entity::{attributes::Attributes, entity_state::EntityState, reads::attribute_instance_key::AttributeInstanceKey};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity_change::EntityChange;
@@ -32,16 +32,15 @@ impl SelectionRule<'_> {
     /// Which of the entity's own members -- `scope` and its `expiresAt` --
     /// travel with the selected attributes.
     ///
-    /// Table 5.2.14.1-1 makes `notification.attributes` "a synonym for pick,
-    /// except that id, type, scope are not allowed": like a `pick` that does
-    /// not list the `scope` keyword (clause 4.21), it leaves `scope` out. The
-    /// entity's `expiresAt` is no member a `pick` decides, so it stays, as a
+    /// Whether `scope` does is the list's clause 4.21 keyword rule. The
+    /// entity's `expiresAt` is no member a list decides, so it stays, as a
     /// query's `pick` leaves it; and the clause 4.8 system attributes are
     /// `sysAttrs`'s alone to decide, whatever the selection.
-    pub(crate) const fn entity_members(self) -> EntityMembers {
-        match self.list {
-            ListInForce::Attributes(_) => EntityMembers::Unscoped,
-            ListInForce::Unrestricted | ListInForce::Pick(_) | ListInForce::Omit(_) => EntityMembers::Kept,
+    pub(crate) fn entity_members(self) -> EntityMembers {
+        if self.list.keeps_keyword(Keyword::Scope) {
+            EntityMembers::Kept
+        } else {
+            EntityMembers::Unscoped
         }
     }
 
@@ -423,15 +422,25 @@ mod tests {
         ));
     }
 
-    /// Clauses 5.8.6 and 4.21: a `pick` keeps the attributes it names, and
-    /// the entity's own members, which a `pick` of attributes alone leaves to
-    /// the structural rule.
+    /// Clauses 5.8.6 and 4.21: a `pick` keeps the attributes it names, and,
+    /// not naming the `scope` keyword, drops `scope` while the entity's
+    /// `expiresAt` stays.
     #[test]
     fn a_pick_keeps_only_the_picked_attributes() {
         let state = vehicle();
         let pick = [term(SPEED, Vec::new())];
         let selected = Selection::of(&state, rule(ListInForce::Pick(&pick), None)).apply(&state).into_owned();
         assert_eq!(selected.attributes().names().map(AttributeName::as_str).collect::<Vec<_>>(), vec![SPEED]);
+        assert!(selected.scope().is_none());
+        assert_eq!(selected.expires_at(), state.expires_at());
+    }
+
+    /// Clause 4.21: a `pick` naming the `scope` keyword keeps `scope`.
+    #[test]
+    fn a_pick_naming_scope_keeps_the_scope() {
+        let state = vehicle();
+        let pick = [term(SPEED, Vec::new()), ProjectionTerm::Scope];
+        let selected = Selection::of(&state, rule(ListInForce::Pick(&pick), None)).apply(&state).into_owned();
         assert!(selected.scope().is_some());
     }
 

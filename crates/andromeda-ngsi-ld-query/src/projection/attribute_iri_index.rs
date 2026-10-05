@@ -5,13 +5,16 @@
 //! applies a projection outside the layer that owns the JSON-LD engine — the
 //! renderer applying a clause 4.21 nested projection while it nests linked
 //! entities, above all — therefore needs that expansion handed to it already
-//! resolved. This index is that hand-over.
+//! resolved. This index is that hand-over, and the one place that expands the
+//! keys: each distinct key once per request, through the expander the
+//! consumer binds to the request `@context`.
 //!
 //! [`ProjectionTerm::matches_attribute`]: crate::projection::term::ProjectionTerm::matches_attribute
 
+use crate::{error::QueryError, projection::term::ProjectionTerm, term_expander::TermExpander};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::IriBuf;
-use std::collections::HashMap;
+use std::{collections::HashMap, future::Future};
 
 /// Attribute keys mapped to the IRI they expand to under one request
 /// `@context`.
@@ -32,6 +35,68 @@ impl AttributeIriIndex {
         AttributeIriIndex { expansions: HashMap::new() }
     }
 
+    /// The index of `keys` expanded through `expander`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError`] when a key cannot be expanded through the
+    /// context.
+    pub fn of_keys<'k, E: TermExpander>(
+        keys: impl IntoIterator<Item = &'k str>,
+        expander: &'k E,
+    ) -> impl Future<Output = Result<AttributeIriIndex, QueryError>> + Send + 'k {
+        let mut index = AttributeIriIndex::new();
+        let expansion = index.missing_keys(keys);
+        async move {
+            index.expand(expansion, expander).await?;
+            Ok(index)
+        }
+    }
+
+    /// Expand into the index every key of `keys` it does not cover yet.
+    ///
+    /// A key that is no attribute name -- one of the clause 4.21 keyword
+    /// members, or a spelling the clause 4.6.2 grammar refuses -- is left
+    /// out, which only means no term can match it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError`] when a key cannot be expanded through the
+    /// context.
+    pub fn cover<'a, E: TermExpander>(
+        &'a mut self,
+        keys: impl IntoIterator<Item = &'a str>,
+        expander: &'a E,
+    ) -> impl Future<Output = Result<(), QueryError>> + Send + 'a {
+        let expansion = self.missing_keys(keys);
+        self.expand(expansion, expander)
+    }
+
+    /// The distinct attribute names among `keys` the index does not cover, in
+    /// first-seen order. Read before any expansion starts, so the iterator is
+    /// never held across one.
+    fn missing_keys<'k>(&self, keys: impl IntoIterator<Item = &'k str>) -> Vec<(&'k str, AttributeName)> {
+        let mut missing: Vec<(&'k str, AttributeName)> = Vec::new();
+        for key in keys {
+            if ProjectionTerm::keyword(key).is_some() || self.expanded(key).is_some() || missing.iter().any(|(seen, _)| *seen == key) {
+                continue;
+            }
+            if let Ok(name) = key.parse::<AttributeName>() {
+                missing.push((key, name));
+            }
+        }
+        missing
+    }
+
+    /// Expand and record each of `missing`.
+    async fn expand<E: TermExpander>(&mut self, missing: Vec<(&str, AttributeName)>, expander: &E) -> Result<(), QueryError> {
+        for (key, name) in missing {
+            let iri = expander.expand_term(key).await?;
+            self.insert(name, iri);
+        }
+        Ok(())
+    }
+
     /// Record the IRI `key` expands to, replacing any earlier expansion of the
     /// same key.
     pub fn insert(&mut self, key: AttributeName, expanded: IriBuf) {
@@ -47,8 +112,14 @@ impl AttributeIriIndex {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{error::QueryError, projection::attribute_iri_index::AttributeIriIndex, term_expander::TermExpander};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
+    use std::{
+        future::{Future, ready},
+        sync::Mutex,
+    };
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")
@@ -74,5 +145,54 @@ mod tests {
         let index = AttributeIriIndex::new();
 
         assert!(index.expanded("speed").is_none());
+    }
+
+    /// An expander prefixing every term, counting what it was asked.
+    #[derive(Default)]
+    struct CountingExpander {
+        asked: Mutex<Vec<String>>,
+    }
+
+    impl TermExpander for CountingExpander {
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            self.asked.lock().expect("never poisoned").push(term.to_owned());
+            ready(Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI")))
+        }
+
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            ready(Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI")))
+        }
+    }
+
+    #[tokio::test]
+    async fn every_distinct_key_is_expanded_once() {
+        let expander = CountingExpander::default();
+        let index = AttributeIriIndex::of_keys(["name", "owner", "name"], &expander).await.expect("expands");
+        assert_eq!(*expander.asked.lock().expect("never poisoned"), vec!["name", "owner"]);
+        assert_eq!(index.expanded("owner").map(IriBuf::as_str), Some("https://example.com/owner"));
+    }
+
+    #[tokio::test]
+    async fn a_key_that_is_no_attribute_name_is_left_out() {
+        let expander = CountingExpander::default();
+        let index = AttributeIriIndex::of_keys(["name", "not an attribute"], &expander).await.expect("expands");
+        assert!(index.expanded("not an attribute").is_none());
+        assert_eq!(index.expanded("name").map(IriBuf::as_str), Some("https://example.com/name"));
+    }
+
+    #[tokio::test]
+    async fn structural_members_are_not_indexed() {
+        let expander = CountingExpander::default();
+        let index = AttributeIriIndex::of_keys(["id", "type", "scope"], &expander).await.expect("expands");
+        assert!(expander.asked.lock().expect("never poisoned").is_empty());
+        assert!(index.expanded("id").is_none());
+    }
+
+    #[tokio::test]
+    async fn covering_expands_only_the_keys_not_yet_indexed() {
+        let expander = CountingExpander::default();
+        let mut index = AttributeIriIndex::of_keys(["name"], &expander).await.expect("expands");
+        index.cover(["name", "owner"], &expander).await.expect("expands");
+        assert_eq!(*expander.asked.lock().expect("never poisoned"), vec!["name", "owner"]);
     }
 }

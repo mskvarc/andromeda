@@ -202,13 +202,15 @@ async fn a_retrieval_without_sys_attrs_carries_no_entity_times() {
 }
 
 /// Clause 5.7.2 `attrs`: the entity keeps the named attribute, compacted
-/// under the request context, and its `scope`.
+/// under the request context, and, as "a synonym for the pick parameter,
+/// except that id, type, scope are not allowed" (Table 6.5.3.1-1), loses its
+/// `scope`.
 #[tokio::test]
 async fn attrs_narrow_the_retrieved_entity_to_the_named_attributes() {
     let attrs = [name("speed")];
     let entity = retrieve(&narrowing(&attrs, SysAttrsInclusion::Strip, None)).await.expect("retrieved");
     pretty_assertions::assert_eq!(attribute_names(&entity), vec!["speed"]);
-    assert!(entity.scope.is_some());
+    assert!(entity.scope.is_none());
 }
 
 /// Clause 5.7.1.4: `attrs` naming none of the entity's attributes is
@@ -220,19 +222,16 @@ async fn attrs_naming_no_attribute_of_the_entity_is_not_found() {
     assert!(matches!(error, EntityError::NotFound { .. }), "{error}");
 }
 
-/// Clause 5.7.1.4 reads `attrs` before the clause 4.21 projection: a pick
+/// Clause 5.7.1.4 raises `ResourceNotFound` only for an `attrs` list: a pick
 /// keeping only `id` leaves an entity with no attribute, and that entity is
 /// still the answer.
 #[tokio::test]
 async fn a_pick_keeping_only_the_id_answers_with_an_entity_without_attributes() {
-    let attrs = [name("speed")];
     let projection = Projection {
         pick: vec![ProjectionTerm::Id],
         omit: Vec::new(),
     };
-    let entity = retrieve(&narrowing(&attrs, SysAttrsInclusion::Strip, Some(&projection)))
-        .await
-        .expect("retrieved");
+    let entity = retrieve(&narrowing(&[], SysAttrsInclusion::Strip, Some(&projection))).await.expect("retrieved");
     assert!(!entity.has_attribute_members());
     assert!(entity.scope.is_none(), "a pick not naming scope drops it");
 }

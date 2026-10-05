@@ -16,7 +16,6 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod admission;
-pub mod attribute_index;
 pub mod candidate;
 pub mod edge;
 pub mod graph;

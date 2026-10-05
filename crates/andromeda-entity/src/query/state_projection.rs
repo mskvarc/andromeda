@@ -10,38 +10,25 @@
 //! by IRI before compaction keeps exactly the attributes selecting by
 //! compacted name after it kept.
 
+use andromeda_linked_retrieval::{keyword::Keyword, narrowing::list::ListInForce};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
+use andromeda_ngsi_ld_query::projection::attribute_iri_index::AttributeIriIndex;
 use chrono::{DateTime, Utc};
-use iri_rs::IriBuf;
 
-/// Retain only the attributes whose expanded name `wanted` lists (clause
-/// 5.7.2 `attrs`). `scope` and the entity `expiresAt` are not attributes and
-/// stay as they are.
-pub(crate) fn retain_wanted_attributes(state: &mut EntityState, wanted: &[IriBuf]) {
-    state.attributes_mut().retain(|name, _| wanted.iter().any(|iri| iri.as_str() == name.as_str()));
-}
-
-/// Apply a clause 4.21 projection to a state's attributes and its `scope`.
+/// Narrow a state's attributes and its `scope` to the clause 4.21 list in
+/// force: `pick`, `omit`, or the clause 5.7.2 `attrs` as the `pick` synonym.
 ///
 /// `id` and `type` are written by the renderer, which applies their half of
-/// the keyword rule.
-pub(crate) fn project_state(state: &mut EntityState, projection: &Projection) {
-    if !projection.pick.is_empty() {
-        state
-            .attributes_mut()
-            .retain(|name, _| projection.pick.iter().any(|term| names_attribute(term, name)));
+/// the keyword rule; the entity `expiresAt` is no member a list decides.
+pub(crate) fn narrow_state(state: &mut EntityState, list: ListInForce<'_>) {
+    if list.is_unrestricted() {
+        return;
     }
-    if !projection.omit.is_empty() {
-        // Clause 4.21: `omit=rel{a}` omits `a` inside the entity `rel` links
-        // to, not `rel` itself, so only a term carrying no linked
-        // sub-projection removes the attribute here.
-        state
-            .attributes_mut()
-            .retain(|name, _| !projection.omit.iter().any(|term| names_attribute(term, name) && term.linked_terms().is_empty()));
-    }
-    if !projection.keeps(&ProjectionTerm::Scope) {
+    // The state keys its attributes by the expanded IRI the terms carry, so
+    // the list matches them without an index.
+    let expanded = AttributeIriIndex::default();
+    state.attributes_mut().retain(|name, _| list.returns_attribute(name.as_str(), &expanded));
+    if !list.keeps_keyword(Keyword::Scope) {
         state.set_scope(None);
     }
 }
@@ -52,20 +39,10 @@ pub(crate) fn keeps_a_standing_attribute(state: &EntityState, now: DateTime<Utc>
     state.attributes().names().any(|name| state.attribute_stands(name.as_str(), now))
 }
 
-/// Whether `term` names the attribute stored under the expanded `name`.
-///
-/// The same match as [`ProjectionTerm::matches_attribute`] with the key and
-/// its expansion both the stored IRI.
-fn names_attribute(term: &ProjectionTerm, name: &AttributeName) -> bool {
-    match term {
-        ProjectionTerm::Attribute { iri, .. } => iri.as_str() == name.as_str(),
-        ProjectionTerm::Id | ProjectionTerm::Type | ProjectionTerm::Scope => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::query::state_projection::{keeps_a_standing_attribute, project_state, retain_wanted_attributes};
+    use crate::query::state_projection::{keeps_a_standing_attribute, narrow_state};
+    use andromeda_linked_retrieval::narrowing::list::ListInForce;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
@@ -114,13 +91,15 @@ mod tests {
     }
 
     /// Clause 5.7.2: `attrs` keeps the listed attributes, the clause 5.2.4
-    /// geo-properties among them, and leaves `scope` alone.
+    /// geo-properties among them, and, as the `pick` synonym that cannot name
+    /// `scope` (Table 6.5.3.1-1), drops `scope`.
     #[test]
-    fn wanted_attributes_keep_only_the_listed_names_and_the_scope() {
+    fn wanted_attributes_keep_only_the_listed_names_and_drop_the_scope() {
         let mut state = state();
-        retain_wanted_attributes(&mut state, &[iri(SPEED), iri(LOCATION)]);
+        let wanted = [iri(SPEED), iri(LOCATION)];
+        narrow_state(&mut state, ListInForce::of(None, &wanted));
         pretty_assertions::assert_eq!(names(&state), vec![SPEED, LOCATION]);
-        assert!(state.scope().is_some());
+        assert!(state.scope().is_none());
     }
 
     /// Clause 4.21: a `pick` naming attributes keeps them and, not naming the
@@ -132,7 +111,7 @@ mod tests {
             pick: vec![attribute(NAME, Vec::new()), attribute(OWNER, vec![attribute(NAME, Vec::new())])],
             omit: Vec::new(),
         };
-        project_state(&mut state, &projection);
+        narrow_state(&mut state, ListInForce::of(Some(&projection), &[]));
         pretty_assertions::assert_eq!(names(&state), vec![NAME, OWNER]);
         assert!(state.scope().is_none());
     }
@@ -147,7 +126,7 @@ mod tests {
             pick: Vec::new(),
             omit: vec![attribute(SPEED, Vec::new()), attribute(OWNER, vec![attribute(NAME, Vec::new())])],
         };
-        project_state(&mut state, &projection);
+        narrow_state(&mut state, ListInForce::of(Some(&projection), &[]));
         pretty_assertions::assert_eq!(names(&state), vec![NAME, OWNER, LOCATION]);
         assert!(state.scope().is_some());
     }
@@ -157,24 +136,20 @@ mod tests {
     #[test]
     fn the_scope_keyword_decides_the_scope() {
         let mut omitted = state();
-        project_state(
-            &mut omitted,
-            &Projection {
-                pick: Vec::new(),
-                omit: vec![ProjectionTerm::Scope],
-            },
-        );
+        let omit_scope = Projection {
+            pick: Vec::new(),
+            omit: vec![ProjectionTerm::Scope],
+        };
+        narrow_state(&mut omitted, ListInForce::of(Some(&omit_scope), &[]));
         assert!(omitted.scope().is_none());
         pretty_assertions::assert_eq!(names(&omitted).len(), 4);
 
         let mut picked = state();
-        project_state(
-            &mut picked,
-            &Projection {
-                pick: vec![ProjectionTerm::Scope],
-                omit: Vec::new(),
-            },
-        );
+        let pick_scope = Projection {
+            pick: vec![ProjectionTerm::Scope],
+            omit: Vec::new(),
+        };
+        narrow_state(&mut picked, ListInForce::of(Some(&pick_scope), &[]));
         assert!(picked.scope().is_some());
         pretty_assertions::assert_eq!(names(&picked), Vec::<&str>::new());
     }
@@ -183,7 +158,7 @@ mod tests {
     #[test]
     fn an_empty_projection_keeps_everything() {
         let mut state = state();
-        project_state(&mut state, &Projection::default());
+        narrow_state(&mut state, ListInForce::of(Some(&Projection::default()), &[]));
         pretty_assertions::assert_eq!(names(&state).len(), 4);
         assert!(state.scope().is_some());
     }

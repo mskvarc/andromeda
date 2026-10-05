@@ -10,11 +10,12 @@ use crate::{
         projection_remainder::projection_remainder,
         pushdown_refusal::refuse_unnarrowable,
         residual::finish_page,
-        state_projection::{keeps_a_standing_attribute, project_state, retain_wanted_attributes},
+        state_projection::{keeps_a_standing_attribute, narrow_state},
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -151,26 +152,24 @@ impl EntityQueryService {
         // clone: a state copy shares every attribute, the narrowing only drops
         // some of them from the copy's map.
         let mut narrowed = Arc::unwrap_or_clone(state);
-        if !narrowing.attrs.is_empty() {
-            let wanted_iris = self.expand_attribute_names(narrowing.attrs, context).await?;
-            retain_wanted_attributes(&mut narrowed, &wanted_iris);
-
-            // Clause 5.7.1.4: "If the optional Attribute list is present and
-            // the NGSI-LD endpoint does know about a matching Entity for the
-            // Entity ID, but this Entity does not have any of the Attributes in
-            // the Attribute list, then an error of type ResourceNotFound shall
-            // be raised." An attribute whose every instance expired is not one
-            // the entity has (clause 4.22).
-            if !keeps_a_standing_attribute(&narrowed, now) {
-                return Err(EntityError::not_found(id));
-            }
-        }
-
+        let wanted_iris = if narrowing.attrs.is_empty() {
+            Vec::new()
+        } else {
+            self.expand_attribute_names(narrowing.attrs, context).await?
+        };
         // Clause 4.21 is applied before the clause 4.5.23 traversal reads the
         // entity's Relationships, matching the query path, where the projection
         // runs inside the query and the join follows it.
-        if let Some(projection) = narrowing.projection {
-            project_state(&mut narrowed, projection);
+        narrow_state(&mut narrowed, ListInForce::of(narrowing.projection, &wanted_iris));
+
+        // Clause 5.7.1.4: "If the optional Attribute list is present and the
+        // NGSI-LD endpoint does know about a matching Entity for the Entity
+        // ID, but this Entity does not have any of the Attributes in the
+        // Attribute list, then an error of type ResourceNotFound shall be
+        // raised." An attribute whose every instance expired is not one the
+        // entity has (clause 4.22).
+        if !wanted_iris.is_empty() && !keeps_a_standing_attribute(&narrowed, now) {
+            return Err(EntityError::not_found(id));
         }
         Ok(Arc::new(narrowed))
     }
@@ -291,8 +290,5 @@ impl EntityQueryService {
 /// was never selected (`EntitySelection::projected_members`), so every entity
 /// here keeps one and the page stays the size the store cut it to.
 fn narrow_to_query(state: &mut EntityState, query: &CompiledEntityQuery) {
-    if !query.selection.attrs.is_empty() {
-        retain_wanted_attributes(state, &query.selection.attrs);
-    }
-    project_state(state, &query.projection);
+    narrow_state(state, ListInForce::of(Some(&query.projection), &query.selection.attrs));
 }

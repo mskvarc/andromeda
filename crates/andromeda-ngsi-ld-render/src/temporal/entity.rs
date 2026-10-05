@@ -5,6 +5,7 @@ use crate::temporal::{
     history_row::{HistoryRowRenderError, TimeRange, neutral_row_to_instance},
     page_cut::PageCut,
 };
+use andromeda_linked_retrieval::{keyword::Keyword, narrowing::list::ListInForce};
 use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -16,7 +17,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
 use andromeda_ngsi_ld_query::{
-    projection::{compiled::Projection, term::ProjectionTerm},
+    projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection},
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -188,55 +189,32 @@ const fn rendered_timestamps(compiled: &CompiledTemporalQuery) -> SysAttrsInclus
 /// stored and rendered as an ordinary attribute-shaped row, keyed by its
 /// expanded IRI like every other attribute -- so its half of the clause
 /// 4.21 structural rule is applied here, against the
-/// [`ProjectionTerm::Scope`] keyword, rather than by the id/type pruning that
+/// `scope` keyword, rather than by the id/type pruning that
 /// runs later on the compacted representation. `id` and `type` are not
 /// members of this map at all: they are inserted separately once this
 /// function returns, and their half of the rule is applied on the compacted
 /// value instead.
 fn project_attrs(attrs: &mut TemporalAttrMap, projection: &Projection) {
-    if !projection.pick.is_empty() {
-        attrs.retain(|attr_name, _| {
-            if is_scope_attribute(attr_name) {
-                return projection.pick.contains(&ProjectionTerm::Scope);
-            }
-            projection.pick.iter().any(|term| matches_expanded_attribute(term, attr_name))
-        });
+    let list = ListInForce::of(Some(projection), &[]);
+    if list.is_unrestricted() {
+        return;
     }
-
-    if !projection.omit.is_empty() {
-        attrs.retain(|attr_name, _| {
-            if is_scope_attribute(attr_name) {
-                return !projection.omit.contains(&ProjectionTerm::Scope);
-            }
-            // Clause 4.21: `omit=rel{a}` omits `a` inside the entity `rel`
-            // links to, not `rel` itself. Only a bare omit term -- one
-            // carrying no linked sub-projection -- removes the attribute from
-            // this temporal representation.
-            !projection
-                .omit
-                .iter()
-                .filter(|term| matches_expanded_attribute(term, attr_name))
-                .any(|term| term.linked_terms().is_empty())
-        });
-    }
+    // A history row is keyed by the attribute's expanded IRI -- history is
+    // never stored keyed by a compact term -- so the list matches it without
+    // an index.
+    let expanded = AttributeIriIndex::default();
+    attrs.retain(|attr_name, _| {
+        if is_scope_attribute(attr_name) {
+            list.keeps_keyword(Keyword::Scope)
+        } else {
+            list.returns_attribute(attr_name.as_str(), &expanded)
+        }
+    });
 }
 
 /// Whether `attr_name` is the clause 4.21 `scope` keyword's attribute row.
 pub(crate) fn is_scope_attribute(attr_name: &AttributeName) -> bool {
     attr_name.as_str() == expanded_properties::SCOPE.as_str()
-}
-
-/// Whether `term` names the attribute `attr_name`.
-///
-/// A history row's attribute name is already the attribute's expanded IRI --
-/// history is never stored keyed by a compact term -- so only the expanded
-/// half of [`ProjectionTerm::matches_attribute`] ever applies at this stage
-/// of rendering.
-fn matches_expanded_attribute(term: &ProjectionTerm, attr_name: &AttributeName) -> bool {
-    match term {
-        ProjectionTerm::Attribute { iri, .. } => iri.as_str() == attr_name.as_str(),
-        ProjectionTerm::Id | ProjectionTerm::Type | ProjectionTerm::Scope => false,
-    }
 }
 
 #[cfg(test)]

@@ -180,7 +180,7 @@ impl NotificationCompactionCache {
 /// The entities `main_entity`, the rendering `key` starts from, links to,
 /// resolved once per change for every notification asking for the same join
 /// of the same rendering.
-pub(super) async fn resolve_linked_cached(
+pub(super) async fn cached_linked_graph(
     target: &ContextTarget,
     entity_query: &EntityQueryService,
     main_entity: &Entity,

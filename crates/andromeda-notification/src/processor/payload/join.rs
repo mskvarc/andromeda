@@ -4,13 +4,12 @@
 
 use crate::processor::payload::{
     NotificationBuildParams,
-    cache::{LinkedEntities, LinkedKey, RenderingKey, resolve_linked_cached},
+    cache::{LinkedEntities, LinkedKey, RenderingKey, cached_linked_graph},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::{EntityQueryService, core_linked_source::CoreLinkedSource};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
 use andromeda_linked_retrieval::{
-    attribute_index::attribute_iri_index,
     graph::{LinkedGraph, RootEdges},
     join::TraversalBounds,
     narrowing::list::ListInForce,
@@ -27,7 +26,7 @@ use tracing::{debug, warn};
 /// The linked entities of the notified entity, the rendering `root` names, or
 /// `None` when its links cannot be resolved, which does not fail the
 /// notification: it goes out carrying the notified entity alone.
-pub(super) async fn resolve_join_targets(
+pub(super) async fn notified_linked_graph(
     main_entity: &Entity,
     root: &RenderingKey,
     params: &NotificationBuildParams<'_>,
@@ -35,7 +34,7 @@ pub(super) async fn resolve_join_targets(
 ) -> Option<LinkedEntities> {
     // clone: the linked key owns the key of the rendering it starts from
     let key = LinkedKey::new(root.clone(), params.sub.notification_join_level, params.sub.notification_sys_attrs);
-    match resolve_linked_cached(params.target, params.entity_query, main_entity, key, context, params.cache).await {
+    match cached_linked_graph(params.target, params.entity_query, main_entity, key, context, params.cache).await {
         Ok(resolved) => Some(resolved),
         Err(error) => {
             debug!(%error, "Failed to resolve linked entities for a notification payload");
@@ -61,7 +60,7 @@ pub(crate) struct PeriodicJoin<'a> {
 /// none of them an entity the notification already carries, or `None` when
 /// their links cannot be resolved, which leaves the notification with the
 /// entities alone, as a change-driven one is left.
-pub(crate) async fn resolve_periodic_join(entity_query: &EntityQueryService, roots: &[Entity], join: PeriodicJoin<'_>) -> Option<LinkedGraph<Entity>> {
+pub(crate) async fn periodic_linked_graph(entity_query: &EntityQueryService, roots: &[Entity], join: PeriodicJoin<'_>) -> Option<LinkedGraph<Entity>> {
     let source = CoreLinkedSource::new(entity_query, join.target, join.sys_attrs, join.context);
     let bounds = TraversalBounds::of(Some(join.join_level), None);
     match traverse(&source, RootEdges::of::<TypedEntities>(roots), &bounds).await {
@@ -102,7 +101,7 @@ pub(crate) async fn linked_attribute_index<'e>(
         .flat_map(TypedEntities::attribute_keys)
         .chain(linked.attribute_keys::<TypedEntities>())
         .collect();
-    match attribute_iri_index(keys, &expander).await {
+    match AttributeIriIndex::of_keys(keys, &expander).await {
         Ok(index) => Some(index),
         Err(error) => {
             debug!(%error, "the attribute keys of a notification's Linked Entities could not be expanded");
