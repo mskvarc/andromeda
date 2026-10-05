@@ -84,7 +84,9 @@ pub(crate) async fn receive(
     }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
     let received = Received::try_from(document).map_err(|error| bad_request_data(format!("not a notification: {error}"), &uri))?;
-    let context = body_context;
+    // A Notification is a document a broker rendered (clauses 5.3.1 and
+    // 5.8.6), so it carries no user `@context` for clause 5.5.7 to admit.
+    let context = body_context.into_broker_document_context();
     // The resolved forwarding service carries a lease on its tenant's runtime;
     // holding it across handling keeps the runtime resident so eviction cannot
     // close its pools while the notification is processed.

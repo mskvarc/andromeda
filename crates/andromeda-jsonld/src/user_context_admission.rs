@@ -1,4 +1,4 @@
-//! Refusing a user `@context` that declares a JSON-LD Scoped Context.
+//! Admitting the user `@context` a client request submitted.
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 5.5.7 states that the user `@context` shall
 //! not "contain JSON-LD Scoped Contexts (see [2], section 4.1.8)", and that
@@ -6,12 +6,23 @@
 //! result in an error of type `BadRequestData`, because JSON-LD Scoped Contexts
 //! and nested embedded @context could be used to modify terms defined in the
 //! Core @context or to reshape NGSI-LD Elements during the expansion of terms".
-//! Clauses 4.4 and 4.5.1 restate it.
+//! Clauses 4.4 and 4.5.1 restate it. Clause 5.5.4 judges a payload
+//! "syntactically correct, according to the @context", so the context is
+//! resolved before anything is judged under it: one that cannot be retrieved is
+//! clause 5.5.6's `LdContextNotAvailable`, decided first, and only a context
+//! that loaded is inspected for what clause 5.5.7 refuses.
 //!
-//! Three things shape where this lives:
+//! The admission is enforced by type rather than by convention. A request
+//! extractor yields a [`SubmittedContext`], which exposes nothing of the spec
+//! it wraps; [`admit_user_context`] is the only way to turn it into an
+//! [`AdmittedContext`], and every service that reads, expands or forwards
+//! under a request's context takes the admitted one. An operation that never
+//! resolves its context says so with [`SubmittedContext::unused`].
 //!
-//! - The rule is about the request's `@context`, not about its payload, so it
-//!   reads a [`ContextSpec`] and never the document.
+//! Three things shape the rule itself:
+//!
+//! - It is about the request's `@context`, not about its payload, so it reads
+//!   a [`ContextSpec`] and never the document.
 //! - Deciding it needs the network: a `Link` header context and a body context
 //!   written as a URL are documents that have to be fetched before anything can
 //!   be said about them, which rules out the synchronous extractor that builds
@@ -29,9 +40,8 @@
 //! engine's scanned-context cache, so the verdict for a URL is reached once for
 //! the life of the engine and every later request reads it from memory.
 //!
-//! Nothing here decides which operations run the rule. A payload a Context
-//! Source sent back, a notification this broker rendered and a snapshot clone
-//! carry no user `@context` and reach no caller of this module.
+//! A payload a Context Source sent back, a notification this broker rendered
+//! and a snapshot clone carry no user `@context` and never pass through here.
 
 use crate::{
     context_graph::check_context_graph,
@@ -43,26 +53,81 @@ use crate::{
     },
     error::JsonLdError,
 };
+use derive_more::{Deref, From};
 use iri_rs::IriBuf;
 use serde_json::Value;
 use std::collections::HashSet;
 
-/// Refuse a request `@context` that declares a JSON-LD Scoped Context anywhere
-/// a user context reaches.
+/// The `@context` a client request named, not yet admitted.
+///
+/// It exposes nothing of the context it carries: an operation reads under a
+/// request's context only once [`admit_user_context`] has admitted it.
+#[derive(Debug, From, PartialEq, Eq)]
+#[must_use = "a submitted context is admitted, or declared unused"]
+pub struct SubmittedContext(ContextSpec);
+
+impl SubmittedContext {
+    /// Declare that the operation never resolves the context it was submitted
+    /// with: one whose input names no term a context could define.
+    pub fn unused(self) {}
+
+    /// The context of a document this broker itself rendered and a client
+    /// relays back, such as a Notification (clauses 5.3.1 and 5.8.6), which
+    /// carries no user `@context` for clause 5.5.7 to admit.
+    #[must_use]
+    pub fn into_broker_document_context(self) -> ContextSpec {
+        self.0
+    }
+}
+
+/// A user `@context` [`admit_user_context`] admitted: every context it names
+/// loaded, and none declares a JSON-LD Scoped Context.
+#[derive(Debug, Clone, Deref)]
+pub struct AdmittedContext(ContextSpec);
+
+impl AdmittedContext {
+    /// The Core `@context` alone, which a document the broker writes itself is
+    /// read under: clause 5.5.7 addresses the *user* `@context` and calls the
+    /// Core one protected, so there is nothing in it to admit.
+    #[must_use]
+    pub const fn core_only() -> AdmittedContext {
+        AdmittedContext(ContextSpec::core_only())
+    }
+
+    /// The admitted context, for a consumer that keeps it beyond the request,
+    /// such as the batch a forwarded deletion names it for.
+    #[must_use]
+    pub fn into_spec(self) -> ContextSpec {
+        self.0
+    }
+}
+
+/// Admit the user `@context` a request submitted.
 ///
 /// Every non-core context the request selected is resolved and inspected, in no
 /// particular order: the refusal is a property of the set, so a scoped context
-/// in the second of two contexts is refused exactly as one in the first, and an
-/// unresolvable neighbour does not hide it.
+/// in the second of two contexts is refused exactly as one in the first.
 ///
 /// # Errors
 ///
-/// Returns [`JsonLdError::ContextGraph`] when the contexts' references form a
-/// cycle or nest too deep, [`JsonLdError::ScopedUserContext`] naming the first term found
-/// carrying a scoped `@context`, and the typed context-loading variant when one
-/// of the contexts does not resolve -- which clause 5.5.2 answers with
-/// `LdContextNotAvailable` rather than with this rule's `BadRequestData`.
-pub async fn reject_scoped_user_contexts(engine: &JsonLdEngine, context: &ContextSpec) -> Result<(), JsonLdError> {
+/// Returns, in this order: [`JsonLdError::ContextGraph`] when the contexts'
+/// references form a cycle or nest too deep, the typed context-loading variant
+/// when one of them does not resolve -- which clause 5.5.6 answers with
+/// `LdContextNotAvailable` -- and [`JsonLdError::ScopedUserContext`] naming the
+/// first term found carrying a scoped `@context`.
+pub async fn admit_user_context(engine: &JsonLdEngine, submitted: SubmittedContext) -> Result<AdmittedContext, JsonLdError> {
+    let SubmittedContext(context) = submitted;
+    screen_user_context(engine, &context).await?;
+    Ok(AdmittedContext(context))
+}
+
+/// Decide whether `context` is a user `@context` clause 5.5.7 admits, as
+/// [`admit_user_context`] does.
+///
+/// # Errors
+///
+/// As [`admit_user_context`].
+pub(crate) async fn screen_user_context(engine: &JsonLdEngine, context: &ContextSpec) -> Result<(), JsonLdError> {
     // A context whose references cycle or nest too deep is refused before any
     // of its documents is inspected, so no document past the limit is fetched.
     if let Some(value) = context.to_context_value() {
@@ -123,7 +188,7 @@ mod tests {
         context_spec::ContextSpec,
         engine::processor::JsonLdEngine,
         error::JsonLdError,
-        scoped_context_admission::reject_scoped_user_contexts,
+        user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
@@ -177,6 +242,11 @@ mod tests {
         engine
     }
 
+    /// Admit `context` as a request would submit it.
+    async fn admitted(engine: &JsonLdEngine, context: &ContextSpec) -> Result<AdmittedContext, JsonLdError> {
+        admit_user_context(engine, SubmittedContext::from(context.clone())).await // clone: the test keeps the spec it compares against
+    }
+
     fn link_spec(url: &str) -> ContextSpec {
         ContextSpec::from_link(IriBuf::new(url.to_owned()).expect("a valid IRI"))
     }
@@ -194,7 +264,7 @@ mod tests {
     async fn a_context_declaring_no_scoped_context_is_admitted() {
         let engine = engine_serving(&[]);
         let context = ContextSpec::from_body(json!({"speed": "https://example.org/speed"}));
-        assert!(reject_scoped_user_contexts(&engine, &context).await.is_ok());
+        assert!(admitted(&engine, &context).await.is_ok());
     }
 
     #[tokio::test]
@@ -203,7 +273,7 @@ mod tests {
         let context = ContextSpec::from_body(json!({
             "speed": {"@id": "https://example.org/speed", "@context": {"unitCode": "https://example.org/rewritten"}}
         }));
-        let error = reject_scoped_user_contexts(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
+        let error = admitted(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "speed");
     }
 
@@ -213,7 +283,7 @@ mod tests {
             "https://example.org/scoped.jsonld",
             json!({"@context": {"speed": {"@id": "https://example.org/speed", "@context": {"unitCode": "https://example.org/rewritten"}}}}),
         )]);
-        let error = reject_scoped_user_contexts(&engine, &link_spec("https://example.org/scoped.jsonld"))
+        let error = admitted(&engine, &link_spec("https://example.org/scoped.jsonld"))
             .await
             .expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "speed");
@@ -231,7 +301,7 @@ mod tests {
             ),
         ]);
         let context = ContextSpec::from_body(json!(["https://example.org/plain.jsonld", "https://example.org/scoped.jsonld"]));
-        let error = reject_scoped_user_contexts(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
+        let error = admitted(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "gear");
     }
 
@@ -244,7 +314,7 @@ mod tests {
             json!({"@context": {"gear": {"@id": "https://example.org/gear", "@context": {}}}}),
         )]);
         let context = ContextSpec::from_body(json!(["https://example.org/absent.jsonld", "https://example.org/scoped.jsonld"]));
-        let error = reject_scoped_user_contexts(&engine, &context).await.expect_err("one of the two is refused");
+        let error = admitted(&engine, &context).await.expect_err("one of the two is refused");
         assert!(
             matches!(error, JsonLdError::ScopedUserContext { .. }) || error.is_context_not_available(),
             "expected either refusal, got {error}"
@@ -265,7 +335,7 @@ mod tests {
                 json!({"@context": {"gear": {"@id": "https://example.org/gear", "@context": {}}}}),
             ),
         ]);
-        let error = reject_scoped_user_contexts(&engine, &link_spec("https://example.org/suite.jsonld"))
+        let error = admitted(&engine, &link_spec("https://example.org/suite.jsonld"))
             .await
             .expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "gear");
@@ -281,7 +351,7 @@ mod tests {
             json!({"@context": {"gear": {"@id": "https://example.org/gear", "@context": {}}}}),
         )]);
         let context = ContextSpec::from_body(json!({"@import": "https://example.org/scoped.jsonld", "speed": "https://example.org/speed"}));
-        let error = reject_scoped_user_contexts(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
+        let error = admitted(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "gear");
     }
 
@@ -298,7 +368,7 @@ mod tests {
                 json!({"@context": {"gear": {"@id": "https://example.org/gear", "@context": {}}}}),
             ),
         ]);
-        let error = reject_scoped_user_contexts(&engine, &link_spec("https://example.org/importing.jsonld"))
+        let error = admitted(&engine, &link_spec("https://example.org/importing.jsonld"))
             .await
             .expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "gear");
@@ -310,7 +380,7 @@ mod tests {
     async fn an_import_of_the_core_context_is_admitted() {
         let engine = engine_serving(&[]);
         let context = ContextSpec::from_body(json!({"@import": NGSI_LD_CORE_CONTEXT_URL.as_str(), "speed": "https://example.org/speed"}));
-        assert!(reject_scoped_user_contexts(&engine, &context).await.is_ok());
+        assert!(admitted(&engine, &context).await.is_ok());
     }
 
     /// A context whose references form a cycle is an invalid `@context`
@@ -321,7 +391,7 @@ mod tests {
             ("https://example.org/a.jsonld", json!({"@context": ["https://example.org/b.jsonld"]})),
             ("https://example.org/b.jsonld", json!({"@context": ["https://example.org/a.jsonld"]})),
         ]);
-        let error = reject_scoped_user_contexts(&engine, &link_spec("https://example.org/a.jsonld"))
+        let error = admitted(&engine, &link_spec("https://example.org/a.jsonld"))
             .await
             .expect_err("a cycle is refused");
         assert!(matches!(error, JsonLdError::ContextGraph(ContextGraphError::Cycle(_))), "{error}");
@@ -335,9 +405,9 @@ mod tests {
     async fn the_core_context_is_never_inspected_under_this_rule() {
         let engine = engine_serving(&[]);
         for url in ["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld", NGSI_LD_CORE_CONTEXT_URL.as_str()] {
-            assert!(reject_scoped_user_contexts(&engine, &link_spec(url)).await.is_ok(), "{url}");
+            assert!(admitted(&engine, &link_spec(url)).await.is_ok(), "{url}");
             let body = ContextSpec::from_body(json!(url));
-            assert!(reject_scoped_user_contexts(&engine, &body).await.is_ok(), "{url}");
+            assert!(admitted(&engine, &body).await.is_ok(), "{url}");
         }
     }
 
@@ -354,7 +424,7 @@ mod tests {
             {"speed": "https://example.org/speed"},
             "https://example.org/scoped.jsonld"
         ]));
-        let error = reject_scoped_user_contexts(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
+        let error = admitted(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "gear");
     }
 
@@ -366,7 +436,7 @@ mod tests {
         let context = ContextSpec::from_body(json!({
             "speed": [{"@id": "https://example.org/speed", "@context": {}}]
         }));
-        let error = reject_scoped_user_contexts(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
+        let error = admitted(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "speed");
     }
 
@@ -375,7 +445,30 @@ mod tests {
     #[tokio::test]
     async fn a_request_that_supplied_no_context_of_its_own_is_admitted() {
         let engine = engine_serving(&[]);
-        assert!(reject_scoped_user_contexts(&engine, &ContextSpec::none()).await.is_ok());
-        assert!(reject_scoped_user_contexts(&engine, &ContextSpec::core_only()).await.is_ok());
+        assert!(admitted(&engine, &ContextSpec::none()).await.is_ok());
+        assert!(admitted(&engine, &ContextSpec::core_only()).await.is_ok());
+    }
+
+    /// What an operation reads under is the context the request submitted.
+    #[tokio::test]
+    async fn an_admitted_context_is_the_one_submitted() {
+        let engine = engine_serving(&[]);
+        let context = ContextSpec::from_body(json!({"speed": "https://example.org/speed"}));
+        let admitted = admitted(&engine, &context).await.expect("admitted");
+        pretty_assertions::assert_eq!(&*admitted, &context);
+    }
+
+    /// Clause 5.5.4 judges data "according to the @context", so a context that
+    /// cannot be retrieved is answered as such before anything clause 5.5.7
+    /// refuses in a neighbour is looked for.
+    #[tokio::test]
+    async fn an_unloadable_context_is_refused_before_a_scoped_neighbour() {
+        let engine = engine_serving(&[]);
+        let context = ContextSpec::from_body(json!([
+            "https://example.org/absent.jsonld",
+            {"speed": {"@id": "https://example.org/speed", "@context": {}}}
+        ]));
+        let error = admitted(&engine, &context).await.expect_err("the absent context is refused");
+        assert!(error.is_context_not_available(), "expected a loading error, got {error}");
     }
 }

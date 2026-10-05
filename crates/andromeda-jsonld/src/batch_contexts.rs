@@ -13,7 +13,8 @@
 //! Everything downstream groups by that identity ([`ContextGroups`]) and never
 //! compares two contexts again.
 
-use crate::context_spec::ContextSpec;
+use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine, error::JsonLdError, user_context_admission::screen_user_context};
+use derive_more::Deref;
 use serde_json::Value;
 use std::{sync::Arc, vec::IntoIter};
 
@@ -49,7 +50,24 @@ impl BatchContext {
     pub const fn shared_spec(&self) -> &Arc<ContextSpec> {
         &self.spec
     }
+
+    /// Admit the user `@context` this batch context is, as clause 5.5.7
+    /// admits a request's (see
+    /// [`admit_user_context`](crate::user_context_admission::admit_user_context)).
+    ///
+    /// # Errors
+    ///
+    /// Returns the refusal of
+    /// [`admit_user_context`](crate::user_context_admission::admit_user_context).
+    pub async fn admit(&self, engine: &JsonLdEngine) -> Result<AdmittedBatchContext, JsonLdError> {
+        screen_user_context(engine, &self.spec).await?;
+        Ok(AdmittedBatchContext(self.clone())) // clone: every entity naming the context holds the shared handle
+    }
 }
+
+/// A [`BatchContext`] [`BatchContext::admit`] admitted.
+#[derive(Debug, Clone, Deref)]
+pub struct AdmittedBatchContext(BatchContext);
 
 /// The distinct contexts one batch's entities name, in the order each first
 /// appears.

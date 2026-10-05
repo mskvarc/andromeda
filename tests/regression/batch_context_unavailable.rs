@@ -127,3 +127,32 @@ async fn regression_batch_context_unavailable_single_create_stays_a_top_level_50
 
     scope.finish().await.expect("environment cleanup");
 }
+
+/// Clause 5.5.4 judges a payload "syntactically correct, according to the
+/// @context", so a single-entity create whose `@context` cannot be retrieved is
+/// `LdContextNotAvailable` even when its payload would also be refused: the
+/// context is admitted before anything is read under it.
+#[tokio::test]
+async fn regression_batch_context_unavailable_an_unreachable_context_outranks_a_refused_payload() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let identifier = scope.id("Building:context-unavailable-before-payload");
+
+    let created = client
+        .raw(Method::POST, "entities")
+        .header("content-type", "application/json")
+        .header("link", UNREACHABLE_CONTEXT_LINK)
+        .json(&json!({
+            "id": identifier,
+            "type": "Building",
+            "name": {"type": "NotAnAttributeType", "value": "Reichstag"}
+        }))
+        .send()
+        .await
+        .expect("creation request");
+    assert_eq!(created.status, StatusCode::GATEWAY_TIMEOUT, "{:?}", created.body);
+    let problem = created.json_value().expect("a refusal carries a problem details body");
+    assert_eq!(problem["type"], json!(LD_CONTEXT_NOT_AVAILABLE.as_str()), "{problem}");
+
+    scope.finish().await.expect("environment cleanup");
+}

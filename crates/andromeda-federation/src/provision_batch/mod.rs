@@ -52,7 +52,6 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_request::options::UpsertMode;
 use futures::{StreamExt, stream};
-use serde_json::Value;
 use std::collections::HashMap;
 use tracing::debug;
 
@@ -235,15 +234,25 @@ impl FederationService {
                 let ids = narrowed.iter().map(|entity| entity.id.clone()).collect::<Vec<_>>(); // clone: the outcomes are keyed by identifier
                 // The forwarded array takes each narrowed body over; what is left
                 // of an entity names its result. A batch deletion carries the
-                // bare identifiers (clause 5.6.10).
+                // bare identifiers (clause 5.6.10.3).
                 let mut narrowed = narrowed;
-                let items = narrowed
-                    .iter_mut()
-                    .map(|entity| ItemBody {
-                        body: entity.body.take().unwrap_or_else(|| Value::String(entity.id.to_string())),
-                        context: entity.context,
-                    })
-                    .collect::<Vec<_>>();
+                let payload = match request.operation {
+                    BatchProvisionOperation::Delete => WritePayload::Identifiers(&ids),
+                    BatchProvisionOperation::Create
+                    | BatchProvisionOperation::Upsert(_)
+                    | BatchProvisionOperation::Update(_)
+                    | BatchProvisionOperation::Merge => WritePayload::Items(
+                        narrowed
+                            .iter_mut()
+                            .filter_map(|entity| {
+                                Some(ItemBody {
+                                    body: entity.body.take()?,
+                                    context: entity.context,
+                                })
+                            })
+                            .collect(),
+                    ),
+                };
                 let narrowed = narrowed;
                 let url = forwarding_url(
                     csr.access.endpoint.url(),
@@ -255,7 +264,7 @@ impl FederationService {
                         registration: csr,
                         url,
                         method: reqwest::Method::POST,
-                        payload: WritePayload::Items(items),
+                        payload,
                         triggering: request.triggering,
                         linked_map: None,
                     })

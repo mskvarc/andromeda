@@ -10,7 +10,6 @@
 use crate::{
     entity::{
         AcceptFormat,
-        ContextSpec,
         EntityQuery,
         EntityResultExt,
         EntityTenantState,
@@ -43,6 +42,7 @@ use andromeda_federation::{
 };
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{api_root::ApiRoot, context_target, pagination_policy::RequestPagination, response_context_request::ResponseContextRequest};
+use andromeda_jsonld::user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context};
 use andromeda_linked_retrieval::{plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -82,8 +82,9 @@ pub(crate) struct EntityQueryRequest {
     /// registration's `contextSourceInfo` can pass one of them through
     /// (clause 6.3.19).
     pub(crate) headers: HeaderMap,
-    /// The JSON-LD context the query's terms expand under (clause 6.3.5).
-    pub(crate) context: ContextSpec,
+    /// The JSON-LD context the query's terms expand under (clause 6.3.5),
+    /// admitted (clause 5.5.7).
+    pub(crate) context: AdmittedContext,
     /// The query itself, in the raw form the binding decoded it to.
     pub(crate) query: EntityQueryParameters,
     /// Which binding decoded it, which decides how the query is forwarded and
@@ -102,6 +103,11 @@ pub(crate) async fn query(
     RequestPagination(pagination): RequestPagination,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.7 addresses the request's `@context` on every operation that
+    // expands one, so a query admits it before anything is read under it.
+    let context = admit_user_context(services.entity_query.engine(), SubmittedContext::from(context))
+        .await
+        .with_entity_instance(&uri)?;
     run(EntityQueryRequest::builder()
         .services(services)
         .target(target)

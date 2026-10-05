@@ -1,6 +1,7 @@
 //! HTTP handling for temporal create or update (clause 5.6.11).
 
 use crate::{
+    request_context_admission::admit_request_context,
     temporal::{
         CreateOrUpdateResult,
         ForwardProvisionRequest,
@@ -60,10 +61,13 @@ pub async fn create_or_update(
     headers: HeaderMap,
     JsonLdDocument { document: payload, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.4 judges the payload "according to the @context", so the
+    // context is admitted before anything is read under it (clause 5.5.7).
+    let context = admit_request_context(state.temporal.engine(), context, &uri).await?;
     let service = &state.temporal;
     // Clause 5.6.11.4 opens with the clause 5.5.4 validation and forwards only
     // afterwards.
-    admit_written_evolution(service.engine(), &payload, &context, &uri).await?;
+    admit_written_evolution(&payload, &uri)?;
 
     if params.local.unwrap_or(false) {
         let result = service.create_or_update(&target, payload, &context).await;

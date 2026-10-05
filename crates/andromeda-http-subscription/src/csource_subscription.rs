@@ -20,6 +20,7 @@ use andromeda_http_extraction::{
 };
 use andromeda_http_headers::via::Via;
 use andromeda_http_response::{headers::with_location, problem_response::ProblemResponse, single::NgsiLdResponse};
+use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_render::{response::ResponsePayload, subscription::SubscriptionRenderer};
 use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription_listing::ListParams};
@@ -41,6 +42,7 @@ pub async fn create(
     IncomingVia(incoming_via): IncomingVia,
     JsonLdDocument { document: payload, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
+    let context = admit_user_context(&state.engine, context).await.with_subscription_instance(&uri)?;
     let service = &state.csource_subscriptions;
     // Table 6.3.18-2: the created subscription must not forward a companion copy
     // back to any context source its request already passed through.
@@ -142,6 +144,7 @@ pub async fn update(
     TypedPath(subscription_id): TypedPath<Identifier>,
     JsonLdDocument { document: payload, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
+    let context = admit_user_context(&state.engine, context).await.with_subscription_instance(&uri)?;
     let service = &state.csource_subscriptions;
 
     service

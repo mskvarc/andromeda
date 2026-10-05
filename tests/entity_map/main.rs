@@ -29,6 +29,7 @@ use urlencoding::encode;
 const BAD_REQUEST_DATA_TYPE: &iri_rs::Iri<&str> = error::BAD_REQUEST_DATA;
 const INVALID_REQUEST_TYPE: &iri_rs::Iri<&str> = error::INVALID_REQUEST;
 const RESOURCE_NOT_FOUND_TYPE: &iri_rs::Iri<&str> = error::RESOURCE_NOT_FOUND;
+const LD_CONTEXT_NOT_AVAILABLE_TYPE: &iri_rs::Iri<&str> = error::LD_CONTEXT_NOT_AVAILABLE;
 
 fn client() -> Client {
     Client::new()

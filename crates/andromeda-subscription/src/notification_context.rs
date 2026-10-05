@@ -75,6 +75,7 @@ mod tests {
         compound_context_host::{CompoundContextHost, CompoundContextHostFuture, ContextHostingError, NoCompoundContextHost, WrapperUse},
         context_spec::ContextSpec,
         engine::processor::JsonLdEngine,
+        user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
@@ -104,6 +105,14 @@ mod tests {
         JsonLdEngine::builder().allow_remote(false).build().expect("the offline engine builds")
     }
 
+    /// `context` as the request handler admits it.
+    async fn admitted(context: &ContextSpec) -> AdmittedContext {
+        // clone: the admission consumes the spec, and the test keeps its own
+        admit_user_context(&engine(), SubmittedContext::from(context.clone()))
+            .await
+            .expect("the context is admitted")
+    }
+
     fn iri_ref(url: &str) -> IriBuf {
         IriBuf::new(url.to_owned()).expect("a valid IRI")
     }
@@ -123,7 +132,7 @@ mod tests {
         initialize_notification_context(
             &mut payload,
             SubscriptionContext::Request {
-                context: &context,
+                context: &admitted(&context).await,
                 host: &host,
             },
             &engine(),
@@ -146,7 +155,7 @@ mod tests {
         initialize_notification_context(
             &mut payload,
             SubscriptionContext::Request {
-                context: &context,
+                context: &admitted(&context).await,
                 host: &host,
             },
             &engine(),
@@ -171,7 +180,7 @@ mod tests {
         let result = initialize_notification_context(
             &mut payload,
             SubscriptionContext::Request {
-                context: &context,
+                context: &admitted(&context).await,
                 host: &NoCompoundContextHost,
             },
             &engine(),
@@ -185,26 +194,6 @@ mod tests {
         assert!(stored_context(&payload).is_none());
     }
 
-    /// Clause 5.5.6: a named document that cannot be loaded fails the request.
-    #[tokio::test]
-    async fn a_named_document_that_cannot_be_loaded_fails_the_request() {
-        let mut payload = json!({});
-        let context = ContextSpec::from_link(iri_ref("https://example.com/unreachable.jsonld"));
-
-        let host = RecordingHost::default();
-        let result = initialize_notification_context(
-            &mut payload,
-            SubscriptionContext::Request {
-                context: &context,
-                host: &host,
-            },
-            &engine(),
-        )
-        .await;
-
-        assert!(matches!(result, Err(SubscriptionError::JsonLd(_))), "{result:?}");
-    }
-
     /// An explicit `jsonldContext` member takes precedence (clause 5.8.1.4).
     #[tokio::test]
     async fn an_explicit_member_takes_precedence_over_the_applicable_context() {
@@ -214,7 +203,7 @@ mod tests {
         initialize_notification_context(
             &mut payload,
             SubscriptionContext::Request {
-                context: &context,
+                context: &admitted(&context).await,
                 host: &NoCompoundContextHost,
             },
             &engine(),
@@ -234,7 +223,7 @@ mod tests {
         initialize_notification_context(
             &mut payload,
             SubscriptionContext::Request {
-                context: &ContextSpec::none(),
+                context: &admitted(&ContextSpec::none()).await,
                 host: &NoCompoundContextHost,
             },
             &engine(),

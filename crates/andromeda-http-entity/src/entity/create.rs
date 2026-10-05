@@ -29,6 +29,7 @@ use andromeda_entity::write_kind::CreateEntity;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use andromeda_http_response::headers::with_location;
+use andromeda_jsonld::user_context_admission::admit_user_context;
 use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn create(
@@ -43,6 +44,9 @@ pub(crate) async fn create(
     headers: HeaderMap,
     JsonLd { value: entity, context }: JsonLd<Entity>,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.4 judges the payload "according to the @context", so the
+    // context is admitted before anything is read under it (clause 5.5.7).
+    let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
     let service = &state.entities;
     // Clause 5.6.1.4 opens with the clause 5.5.4 validation and forwards only
     // afterwards, so the whole screening runs here: a representation this

@@ -36,6 +36,7 @@ use andromeda_federation::{
     request::TriggeringRequest,
 };
 use andromeda_http_extraction::context_target;
+use andromeda_jsonld::user_context_admission::admit_user_context;
 use axum::http::Method;
 
 pub(crate) async fn append_attrs(
@@ -49,6 +50,9 @@ pub(crate) async fn append_attrs(
     ValidatedQuery(params): ValidatedQuery<AppendParams>,
     JsonLdDocument { document: fragment, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.4 judges the payload "according to the @context", so the
+    // context is admitted before anything is read under it (clause 5.5.7).
+    let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
     let service = &state.entities;
     // The fragment is refused before the options are, so the options are
     // read here and their refusal raised after the admission.

@@ -16,8 +16,10 @@ use crate::{
         query_binding::QueryBinding,
     },
     entity_operations::{AcceptFormat, ApiRoot, EntityTenantState, NgsiLdProtocolHeaders, NgsiLdRequestEnvelope, ProblemResponse, Response},
+    error::EntityResultExt,
 };
 use andromeda_http_extraction::{context_target, entity_post_query::EntityPostQuery, pagination_policy::RequestPagination};
+use andromeda_jsonld::user_context_admission::admit_user_context;
 
 pub(crate) async fn query(
     context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: EntityTenantState,
@@ -31,6 +33,7 @@ pub(crate) async fn query(
     // the `Link` context for `application/json`.
     EntityPostQuery { query, context }: EntityPostQuery,
 ) -> Result<Response, ProblemResponse> {
+    let context = admit_user_context(services.entity_query.engine(), context).await.with_entity_instance(&uri)?;
     run(EntityQueryRequest::builder()
         .services(services)
         .target(target)

@@ -37,6 +37,7 @@ use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::{admitted_temporal_query::AdmittedTemporalQuery, context_target, response_context_request::ResponseContextRequest};
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{collection::NgsiLdCollectionResponse, content_range::build_content_range};
+use andromeda_jsonld::user_context_admission::SubmittedContext;
 use andromeda_linked_retrieval::edge::LinkedEdge;
 use andromeda_ngsi_ld_request::query::temporal::operation::TemporalQueryOperation;
 use andromeda_temporal::{error::TemporalError, temporal_invariant::TemporalInvariant};
@@ -56,10 +57,9 @@ pub async fn get(
     AdmittedTemporalQuery { mut params, .. }: AdmittedTemporalQuery<TemporalExtensionGate>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
-    // Clause 5.5.7: a request `@context` declaring a JSON-LD Scoped Context is
-    // refused on the temporal history read path before anything is forwarded or
-    // expanded against it.
-    admit_request_context(service.engine(), &context, &uri).await?;
+    // Clause 5.5.7: the request `@context` is admitted on the temporal history
+    // read path before anything is forwarded or expanded against it.
+    let context = admit_request_context(service.engine(), SubmittedContext::from(context), &uri).await?;
     protocol.extensions().apply_to_temporal_query(&mut params).with_instance(&uri)?;
     params
         .validate(TemporalQueryOperation::Retrieve, service.linked_retrieval())

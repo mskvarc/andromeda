@@ -28,7 +28,11 @@ impl SnapshotStateResolver for BrokerSnapshotStateResolver {
     fn resolve<'a>(&'a self, tenant: &'a TenantRef, creation_policy: TenantCreationPolicy) -> BoxFuture<'a, Result<Arc<SnapshotRouteServices>, TenancyError>> {
         Box::pin(async move {
             let LeasedState { state, lease } = self.tenants.resolve_state(tenant, creation_policy).await?;
-            Ok(Arc::new(SnapshotRouteServices::new(Arc::clone(&state.snapshots), lease)))
+            Ok(Arc::new(SnapshotRouteServices::new(
+                Arc::clone(&state.snapshots),
+                state.entity_query.engine().clone(), // clone: the engine shares its loader and caches behind `Arc`s
+                lease,
+            )))
         })
     }
 }

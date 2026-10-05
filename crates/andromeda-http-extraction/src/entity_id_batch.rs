@@ -19,7 +19,7 @@ use crate::{
     jsonld::{AdmittedBody, admit_request_body},
 };
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::user_context_admission::SubmittedContext;
 use andromeda_ngsi_ld_lexicon::{
     identifier::{Identifier, IdentifierParseError},
     uri::Uri,
@@ -42,8 +42,9 @@ pub struct EntityIdBatch {
 pub struct JsonLdEntityIds {
     /// The identifiers the body names.
     pub batch: EntityIdBatch,
-    /// The context the request named, in its `Link` header (clause 6.3.5).
-    pub context: ContextSpec,
+    /// The context the request named, in its `Link` header (clause 6.3.5),
+    /// admitted before anything is read under it.
+    pub context: SubmittedContext,
 }
 
 impl<S> FromRequest<S> for JsonLdEntityIds
@@ -55,7 +56,10 @@ where
     async fn from_request(req: Request, state: &S) -> Result<JsonLdEntityIds, ExtractorRejection> {
         admit_request_body(req, state, |AdmittedBody { text, context, uri }| {
             let batch = entity_id_batch(&text).map_err(|refusal| ExtractorRejection::Classified(refusal.into_problem(uri)))?;
-            Ok(JsonLdEntityIds { batch, context })
+            Ok(JsonLdEntityIds {
+                batch,
+                context: SubmittedContext::from(context),
+            })
         })
         .await
     }
@@ -93,7 +97,7 @@ fn entity_id_batch(body: &[u8]) -> Result<EntityIdBatch, BatchBodyRefusal> {
 mod tests {
     use crate::entity_id_batch::JsonLdEntityIds;
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
-    use andromeda_jsonld::request_context::RequestContext;
+    use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext, user_context_admission::SubmittedContext};
     use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
     use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use axum::{
@@ -155,15 +159,17 @@ mod tests {
             .expect("a batch of ids");
         pretty_assertions::assert_eq!(extracted.batch.ids.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:1"]);
         pretty_assertions::assert_eq!(
-            extracted.context.request_context(),
-            &RequestContext::Link(IriBuf::new("https://example.org/ctx.jsonld".to_owned()).expect("a valid IRI"))
+            extracted.context,
+            SubmittedContext::from(ContextSpec::from_link(
+                IriBuf::new("https://example.org/ctx.jsonld".to_owned()).expect("a valid IRI")
+            ))
         );
     }
 
     #[tokio::test]
     async fn a_json_id_array_without_a_link_is_read_against_the_default_context() {
         let extracted = extract(json_request(r#"["urn:ngsi-ld:T:1"]"#)).await.expect("a batch of ids");
-        pretty_assertions::assert_eq!(extracted.context.request_context(), &RequestContext::Default);
+        pretty_assertions::assert_eq!(extracted.context, SubmittedContext::from(ContextSpec::from_request(RequestContext::Default)));
     }
 
     /// Clause 6.3.5: an `application/ld+json` body names its context in an

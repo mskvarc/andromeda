@@ -12,7 +12,11 @@ use crate::{
 };
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_jsonld::{
+    context_spec::ContextSpec,
+    engine::processor::JsonLdEngine,
+    user_context_admission::{SubmittedContext, admit_user_context},
+};
 use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
@@ -377,6 +381,10 @@ fn subscription_with_chosen_context() -> Subscription {
 /// the `jsonldContext` the update wrote back.
 async fn written_context_after_update(fragment: Value, context: &ContextSpec) -> Option<IriBuf> {
     let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+    // clone: the admission consumes the spec, and the caller keeps its own
+    let context = admit_user_context(&engine, SubmittedContext::from(context.clone()))
+        .await
+        .expect("the context is admitted");
     let written = WrittenContext::default();
     let store = UpdatingStore {
         stored: subscription_with_chosen_context(),
@@ -395,7 +403,7 @@ async fn written_context_after_update(fragment: Value, context: &ContextSpec) ->
         },
     );
     let updated = service
-        .update(&ContextTarget::Live, &uri("urn:ngsi-ld:Subscription:stored"), fragment, context)
+        .update(&ContextTarget::Live, &uri("urn:ngsi-ld:Subscription:stored"), fragment, &context)
         .await;
     assert!(updated.is_ok(), "{updated:?}");
     written

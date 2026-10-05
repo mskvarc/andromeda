@@ -25,9 +25,9 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{
-    context_spec::ContextSpec,
     context_validation::{validate_context_spec, validate_jsonld_context_value},
     engine::processor::JsonLdEngine,
+    user_context_admission::AdmittedContext,
 };
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, ngsi_ld_urn::SubscriptionId};
@@ -216,7 +216,7 @@ where
     /// or the terms cannot be expanded; [`SubscriptionError::Persistence`]
     /// when the store rejects the write. A failing forwarding hook is logged
     /// rather than returned: the local subscription is updated either way.
-    pub async fn update(&self, target: &ContextTarget, id: &Identifier, mut payload: Value, context: &ContextSpec) -> Result<(), SubscriptionError> {
+    pub async fn update(&self, target: &ContextTarget, id: &Identifier, mut payload: Value, context: &AdmittedContext) -> Result<(), SubscriptionError> {
         let result: Result<(), SubscriptionError> = async {
             validate_endpoint(&payload, self.endpoint_validator.as_ref())?;
 

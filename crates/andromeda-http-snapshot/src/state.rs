@@ -5,6 +5,7 @@ use andromeda_http_extraction::{
     tenant_state::{ExistingTenantState, TenantStateResolver},
 };
 use andromeda_http_response::problem_response::ProblemResponse;
+use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_snapshot::service::SnapshotService;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::RuntimeLease, tenant_ref::TenantRef};
 use axum::http::Uri;
@@ -15,6 +16,9 @@ use std::sync::Arc;
 pub struct SnapshotRouteServices {
     /// Snapshot lifecycle policy.
     pub snapshots: Arc<SnapshotService>,
+    /// The tenant's JSON-LD engine, which admits the user `@context` a
+    /// Snapshot is created under (clause 5.5.7).
+    pub engine: JsonLdEngine,
     /// Keeps the tenant runtime resident for the life of the request holding
     /// this capability set, so eviction never closes its pools mid-request.
     pub runtime_lease: RuntimeLease,
@@ -23,8 +27,12 @@ pub struct SnapshotRouteServices {
 impl SnapshotRouteServices {
     /// Construct focused snapshot capabilities.
     #[must_use]
-    pub const fn new(snapshots: Arc<SnapshotService>, runtime_lease: RuntimeLease) -> SnapshotRouteServices {
-        SnapshotRouteServices { snapshots, runtime_lease }
+    pub const fn new(snapshots: Arc<SnapshotService>, engine: JsonLdEngine, runtime_lease: RuntimeLease) -> SnapshotRouteServices {
+        SnapshotRouteServices {
+            snapshots,
+            engine,
+            runtime_lease,
+        }
     }
 }
 

@@ -3,7 +3,10 @@
 
 use crate::{
     BAD_REQUEST_DATA_TYPE,
+    COMPOUND_CONTEXT_URL,
+    LD_CONTEXT_NOT_AVAILABLE_TYPE,
     RESOURCE_NOT_FOUND_TYPE,
+    UNREACHABLE_CONTEXT,
     cleanup_registration,
     create_registration,
     csr_basic_jsonld,
@@ -20,7 +23,8 @@ use crate::{
     update_registration_raw,
 };
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
-use reqwest::StatusCode;
+use reqwest::{Method, StatusCode};
+use serde_json::json;
 
 // ---------------------------------------------------------------------------
 // 5.9.3 -- Update endpoint
@@ -248,6 +252,70 @@ async fn update_without_id_in_url_returns_405() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+
+    cleanup_registration(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
+}
+
+// ---------------------------------------------------------------------------
+// 5.5.7 -- The user @context an update is written under
+// ---------------------------------------------------------------------------
+
+/// Clause 5.5.7: a user `@context` declaring a JSON-LD Scoped Context is
+/// `BadRequestData` on an update as on a create, and the registration is left
+/// as it was.
+#[tokio::test]
+async fn update_under_a_scoped_user_context_returns_400_and_leaves_the_registration_unchanged() {
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
+    let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-scoped");
+    let (status, _, _) = create_registration(&c, &csr_basic_jsonld(&id)).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let fragment = json!({
+        "endpoint": "http://scoped.example.org:1026",
+        "@context": [{"speed": {"@id": "https://example.org/speed", "@context": {}}}, COMPOUND_CONTEXT_URL.as_str()]
+    });
+    let (status, body) = update_registration(&c, &id, &fragment, "application/ld+json").await;
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+
+    let (status, body) = retrieve_registration(&c, &id, None, None).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["endpoint"], "http://my.csource.org:1026/");
+
+    cleanup_registration(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.5.6: an update whose `@context` cannot be retrieved is
+/// `LdContextNotAvailable`, and the registration is left as it was.
+#[tokio::test]
+async fn update_under_an_unreachable_context_returns_504_and_leaves_the_registration_unchanged() {
+    let scope = TenantScopedEnvironment::from_suite("csr").await.expect("tenant-scoped test environment");
+    let c = scope.client().clone();
+    crate::provision_tenant(&c).await;
+    let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-unreachable");
+    let (status, _, _) = create_registration(&c, &csr_basic_jsonld(&id)).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = request(
+        &c,
+        Method::PATCH,
+        &format!("/csourceRegistrations/{id}"),
+        Some(&json!({"endpoint": "http://unreachable.example.org:1026"})),
+        Some("application/json"),
+        Some(UNREACHABLE_CONTEXT),
+        None,
+    )
+    .await;
+    pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT, "{body}");
+    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE.as_str());
+
+    let (status, body) = retrieve_registration(&c, &id, None, None).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["endpoint"], "http://my.csource.org:1026/");
 
     cleanup_registration(&c, &id).await;
     scope.finish().await.expect("cleanup failed");

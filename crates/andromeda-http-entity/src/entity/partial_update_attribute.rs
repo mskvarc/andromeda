@@ -29,6 +29,7 @@ use crate::{
 use andromeda_entity::write_kind::PartialUpdateAttribute;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
+use andromeda_jsonld::user_context_admission::admit_user_context;
 use axum::http::Method;
 
 pub(crate) async fn partial_update_attr(
@@ -42,6 +43,9 @@ pub(crate) async fn partial_update_attr(
     ValidatedQuery(params): ValidatedQuery<PartialUpdateAttrParams>,
     JsonLdDocument { document: fragment, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.4 judges the payload "according to the @context", so the
+    // context is admitted before anything is read under it (clause 5.5.7).
+    let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
     let service = &state.entities;
     let dataset_id = selected_dataset_uri(params.dataset_id.as_ref());
     let path_suffix = format!("/attrs/{attr_id}");

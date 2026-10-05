@@ -27,11 +27,12 @@
 //! which only the resolver knows, so [`presented_context`] states it from the
 //! [`context_tail`] the resolver records for every document it holds.
 //!
-//! One clause 5.5.7 rule is stated here for the same reason: whether the user
-//! `@context` of a request declares a JSON-LD Scoped Context is decidable only
-//! once every context it names has been resolved, which is this crate's
-//! capability and no caller's. [`scoped_context_admission`] holds it; which
-//! operations run it is the callers' decision.
+//! The clause 5.5.7 admission of a request's user `@context` is stated here for
+//! the same reason: whether it loads, and whether it declares a JSON-LD Scoped
+//! Context, is decidable only once every context it names has been resolved,
+//! which is this crate's capability and no caller's.
+//! [`user_context_admission`] holds it, and its types make it the one way a
+//! context a client submitted becomes one an operation may read under.
 //!
 //! Four ports point outward and are declared here because this crate or its
 //! callers reach through them: [`context_cache::ContextCache`], the durable
@@ -70,8 +71,8 @@ pub mod loader;
 pub mod operation_hit_scope;
 pub mod presented_context;
 pub mod request_context;
-pub mod scoped_context_admission;
 pub mod term_expansion;
+pub mod user_context_admission;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

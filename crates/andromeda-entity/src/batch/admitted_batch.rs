@@ -20,7 +20,7 @@ use crate::{
     write_admission::BatchWrite,
     write_kind::BatchWriteKind,
 };
-use andromeda_jsonld::batch_contexts::{BatchContext, ContextGroups};
+use andromeda_jsonld::batch_contexts::{AdmittedBatchContext, BatchContext, ContextGroups};
 use andromeda_ngsi_ld_entity::document::EntityDocument;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{attribute_strip::AttributeStrip, entity::Entity};
@@ -31,8 +31,9 @@ pub struct SubmittedEntity {
     pub entity: Entity,
     /// The context the entity is read against: its own `@context` in an
     /// `application/ld+json` batch, the request's `Link` context otherwise
-    /// (clause 5.5.7). Entities naming the same context share one identity.
-    pub context: BatchContext,
+    /// (clause 5.5.7), admitted before the entity is. Entities naming the same
+    /// context share one identity.
+    pub context: AdmittedBatchContext,
 }
 
 /// Where an admitted entity's local write document comes from.
@@ -231,7 +232,7 @@ mod tests {
         write_kind::{BatchCreate, BatchUpsert},
     };
     use andromeda_jsonld::{
-        batch_contexts::{BatchContext, BatchContexts},
+        batch_contexts::{AdmittedBatchContext, BatchContexts},
         context_spec::ContextSpec,
     };
     use andromeda_ngsi_ld_entity::document::EntityDocument;
@@ -387,8 +388,13 @@ mod tests {
 
     /// A context mapping `term` to `iri`, as an item of an
     /// `application/ld+json` batch carries it, interned in `contexts`.
-    fn term_context(contexts: &mut BatchContexts, term: &str, iri: &str) -> BatchContext {
-        contexts.context_of(Some(json!({ term: iri })))
+    /// The context defining `term` as `iri`, admitted as a request's is.
+    async fn term_context(service: &EntityService, contexts: &mut BatchContexts, term: &str, iri: &str) -> AdmittedBatchContext {
+        contexts
+            .context_of(Some(json!({ term: iri })))
+            .admit(&service.engine)
+            .await
+            .expect("the context is admitted")
     }
 
     /// The expanded attribute names the admission prepared, by identifier.
@@ -403,7 +409,7 @@ mod tests {
             .collect()
     }
 
-    fn submitted_under(id: &str, context: &BatchContext) -> SubmittedEntity {
+    fn submitted_under(id: &str, context: &AdmittedBatchContext) -> SubmittedEntity {
         SubmittedEntity {
             entity: vehicle(id),
             context: context.clone(), // clone: each entity holds the shared handle
@@ -417,8 +423,8 @@ mod tests {
     async fn each_entity_of_a_batch_is_expanded_under_its_own_context() {
         let (service, _recorded) = recording_service().await;
         let mut contexts = BatchContexts::per_entity();
-        let first = term_context(&mut contexts, "speed", "https://a.example/speed");
-        let second = term_context(&mut contexts, "speed", "https://b.example/speed");
+        let first = term_context(&service, &mut contexts, "speed", "https://a.example/speed").await;
+        let second = term_context(&service, &mut contexts, "speed", "https://b.example/speed").await;
         let submitted = vec![
             submitted_under("urn:ngsi-ld:Vehicle:1", &first),
             submitted_under("urn:ngsi-ld:Vehicle:2", &second),
@@ -454,8 +460,8 @@ mod tests {
     async fn a_narrowed_entity_is_prepared_again_under_its_own_context() {
         let (service, _recorded) = recording_service().await;
         let mut contexts = BatchContexts::per_entity();
-        let own = term_context(&mut contexts, "brandName", "https://a.example/brandName");
-        let other = term_context(&mut contexts, "brandName", "https://b.example/brandName");
+        let own = term_context(&service, &mut contexts, "brandName", "https://a.example/brandName").await;
+        let other = term_context(&service, &mut contexts, "brandName", "https://b.example/brandName").await;
         let submitted = vec![submitted_under("urn:ngsi-ld:Vehicle:1", &own), submitted_under("urn:ngsi-ld:Vehicle:2", &other)];
         let (mut admitted, refused) = service.admit_batch_write(BatchCreate, submitted).await;
         assert!(refused.is_empty(), "{refused:?}");
@@ -494,7 +500,9 @@ mod tests {
             entity(&json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": "urn:ngsi-ld:null"}})),
             vehicle("urn:ngsi-ld:Vehicle:2"),
         ];
-        let (admitted, refused) = service.admit_batch_write(BatchCreate, submitted(entities, &ContextSpec::core_only())).await;
+        let (admitted, refused) = service
+            .admit_batch_write(BatchCreate, submitted(&service, entities, &ContextSpec::core_only()).await)
+            .await;
         pretty_assertions::assert_eq!(refused.iter().map(|(id, _)| id.to_string()).collect::<Vec<_>>(), vec!["urn:ngsi-ld:Vehicle:1"]);
         pretty_assertions::assert_eq!(
             admitted.entities().map(|(entity, _)| entity.id.to_string()).collect::<Vec<_>>(),
@@ -515,7 +523,9 @@ mod tests {
         }));
         let entities = vec![located, vehicle("urn:ngsi-ld:Vehicle:2")];
 
-        let (admitted, refused) = service.admit_batch_write(BatchCreate, submitted(entities, &ContextSpec::core_only())).await;
+        let (admitted, refused) = service
+            .admit_batch_write(BatchCreate, submitted(&service, entities, &ContextSpec::core_only()).await)
+            .await;
 
         let [(id, refusal)] = refused.as_slice() else {
             panic!("exactly the oversized entity is refused: {refused:?}");
@@ -541,7 +551,9 @@ mod tests {
         let nested = entity(&json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "reading": {"type": "Property", "value": deep}}));
         let entities = vec![nested, vehicle("urn:ngsi-ld:Vehicle:2")];
 
-        let (admitted, refused) = service.admit_batch_write(BatchCreate, submitted(entities, &ContextSpec::core_only())).await;
+        let (admitted, refused) = service
+            .admit_batch_write(BatchCreate, submitted(&service, entities, &ContextSpec::core_only()).await)
+            .await;
 
         let [(id, refusal)] = refused.as_slice() else {
             panic!("exactly the nesting entity is refused: {refused:?}");

@@ -11,7 +11,7 @@
 //! than only under an HTTP-status integration test.
 
 use crate::{
-    admission_fixture::admitted_entity,
+    admission_fixture::{admitted_context, admitted_entity},
     deletion_outline::DeletionWatchers,
     deletion_outline_fixture::ProbeAnswer,
     merge_options::MergeOptions,
@@ -46,7 +46,14 @@ async fn merge_records_an_attribute_updated_match() {
     let fragment = patch(json!({"category": {"type": "Property", "value": "retail"}}));
     let admitted = admitted_entity::<MergeEntity>(&service, &fragment, &core_context()).await;
     service
-        .merge(&live_target(), &entity_uri(), &fragment, admitted, &core_context(), MergeOptions::default())
+        .merge(
+            &live_target(),
+            &entity_uri(),
+            &fragment,
+            admitted,
+            &admitted_context(&service, &core_context()).await,
+            MergeOptions::default(),
+        )
         .await
         .expect("the merge lands");
 
@@ -60,7 +67,14 @@ async fn merge_records_an_attribute_created_match() {
     let fragment = patch(json!({"name": {"type": "Property", "value": "lobby"}}));
     let admitted = admitted_entity::<MergeEntity>(&service, &fragment, &core_context()).await;
     service
-        .merge(&live_target(), &entity_uri(), &fragment, admitted, &core_context(), MergeOptions::default())
+        .merge(
+            &live_target(),
+            &entity_uri(),
+            &fragment,
+            admitted,
+            &admitted_context(&service, &core_context()).await,
+            MergeOptions::default(),
+        )
         .await
         .expect("the merge lands");
 
@@ -99,9 +113,10 @@ async fn every_match_of_one_change_shares_one_snapshot() {
     let observed = probing_recording_service(ProbeAnswer::Answers(DeletionWatchers::Possible), CachedSubscription::BuildingTwice).await;
     let fragment = patch(json!({"category": {"type": "Property", "value": "retail"}}));
     let admitted = admitted_entity::<MergeEntity>(&observed.service, &fragment, &core_context()).await;
+    let context = admitted_context(&observed.service, &core_context()).await;
     observed
         .service
-        .merge(&live_target(), &entity_uri(), &fragment, admitted, &core_context(), MergeOptions::default())
+        .merge(&live_target(), &entity_uri(), &fragment, admitted, &context, MergeOptions::default())
         .await
         .expect("the merge lands");
 

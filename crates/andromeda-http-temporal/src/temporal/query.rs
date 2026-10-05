@@ -10,7 +10,6 @@
 use crate::{
     history_read::TemporalHistoryRead,
     join::apply_temporal_join,
-    request_context_admission::admit_request_context,
     temporal::{
         ProblemResponse,
         Response,
@@ -85,10 +84,6 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         page,
     } = request;
     let service = &state.temporal;
-    // Clause 5.5.7: a request `@context` declaring a JSON-LD Scoped Context is
-    // refused on the temporal query path -- GET and POST alike -- before it is
-    // forwarded or expanded against.
-    admit_request_context(service.engine(), &context, &uri).await?;
     let AdmittedQuery { prefer, incoming_via, map_use } = admit_request(&state, &target, &context, protocol, &mut params, &uri).await?;
     let key_values = params.is_simplified();
 

@@ -23,7 +23,7 @@ use crate::{
     status_delivery_signal::StatusDeliverySignal,
     store::SnapshotStore,
 };
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::SnapshotId};
 use andromeda_ngsi_ld_model::{
     snapshot::{Snapshot, SnapshotStatus},
@@ -126,7 +126,7 @@ impl SnapshotService {
     /// generated identifier, the configured default lifetime or the request
     /// context cannot be materialised; and the store's own failure when the
     /// record cannot be persisted or the tenant quotas cannot be enforced.
-    pub async fn create(&self, input: SnapshotInput, context: ContextSpec) -> Result<Snapshot, SnapshotError> {
+    pub async fn create(&self, input: SnapshotInput, context: AdmittedContext) -> Result<Snapshot, SnapshotError> {
         if input.snapshot_queries.is_none() && input.snapshot_temporal_queries.is_none() {
             return Err(SnapshotValidationReason::QueryCollectionsMissing.into());
         }

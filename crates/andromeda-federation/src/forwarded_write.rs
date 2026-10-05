@@ -9,7 +9,7 @@ use crate::{
     FederationService,
     document_rewording::DocumentVocabulary,
     error::FederationError,
-    forwarded_payload::{ItemBody, OutgoingBody},
+    forwarded_payload::{ItemBody, OutgoingBody, build_identifiers_payload},
     forwarding_context::BodyPresence,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
     registration_payload::forwarding_decision,
@@ -73,6 +73,9 @@ pub(crate) enum WritePayload<'a> {
     /// A batch array whose entities each carry the context they were
     /// submitted under.
     Items(Vec<ItemBody<'a>>),
+    /// The bare Entity IDs of a batch deletion (clause 5.6.10.3), which name
+    /// no term and so are read under no context.
+    Identifiers(&'a [Identifier]),
 }
 
 /// One forwarded write request, as [`FederationService::forward_write`] sends it.
@@ -184,6 +187,7 @@ impl FederationService {
                 single_write_naming(registration, context, BodyPresence::Present),
             ),
             WritePayload::Items(items) => (self.payload_for_items(registration, items).await, Ok(None)),
+            WritePayload::Identifiers(ids) => (build_identifiers_payload(ids), Ok(None)),
         };
         let (payload, naming) = match (payload, naming) {
             (Ok(payload), Ok(naming)) => (payload, naming),

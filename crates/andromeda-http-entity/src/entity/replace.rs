@@ -28,6 +28,7 @@ use crate::{
 use andromeda_entity::write_kind::ReplaceEntity;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
+use andromeda_jsonld::user_context_admission::admit_user_context;
 use axum::http::Method;
 
 pub(crate) async fn update(
@@ -41,6 +42,9 @@ pub(crate) async fn update(
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     JsonLd { value: patch, context }: JsonLd<EntityPatch>,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.4 judges the payload "according to the @context", so the
+    // context is admitted before anything is read under it (clause 5.5.7).
+    let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
     let service = &state.entities;
     let is_local = params.local.unwrap_or(false);
     // Clause 5.6.18.4 runs the clause 5.5.4 validation before the forwarding

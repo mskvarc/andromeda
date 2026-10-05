@@ -36,6 +36,7 @@ use andromeda_entity_map::recording::PageMatches;
 use andromeda_federation::request::{EntityMapInUse, TriggeringRequest};
 use andromeda_http_extraction::{context_target, response_context_request::ResponseContextRequest};
 use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
+use andromeda_jsonld::user_context_admission::{SubmittedContext, admit_user_context};
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_render::response::ResponseRenderer;
 use std::slice::{from_mut, from_ref};
@@ -105,10 +106,11 @@ pub(crate) async fn get(
     protocol: NgsiLdProtocolHeaders,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entity_query;
-    // Clause 5.5.7: a request `@context` declaring a JSON-LD Scoped Context is
-    // refused on the read path exactly as on the write path, before anything is
-    // expanded against it.
-    service.admit_read_context(&context).await.with_entity_instance(&uri)?;
+    // Clause 5.5.7: the request `@context` is admitted on the read path exactly
+    // as on the write path, before anything is expanded against it.
+    let context = admit_user_context(service.engine(), SubmittedContext::from(context))
+        .await
+        .with_entity_instance(&uri)?;
     protocol.extensions().apply_to_entity_get(&mut params).with_entity_instance(&uri)?;
     let language_filter = params.lang.take().or(protocol.language_filter);
     let prefer = protocol.prefer;

@@ -5,6 +5,7 @@ use crate::{
     BAD_REQUEST_DATA_TYPE,
     BASE_URL,
     INVALID_REQUEST_TYPE,
+    LD_CONTEXT_NOT_AVAILABLE_TYPE,
     cleanup_entity_map,
     client,
     create_entity,
@@ -253,5 +254,62 @@ async fn entity_map_create_entity_using_core_context_succeeds_for_baseline() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     delete_entity(&c, &id).await;
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// A remote `@context` at an address nothing answers on, so its resolution
+/// fails with a connection refusal rather than a slow timeout (clause 5.5.6).
+const UNREACHABLE_CONTEXT_LINK: &str = r#"<http://127.0.0.1:9/unreachable.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#;
+
+/// POST `query` to `path` as `application/ld+json` under an inline `@context`
+/// declaring a JSON-LD Scoped Context, and as `application/json` under an
+/// unreachable context `Link`, answering each status and problem type and
+/// whether a map was created.
+async fn refused_creations(c: &reqwest::Client, path: &str) -> [(StatusCode, Value, bool); 2] {
+    let query = json!({"type": "Query", "entities": [{"type": "Vehicle"}]});
+    let mut scoped = query.clone(); // clone: the unreachable case posts the query without the context
+    scoped["@context"] = json!([{"speed": {"@id": "https://example.org/speed", "@context": {}}}, CORE_CONTEXT.as_str()]);
+    let scoped = c
+        .post(format!("{BASE_URL}{path}"))
+        .header("Content-Type", "application/ld+json")
+        .json(&scoped)
+        .send()
+        .await
+        .expect("scoped request");
+    let unreachable = c
+        .post(format!("{BASE_URL}{path}"))
+        .header("Content-Type", "application/json")
+        .header("Link", UNREACHABLE_CONTEXT_LINK)
+        .json(&query)
+        .send()
+        .await
+        .expect("unreachable request");
+    [answered(scoped).await, answered(unreachable).await]
+}
+
+/// The status, problem type and whether a map was created, of one answer.
+async fn answered(response: reqwest::Response) -> (StatusCode, Value, bool) {
+    let status = response.status();
+    let created = response.headers().contains_key("location") || response.headers().contains_key("ngsild-entitymap");
+    let body: Value = response.json().await.unwrap_or_default();
+    (status, body["type"].clone(), created) // clone: the type outlives the body it was read from
+}
+
+/// Clauses 5.5.6 and 5.5.7: an Entity Map creation from a posted query admits
+/// its user `@context` first -- a scoped one is `BadRequestData`, an
+/// unreachable one `LdContextNotAvailable` -- and creates no map.
+#[tokio::test]
+async fn entity_map_create_from_post_refuses_a_scoped_or_unreachable_context() {
+    let scope = TestEnvironment::from_suite("entity_map").await.expect("isolated test environment");
+    let c = client();
+    for path in ["/entityMaps", "/temporal/entityMaps"] {
+        let [scoped, unreachable] = refused_creations(&c, path).await;
+        pretty_assertions::assert_eq!(scoped, (StatusCode::BAD_REQUEST, json!(BAD_REQUEST_DATA_TYPE.as_str()), false), "{path}");
+        pretty_assertions::assert_eq!(
+            unreachable,
+            (StatusCode::GATEWAY_TIMEOUT, json!(LD_CONTEXT_NOT_AVAILABLE_TYPE.as_str()), false),
+            "{path}"
+        );
+    }
     scope.finish().await.expect("cleanup failed");
 }

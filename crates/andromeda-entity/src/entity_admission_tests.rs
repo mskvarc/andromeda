@@ -3,7 +3,7 @@
 //! reaches them.
 
 use crate::{
-    admission_fixture::{admitted_batch, admitted_entity, submitted},
+    admission_fixture::{admitted_batch, admitted_context, admitted_entity, submitted},
     error::EntityError,
     merge_options::MergeOptions,
     notification_recording_harness::{ENTITY_ID, entity_uri, live_target, recording_service},
@@ -38,7 +38,10 @@ fn admit_expanded(expanded: &Value) -> Result<(), EntityError> {
 async fn admit_created(attribute: &str, node: &Value) -> Result<(), EntityError> {
     let (service, _recorded) = recording_service().await;
     let payload = json!({"id": ENTITY_ID, "type": "Building", attribute: node});
-    service.admit_entity_write::<CreateEntity>(payload, &ContextSpec::core_only()).await.map(drop)
+    service
+        .admit_entity_write::<CreateEntity>(payload, &admitted_context(&service, &ContextSpec::core_only()).await)
+        .await
+        .map(drop)
 }
 
 /// Admit a Building located by `geometry` as a creation.
@@ -100,7 +103,7 @@ async fn creating_an_entity_whose_property_value_object_nests_a_null_is_refused(
     let (service, _recorded) = recording_service().await;
     let entity = written_entity("address", &json!({"type": "Property", "value": {"country": "urn:ngsi-ld:null"}}));
     let error = service
-        .admit_entity_write::<CreateEntity>(&entity, &ContextSpec::core_only())
+        .admit_entity_write::<CreateEntity>(&entity, &admitted_context(&service, &ContextSpec::core_only()).await)
         .await
         .expect_err("a creation may not nest the sentinel in a value object");
     assert!(matches!(error, EntityError::Validation(_)), "{error}");
@@ -119,7 +122,7 @@ async fn merging_a_fragment_whose_property_value_object_nests_a_null_is_accepted
             &entity_uri(),
             &patch,
             admitted,
-            &ContextSpec::core_only(),
+            &admitted_context(&service, &ContextSpec::core_only()).await,
             MergeOptions::default(),
         )
         .await
@@ -133,7 +136,7 @@ async fn merging_a_fragment_that_deletes_a_dataset_id_is_refused() {
     let (service, _recorded) = recording_service().await;
     let patch = written_patch("category", &json!({"type": "Property", "value": 9, "datasetId": "urn:ngsi-ld:null"}));
     let error = service
-        .admit_entity_write::<MergeEntity>(&patch, &ContextSpec::core_only())
+        .admit_entity_write::<MergeEntity>(&patch, &admitted_context(&service, &ContextSpec::core_only()).await)
         .await
         .expect_err("a datasetId cannot be deleted by the sentinel");
     assert!(matches!(error, EntityError::Validation(_)), "{error}");
@@ -145,7 +148,9 @@ async fn merging_a_fragment_that_deletes_a_dataset_id_is_refused() {
 async fn a_batch_creation_refuses_the_sentinel_against_the_entity_that_carried_it() {
     let (service, _recorded) = recording_service().await;
     let entities = vec![written_entity("category", &json!({"type": "Property", "value": "urn:ngsi-ld:null"}))];
-    let (admitted, refused) = service.admit_batch_write(BatchCreate, submitted(entities, &ContextSpec::core_only())).await;
+    let (admitted, refused) = service
+        .admit_batch_write(BatchCreate, submitted(&service, entities, &ContextSpec::core_only()).await)
+        .await;
     assert!(admitted.is_empty(), "nothing may be created");
     pretty_assertions::assert_eq!(refused.len(), 1);
     pretty_assertions::assert_eq!(refused[0].0.as_str(), ENTITY_ID);
@@ -187,7 +192,7 @@ async fn creating_an_entity_with_any_family_spelling_of_the_sentinel_is_refused(
     for (attribute, node) in cases {
         let (service, _recorded) = recording_service().await;
         let outcome = service
-            .admit_entity_write::<CreateEntity>(&written_entity(attribute, &node), &ContextSpec::core_only())
+            .admit_entity_write::<CreateEntity>(&written_entity(attribute, &node), &admitted_context(&service, &ContextSpec::core_only()).await)
             .await;
         match outcome {
             Ok(admitted) => panic!("{attribute}: a creation admits no NGSI-LD Null, yet {admitted:?} was admitted"),
@@ -359,7 +364,7 @@ async fn a_patch_fragment_is_validated() {
         &json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}}),
     );
     let error = service
-        .admit_entity_write::<MergeEntity>(&patch, &ContextSpec::core_only())
+        .admit_entity_write::<MergeEntity>(&patch, &admitted_context(&service, &ContextSpec::core_only()).await)
         .await
         .expect_err("a fragment is validated");
     assert!(error.to_string().contains("4 ordinates"), "got {error}");

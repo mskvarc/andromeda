@@ -19,6 +19,7 @@ use crate::{
 };
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfo;
 use andromeda_ngsi_ld_render::version::renderer::VersionRenderer;
 use iri_rs::IriBuf;
@@ -126,7 +127,7 @@ pub(crate) async fn build_forwarded_payload(
 /// each entity of an `application/ld+json` batch is read under its own.
 #[derive(Debug)]
 pub(crate) struct ItemBody<'a> {
-    /// The entity, or the bare identifier a batch deletion carries.
+    /// The entity.
     pub(crate) body: Value,
     /// The context the entity was submitted under.
     pub(crate) context: &'a BatchContext,
@@ -149,11 +150,6 @@ pub(crate) async fn build_items_payload(
     let mut array = Vec::with_capacity(items.len());
     for ItemBody { body: mut value, context } in items {
         remove_inline_context(&mut value);
-        // A batch deletion carries bare identifiers, which name no term.
-        if !value.is_object() {
-            array.push(value);
-            continue;
-        }
         let naming = decision.context.naming(context.spec());
         let mut value = DocumentRewording::reword(
             engine,
@@ -174,6 +170,27 @@ pub(crate) async fn build_items_payload(
         media_type: decision.media_type,
         link_context: decision.context.link(),
         body: Some(serde_json::to_vec(&Value::Array(array))?),
+    })
+}
+
+/// Build the payload of a forwarded batch deletion: the bare Entity IDs, as
+/// `application/json` under no context `Link`.
+///
+/// Clause 6.3.5 has an `application/ld+json` body name its context in an
+/// `@context` member, which an array of strings cannot carry, and the
+/// identifiers name no term a context could resolve, so the array is sent the
+/// one way a source admits it whatever representation its registration asks
+/// for.
+///
+/// # Errors
+///
+/// Returns [`FederationError::Representation`] when the array cannot be
+/// serialised.
+pub(crate) fn build_identifiers_payload(ids: &[Identifier]) -> Result<ForwardedPayload, FederationError> {
+    Ok(ForwardedPayload {
+        media_type: ResponseMediaType::Json,
+        link_context: None,
+        body: Some(serde_json::to_vec(ids)?),
     })
 }
 
@@ -214,11 +231,12 @@ async fn spelled_body(engine: &JsonLdEngine, inbound: &ContextSpec, context: &Fo
 mod tests {
     use crate::{
         document_rewording::DocumentVocabulary,
-        forwarded_payload::{ForwardedPayload, ItemBody, OutgoingBody, build_forwarded_payload, build_items_payload},
+        forwarded_payload::{ForwardedPayload, ItemBody, OutgoingBody, build_forwarded_payload, build_identifiers_payload, build_items_payload},
         forwarding_context::{BodyPresence, ForwardingContext, Rewording, decide, decide_for_items},
     };
     use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_jsonld::{batch_contexts::BatchContexts, context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, key_value_pair::KeyValuePair};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
@@ -549,6 +567,19 @@ mod tests {
         pretty_assertions::assert_eq!(body[1]["@context"], json!(CONFIGURED_CONTEXT));
         pretty_assertions::assert_eq!(body[0]["type"], json!("Vehicle"));
         pretty_assertions::assert_eq!(body[1]["type"], json!("Car"));
+    }
+
+    /// Clause 6.3.5: a forwarded batch deletion's bare identifiers cannot carry
+    /// an `@context`, so they travel as `application/json` under no context
+    /// `Link`, in array order.
+    #[test]
+    fn a_batch_deletion_forwards_its_identifiers_as_json_under_no_link() {
+        let ids = ["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"].map(|raw| raw.parse::<Identifier>().expect("a valid identifier"));
+        let forwarded = build_identifiers_payload(&ids).expect("payload builds");
+        pretty_assertions::assert_eq!(forwarded.media_type, ResponseMediaType::Json);
+        assert!(forwarded.link_context.is_none());
+        let body: Value = serde_json::from_slice(forwarded.body.as_deref().expect("body")).expect("JSON body");
+        pretty_assertions::assert_eq!(body, json!(["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]));
     }
 
     /// An item whose own context holds a relative reference cannot travel

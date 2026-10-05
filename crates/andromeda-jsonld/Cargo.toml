@@ -25,7 +25,7 @@ async-trait = "0.1.92"
 backon = { version = "1.6.0", features = ["tokio-sleep"] }
 contextual = "0.1.6"
 dashmap = { version = "6.2.1", features = ["inline"] }
-derive_more = { version = "2.1.1", features = ["debug", "display"] }
+derive_more = { version = "2.1.1", features = ["debug", "deref", "display", "from"] }
 headers = "0.4.2"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 jsonld = { version = "0.23.6", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }

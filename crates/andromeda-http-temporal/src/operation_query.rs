@@ -12,6 +12,7 @@
 use crate::{
     error::TemporalResultExt,
     extension_gate::TemporalExtensionGate,
+    request_context_admission::admit_request_context,
     state::TemporalTenantState,
     temporal::query::{page::QueriedPage, request::TemporalQueryRequest, run},
 };
@@ -44,6 +45,9 @@ pub async fn query(
     RequestPagination(pagination): RequestPagination,
     AdmittedTemporalPostQuery { params, context, .. }: AdmittedTemporalPostQuery<TemporalExtensionGate>,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.7: the request `@context` is admitted before the query is
+    // forwarded or anything is expanded against it.
+    let context = admit_request_context(services.temporal.engine(), context, &uri).await?;
     // Clause 6.3.10 asks for a Link Target "that could be dereferenced by an
     // NGSI-LD Client to retrieve the next page of NGSI-LD Elements", and clause
     // 5.5.9.1 that the pointers "contain all the parameters needed to allow

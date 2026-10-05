@@ -7,7 +7,7 @@
 //! subscription is joined through, is written under the core context alone and
 //! has nothing to host.
 
-use andromeda_jsonld::{compound_context_host::CompoundContextHost, context_spec::ContextSpec};
+use andromeda_jsonld::{compound_context_host::CompoundContextHost, context_spec::ContextSpec, user_context_admission::AdmittedContext};
 
 /// The core context alone, which a subscription the broker places is written
 /// under.
@@ -19,8 +19,8 @@ pub enum SubscriptionContext<'a> {
     /// A client request, and the tenant's host of a wrapper naming its
     /// contexts.
     Request {
-        /// The contexts the request named.
-        context: &'a ContextSpec,
+        /// The contexts the request named, admitted (clause 5.5.7).
+        context: &'a AdmittedContext,
         /// Where a wrapper of them is hosted when no single URL names them.
         host: &'a dyn CompoundContextHost,
     },

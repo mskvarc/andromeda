@@ -17,7 +17,7 @@ use andromeda_http_response::{
     internal_failure_summary::InternalFailureSummary,
     parameter_failure::classify_parameter_error,
 };
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::user_context_admission::SubmittedContext;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, post_parameters::TemporalPostQueryParams};
 use axum::{
@@ -93,7 +93,7 @@ pub struct AdmittedTemporalPostQuery<A> {
     pub params: TemporalQueryParameters,
     /// The context the query is read against: the body's own `@context` for
     /// `application/ld+json`, the `Link` context for `application/json`.
-    pub context: ContextSpec,
+    pub context: SubmittedContext,
     /// The admission the parameters passed.
     admission: PhantomData<A>,
 }

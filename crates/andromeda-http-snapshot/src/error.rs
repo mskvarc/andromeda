@@ -5,10 +5,12 @@ use andromeda_http_response::{
     entity_failure::classify_entity_error,
     forwarding_failure::classify_federation_error,
     internal_failure_summary::InternalFailureSummary,
+    jsonld_failure::classify_jsonld_error,
     parameter_failure::classify_parameter_error,
     problem_response::ProblemResponse,
     temporal_failure::classify_temporal_error,
 };
+use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_snapshot::{error::SnapshotError, service::purge::SnapshotPurgeFailure};
 use axum::http::Uri;
@@ -53,6 +55,14 @@ pub trait SnapshotResultExt<T> {
 impl<T> SnapshotResultExt<T> for Result<T, SnapshotError> {
     fn with_snapshot_instance(self, instance: &Uri) -> Result<T, ProblemResponse> {
         self.map_err(|error| classify_snapshot_error(&error).with_instance(instance.clone()))
+    }
+}
+
+/// The admission of the user `@context` a Snapshot is created under (clause
+/// 5.5.7) is refused as every other operation's is.
+impl<T> SnapshotResultExt<T> for Result<T, JsonLdError> {
+    fn with_snapshot_instance(self, instance: &Uri) -> Result<T, ProblemResponse> {
+        self.map_err(|error| classify_jsonld_error(&error).with_instance(instance.clone()))
     }
 }
 

@@ -29,6 +29,7 @@ use crate::{
 use andromeda_entity::write_kind::UpdateAttributes;
 use andromeda_federation::{outcome::ForwardedWriteResult, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
+use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_request::empty::EmptyParams;
 use axum::http::{HeaderMap, Method};
 
@@ -47,6 +48,9 @@ pub(crate) async fn update_attrs(
     headers: HeaderMap,
     JsonLdDocument { document: fragment, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.4 judges the payload "according to the @context", so the
+    // context is admitted before anything is read under it (clause 5.5.7).
+    let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
     let service = &state.entities;
     let request = ForwardProvisionRequest {
         resource: ProvisionResource::Entities,

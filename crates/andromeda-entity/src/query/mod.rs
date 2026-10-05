@@ -48,12 +48,11 @@ pub(crate) mod state_projection;
 
 use crate::{
     compiled_cache::CompiledQueryCache,
-    error::EntityError,
     port::{query::EntityQueryStore, reader::EntityReader},
     query::remote_linked::RemoteLinkedEntitySource,
     spatial_acceleration::SpatialAcceleration,
 };
-use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, scoped_context_admission::reject_scoped_user_contexts};
+use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use std::sync::Arc;
@@ -113,27 +112,5 @@ impl EntityQueryService {
     #[must_use]
     pub const fn reference_limits(&self) -> GeometryCensusLimits {
         self.reference_limits
-    }
-
-    /// Refuse a request `@context` clause 5.5.7 does not admit, before a read or
-    /// query expands anything against it.
-    ///
-    /// Clause 5.5.7 states that the user `@context` "shall not contain JSON-LD
-    /// Scoped Contexts", because they "could be used to modify terms defined in
-    /// the Core @context or to reshape NGSI-LD Elements during the expansion of
-    /// terms". The clause addresses the request's `@context` on every operation
-    /// that expands one, not only the write path, so a retrieval and a query
-    /// screen it exactly as a create does.
-    ///
-    /// # Errors
-    ///
-    /// Reports [`EntityError::JsonLd`] carrying
-    /// [`JsonLdError::ScopedUserContext`](andromeda_jsonld::error::JsonLdError::ScopedUserContext),
-    /// which the HTTP binding answers with `BadRequestData`, and the typed
-    /// context-loading failure when one of the request's contexts does not
-    /// resolve.
-    pub async fn admit_read_context(&self, context: &ContextSpec) -> Result<(), EntityError> {
-        reject_scoped_user_contexts(&self.engine, context).await?;
-        Ok(())
     }
 }

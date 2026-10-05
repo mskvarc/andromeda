@@ -26,6 +26,7 @@ use andromeda_http_extraction::{
     context_target,
     entity_id_batch::{EntityIdBatch, JsonLdEntityIds},
 };
+use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_request::empty::EmptyParams;
 
 pub(crate) async fn batch_delete(
@@ -52,6 +53,7 @@ pub(crate) async fn batch_delete(
         context,
     }: JsonLdEntityIds,
 ) -> Result<Response, ProblemResponse> {
+    let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
     let service = &state.entities;
 
     let triggering = TriggeringRequest {

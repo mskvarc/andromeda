@@ -26,7 +26,10 @@ use andromeda_http_extraction::{
     typed_path::TypedPath,
 };
 use andromeda_http_response::{internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse, single::NgsiLdResponse};
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{
+    context_spec::ContextSpec,
+    user_context_admission::{SubmittedContext, admit_user_context},
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_query::page_window::PageWindow;
@@ -79,8 +82,9 @@ pub async fn update(
     TypedPath(entity_map_id): TypedPath<Identifier>,
     // Clause 5.14.2.3 takes "A JSON-LD document"; the update names no term,
     // so its context is never resolved.
-    JsonLd { value: body, context: _ }: JsonLd<UpdateEntityMapBody>,
+    JsonLd { value: body, context }: JsonLd<UpdateEntityMapBody>,
 ) -> Result<Response, ProblemResponse> {
+    context.unused();
     let expires_at = body.expires_at.ok_or_else(|| bad_request_data("expiresAt is required", &uri))?;
 
     if expires_at <= chrono::Utc::now() {
@@ -213,6 +217,9 @@ pub async fn create_from_query(
     RequestPagination(pagination): RequestPagination,
     EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
+    let context = admit_user_context(state.entity_query.engine(), SubmittedContext::from(context))
+        .await
+        .with_entity_map_instance(&uri)?;
     validate_entity_map_query(&query, &uri)?;
     let window = membership_window(pagination, &query.page, &query.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
@@ -248,7 +255,8 @@ pub async fn create_from_query_post(
     JsonLd { value: body, context }: JsonLd<Query>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 6.3.5: the query is read against the one context the body
-    // extractor resolved.
+    // extractor resolved, admitted first (clause 5.5.7).
+    let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_map_instance(&uri)?;
     let mut query = EntityQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
     validate_entity_map_query(&query, &uri)?;
     let window = membership_window(pagination, &query.page, &query.ordering, &uri)?;
@@ -284,6 +292,9 @@ pub async fn create_temporal_from_query(
     RequestPagination(pagination): RequestPagination,
     TemporalQuery(params): TemporalQuery,
 ) -> Result<Response, ProblemResponse> {
+    let context = admit_user_context(state.entity_query.engine(), SubmittedContext::from(context))
+        .await
+        .with_entity_map_instance(&uri)?;
     validate_temporal_entity_map_query(&params, state.temporal.linked_retrieval(), &uri)?;
     let window = membership_window(pagination, &params.page, &params.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(params.split_entities).is_split());
@@ -319,7 +330,8 @@ pub async fn create_temporal_from_query_post(
     JsonLd { value: body, context }: JsonLd<Query>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 6.3.5: the query is read against the one context the body
-    // extractor resolved.
+    // extractor resolved, admitted first (clause 5.5.7).
+    let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_map_instance(&uri)?;
     let params = TemporalQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
     validate_temporal_entity_map_query(&params, state.temporal.linked_retrieval(), &uri)?;
     let window = membership_window(pagination, &params.page, &params.ordering, &uri)?;

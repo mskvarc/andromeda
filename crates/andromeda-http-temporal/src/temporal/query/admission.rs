@@ -20,6 +20,7 @@ use andromeda_federation::{
 };
 use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_http_headers::via::Via;
+use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_request::{error::ParameterError, query::temporal::operation::TemporalQueryOperation};
 use axum::http::Uri;
 
@@ -52,7 +53,7 @@ pub(super) struct AdmittedQuery {
 pub(super) async fn admit_request(
     state: &TemporalRouteServices,
     target: &ContextTarget,
-    context: &ContextSpec,
+    context: &AdmittedContext,
     protocol: NgsiLdProtocolHeaders,
     params: &mut TemporalQueryParameters,
     instance: &Uri,

@@ -4,7 +4,7 @@
 //! 4.5.8), proven without a live broker.
 
 use crate::{
-    admission_fixture::admitted_entity,
+    admission_fixture::{admitted_context, admitted_entity},
     history_recording_assertions::{assert_observes_stored_instances, observed_default_instance, recorded_observation},
     merge_options::MergeOptions,
     notification_recording_harness::{ACCURACY_IRI, CATEGORY_IRI, NAME_IRI, core_context, entity_uri, live_target, recording_service, single_recorded_write},
@@ -29,7 +29,14 @@ async fn merge_records_the_merged_instance_keeping_its_untouched_sub_property() 
     let fragment = patch(json!({"category": {"type": "Property", "value": "retail"}}));
     let admitted = admitted_entity::<MergeEntity>(&service, &fragment, &core_context()).await;
     service
-        .merge(&live_target(), &entity_uri(), &fragment, admitted, &core_context(), MergeOptions::default())
+        .merge(
+            &live_target(),
+            &entity_uri(),
+            &fragment,
+            admitted,
+            &admitted_context(&service, &core_context()).await,
+            MergeOptions::default(),
+        )
         .await
         .expect("the merge lands");
 
@@ -50,7 +57,14 @@ async fn merge_records_the_instance_without_the_sub_property_it_deleted_and_with
     let fragment = patch(json!({"category": {"type": "Property", "value": "retail", "accuracy": "urn:ngsi-ld:null"}}));
     let admitted = admitted_entity::<MergeEntity>(&service, &fragment, &core_context()).await;
     service
-        .merge(&live_target(), &entity_uri(), &fragment, admitted, &core_context(), MergeOptions::default())
+        .merge(
+            &live_target(),
+            &entity_uri(),
+            &fragment,
+            admitted,
+            &admitted_context(&service, &core_context()).await,
+            MergeOptions::default(),
+        )
         .await
         .expect("the merge lands");
 

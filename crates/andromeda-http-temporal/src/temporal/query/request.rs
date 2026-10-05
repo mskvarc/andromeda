@@ -8,10 +8,10 @@
 
 use crate::{
     extension_gate::TemporalExtensionGate,
+    request_context_admission::admit_request_context,
     state::TemporalRouteServices,
     temporal::{
         AcceptFormatNoGeo,
-        ContextSpec,
         NgsiLdProtocolHeaders,
         NgsiLdRequestEnvelope,
         ProblemResponse,
@@ -30,6 +30,7 @@ use andromeda_http_extraction::{
     pagination_policy::RequestPagination,
     response_context_request::ResponseContextRequest,
 };
+use andromeda_jsonld::user_context_admission::{AdmittedContext, SubmittedContext};
 use andromeda_ngsi_ld_request::pagination::page_pointers::PagePointers;
 use axum::http::{HeaderMap, Uri};
 use std::sync::Arc;
@@ -63,8 +64,9 @@ pub(crate) struct TemporalQueryRequest {
     /// registration's `contextSourceInfo` can pass one of them through
     /// (clause 6.3.19).
     pub(crate) headers: HeaderMap,
-    /// The JSON-LD context the query's terms expand under (clause 6.3.5).
-    pub(crate) context: ContextSpec,
+    /// The JSON-LD context the query's terms expand under (clause 6.3.5),
+    /// admitted (clause 5.5.7).
+    pub(crate) context: AdmittedContext,
     /// The query itself, in the raw form the binding decoded it to.
     pub(crate) params: TemporalQueryParameters,
     /// The element page the query answers with, decided by the broker's
@@ -91,6 +93,9 @@ pub async fn query(
     RequestPagination(pagination): RequestPagination,
     AdmittedTemporalQuery { params, .. }: AdmittedTemporalQuery<TemporalExtensionGate>,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.7: the request `@context` is admitted before the query is
+    // forwarded or anything is expanded against it.
+    let context = admit_request_context(services.temporal.engine(), SubmittedContext::from(context), &uri).await?;
     // Clause 6.18.3.2 carries the whole query in the request URI, so a
     // pointer built from it retrieves the next page on its own.
     let page = QueriedPage::requested(pagination, &params, PagePointers::OverRequestUri).with_instance(&uri)?;

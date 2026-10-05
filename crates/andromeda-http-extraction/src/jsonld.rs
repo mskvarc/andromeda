@@ -24,7 +24,7 @@ use crate::{
     undecodable_body::UndecodableBody,
 };
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
-use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext};
+use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext, user_context_admission::SubmittedContext};
 use andromeda_ngsi_ld_model::request_body::RequestBody;
 use andromeda_ngsi_ld_number::json_value::{
     deserialize_exact_document,
@@ -51,8 +51,9 @@ use serde_json::Value;
 pub struct JsonLd<T> {
     /// The deserialized request body with `@context` removed.
     pub value: T,
-    /// The extracted context specification from the body and/or Link header.
-    pub context: ContextSpec,
+    /// The context the request named in its body or `Link` header, admitted
+    /// before anything is read under it.
+    pub context: SubmittedContext,
 }
 
 /// Axum extractor for NGSI-LD JSON-LD request bodies kept as untyped JSON
@@ -64,8 +65,9 @@ pub struct JsonLd<T> {
 pub struct JsonLdDocument {
     /// The request body with `@context` removed.
     pub document: Value,
-    /// The extracted context specification from the body and/or Link header.
-    pub context: ContextSpec,
+    /// The context the request named in its body or `Link` header, admitted
+    /// before anything is read under it.
+    pub context: SubmittedContext,
 }
 
 /// A request body that passed the NGSI-LD body preconditions, with its
@@ -143,7 +145,10 @@ where
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         admit_request_body(req, state, |AdmittedBody { text, context, uri }| {
             let value = T::from_request_text(&text).map_err(|source| undecodable_body(&UndecodableBody::of_text::<T>(&text, source), uri))?;
-            Ok(JsonLd { value, context })
+            Ok(JsonLd {
+                value,
+                context: SubmittedContext::from(context),
+            })
         })
         .await
     }
@@ -160,7 +165,10 @@ where
             // clone: each refusal names the request
             let document = admitted_document(&text).map_err(|refusal| number_rejection(refusal, uri.clone()))?;
             let document = deserialize_exact_document(document).map_err(|source| undecodable_body(&UndecodableBody::Document { source }, uri))?;
-            Ok(JsonLdDocument { document, context })
+            Ok(JsonLdDocument {
+                document,
+                context: SubmittedContext::from(context),
+            })
         })
         .await
     }
@@ -341,7 +349,7 @@ mod tests {
         request_json_value_limit::RequestJsonValueLimit,
     };
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
-    use andromeda_jsonld::request_context::RequestContext;
+    use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext, user_context_admission::SubmittedContext};
     use andromeda_ngsi_ld_model::{entity::Entity, request_body::RequestBody};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -407,8 +415,13 @@ mod tests {
     }
 
     /// The request context a document extraction reads, or its rejection.
-    async fn extracted_context(request: Request<Body>) -> Result<RequestContext, ExtractorRejection> {
-        extract_document(request).await.map(|admitted| admitted.context.request_context().clone()) // clone: the spec is dropped here
+    async fn extracted_context(request: Request<Body>) -> Result<SubmittedContext, ExtractorRejection> {
+        extract_document(request).await.map(|admitted| admitted.context)
+    }
+
+    /// The context a request naming `context` submits.
+    fn submitted(context: RequestContext) -> SubmittedContext {
+        SubmittedContext::from(ContextSpec::from_request(context))
     }
 
     /// Whether `rejection` is a clause 5.5.4 `BadRequestData`.
@@ -450,7 +463,9 @@ mod tests {
 
         pretty_assertions::assert_eq!(
             extracted_context(request).await.expect("one context link is admitted"),
-            RequestContext::Link(IriBuf::new("https://example.com/a.jsonld".to_owned()).expect("a valid IRI"))
+            submitted(RequestContext::Link(
+                IriBuf::new("https://example.com/a.jsonld".to_owned()).expect("a valid IRI")
+            ))
         );
     }
 
@@ -493,7 +508,7 @@ mod tests {
             extracted_context(request_with_links("application/ld+json", body, &[PROFILE]))
                 .await
                 .expect("a profile link is admitted"),
-            RequestContext::Body(json!("https://example.com/a.jsonld"))
+            submitted(RequestContext::Body(json!("https://example.com/a.jsonld")))
         );
     }
 
@@ -534,7 +549,9 @@ mod tests {
         let request = json_request_with_links(r#"{"type": "Query"}"#, &[r#"<ctx.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#]);
         pretty_assertions::assert_eq!(
             extracted_context(request).await.expect("a relative context link"),
-            RequestContext::Link(IriBuf::new("http://broker.example/ngsi-ld/v1/entityOperations/ctx.jsonld".to_owned()).expect("a valid IRI"))
+            submitted(RequestContext::Link(
+                IriBuf::new("http://broker.example/ngsi-ld/v1/entityOperations/ctx.jsonld".to_owned()).expect("a valid IRI")
+            ))
         );
     }
 
@@ -544,7 +561,7 @@ mod tests {
     async fn a_json_body_without_a_link_is_read_against_the_default_context() {
         pretty_assertions::assert_eq!(
             extracted_context(json_request(r#"{"type": "Query"}"#)).await.expect("admitted"),
-            RequestContext::Default
+            submitted(RequestContext::Default)
         );
     }
 
@@ -634,7 +651,7 @@ mod tests {
             .unwrap();
 
         let result = extract_document(req).await.unwrap();
-        pretty_assertions::assert_eq!(result.context.body_context(), Some(&serde_json::json!("http://example.org/context")));
+        pretty_assertions::assert_eq!(result.context, submitted(RequestContext::Body(json!("http://example.org/context"))));
         assert!(result.document.as_object().unwrap().get("@context").is_none());
     }
 
@@ -673,7 +690,11 @@ mod tests {
 
         pretty_assertions::assert_eq!(
             extracted_context(req).await.expect("a shared context"),
-            RequestContext::Body(json!(["https://example.org/a", "https://example.org/b", "https://example.org/a"]))
+            submitted(RequestContext::Body(json!([
+                "https://example.org/a",
+                "https://example.org/b",
+                "https://example.org/a"
+            ])))
         );
     }
 
@@ -905,9 +926,9 @@ mod tests {
 
     /// What one decode path makes of `body`: the admitted document and its
     /// context, or the status and problem of its refusal.
-    async fn decoded_at(body: &'static str, threshold: usize) -> Result<(String, RequestContext), (StatusCode, Value)> {
+    async fn decoded_at(body: &'static str, threshold: usize) -> Result<(String, SubmittedContext), (StatusCode, Value)> {
         match extract_document(with_decode_threshold(json_request(body), threshold)).await {
-            Ok(admitted) => Ok((admitted.document.to_string(), admitted.context.request_context().clone())), // clone: the spec is dropped here
+            Ok(admitted) => Ok((admitted.document.to_string(), admitted.context)),
             Err(rejection) => {
                 let (status, _connection, problem) = answered(rejection).await;
                 Err((status, problem))
@@ -960,12 +981,9 @@ mod tests {
     /// What the typed decode path makes of `body` as a `T`: the decoded value
     /// rendered back and its context, or the status and problem of its
     /// refusal.
-    async fn typed_at(body: &'static str, threshold: usize) -> Result<(String, RequestContext), (StatusCode, Value)> {
+    async fn typed_at(body: &'static str, threshold: usize) -> Result<(String, SubmittedContext), (StatusCode, Value)> {
         match extract::<Entity>(with_decode_threshold(json_request(body), threshold)).await {
-            Ok(admitted) => Ok((
-                serde_json::to_value(&admitted.value).expect("an entity renders").to_string(),
-                admitted.context.request_context().clone(), // clone: the spec is dropped here
-            )),
+            Ok(admitted) => Ok((serde_json::to_value(&admitted.value).expect("an entity renders").to_string(), admitted.context)),
             Err(rejection) => {
                 let (status, _connection, problem) = answered(rejection).await;
                 Err((status, problem))

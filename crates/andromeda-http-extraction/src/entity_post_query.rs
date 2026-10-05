@@ -8,7 +8,7 @@
 
 use crate::{addressed_uri::addressed_uri, jsonld::JsonLd, query::ValidatedQuery};
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, parameter_failure::classify_parameter_error};
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::user_context_admission::SubmittedContext;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_request::{entity_operations::PostQueryParams, query::entity::parameters::EntityQueryParameters};
 use axum::extract::{FromRequest, FromRequestParts, Request};
@@ -20,7 +20,7 @@ pub struct EntityPostQuery {
     pub query: EntityQueryParameters,
     /// The context the query is read against: the body's own `@context` for
     /// `application/ld+json`, the `Link` context for `application/json`.
-    pub context: ContextSpec,
+    pub context: SubmittedContext,
 }
 
 impl<S> FromRequest<S> for EntityPostQuery

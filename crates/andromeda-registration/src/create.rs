@@ -10,7 +10,7 @@ use crate::{
     payload::extract_create_params,
     validation::{RegistrationShape, validate_shape},
 };
-use andromeda_jsonld::{context_spec::ContextSpec, scoped_context_admission::reject_scoped_user_contexts};
+use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::{CsrChangeEvent, CsrTriggerReason};
 use serde_json::Value;
@@ -26,12 +26,12 @@ impl RegistrationService {
     /// identifier the store already holds, [`RegistrationError::Conflict`]
     /// when a proxied footprint overlaps an existing registration or context
     /// data the broker already holds (clause 5.9.2.4),
-    /// [`RegistrationError::JsonLd`] when the request context cannot be loaded
-    /// or the payload cannot be expanded, [`RegistrationError::Internal`]
+    /// [`RegistrationError::JsonLd`] when the request context cannot be
+    /// processed or the payload cannot be expanded, [`RegistrationError::Internal`]
     /// when no identifier could be minted for an anonymous registration,
     /// and [`RegistrationError::Persistence`] when the store rejects the
     /// write.
-    pub async fn create(&self, payload: Value, context: &ContextSpec) -> Result<Identifier, RegistrationError> {
+    pub async fn create(&self, payload: Value, context: &AdmittedContext) -> Result<Identifier, RegistrationError> {
         // Counted before the payload is expanded or a geometry built from it.
         admit_registration_geometries(&payload, self.geometry_limits)?;
         let id = match payload.get("id").and_then(Value::as_str) {
@@ -45,12 +45,7 @@ impl RegistrationService {
             None => generate_registration_id()?,
         };
 
-        // Clause 5.5.7: the request `@context` a registration is created under
-        // shall not declare a JSON-LD Scoped Context, refused before the payload
-        // is expanded against it.
-        reject_scoped_user_contexts(&self.engine, context).await?;
-
-        // Clause 5.5.7: a context that does not resolve or process refuses the
+        // Clause 5.5.7: a context that does not process refuses the
         // registration before any of its names is expanded under it.
         self.engine.expansion_context(context).await?;
 

@@ -1,6 +1,7 @@
 //! HTTP handling for temporal add attributes (clause 5.6.12).
 
 use crate::{
+    request_context_admission::admit_request_context,
     temporal::{
         ForwardProvisionRequest,
         ForwardingOperation,
@@ -44,10 +45,13 @@ pub async fn add_attrs(
     TypedPath(id): TypedPath<Identifier>,
     JsonLdDocument { document: payload, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.4 judges the payload "according to the @context", so the
+    // context is admitted before anything is read under it (clause 5.5.7).
+    let context = admit_request_context(state.temporal.engine(), context, &uri).await?;
     let service = &state.temporal;
     // Clause 5.6.12.4 runs the clause 5.5.4 validation before the forwarding
     // phase, the Fragment's `id` included (clause 5.4).
-    admit_added_attributes(service.engine(), &id, &payload, &context, &uri).await?;
+    admit_added_attributes(&id, &payload, &uri)?;
 
     if params.local.unwrap_or(false) {
         service.add_attrs(&target, &id, payload, &context).await.with_instance(&uri)?;

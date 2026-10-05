@@ -473,3 +473,51 @@ async fn snapshot_clone_of_a_preparing_source_waits_and_copies_the_source_data()
         pretty_assertions::assert_eq!(delete_snapshot_raw(&client(), id).await.0, StatusCode::NO_CONTENT);
     }
 }
+
+/// Clauses 5.5.6 and 5.5.7: a Snapshot is created under the user `@context` it
+/// is submitted with, which is admitted first -- one declaring a JSON-LD
+/// Scoped Context is `BadRequestData`, an unreachable one
+/// `LdContextNotAvailable` -- and no Snapshot is created.
+#[tokio::test]
+#[serial(snapshot)]
+async fn snapshot_create_refuses_a_scoped_or_unreachable_context() {
+    let _serialized_environment = clean_database().await;
+    let scoped_id = "urn:ngsi-ld:Snapshot:test-scoped-context";
+    let mut scoped = minimal(Some(scoped_id));
+    scoped["@context"] = json!([
+        {"speed": {"@id": "https://example.org/speed", "@context": {}}},
+        "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"
+    ]);
+    let response = client()
+        .post(broker_url("/snapshots"))
+        .header("Content-Type", "application/ld+json")
+        .json(&scoped)
+        .send()
+        .await
+        .expect("create Snapshot request");
+    pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let problem: Value = response.json().await.unwrap_or_default();
+    assert_problem_details(&problem, "https://uri.etsi.org/ngsi-ld/errors/BadRequestData", StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(get_snapshot(&client(), scoped_id).await.0, StatusCode::NOT_FOUND);
+
+    let unreachable_id = "urn:ngsi-ld:Snapshot:test-unreachable-context";
+    let response = client()
+        .post(broker_url("/snapshots"))
+        .header("Content-Type", "application/json")
+        .header(
+            "Link",
+            r#"<http://127.0.0.1:9/unreachable.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#,
+        )
+        .json(&minimal(Some(unreachable_id)))
+        .send()
+        .await
+        .expect("create Snapshot request");
+    pretty_assertions::assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+    let problem: Value = response.json().await.unwrap_or_default();
+    assert_problem_details(
+        &problem,
+        "https://uri.etsi.org/ngsi-ld/errors/LdContextNotAvailable",
+        StatusCode::GATEWAY_TIMEOUT,
+    );
+    pretty_assertions::assert_eq!(get_snapshot(&client(), unreachable_id).await.0, StatusCode::NOT_FOUND);
+}

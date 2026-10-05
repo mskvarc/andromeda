@@ -59,7 +59,7 @@ pub(crate) async fn batch_merge(
     // included in the input Array", each entity answering for itself: the
     // clause 5.5.4 validation an entity fails contributes a BatchEntityError of
     // its own rather than failing the whole request.
-    let mut admitted = admitted_batch_entities(service, BatchMerge, items, &mut entity_errors)
+    let mut admitted = admitted_batch_entities(service, state.entity_query.engine(), BatchMerge, items, &mut entity_errors)
         .await
         .with_entity_instance(&uri)?;
 

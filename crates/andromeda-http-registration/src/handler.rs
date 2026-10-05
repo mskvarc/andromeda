@@ -27,6 +27,7 @@ use andromeda_http_response::{
     problem_response::ProblemResponse,
     single::NgsiLdResponse,
 };
+use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::count_policy::CountPolicy;
 use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, registration::RegistrationRenderer, response::ResponsePayload};
@@ -53,6 +54,9 @@ pub(crate) async fn create(
     OriginalUri(uri): OriginalUri,
     JsonLdDocument { document: payload, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
+    let context = admit_user_context(state.registrations.engine(), context)
+        .await
+        .with_registration_instance(&uri)?;
     let identifier = state.registrations.create(payload, &context).await.with_registration_instance(&uri)?;
     Ok(with_location(
         StatusCode::CREATED.into_response(),
@@ -188,6 +192,9 @@ pub(crate) async fn update(
     TypedPath(registration_id): TypedPath<Identifier>,
     JsonLdDocument { document: payload, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
+    let context = admit_user_context(state.registrations.engine(), context)
+        .await
+        .with_registration_instance(&uri)?;
     state
         .registrations
         .update(&registration_id, payload, &context)

@@ -72,7 +72,7 @@ pub(crate) async fn batch_upsert(
     };
     // Which NGSI-LD Nulls the payload may carry is the requested mode's answer
     // (clause 5.6.8.4), so the mode is read before the screening.
-    let mut admitted = admitted_batch_entities(service, BatchUpsert(upsert_policy), items, &mut entity_errors)
+    let mut admitted = admitted_batch_entities(service, state.entity_query.engine(), BatchUpsert(upsert_policy), items, &mut entity_errors)
         .await
         .with_entity_instance(&uri)?;
 

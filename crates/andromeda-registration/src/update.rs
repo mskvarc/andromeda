@@ -11,7 +11,7 @@ use crate::{
     resolved_update::apply_fragment,
     validation::{RegistrationShape, validate_shape},
 };
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     notification::{CsrChangeEvent, CsrTriggerReason},
@@ -30,12 +30,12 @@ impl RegistrationService {
     /// outside Table 5.2.9-1, [`RegistrationError::NotFound`] when no
     /// registration carries `id`, [`RegistrationError::Conflict`] when the
     /// merged footprint overlaps an existing registration or local context
-    /// data (clause 5.9.3.4), [`RegistrationError::JsonLd`] when the request
-    /// context cannot be loaded or the fragment cannot be expanded,
+    /// data (clause 5.9.3.4), [`RegistrationError::JsonLd`] when the fragment
+    /// cannot be expanded,
     /// [`RegistrationError::Internal`] when the pre-update snapshot cannot be
     /// serialised, and [`RegistrationError::Persistence`] when the store
     /// rejects the read or the write.
-    pub async fn update(&self, id: &Identifier, payload: Value, context: &ContextSpec) -> Result<(), RegistrationError> {
+    pub async fn update(&self, id: &Identifier, payload: Value, context: &AdmittedContext) -> Result<(), RegistrationError> {
         // Counted before the fragment is expanded or a geometry built from it.
         admit_registration_geometries(&payload, self.geometry_limits)?;
         // A fragment may omit `type`, but one it carries has to be the
@@ -94,11 +94,14 @@ mod tests {
         fixed_store::{FixedStore, registration},
         store::RegistrationStore,
     };
-    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_jsonld::{
+        context_spec::ContextSpec,
+        engine::processor::JsonLdEngine,
+        user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
+    };
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use iri_rs::IriBuf;
     use serde_json::json;
     use std::{num::NonZeroUsize, sync::Arc};
 
@@ -118,6 +121,13 @@ mod tests {
                 values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
             },
         )
+    }
+
+    /// `context` as the request handler admits it.
+    async fn admitted(service: &RegistrationService, context: ContextSpec) -> AdmittedContext {
+        admit_user_context(service.engine(), SubmittedContext::from(context))
+            .await
+            .expect("the context is admitted")
     }
 
     fn registration_id() -> Identifier {
@@ -144,6 +154,7 @@ mod tests {
             "speed": "https://example.org/speed"
         }));
         let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle" } ], "propertyNames": ["speed"] } ] });
+        let context = admitted(&service, context).await;
 
         service.update(&registration_id(), fragment, &context).await.expect("the fragment applies");
 
@@ -160,28 +171,6 @@ mod tests {
         pretty_assertions::assert_eq!(types, vec!["https://example.org/Vehicle".to_string()]);
     }
 
-    /// Clause 5.5.2: a request context that cannot be loaded is reported as
-    /// `LdContextNotAvailable`; the fragment is never expanded against the
-    /// core context alone and nothing is written.
-    #[tokio::test]
-    async fn an_unloadable_request_context_is_reported_rather_than_replaced_by_the_core_context() {
-        let store = baseline_store();
-        let service = service(&store);
-        let context = ContextSpec::from_link(IriBuf::new("https://contexts.example.org/unreachable.jsonld".to_owned()).expect("valid IRI"));
-        let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle" } ], "propertyNames": ["speed"] } ] });
-
-        let error = service
-            .update(&registration_id(), fragment, &context)
-            .await
-            .expect_err("the context load fails");
-
-        assert!(
-            matches!(&error, RegistrationError::JsonLd(source) if source.is_context_not_available()),
-            "expected a context-not-available failure, got {error:?}"
-        );
-        assert!(store.updated_information().is_empty(), "nothing is written when the context does not load");
-    }
-
     /// The fragment is expanded before the registration is looked up, so an
     /// unknown identifier under a loadable context is a plain not-found.
     #[tokio::test]
@@ -189,8 +178,9 @@ mod tests {
         let service = service(&Arc::new(FixedStore::new(Vec::new())));
         let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle" } ], "propertyNames": ["speed"] } ] });
 
+        let context = admitted(&service, ContextSpec::none()).await;
         let error = service
-            .update(&registration_id(), fragment, &ContextSpec::none())
+            .update(&registration_id(), fragment, &context)
             .await
             .expect_err("the registration is unknown");
 

@@ -20,7 +20,7 @@ use andromeda_http_response::{
     problem_response::ProblemResponse,
     single::NgsiLdResponse,
 };
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity_map::EntityMap, entity_map_fingerprint::RequestFingerprint};
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
@@ -58,8 +58,8 @@ pub(crate) struct MapCreation<'a> {
 /// How a created map is rendered.
 #[derive(TypedBuilder)]
 pub(crate) struct CreationRendering<'a> {
-    /// The request's JSON-LD context.
-    pub(crate) context: &'a ContextSpec,
+    /// The request's JSON-LD context, admitted (clause 5.5.7).
+    pub(crate) context: &'a AdmittedContext,
     /// The negotiated representation.
     pub(crate) accept: AcceptFormatNoGeo,
     /// The request's `Prefer` header.

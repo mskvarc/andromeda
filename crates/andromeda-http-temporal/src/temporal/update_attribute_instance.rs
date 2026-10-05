@@ -1,6 +1,7 @@
 //! HTTP handling for temporal update attribute instance (clause 5.6.14).
 
 use crate::{
+    request_context_admission::admit_request_context,
     temporal::{
         AttributeName,
         ForwardProvisionRequest,
@@ -44,6 +45,9 @@ pub async fn update_attr_instance(
     TypedPath((id, attr_id, instance_id)): TypedPath<(Identifier, AttributeName, Identifier)>,
     JsonLdDocument { document: payload, context }: JsonLdDocument,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.4 judges the payload "according to the @context", so the
+    // context is admitted before anything is read under it (clause 5.5.7).
+    let context = admit_request_context(state.temporal.engine(), context, &uri).await?;
     let service = &state.temporal;
     let path_suffix = format!("/attrs/{attr_id}/{instance_id}");
     // Clause 4.5.7 carries an `instanceId` as a URI; which of the two stored
@@ -56,7 +60,7 @@ pub async fn update_attr_instance(
     // seals clauses 4.5.3.2 and 4.5.3.3 prohibit, and a user `@context` clause
     // 5.5.7 refuses below the top level, are held to it as to any written
     // Temporal Evolution.
-    admit_written_instance(service.engine(), &id, &payload, &context, &uri).await?;
+    admit_written_instance(&id, &payload, &uri)?;
 
     if params.local.unwrap_or(false) {
         service

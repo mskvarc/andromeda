@@ -13,7 +13,7 @@ use crate::{
 };
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
+use andromeda_jsonld::{engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander, user_context_admission::AdmittedContext};
 use andromeda_ngsi_ld_entity::{
     entity_state::EntityState,
     history::written_observation::AddressedInstances,
@@ -59,7 +59,7 @@ impl EntityService {
         id: &Identifier,
         patch: &EntityPatch,
         admitted: AdmittedEntity<MergeEntity>,
-        context: &ContextSpec,
+        context: &AdmittedContext,
         options: MergeOptions<'_>,
     ) -> Result<(), EntityError> {
         let timer = entity::start(EntityOperation::Merge);

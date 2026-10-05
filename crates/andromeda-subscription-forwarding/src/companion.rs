@@ -19,7 +19,7 @@ use crate::{
     service::SubscriptionForwardingService,
 };
 use andromeda_federation::subscription::SubscriptionForward;
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{context_spec::ContextSpec, user_context_admission::AdmittedContext};
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::ContextSourceRegistration, subscription::Subscription};
 use andromeda_subscription::{
@@ -263,7 +263,7 @@ impl SubscriptionForwardingService {
                 object.remove("type");
             }
             self.csource_subscriptions
-                .update(&self.live_target, &companion, fragment, &ContextSpec::core_only())
+                .update(&self.live_target, &companion, fragment, &AdmittedContext::core_only())
                 .await?;
             companion
         } else {

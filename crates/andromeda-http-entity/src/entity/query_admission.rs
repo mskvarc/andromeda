@@ -21,6 +21,7 @@ use andromeda_federation::{
 };
 use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLdEntityMap, via::Via};
+use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
     query::entity::{
@@ -63,18 +64,13 @@ pub(crate) struct AdmittedQuery {
 pub(crate) async fn admit_request(
     state: &EntityRouteServices,
     target: &ContextTarget,
-    context: &ContextSpec,
+    context: &AdmittedContext,
     protocol: NgsiLdProtocolHeaders,
     query: &mut EntityQueryParameters,
     binding: QueryBinding,
     instance: &HttpUri,
 ) -> Result<AdmittedQuery, ProblemResponse> {
     protocol.extensions().apply_to_entity_query(query).with_entity_instance(instance)?;
-    // Clause 5.5.7: a request `@context` declaring a JSON-LD Scoped Context is
-    // refused on the query path -- GET and POST alike, the latter after its body
-    // `@context` has been merged into `context` -- before anything is expanded
-    // against it.
-    state.entity_query.admit_read_context(context).await.with_entity_instance(instance)?;
     if !target.permits_federation() {
         query.local = Some(true);
     }

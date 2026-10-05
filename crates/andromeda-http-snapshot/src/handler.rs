@@ -20,6 +20,7 @@ use andromeda_http_response::{
     render::{RenderingPreferences, start_rendering_core},
     single::NgsiLdResponse,
 };
+use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{snapshot_clone::SnapshotCloneInput, snapshot_input::SnapshotInput, snapshot_patch::SnapshotPatch};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
@@ -37,8 +38,9 @@ use axum::{
 ///
 /// The body is a JSON-LD document (clause 6.3.5): under `application/ld+json`
 /// it carries its own `@context`, which the extractor lifts off before the
-/// Snapshot members are read. The snapshot stores its queries as written, so
-/// the context is not needed beyond that.
+/// Snapshot members are read. The snapshot stores its queries as written,
+/// beside the context they are later run under, which is admitted first
+/// (clause 5.5.7).
 pub async fn create(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
@@ -47,6 +49,7 @@ pub async fn create(
     OriginalUri(uri): OriginalUri,
     JsonLd { value: input, context }: JsonLd<SnapshotInput>,
 ) -> Result<Response, ProblemResponse> {
+    let context = admit_user_context(&state.engine, context).await.with_snapshot_instance(&uri)?;
     let snapshot = state.snapshots.create(input, context).await.with_snapshot_instance(&uri)?;
     state.snapshots.prepare_now();
 
@@ -84,8 +87,10 @@ pub async fn update(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     TypedPath(snapshot_id): TypedPath<Identifier>,
-    JsonLd { value: patch, context: _ }: JsonLd<SnapshotPatch>,
+    JsonLd { value: patch, context }: JsonLd<SnapshotPatch>,
 ) -> Result<Response, ProblemResponse> {
+    // A Snapshot patch names no term a context could define.
+    context.unused();
     let updated = state.snapshots.update(&snapshot_id, patch).await.with_snapshot_instance(&uri)?;
 
     let body = serde_json::to_value(&updated).map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, &uri))?;
@@ -155,8 +160,11 @@ pub async fn clone(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(snapshot_id): TypedPath<Identifier>,
-    JsonLd { value: input, context: _ }: JsonLd<SnapshotCloneInput>,
+    JsonLd { value: input, context }: JsonLd<SnapshotCloneInput>,
 ) -> Result<Response, ProblemResponse> {
+    // A clone names no term a context could define; its queries keep the
+    // context the source Snapshot was created under.
+    context.unused();
     let cloned = state.snapshots.clone_snapshot(&snapshot_id, input).await.with_snapshot_instance(&uri)?;
     state.snapshots.prepare_now();
 

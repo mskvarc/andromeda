@@ -24,6 +24,11 @@ use uuid::Uuid;
 
 const BAD_REQUEST_DATA_TYPE: &iri_rs::Iri<&str> = error::BAD_REQUEST_DATA;
 const RESOURCE_NOT_FOUND_TYPE: &iri_rs::Iri<&str> = error::RESOURCE_NOT_FOUND;
+const LD_CONTEXT_NOT_AVAILABLE_TYPE: &iri_rs::Iri<&str> = error::LD_CONTEXT_NOT_AVAILABLE;
+
+/// A remote `@context` at an address nothing answers on, so its resolution
+/// fails with a connection refusal rather than a slow timeout (clause 5.5.6).
+const UNREACHABLE_CONTEXT: &str = "http://127.0.0.1:9/unreachable.jsonld";
 const COMPOUND_CONTEXT_URL: &iri_rs::Iri<&str> = COMPOUND_CONTEXT;
 
 fn unique_id(prefix: &str) -> String {

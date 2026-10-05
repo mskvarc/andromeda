@@ -2,7 +2,7 @@
 //! returns.
 
 use crate::{
-    admission_fixture::{admitted_batch, admitted_entity},
+    admission_fixture::{admitted_batch, admitted_context, admitted_entity},
     merge_options::MergeOptions,
     side_effect::SideEffectPlacement,
     spatial_acceleration::SpatialAcceleration,
@@ -59,7 +59,7 @@ async fn under_commit_synchronous_a_merge_moving_an_entity_into_range_makes_it_a
             &uri("urn:ngsi-ld:Vehicle:mover"),
             &patch,
             admitted,
-            &ContextSpec::core_only(),
+            &admitted_context(&service, &ContextSpec::core_only()).await,
             MergeOptions::default(),
         )
         .await

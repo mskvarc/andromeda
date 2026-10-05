@@ -18,7 +18,7 @@ use std::sync::Arc;
 pub(crate) struct UserContextScan {
     /// The first term found carrying a scoped context, if any.
     ///
-    /// The clause 5.5.7 refusal in [`crate::scoped_context_admission`] names it
+    /// The clause 5.5.7 refusal in [`crate::user_context_admission`] names it
     /// in the problem detail, which is why the term is kept rather than a flag.
     pub(crate) scoped_context_term: Option<ContextTerm>,
     /// The remote contexts this document references rather than declares.

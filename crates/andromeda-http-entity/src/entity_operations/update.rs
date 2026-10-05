@@ -60,7 +60,7 @@ pub(crate) async fn batch_update(
     // new BatchEntityError shall be added to E containing the failed Entity ID
     // and the ProblemDetails associated": the clause 5.5.4 validation an entity
     // fails is that entity's failure, not the request's.
-    let mut admitted = admitted_batch_entities(service, BatchUpdate, items, &mut entity_errors)
+    let mut admitted = admitted_batch_entities(service, state.entity_query.engine(), BatchUpdate, items, &mut entity_errors)
         .await
         .with_entity_instance(&uri)?;
 

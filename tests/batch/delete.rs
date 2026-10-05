@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use crate::helpers::*;
-use andromeda_test_fixtures::problem_detail::BAD_REQUEST_DATA;
-use andromeda_test_harness::environment::TestEnvironment;
+use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, LD_CONTEXT_NOT_AVAILABLE};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE, environment::TestEnvironment};
 use reqwest::{Client, Method, StatusCode};
 use serde_json::json;
 
@@ -161,6 +161,35 @@ async fn batch_delete_ld_json_beside_a_context_link_returns_400() {
     let (status, problem) = request_raw(&c, Method::POST, "/entityOperations/delete", &body, Some("application/ld+json"), true).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(problem["type"], BAD_REQUEST_DATA.as_str());
+
+    let (status, _, _) = get_entity(&c, &id, "", false).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 5.5.6: a batch delete whose context `Link` cannot be retrieved is
+/// `LdContextNotAvailable`, and nothing is deleted.
+#[tokio::test]
+async fn batch_delete_under_an_unreachable_context_link_returns_504_and_deletes_nothing() {
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
+    let c = client();
+    let id = scope.id("Building:006_08_01");
+    create_buildings(&c, &[&id]).await;
+
+    let response = c
+        .post(format!("{RUNTIME_BROKER_BASE}/entityOperations/delete"))
+        .header("Content-Type", "application/json")
+        .header(
+            "Link",
+            r#"<http://127.0.0.1:9/unreachable.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#,
+        )
+        .json(&json!([&id]))
+        .send()
+        .await
+        .expect("batch delete request");
+    pretty_assertions::assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+    let problem: serde_json::Value = response.json().await.unwrap_or_default();
+    pretty_assertions::assert_eq!(problem["type"], LD_CONTEXT_NOT_AVAILABLE.as_str());
 
     let (status, _, _) = get_entity(&c, &id, "", false).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
