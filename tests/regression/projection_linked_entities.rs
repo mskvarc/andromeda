@@ -367,23 +367,24 @@ async fn regression_flat_membership_only_the_returned_relationships_name_the_arr
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.21's union rule for `join=flat`: the array renders each Linked
-/// Entity once, so a target two Relationships reach renders unrestricted when
-/// either of them carried no sub-projection.
+/// Clause 5.7.1.5 appends a flat Linked Entity "unless a target URI has been
+/// previously encountered": a target two Relationships reach is appended once,
+/// narrowed by the list in force at its first encounter (breadth-first, in
+/// member order). A later reference neither widens nor merges that list.
 #[tokio::test]
-async fn regression_linked_projection_two_relationships_sharing_a_target_take_the_union() {
+async fn regression_linked_projection_two_relationships_sharing_a_target_take_the_first_encounter() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
-    let id = scope.id("Building:union-root");
-    let target = scope.id("City:union-target");
-    let onward = scope.id("Country:union-target");
+    let id = scope.id("Building:first-root");
+    let target = scope.id("City:first-target");
+    let onward = scope.id("Country:first-target");
     create(
         client,
         &json!({
             "id": id,
             "type": "Building",
             "linkedTo": {"type": "Relationship", "object": target},
-            "alsoLinkedTo": {"type": "Relationship", "object": target},
+            "secondLinkTo": {"type": "Relationship", "object": target},
             "@context": [TEST_SUITE_CONTEXT]
         }),
     )
@@ -391,26 +392,22 @@ async fn regression_linked_projection_two_relationships_sharing_a_target_take_th
     create(client, &city(&target, &onward)).await;
     create(client, &country(&onward)).await;
 
-    let body = read_ok(client, &format!("entities/{id}?join=flat&joinLevel=1&pick=id,linkedTo%7Bname%7D,alsoLinkedTo")).await;
+    let body = read_ok(client, &format!("entities/{id}?join=flat&joinLevel=1&pick=id,linkedTo%7Bname%7D,secondLinkTo")).await;
+    assert_eq!(members(&body).len(), 2, "the shared target is appended once: {body}");
     let linked = &members(&body)[1];
-    assert_eq!(
-        linked["id"].as_str(),
-        Some(target.as_str()),
-        "the unrestricted reach widens the target: {linked}"
-    );
-    assert_eq!(linked["type"].as_str(), Some("City"), "{linked}");
-    assert!(linked.get("name").is_some(), "{linked}");
+    assert!(linked.get("name").is_some(), "the first encounter's group keeps `name`: {linked}");
+    assert!(linked.get("id").is_none(), "the bare later reference does not widen it: {linked}");
+    assert!(linked.get("type").is_none(), "{linked}");
 
-    // Two nested sub-projections instead: the union is what both named.
+    // Two nested groups: the first one decides, the second is not merged in.
     let narrowed = read_ok(
         client,
-        &format!("entities/{id}?join=flat&joinLevel=1&pick=id,linkedTo%7Bname%7D,alsoLinkedTo%7Bid%7D"),
+        &format!("entities/{id}?join=flat&joinLevel=1&pick=id,linkedTo%7Bname%7D,secondLinkTo%7Bid%7D"),
     )
     .await;
     let linked = &members(&narrowed)[1];
-    assert_eq!(linked["id"].as_str(), Some(target.as_str()), "one term named `id`: {linked}");
-    assert!(linked.get("name").is_some(), "the other named `name`: {linked}");
-    assert!(linked.get("type").is_none(), "neither named `type`: {linked}");
+    assert!(linked.get("name").is_some(), "the first group named `name`: {linked}");
+    assert!(linked.get("id").is_none(), "the second group is not merged in: {linked}");
 
     scope.finish().await.expect("cleanup failed");
 }

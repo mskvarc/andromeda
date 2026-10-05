@@ -85,6 +85,30 @@ async fn conformance_mode_rejects_the_temporal_aggregation_grouping() {
     );
 }
 
+/// Conformance mode leaves `join` undefined on the temporal URI binding, as
+/// clauses 5.7.3.3 and 5.7.4.3 do: the parameter is an invalid request.
+#[tokio::test]
+async fn conformance_mode_rejects_the_temporal_join() {
+    let Some(client) = conformance_client() else {
+        eprintln!("skipping: ANDROMEDA_TEST_CONFORMANCE_BROKER_URL is not set");
+        return;
+    };
+    let response = client
+        .raw(
+            Method::GET,
+            "/ngsi-ld/v1/temporal/entities?type=Vehicle&timerel=after&timeAt=1970-01-01T00:00:00Z&join=flat",
+        )
+        .header("Link", jsonld_link_header(CORE_CONTEXT).expect("core context Link"))
+        .send()
+        .await
+        .expect("joined temporal query request");
+    assert_eq!(
+        response.status,
+        StatusCode::BAD_REQUEST,
+        "conformance mode must reject `join` on the temporal binding with InvalidRequest"
+    );
+}
+
 /// Conformance mode advertises no extension in the Context Source Identity.
 #[tokio::test]
 async fn conformance_mode_advertises_no_extension() {
@@ -102,6 +126,10 @@ async fn conformance_mode_advertises_no_extension() {
     assert!(!advertised.contains("purge-dataset-scope"), "no extension token is advertised: {advertised}");
     assert!(
         !advertised.contains("temporal-aggregation-grouping"),
+        "no extension token is advertised: {advertised}"
+    );
+    assert!(
+        !advertised.contains("temporal-linked-retrieval"),
         "no extension token is advertised: {advertised}"
     );
     assert!(

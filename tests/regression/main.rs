@@ -63,6 +63,7 @@ mod invalid_parameter_values;
 mod json_property_array;
 mod large_entity_budget;
 mod large_entity_replicas;
+mod linked_retrieval_compliance;
 mod list_attribute_families;
 mod list_relationship_representation;
 mod long_uri_references;

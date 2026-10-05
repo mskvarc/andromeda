@@ -214,21 +214,6 @@ async fn query_entities(client: &Client, scope: &TestEnvironment, query: &str) -
     (status, headers, body)
 }
 
-async fn query_temporal_entities(client: &Client, scope: &TestEnvironment, query: &str) -> (StatusCode, HeaderMap, Value) {
-    let query = scope.scope_query(query);
-    let sep = if query.is_empty() { "" } else { "?" };
-    let resp = client
-        .get(format!("{BASE_URL}/temporal/entities{sep}{query}"))
-        .header("Link", jsonld_link_value())
-        .send()
-        .await
-        .expect("query_temporal_entities request failed");
-    let status = resp.status();
-    let headers = resp.headers().clone();
-    let body: Value = resp.json().await.unwrap_or_default();
-    (status, headers, body)
-}
-
 async fn query_entities_with_entity_map(client: &Client, scope: &TestEnvironment, query: &str, entity_map_id: &str) -> (StatusCode, HeaderMap, Value) {
     let query = scope.scope_query(query);
     let sep = if query.is_empty() { "" } else { "?" };

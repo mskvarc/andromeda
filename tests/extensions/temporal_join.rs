@@ -1,4 +1,4 @@
-//! Temporal join tests (NGSI-LD 4.5.23 applied to the Temporal API).
+//! The temporal join's window semantics (`temporal_linked_retrieval`).
 //!
 //! A temporal answer is a slice of history, so a joined Linked Entity is
 //! rendered over exactly the window the roots were rendered over, and only the
@@ -6,14 +6,15 @@
 //! `join=flat` puts the Linked Entities beside the roots (clause 6.4.3.2);
 //! `join=inline` nests each one under the instances that name it.
 //!
-//! Applying `join` to the Temporal API is a deliberate Andromeda extension:
-//! clauses 5.7.3.4 and 5.7.4.4 do not list the parameter among the ones the
-//! temporal operations accept.
+//! Clauses 5.7.3.4 and 5.7.4.4 do not admit Linked Entity retrieval on the
+//! temporal operations, so these cases run only against a broker started with
+//! `ANDROMEDA__EXTENSIONS__TEMPORAL_LINKED_RETRIEVAL=enabled`.
 
-use crate::{COMPOUND_CONTEXT, TEST_SUITE_CONTEXT, client, create_temporal_entity, post_temporal_query, query_temporal_entities};
+use andromeda_test_client::{header::jsonld_link_header, response::TestResponse, test_client::TestClient};
+use andromeda_test_fixtures::context::{COMPOUND_CONTEXT, TEST_SUITE_CONTEXT};
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
-use reqwest::StatusCode;
+use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 
 /// The window every case below reads over.
@@ -51,6 +52,33 @@ fn vehicle_parked_across_the_window(id: &str, inside: &str, outside: &str) -> Va
     })
 }
 
+/// Create one Temporal Entity, asserting the broker accepted it.
+async fn create(client: &TestClient, entity: &Value) {
+    let created = client.create_temporal_entity(entity).await.expect("create temporal entity request");
+    assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
+}
+
+/// Send one request under the suite context.
+async fn send(client: &TestClient, method: Method, path: &str, body: Option<&Value>) -> TestResponse {
+    let request = client
+        .raw(method, path)
+        .header("Accept", "application/ld+json")
+        .header("Link", jsonld_link_header(TEST_SUITE_CONTEXT).expect("test-suite context Link must be valid"));
+    let request = match body {
+        Some(body) => request.header("Content-Type", "application/json").json(body),
+        None => request,
+    };
+    request.send().await.expect("request")
+}
+
+/// Query the Vehicles of one run with `parameters`, asserting a 200.
+async fn query_ok(scope: &TestEnvironment, parameters: &str) -> Value {
+    let path = format!("temporal/entities?{}", scope.scope_query(&format!("type=Vehicle&{WINDOW}&{parameters}")));
+    let response = send(scope.client(), Method::GET, &path, None).await;
+    assert_eq!(response.status, StatusCode::OK, "{path}: {:?}", response.body);
+    response.json_value().expect("a 200 carries a JSON body")
+}
+
 /// The `id` member of every entity in an array body, in response order.
 fn ids_from_array(body: &Value) -> Vec<String> {
     body.as_array()
@@ -82,31 +110,18 @@ fn observed_instants(member: &Value) -> Vec<String> {
 }
 
 /// Clause 6.4.3.2: a flat join appends the Linked Entities after the roots, and
-/// the Temporal API renders them the way it renders everything else — as the
+/// the Temporal API renders them the way it renders everything else, as the
 /// history each attribute had over the requested window.
 #[tokio::test]
 async fn temporal_join_flat_appends_linked_temporal_entity() {
-    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
-    let c = client();
+    let scope = TestEnvironment::from_suite("extensions").await.expect("isolated test environment");
     let linked = scope.id("Vehicle:tjoin-flat-B");
     let root = scope.id("Vehicle:tjoin-flat-A");
     let elsewhere = scope.id("Vehicle:tjoin-flat-C");
+    create(scope.client(), &vehicle_with_speed_history(&linked)).await;
+    create(scope.client(), &vehicle_parked_across_the_window(&root, &linked, &elsewhere)).await;
 
-    assert_eq!(create_temporal_entity(&c, &vehicle_with_speed_history(&linked)).await, StatusCode::CREATED);
-    assert_eq!(
-        create_temporal_entity(&c, &vehicle_parked_across_the_window(&root, &linked, &elsewhere)).await,
-        StatusCode::CREATED
-    );
-
-    let (status, body, _) = query_temporal_entities(
-        &c,
-        &scope,
-        &format!("id={root}&type=Vehicle&{WINDOW}&join=flat&joinLevel=1"),
-        Some(TEST_SUITE_CONTEXT),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-
+    let body = query_ok(&scope, &format!("id={root}&join=flat&joinLevel=1")).await;
     let ids = ids_from_array(&body);
     assert!(ids.contains(&root), "the root must be present: {ids:?}");
     assert!(ids.contains(&linked), "the Linked Entity must accompany the root: {ids:?}");
@@ -125,35 +140,21 @@ async fn temporal_join_flat_appends_linked_temporal_entity() {
 /// `entity`, and the collection still holds exactly the roots it started with.
 #[tokio::test]
 async fn temporal_join_inline_nests_under_instances() {
-    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
-    let c = client();
+    let scope = TestEnvironment::from_suite("extensions").await.expect("isolated test environment");
     let linked = scope.id("Vehicle:tjoin-inline-B");
     let root = scope.id("Vehicle:tjoin-inline-A");
     let elsewhere = scope.id("Vehicle:tjoin-inline-C");
+    create(scope.client(), &vehicle_with_speed_history(&linked)).await;
+    create(scope.client(), &vehicle_parked_across_the_window(&root, &linked, &elsewhere)).await;
 
-    assert_eq!(create_temporal_entity(&c, &vehicle_with_speed_history(&linked)).await, StatusCode::CREATED);
-    assert_eq!(
-        create_temporal_entity(&c, &vehicle_parked_across_the_window(&root, &linked, &elsewhere)).await,
-        StatusCode::CREATED
-    );
-
-    let (status, body, _) = query_temporal_entities(
-        &c,
-        &scope,
-        &format!("id={root}&type=Vehicle&{WINDOW}&join=inline&joinLevel=1"),
-        Some(TEST_SUITE_CONTEXT),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-
+    let body = query_ok(&scope, &format!("id={root}&join=inline&joinLevel=1")).await;
     assert_eq!(ids_from_array(&body), vec![root.clone()], "an inline join appends nothing");
 
     let instances = member_with_id(&body, &root)["isParkedIn"]
         .as_array()
-        .expect("the Relationship renders as an array of instances")
-        .clone();
+        .expect("the Relationship renders as an array of instances");
     assert_eq!(instances.len(), 2, "only the in-window instances are rendered: {instances:?}");
-    for instance in &instances {
+    for instance in instances {
         assert_eq!(
             instance["entity"]["id"].as_str(),
             Some(linked.as_str()),
@@ -169,32 +170,19 @@ async fn temporal_join_inline_nests_under_instances() {
 }
 
 /// A Relationship instance outside the window is not rendered, so the entity it
-/// names is never a traversal candidate — even when that entity has history of
+/// names is never a traversal candidate, even when that entity has history of
 /// its own inside the window.
 #[tokio::test]
 async fn temporal_join_window_limits_candidates() {
-    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
-    let c = client();
+    let scope = TestEnvironment::from_suite("extensions").await.expect("isolated test environment");
     let linked = scope.id("Vehicle:tjoin-window-B");
     let root = scope.id("Vehicle:tjoin-window-A");
     let elsewhere = scope.id("Vehicle:tjoin-window-C");
+    create(scope.client(), &vehicle_with_speed_history(&linked)).await;
+    create(scope.client(), &vehicle_with_speed_history(&elsewhere)).await;
+    create(scope.client(), &vehicle_parked_across_the_window(&root, &linked, &elsewhere)).await;
 
-    assert_eq!(create_temporal_entity(&c, &vehicle_with_speed_history(&linked)).await, StatusCode::CREATED);
-    assert_eq!(create_temporal_entity(&c, &vehicle_with_speed_history(&elsewhere)).await, StatusCode::CREATED);
-    assert_eq!(
-        create_temporal_entity(&c, &vehicle_parked_across_the_window(&root, &linked, &elsewhere)).await,
-        StatusCode::CREATED
-    );
-
-    let (status, body, _) = query_temporal_entities(
-        &c,
-        &scope,
-        &format!("id={root}&type=Vehicle&{WINDOW}&join=flat&joinLevel=1"),
-        Some(TEST_SUITE_CONTEXT),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-
+    let body = query_ok(&scope, &format!("id={root}&join=flat&joinLevel=1")).await;
     let ids = ids_from_array(&body);
     assert!(ids.contains(&linked), "the in-window Linked Entity must be present: {ids:?}");
     assert!(!ids.contains(&elsewhere), "an entity named only outside the window must not be joined: {ids:?}");
@@ -205,17 +193,12 @@ async fn temporal_join_window_limits_candidates() {
 /// the GET carries them in its query string, and reaches the same traversal.
 #[tokio::test]
 async fn temporal_post_query_join() {
-    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
-    let c = client();
+    let scope = TestEnvironment::from_suite("extensions").await.expect("isolated test environment");
     let linked = scope.id("Vehicle:tjoin-post-B");
     let root = scope.id("Vehicle:tjoin-post-A");
     let elsewhere = scope.id("Vehicle:tjoin-post-C");
-
-    assert_eq!(create_temporal_entity(&c, &vehicle_with_speed_history(&linked)).await, StatusCode::CREATED);
-    assert_eq!(
-        create_temporal_entity(&c, &vehicle_parked_across_the_window(&root, &linked, &elsewhere)).await,
-        StatusCode::CREATED
-    );
+    create(scope.client(), &vehicle_with_speed_history(&linked)).await;
+    create(scope.client(), &vehicle_parked_across_the_window(&root, &linked, &elsewhere)).await;
 
     let query = json!({
         "type": "Query",
@@ -228,8 +211,9 @@ async fn temporal_post_query_join() {
             "endTimeAt": "2020-08-01T12:10:00Z"
         }
     });
-    let (status, body, _) = post_temporal_query(&c, &scope, &query, Some(TEST_SUITE_CONTEXT)).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    let response = send(scope.client(), Method::POST, "temporal/entityOperations/query", Some(&query)).await;
+    assert_eq!(response.status, StatusCode::OK, "{:?}", response.body);
+    let body = response.json_value().expect("a 200 carries a JSON body");
 
     let ids = ids_from_array(&body);
     assert!(ids.contains(&root), "the root must be present: {ids:?}");
@@ -238,51 +222,38 @@ async fn temporal_post_query_join() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clauses 5.7.3.4 and 5.7.4.4 refuse Linked Entity retrieval on the temporal
-/// operations outright, raising an error where projection attributes or filter
-/// conditions indicate one. The join extension above accepts the parameters and
-/// bounds the references instead, by the clause 5.7.2.4 rule: a `q` hop needs a
-/// join that retrieves, and `@none` is the parameter's default rather than one.
+/// With the extension on, the temporal query follows the clause 5.7.2.4 row of
+/// Query Entities: a `q` hop needs a join that retrieves.
 #[tokio::test]
 async fn temporal_query_rejects_a_traversing_filter_without_a_retrieving_join() {
-    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
-    let c = client();
-
+    let scope = TestEnvironment::from_suite("extensions").await.expect("isolated test environment");
     let filter = urlencoding::encode("isParkedIn{speed>5}");
-    let (status, body, _) = query_temporal_entities(&c, &scope, &format!("type=Vehicle&{WINDOW}&q={filter}"), Some(TEST_SUITE_CONTEXT)).await;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let path = format!("temporal/entities?{}", scope.scope_query(&format!("type=Vehicle&{WINDOW}&q={filter}")));
+    let response = send(scope.client(), Method::GET, &path, None).await;
+    assert_eq!(response.status, StatusCode::BAD_REQUEST, "{:?}", response.body);
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The projection half of the same pair, enforced symmetrically: a nested
-/// `pick` term describes a Linked Entity, so it is refused without a retrieving
-/// join and honoured once one is requested.
+/// The projection half of the same row: a nested `pick` term describes a
+/// Linked Entity, so it is refused without a retrieving join and honoured once
+/// one is requested.
 #[tokio::test]
 async fn temporal_query_bounds_a_nested_projection_by_the_requested_join() {
-    let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
-    let c = client();
+    let scope = TestEnvironment::from_suite("extensions").await.expect("isolated test environment");
     let linked = scope.id("Vehicle:tjoin-pick-B");
     let root = scope.id("Vehicle:tjoin-pick-A");
     let elsewhere = scope.id("Vehicle:tjoin-pick-C");
-
-    assert_eq!(create_temporal_entity(&c, &vehicle_with_speed_history(&linked)).await, StatusCode::CREATED);
-    assert_eq!(
-        create_temporal_entity(&c, &vehicle_parked_across_the_window(&root, &linked, &elsewhere)).await,
-        StatusCode::CREATED
-    );
+    create(scope.client(), &vehicle_with_speed_history(&linked)).await;
+    create(scope.client(), &vehicle_parked_across_the_window(&root, &linked, &elsewhere)).await;
 
     let pick = urlencoding::encode("isParkedIn{speed}");
-    let (status, body, _) = query_temporal_entities(&c, &scope, &format!("id={root}&type=Vehicle&{WINDOW}&pick={pick}"), Some(TEST_SUITE_CONTEXT)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let path = format!(
+        "temporal/entities?{}",
+        scope.scope_query(&format!("id={root}&type=Vehicle&{WINDOW}&pick={pick}"))
+    );
+    let refused = send(scope.client(), Method::GET, &path, None).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{:?}", refused.body);
 
-    let (status, body, _) = query_temporal_entities(
-        &c,
-        &scope,
-        &format!("id={root}&type=Vehicle&{WINDOW}&pick={pick}&join=flat&joinLevel=1"),
-        Some(TEST_SUITE_CONTEXT),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    query_ok(&scope, &format!("id={root}&pick={pick}&join=flat&joinLevel=1")).await;
     scope.finish().await.expect("cleanup failed");
 }

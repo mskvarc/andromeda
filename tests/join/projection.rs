@@ -91,15 +91,16 @@ async fn join_omit_linked_term_removes_nested_attribute() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 6.3.15 union rule: `join=flat` renders each linked entity once, so a
-/// target reached both through a Relationship carrying a sub-projection and
-/// through one carrying none renders unrestricted.
+/// Clause 5.7.2.5 appends a flat Linked Entity once, "unless a target URI has
+/// been previously encountered": the first encounter (breadth-first, in member
+/// order) decides the list it is narrowed by, and a later Relationship reaching
+/// the same target neither widens nor merges it.
 #[tokio::test]
-async fn join_pick_union_when_two_relationships_share_target() {
+async fn join_pick_first_encounter_decides_a_shared_flat_target() {
     let scope = TestEnvironment::from_suite("join").await.expect("isolated test environment");
     let client = scope.client();
-    let id_b = scope.id("Building:union-B");
-    let id_a = scope.id("Building:union-A");
+    let id_b = scope.id("Building:first-B");
+    let id_a = scope.id("Building:first-A");
     create(client, &described_building(&id_b)).await;
     create(
         client,
@@ -119,12 +120,12 @@ async fn join_pick_union_when_two_relationships_share_target() {
     )
     .await;
 
-    let linked = member_with_id(&body, &id_b);
-    assert!(linked.get("category").is_some(), "the union renders the shared target in full: {linked}");
-    assert!(
-        linked.get("name").is_some(),
-        "a relationship carrying no sub-projection widens the shared target to its full rendering: {linked}"
-    );
+    let members = body.as_array().expect("a flat join answers with a collection");
+    assert_eq!(members.len(), 2, "the shared target is appended once: {body}");
+    let linked = &members[1];
+    assert!(linked.get("category").is_some(), "the first encounter's group keeps `category`: {linked}");
+    assert!(linked.get("name").is_none(), "the later bare reference does not widen it: {linked}");
+    assert!(linked.get("id").is_none(), "the first encounter's group names no `id`: {linked}");
     scope.finish().await.expect("cleanup failed");
 }
 
