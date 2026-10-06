@@ -12,7 +12,7 @@ use andromeda_http_headers::via::Via;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
-use andromeda_ngsi_ld_query::filter::expression::Expr;
+use andromeda_ngsi_ld_query::{filter::expression::Expr, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use http::HeaderMap;
 
@@ -158,8 +158,11 @@ pub struct ForwardProvisionRequest<'a> {
     pub resource: ProvisionResource,
     /// Entity ID to target, if applicable.
     pub entity_id: &'a Identifier,
-    /// Compact entity type for CSR matching.
-    pub entity_type_compact: Option<&'a EntityTypeName>,
+    /// The clause 4.17 selector the request names its target entity's types
+    /// with, matched against each registration by clause 5.12. A request that
+    /// carries a single type names it as a one-type selector; without one, the
+    /// local entity's own types stand in.
+    pub entity_type_selector: Option<&'a TypeExprRaw>,
     /// Attribute name used to filter registration information entries.
     pub attribute_name: Option<&'a AttributeName>,
     /// HTTP method for the forwarded request.

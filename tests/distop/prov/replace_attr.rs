@@ -19,7 +19,7 @@ use crate::{
 use andromeda_test_client::response::TestResponse;
 use andromeda_test_fixtures::{
     context::COMPOUND_CONTEXT,
-    problem_detail::{CONFLICT, RESOURCE_NOT_FOUND},
+    problem_detail::{BAD_REQUEST_DATA, CONFLICT, RESOURCE_NOT_FOUND},
 };
 use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use axum::http::Method;
@@ -236,6 +236,114 @@ async fn replace_attr_inclusive_forwards_remainder() {
         .expect("local read-back");
     assert_status(&local, 200);
     assert_eq!(json_body(&local)["speed"]["value"].as_i64(), Some(99), "the local attribute is replaced");
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// Clause 5.6.19.4 runs the clause 5.5.4 validation of the replacement before
+/// its forwarding phase, and the replacement is a whole instance (Table
+/// 5.2.5-1), so a Fragment naming only a `unitCode` is a `400 BadRequestData`
+/// that no inclusive registration receives, and the local `speed` is untouched.
+#[tokio::test]
+async fn replace_attr_without_a_value_is_refused_before_forwarding_to_an_inclusive_registration() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
+    let mock = ContextSourceAdapter::start().await;
+    let entity_id = topology.id("Vehicle:prov-replaceattr-valueless");
+    let reg_id = topology.id("registration:prov-replaceattr-valueless");
+    let path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
+
+    let seeded = client
+        .raw(Method::POST, "/ngsi-ld/v1/entities?local=true")
+        .header("content-type", "application/ld+json")
+        .json(&entity(&entity_id, "Vehicle", &[("speed", property(json!(42)))]))
+        .send()
+        .await
+        .expect("seed local entity");
+    assert_status(&seeded, 201);
+
+    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
+        .mode("inclusive")
+        .entity_id(&entity_id)
+        .operations(&["replaceAttrs", "retrieveEntity"])
+        .build();
+    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    mock.set_stub(Method::PUT, &path, 204).await;
+
+    let replaced = client
+        .raw(Method::PUT, &path)
+        .header("content-type", "application/ld+json")
+        .json(&json!({ "unitCode": "C62", "@context": COMPOUND_CONTEXT.as_str() }))
+        .send()
+        .await
+        .expect("replace attr");
+    assert_status(&replaced, 400);
+    assert_problem_details(&replaced, BAD_REQUEST_DATA);
+    assert_eq!(mock.get_count(Method::PUT, &path), 0, "a replacement clause 5.5.4 refuses is never forwarded");
+
+    let local = client
+        .get_entity(&entity_id, "local=true", "application/ld+json", None)
+        .await
+        .expect("local read-back");
+    assert_status(&local, 200);
+    assert_eq!(json_body(&local)["speed"]["value"].as_i64(), Some(42), "the local attribute is unchanged");
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// Issue the replace-attribute request against broker A for `speed`, naming the
+/// target entity's type with `selector` (Table 6.7.3.3-1 `type`).
+async fn replace_speed_selecting(topology: &MultiBrokerTopology<BrokerRole>, entity_id: &str, selector: &str) -> TestResponse {
+    topology
+        .broker(BrokerRole::A)
+        .expect("topology broker A")
+        .client()
+        .raw(Method::PUT, &format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed?type={selector}"))
+        .header("content-type", "application/ld+json")
+        .json(&speed_node(99))
+        .send()
+        .await
+        .expect("replace attr")
+}
+
+/// Clause 5.12 matches a write to a registration by the request's type
+/// selector: a selector naming `Building` does not match an exclusive
+/// registration of `Vehicle` entities that covers the entity identifier, so
+/// nothing is forwarded and the entity, held nowhere else, is `404
+/// ResourceNotFound`; naming `Vehicle` matches and forwards.
+#[tokio::test]
+async fn replace_attr_type_selector_decides_which_registration_receives_the_write() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
+    let mock = ContextSourceAdapter::start().await;
+    let entity_id = topology.id("Vehicle:prov-replaceattr-selector");
+    let reg_id = topology.id("registration:prov-replaceattr-selector");
+    let path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
+
+    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
+        .mode("exclusive")
+        .entity_id(&entity_id)
+        .entity_type("Vehicle")
+        .property_names(&["speed"])
+        .operations(&["replaceAttrs", "retrieveEntity"])
+        .build();
+    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    mock.set_stub(Method::PUT, &path, 204).await;
+
+    let excluded = replace_speed_selecting(&topology, &entity_id, "Building").await;
+    assert_status(&excluded, 404);
+    assert_problem_details(&excluded, RESOURCE_NOT_FOUND);
+    assert_eq!(mock.get_count(Method::PUT, &path), 0, "a registration of another type is not sent the write");
+
+    let matched = replace_speed_selecting(&topology, &entity_id, "Vehicle").await;
+    assert!(
+        matched.status.as_u16() != 404,
+        "a registration of the selected type receives the write: {}",
+        String::from_utf8_lossy(&matched.body)
+    );
+    assert_eq!(mock.get_count(Method::PUT, &path), 1, "the write is forwarded once");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

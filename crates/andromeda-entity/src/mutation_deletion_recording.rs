@@ -24,6 +24,7 @@ use crate::{
         probing_recording_service,
         single_recorded_write,
     },
+    write_target::WriteTarget,
 };
 use andromeda_context_commit::{change_event::ChangeEvent, history_record::HistoryRecord};
 use andromeda_ngsi_ld_entity::reads::{
@@ -40,7 +41,11 @@ use std::sync::{Arc, Mutex, atomic::Ordering};
 /// and whose cache holds `cached`.
 async fn deleted_through(probe: ProbeAnswer, cached: CachedSubscription) -> ObservedService {
     let observed = probing_recording_service(probe, cached).await;
-    observed.service.delete(&live_target(), &entity_uri()).await.expect("the deletion lands");
+    observed
+        .service
+        .delete(&live_target(), WriteTarget::new(&entity_uri(), None))
+        .await
+        .expect("the deletion lands");
     observed
 }
 
@@ -138,7 +143,11 @@ async fn a_failed_watcher_probe_reads_the_removed_state() {
 #[tokio::test]
 async fn a_live_delivery_deletion_reads_the_removed_state_for_an_entity_updated_subscription() {
     let observed = probing_live_service(ProbeAnswer::Answers(DeletionWatchers::None), CachedSubscription::BuildingOnEntityUpdated).await;
-    observed.service.delete(&live_target(), &entity_uri()).await.expect("the deletion lands");
+    observed
+        .service
+        .delete(&live_target(), WriteTarget::new(&entity_uri(), None))
+        .await
+        .expect("the deletion lands");
 
     assert_eq!(observed.payload_reads.load(Ordering::Relaxed), 1);
     assert!(single_recorded_write(&observed.recorded).subscription_matches.is_empty());
@@ -150,7 +159,11 @@ async fn a_live_delivery_deletion_reads_the_removed_state_for_an_entity_updated_
 #[tokio::test]
 async fn a_live_delivery_deletion_no_subscription_watches_never_reads_the_removed_state() {
     let observed = probing_live_service(ProbeAnswer::Answers(DeletionWatchers::None), CachedSubscription::None).await;
-    observed.service.delete(&live_target(), &entity_uri()).await.expect("the deletion lands");
+    observed
+        .service
+        .delete(&live_target(), WriteTarget::new(&entity_uri(), None))
+        .await
+        .expect("the deletion lands");
 
     assert_eq!(observed.payload_reads.load(Ordering::Relaxed), 0);
     assert!(single_published(&observed.published).entity_snapshot.is_none());

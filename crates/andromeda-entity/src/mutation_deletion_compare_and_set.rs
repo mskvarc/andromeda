@@ -7,7 +7,10 @@
 //! replica would, and prove the deletion is read again and ends the added
 //! instance too.
 
-use crate::compare_and_set_fixture::{Watchers, adds_attribute, building_id, contended_service, held_version, stored_building, tombstoned_terms};
+use crate::{
+    compare_and_set_fixture::{Watchers, adds_attribute, building_id, contended_service, held_version, stored_building, tombstoned_terms},
+    write_target::WriteTarget,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::reads::attribute_change::AttributeChangeKind;
 use pretty_assertions::assert_eq;
@@ -29,7 +32,11 @@ async fn a_deletion_from_the_outline_superseded_by_another_writer_ends_the_insta
     let concurrent = Arc::new(Mutex::new(None));
     contended.store.interfere(adds_attribute(&id, "other", &concurrent));
 
-    contended.service.delete(&ContextTarget::Live, &id).await.expect("the deletion lands");
+    contended
+        .service
+        .delete(&ContextTarget::Live, WriteTarget::new(&id, None))
+        .await
+        .expect("the deletion lands");
 
     let writes = contended.store.submitted_for(&id);
     assert_eq!(writes.len(), 2, "the superseded attempt and the one that landed");
@@ -52,7 +59,11 @@ async fn a_deletion_from_the_removed_state_superseded_by_another_writer_notifies
     contended.store.seed(&id, stored_building(&id, &["seed"]));
     contended.store.interfere(adds_attribute(&id, "other", &Arc::new(Mutex::new(None))));
 
-    contended.service.delete(&ContextTarget::Live, &id).await.expect("the deletion lands");
+    contended
+        .service
+        .delete(&ContextTarget::Live, WriteTarget::new(&id, None))
+        .await
+        .expect("the deletion lands");
 
     let writes = contended.store.submitted_for(&id);
     assert_eq!(writes.len(), 2);

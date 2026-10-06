@@ -34,6 +34,7 @@ use andromeda_http_extraction::context_target;
 use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location};
 use andromeda_ngsi_ld_model::temporal::written_temporal_entity::WrittenTemporalEntity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 
 /// The response a local create-or-update answers with: 201 with the new
 /// evolution's location, or 204 (clause 5.6.11.5).
@@ -79,11 +80,15 @@ pub async fn create_or_update(
         .id
         .clone() // clone: the forwarding names the evolution beside the payload it narrows
         .ok_or_else(|| ClassifiedReport::public(NgsiLdErrorType::BadRequestData, "entity id must be a valid URI").with_instance(uri.clone()))?;
-    let entity_type = payload.type_.as_ref().and_then(|types| types.iter().next());
+    let entity_type = payload
+        .type_
+        .as_ref()
+        .and_then(|types| types.iter().next())
+        .map(|name| TypeExprRaw::Type(name.clone())); // clone: the one-type selector owns the type it names
     let request = ForwardProvisionRequest {
         resource: ProvisionResource::TemporalEntities,
         entity_id: &entity_id,
-        entity_type_compact: entity_type,
+        entity_type_selector: entity_type.as_ref(),
         attribute_name: None,
         method: Method::POST,
         context: &context,

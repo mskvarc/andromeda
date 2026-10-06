@@ -660,6 +660,7 @@ dependencies = [
  "tower",
  "tracing",
  "typed-builder",
+ "url",
 ]
 
 [[package]]

@@ -42,6 +42,20 @@ pub(crate) fn offline_service(registrations: Vec<ContextSourceRegistration>) -> 
     .expect("the service builds")
 }
 
+/// A forwarding service choosing among `registrations`, holding the one entity
+/// of `local_types` whatever its identifier, and resolving only embedded
+/// contexts, never the network.
+pub(crate) fn service_holding_entity_of(registrations: Vec<ContextSourceRegistration>, local_types: Vec<IriBuf>) -> FederationService {
+    FederationService::new(
+        Arc::new(FixedRegistrationStore::new(registrations)),
+        Arc::new(LocalEntityOf(local_types)),
+        JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"),
+        ContextSourcePseudonym::new("andromeda-test").expect("a valid alias"),
+        &FederationConfig::default(),
+    )
+    .expect("the service builds")
+}
+
 /// A store holding a fixed registration list.
 pub(crate) struct FixedRegistrationStore {
     /// The registrations every matching query answers.
@@ -209,5 +223,15 @@ pub(crate) struct NoLocalEntities;
 impl LocalEntityTypeResolver for NoLocalEntities {
     fn local_entity_types<'resolver>(&'resolver self, _target: &'resolver ContextTarget, _id: &'resolver Identifier) -> BoxFuture<'resolver, Vec<IriBuf>> {
         Box::pin(async { Vec::new() })
+    }
+}
+
+/// A resolver for which every entity is held locally with the same types.
+pub(crate) struct LocalEntityOf(Vec<IriBuf>);
+
+impl LocalEntityTypeResolver for LocalEntityOf {
+    fn local_entity_types<'resolver>(&'resolver self, _target: &'resolver ContextTarget, _id: &'resolver Identifier) -> BoxFuture<'resolver, Vec<IriBuf>> {
+        let types = self.0.clone(); // clone: the answer owns the types the fixture holds
+        Box::pin(async { types })
     }
 }

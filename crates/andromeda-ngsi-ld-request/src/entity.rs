@@ -9,7 +9,6 @@ use crate::{
     options::{EntityRepresentationOptions, OverwritePolicy},
     query::deserialization::{
         deserialize_optional_attribute_names,
-        deserialize_optional_dataset_selector,
         deserialize_optional_dataset_selectors,
         deserialize_optional_iso8601_duration,
         deserialize_optional_projection_terms,
@@ -46,6 +45,10 @@ use std::num::NonZeroU32;
 pub struct AppendParams {
     /// Whether existing attributes may be overwritten.
     pub options: Option<WrittenValue<OverwritePolicy>>,
+    /// The clause 4.17 selector the target entity's types must satisfy
+    /// (Table 6.6.3.1-1 `type`).
+    #[serde(rename = "type")]
+    pub entity_type: Option<TypeExprRaw>,
 }
 
 impl AppendParams {
@@ -60,24 +63,20 @@ impl AppendParams {
     }
 }
 
-/// Query parameters for `PATCH /entities/{id}/attrs/{attrId}` (partial update).
+/// Query parameters for `PATCH /entities/{id}/attrs/{attrId}` (Partial
+/// Attribute Update, Table 6.7.3.1-1) and `PUT /entities/{id}/attrs/{attrId}`
+/// (Replace Attribute, Table 6.7.3.3-1).
+///
+/// Each table defines `type` alone. It does not define `datasetId`: the
+/// instance an Attribute Fragment addresses is named by the Fragment's own
+/// `datasetId` (clauses 5.6.4.4 and 5.6.19.4), so the URL parameter is refused
+/// as unknown (clause 6.3.20).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PartialUpdateAttrParams {
-    /// Dataset instances to select, comma-separated (`datasetId`).
-    #[serde(rename = "datasetId")]
-    #[serde(default, deserialize_with = "deserialize_optional_dataset_selector")]
-    pub dataset_id: Option<DatasetSelector>,
-}
-
-/// Query parameters for `PUT /entities/{id}/attrs/{attrId}` (replace attribute).
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReplaceAttrParams {
-    /// Dataset instances to select, comma-separated (`datasetId`).
-    #[serde(rename = "datasetId")]
-    #[serde(default, deserialize_with = "deserialize_optional_dataset_selector")]
-    pub dataset_id: Option<DatasetSelector>,
+pub struct AttributeWriteParams {
+    /// The clause 4.17 selector the target entity's types must satisfy.
+    #[serde(rename = "type")]
+    pub entity_type: Option<TypeExprRaw>,
 }
 
 /// Query parameters for `PATCH /entities/{id}` (Merge Entity, Table 6.5.3.4-1).
@@ -284,6 +283,31 @@ mod tests {
         assert!(serde_urlencoded::from_str::<GetEntityParams>("type=Vehicle%7C").is_err());
     }
 
+    /// Tables 6.7.3.1-1 and 6.7.3.3-1 define the `type` parameter, a clause 4.17
+    /// selector: a malformed one is a client error, and without the parameter
+    /// no selector applies.
+    #[test]
+    fn an_attribute_write_reads_a_clause_4_17_type_selector() {
+        let params: AttributeWriteParams = serde_urlencoded::from_str("type=Vehicle%7CBuilding").expect("a valid type selector");
+        pretty_assertions::assert_eq!(params.entity_type.map(|selector| selector.to_string()), Some("Vehicle,Building".to_string()));
+        assert!(serde_urlencoded::from_str::<AttributeWriteParams>("type=Vehicle%7C").is_err());
+        // Clause 4.17's grammar has no empty selector: `type=` names no type, so
+        // it is refused rather than read as no selector.
+        assert!(serde_urlencoded::from_str::<AttributeWriteParams>("type=").is_err());
+        let bare: AttributeWriteParams = serde_urlencoded::from_str("").expect("parses");
+        assert!(bare.entity_type.is_none());
+    }
+
+    /// Table 6.6.3.1-1: Append Attributes takes `type` beside `options`.
+    #[test]
+    fn an_append_reads_a_type_selector_beside_its_options() {
+        let params: AppendParams = serde_urlencoded::from_str("type=Vehicle&options=noOverwrite").expect("both parameters parse");
+        pretty_assertions::assert_eq!(params.entity_type.map(|selector| selector.to_string()), Some("Vehicle".to_string()));
+        assert!(params.options.is_some());
+        let bare: AppendParams = serde_urlencoded::from_str("").expect("parses");
+        assert!(bare.entity_type.is_none() && bare.options.is_none());
+    }
+
     fn default_params() -> GetEntityParams {
         GetEntityParams {
             entity_type: None,
@@ -434,11 +458,11 @@ mod tests {
         assert!(params.validate().is_ok());
     }
 
+    /// Tables 6.7.3.1-1 and 6.7.3.3-1 define no `datasetId` parameter.
     #[test]
-    fn mutation_dataset_id_is_typed_at_deserialization() {
-        let params: PartialUpdateAttrParams = serde_urlencoded::from_str("datasetId=urn:ngsi-ld:Dataset:test").expect("valid dataset id");
-        pretty_assertions::assert_eq!(params.dataset_id.as_ref().map(ToString::to_string).as_deref(), Some("urn:ngsi-ld:Dataset:test"));
-        assert!(serde_urlencoded::from_str::<ReplaceAttrParams>("datasetId=not-a-urn").is_err());
+    fn an_attribute_write_refuses_a_dataset_id_parameter() {
+        let error = serde_urlencoded::from_str::<AttributeWriteParams>("datasetId=urn:ngsi-ld:Dataset:test").expect_err("datasetId is not defined");
+        assert!(error.to_string().contains("unknown field"), "got {error}");
     }
 
     #[test]

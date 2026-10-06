@@ -6,11 +6,11 @@ use crate::{
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
     write_kind::PartialUpdateAttribute,
+    write_target::WriteTarget,
 };
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, history::written_observation::AddressedInstances, system_instant::SystemInstant};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::Utc;
 use std::sync::Arc;
@@ -34,7 +34,8 @@ impl EntityService {
     ///
     /// Reports [`EntityError::Validation`] when the attribute names `scope`
     /// (clause 5.6.4.4) or the fragment cannot be merged into the stored
-    /// instance, [`EntityError::NotFound`] when no entity carries `id`,
+    /// instance, [`EntityError::NotFound`] when no entity carries the
+    /// identifier of `entity` or the type selector of `entity` excludes it,
     /// [`EntityError::MemberNotFound`] when the entity carries neither the
     /// attribute nor the selected instance, [`EntityError::Contention`] when
     /// concurrent writers superseded the computed write on every attempt, and
@@ -42,10 +43,10 @@ impl EntityService {
     pub async fn partial_update_attr(
         &self,
         target: &ContextTarget,
-        id: &Identifier,
-        dataset_id: Option<&Identifier>,
+        entity: WriteTarget<'_>,
         admitted: AdmittedAttribute<'_, PartialUpdateAttribute>,
     ) -> Result<(), EntityError> {
+        let id = entity.id;
         // Clause 5.6.4.4: `scope` is not an attribute and cannot be a partial
         // update target, exactly as Replace Attribute rejects it.
         if admitted.expanded_name().as_str() == expanded_properties::SCOPE.as_str() {
@@ -54,16 +55,15 @@ impl EntityService {
         let (attribute, fragment) = admitted.into_parts();
 
         let events = self
-            .commit_computed_write(target, id, |previous| {
+            .commit_computed_write(target, entity, |previous| {
                 let mut updated = EntityState::clone(previous); // clone: shares every attribute the update leaves alone
-                updated.partial_update_attribute(&attribute, dataset_id, &fragment)?;
+                updated.partial_update_attribute(&attribute, &fragment)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
                 // its createdAt across the read-modify-write.
                 updated.stamp_attribute_instants(Some(previous), SystemInstant::new(Utc::now()));
                 let updated = Arc::new(updated);
                 let addressed = AddressedInstances::AttributeFragment {
                     attribute: &attribute,
-                    dataset_id,
                     fragment: &fragment,
                 };
                 let history = mutation_history(addressed, previous, &updated);
@@ -87,6 +87,7 @@ mod tests {
         error::EntityError,
         notification_recording_harness::{entity_uri, live_target, recording_service},
         write_kind::PartialUpdateAttribute,
+        write_target::WriteTarget,
     };
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -101,7 +102,7 @@ mod tests {
         let admitted =
             admitted_attribute::<PartialUpdateAttribute>(&service, &scope, json!({"type": "Property", "value": "/Madrid"}), &ContextSpec::core_only()).await;
         let error = service
-            .partial_update_attr(&live_target(), &entity_uri(), None, admitted)
+            .partial_update_attr(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
             .await
             .expect_err("scope cannot be partially updated");
         assert!(matches!(error, EntityError::Validation(_)), "{error}");

@@ -18,25 +18,27 @@ use crate::{
         Response,
         StatusCode,
         TypedPath,
+        UpdateAttributesParams,
         ValidatedQuery,
         classify_entity_error,
         collect_proxied_attrs,
         provision_response,
         update_result::{NotUpdatedReason, update_result_response},
     },
+    forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
     written_payload_admission::admit_written_entity,
 };
-use andromeda_entity::write_kind::UpdateAttributes;
+use andromeda_entity::{write_kind::UpdateAttributes, write_target::WriteTarget};
 use andromeda_federation::{forwarded_content::ForwardedContent, outcome::ForwardedWriteResult, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
-use andromeda_ngsi_ld_request::empty::EmptyParams;
 use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn update_attrs(
-    // Clause 6.3.20: the operation defines no parameter, so any is an
-    // `InvalidRequest`; it is read first, before the tenant is resolved.
-    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
+    // Clause 6.3.20: the operation defines `type` alone (Table 6.6.3.2-1), so
+    // any other parameter is an `InvalidRequest`; it is read first, before the
+    // tenant is resolved.
+    ValidatedQuery(params): ValidatedQuery<UpdateAttributesParams>,
     context_target::ExistingTargetedTenantState {
         services: state,
         target,
@@ -53,16 +55,22 @@ pub(crate) async fn update_attrs(
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
     let fragment = body.admitted(&context)?;
     let service = &state.entities;
+    let selector = service
+        .expand_write_selector(params.entity_type.as_ref(), &context)
+        .await
+        .with_entity_instance(&uri)?;
+    let entity = WriteTarget::new(&id, selector.as_ref());
+    let qs = forwarded_write_query([forwarded_type_parameter(uri.query())]);
     let request = ForwardProvisionRequest {
         resource: ProvisionResource::Entities,
         entity_id: &id,
-        entity_type_compact: None,
+        entity_type_selector: params.entity_type.as_ref(),
         attribute_name: None,
         method: Method::PATCH,
         context: &context,
         operation: ForwardingOperation::UpdateEntityAttributes,
         path_suffix: Some("/attrs"),
-        query_string: None,
+        query_string: qs.as_deref(),
         triggering: TriggeringRequest {
             via: incoming_via.as_ref(),
             headers: Some(&headers),
@@ -85,7 +93,7 @@ pub(crate) async fn update_attrs(
 
     if forwarded.is_empty() {
         // No matching CSRs — update locally
-        let (requested, not_updated) = service.update_attrs(&target, &id, admitted).await.with_entity_instance(&uri)?;
+        let (requested, not_updated) = service.update_attrs(&target, entity, admitted).await.with_entity_instance(&uri)?;
         if not_updated.is_empty() {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
@@ -102,11 +110,11 @@ pub(crate) async fn update_attrs(
     // read was taken over by none of them.
     let local_update = if sent_to_registrations {
         match admitted.local_remainder(&collect_proxied_attrs(&forwarded)) {
-            Some(remainder) => Some(service.update_attrs(&target, &id, remainder).await),
+            Some(remainder) => Some(service.update_attrs(&target, entity, remainder).await),
             None => None,
         }
     } else {
-        Some(service.update_attrs(&target, &id, admitted).await)
+        Some(service.update_attrs(&target, entity, admitted).await)
     };
 
     // Clause 5.6.2.5: the status says "whether all the new Attributes were

@@ -30,6 +30,7 @@ use andromeda_federation::{forwarded_content::ForwardedContent, request::Trigger
 use andromeda_http_extraction::context_target;
 use andromeda_http_response::headers::with_location;
 use andromeda_jsonld::user_context_admission::admit_user_context;
+use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn create(
@@ -72,7 +73,8 @@ pub(crate) async fn create(
     let entity_type = match &entity.type_ {
         EntityTypeValue::Single(name) => Some(name),
         EntityTypeValue::Multiple(names) => names.first(),
-    };
+    }
+    .map(|name| TypeExprRaw::Type(name.clone())); // clone: the one-type selector owns the type it names
 
     let forwarded = state
         .forwarding
@@ -81,7 +83,7 @@ pub(crate) async fn create(
             ForwardProvisionRequest {
                 resource: ProvisionResource::Entities,
                 entity_id: &entity_id,
-                entity_type_compact: entity_type,
+                entity_type_selector: entity_type.as_ref(),
                 attribute_name: None,
                 method: Method::POST,
                 context: &context,

@@ -9,6 +9,7 @@ use crate::{
     notification_recording_harness::{ENTITY_ID, entity_uri, live_target, recording_service},
     side_effect::SideEffectPlacement,
     write_kind::{BatchCreate, BatchMerge, CreateEntity, MergeEntity},
+    write_target::WriteTarget,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::{admission::null_sentinel_admission::NullSentinelAdmission, document::EntityDocument};
@@ -124,7 +125,7 @@ async fn merging_a_fragment_whose_property_value_object_nests_a_null_is_accepted
     service
         .merge(
             &live_target(),
-            &entity_uri(),
+            WriteTarget::new(&entity_uri(), None),
             &patch,
             admitted,
             &admitted_context(&service, &ContextSpec::core_only()).await,

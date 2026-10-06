@@ -1,7 +1,7 @@
 //! The admission rules, with the cases the expanded-JSON admission pinned.
 
 use crate::{
-    admission::null_sentinel_admission::NullSentinelAdmission,
+    admission::{instance_completeness::InstanceCompleteness, null_sentinel_admission::NullSentinelAdmission},
     document::{EntityDocument, instance_document::InstanceDocument},
     refusal::EntityRefusal,
 };
@@ -41,11 +41,18 @@ fn admit(document: &Value, admission: NullSentinelAdmission) -> Result<(), Entit
     EntityDocument::from_slice(&bytes)?.admit(admission)
 }
 
-/// Decode the attribute fragment `fragment` and admit it under `admission`.
+/// Decode the attribute fragment `fragment` and admit it under `admission`,
+/// as a fragment patching the members it names.
 fn admit_fragment(fragment: &Value, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
+    admit_fragment_as(fragment, admission, InstanceCompleteness::Partial)
+}
+
+/// Decode the attribute fragment `fragment` and admit it under `admission`, as
+/// an instance of the `completeness` the operation writing it requires.
+fn admit_fragment_as(fragment: &Value, admission: NullSentinelAdmission, completeness: InstanceCompleteness) -> Result<(), EntityRefusal> {
     let attribute: AttributeName = "https://example.org/member".parse().expect("a name");
     let bytes = serde_json::to_vec(fragment).expect("JSON");
-    InstanceDocument::from_slice(&attribute, &bytes)?.admit_fragment(&attribute, admission)
+    InstanceDocument::from_slice(&attribute, &bytes)?.admit_fragment(&attribute, admission, completeness)
 }
 
 /// The value member each family carries, in its expanded shape.
@@ -774,4 +781,57 @@ fn a_partial_update_fragment_with_a_repeated_nested_dataset_id_is_refused() {
         matches!(&error, EntityRefusal::RepeatedInstance { attribute, .. } if attribute.as_str() == "https://example.org/method"),
         "{error:?}"
     );
+}
+
+/// Clause 5.5.8 patches the members a Fragment names, and clause 5.4 makes the
+/// Fragment a JSON Merge Patch that names none of them mandatory: a partial
+/// update admits a Fragment naming nothing, or only its `datasetId`.
+#[test]
+fn a_partial_update_admits_a_fragment_naming_only_its_dataset_id_or_nothing() {
+    let fragments = [json!([{}]), json!([{properties::DATASET_ID.as_str(): [{"@id": "urn:ngsi-ld:Dataset:A"}]}])];
+    for fragment in fragments {
+        admit_fragment_as(&fragment, NullSentinelAdmission::PartialUpdateFragment, InstanceCompleteness::Partial)
+            .unwrap_or_else(|error| panic!("{fragment}: {error:?}"));
+    }
+}
+
+/// Clauses 5.2.5 and 5.6.19.4: a replacement is a whole instance, so one with
+/// no value member is refused with its family's missing-value refusal, a
+/// Fragment declaring no family being read as a Property (clause 4.5.2); a
+/// Fragment declaring no family is admitted as a partial update.
+#[test]
+fn a_replacement_without_a_value_member_is_refused() {
+    let unit_code = json!([{properties::UNIT_CODE.as_str(): [{"@value": "C62"}]}]);
+    let typed_property = json!([{"@type": [AttributeType::Property.iri().as_str()]}]);
+    let typed_relationship = json!([{"@type": [AttributeType::Relationship.iri().as_str()]}]);
+    let empty = json!([{}]);
+
+    for fragment in [&unit_code, &typed_property, &empty] {
+        let error = admit_fragment_as(fragment, NullSentinelAdmission::Refused, InstanceCompleteness::Complete).expect_err("the value is missing");
+        assert!(
+            matches!(&error, EntityRefusal::MissingValue { attribute_type: AttributeType::Property, attribute } if attribute.as_str() == "https://example.org/member"),
+            "{fragment}: {error:?}"
+        );
+    }
+    let error = admit_fragment_as(&typed_relationship, NullSentinelAdmission::Refused, InstanceCompleteness::Complete).expect_err("the object is missing");
+    assert!(
+        matches!(&error, EntityRefusal::MissingObject { attribute } if attribute.as_str() == "https://example.org/member"),
+        "{error:?}"
+    );
+
+    for fragment in [&unit_code, &empty] {
+        admit_fragment_as(fragment, NullSentinelAdmission::PartialUpdateFragment, InstanceCompleteness::Partial)
+            .unwrap_or_else(|error| panic!("{fragment}: {error:?}"));
+    }
+}
+
+/// A replacement carrying its value is complete, whatever else it omits.
+#[test]
+fn a_replacement_carrying_its_value_is_admitted() {
+    admit_fragment_as(
+        &json!([property_instance(1, None)]),
+        NullSentinelAdmission::Refused,
+        InstanceCompleteness::Complete,
+    )
+    .expect("a Property with its value is a complete instance");
 }

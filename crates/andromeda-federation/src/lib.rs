@@ -80,6 +80,9 @@ pub mod provision;
 pub mod provision_batch;
 /// Which registrations a single-entity provision is forwarded to.
 pub mod provision_plan;
+/// How the type selector of a write narrows the registrations it is forwarded to.
+#[cfg(test)]
+mod provision_plan_selector_tests;
 /// Purge forwarding.
 pub mod provision_purge;
 /// Why a forwarded entity query produced no answer.

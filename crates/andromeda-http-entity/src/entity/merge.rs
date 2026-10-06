@@ -27,7 +27,7 @@ use crate::{
     },
     written_payload_admission::admit_written_entity,
 };
-use andromeda_entity::write_kind::MergeEntity;
+use andromeda_entity::{write_kind::MergeEntity, write_target::WriteTarget};
 use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
@@ -56,9 +56,13 @@ pub(crate) async fn merge(
         representation,
         lang: params.lang.as_ref(),
         observed_at: params.observed_at,
-        type_selector: params.entity_type.as_ref(),
         claimed: &[],
     };
+    let selector = service
+        .expand_write_selector(params.entity_type.as_ref(), &context)
+        .await
+        .with_entity_instance(&uri)?;
+    let entity = WriteTarget::new(&id, selector.as_ref());
     // Clause 5.6.17.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and a
     // merge left with nothing local is still validated.
@@ -68,7 +72,7 @@ pub(crate) async fn merge(
 
     if is_local {
         service
-            .merge(&target, &id, &patch, admitted, &context, options)
+            .merge(&target, entity, &patch, admitted, &context, options)
             .await
             .with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -81,7 +85,7 @@ pub(crate) async fn merge(
             ForwardProvisionRequest {
                 resource: ProvisionResource::Entities,
                 entity_id: &id,
-                entity_type_compact: None,
+                entity_type_selector: params.entity_type.as_ref(),
                 attribute_name: None,
                 method: Method::PATCH,
                 context: &context,
@@ -100,7 +104,7 @@ pub(crate) async fn merge(
 
     if forwarded.is_empty() {
         service
-            .merge(&target, &id, &patch, admitted, &context, options)
+            .merge(&target, entity, &patch, admitted, &context, options)
             .await
             .with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -112,7 +116,7 @@ pub(crate) async fn merge(
     let local = match admitted.local_remainder(&proxied) {
         Some(remainder) => LocalOutcome::processed(
             service
-                .merge(&target, &id, &patch, remainder, &context, MergeOptions { claimed: &proxied, ..options })
+                .merge(&target, entity, &patch, remainder, &context, MergeOptions { claimed: &proxied, ..options })
                 .await,
             classify_entity_error,
         ),

@@ -13,7 +13,7 @@
 //! their history rows land. The Entity API and the Temporal Evolution then
 //! disagree permanently, because nothing sweeps the difference away.
 
-use crate::{EntityService, entity_invariant::EntityInvariant, error::EntityError};
+use crate::{EntityService, entity_invariant::EntityInvariant, error::EntityError, write_target::WriteTarget};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     precondition::{AfterAttempt, Precondition, after_attempt},
@@ -120,15 +120,19 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::NotFound`] when the entity is absent,
-    /// and otherwise propagates whatever `build` or the coordinator returns.
-    pub(crate) async fn commit_computed_write<B, T>(&self, target: &ContextTarget, id: &Identifier, mut build: B) -> Result<T, EntityError>
+    /// Reports [`EntityError::NotFound`] when the entity is absent or outside
+    /// the type selector of `entity`, and otherwise propagates whatever `build` or the coordinator returns.
+    pub(crate) async fn commit_computed_write<B, T>(&self, target: &ContextTarget, entity: WriteTarget<'_>, mut build: B) -> Result<T, EntityError>
     where
         B: FnMut(&Arc<EntityState>) -> Result<(Option<AtomicWrite>, T), EntityError>,
     {
+        let id = entity.id;
         let mut produced: Option<(T, ComputedWrite)> = None;
         let landed = self
             .commit_read_modify_write(target, id, |previous| {
+                // Clauses 5.6.2.4 to 5.6.19.4: an entity outside the request's
+                // type selector is not the target, whatever the attempt read.
+                entity.admits(previous)?;
                 let (write, value) = build(previous)?;
                 produced = Some((value, ComputedWrite::of(write.as_ref())));
                 Ok(write)

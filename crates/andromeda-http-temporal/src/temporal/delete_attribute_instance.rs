@@ -69,7 +69,7 @@ pub async fn delete_attr_instance(
             ForwardProvisionRequest {
                 resource: ProvisionResource::TemporalEntities,
                 entity_id: &id,
-                entity_type_compact: None,
+                entity_type_selector: None,
                 attribute_name: Some(&attr_id),
                 method: Method::DELETE,
                 context: &context,

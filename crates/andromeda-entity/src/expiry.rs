@@ -1,6 +1,13 @@
 //! Applying clause 4.22 expiry through the ordinary atomic mutation boundary.
 
-use crate::{EntityService, entity_snapshot::EntitySnapshot, error::EntityError, modification_write::ModificationWrite, port::expiry::EntityExpirySource};
+use crate::{
+    EntityService,
+    entity_snapshot::EntitySnapshot,
+    error::EntityError,
+    modification_write::ModificationWrite,
+    port::expiry::EntityExpirySource,
+    write_target::WriteTarget,
+};
 #[cfg(test)]
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord};
 use andromeda_context_commit::{history_record::HistoryRecord, precondition::Precondition, write_outcome::WriteOutcome};
@@ -119,7 +126,7 @@ impl EntityService {
         let candidates = source.entities_due_for_expiry(target, cutoff, batch_size).await?;
         let mut expired = 0usize;
         for entity_id in candidates {
-            match self.delete(target, &entity_id).await {
+            match self.delete(target, WriteTarget::new(&entity_id, None)).await {
                 Ok(()) => expired += 1,
                 Err(EntityError::NotFound { identifier: _ }) => {}
                 Err(error) => return Err(error),

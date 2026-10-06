@@ -1,6 +1,12 @@
 //! Deleting an attribute from an entity (clause 5.6.5).
 
-use crate::{EntityService, entity_validation_reason::EntityValidationReason, error::EntityError, modification_write::ModificationWrite};
+use crate::{
+    EntityService,
+    entity_validation_reason::EntityValidationReason,
+    error::EntityError,
+    modification_write::ModificationWrite,
+    write_target::WriteTarget,
+};
 use andromeda_context_commit::history_record::{HistoryRecord, tombstone};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -25,18 +31,20 @@ impl EntityService {
     /// Reports [`EntityError::JsonLd`] when `attr_name` cannot be expanded
     /// against `context`, [`EntityError::Validation`] when its expansion is
     /// not an attribute name, [`EntityError::NotFound`] when no entity carries
-    /// `id`, [`EntityError::MemberNotFound`] when the entity carries neither
+    /// the identifier of `entity` or the type selector of `entity` excludes it
+    /// (clause 5.6.5.4),[`EntityError::MemberNotFound`] when the entity carries neither
     /// the attribute nor the selected instance, [`EntityError::Contention`]
     /// when concurrent writers superseded the computed write on every attempt,
     /// and [`EntityError::Persistence`] when the store could not apply it.
     pub async fn delete_attr(
         &self,
         target: &ContextTarget,
-        id: &Identifier,
+        entity: WriteTarget<'_>,
         attr_name: &AttributeName,
         selection: DatasetSelection<'_>,
         context: &ContextSpec,
     ) -> Result<(), EntityError> {
+        let id = entity.id;
         let prepared_context = self.engine.prepare_term_context(context);
         let attr_iri = self.engine.expand_term(attr_name.as_str(), &prepared_context).await?;
         let attribute = attribute_name_of(attr_iri.as_str())?;
@@ -57,7 +65,7 @@ impl EntityService {
         };
 
         let events = self
-            .commit_computed_write(target, id, |previous| {
+            .commit_computed_write(target, entity, |previous| {
                 let mut remaining = EntityState::clone(previous); // clone: shares every attribute the deletion leaves alone
                 delete_member(&mut remaining, &attribute, selection)?;
 

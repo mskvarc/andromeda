@@ -29,6 +29,7 @@ use crate::{
         single_recorded_write,
     },
     write_kind::{MergeEntity, ReplaceEntity},
+    write_target::WriteTarget,
 };
 use andromeda_ngsi_ld_entity::reads::attribute_change::AttributeChangeKind;
 use andromeda_ngsi_ld_model::{attribute::member_reading::MemberReading, entity::EntityPatch};
@@ -48,7 +49,7 @@ async fn merge_records_an_attribute_updated_match() {
     service
         .merge(
             &live_target(),
-            &entity_uri(),
+            WriteTarget::new(&entity_uri(), None),
             &fragment,
             admitted,
             &admitted_context(&service, &core_context()).await,
@@ -69,7 +70,7 @@ async fn merge_records_an_attribute_created_match() {
     service
         .merge(
             &live_target(),
-            &entity_uri(),
+            WriteTarget::new(&entity_uri(), None),
             &fragment,
             admitted,
             &admitted_context(&service, &core_context()).await,
@@ -94,7 +95,7 @@ async fn replace_entity_records_the_replacement_diff() {
     )
     .await;
     service
-        .replace_entity(&live_target(), &entity_uri(), admitted)
+        .replace_entity(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
         .await
         .expect("the replace lands");
 
@@ -116,7 +117,14 @@ async fn every_match_of_one_change_shares_one_snapshot() {
     let context = admitted_context(&observed.service, &core_context()).await;
     observed
         .service
-        .merge(&live_target(), &entity_uri(), &fragment, admitted, &context, MergeOptions::default())
+        .merge(
+            &live_target(),
+            WriteTarget::new(&entity_uri(), None),
+            &fragment,
+            admitted,
+            &context,
+            MergeOptions::default(),
+        )
         .await
         .expect("the merge lands");
 

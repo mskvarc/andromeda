@@ -3,16 +3,16 @@
 use crate::{
     EntityService,
     admitted_write::AdmittedEntity,
-    entity_type_match::entity_satisfies,
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
     merge_fragment::{adapt_member, held_attribute_family},
     merge_options::MergeOptions,
     write_kind::MergeEntity,
+    write_target::WriteTarget,
 };
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander, user_context_admission::AdmittedContext};
+use andromeda_jsonld::{engine::term_lookup::PreparedTermContext, user_context_admission::AdmittedContext};
 use andromeda_ngsi_ld_entity::{
     entity_state::EntityState,
     history::written_observation::AddressedInstances,
@@ -21,7 +21,6 @@ use andromeda_ngsi_ld_entity::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{attribute::merge_member::MergeMember, entity::EntityPatch};
-use andromeda_ngsi_ld_query::type_selection::expansion::expand_type_expression;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
 use std::sync::Arc;
@@ -45,28 +44,26 @@ impl EntityService {
     /// Reports [`EntityError::Validation`] when a rewritten patch cannot be
     /// adapted to the attribute families the target
     /// holds, or sets a `datasetId` to the NGSI-LD Null (clause 5.5.12),
-    /// [`EntityError::JsonLd`] when the patch or the type expression cannot be
-    /// expanded against `context`, [`EntityError::NotFound`] when no entity
-    /// carries `id` or the type selector excludes it,
+    /// [`EntityError::JsonLd`] when the patch cannot be expanded against
+    /// `context`, [`EntityError::NotFound`] when no entity carries the
+    /// identifier of `write_target` or its type selector excludes it (clause
+    /// 5.6.17.4),
     /// [`EntityError::Contention`] when concurrent writers superseded the
     /// computed write on every attempt, and [`EntityError::Persistence`] when
     /// the store could not apply it.
     pub async fn merge(
         &self,
         target: &ContextTarget,
-        id: &Identifier,
+        write_target: WriteTarget<'_>,
         patch: &EntityPatch<MergeMember>,
         admitted: AdmittedEntity<MergeEntity>,
         context: &AdmittedContext,
         options: MergeOptions<'_>,
     ) -> Result<(), EntityError> {
+        let id = write_target.id;
         let timer = entity::start(EntityOperation::Merge);
         let result: Result<(), EntityError> = async {
             let prepared_context = self.engine.prepare_term_context(context);
-            let type_selector = match options.type_selector {
-                Some(raw) => Some(expand_type_expression(raw, &ContextualExpander::new(&self.engine, &prepared_context)).await?),
-                None => None,
-            };
             let fragment = if options.rewrites_fragment() {
                 let mut adapted = patch.clone(); // clone: the caller keeps the fragment as written, for the registrations it forwards it to
                 self.adapt_merge_fragment(target, id, &mut adapted, &prepared_context, options).await?;
@@ -89,12 +86,7 @@ impl EntityService {
 
             let now = SystemInstant::new(Utc::now());
             let events = self
-                .commit_computed_write(target, id, |previous| {
-                    // Clause 5.6.17.4: the target is the entity with this id "and,
-                    // where specified, type"; one outside the selector is not it.
-                    if type_selector.as_ref().is_some_and(|selector| !entity_satisfies(previous, selector)) {
-                        return Err(EntityError::not_found(id));
-                    }
+                .commit_computed_write(target, write_target, |previous| {
                     let mut merged = EntityState::clone(previous); // clone: shares every attribute the merge leaves alone
                     merged.merge(&fragment, options.observed_at)?;
                     // Clause 4.8: a merged instance keeps its createdAt and, when its

@@ -22,6 +22,7 @@ use crate::{
         single_recorded_write,
     },
     write_kind::{AppendAttributes, PartialUpdateAttribute, ReplaceAttribute, UpdateAttributes},
+    write_target::WriteTarget,
 };
 use andromeda_ngsi_ld_entity::{
     operation::selection::{DatasetSelection, OverwritePolicy},
@@ -34,7 +35,7 @@ async fn append_attrs_records_an_attribute_created_match() {
     let (service, recorded) = recording_service().await;
     let admitted = admitted_written::<AppendAttributes>(&service, json!({"name": {"type": "Property", "value": "lobby"}}), &core_context()).await;
     service
-        .append_attrs(&live_target(), &entity_uri(), admitted, OverwritePolicy::Overwrite)
+        .append_attrs(&live_target(), WriteTarget::new(&entity_uri(), None), admitted, OverwritePolicy::Overwrite)
         .await
         .expect("the append lands");
 
@@ -46,7 +47,10 @@ async fn append_attrs_records_an_attribute_created_match() {
 async fn update_attrs_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
     let admitted = admitted_written::<UpdateAttributes>(&service, json!({"category": {"type": "Property", "value": "retail"}}), &core_context()).await;
-    service.update_attrs(&live_target(), &entity_uri(), admitted).await.expect("the update lands");
+    service
+        .update_attrs(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
+        .await
+        .expect("the update lands");
 
     let write = single_recorded_write(&recorded);
     assert_single_match(&write, &[(AttributeChangeKind::Updated, CATEGORY_IRI)]);
@@ -58,7 +62,7 @@ async fn partial_update_attr_records_an_attribute_updated_match() {
     let category = attribute_name("category");
     let admitted = admitted_attribute::<PartialUpdateAttribute>(&service, &category, json!({"type": "Property", "value": "retail"}), &core_context()).await;
     service
-        .partial_update_attr(&live_target(), &entity_uri(), None, admitted)
+        .partial_update_attr(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
         .await
         .expect("the partial update lands");
 
@@ -72,7 +76,7 @@ async fn delete_attr_records_an_attribute_deleted_match() {
     service
         .delete_attr(
             &live_target(),
-            &entity_uri(),
+            WriteTarget::new(&entity_uri(), None),
             &attribute_name("category"),
             DatasetSelection::Default,
             &core_context(),
@@ -90,7 +94,7 @@ async fn replace_attr_records_an_attribute_updated_match() {
     let category = attribute_name("category");
     let admitted = admitted_attribute::<ReplaceAttribute>(&service, &category, json!({"type": "Property", "value": "retail"}), &core_context()).await;
     service
-        .replace_attr(&live_target(), &entity_uri(), None, admitted)
+        .replace_attr(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
         .await
         .expect("the replace lands");
 

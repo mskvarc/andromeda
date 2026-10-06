@@ -11,8 +11,13 @@ use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
 
 /// Whether a stored entity's types satisfy an expanded clause 4.17 selector.
 pub(crate) fn entity_satisfies(state: &EntityState, selector: &TypeExpr) -> bool {
-    let types: Vec<&str> = state.types().as_slice().iter().map(EntityTypeName::as_str).collect();
-    selector.matches(&types)
+    types_satisfy(state.types().as_slice(), selector)
+}
+
+/// Whether an entity's `types` satisfy an expanded clause 4.17 selector.
+pub(crate) fn types_satisfy(types: &[EntityTypeName], selector: &TypeExpr) -> bool {
+    let names: Vec<&str> = types.iter().map(EntityTypeName::as_str).collect();
+    selector.matches(&names)
 }
 
 #[cfg(test)]

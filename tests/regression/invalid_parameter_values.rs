@@ -77,6 +77,124 @@ fn assert_refused_as(response: &TestResponse, expected_type: &str, scenario: &st
     assert!(problem["title"].is_string(), "{scenario}: a problem carries a title: {problem}");
 }
 
+/// The `datasetId` of the `speed` instance `attribute_write_vehicle` gives the value 60.
+const GPS: &str = "urn:ngsi-ld:Property:gps";
+
+/// The `datasetId` of the `speed` instance `attribute_write_vehicle` gives the value 61.
+const SPEEDOMETER: &str = "urn:ngsi-ld:Property:speedometer";
+
+/// A Vehicle whose `speed` has the two instances `GPS` (60) and `SPEEDOMETER`
+/// (61), so a write to one of them can be told from a write to the other.
+fn attribute_write_vehicle(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "Vehicle",
+        "speed": [
+            {"type": "Property", "value": 60, "datasetId": GPS},
+            {"type": "Property", "value": 61, "datasetId": SPEEDOMETER}
+        ],
+        "@context": [CORE_CONTEXT]
+    })
+}
+
+/// Send `body` as `application/json` to `PATCH` or `PUT` `/entities/{id}/attrs/speed`
+/// followed by `query` (empty, or `?name=value`).
+async fn write_speed(client: &TestClient, method: Method, id: &str, query: &str, body: &Value) -> TestResponse {
+    client
+        .raw(method, &format!("/ngsi-ld/v1/entities/{}/attrs/speed{query}", urlencoding::encode(id)))
+        .header("content-type", "application/json")
+        .body(body.to_string().into_bytes())
+        .send()
+        .await
+        .expect("attribute write request")
+}
+
+/// The value of each `speed` instance of the stored entity, by `datasetId`.
+async fn speed_values(client: &TestClient, id: &str) -> Vec<(String, Value)> {
+    let retrieved = client
+        .get_entity(id, "", "application/ld+json", Some(CORE_CONTEXT))
+        .await
+        .expect("retrieve entity request");
+    assert_eq!(retrieved.status, StatusCode::OK, "retrieve: {:?}", retrieved.body);
+    let entity = retrieved.json_value().expect("a retrieved entity is JSON");
+    let mut values: Vec<(String, Value)> = entity["speed"]
+        .as_array()
+        .expect("speed holds two instances")
+        .iter()
+        .map(|instance| {
+            (
+                instance["datasetId"].as_str().expect("an instance names its datasetId").to_owned(),
+                instance["value"].clone(),
+            )
+        })
+        .collect();
+    values.sort_by(|left, right| left.0.cmp(&right.0));
+    values
+}
+
+/// Tables 6.7.3.1-1 (Partial Attribute Update) and 6.7.3.3-1 (Replace Attribute)
+/// define the `type` URL parameter and nothing else, so a `datasetId` there is
+/// "a parameter incompatible with the operation" (clause 6.3.20): an
+/// `InvalidRequest` raised before the entity is read, which makes an unknown
+/// `datasetId` a 400 rather than a 404, and leaves every instance as it was.
+/// Clauses 5.6.4.4 and 5.6.19.4 name the instance by the Fragment's own
+/// `datasetId`; only Table 6.7.3.2-1 (Delete Attribute) has the parameter.
+#[tokio::test]
+async fn regression_invalid_parameters_a_dataset_id_on_an_attribute_write_is_an_invalid_request() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Vehicle:attribute-write-dataset-id");
+    create_entity(client, &attribute_write_vehicle(&id)).await;
+
+    let null_fragment = json!({"type": "Property", "value": "urn:ngsi-ld:null"});
+    let requests = [
+        (Method::PATCH, SPEEDOMETER, json!({"value": 65})),
+        (Method::PATCH, "urn:ngsi-ld:Property:unknown", json!({"value": 65})),
+        (Method::PATCH, GPS, null_fragment),
+        (Method::PUT, SPEEDOMETER, json!({"type": "Property", "value": 100})),
+    ];
+    for (method, dataset_id, body) in requests {
+        let query = format!("?datasetId={}", urlencoding::encode(dataset_id));
+        let refused = write_speed(client, method.clone(), &id, &query, &body).await;
+        assert_refused_as(&refused, INVALID_REQUEST, &format!("{method} with datasetId={dataset_id}"));
+    }
+
+    pretty_assertions::assert_eq!(
+        speed_values(client, &id).await,
+        vec![(GPS.to_owned(), json!(60)), (SPEEDOMETER.to_owned(), json!(61))]
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clauses 5.6.4.4 and 5.6.19.4 select the instance "as an instance with the
+/// specified datasetId if present", the `datasetId` being a member of the
+/// Attribute Fragment (clause 5.5.8), so the Fragment alone addresses one
+/// instance and leaves the other untouched.
+#[tokio::test]
+async fn regression_invalid_parameters_the_fragment_dataset_id_addresses_the_instance() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Vehicle:attribute-write-fragment-dataset-id");
+    create_entity(client, &attribute_write_vehicle(&id)).await;
+
+    let patched = write_speed(client, Method::PATCH, &id, "", &json!({"value": 65, "datasetId": SPEEDOMETER})).await;
+    assert_eq!(patched.status, StatusCode::NO_CONTENT, "partial update: {:?}", patched.body);
+    pretty_assertions::assert_eq!(
+        speed_values(client, &id).await,
+        vec![(GPS.to_owned(), json!(60)), (SPEEDOMETER.to_owned(), json!(65))]
+    );
+
+    let replaced = write_speed(client, Method::PUT, &id, "", &json!({"type": "Property", "value": 100, "datasetId": GPS})).await;
+    assert_eq!(replaced.status, StatusCode::NO_CONTENT, "replace: {:?}", replaced.body);
+    pretty_assertions::assert_eq!(
+        speed_values(client, &id).await,
+        vec![(GPS.to_owned(), json!(100)), (SPEEDOMETER.to_owned(), json!(65))]
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
 /// Every unsupported `format` and `options` value Table 6.3.7-1 leaves out is
 /// a clause 6.3.20 `InvalidRequest`, on the retrieval and on the query alike,
 /// and so is a value supplied alongside a supported one.

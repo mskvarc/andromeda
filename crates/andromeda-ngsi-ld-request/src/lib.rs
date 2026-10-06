@@ -28,6 +28,7 @@ pub mod discovery;
 pub mod empty;
 pub mod entity;
 pub mod entity_operations;
+pub mod entity_write;
 pub mod error;
 pub mod fragment_entity_id;
 pub mod jsonld_context;

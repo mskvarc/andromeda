@@ -46,8 +46,9 @@ use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, e
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::purge::PurgeMode};
 use andromeda_ngsi_ld_render::geometry_selection::GeometrySelection;
 use andromeda_ngsi_ld_request::{
-    attribute_deletion::DeleteAttrParams,
-    entity::{AppendParams, GetEntityParams, MergeParams, PartialUpdateAttrParams, ReplaceAttrParams},
+    attribute_deletion::EntityAttributeDeletionParams,
+    entity::{AppendParams, AttributeWriteParams, GetEntityParams, MergeParams},
+    entity_write::{EntityWriteParams, UpdateAttributesParams},
     local::LocalOnlyParams,
     options::OverwritePolicy as RequestOverwritePolicy,
 };
@@ -56,13 +57,6 @@ use axum::{
     http::{StatusCode, Uri as HttpUri},
     response::{IntoResponse, Response},
 };
-
-const fn selected_dataset_uri(selector: Option<&DatasetSelector>) -> Option<&Identifier> {
-    match selector {
-        Some(DatasetSelector::Id(uri)) => Some(uri),
-        Some(DatasetSelector::Default) | None => None,
-    }
-}
 
 /// Attribute collection append handling.
 pub mod append_attributes;

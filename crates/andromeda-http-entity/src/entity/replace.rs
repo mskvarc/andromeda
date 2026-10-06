@@ -5,12 +5,12 @@ use crate::{
         EntityPatch,
         EntityResultExt,
         EntityTenantState,
+        EntityWriteParams,
         ForwardProvisionRequest,
         ForwardingOperation,
         Identifier,
         IntoResponse,
         JsonLd,
-        LocalOnlyParams,
         LocalOutcome,
         NgsiLdRequestEnvelope,
         ProblemResponse,
@@ -23,9 +23,10 @@ use crate::{
         collect_proxied_attrs,
         provision_response,
     },
+    forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
     written_payload_admission::admit_written_entity,
 };
-use andromeda_entity::write_kind::ReplaceEntity;
+use andromeda_entity::{write_kind::ReplaceEntity, write_target::WriteTarget};
 use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
@@ -39,7 +40,7 @@ pub(crate) async fn update(
     }: EntityTenantState,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     TypedPath(id): TypedPath<Identifier>,
-    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
+    ValidatedQuery(params): ValidatedQuery<EntityWriteParams>,
     JsonLd { body, context }: JsonLd<EntityPatch>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.4 judges the payload "according to the @context", so the
@@ -48,6 +49,12 @@ pub(crate) async fn update(
     let patch = body.admitted(&context)?;
     let service = &state.entities;
     let is_local = params.local.unwrap_or(false);
+    let selector = service
+        .expand_write_selector(params.entity_type.as_ref(), &context)
+        .await
+        .with_entity_instance(&uri)?;
+    let entity = WriteTarget::new(&id, selector.as_ref());
+    let qs = forwarded_write_query([forwarded_type_parameter(uri.query())]);
     // Clause 5.6.18.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a payload this broker refuses reaches no context source and a
     // replacement left with nothing local is still validated.
@@ -56,7 +63,7 @@ pub(crate) async fn update(
         .with_entity_instance(&uri)?;
 
     if is_local {
-        service.replace_entity(&target, &id, admitted).await.with_entity_instance(&uri)?;
+        service.replace_entity(&target, entity, admitted).await.with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -67,13 +74,13 @@ pub(crate) async fn update(
             ForwardProvisionRequest {
                 resource: ProvisionResource::Entities,
                 entity_id: &id,
-                entity_type_compact: None,
+                entity_type_selector: params.entity_type.as_ref(),
                 attribute_name: None,
                 method: Method::PUT,
                 context: &context,
                 operation: ForwardingOperation::ReplaceEntity,
                 path_suffix: None,
-                query_string: None,
+                query_string: qs.as_deref(),
                 triggering: TriggeringRequest {
                     via: incoming_via.as_ref(),
                     headers: Some(&headers),
@@ -85,14 +92,14 @@ pub(crate) async fn update(
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
-        service.replace_entity(&target, &id, admitted).await.with_entity_instance(&uri)?;
+        service.replace_entity(&target, entity, admitted).await.with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
     // Clause 5.6.18.4: the attributes proxied registrations cover leave the
     // fragment; whatever remains replaces the entity here.
     let local = match admitted.local_remainder(&collect_proxied_attrs(&forwarded)) {
-        Some(remainder) => LocalOutcome::processed(service.replace_entity(&target, &id, remainder).await, classify_entity_error),
+        Some(remainder) => LocalOutcome::processed(service.replace_entity(&target, entity, remainder).await, classify_entity_error),
         None => LocalOutcome::NothingRemained,
     };
     provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)

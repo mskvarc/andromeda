@@ -9,6 +9,7 @@ use crate::{
     merge_options::MergeOptions,
     notification_recording_harness::{ACCURACY_IRI, CATEGORY_IRI, NAME_IRI, core_context, entity_uri, live_target, recording_service, single_recorded_write},
     write_kind::{MergeEntity, ReplaceEntity},
+    write_target::WriteTarget,
 };
 use andromeda_ngsi_ld_model::{attribute::member_reading::MemberReading, entity::EntityPatch};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
@@ -31,7 +32,7 @@ async fn merge_records_the_merged_instance_keeping_its_untouched_sub_property() 
     service
         .merge(
             &live_target(),
-            &entity_uri(),
+            WriteTarget::new(&entity_uri(), None),
             &fragment,
             admitted,
             &admitted_context(&service, &core_context()).await,
@@ -59,7 +60,7 @@ async fn merge_records_the_instance_without_the_sub_property_it_deleted_and_with
     service
         .merge(
             &live_target(),
-            &entity_uri(),
+            WriteTarget::new(&entity_uri(), None),
             &fragment,
             admitted,
             &admitted_context(&service, &core_context()).await,
@@ -93,7 +94,7 @@ async fn replace_entity_records_every_stored_attribute_of_the_replacement() {
     )
     .await;
     service
-        .replace_entity(&live_target(), &entity_uri(), admitted)
+        .replace_entity(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
         .await
         .expect("the replace lands");
 

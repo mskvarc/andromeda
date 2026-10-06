@@ -191,6 +191,20 @@ impl TypeExpr {
         }
     }
 
+    /// The type IRIs the expression names, in order of appearance.
+    ///
+    /// The wildcard names none. A caller that must hand a flat list of types to
+    /// code that does not read the boolean structure uses this, knowing it
+    /// over-approximates a conjunction.
+    #[must_use]
+    pub fn named_types(&self) -> Vec<IriBuf> {
+        match self {
+            TypeExpr::Wildcard => Vec::new(),
+            TypeExpr::Type(iri) => vec![iri.clone()], // clone: the list owns the IRIs it names
+            TypeExpr::And(children) | TypeExpr::Or(children) => children.iter().flat_map(TypeExpr::named_types).collect(),
+        }
+    }
+
     /// Convert an expanded expression into the serialisable expression shape.
     ///
     /// Full IRIs satisfy the same clause-4.6.2 name grammar as compact type
@@ -276,6 +290,17 @@ mod tests {
         let expr: TypeExprRaw = "Home;Vehicle".parse().expect("valid type expression");
         assert!(expr.matches(&["Home", "Vehicle"]));
         assert!(!expr.matches(&["Home"]));
+    }
+
+    #[test]
+    fn an_expanded_expression_names_its_leaf_types_in_order() {
+        let iri = |name: &str| iri_rs::IriBuf::new(format!("https://example.org/{name}")).expect("valid IRI");
+        let expr = TypeExpr::Or(vec![
+            TypeExpr::Type(iri("Vehicle")),
+            TypeExpr::And(vec![TypeExpr::Type(iri("Home")), TypeExpr::Type(iri("Asset"))]),
+        ]);
+        pretty_assertions::assert_eq!(expr.named_types(), vec![iri("Vehicle"), iri("Home"), iri("Asset")]);
+        pretty_assertions::assert_eq!(TypeExpr::Wildcard.named_types(), Vec::<iri_rs::IriBuf>::new());
     }
 
     #[test]

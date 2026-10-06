@@ -11,6 +11,7 @@ use crate::{
         write_service::indexed_service,
     },
     write_kind::{BatchCreate, MergeEntity},
+    write_target::WriteTarget,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -59,7 +60,7 @@ async fn under_commit_synchronous_a_merge_moving_an_entity_into_range_makes_it_a
     service
         .merge(
             &ContextTarget::Live,
-            &uri("urn:ngsi-ld:Vehicle:mover"),
+            WriteTarget::new(&uri("urn:ngsi-ld:Vehicle:mover"), None),
             &patch,
             admitted,
             &admitted_context(&service, &ContextSpec::core_only()).await,
@@ -80,7 +81,7 @@ async fn under_commit_synchronous_a_deleted_entity_leaves_the_candidates() {
     let service = indexed_service(&index);
     create(&service, vehicle_at("urn:ngsi-ld:Vehicle:gone", 0.001)).await;
     service
-        .delete(&ContextTarget::Live, &uri("urn:ngsi-ld:Vehicle:gone"))
+        .delete(&ContextTarget::Live, WriteTarget::new(&uri("urn:ngsi-ld:Vehicle:gone"), None))
         .await
         .expect("the delete lands");
 

@@ -6,10 +6,14 @@
 //! ([`information_covers_attribute`]). The attributes of a write body that a
 //! registration covers are decided in [`crate::attribute_coverage`].
 
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, info::RegistrationInfo};
-use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::{
+    registration::{ContextSourceRegistration, info::RegistrationInfo},
+    registration_matching::{EntitySpecification, RegistrationMatchSpecification},
+};
+use andromeda_ngsi_ld_query::{scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use iri_rs::IriBuf;
+use std::slice::from_ref;
 
 /// Whether one information entry covers the entity and requested attribute. The
 /// attribute is expanded to its IRI by the caller so the comparison is exact.
@@ -23,6 +27,33 @@ pub(crate) fn csr_has_matching_information(
         .information
         .iter()
         .any(|information| information_matches_entity(information, entity_types, entity_id) && information_covers_attribute(information, attribute))
+}
+
+/// Whether one registration matches the entity `entity_id` the clause 4.17
+/// selector `type_selector` names, and the `attributes` asked for, by the
+/// clause 5.12 reading discovery and subscriptions share.
+///
+/// `type_selector` is expanded; the registered types it is held against are
+/// stored expanded too.
+pub(crate) fn csr_matches_selected_entity(
+    csr: &ContextSourceRegistration,
+    type_selector: &TypeExprRaw,
+    entity_id: &Identifier,
+    attributes: &[AttributeName],
+) -> bool {
+    let entities = [EntitySpecification {
+        type_selector: Some(type_selector),
+        ids: from_ref(entity_id),
+        id_pattern: None,
+    }];
+    let specification = RegistrationMatchSpecification {
+        entities: &entities,
+        attributes,
+    };
+    csr.coverage
+        .information
+        .iter()
+        .any(|information| specification.matches_information(information))
 }
 
 /// Whether a registration's declared scope can answer a scoped read.

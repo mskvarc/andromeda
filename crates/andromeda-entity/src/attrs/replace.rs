@@ -6,11 +6,11 @@ use crate::{
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
     write_kind::ReplaceAttribute,
+    write_target::WriteTarget,
 };
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, history::written_observation::AddressedInstances, system_instant::SystemInstant};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::Utc;
 use std::sync::Arc;
@@ -32,18 +32,19 @@ impl EntityService {
     ///
     /// Reports [`EntityError::Validation`] when the attribute name is a JSON-LD
     /// keyword or names `scope`, or when the fragment cannot replace the stored
-    /// instance, [`EntityError::NotFound`] when no entity carries `id`,
-    /// [`EntityError::MemberNotFound`] when the entity carries neither the
+    /// instance, [`EntityError::NotFound`] when no entity carries the
+    /// identifier of `entity` or the type selector of `entity` excludes it
+    /// (clause 5.6.19.4), [`EntityError::MemberNotFound`] when the entity carries neither the
     /// attribute nor the selected instance, [`EntityError::Contention`] when
     /// concurrent writers superseded the computed write on every attempt, and
     /// [`EntityError::Persistence`] when the store could not apply it.
     pub async fn replace_attr(
         &self,
         target: &ContextTarget,
-        id: &Identifier,
-        dataset_id: Option<&Identifier>,
+        entity: WriteTarget<'_>,
         admitted: AdmittedAttribute<'_, ReplaceAttribute>,
     ) -> Result<(), EntityError> {
+        let id = entity.id;
         let attr_name = admitted.attribute();
         if attr_name.as_str().starts_with('@') {
             return Err(EntityError::Validation(EntityValidationReason::ReservedAttributeName {
@@ -56,16 +57,15 @@ impl EntityService {
         let (attribute, replacement) = admitted.into_parts();
 
         let events = self
-            .commit_computed_write(target, id, |previous| {
+            .commit_computed_write(target, entity, |previous| {
                 let mut replaced = EntityState::clone(previous); // clone: shares every attribute the replacement leaves alone
-                replaced.replace_attribute(&attribute, dataset_id, &replacement)?;
+                replaced.replace_attribute(&attribute, &replacement)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
                 // its createdAt across the read-modify-write.
                 replaced.stamp_attribute_instants(Some(previous), SystemInstant::new(Utc::now()));
                 let replaced = Arc::new(replaced);
                 let addressed = AddressedInstances::AttributeFragment {
                     attribute: &attribute,
-                    dataset_id,
                     fragment: &replacement,
                 };
                 let history = mutation_history(addressed, previous, &replaced);

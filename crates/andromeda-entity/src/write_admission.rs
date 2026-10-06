@@ -48,6 +48,7 @@ use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_entity::{
     admission::{
         attribute_nesting_admission::{admit_document_nesting, admit_instance_nesting},
+        instance_completeness::InstanceCompleteness,
         null_sentinel_admission::NullSentinelAdmission,
     },
     document::EntityDocument,
@@ -123,6 +124,19 @@ impl EntityWrite {
 }
 
 impl AttributeWrite {
+    /// Whether the Fragment must stand as a complete instance.
+    ///
+    /// Clause 5.6.4.4 patches the members the Fragment names (clause 5.5.8);
+    /// clause 5.6.19.4 replaces the instance with it, after the clause 5.5.4
+    /// validation and before any forwarding, so a Fragment without the value
+    /// member its family requires (Table 5.2.5-1) is refused here.
+    pub(crate) const fn instance_completeness(self) -> InstanceCompleteness {
+        match self {
+            AttributeWrite::PartialUpdate => InstanceCompleteness::Partial,
+            AttributeWrite::Replace => InstanceCompleteness::Complete,
+        }
+    }
+
     /// Which of the clause 5.5.4 NGSI-LD Null prohibitions this operation is
     /// exempt from.
     ///
@@ -258,7 +272,9 @@ impl EntityService {
         let fragment = expansion.attribute(attribute, payload).await?;
         admit_instance_document(self.payload_budget, fragment.name(), fragment.instance())?;
         admit_instance_nesting(self.payload_budget.attribute_nesting, fragment.name(), fragment.instance())?;
-        fragment.instance().admit_fragment(fragment.name(), W::WRITE.null_sentinel_admission())?;
+        fragment
+            .instance()
+            .admit_fragment(fragment.name(), W::WRITE.null_sentinel_admission(), W::WRITE.instance_completeness())?;
         Ok(AdmittedAttribute::new(attribute, fragment))
     }
 }
@@ -271,18 +287,22 @@ mod tests {
         error::EntityError,
         notification_recording_harness::{budgeted_recording_service, geometry_budget, recording_service},
         write_admission::{AttributeWrite, BatchWrite, EntityWrite},
-        write_kind::CreateEntity,
+        write_kind::{CreateEntity, PartialUpdateAttribute},
     };
+    use andromeda_json_literal::piece::JsonPiece;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_entity::{
-        admission::null_sentinel_admission::NullSentinelAdmission,
+        admission::{instance_completeness::InstanceCompleteness, null_sentinel_admission::NullSentinelAdmission},
         document::{EntityDocument, instance_document::InstanceDocument},
     };
     use andromeda_ngsi_ld_expansion::normalization::Normalization;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT};
-    use andromeda_ngsi_ld_model::entity::Entity;
+    use andromeda_ngsi_ld_model::{
+        attribute::{instance::AttributeValue, member_reading::MemberReading, merge_member::MergeMember},
+        entity::Entity,
+    };
     use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
-    use serde_json::{Value, json};
+    use serde_json::{Value, json, value::RawValue};
     use std::slice::from_ref;
 
     /// Decode an expanded entity document and screen it under `admission`,
@@ -294,10 +314,10 @@ mod tests {
     }
 
     /// Decode an expanded attribute fragment of `attribute` and screen it
-    /// under `admission`.
-    fn admit_expanded_attribute(expanded: &Value, attribute: &AttributeName, admission: NullSentinelAdmission) -> Result<(), EntityError> {
+    /// as the operation `write` screens it.
+    fn admit_expanded_attribute(expanded: &Value, attribute: &AttributeName, write: AttributeWrite) -> Result<(), EntityError> {
         let instance = InstanceDocument::from_slice(attribute, &serde_json::to_vec(expanded).expect("JSON"))?;
-        instance.admit_fragment(attribute, admission)?;
+        instance.admit_fragment(attribute, write.null_sentinel_admission(), write.instance_completeness())?;
         Ok(())
     }
 
@@ -430,11 +450,70 @@ mod tests {
             "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "urn:ngsi-ld:null"}]
         }]);
-        let error = admit_expanded_attribute(&fragment, &attribute(), AttributeWrite::Replace.null_sentinel_admission())
-            .expect_err("clause 5.6.19 replaces a whole attribute");
+        let error = admit_expanded_attribute(&fragment, &attribute(), AttributeWrite::Replace).expect_err("clause 5.6.19 replaces a whole attribute");
         assert!(error.to_string().contains("urn:ngsi-ld:null"), "{error}");
-        admit_expanded_attribute(&fragment, &attribute(), AttributeWrite::PartialUpdate.null_sentinel_admission())
-            .expect("clause 5.6.4 supports NGSI-LD Nulls");
+        admit_expanded_attribute(&fragment, &attribute(), AttributeWrite::PartialUpdate).expect("clause 5.6.4 supports NGSI-LD Nulls");
+    }
+
+    /// Clause 5.6.19.4 runs the clause 5.5.4 validation of a replacement, which
+    /// is a whole instance (Table 5.2.5-1): a Fragment naming only a `unitCode`
+    /// is read as a Property without its value and refused, where the partial
+    /// update of clause 5.6.4 patches the member it names.
+    #[test]
+    fn the_replace_admission_refuses_a_fragment_without_a_value() {
+        let fragment = json!([{"https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "C62"}]}]);
+        let error = admit_expanded_attribute(&fragment, &attribute(), AttributeWrite::Replace).expect_err("a replacement carries its value");
+        assert!(matches!(error, EntityError::Validation(_)), "{error:?}");
+        assert!(error.to_string().contains("Property"), "{error}");
+        assert!(error.to_string().contains("'value'"), "{error}");
+        admit_expanded_attribute(&fragment, &attribute(), AttributeWrite::PartialUpdate).expect("a partial update patches the member it names");
+    }
+
+    /// Clause 5.6.19.4 for a Fragment written as plain JSON: `{}` and a
+    /// Fragment naming only a `unitCode` are not a replacement the compact
+    /// reading of the transport accepts (the typed member of a replacement is a
+    /// whole instance), while the partial update of clause 5.6.4 admits both
+    /// through the whole admission, normalization and expansion included (an
+    /// empty Fragment is a JSON Merge Patch that changes nothing, clause 5.4).
+    #[tokio::test]
+    async fn a_replacement_written_as_plain_json_without_a_value_is_refused() {
+        let (service, _recorded) = recording_service().await;
+        let context = admitted_context(&service, &ContextSpec::core_only()).await;
+        let speed: AttributeName = "speed".parse().expect("a valid attribute name");
+        for written in [json!({}), json!({"unitCode": "C62"})] {
+            let raw = RawValue::from_string(written.to_string()).expect("the fragment is JSON");
+            let refused = AttributeValue::from_fragment_node(speed.as_str(), JsonPiece::new(&raw)).expect_err("a replacement carries its value");
+            assert!(refused.to_string().contains("value"), "{written}: {refused}");
+
+            let patch = MergeMember::from_fragment_node(speed.as_str(), JsonPiece::new(&raw)).expect("the fragment decodes");
+            service
+                .admit_attribute_write::<PartialUpdateAttribute>(&speed, &patch, &context)
+                .await
+                .expect("a partial update patches the members it names");
+        }
+    }
+
+    /// Clause 5.6.19.4: the Fragment's family decides which member is missing.
+    #[test]
+    fn a_replacement_without_its_family_value_is_refused_with_that_familys_refusal() {
+        let cases = [
+            (json!([{"@type": ["https://uri.etsi.org/ngsi-ld/Relationship"]}]), "Relationship"),
+            (json!([{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}]), "'value'"),
+            (json!([{"@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"]}]), "GeoProperty"),
+            (json!([{"@type": ["https://uri.etsi.org/ngsi-ld/LanguageProperty"]}]), "LanguageProperty"),
+            (json!([{}]), "Property"),
+        ];
+        for (fragment, expected) in cases {
+            let error = admit_expanded_attribute(&fragment, &attribute(), AttributeWrite::Replace).expect_err("the value member is missing");
+            assert!(matches!(error, EntityError::Validation(_)), "{fragment}: {error:?}");
+            assert!(error.to_string().contains(expected), "{fragment}: {error}");
+        }
+    }
+
+    #[test]
+    fn every_attribute_write_states_whether_it_needs_a_complete_instance() {
+        pretty_assertions::assert_eq!(AttributeWrite::PartialUpdate.instance_completeness(), InstanceCompleteness::Partial);
+        pretty_assertions::assert_eq!(AttributeWrite::Replace.instance_completeness(), InstanceCompleteness::Complete);
     }
 
     #[test]
@@ -484,11 +563,7 @@ mod tests {
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
             "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": identifier_past_the_limit()}]
         }]);
-        assert_refused_past_the_limit(admit_expanded_attribute(
-            &fragment,
-            &attribute(),
-            AttributeWrite::PartialUpdate.null_sentinel_admission(),
-        ));
+        assert_refused_past_the_limit(admit_expanded_attribute(&fragment, &attribute(), AttributeWrite::PartialUpdate));
     }
 
     /// A Vehicle carrying `speed` and `brandName`, as a client writes it.

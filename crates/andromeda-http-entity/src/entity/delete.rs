@@ -1,28 +1,31 @@
 //! HTTP handling for the delete entity operation.
 
-use crate::entity::{
-    ContextSpec,
-    ContextUrl,
-    EntityResultExt,
-    EntityTenantState,
-    ForwardProvisionRequest,
-    ForwardingOperation,
-    Identifier,
-    IncomingVia,
-    IntoResponse,
-    LocalOnlyParams,
-    LocalOutcome,
-    OriginalUri,
-    ProblemResponse,
-    ProvisionResource,
-    Response,
-    StatusCode,
-    TypedPath,
-    ValidatedQuery,
-    classify_entity_error,
-    provision_response,
+use crate::{
+    entity::{
+        ContextSpec,
+        ContextUrl,
+        EntityResultExt,
+        EntityTenantState,
+        EntityWriteParams,
+        ForwardProvisionRequest,
+        ForwardingOperation,
+        Identifier,
+        IncomingVia,
+        IntoResponse,
+        LocalOutcome,
+        OriginalUri,
+        ProblemResponse,
+        ProvisionResource,
+        Response,
+        StatusCode,
+        TypedPath,
+        ValidatedQuery,
+        classify_entity_error,
+        provision_response,
+    },
+    forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
 };
-use andromeda_entity::error::EntityError;
+use andromeda_entity::{error::EntityError, write_target::WriteTarget};
 use andromeda_federation::{outcome::ForwardedWriteOutcome, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
@@ -37,19 +40,25 @@ pub(crate) async fn delete(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(id): TypedPath<Identifier>,
-    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
+    ValidatedQuery(params): ValidatedQuery<EntityWriteParams>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
     let is_local = params.local.unwrap_or(false);
+    let context: ContextSpec = context.into_inner();
+    let selector = service
+        .expand_write_selector(params.entity_type.as_ref(), &context)
+        .await
+        .with_entity_instance(&uri)?;
+    let entity = WriteTarget::new(&id, selector.as_ref());
 
     if is_local {
-        service.delete(&target, &id).await.with_entity_instance(&uri)?;
+        service.delete(&target, entity).await.with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let context: ContextSpec = context.into_inner();
+    let qs = forwarded_write_query([forwarded_type_parameter(uri.query())]);
 
     let forwarded = state
         .forwarding
@@ -58,13 +67,13 @@ pub(crate) async fn delete(
             ForwardProvisionRequest {
                 resource: ProvisionResource::Entities,
                 entity_id: &id,
-                entity_type_compact: None,
+                entity_type_selector: params.entity_type.as_ref(),
                 attribute_name: None,
                 method: Method::DELETE,
                 context: &context,
                 operation: ForwardingOperation::DeleteEntity,
                 path_suffix: None,
-                query_string: None,
+                query_string: qs.as_deref(),
                 triggering: TriggeringRequest {
                     via: incoming_via.as_ref(),
                     headers: Some(&headers),
@@ -76,7 +85,7 @@ pub(crate) async fn delete(
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
-        service.delete(&target, &id).await.with_entity_instance(&uri)?;
+        service.delete(&target, entity).await.with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -95,7 +104,7 @@ pub(crate) async fn delete(
     // removed is that succeeded part, so an unsupported-everywhere delete beside a
     // successful local removal is a 207 partial success, not a 409.
     let unsupported_only = forwarded.iter().all(|result| matches!(result.outcome, ForwardedWriteOutcome::NotAdvertised));
-    let local = match service.delete(&target, &id).await {
+    let local = match service.delete(&target, entity).await {
         Ok(()) if proxied && unsupported_only => LocalOutcome::Processed(Ok(())),
         Ok(()) | Err(EntityError::NotFound { .. }) if proxied => LocalOutcome::NothingRemained,
         other => LocalOutcome::processed(other, classify_entity_error),

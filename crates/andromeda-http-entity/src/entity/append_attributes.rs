@@ -27,9 +27,10 @@ use crate::{
         provision_response,
         update_result::{NotUpdatedReason, update_result_response},
     },
+    forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
     written_payload_admission::admit_written_entity,
 };
-use andromeda_entity::write_kind::AppendAttributes;
+use andromeda_entity::{write_kind::AppendAttributes, write_target::WriteTarget};
 use andromeda_federation::{
     answer_body::AnswerBody,
     forwarded_content::ForwardedContent,
@@ -61,17 +62,25 @@ pub(crate) async fn append_attrs(
     // read here and their refusal raised after the admission.
     let requested_policy = params.overwrite_policy();
     let no_overwrite = matches!(requested_policy, Ok(RequestOverwritePolicy::NoOverwrite));
-    let qs = if no_overwrite { "options=noOverwrite" } else { "" };
+    let selector = service
+        .expand_write_selector(params.entity_type.as_ref(), &context)
+        .await
+        .with_entity_instance(&uri)?;
+    let entity = WriteTarget::new(&id, selector.as_ref());
+    let qs = forwarded_write_query([
+        no_overwrite.then(|| ("options", "noOverwrite".to_owned())),
+        forwarded_type_parameter(uri.query()),
+    ]);
     let request = ForwardProvisionRequest {
         resource: ProvisionResource::Entities,
         entity_id: &id,
-        entity_type_compact: None,
+        entity_type_selector: params.entity_type.as_ref(),
         attribute_name: None,
         method: Method::POST,
         context: &context,
         operation: ForwardingOperation::AppendEntityAttributes,
         path_suffix: Some("/attrs"),
-        query_string: if qs.is_empty() { None } else { Some(qs) },
+        query_string: qs.as_deref(),
         triggering: TriggeringRequest {
             via: incoming_via.as_ref(),
             headers: Some(&headers),
@@ -98,7 +107,7 @@ pub(crate) async fn append_attrs(
 
     if forwarded.is_empty() {
         // No matching CSRs — append locally
-        let (all_attrs, not_appended) = service.append_attrs(&target, &id, admitted, overwrite).await.with_entity_instance(&uri)?;
+        let (all_attrs, not_appended) = service.append_attrs(&target, entity, admitted, overwrite).await.with_entity_instance(&uri)?;
 
         return Ok(append_outcome_response(&all_attrs, &not_appended, Vec::new(), ForwardedCompleteness::Complete));
     }
@@ -108,11 +117,11 @@ pub(crate) async fn append_attrs(
     // read was taken over by none of them.
     let local_append = if sent_to_registrations {
         match admitted.local_remainder(&collect_proxied_attrs(&forwarded)) {
-            Some(remainder) => Some(service.append_attrs(&target, &id, remainder, overwrite).await),
+            Some(remainder) => Some(service.append_attrs(&target, entity, remainder, overwrite).await),
             None => None,
         }
     } else {
-        Some(service.append_attrs(&target, &id, admitted, overwrite).await)
+        Some(service.append_attrs(&target, entity, admitted, overwrite).await)
     };
     // Clause 5.6.3.5: the status says "whether all the new Attributes were
     // appended or only some of them", and Table 6.6.3.1-2 reserves 204 for

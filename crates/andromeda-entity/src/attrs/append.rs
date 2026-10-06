@@ -5,6 +5,7 @@ use crate::{
     admitted_write::AdmittedEntity,
     error::EntityError,
     write_kind::AppendAttributes,
+    write_target::WriteTarget,
     written_members::{member_attribute_names, written_member_names},
 };
 use andromeda_context_commit::history_record::mutation_history;
@@ -15,7 +16,7 @@ use andromeda_ngsi_ld_entity::{
     operation::selection::OverwritePolicy,
     system_instant::SystemInstant,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use chrono::Utc;
 use std::sync::Arc;
 
@@ -41,16 +42,18 @@ impl EntityService {
     ///
     /// Reports [`EntityError::Validation`] when an attribute instance cannot be
     /// appended to the stored ones, [`EntityError::NotFound`] when no entity
-    /// carries `id`, [`EntityError::Contention`] when concurrent writers
+    /// carries the identifier of `entity` or the type selector of `entity`
+    /// excludes it (clause 5.6.3.4), [`EntityError::Contention`] when concurrent writers
     /// superseded the computed write on every attempt, and
     /// [`EntityError::Persistence`] when the store could not apply it.
     pub async fn append_attrs(
         &self,
         target: &ContextTarget,
-        id: &Identifier,
+        entity: WriteTarget<'_>,
         admitted: AdmittedEntity<AppendAttributes>,
         overwrite: OverwritePolicy,
     ) -> Result<(Vec<AttributeName>, Vec<AttributeName>), EntityError> {
+        let id = entity.id;
         let fragment = admitted.into_document();
 
         // Clause 5.6.3.5 reports "the list of Attributes actually appended", so
@@ -59,7 +62,7 @@ impl EntityService {
         // already held as if this request had appended it.
         let requested = written_member_names(&fragment)?;
         let (not_appended, events) = self
-            .commit_computed_write(target, id, |previous| {
+            .commit_computed_write(target, entity, |previous| {
                 let mut appended = EntityState::clone(previous); // clone: shares every attribute the append leaves alone
                 let not_appended = member_attribute_names(appended.append_attributes(&fragment, overwrite)?)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps

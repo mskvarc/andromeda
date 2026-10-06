@@ -15,7 +15,7 @@
 //! write outside a merge.
 
 use crate::{
-    admission::null_sentinel_admission::NullSentinelAdmission,
+    admission::{instance_completeness::InstanceCompleteness, null_sentinel_admission::NullSentinelAdmission},
     codec::geometry_decode::geo_value_of,
     document::{
         EntityDocument,
@@ -26,6 +26,7 @@ use crate::{
         written_value::{ValueSlot, WrittenValue},
     },
     expanded_value::ExpandedValue,
+    operation::instance_patch::written_family,
     refusal::EntityRefusal,
     value_mode::{Fragment, FragmentMember, FragmentText},
 };
@@ -97,12 +98,17 @@ impl EntityDocument {
 impl InstanceDocument {
     /// Hold the bare attribute fragment of clauses 5.6.4 and 5.6.19, written
     /// for `attribute`, to the rules of an operation writing it under
-    /// `admission`.
+    /// `admission`, as a `completeness` instance.
     ///
     /// # Errors
     ///
-    /// Returns the [`EntityRefusal`] of the first rule the fragment breaks.
-    pub fn admit_fragment(&self, attribute: &AttributeName, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
+    /// Returns the [`EntityRefusal`] of the first rule the fragment breaks:
+    /// the family's missing-value refusal comes first for a
+    /// [`InstanceCompleteness::Complete`] fragment that names no value member.
+    pub fn admit_fragment(&self, attribute: &AttributeName, admission: NullSentinelAdmission, completeness: InstanceCompleteness) -> Result<(), EntityRefusal> {
+        if completeness == InstanceCompleteness::Complete && matches!(self.value(), ValueSlot::Absent) {
+            return Err(EntityRefusal::missing_value(attribute, written_family(self, None)));
+        }
         admit_sub_attribute_identities(self)?;
         for (name, member) in self.sub_attributes() {
             member

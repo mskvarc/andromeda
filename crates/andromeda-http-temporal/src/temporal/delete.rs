@@ -59,7 +59,7 @@ pub async fn delete(
             ForwardProvisionRequest {
                 resource: ProvisionResource::TemporalEntities,
                 entity_id: &id,
-                entity_type_compact: None,
+                entity_type_selector: None,
                 attribute_name: None,
                 method: Method::DELETE,
                 context: &context,

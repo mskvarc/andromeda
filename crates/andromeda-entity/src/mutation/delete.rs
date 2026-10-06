@@ -24,6 +24,7 @@ use crate::{
     notification_fanout::{ChangedEntity, MutationSnapshots},
     notification_plan::deletion,
     snapshot_supply::SnapshotSupply,
+    write_target::WriteTarget,
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -50,15 +51,17 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::NotFound`] when no entity carries `id`, and
-    /// [`EntityError::Persistence`] when the store could not read the entity or
-    /// commit the deletion.
-    pub async fn delete(&self, target: &ContextTarget, id: &Identifier) -> Result<(), EntityError> {
+    /// Reports [`EntityError::NotFound`] when no entity carries the identifier
+    /// of `entity` or the type selector of `entity` excludes it (clause
+    /// 5.6.6.4), and [`EntityError::Persistence`] when the store could not read
+    /// the entity or commit the deletion.
+    pub async fn delete(&self, target: &ContextTarget, entity: WriteTarget<'_>) -> Result<(), EntityError> {
+        let id = entity.id;
         let timer = entity::start(EntityOperation::Delete);
         let result: Result<(), EntityError> = async {
             for lost_attempts in 0..WRITE_ATTEMPTS {
                 self.wait_before_retry(lost_attempts).await;
-                match self.delete_attempt(target, id).await? {
+                match self.delete_attempt(target, entity).await? {
                     AfterAttempt::Settled => return Ok(()),
                     AfterAttempt::Vanished => return Err(EntityError::not_found(id)),
                     // A write landed between the read and the deletion: read
@@ -75,10 +78,16 @@ impl EntityService {
 
     /// One attempt at the deletion: outline the entity, decide whether its
     /// removed state is needed, and delete it unless it changed since.
-    async fn delete_attempt(&self, target: &ContextTarget, id: &Identifier) -> Result<AfterAttempt, EntityError> {
+    async fn delete_attempt(&self, target: &ContextTarget, entity: WriteTarget<'_>) -> Result<AfterAttempt, EntityError> {
+        let id = entity.id;
         let Some(outline) = self.deletion_outline.deletion_outline(target, id).await? else {
             return Ok(AfterAttempt::Vanished);
         };
+        // Clause 5.6.6.4: an entity outside the request's type selector is not
+        // the target, so it is as absent as one that does not exist.
+        if !entity.selects(&outline.types) {
+            return Ok(AfterAttempt::Vanished);
+        }
         let change = EntityChange::new(
             EntityLifecycle::Deleted,
             deleted_instances(outline.instances.iter().map(|(key, _)| key.clone())),
@@ -89,7 +98,7 @@ impl EntityService {
             types: &outline.types,
         };
         match self.deletion_watchers(deleted, &change).await {
-            DeletionWatchers::Possible => self.delete_removed_state(target, id).await,
+            DeletionWatchers::Possible => self.delete_removed_state(target, entity).await,
             DeletionWatchers::None => self.delete_outline(target, id, outline, change).await,
         }
     }
@@ -150,10 +159,14 @@ impl EntityService {
 
     /// Delete an entity a subscription may be owed a notification for,
     /// reading the state it removes for the notification.
-    async fn delete_removed_state(&self, target: &ContextTarget, id: &Identifier) -> Result<AfterAttempt, EntityError> {
+    async fn delete_removed_state(&self, target: &ContextTarget, entity: WriteTarget<'_>) -> Result<AfterAttempt, EntityError> {
+        let id = entity.id;
         let Some(EntitySnapshot { state: removed, modified_at }) = self.reader.get_snapshot(target, id).await? else {
             return Ok(AfterAttempt::Vanished);
         };
+        if !entity.selects(removed.types().as_slice()) {
+            return Ok(AfterAttempt::Vanished);
+        }
         let entity_types = removed.types().as_slice().to_vec();
 
         // Captured before the delete so the notification can carry them: once

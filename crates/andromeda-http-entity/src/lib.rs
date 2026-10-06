@@ -11,6 +11,7 @@ mod entity;
 mod entity_operations;
 pub mod entity_type;
 pub mod error;
+mod forwarded_write_query;
 mod join;
 mod read_rendering;
 mod request_projection;

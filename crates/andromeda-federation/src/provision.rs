@@ -328,7 +328,7 @@ mod tests {
                 ForwardProvisionRequest {
                     resource: ProvisionResource::Entities,
                     entity_id: &entity_id,
-                    entity_type_compact: None,
+                    entity_type_selector: None,
                     attribute_name: None,
                     method: reqwest::Method::POST,
                     context: &context,

@@ -14,13 +14,15 @@ use crate::{
     federation_invariant::FederationInvariant,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     provision::{is_proxied, proxied_mode},
-    registration_information::csr_has_matching_information,
+    registration_information::{csr_has_matching_information, csr_matches_selected_entity},
     request::ForwardProvisionRequest,
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_jsonld::term_expansion::ContextualExpander;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
+use andromeda_ngsi_ld_query::type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw};
 use andromeda_telemetry::{
     federation_ops::{self, FederationOperation},
     operation::OperationTimer,
@@ -100,17 +102,22 @@ impl FederationService {
         let looped = self.is_loop_detected(request.triggering.via);
 
         let resolver = TermResolver::new(&self.engine, request.context);
-        let entity_types: Vec<IriBuf> = match request.entity_type_compact {
-            Some(t) => vec![resolver.expand_type(t.as_str()).await?],
-            // An attribute-level write (delete/append/update attrs, merge,
-            // replace, delete entity) carries no `type` in its request. Match
-            // it against registrations by the local entity's actual types --
-            // every one it carries, since clause 5.12 matches on any of them --
-            // so a registration scoped to an unrelated type is not taken to
-            // cover the write and refuse it. A write to an entity this broker
-            // holds only at a source resolves to an empty set and falls back
-            // to id-only matching, as before.
-            None => self.local_entity_types.local_entity_types(target, request.entity_id).await,
+        let (entity_types, type_selector): (Vec<IriBuf>, Option<TypeExprRaw>) = match request.entity_type_selector {
+            // Clause 5.12 holds the selector against each registration's types.
+            // The flat list the rest of the forwarding reads is the types the
+            // selector names.
+            Some(raw) => {
+                let expanded = expand_type_expression(raw, &ContextualExpander::new(&self.engine, resolver.prepared())).await?;
+                (expanded.named_types(), Some(expanded.into_raw()?))
+            }
+            // A write that carries no `type` in its request is matched against
+            // registrations by the local entity's actual types -- every one it
+            // carries, since clause 5.12 matches on any of them -- so a
+            // registration scoped to an unrelated type is not taken to cover
+            // the write and refuse it. A write to an entity this broker holds
+            // only at a source resolves to an empty set and falls back to
+            // id-only matching, as before.
+            None => (self.local_entity_types.local_entity_types(target, request.entity_id).await, None),
         };
         // The path attribute is a compact term; matching compares IRIs, so
         // it is expanded once against the triggering request's context.
@@ -126,11 +133,15 @@ impl FederationService {
 
         // The store pre-filter is a coarse superset; clause-5.12 precision is
         // applied by csr_has_matching_information below. A single known type
-        // narrows the query; zero or several types take the whole id-covering
-        // superset and let the precise match do the filtering.
-        let coarse_type = match entity_types.as_slice() {
-            [single] => Some(single),
-            _ => None,
+        // narrows the query, a selector only when it is one bare type; zero or
+        // several types take the whole id-covering superset and let the precise
+        // match do the filtering.
+        let coarse_type = match type_selector.as_ref() {
+            Some(selector) => selector.as_single_type().and(entity_types.first()),
+            None => match entity_types.as_slice() {
+                [single] => Some(single),
+                _ => None,
+            },
         };
         let csrs = self.csr_repo.find_matching(coarse_type, Some(request.entity_id)).await?;
 
@@ -142,7 +153,11 @@ impl FederationService {
             if csr.access.mode == Some(ForwardingMode::Auxiliary) {
                 continue;
             }
-            if !csr_has_matching_information(&csr, &entity_types, Some(request.entity_id), expanded_attribute.as_ref()) {
+            let matches = match type_selector.as_ref() {
+                Some(selector) => csr_matches_selected_entity(&csr, selector, request.entity_id, expanded_name.as_slice()),
+                None => csr_has_matching_information(&csr, &entity_types, Some(request.entity_id), expanded_attribute.as_ref()),
+            };
+            if !matches {
                 continue;
             }
             if looped {

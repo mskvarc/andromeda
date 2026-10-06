@@ -4,6 +4,7 @@
 
 pub mod attribute_nesting_admission;
 pub mod document_admission;
+pub mod instance_completeness;
 pub mod null_sentinel_admission;
 
 #[cfg(test)]

@@ -8,17 +8,17 @@ use crate::{
         attribute_write::{InstanceRemovalOutcome, remove_instance},
         instance_patch::{InstancePatchDepth, patch_instance},
         mutation_error::MutationError,
-        selection::addressed_dataset,
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
 impl EntityState {
     /// Patch `fragment` into one instance of `attribute` (clause 5.6.4).
     ///
     /// The instance is the one clause 5.6.4.4 names: "as an instance with the
-    /// specified datasetId if present", otherwise the default instance, as
-    /// [`addressed_dataset`] resolves it. Each member the fragment names
+    /// specified datasetId if present", the `datasetId` being the
+    /// fragment's own (Table 6.7.3.1-1 defines no URL parameter for it),
+    /// otherwise the default instance. Each member the fragment names
     /// replaces the stored one wholesale, a member set to the NGSI-LD Null is
     /// deleted, and an omitted member survives (clause 5.5.8); a sub-attribute
     /// is replaced instance by instance, each written instance replacing only
@@ -35,18 +35,13 @@ impl EntityState {
     /// fragment names another family ("it is not allowed to change the type
     /// of an Attribute"), and [`MutationError::Refused`] when the patched
     /// instance cannot be state.
-    pub fn partial_update_attribute(
-        &mut self,
-        attribute: &AttributeName,
-        dataset_id: Option<&Identifier>,
-        fragment: &InstanceDocument,
-    ) -> Result<(), MutationError> {
+    pub fn partial_update_attribute(&mut self, attribute: &AttributeName, fragment: &InstanceDocument) -> Result<(), MutationError> {
         let Some(held) = self.attributes().get(attribute) else {
             return Err(MutationError::AttributeNotFound {
                 attribute: attribute.clone(), // clone: the error outlives the borrowed request.
             });
         };
-        let addressed = addressed_dataset(dataset_id, fragment);
+        let addressed = fragment.dataset_id();
         if !held.contains(addressed) {
             return Err(MutationError::missing_instance(attribute, addressed));
         }
@@ -138,7 +133,7 @@ mod tests {
 
     fn patched(fragment: &InstanceDocument) -> Instance {
         let mut target = entity(vec![(SPEED, instances(vec![(None, stored_property())]))]);
-        target.partial_update_attribute(&name(SPEED), None, fragment).expect("the patch applies");
+        target.partial_update_attribute(&name(SPEED), fragment).expect("the patch applies");
         target
             .attributes()
             .get(SPEED)
@@ -163,7 +158,7 @@ mod tests {
         let mut target = entity(vec![(SPEED, instances(vec![(None, property(number(4)))]))]);
         let unit = UnitCode::resolve("CEL").expect("a registered code");
         target
-            .partial_update_attribute(&name(SPEED), None, &InstanceDocument::builder().unit_code(Some(Slot::Set(unit))).build())
+            .partial_update_attribute(&name(SPEED), &InstanceDocument::builder().unit_code(Some(Slot::Set(unit))).build())
             .expect("the patch applies");
         let instance = target.attributes().get(SPEED).and_then(|held| held.get(None)).expect("the instance");
         pretty_assertions::assert_eq!(instance.value().unit_code(), Some(unit));
@@ -218,7 +213,7 @@ mod tests {
             AttributeMember::Instances(vec![property_document(number(2), Some("urn:ngsi-ld:Dataset:B"))]),
         );
 
-        target.partial_update_attribute(&name(SPEED), None, &fragment).expect("the patch applies");
+        target.partial_update_attribute(&name(SPEED), &fragment).expect("the patch applies");
 
         let instance = target.attributes().get(SPEED).and_then(|held| held.get(None)).expect("the instance");
         pretty_assertions::assert_eq!(integer_of(instance), Some(20));
@@ -263,7 +258,7 @@ mod tests {
         ));
 
         target
-            .partial_update_attribute(&name(SPEED), None, &property_document(written, None))
+            .partial_update_attribute(&name(SPEED), &property_document(written, None))
             .expect("the patch applies");
 
         let instance = target.attributes().get(SPEED).and_then(|held| held.get(None)).expect("the instance");
@@ -287,7 +282,7 @@ mod tests {
             ))))
             .build();
 
-        let error = target.partial_update_attribute(&name(SPEED), None, &fragment).expect_err("must fail");
+        let error = target.partial_update_attribute(&name(SPEED), &fragment).expect_err("must fail");
 
         assert!(
             matches!(
@@ -307,7 +302,7 @@ mod tests {
     fn partially_updating_an_absent_attribute_is_a_typed_error() {
         let mut target = entity(vec![("https://example.com/other", instances(vec![(None, property(number(1)))]))]);
         let error = target
-            .partial_update_attribute(&name(SPEED), None, &InstanceDocument::builder().build())
+            .partial_update_attribute(&name(SPEED), &InstanceDocument::builder().build())
             .expect_err("must fail");
         assert!(
             matches!(&error, MutationError::AttributeNotFound { attribute } if attribute.as_str() == SPEED),
@@ -318,24 +313,25 @@ mod tests {
     /// Clause 5.5.8 hands a fragment that is the NGSI-LD Null to clause 5.6.5:
     /// the addressed instance is deleted and the others stay.
     #[test]
-    fn a_deletion_fragment_deletes_only_the_addressed_instance() {
+    fn a_deletion_fragment_deletes_only_the_instance_its_dataset_id_names() {
         let mut target = with_three_instances();
-        let deletion = InstanceDocument::builder().value(ValueSlot::Remove(ValueCarrier::Value)).build();
+        let deletion = InstanceDocument::builder()
+            .dataset_id(Some(dataset("urn:ngsi-ld:Dataset:A")))
+            .value(ValueSlot::Remove(ValueCarrier::Value))
+            .build();
 
-        target
-            .partial_update_attribute(&name(SPEED), Some(&dataset("urn:ngsi-ld:Dataset:A")), &deletion)
-            .expect("the deletion applies");
+        target.partial_update_attribute(&name(SPEED), &deletion).expect("the deletion applies");
 
         pretty_assertions::assert_eq!(values(&target, SPEED), vec![20, 30]);
     }
 
-    /// Clause 5.6.4.4: the URL `datasetId` addresses the instance; one the
-    /// entity lacks is a `ResourceNotFound`.
+    /// Clause 5.6.4.4: the fragment's `datasetId` addresses the instance; one
+    /// the entity lacks is a `ResourceNotFound`.
     #[test]
     fn partially_updating_an_absent_dataset_is_a_typed_error() {
         let mut target = with_three_instances();
         let error = target
-            .partial_update_attribute(&name(SPEED), Some(&dataset("urn:ngsi-ld:Dataset:Z")), &property_document(number(1), None))
+            .partial_update_attribute(&name(SPEED), &property_document(number(1), Some("urn:ngsi-ld:Dataset:Z")))
             .expect_err("must fail");
         assert!(
             matches!(&error, MutationError::DatasetNotFound { dataset_id, .. } if dataset_id.as_str() == "urn:ngsi-ld:Dataset:Z"),
@@ -345,7 +341,7 @@ mod tests {
 
     /// Clause 4.5.5: a fragment whose `datasetId` cannot be read names no
     /// instance the broker can identify, so it never reaches the write at
-    /// all: decoding refuses it, whatever a URL `datasetId` addresses.
+    /// all: decoding refuses it.
     #[test]
     fn a_partial_update_with_an_unreadable_dataset_id_never_touches_the_default_instance() {
         let long_dataset = format!("urn:ngsi-ld:Dataset:{}", "a".repeat(IDENTIFIER_BYTE_LIMIT));

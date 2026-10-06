@@ -8,6 +8,7 @@ use crate::{
     merge_options::MergeOptions,
     notification_recording_harness::{ACCURACY_IRI, CATEGORY_IRI, core_context, entity_uri, live_target, recording_service, single_recorded_write},
     write_kind::MergeEntity,
+    write_target::WriteTarget,
 };
 use andromeda_ngsi_ld_model::{attribute::merge_member::MergeMember, entity::EntityPatch};
 use pretty_assertions::assert_eq;
@@ -31,7 +32,7 @@ async fn merged(fragment: Value) -> Value {
     service
         .merge(
             &live_target(),
-            &entity_uri(),
+            WriteTarget::new(&entity_uri(), None),
             &fragment,
             admitted,
             &admitted_context(&service, &core_context()).await,
@@ -87,7 +88,7 @@ async fn a_merge_with_an_empty_fragment_stores_nothing() {
     service
         .merge(
             &live_target(),
-            &entity_uri(),
+            WriteTarget::new(&entity_uri(), None),
             &fragment,
             admitted,
             &admitted_context(&service, &core_context()).await,

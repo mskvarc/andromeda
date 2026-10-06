@@ -21,7 +21,6 @@ use crate::{
     get_entity,
     partial_update_attr,
     partial_update_attr_raw,
-    partial_update_attr_with_datasetid,
     request_attrs_method,
     vehicle_speed_two_datasetid,
 };
@@ -74,10 +73,11 @@ async fn attribute_partial_update_with_datasetid_success() {
 
     let fragment = json!({
         "value": 65,
+        "datasetId": "urn:ngsi-ld:Property:speedometer",
         "@context": TEST_SUITE_CONTEXT
     });
 
-    let (status, _) = partial_update_attr_with_datasetid(&c, &id, "speed", "urn:ngsi-ld:Property:speedometer", &fragment, None).await;
+    let (status, _) = partial_update_attr(&c, &id, "speed", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "partial update with datasetId should return 204");
     scope.finish().await.expect("cleanup failed");
 }
@@ -133,10 +133,11 @@ async fn attribute_partial_update_mismatched_type_returns_400() {
     let fragment = json!({
         "type": "Relationship",
         "object": "urn:ngsi-ld:Something:else",
+        "datasetId": "urn:ngsi-ld:Property:speedometer",
         "@context": TEST_SUITE_CONTEXT
     });
 
-    let (status, _) = partial_update_attr_with_datasetid(&c, &id, "speed", "urn:ngsi-ld:Property:speedometer", &fragment, None).await;
+    let (status, _) = partial_update_attr(&c, &id, "speed", &fragment, None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "mismatched attribute type should return 400");
     scope.finish().await.expect("cleanup failed");
 }
@@ -205,10 +206,11 @@ async fn attribute_partial_update_nonexistent_datasetid_returns_404() {
 
     let fragment = json!({
         "value": 100,
+        "datasetId": "urn:ngsi-ld:Property:unknownDatasetId",
         "@context": TEST_SUITE_CONTEXT
     });
 
-    let (status, _) = partial_update_attr_with_datasetid(&c, &id, "speed", "urn:ngsi-ld:Property:unknownDatasetId", &fragment, None).await;
+    let (status, _) = partial_update_attr(&c, &id, "speed", &fragment, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent datasetId should return 404");
     scope.finish().await.expect("cleanup failed");
 }
@@ -387,10 +389,11 @@ async fn attribute_partial_update_delete_property_instance_with_null_success() {
     let fragment = json!({
         "type": "Property",
         "value": "urn:ngsi-ld:null",
+        "datasetId": "urn:ngsi-ld:Dataset:01",
         "@context": COMPOUND_CONTEXT
     });
 
-    let (status, _) = partial_update_attr_with_datasetid(&c, &id, "name", "urn:ngsi-ld:Dataset:01", &fragment, None).await;
+    let (status, _) = partial_update_attr(&c, &id, "name", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete Property instance via null should return 204");
     scope.finish().await.expect("cleanup failed");
 }
@@ -408,10 +411,11 @@ async fn attribute_partial_update_delete_relationship_instance_with_null_success
     let fragment = json!({
         "type": "Relationship",
         "object": "urn:ngsi-ld:null",
+        "datasetId": "urn:ngsi-ld:Dataset:01",
         "@context": COMPOUND_CONTEXT
     });
 
-    let (status, _) = partial_update_attr_with_datasetid(&c, &id, "locatedAt", "urn:ngsi-ld:Dataset:01", &fragment, None).await;
+    let (status, _) = partial_update_attr(&c, &id, "locatedAt", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete Relationship instance via null should return 204");
     scope.finish().await.expect("cleanup failed");
 }
@@ -429,10 +433,11 @@ async fn attribute_partial_update_delete_geo_property_instance_with_null_success
     let fragment = json!({
         "type": "GeoProperty",
         "value": "urn:ngsi-ld:null",
+        "datasetId": "urn:ngsi-ld:Dataset:01",
         "@context": COMPOUND_CONTEXT
     });
 
-    let (status, _) = partial_update_attr_with_datasetid(&c, &id, "location", "urn:ngsi-ld:Dataset:01", &fragment, None).await;
+    let (status, _) = partial_update_attr(&c, &id, "location", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete GeoProperty instance via null should return 204");
     scope.finish().await.expect("cleanup failed");
 }
@@ -452,10 +457,11 @@ async fn attribute_partial_update_delete_language_property_instance_with_null_su
         "languageMap": {
             "@none": "urn:ngsi-ld:null"
         },
+        "datasetId": "urn:ngsi-ld:Dataset:01",
         "@context": COMPOUND_CONTEXT
     });
 
-    let (status, _) = partial_update_attr_with_datasetid(&c, &id, "street", "urn:ngsi-ld:Dataset:01", &fragment, None).await;
+    let (status, _) = partial_update_attr(&c, &id, "street", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete LanguageProperty instance via null should return 204");
     scope.finish().await.expect("cleanup failed");
 }

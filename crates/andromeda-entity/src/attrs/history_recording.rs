@@ -22,6 +22,7 @@ use crate::{
         single_recorded_write,
     },
     write_kind::{AppendAttributes, PartialUpdateAttribute, ReplaceAttribute, UpdateAttributes},
+    write_target::WriteTarget,
 };
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
@@ -37,7 +38,7 @@ async fn partial_update_attr_records_the_patched_instance_keeping_its_untouched_
     let attribute = attribute_name("category");
     let admitted = admitted_attribute::<PartialUpdateAttribute>(&service, &attribute, json!({"type": "Property", "value": "retail"}), &core_context()).await;
     service
-        .partial_update_attr(&live_target(), &entity_uri(), None, admitted)
+        .partial_update_attr(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
         .await
         .expect("the partial update lands");
 
@@ -67,7 +68,7 @@ async fn partial_update_attr_does_not_record_a_fragment_sub_property_as_an_entit
     )
     .await;
     service
-        .partial_update_attr(&live_target(), &entity_uri(), None, admitted)
+        .partial_update_attr(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
         .await
         .expect("the partial update lands");
 
@@ -89,7 +90,7 @@ async fn partial_update_attr_to_the_null_sentinel_records_only_the_tombstone() {
     let admitted =
         admitted_attribute::<PartialUpdateAttribute>(&service, &attribute, json!({"type": "Property", "value": "urn:ngsi-ld:null"}), &core_context()).await;
     service
-        .partial_update_attr(&live_target(), &entity_uri(), None, admitted)
+        .partial_update_attr(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
         .await
         .expect("the deleting partial update lands");
 
@@ -110,7 +111,7 @@ async fn replace_attr_records_the_stored_replacement() {
     let attribute = attribute_name("category");
     let admitted = admitted_attribute::<ReplaceAttribute>(&service, &attribute, json!({"type": "Property", "value": "retail"}), &core_context()).await;
     service
-        .replace_attr(&live_target(), &entity_uri(), None, admitted)
+        .replace_attr(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
         .await
         .expect("the replace lands");
 
@@ -131,7 +132,10 @@ async fn replace_attr_records_the_stored_replacement() {
 async fn update_attrs_records_the_whole_instance_it_wrote() {
     let (service, recorded) = recording_service().await;
     let admitted = admitted_written::<UpdateAttributes>(&service, json!({"category": {"type": "Property", "value": "retail"}}), &core_context()).await;
-    service.update_attrs(&live_target(), &entity_uri(), admitted).await.expect("the update lands");
+    service
+        .update_attrs(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
+        .await
+        .expect("the update lands");
 
     let write = single_recorded_write(&recorded);
     assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
@@ -151,7 +155,10 @@ async fn update_attrs_records_no_scope_it_ignored() {
         &core_context(),
     )
     .await;
-    service.update_attrs(&live_target(), &entity_uri(), admitted).await.expect("the update lands");
+    service
+        .update_attrs(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
+        .await
+        .expect("the update lands");
 
     let write = single_recorded_write(&recorded);
     let observation = recorded_observation(&write).expect("an observation");
@@ -177,7 +184,7 @@ async fn append_attrs_without_overwrite_records_only_the_attributes_it_appended(
     )
     .await;
     service
-        .append_attrs(&live_target(), &entity_uri(), admitted, OverwritePolicy::Preserve)
+        .append_attrs(&live_target(), WriteTarget::new(&entity_uri(), None), admitted, OverwritePolicy::Preserve)
         .await
         .expect("the append lands");
 
@@ -194,7 +201,7 @@ async fn append_attrs_without_overwrite_that_appended_nothing_records_no_observa
     let (service, recorded) = recording_service().await;
     let admitted = admitted_written::<AppendAttributes>(&service, json!({"category": {"type": "Property", "value": "retail"}}), &core_context()).await;
     service
-        .append_attrs(&live_target(), &entity_uri(), admitted, OverwritePolicy::Preserve)
+        .append_attrs(&live_target(), WriteTarget::new(&entity_uri(), None), admitted, OverwritePolicy::Preserve)
         .await
         .expect("the append lands");
 
@@ -220,7 +227,7 @@ async fn append_attrs_with_overwrite_records_the_stored_instances() {
     )
     .await;
     service
-        .append_attrs(&live_target(), &entity_uri(), admitted, OverwritePolicy::Overwrite)
+        .append_attrs(&live_target(), WriteTarget::new(&entity_uri(), None), admitted, OverwritePolicy::Overwrite)
         .await
         .expect("the append lands");
 
@@ -236,7 +243,7 @@ async fn partial_update_attr_with_an_empty_fragment_leaves_the_instance_as_it_wa
     let attribute = attribute_name("category");
     let admitted = admitted_attribute::<PartialUpdateAttribute>(&service, &attribute, json!({}), &core_context()).await;
     service
-        .partial_update_attr(&live_target(), &entity_uri(), None, admitted)
+        .partial_update_attr(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
         .await
         .expect("the empty fragment is admitted");
 
@@ -257,7 +264,7 @@ async fn partial_update_attr_with_an_empty_fragment_stores_nothing() {
     let attribute = attribute_name("category");
     let admitted = admitted_attribute::<PartialUpdateAttribute>(&service, &attribute, json!({}), &core_context()).await;
     service
-        .partial_update_attr(&live_target(), &entity_uri(), None, admitted)
+        .partial_update_attr(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
         .await
         .expect("the empty fragment is admitted");
 
@@ -271,7 +278,7 @@ async fn update_attrs_with_an_empty_fragment_stores_nothing() {
     let (service, recorded) = recording_service().await;
     let admitted = admitted_written::<UpdateAttributes>(&service, json!({}), &core_context()).await;
     let (requested, not_updated) = service
-        .update_attrs(&live_target(), &entity_uri(), admitted)
+        .update_attrs(&live_target(), WriteTarget::new(&entity_uri(), None), admitted)
         .await
         .expect("the empty fragment is admitted");
 
@@ -287,7 +294,7 @@ async fn append_attrs_with_an_empty_fragment_stores_nothing() {
         let (service, recorded) = recording_service().await;
         let admitted = admitted_written::<AppendAttributes>(&service, json!({}), &core_context()).await;
         service
-            .append_attrs(&live_target(), &entity_uri(), admitted, overwrite)
+            .append_attrs(&live_target(), WriteTarget::new(&entity_uri(), None), admitted, overwrite)
             .await
             .expect("the empty fragment is admitted");
 

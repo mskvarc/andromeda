@@ -3,6 +3,7 @@
 use crate::{
     entity::{
         AttributeName,
+        AttributeWriteParams,
         EntityResultExt,
         EntityTenantState,
         ForwardProvisionRequest,
@@ -12,7 +13,6 @@ use crate::{
         JsonLd,
         LocalOutcome,
         NgsiLdRequestEnvelope,
-        PartialUpdateAttrParams,
         ProblemResponse,
         ProvisionResource,
         Response,
@@ -22,11 +22,11 @@ use crate::{
         classify_entity_error,
         collect_proxied_attrs,
         provision_response,
-        selected_dataset_uri,
     },
+    forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
     written_payload_admission::admit_written_attribute,
 };
-use andromeda_entity::write_kind::PartialUpdateAttribute;
+use andromeda_entity::{write_kind::PartialUpdateAttribute, write_target::WriteTarget};
 use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
@@ -41,7 +41,7 @@ pub(crate) async fn partial_update_attr(
     }: EntityTenantState,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     TypedPath((id, attr_id)): TypedPath<(Identifier, AttributeName)>,
-    ValidatedQuery(params): ValidatedQuery<PartialUpdateAttrParams>,
+    ValidatedQuery(params): ValidatedQuery<AttributeWriteParams>,
     JsonLd { body, context }: JsonLd<WrittenAttribute>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.4 judges the payload "according to the @context", so the
@@ -49,13 +49,17 @@ pub(crate) async fn partial_update_attr(
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
     let fragment: MergeMember = body.read_attribute(&attr_id).admitted(&context)?;
     let service = &state.entities;
-    let dataset_id = selected_dataset_uri(params.dataset_id.as_ref());
+    let selector = service
+        .expand_write_selector(params.entity_type.as_ref(), &context)
+        .await
+        .with_entity_instance(&uri)?;
+    let entity = WriteTarget::new(&id, selector.as_ref());
     let path_suffix = format!("/attrs/{attr_id}");
-    let qs = params.dataset_id.as_ref().map(|dataset_id| format!("datasetId={dataset_id}"));
+    let qs = forwarded_write_query([forwarded_type_parameter(uri.query())]);
     let request = ForwardProvisionRequest {
         resource: ProvisionResource::Entities,
         entity_id: &id,
-        entity_type_compact: None,
+        entity_type_selector: params.entity_type.as_ref(),
         attribute_name: Some(&attr_id),
         method: Method::PATCH,
         context: &context,
@@ -91,17 +95,14 @@ pub(crate) async fn partial_update_attr(
 
     if forwarded.is_empty() {
         // No matching CSRs — update locally
-        service
-            .partial_update_attr(&target, &id, dataset_id, admitted)
-            .await
-            .with_entity_instance(&uri)?;
+        service.partial_update_attr(&target, entity, admitted).await.with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
     // Clause 5.6.4.4: an attribute a proxied registration covers is updated at
     // the source, never here; an inclusive one is updated in both places.
     let local = if collect_proxied_attrs(&forwarded).is_empty() {
-        LocalOutcome::processed(service.partial_update_attr(&target, &id, dataset_id, admitted).await, classify_entity_error)
+        LocalOutcome::processed(service.partial_update_attr(&target, entity, admitted).await, classify_entity_error)
     } else {
         LocalOutcome::NothingRemained
     };

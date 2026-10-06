@@ -278,7 +278,6 @@ mod tests {
         .expect("a written attribute fragment decodes");
         let addressed = AddressedInstances::AttributeFragment {
             attribute: &attribute,
-            dataset_id: None,
             fragment: &written,
         };
 

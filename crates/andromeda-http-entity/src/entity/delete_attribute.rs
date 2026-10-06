@@ -1,31 +1,35 @@
 //! HTTP handling for the delete attribute entity operation.
 
-use crate::entity::{
-    AttributeName,
-    ContextSpec,
-    ContextUrl,
-    DatasetSelection,
-    DatasetSelector,
-    DeleteAttrParams,
-    EntityResultExt,
-    EntityTenantState,
-    ForwardProvisionRequest,
-    ForwardingOperation,
-    Identifier,
-    IncomingVia,
-    IntoResponse,
-    LocalOutcome,
-    OriginalUri,
-    ProblemResponse,
-    ProvisionResource,
-    Response,
-    StatusCode,
-    TypedPath,
-    ValidatedQuery,
-    classify_entity_error,
-    collect_proxied_attrs,
-    provision_response,
+use crate::{
+    entity::{
+        AttributeName,
+        ContextSpec,
+        ContextUrl,
+        DatasetSelection,
+        DatasetSelector,
+        EntityAttributeDeletionParams,
+        EntityResultExt,
+        EntityTenantState,
+        ForwardProvisionRequest,
+        ForwardingOperation,
+        Identifier,
+        IncomingVia,
+        IntoResponse,
+        LocalOutcome,
+        OriginalUri,
+        ProblemResponse,
+        ProvisionResource,
+        Response,
+        StatusCode,
+        TypedPath,
+        ValidatedQuery,
+        classify_entity_error,
+        collect_proxied_attrs,
+        provision_response,
+    },
+    forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
 };
+use andromeda_entity::write_target::WriteTarget;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use axum::http::{HeaderMap, Method};
@@ -39,7 +43,7 @@ pub(crate) async fn delete_attr(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath((id, attr_id)): TypedPath<(Identifier, AttributeName)>,
-    ValidatedQuery(params): ValidatedQuery<DeleteAttrParams>,
+    ValidatedQuery(params): ValidatedQuery<EntityAttributeDeletionParams>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
 ) -> Result<Response, ProblemResponse> {
@@ -61,15 +65,18 @@ pub(crate) async fn delete_attr(
     // Forward to matching context sources
     let path_suffix = format!("/attrs/{attr_id}");
 
+    let selector = service
+        .expand_write_selector(params.entity_type.as_ref(), &context)
+        .await
+        .with_entity_instance(&uri)?;
+    let entity = WriteTarget::new(&id, selector.as_ref());
+
     // Build query string for forwarding
-    let mut qs_parts = Vec::new();
-    if delete_all {
-        qs_parts.push("deleteAll=true".to_string());
-    }
-    if let Some(ref ds) = params.dataset_id {
-        qs_parts.push(format!("datasetId={ds}"));
-    }
-    let qs = if qs_parts.is_empty() { None } else { Some(qs_parts.join("&")) };
+    let qs = forwarded_write_query([
+        delete_all.then(|| ("deleteAll", "true".to_owned())),
+        params.dataset_id.as_ref().map(|dataset_id| ("datasetId", dataset_id.to_string())),
+        forwarded_type_parameter(uri.query()),
+    ]);
 
     let forwarded = state
         .forwarding
@@ -78,7 +85,7 @@ pub(crate) async fn delete_attr(
             ForwardProvisionRequest {
                 resource: ProvisionResource::Entities,
                 entity_id: &id,
-                entity_type_compact: None,
+                entity_type_selector: params.entity_type.as_ref(),
                 attribute_name: Some(&attr_id),
                 method: Method::DELETE,
                 context: &context,
@@ -97,7 +104,7 @@ pub(crate) async fn delete_attr(
 
     if forwarded.is_empty() {
         service
-            .delete_attr(&target, &id, &attr_id, selection, &context)
+            .delete_attr(&target, entity, &attr_id, selection, &context)
             .await
             .with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -106,7 +113,7 @@ pub(crate) async fn delete_attr(
     // Clause 5.6.5.4: an attribute a proxied registration covers is deleted
     // at the source, never here; an inclusive one is deleted in both places.
     let local = if collect_proxied_attrs(&forwarded).is_empty() {
-        LocalOutcome::processed(service.delete_attr(&target, &id, &attr_id, selection, &context).await, classify_entity_error)
+        LocalOutcome::processed(service.delete_attr(&target, entity, &attr_id, selection, &context).await, classify_entity_error)
     } else {
         LocalOutcome::NothingRemained
     };

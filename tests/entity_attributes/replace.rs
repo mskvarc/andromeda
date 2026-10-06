@@ -14,7 +14,6 @@ use crate::{
     get_entity,
     replace_entity_attr,
     replace_entity_attr_json,
-    replace_entity_attr_with_datasetid,
     request_attrs_method,
     vehicle_speed_multi_instances,
     vehicle_speed_two_datasetid,
@@ -142,10 +141,11 @@ async fn attribute_replace_specific_instance_by_datasetid_success() {
     let fragment = json!({
         "type": "Property",
         "value": 100,
+        "datasetId": "urn:ngsi-ld:Property:speedometer",
         "@context": TEST_SUITE_CONTEXT
     });
 
-    let (status, _) = replace_entity_attr_with_datasetid(&c, &id, "speed", "urn:ngsi-ld:Property:speedometer", &fragment, None).await;
+    let (status, _) = replace_entity_attr(&c, &id, "speed", &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "replace specific instance by datasetId should return 204");
     scope.finish().await.expect("cleanup failed");
 }

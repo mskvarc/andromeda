@@ -19,7 +19,7 @@ use crate::{
     document::{EntityDocument, instance_document::InstanceDocument, written_value::ValueSlot},
     entity_state::EntityState,
     instance::Instance,
-    operation::selection::{OverwritePolicy, addressed_dataset},
+    operation::selection::OverwritePolicy,
     scopes::Scopes,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -37,13 +37,11 @@ pub enum AddressedInstances<'a> {
         /// Whether instances the entity already held were overwritten.
         overwrite: OverwritePolicy,
     },
-    /// The one instance an attribute fragment addressed through its URL
-    /// (clauses 5.6.4 and 5.6.19).
+    /// The one instance an attribute fragment addressed through its own
+    /// `datasetId` (clauses 5.6.4 and 5.6.19).
     AttributeFragment {
         /// Expanded name of the attribute the URL names.
         attribute: &'a AttributeName,
-        /// The `datasetId` URL parameter, when the request carried one.
-        dataset_id: Option<&'a Identifier>,
         /// The attribute fragment the request carried.
         fragment: &'a InstanceDocument,
     },
@@ -86,15 +84,11 @@ pub fn written_observation(addressed: AddressedInstances<'_>, previous: Option<&
                 }
             }
         }
-        AddressedInstances::AttributeFragment {
-            attribute,
-            dataset_id,
-            fragment,
-        } => {
+        AddressedInstances::AttributeFragment { attribute, fragment } => {
             // Clause 5.5.8 hands a fragment that is the NGSI-LD Null to clause
             // 5.6.5: the addressed instance is deleted, not observed.
             if !matches!(fragment.value(), ValueSlot::Remove(_)) {
-                let dataset_id = addressed_dataset(dataset_id, fragment);
+                let dataset_id = fragment.dataset_id();
                 // Clause 5.4: a Fragment naming no member is a JSON Merge Patch
                 // that returns its target unchanged, so it applies no instance.
                 if let Some(instance) = current
@@ -215,7 +209,7 @@ mod tests {
         unit_code::UnitCode,
     };
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use indexmap::IndexMap;
     use serde_json::json;
     use std::sync::Arc;
@@ -260,12 +254,8 @@ mod tests {
         instance
     }
 
-    fn attribute_fragment<'a>(fragment: &'a InstanceDocument, attribute: &'a AttributeName, dataset_id: Option<&'a Identifier>) -> AddressedInstances<'a> {
-        AddressedInstances::AttributeFragment {
-            attribute,
-            dataset_id,
-            fragment,
-        }
+    fn attribute_fragment<'a>(fragment: &'a InstanceDocument, attribute: &'a AttributeName) -> AddressedInstances<'a> {
+        AddressedInstances::AttributeFragment { attribute, fragment }
     }
 
     fn entity_fragment(fragment: &EntityDocument, overwrite: OverwritePolicy) -> AddressedInstances<'_> {
@@ -286,7 +276,7 @@ mod tests {
         let written = observed_document(100, None, "2022-03-14T13:00:00.000Z");
         let attribute = name(TEMPERATURE);
 
-        let observed = written_observation(attribute_fragment(&written, &attribute, None), Some(&previous), &current);
+        let observed = written_observation(attribute_fragment(&written, &attribute), Some(&previous), &current);
 
         pretty_assertions::assert_eq!(observed, Some(current));
     }
@@ -300,11 +290,11 @@ mod tests {
         let attribute = name(TEMPERATURE);
         let empty = InstanceDocument::builder().build();
         assert!(empty.names_nothing());
-        pretty_assertions::assert_eq!(written_observation(attribute_fragment(&empty, &attribute, None), Some(&held), &held), None);
+        pretty_assertions::assert_eq!(written_observation(attribute_fragment(&empty, &attribute), Some(&held), &held), None);
 
         let writes_a_value = observed_document(25, None, "2022-03-14T01:59:26.535Z");
         assert!(!writes_a_value.names_nothing());
-        assert!(written_observation(attribute_fragment(&writes_a_value, &attribute, None), Some(&held), &held).is_some());
+        assert!(written_observation(attribute_fragment(&writes_a_value, &attribute), Some(&held), &held).is_some());
     }
 
     /// Clause 5.6.19.4 keeps the replaced instance's `createdAt`, which only
@@ -321,7 +311,7 @@ mod tests {
         let attribute = name(TEMPERATURE);
 
         let observed = written_observation(
-            attribute_fragment(&written, &attribute, None),
+            attribute_fragment(&written, &attribute),
             Some(&building(vec![(TEMPERATURE, vec![(None, before)])])),
             &current,
         );
@@ -343,27 +333,7 @@ mod tests {
         let written = property_document(number(2), Some("urn:ngsi-ld:Dataset:b"));
         let attribute = name(TEMPERATURE);
 
-        let observed = written_observation(attribute_fragment(&written, &attribute, None), Some(&state), &state);
-
-        pretty_assertions::assert_eq!(
-            observed,
-            Some(building(vec![(TEMPERATURE, vec![(Some("urn:ngsi-ld:Dataset:b"), property(number(2)))])]))
-        );
-    }
-
-    /// The `datasetId` URL parameter addresses ahead of a fragment that names
-    /// none.
-    #[test]
-    fn an_attribute_fragment_observes_the_instance_the_url_dataset_id_addresses() {
-        let state = building(vec![(
-            TEMPERATURE,
-            vec![(None, property(number(1))), (Some("urn:ngsi-ld:Dataset:b"), property(number(2)))],
-        )]);
-        let written = property_document(number(2), None);
-        let attribute = name(TEMPERATURE);
-        let dataset_id = dataset("urn:ngsi-ld:Dataset:b");
-
-        let observed = written_observation(attribute_fragment(&written, &attribute, Some(&dataset_id)), Some(&state), &state);
+        let observed = written_observation(attribute_fragment(&written, &attribute), Some(&state), &state);
 
         pretty_assertions::assert_eq!(
             observed,
@@ -379,7 +349,7 @@ mod tests {
         let attribute = name(TEMPERATURE);
 
         let observed = written_observation(
-            attribute_fragment(&written, &attribute, None),
+            attribute_fragment(&written, &attribute),
             Some(&building(vec![(TEMPERATURE, vec![(None, property(number(1)))])])),
             &building(Vec::new()),
         );
@@ -543,7 +513,7 @@ mod tests {
 
         let without = property_document(number(2), None);
         pretty_assertions::assert_eq!(
-            written_observation(attribute_fragment(&without, &attribute, None), Some(&state), &state),
+            written_observation(attribute_fragment(&without, &attribute), Some(&state), &state),
             Some(building(vec![(TEMPERATURE, vec![(None, property(number(2)))])]))
         );
 
@@ -552,7 +522,7 @@ mod tests {
         let mut expected = property(number(2));
         expected.set_instance_id(Some("urn:ngsi-ld:Instance:new".parse().expect("a valid identifier")));
         pretty_assertions::assert_eq!(
-            written_observation(attribute_fragment(&supplied, &attribute, None), Some(&state), &state),
+            written_observation(attribute_fragment(&supplied, &attribute), Some(&state), &state),
             Some(building(vec![(TEMPERATURE, vec![(None, expected)])]))
         );
     }

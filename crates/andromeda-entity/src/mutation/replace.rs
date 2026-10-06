@@ -7,6 +7,7 @@ use crate::{
     error::EntityError,
     modification_write::ModificationWrite,
     write_kind::ReplaceEntity,
+    write_target::WriteTarget,
 };
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
@@ -32,13 +33,15 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::NotFound`] when no entity carries `id`,
-    /// [`EntityError::Validation`] when the written document is no entity the
+    /// Reports [`EntityError::NotFound`] when no entity carries the identifier
+    /// of `entity` or the type selector of `entity` excludes it (clause
+    /// 5.6.18.4), [`EntityError::Validation`] when the written document is no entity the
     /// replacement can store or names an entity other than `id`,
     /// [`EntityError::Contention`] when concurrent writers superseded the
     /// computed write on every attempt, and [`EntityError::Persistence`] when
     /// the store could not apply it.
-    pub async fn replace_entity(&self, target: &ContextTarget, id: &Identifier, admitted: AdmittedEntity<ReplaceEntity>) -> Result<(), EntityError> {
+    pub async fn replace_entity(&self, target: &ContextTarget, entity: WriteTarget<'_>, admitted: AdmittedEntity<ReplaceEntity>) -> Result<(), EntityError> {
+        let id = entity.id;
         let timer = entity::start(EntityOperation::Replace);
         let result: Result<(), EntityError> = async {
             if self.reader.get_snapshot(target, id).await?.is_none() {
@@ -48,7 +51,7 @@ impl EntityService {
             let now = SystemInstant::new(Utc::now());
 
             let events = self
-                .commit_computed_write(target, id, |previous| {
+                .commit_computed_write(target, entity, |previous| {
                     // Clause 4.8: an attribute the replacement keeps (same datasetId)
                     // keeps its createdAt, matching the Entity-level createdAt column
                     // that a replace does not rewrite; every instance takes `now` for

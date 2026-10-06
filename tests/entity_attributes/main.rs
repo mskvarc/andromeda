@@ -574,28 +574,6 @@ async fn partial_update_attr(client: &Client, id: &str, attr_name: &str, fragmen
     (status, body)
 }
 
-async fn partial_update_attr_with_datasetid(
-    client: &Client,
-    id: &str,
-    attr_name: &str,
-    dataset_id: &str,
-    fragment: &Value,
-    link: Option<&str>,
-) -> (StatusCode, Value) {
-    let encoded = urlencoding::encode(id);
-    let encoded_dataset = urlencoding::encode(dataset_id);
-    let mut req = client
-        .patch(format!("{BASE_URL}/entities/{encoded}/attrs/{attr_name}?datasetId={encoded_dataset}"))
-        .header("Content-Type", "application/ld+json");
-    if let Some(ctx) = link {
-        req = req.header("Link", jsonld_link_header(ctx));
-    }
-    let resp = req.json(fragment).send().await.expect("partial_update_attr_with_datasetid request failed");
-    let status = resp.status();
-    let body: Value = resp.json().await.unwrap_or_default();
-    (status, body)
-}
-
 async fn partial_update_attr_raw(client: &Client, id: &str, attr_name: &str, raw: &[u8], content_type: &str) -> (StatusCode, Value) {
     let encoded = urlencoding::encode(id);
     let resp = client
@@ -634,28 +612,6 @@ async fn replace_entity_attr_json(client: &Client, id: &str, attr_name: &str, fr
         .send()
         .await
         .expect("replace_entity_attr_json request failed");
-    let status = resp.status();
-    let body: Value = resp.json().await.unwrap_or_default();
-    (status, body)
-}
-
-async fn replace_entity_attr_with_datasetid(
-    client: &Client,
-    id: &str,
-    attr_name: &str,
-    dataset_id: &str,
-    fragment: &Value,
-    link: Option<&str>,
-) -> (StatusCode, Value) {
-    let encoded = urlencoding::encode(id);
-    let encoded_dataset = urlencoding::encode(dataset_id);
-    let mut req = client
-        .put(format!("{BASE_URL}/entities/{encoded}/attrs/{attr_name}?datasetId={encoded_dataset}"))
-        .header("Content-Type", "application/ld+json");
-    if let Some(ctx) = link {
-        req = req.header("Link", jsonld_link_header(ctx));
-    }
-    let resp = req.json(fragment).send().await.expect("replace_entity_attr_with_datasetid request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     (status, body)

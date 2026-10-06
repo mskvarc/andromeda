@@ -153,6 +153,11 @@ pub mod storage_profile;
 pub mod write_admission;
 /// The write operations an admitted payload is bound to, as types.
 pub mod write_kind;
+/// The entity a write targets: its identifier and, where specified, its type.
+pub mod write_target;
+/// Type-selector tests for every entity write operation.
+#[cfg(test)]
+mod write_target_recording;
 /// The members a written Entity Fragment names, as the attribute names
 /// Update Attributes and Append Attributes report.
 mod written_members;
