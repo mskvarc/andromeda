@@ -4,7 +4,6 @@ use crate::{
     EntityService,
     admitted_write::AdmittedEntity,
     error::EntityError,
-    modification_write::ModificationWrite,
     write_kind::AppendAttributes,
     written_members::{member_attribute_names, written_member_names},
 };
@@ -72,7 +71,7 @@ impl EntityService {
                     overwrite,
                 };
                 let history = mutation_history(addressed, previous, &appended);
-                let ModificationWrite { write, events } = self.modification_write(target, id, previous, appended, history)?;
+                let (write, events) = self.fragment_write(target, id, previous, appended, history)?;
                 Ok((write, (not_appended, events)))
             })
             .await?;

@@ -78,7 +78,7 @@ impl ChunkRewrite for DeleteRewrite<'_> {
             events: deletion_events(&entry, removed, sys_attrs),
         };
         Ok(PlannedWrite {
-            write: ChunkWrite {
+            write: Some(ChunkWrite {
                 id: entry.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
                 entity: EntityMutation::Delete,
                 // Clause 5.6.6 removes current state and leaves the Temporal
@@ -86,7 +86,7 @@ impl ChunkRewrite for DeleteRewrite<'_> {
                 // recorded as ended rather than being deleted with it.
                 history: deletion_history(removed),
                 plan,
-            },
+            }),
             entry,
             alongside: None,
         })

@@ -5,7 +5,6 @@ use crate::{
     admitted_write::AdmittedAttribute,
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
-    modification_write::ModificationWrite,
     write_kind::PartialUpdateAttribute,
 };
 use andromeda_context_commit::history_record::mutation_history;
@@ -68,7 +67,7 @@ impl EntityService {
                     fragment: &fragment,
                 };
                 let history = mutation_history(addressed, previous, &updated);
-                let ModificationWrite { write, events } = self.modification_write(target, id, previous, updated, history)?;
+                let (write, events) = self.fragment_write(target, id, previous, updated, history)?;
                 Ok((write, events))
             })
             .await?;

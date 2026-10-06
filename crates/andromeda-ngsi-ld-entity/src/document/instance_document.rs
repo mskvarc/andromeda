@@ -204,6 +204,26 @@ impl InstanceDocument {
         &self.sub_attributes
     }
 
+    /// Whether the instance names no member a write acts on: an empty Fragment
+    /// (clause 5.4). The `createdAt` and `modifiedAt` the broker generates
+    /// (clause 4.8) are ignored when a request carries them (clause 5.2.5), so
+    /// they name nothing either.
+    #[must_use]
+    pub fn names_nothing(&self) -> bool {
+        self.family.is_none()
+            && self.dataset_id.is_none()
+            && matches!(self.value, ValueSlot::Absent)
+            && self.observed_at.is_none()
+            && self.expires_at.is_none()
+            && self.unit_code.is_none()
+            && self.value_type.is_none()
+            && self.object_types.is_none()
+            && self.deleted_at.is_none()
+            && self.instance_id.is_none()
+            && self.proof_seals == ProofSeals::default()
+            && self.sub_attributes.is_empty()
+    }
+
     /// Replace the value slot.
     pub fn set_value(&mut self, value: ValueSlot) {
         self.value = value;

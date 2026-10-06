@@ -68,13 +68,15 @@ impl ChunkRewrite for ReplaceRewrite<'_> {
             // clone: reference-count bumps only when the earlier attempt's write still shares the state
             Replacement::Built { id, state } => (id, Arc::unwrap_or_clone(state)),
         };
+        // Clause 5.6.8.4 replace mode is the Replace Entity of clause 5.6.18,
+        // a whole replacement and not a Fragment, so it always writes.
         let write = self.service.replacement_write(self.target, id, replacement, snapshot, now)?;
         Ok(PlannedWrite {
             entry: Replacement::Built {
                 id: write.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
                 state: stored_state(&write)?,
             },
-            write,
+            write: Some(write),
             alongside: None,
         })
     }

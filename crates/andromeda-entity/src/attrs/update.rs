@@ -4,7 +4,6 @@ use crate::{
     EntityService,
     admitted_write::AdmittedEntity,
     error::EntityError,
-    modification_write::ModificationWrite,
     write_kind::UpdateAttributes,
     written_members::{member_attribute_names, written_member_names},
 };
@@ -78,7 +77,7 @@ impl EntityService {
                 // The durable matches and the in-process events are planned
                 // together from one partition, so the two channels always agree
                 // on the per-attribute triggers (clause 5.2.12).
-                let ModificationWrite { write, events } = self.modification_write(target, id, previous, updated, history)?;
+                let (write, events) = self.fragment_write(target, id, previous, updated, history)?;
                 Ok((write, (events, not_updated)))
             })
             .await?;

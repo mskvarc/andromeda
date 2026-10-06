@@ -78,8 +78,10 @@ pub(super) trait ChunkRewrite: Sync {
 pub(super) struct PlannedWrite<E> {
     /// What the write is rebuilt from if the store refuses it.
     pub entry: E,
-    /// The write to commit.
-    pub write: ChunkWrite,
+    /// The write to commit, or `None` when the entry changes nothing: the
+    /// entity is then settled as a success without a write, so its
+    /// `modifiedAt`, subscribers and history stay untouched.
+    pub write: Option<ChunkWrite>,
     /// A failure reported beside the write once it settles, such as an append
     /// that added nothing. It describes this attempt only, so a refused
     /// attempt's is dropped with it.
@@ -150,10 +152,24 @@ impl EntityService {
         for entry in pending {
             let snapshot = snapshots.remove(R::id(&entry));
             match rewrite.build(entry, snapshot.as_ref(), &reads, now) {
-                Ok(PlannedWrite { entry, write, alongside }) => {
+                Ok(PlannedWrite {
+                    entry,
+                    write: Some(write),
+                    alongside,
+                }) => {
                     let precondition = snapshot.map_or(Precondition::MustNotExist, |snapshot| Precondition::UnchangedSince(snapshot.modified_at));
                     writes.push(GuardedWrite { write, precondition });
                     built.push((entry, alongside));
+                }
+                // The state this attempt read already is what the entry asks
+                // for, so a concurrent writer moving the entity on does not
+                // make the answer wrong: nothing is stored and nothing retried.
+                Ok(PlannedWrite { entry, write: None, alongside }) => {
+                    let id = R::id(&entry);
+                    settled.success.push(id.clone()); // clone: the report owns the identifier it names
+                    if let Some(alongside) = alongside {
+                        settled.errors.push((id.clone(), alongside)); // clone: the report owns the identifier it names
+                    }
                 }
                 Err(failure) => settled.errors.push(*failure),
             }

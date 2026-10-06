@@ -89,7 +89,7 @@ impl EntityService {
                 };
 
                 let ModificationWrite { write, events } = self.modification_write(target, id, previous, Arc::new(remaining), history)?;
-                Ok((write, events))
+                Ok((Some(write), events))
             })
             .await?;
 

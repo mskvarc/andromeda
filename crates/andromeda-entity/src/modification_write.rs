@@ -28,6 +28,16 @@ pub(crate) struct ModificationWrite {
     pub(crate) events: Vec<ChangeEvent>,
 }
 
+/// Whether turning `previous` into `current` while recording `history` leaves
+/// the entity exactly as it was: the state is the one that was read and
+/// nothing is recorded in the Temporal Evolution.
+///
+/// Single-entity fragment operations and the batch operations that run them
+/// per entity share this test, so they cannot disagree on what a no-op is.
+pub(crate) fn leaves_entity_unchanged(previous: &EntityState, current: &EntityState, history: &[HistoryRecord]) -> bool {
+    history.is_empty() && previous == current
+}
+
 impl EntityService {
     /// The write that stores `current` as the entity `id` names in place of
     /// `previous`, recording `history`.
@@ -63,5 +73,35 @@ impl EntityService {
             .subscription_matches(plan.matches)
             .build();
         Ok(ModificationWrite { write, events: plan.events })
+    }
+
+    /// The write a fragment operation owes for turning `previous` into
+    /// `current`, and the events it publishes, or no write and no events when
+    /// it changed nothing.
+    ///
+    /// Clause 5.4 makes a Fragment an IETF RFC 7396 JSON Merge Patch, which
+    /// returns its target unchanged when it names nothing to change, and
+    /// clauses 5.5.8 and 5.5.12 iterate over the members of the Fragment. A
+    /// write whose state is the one it read and that records no history
+    /// therefore stores nothing: the entity keeps its `modifiedAt` (clause 4.8),
+    /// no subscriber is notified and no Temporal Evolution instance is
+    /// recorded.
+    ///
+    /// # Errors
+    ///
+    /// Reports the [`EntityError`] of [`EntityService::modification_write`].
+    pub(crate) fn fragment_write(
+        &self,
+        target: &ContextTarget,
+        id: &Identifier,
+        previous: &Arc<EntityState>,
+        current: Arc<EntityState>,
+        history: Vec<HistoryRecord>,
+    ) -> Result<(Option<AtomicWrite>, Vec<ChangeEvent>), EntityError> {
+        if leaves_entity_unchanged(previous, &current, &history) {
+            return Ok((None, Vec::new()));
+        }
+        let ModificationWrite { write, events } = self.modification_write(target, id, previous, current, history)?;
+        Ok((Some(write), events))
     }
 }

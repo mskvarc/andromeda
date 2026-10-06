@@ -23,8 +23,10 @@ use serde_json::{Value, json};
 /// The NGSI-LD Null of clause 4.5.0.
 const NULL_URI: &str = "urn:ngsi-ld:null";
 
-/// The window every temporal read of this module asks for.
-const WINDOW: &str = "timerel=after&timeAt=2000-01-01T00:00:00Z";
+/// The query every temporal read of this module asks for: no time filter,
+/// because clause 4.11 makes `observedAt` the default `timeproperty`, which no
+/// instance of a Core-written entity carries.
+const WINDOW: &str = "";
 
 /// Clauses 4.5.0, 4.5.7 and 4.5.8: after the `location` of an entity is deleted,
 /// its Temporal Evolution still answers 200, and the ended instance carries the
@@ -82,7 +84,7 @@ async fn regression_a_deleted_geo_property_in_a_temporal_evolution_reads_typed()
     );
 
     let simplified = client
-        .get_temporal_entity(&id, &format!("{WINDOW}&format=temporalValues"), Some(CORE_CONTEXT))
+        .get_temporal_entity(&id, "format=temporalValues", Some(CORE_CONTEXT))
         .await
         .expect("retrieve simplified temporal evolution request");
     assert_eq!(simplified.status, StatusCode::OK, "temporalValues: {:?}", simplified.body);

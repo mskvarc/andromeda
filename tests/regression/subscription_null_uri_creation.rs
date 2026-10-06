@@ -47,3 +47,43 @@ async fn regression_subscription_null_uri_creation_a_null_jsonld_context_is_bad_
     assert_eq!(retrieved.status, StatusCode::NOT_FOUND, "nothing was created: {:?}", retrieved.body);
     scope.finish().await.expect("cleanup failed");
 }
+
+/// Clause 5.2.1: "None of the members described admit a null value directly"
+/// outside the update clauses 5.5.8 and 5.5.12, and clause 5.8.1.4 bullet 1
+/// raises `BadRequestData` for a body that does not meet Table 5.2.12-1. A
+/// create writing a JSON `null` into any member is refused naming it, and the
+/// subscription is not created.
+#[tokio::test]
+async fn regression_subscription_null_uri_creation_a_json_null_member_is_bad_request_data() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    for (member, wire) in [
+        ("subscriptionName", json!(null)),
+        ("jsonldContext", json!(null)),
+        ("datasetId", json!(null)),
+        ("expiresAt", json!(null)),
+        ("isActive", json!(null)),
+        ("ngsildConformance", json!(null)),
+    ] {
+        let id = scope.id(&format!("Subscription:json-null-{member}"));
+        let mut body = json!({
+            "id": id,
+            "type": "Subscription",
+            "entities": [{"type": scope.entity_type("NullMemberProbe")}],
+            "notification": {"endpoint": {"uri": "http://127.0.0.1:9/notify", "accept": "application/json"}},
+            "@context": [TEST_SUITE_CONTEXT]
+        });
+        body[member] = wire;
+
+        let refused = client.create_subscription(&body).await.expect("create subscription request");
+        let retrieved = client.retrieve_subscription(&id, None).await.expect("retrieve subscription request");
+
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{member}: {:?}", refused.body);
+        let problem = refused.json_value().expect("a refusal carries a problem details body");
+        assert_eq!(problem["type"], json!(BAD_REQUEST_DATA), "{member}: {problem}");
+        let detail = problem["detail"].as_str().expect("a problem names its detail");
+        assert!(detail.contains(member), "the member is named: {detail}");
+        assert_eq!(retrieved.status, StatusCode::NOT_FOUND, "{member}: nothing was created: {:?}", retrieved.body);
+    }
+    scope.finish().await.expect("cleanup failed");
+}

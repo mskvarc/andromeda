@@ -35,7 +35,7 @@ use crate::{
     query::temporal_query::TemporalQuery,
     request_body::RequestBody,
     subscription::{EntitySelector, SubscriptionType},
-    subscription_uri_member::SubscriptionUriMember,
+    subscription_member::SubscriptionMember,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
@@ -169,24 +169,41 @@ pub struct SubscriptionRequest {
 impl RequestBody for SubscriptionRequest {}
 
 impl SubscriptionRequest {
-    /// The first member that takes a URI which the body wrote as the NGSI-LD
-    /// Null `urn:ngsi-ld:null` (clause 4.5.0), if it wrote one.
+    /// The first member, in the order of Table 5.2.12-1, which the body wrote
+    /// as a null: a JSON `null` or, for a member that takes a URI, the NGSI-LD
+    /// Null `urn:ngsi-ld:null` (clause 4.5.0).
     ///
     /// Clause 5.5.8 gives the Null the meaning "the target member is deleted"
     /// in an update; a create has no member to delete, and clause 5.2.1 makes
-    /// an NGSI-LD Null elsewhere `BadRequestData`. A JSON `null` is not one: it
-    /// is dropped when the body is expanded.
+    /// an NGSI-LD Null elsewhere `BadRequestData`.
     #[must_use]
-    pub const fn ngsi_ld_null_uri_member(&self) -> Option<SubscriptionUriMember> {
-        if self.jsonld_context.is_ngsi_ld_null() {
-            Some(SubscriptionUriMember::JsonldContext)
-        } else if self.dataset_id.is_ngsi_ld_null() {
-            Some(SubscriptionUriMember::DatasetId)
-        } else if self.watched_attributes.is_ngsi_ld_null() {
-            Some(SubscriptionUriMember::WatchedAttributes)
-        } else {
-            None
-        }
+    pub fn null_member(&self) -> Option<SubscriptionMember> {
+        [
+            (SubscriptionMember::SubscriptionName, self.subscription_name.is_null()),
+            (SubscriptionMember::Description, self.description.is_null()),
+            (SubscriptionMember::Entities, self.entities.is_null()),
+            (SubscriptionMember::WatchedAttributes, self.watched_attributes.is_null()),
+            (SubscriptionMember::NotificationTrigger, self.notification_trigger.is_null()),
+            (SubscriptionMember::TimeInterval, self.time_interval.is_null()),
+            (SubscriptionMember::Q, self.q.is_null()),
+            (SubscriptionMember::GeoQ, self.geo_q.is_null()),
+            (SubscriptionMember::ScopeQ, self.scope_q.is_null()),
+            (SubscriptionMember::Csf, self.csf.is_null()),
+            (SubscriptionMember::DatasetId, self.dataset_id.is_null()),
+            (SubscriptionMember::TemporalQ, self.temporal_q.is_null()),
+            (SubscriptionMember::ExpandValues, self.expand_values.is_null()),
+            (SubscriptionMember::JsonKeys, self.json_keys.is_null()),
+            (SubscriptionMember::Throttling, self.throttling.is_null()),
+            (SubscriptionMember::ExpiresAt, self.expires_at.is_null()),
+            (SubscriptionMember::IsActive, self.is_active.is_null()),
+            (SubscriptionMember::Lang, self.lang.is_null()),
+            (SubscriptionMember::JsonldContext, self.jsonld_context.is_null()),
+            (SubscriptionMember::LocalOnly, self.local_only.is_null()),
+            (SubscriptionMember::SplitEntities, self.split_entities.is_null()),
+            (SubscriptionMember::NgsildConformance, self.ngsild_conformance.is_null()),
+        ]
+        .into_iter()
+        .find_map(|(member, written_null)| written_null.then_some(member))
     }
 }
 
@@ -335,21 +352,24 @@ mod tests {
         assert!(matches!(cleared.watched_attributes, Clearable::NgsiLdNull));
     }
 
-    /// Clause 5.2.1: an NGSI-LD Null outside clauses 5.5.8 and 5.5.12 is
-    /// `BadRequestData`, so a request tells the URI Null of a URI member --
-    /// alone or as the one item of an array -- from the JSON `null` JSON-LD
-    /// drops, and from every other value of those members.
+    /// Clause 5.2.1: "None of the members described admit a null value
+    /// directly" outside clauses 5.5.8 and 5.5.12, so a request names the
+    /// member it wrote as a null: the JSON `null` of any member, and the URI
+    /// Null of a URI member, alone or as the one item of an array. The URI Null
+    /// beside another item, or in a text member, is a value.
     #[test]
-    fn a_request_names_the_uri_member_it_wrote_the_ngsi_ld_null_into() {
+    fn a_request_names_the_member_it_wrote_a_null_into() {
         for (body, member) in [
             (json!({"jsonldContext": "urn:ngsi-ld:null"}), Some("jsonldContext")),
             (json!({"datasetId": ["urn:ngsi-ld:null"]}), Some("datasetId")),
             (json!({"watchedAttributes": ["urn:ngsi-ld:null"]}), Some("watchedAttributes")),
             (
                 json!({"datasetId": ["urn:ngsi-ld:null"], "watchedAttributes": ["urn:ngsi-ld:null"]}),
-                Some("datasetId"),
+                Some("watchedAttributes"),
             ),
-            (json!({"jsonldContext": null, "datasetId": null, "watchedAttributes": null}), None),
+            (json!({"jsonldContext": null}), Some("jsonldContext")),
+            (json!({"ngsildConformance": null}), Some("ngsildConformance")),
+            (json!({"q": null, "expiresAt": null}), Some("q")),
             (json!({"datasetId": ["urn:ngsi-ld:null", "@none"]}), None),
             (
                 json!({"jsonldContext": "https://example.com/context.jsonld", "description": "urn:ngsi-ld:null"}),
@@ -358,9 +378,44 @@ mod tests {
             (json!({}), None),
         ] {
             pretty_assertions::assert_eq!(
-                decode(&body).ngsi_ld_null_uri_member().map(|named| named.to_string()),
+                decode(&body).null_member().map(|named| named.to_string()),
                 member.map(ToOwned::to_owned),
                 "{body}"
+            );
+        }
+    }
+
+    /// Clause 5.2.1: every member of cardinality `0..1` written as a JSON
+    /// `null` is named, so no member lets a create swallow it.
+    #[test]
+    fn every_deletable_member_written_as_null_is_named() {
+        for member in [
+            "subscriptionName",
+            "description",
+            "entities",
+            "watchedAttributes",
+            "notificationTrigger",
+            "timeInterval",
+            "q",
+            "geoQ",
+            "scopeQ",
+            "csf",
+            "datasetId",
+            "temporalQ",
+            "expandValues",
+            "jsonKeys",
+            "throttling",
+            "expiresAt",
+            "isActive",
+            "lang",
+            "jsonldContext",
+            "localOnly",
+            "splitEntities",
+            "ngsildConformance",
+        ] {
+            pretty_assertions::assert_eq!(
+                decode(&json!({ member: null })).null_member().map(|named| named.to_string()),
+                Some(member.to_owned())
             );
         }
     }

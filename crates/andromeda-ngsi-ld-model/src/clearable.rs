@@ -5,8 +5,8 @@
 //! explicit `null` (the NGSI-LD Null) removes it, and any other value replaces
 //! it. Where a member takes a URI, clause 4.5.0 spells the Null as the URI
 //! `urn:ngsi-ld:null` too, and clause 5.2.1 refuses an NGSI-LD Null anywhere
-//! but in an update (clauses 5.5.8 and 5.5.12), while JSON-LD drops a JSON
-//! `null` on creation. Four states, so neither an `Option` (which cannot say
+//! but in an update (clauses 5.5.8 and 5.5.12), a JSON `null` on creation
+//! included. Four states, so neither an `Option` (which cannot say
 //! "cleared") nor a pair of them (which hides the other states in a nesting)
 //! names them.
 
@@ -17,11 +17,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub enum Clearable<T> {
     /// The fragment does not mention the member, which keeps its stored value.
     Absent,
-    /// The fragment wrote `null`, which removes the member.
+    /// The fragment wrote `null`, which removes the member from a stored one.
     Cleared,
     /// The fragment wrote the NGSI-LD Null as the URI `urn:ngsi-ld:null` (clause
-    /// 4.5.0), which removes the member from a stored one and which a create
-    /// refuses (clause 5.2.1).
+    /// 4.5.0), which removes the member from a stored one.
     NgsiLdNull,
     /// The fragment wrote a value, which replaces the stored one.
     Set(T),
@@ -53,6 +52,14 @@ impl<T> Clearable<T> {
         matches!(self, Clearable::NgsiLdNull)
     }
 
+    /// Whether the fragment wrote the member as a null of either spelling, a
+    /// JSON `null` or the NGSI-LD Null URI, which clause 5.2.1 refuses outside
+    /// an update.
+    #[must_use]
+    pub const fn is_null(&self) -> bool {
+        matches!(self, Clearable::Cleared | Clearable::NgsiLdNull)
+    }
+
     /// The value the fragment wrote, if it wrote one.
     #[must_use]
     pub const fn as_set(&self) -> Option<&T> {
@@ -71,9 +78,8 @@ impl<T> Clearable<T> {
     }
 
     /// The member a create body holds: a create has nothing stored, so a
-    /// member it leaves out or clears with a JSON `null` is absent. A create
-    /// that wrote the NGSI-LD Null as a URI is refused before this is read
-    /// (clause 5.2.1).
+    /// member it leaves out is absent. A create that wrote the member as a
+    /// null of either spelling is refused before this is read (clause 5.2.1).
     #[must_use]
     pub fn into_created(self) -> Option<T> {
         match self {
@@ -168,6 +174,20 @@ mod tests {
         pretty_assertions::assert_eq!(Clearable::<u8>::NgsiLdNull.into_created(), None);
         assert!(Clearable::<u8>::NgsiLdNull.is_ngsi_ld_null());
         assert!(!Clearable::<u8>::Cleared.is_ngsi_ld_null());
+    }
+
+    /// Clause 5.2.1: both spellings of a null are told from a member that is
+    /// absent or set.
+    #[test]
+    fn a_null_of_either_spelling_is_told_from_an_absent_or_a_set_member() {
+        assert!(Clearable::<u8>::Cleared.is_null());
+        assert!(Clearable::<u8>::NgsiLdNull.is_null());
+        assert!(!Clearable::<u8>::Absent.is_null());
+        assert!(!Clearable::Set(1).is_null());
+    }
+
+    #[test]
+    fn a_created_member_that_is_set_is_kept() {
         pretty_assertions::assert_eq!(Clearable::Set(3).into_created(), Some(3));
     }
 }

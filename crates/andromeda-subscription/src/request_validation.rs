@@ -38,11 +38,11 @@ fn q_has_comparison(expr: &Expr) -> bool {
 /// 5.2.1) -- and [`SubscriptionError::GeoQTooLarge`] for a reference geometry
 /// past `geo_limits`.
 pub fn validate_create_request(request: &SubscriptionRequest, geo_limits: GeometryCensusLimits) -> Result<(), SubscriptionError> {
-    // Clause 5.2.1: an NGSI-LD Null is `BadRequestData` outside clauses 5.5.8
-    // and 5.5.12, so a create refuses the URI Null; a JSON `null` is dropped by
-    // JSON-LD and reads as an absent member.
-    if let Some(member) = request.ngsi_ld_null_uri_member() {
-        return Err(SubscriptionError::Validation(SubscriptionValidationReason::NgsiLdNullOnCreate(member)));
+    // Clause 5.2.1: no member admits a null value directly outside clauses
+    // 5.5.8 and 5.5.12, so a create refuses a JSON `null` and the URI Null alike
+    // (clause 5.8.1.4, bullet 1).
+    if let Some(member) = request.null_member() {
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::NullOnCreate(member)));
     }
     let Some(notification) = &request.notification else {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::NotificationRequired));
@@ -236,13 +236,13 @@ mod tests {
         ));
     }
 
-    /// Clause 5.2.1: an NGSI-LD Null outside clauses 5.5.8 and 5.5.12 is
+    /// Clause 5.2.1: a null outside clauses 5.5.8 and 5.5.12 is
     /// `BadRequestData`, so a create refuses `urn:ngsi-ld:null` (alone, or as
     /// the one item of an array) in `jsonldContext`, `datasetId` and
-    /// `watchedAttributes`, naming the member; a JSON `null` is dropped by
-    /// JSON-LD and stays an absent member, and an update still deletes with it.
+    /// `watchedAttributes`, and a JSON `null` in any member, naming the member.
+    /// An update still deletes with either.
     #[test]
-    fn a_create_refuses_the_ngsi_ld_null_in_a_uri_member_naming_it() {
+    fn a_create_refuses_a_null_naming_the_member() {
         let notification = json!({"endpoint": {"uri": "https://receiver.example.com/notify"}});
         for (member, wire) in [
             ("jsonldContext", json!("urn:ngsi-ld:null")),
@@ -252,15 +252,29 @@ mod tests {
             let body = json!({"type": "Subscription", "entities": [{"type": "Vehicle"}], "notification": notification, member: wire});
             let result = validate_create_request(&request(&body), limits());
             match &result {
-                Err(refusal @ SubscriptionError::Validation(SubscriptionValidationReason::NgsiLdNullOnCreate(_))) => {
+                Err(refusal @ SubscriptionError::Validation(SubscriptionValidationReason::NullOnCreate(_))) => {
                     assert!(refusal.to_string().contains(member), "{member}: {refusal}");
                 }
                 other => panic!("{member}: expected the NGSI-LD Null to be refused, got {other:?}"),
             }
         }
-        for member in ["jsonldContext", "datasetId", "watchedAttributes"] {
+        for member in [
+            "jsonldContext",
+            "datasetId",
+            "ngsildConformance",
+            "isActive",
+            "expiresAt",
+            "subscriptionName",
+            "q",
+        ] {
             let body = json!({"type": "Subscription", "entities": [{"type": "Vehicle"}], "notification": notification, member: null});
-            assert!(validate_create_request(&request(&body), limits()).is_ok(), "{member}");
+            let result = validate_create_request(&request(&body), limits());
+            match &result {
+                Err(refusal @ SubscriptionError::Validation(SubscriptionValidationReason::NullOnCreate(_))) => {
+                    assert!(refusal.to_string().contains(member), "{member}: {refusal}");
+                }
+                other => panic!("{member}: expected the JSON null to be refused, got {other:?}"),
+            }
         }
     }
 

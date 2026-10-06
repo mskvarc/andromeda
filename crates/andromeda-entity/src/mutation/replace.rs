@@ -60,7 +60,7 @@ impl EntityService {
                     let replaced = Arc::clone(&replacement); // clone: Arc ref-count bump; the write stores the replacement
                     let history = mutation_history(AddressedInstances::Replacement, previous, &replaced);
                     let ModificationWrite { write, events } = self.modification_write(target, id, previous, replaced, history)?;
-                    Ok((write, events))
+                    Ok((Some(write), events))
                 })
                 .await?;
 

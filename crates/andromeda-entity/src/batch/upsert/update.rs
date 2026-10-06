@@ -120,7 +120,7 @@ fn inserted(write: ChunkWrite) -> Result<PlannedWrite<UpsertFragment>, Box<(Iden
             id: write.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
             stored: stored_state(&write)?,
         },
-        write,
+        write: Some(write),
         alongside: None,
     })
 }
@@ -166,7 +166,8 @@ impl EntityService {
     /// overwrite as a single update).
     ///
     /// Mirrors the single attribute update (clause 5.6.2): the per-attribute
-    /// triggers, partitioned from the before/after diff.
+    /// triggers, partitioned from the before/after diff, and no write at all
+    /// when the fragment changes nothing.
     ///
     /// # Errors
     ///
@@ -179,13 +180,13 @@ impl EntityService {
         fragment: &EntityDocument,
         previous: &Arc<EntityState>,
         now: SystemInstant,
-    ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
+    ) -> Result<Option<ChunkWrite>, Box<(Identifier, EntityError)>> {
         // clone: reference-count bumps; the update shares every attribute it does not touch with the stored state
         let mut updated = EntityState::clone(previous);
         if let Err(error) = updated.update_attributes(fragment) {
             return Err(Box::new((id, EntityError::from(error))));
         }
-        self.chunk_update(
+        self.chunk_fragment_update(
             target,
             id,
             UpdatedStates {

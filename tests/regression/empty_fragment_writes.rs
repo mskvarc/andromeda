@@ -8,7 +8,9 @@
 //! broker therefore answers `{}` with the operation's success status (204) and
 //! changes, notifies and records nothing; a missing entity or attribute is still
 //! the `ResourceNotFound` those clauses raise. The rule is recorded in
-//! `docs/empty-fragment-writes.md` (option A).
+//! `docs/empty-fragment-writes.md` (option A), and the batch operations that run
+//! those fragment writes per entity (clauses 5.6.8.4, 5.6.9.4 and 5.6.20.4)
+//! follow it for an entity whose fragment names no member.
 //!
 //! Naming convention: `regression_<finding>_<scenario>`.
 
@@ -23,8 +25,11 @@ use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use std::time::Duration;
 
-/// The window the temporal reads of this module ask for.
-const WINDOW: &str = "timerel=after&timeAt=2000-01-01T00:00:00Z";
+/// The window the temporal reads of this module ask for. Clause 4.11 makes
+/// `observedAt` the default `timeproperty`, which no instance of a Core-created
+/// entity carries, so the window names the `modifiedAt` the broker stamps on
+/// every instance.
+const WINDOW: &str = "timeproperty=modifiedAt&timerel=after&timeAt=2000-01-01T00:00:00Z";
 
 /// How long the absence of a notification is observed.
 const QUIET: Duration = Duration::from_secs(2);
@@ -57,6 +62,39 @@ impl EntityFragmentWrite {
             Self::MergeEntity => (Method::PATCH, format!("/ngsi-ld/v1/entities/{encoded}")),
         }
     }
+}
+
+/// The batch operations that run a fragment write for each entity.
+#[derive(Clone, Copy, Debug)]
+enum BatchFragmentWrite {
+    /// Clause 5.6.9, `POST /entityOperations/update`.
+    Update,
+    /// Clause 5.6.9 with `options=noOverwrite`.
+    NoOverwriteUpdate,
+    /// Clause 5.6.20, `POST /entityOperations/merge`.
+    Merge,
+    /// Clause 5.6.8 with `options=update`.
+    UpsertUpdate,
+}
+
+impl BatchFragmentWrite {
+    /// Every batch fragment write.
+    const ALL: [Self; 4] = [Self::Update, Self::NoOverwriteUpdate, Self::Merge, Self::UpsertUpdate];
+
+    /// The path of the operation.
+    const fn path(self) -> &'static str {
+        match self {
+            Self::Update => "/ngsi-ld/v1/entityOperations/update",
+            Self::NoOverwriteUpdate => "/ngsi-ld/v1/entityOperations/update?options=noOverwrite",
+            Self::Merge => "/ngsi-ld/v1/entityOperations/merge",
+            Self::UpsertUpdate => "/ngsi-ld/v1/entityOperations/upsert?options=update",
+        }
+    }
+}
+
+/// Send the array `entities` to a batch operation as `application/ld+json`.
+async fn batch_write(client: &TestClient, operation: BatchFragmentWrite, entities: &Value) -> TestResponse {
+    send(client, Method::POST, operation.path(), "application/ld+json", &entities.to_string()).await
 }
 
 /// Send `body` as `content_type` with the given method and path.
@@ -254,6 +292,74 @@ async fn regression_an_empty_fragment_still_answers_not_found_for_an_unknown_ent
     for operation in EntityFragmentWrite::ALL {
         let (method, path) = operation.request(&missing);
         assert_not_found(&send(client, method, &path, "application/json", "{}").await, &format!("{operation:?}"));
+    }
+
+    scope.finish().await.expect("environment cleanup");
+}
+
+/// Clauses 5.6.8.4 (update mode), 5.6.9.4 and 5.6.20.4: an entity of a batch
+/// whose fragment names no member beside its identity is a success that changes,
+/// notifies and records nothing, on every batch operation that runs a fragment
+/// write per entity.
+#[tokio::test]
+async fn regression_an_empty_batch_fragment_is_a_no_op_on_every_batch_fragment_write() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let receiver = NotificationAdapter::start().await;
+    let id = scope.id("Vehicle:empty-batch-fragment");
+    let subscription_id = scope.id("Subscription:empty-batch-fragment");
+    seed(client, &id).await;
+    let subscribed = client
+        .create_subscription(&json!({
+            "id": subscription_id,
+            "type": "Subscription",
+            "entities": [{"id": id, "type": "Vehicle"}],
+            "notification": {"format": "normalized", "endpoint": {"uri": receiver.endpoint_url(), "accept": "application/json"}},
+            "@context": [CORE_CONTEXT]
+        }))
+        .await
+        .expect("create subscription request");
+    assert_eq!(subscribed.status, StatusCode::CREATED, "{:?}", subscribed.body);
+    receiver.clear_notifications().await;
+    let before = stored(client, &id).await;
+    let evolution_before = evolution(client, &id).await;
+
+    for operation in BatchFragmentWrite::ALL {
+        let answer = batch_write(client, operation, &json!([{"id": id, "type": "Vehicle", "@context": [CORE_CONTEXT]}])).await;
+        assert_eq!(answer.status, StatusCode::NO_CONTENT, "{operation:?}: {:?}", answer.body);
+        assert_eq!(stored(client, &id).await, before, "{operation:?}");
+    }
+    receiver.wait_for_no_subscription_notification(&subscription_id, QUIET).await;
+    assert_eq!(evolution(client, &id).await, evolution_before);
+
+    client.delete_subscription(&subscription_id).await.expect("delete subscription");
+    receiver.shutdown().await;
+    scope.finish().await.expect("environment cleanup");
+}
+
+/// Clauses 5.6.9.4 and 5.6.20.4: a batch fragment that does change a value
+/// still writes, so the skipped write is decided by the change and not by the
+/// operation.
+#[tokio::test]
+async fn regression_a_batch_fragment_that_changes_a_value_still_moves_the_entity() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Vehicle:changing-batch-fragment");
+    seed(client, &id).await;
+
+    for (operation, speed) in [(BatchFragmentWrite::Update, 60), (BatchFragmentWrite::Merge, 70)] {
+        let before = stored(client, &id).await;
+        let fragment = json!([{"id": id, "type": "Vehicle", "speed": {"type": "Property", "value": speed}, "@context": [CORE_CONTEXT]}]);
+
+        let answer = batch_write(client, operation, &fragment).await;
+
+        assert_eq!(answer.status, StatusCode::NO_CONTENT, "{operation:?}: {:?}", answer.body);
+        let after = stored(client, &id).await;
+        assert_eq!(after["speed"]["value"], json!(speed), "{operation:?}: {after}");
+        assert!(
+            after["modifiedAt"] != before["modifiedAt"],
+            "{operation:?}: modifiedAt moves with a real change: {after}"
+        );
     }
 
     scope.finish().await.expect("environment cleanup");

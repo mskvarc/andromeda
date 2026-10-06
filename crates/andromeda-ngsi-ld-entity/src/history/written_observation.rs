@@ -95,7 +95,14 @@ pub fn written_observation(addressed: AddressedInstances<'_>, previous: Option<&
             // 5.6.5: the addressed instance is deleted, not observed.
             if !matches!(fragment.value(), ValueSlot::Remove(_)) {
                 let dataset_id = addressed_dataset(dataset_id, fragment);
-                if let Some(instance) = current.attributes().get(attribute).and_then(|held| held.get(dataset_id)) {
+                // Clause 5.4: a Fragment naming no member is a JSON Merge Patch
+                // that returns its target unchanged, so it applies no instance.
+                if let Some(instance) = current
+                    .attributes()
+                    .get(attribute)
+                    .and_then(|held| held.get(dataset_id))
+                    .filter(|_| !fragment.names_nothing())
+                {
                     // clone: the observation owns the attribute name and the instance identity.
                     observed.insert(
                         attribute.clone(),
@@ -282,6 +289,22 @@ mod tests {
         let observed = written_observation(attribute_fragment(&written, &attribute, None), Some(&previous), &current);
 
         pretty_assertions::assert_eq!(observed, Some(current));
+    }
+
+    /// Clause 5.4: an attribute fragment naming no member is a JSON Merge Patch
+    /// that returns its target unchanged, so it applies no instance and
+    /// nothing is observed; one naming a member still observes the instance.
+    #[test]
+    fn an_empty_attribute_fragment_observes_nothing() {
+        let held = building(vec![(TEMPERATURE, vec![(None, measured(25, "2022-03-14T01:59:26.535Z"))])]);
+        let attribute = name(TEMPERATURE);
+        let empty = InstanceDocument::builder().build();
+        assert!(empty.names_nothing());
+        pretty_assertions::assert_eq!(written_observation(attribute_fragment(&empty, &attribute, None), Some(&held), &held), None);
+
+        let writes_a_value = observed_document(25, None, "2022-03-14T01:59:26.535Z");
+        assert!(!writes_a_value.names_nothing());
+        assert!(written_observation(attribute_fragment(&writes_a_value, &attribute, None), Some(&held), &held).is_some());
     }
 
     /// Clause 5.6.19.4 keeps the replaced instance's `createdAt`, which only

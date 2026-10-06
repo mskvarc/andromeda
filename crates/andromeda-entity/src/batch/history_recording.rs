@@ -105,8 +105,9 @@ async fn batch_update_without_overwrite_records_only_the_attributes_it_appended(
     assert_observes_stored_instances(&write, &[NAME_IRI]);
 }
 
-/// A `noOverwrite` batch update that appended nothing records no observation,
-/// so the current-value projection keeps the value the Entity still holds.
+/// A `noOverwrite` batch update that appended nothing stores no write at all,
+/// so it records no observation and the current-value projection keeps the
+/// value the Entity still holds.
 #[tokio::test]
 async fn batch_update_without_overwrite_that_appended_nothing_records_no_observation() {
     let (service, recorded) = recording_service().await;
@@ -122,8 +123,8 @@ async fn batch_update_without_overwrite_that_appended_nothing_records_no_observa
         .await
         .expect("the batch update completes");
 
-    let write = single_recorded_write(&recorded);
-    assert!(recorded_observation(&write).is_none(), "the skipped value is not recorded: {:?}", write.history);
+    let writes = recorded.lock().expect("recording mutex is not poisoned");
+    assert!(writes.is_empty(), "the skipped value is not recorded: {writes:?}");
 }
 
 /// Clause 5.6.9 with overwriting records the stored whole instance.

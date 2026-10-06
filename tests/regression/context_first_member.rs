@@ -248,7 +248,15 @@ async fn regression_context_first_member_notification_body() {
     assert_eq!(accepted.status, StatusCode::CREATED, "create subscription: {:?}", accepted.body);
     sleep(Duration::from_millis(400)).await;
 
-    let entity = json!({"id": scope.id("Vehicle:context-first-notified"), "type": entity_type, "@context": [CORE_CONTEXT]});
+    // Table 5.2.12-1: absent `notificationTrigger` defaults to `attributeCreated`
+    // and `attributeUpdated`, so the created entity carries an attribute to
+    // create.
+    let entity = json!({
+        "id": scope.id("Vehicle:context-first-notified"),
+        "type": entity_type,
+        "speed": {"type": "Property", "value": 7},
+        "@context": [CORE_CONTEXT]
+    });
     let created = client.post_entity(&entity).send().await.expect("create entity request");
     assert_eq!(created.status, StatusCode::CREATED, "create entity: {:?}", created.body);
 

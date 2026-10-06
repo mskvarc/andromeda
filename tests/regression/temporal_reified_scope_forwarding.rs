@@ -5,9 +5,13 @@
 //! and 5.6.14.4 forward the operation's matching input data to the registered
 //! Context Sources. A write whose `scope` is a history of instances must
 //! therefore reach a source with every instance and the temporal members it
-//! dated it with (`createdAt`, `modifiedAt`, `deletedAt` and the Null clause
-//! 4.18 reserves for a deleted scope), as the local write receives them. The
-//! broker once forwarded the paths of the Scope and dropped the history.
+//! dated it with (`observedAt`, `deletedAt` and the Null clause 4.18 reserves
+//! for a deleted scope), as the local write receives them. The `createdAt` and
+//! `modifiedAt` of an instance are output only (clause 5.2.5, Table 5.2.5-2:
+//! "In the event that they are provided (in update or create operations)
+//! NGSI-LD implementations shall ignore them"), so the local write stamps its
+//! own and a value a client sent is not among what is forwarded. The broker
+//! once forwarded the paths of the Scope and dropped the history.
 //!
 //! Naming convention: `regression_<finding>_<scenario>`.
 
@@ -16,10 +20,18 @@
 use crate::context_source_adapter::ContextSourceAdapter;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use std::time::Duration;
+
+/// The `createdAt` a client sends on the first Scope instance, which clause
+/// 5.2.5 has implementations ignore.
+const CLIENT_CREATED_AT: &str = "2025-01-01T00:00:01Z";
+
+/// The `modifiedAt` a client sends on the first Scope instance, which clause
+/// 5.2.5 has implementations ignore.
+const CLIENT_MODIFIED_AT: &str = "2025-01-01T00:00:02Z";
 
 /// An `inclusive` registration of this test's `covered_type` entities,
 /// advertising `operation`.
@@ -45,8 +57,8 @@ fn reified_scope() -> Value {
             "type": "Property",
             "value": "/Madrid/Gardens",
             "observedAt": "2025-01-01T00:00:00Z",
-            "createdAt": "2025-01-01T00:00:01Z",
-            "modifiedAt": "2025-01-01T00:00:02Z"
+            "createdAt": CLIENT_CREATED_AT,
+            "modifiedAt": CLIENT_MODIFIED_AT
         },
         {
             "type": "Property",
@@ -62,14 +74,17 @@ fn speed() -> Value {
     json!([{"type": "Property", "value": 10, "observedAt": "2025-01-01T00:00:00Z"}])
 }
 
-/// Assert that `body` carries both Scope instances with their temporal members.
+/// Assert that `body` carries both Scope instances with the temporal members
+/// clause 4.5.6 lets a client date them with, and none of the output-only
+/// `createdAt` and `modifiedAt` the client sent (clause 5.2.5).
 fn assert_scope_history(body: &Value) {
     assert!(body["scope"].is_array(), "the Scope is forwarded as its history: {body}");
     let history = body["scope"].as_array().expect("the Scope was asserted to be an array");
     assert_eq!(history.len(), 2, "both Scope instances are forwarded: {body}");
     assert_eq!(history[0]["value"], json!("/Madrid/Gardens"), "{body}");
-    assert_eq!(history[0]["createdAt"], json!("2025-01-01T00:00:01Z"), "{body}");
-    assert_eq!(history[0]["modifiedAt"], json!("2025-01-01T00:00:02Z"), "{body}");
+    assert_eq!(history[0]["observedAt"], json!("2025-01-01T00:00:00Z"), "{body}");
+    assert_ne!(history[0]["createdAt"], json!(CLIENT_CREATED_AT), "{body}");
+    assert_ne!(history[0]["modifiedAt"], json!(CLIENT_MODIFIED_AT), "{body}");
     assert_eq!(history[1]["value"], json!("urn:ngsi-ld:null"), "{body}");
     assert_eq!(history[1]["deletedAt"], json!("2025-01-02T00:00:00Z"), "{body}");
 }

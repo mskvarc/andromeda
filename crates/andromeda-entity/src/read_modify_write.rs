@@ -25,6 +25,25 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::{slice::from_ref, sync::Arc};
 
+/// What one attempt of a computed write asked the store to do.
+#[derive(Clone, Copy)]
+enum ComputedWrite {
+    /// The attempt produced a write to store.
+    Stored,
+    /// The attempt changed nothing, so nothing is stored.
+    Nothing,
+}
+
+impl ComputedWrite {
+    /// What an attempt that produced `write` asked of the store.
+    const fn of(write: Option<&AtomicWrite>) -> ComputedWrite {
+        match write {
+            Some(_) => ComputedWrite::Stored,
+            None => ComputedWrite::Nothing,
+        }
+    }
+}
+
 impl EntityService {
     /// Commit one entity's read-modify-write, re-reading whatever a concurrent
     /// writer superseded.
@@ -94,31 +113,35 @@ impl EntityService {
     /// is what keeps the notification describing the change the store accepted
     /// rather than one an earlier attempt computed and lost.
     ///
+    /// `build` returns no write when the computation changed nothing (clause
+    /// 5.4: an empty Fragment is a JSON Merge Patch that returns its target
+    /// unchanged), and then nothing is stored: the entity's `modifiedAt` stays
+    /// as it was. The value `build` produced is still handed back.
+    ///
     /// # Errors
     ///
     /// Reports [`EntityError::NotFound`] when the entity is absent,
     /// and otherwise propagates whatever `build` or the coordinator returns.
     pub(crate) async fn commit_computed_write<B, T>(&self, target: &ContextTarget, id: &Identifier, mut build: B) -> Result<T, EntityError>
     where
-        B: FnMut(&Arc<EntityState>) -> Result<(AtomicWrite, T), EntityError>,
+        B: FnMut(&Arc<EntityState>) -> Result<(Option<AtomicWrite>, T), EntityError>,
     {
-        let mut produced: Option<T> = None;
+        let mut produced: Option<(T, ComputedWrite)> = None;
         let landed = self
             .commit_read_modify_write(target, id, |previous| {
                 let (write, value) = build(previous)?;
-                produced = Some(value);
-                Ok(Some(write))
+                produced = Some((value, ComputedWrite::of(write.as_ref())));
+                Ok(write)
             })
             .await?;
 
-        if landed.is_none() {
-            return Err(EntityError::not_found(id));
-        }
-        produced.ok_or_else(|| {
-            EntityInvariant::ReadModifyWriteWithoutResult {
+        match (landed, produced) {
+            (Some(_), Some((value, ComputedWrite::Stored | ComputedWrite::Nothing))) | (None, Some((value, ComputedWrite::Nothing))) => Ok(value),
+            (None, Some((_, ComputedWrite::Stored)) | None) => Err(EntityError::not_found(id)),
+            (Some(_), None) => Err(EntityInvariant::ReadModifyWriteWithoutResult {
                 entity: id.clone(), // clone: the error owns the entity it names.
             }
-            .into()
-        })
+            .into()),
+        }
     }
 }

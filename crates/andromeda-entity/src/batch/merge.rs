@@ -64,7 +64,7 @@ impl ChunkRewrite for MergeRewrite<'_> {
         if let Err(error) = merged.merge(&entry.document, None) {
             return Err(Box::new((entry.id, EntityError::from(error))));
         }
-        let write = self.service.chunk_update(
+        let write = self.service.chunk_fragment_update(
             self.target,
             entry.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
             UpdatedStates {

@@ -5,6 +5,27 @@ use andromeda_test_harness::environment::TestEnvironment;
 use reqwest::{Method, StatusCode};
 use serde_json::json;
 
+/// Clause 5.6.9.4 runs the single Update Attributes and Append Attributes per
+/// entity, so a fragment naming no member changes nothing: 204, `modifiedAt` kept.
+#[tokio::test]
+async fn batch_update_empty_fragment_keeps_modified_at_returns_204() {
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
+    let c = client();
+
+    let id = scope.id("Building:005_empty_fragment");
+    create_entity(&c, &building_simple_attributes(&id)).await;
+    let (_, _, before) = get_entity(&c, &id, "options=sysAttrs", true).await;
+
+    for no_overwrite in [false, true] {
+        let (status, _) = batch_update(&c, &json!([building_minimal(&id)]), no_overwrite).await;
+        pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT, "noOverwrite={no_overwrite}");
+        let (status, _, after) = get_entity(&c, &id, "options=sysAttrs", true).await;
+        pretty_assertions::assert_eq!(status, StatusCode::OK);
+        pretty_assertions::assert_eq!(after, before, "noOverwrite={no_overwrite}");
+    }
+    scope.finish().await.expect("cleanup failed");
+}
+
 #[tokio::test]
 async fn batch_update_properties_returns_204() {
     let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");

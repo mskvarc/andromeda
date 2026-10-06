@@ -77,6 +77,28 @@ async fn a_null_on_an_instance_member_removes_it_in_a_merge() {
     assert!(!node.to_string().contains("urn:ngsi-ld:null"), "no sentinel is stored: {node}");
 }
 
+/// Clauses 5.4 and 5.5.12: a merge fragment that names no member is a JSON
+/// Merge Patch that returns its target unchanged, so nothing is stored.
+#[tokio::test]
+async fn a_merge_with_an_empty_fragment_stores_nothing() {
+    let (service, recorded) = recording_service().await;
+    let fragment: EntityPatch<MergeMember> = serde_json::from_value(json!({})).expect("a merge fragment");
+    let admitted = admitted_entity::<MergeEntity>(&service, &fragment, &core_context()).await;
+    service
+        .merge(
+            &live_target(),
+            &entity_uri(),
+            &fragment,
+            admitted,
+            &admitted_context(&service, &core_context()).await,
+            MergeOptions::default(),
+        )
+        .await
+        .expect("the empty fragment is admitted");
+
+    assert!(recorded.lock().expect("the recording buffer").is_empty(), "an empty fragment stores no write");
+}
+
 /// S9: the NGSI-LD Null in place of a whole member removes the attribute
 /// (clause 5.5.12).
 #[tokio::test]

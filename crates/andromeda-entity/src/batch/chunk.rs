@@ -16,6 +16,7 @@ use crate::{
     EntityService,
     entity_invariant::EntityInvariant,
     error::EntityError,
+    modification_write::leaves_entity_unchanged,
     notification_plan::{NotificationPlan, creation, modification},
     side_effect::SideEffectPlacement,
 };
@@ -78,6 +79,37 @@ pub(super) struct UpdatedStates<'a> {
     /// The instances the request addressed, whose resulting state the
     /// Temporal Evolution records.
     pub addressed: AddressedInstances<'a>,
+}
+
+/// An entity update once its instances carry the write instant: the state it
+/// replaces, the state replacing it and what the Temporal Evolution records.
+struct StampedUpdate<'a> {
+    previous: &'a Arc<EntityState>,
+    current: Arc<EntityState>,
+    history: Vec<HistoryRecord>,
+}
+
+impl<'a> StampedUpdate<'a> {
+    /// Stamp the states of `states` with `now` and derive the history.
+    fn of(states: UpdatedStates<'a>, now: SystemInstant) -> StampedUpdate<'a> {
+        let UpdatedStates {
+            previous,
+            mut current,
+            addressed,
+        } = states;
+        // Clause 4.8: an updated instance takes `now` for modifiedAt and keeps
+        // its createdAt; an untouched one keeps both. Stamped before the columns
+        // and the notification plan read the state, so both see it; only an
+        // attribute whose stamps change stops being shared with `previous`.
+        current.stamp_attribute_instants(Some(previous), now);
+        let current = Arc::new(current);
+        // Clauses 5.6.8, 5.6.9 and 5.6.20 run the single-entity behaviours per
+        // entity, so the batch records exactly what its single-entity sibling
+        // records: the resulting instances it addressed and the ends of what it
+        // removed.
+        let history = mutation_history(addressed, previous, &current);
+        StampedUpdate { previous, current, history }
+    }
 }
 
 /// What one chunk reports back to its batch.
@@ -144,7 +176,7 @@ impl EntityService {
     }
 
     /// The write that overwrites an existing entity with the state replacing
-    /// it.
+    /// it, whether or not the replacement differs from what is stored.
     ///
     /// The per-attribute triggers of clause 5.2.12 are read off the difference
     /// between the two states. The write is computed from `previous`, so the
@@ -163,22 +195,51 @@ impl EntityService {
         states: UpdatedStates<'_>,
         now: SystemInstant,
     ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
-        let UpdatedStates {
-            previous,
-            mut current,
-            addressed,
-        } = states;
-        // Clause 4.8: an updated instance takes `now` for modifiedAt and keeps
-        // its createdAt; an untouched one keeps both. Stamped before the columns
-        // and the notification plan read the state, so both see it; only an
-        // attribute whose stamps change stops being shared with `previous`.
-        current.stamp_attribute_instants(Some(previous), now);
-        let current = Arc::new(current);
-        // Clauses 5.6.8, 5.6.9 and 5.6.20 run the single-entity behaviours per
-        // entity, so the batch records exactly what its single-entity sibling
-        // records: the resulting instances it addressed and the ends of what it
-        // removed.
-        let history = mutation_history(addressed, previous, &current);
+        let StampedUpdate { previous, current, history } = StampedUpdate::of(states, now);
+        self.update_write(target, id, previous, current, history)
+    }
+
+    /// The write a fragment operation owes for turning an entity into the
+    /// state `states` computed, or no write when the fragment changed nothing.
+    ///
+    /// The change test is the single-entity one
+    /// ([`leaves_entity_unchanged`](crate::modification_write::leaves_entity_unchanged)):
+    /// clauses 5.6.8.4 (update mode), 5.6.9.4 and 5.6.20.4 run Update
+    /// Attributes, Append Attributes and Merge Entity per entity, so an entity
+    /// whose fragment names nothing to change keeps its `modifiedAt` (clause
+    /// 4.8), notifies no subscriber and records no Temporal Evolution
+    /// instance, exactly as the single-entity operation. The entity is still
+    /// settled as a success, because the operation it stands for succeeded.
+    ///
+    /// # Errors
+    ///
+    /// Answers the entity's identifier with the failure, boxed because a
+    /// failure is the rare outcome, when the entity's search columns cannot be
+    /// derived.
+    pub(super) fn chunk_fragment_update(
+        &self,
+        target: &ContextTarget,
+        id: Identifier,
+        states: UpdatedStates<'_>,
+        now: SystemInstant,
+    ) -> Result<Option<ChunkWrite>, Box<(Identifier, EntityError)>> {
+        let StampedUpdate { previous, current, history } = StampedUpdate::of(states, now);
+        if leaves_entity_unchanged(previous, &current, &history) {
+            return Ok(None);
+        }
+        self.update_write(target, id, previous, current, history).map(Some)
+    }
+
+    /// The write storing `current` in place of `previous`, with the
+    /// notifications and history it owes.
+    fn update_write(
+        &self,
+        target: &ContextTarget,
+        id: Identifier,
+        previous: &Arc<EntityState>,
+        current: Arc<EntityState>,
+        history: Vec<HistoryRecord>,
+    ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
         let plan = self.notifier.plan(
             target,
             &id,

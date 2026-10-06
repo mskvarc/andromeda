@@ -8,7 +8,6 @@ use crate::{
     error::EntityError,
     merge_fragment::{adapt_member, held_attribute_family},
     merge_options::MergeOptions,
-    modification_write::ModificationWrite,
     write_kind::MergeEntity,
 };
 use andromeda_context_commit::history_record::mutation_history;
@@ -107,7 +106,7 @@ impl EntityService {
                         overwrite: OverwritePolicy::Overwrite,
                     };
                     let history = mutation_history(addressed, previous, &merged);
-                    let ModificationWrite { write, events } = self.modification_write(target, id, previous, merged, history)?;
+                    let (write, events) = self.fragment_write(target, id, previous, merged, history)?;
                     Ok((write, events))
                 })
                 .await?;

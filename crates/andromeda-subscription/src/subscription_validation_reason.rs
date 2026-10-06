@@ -15,7 +15,7 @@
 
 use crate::{endpoint_refusal::EndpointRefusal, geo_filter::GeoQError};
 use andromeda_linked_retrieval::admission::AdmissionError;
-use andromeda_ngsi_ld_model::subscription_uri_member::SubscriptionUriMember;
+use andromeda_ngsi_ld_model::subscription_member::SubscriptionMember;
 use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict};
 use thiserror::Error;
 
@@ -35,12 +35,12 @@ pub enum SubscriptionValidationReason {
     /// on without inverting the layering, so its refusal arrives classified.
     #[error(transparent)]
     EndpointRejected(EndpointRefusal),
-    /// A create body wrote the NGSI-LD Null `urn:ngsi-ld:null` into a member
-    /// that takes a URI. Clause 5.2.1 makes an NGSI-LD Null outside the update
+    /// A create body wrote a member as a null, a JSON `null` or the NGSI-LD
+    /// Null `urn:ngsi-ld:null`. Clause 5.2.1 makes a null outside the update
     /// clauses 5.5.8 and 5.5.12 `BadRequestData`, and a create has no member to
     /// delete.
-    #[error("{0} must not be the NGSI-LD Null urn:ngsi-ld:null in a creation request, which has no member to delete")]
-    NgsiLdNullOnCreate(SubscriptionUriMember),
+    #[error("{0} must not be null in a creation request, which has no member to delete")]
+    NullOnCreate(SubscriptionMember),
     /// `expiresAt` was in the past (clauses 5.8.1.4, 5.8.2.4).
     #[error("expiresAt must be in the future")]
     ExpiresAtInPast,
