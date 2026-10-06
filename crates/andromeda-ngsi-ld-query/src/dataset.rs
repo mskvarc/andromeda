@@ -2,16 +2,9 @@
 //! (clause 4.5.5).
 
 use crate::error::QueryError;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{default_instance::DEFAULT_INSTANCE_TOKEN, identifier::Identifier};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
-
-/// The reserved `datasetId` value naming the default attribute instance.
-///
-/// Clause 4.5.5: an attribute instance with no `datasetId` is the default
-/// instance, and `datasetId=@none` selects it. `@none` is a JSON-LD keyword,
-/// not a URI, so it cannot collide with a real identifier.
-pub const DEFAULT_INSTANCE_TOKEN: &str = "@none";
 
 /// One `datasetId`, naming either a specific dataset or the default instance.
 ///
@@ -40,6 +33,16 @@ impl DatasetSelector {
             return Ok(DatasetSelector::Default);
         }
         raw.parse::<Identifier>().map(DatasetSelector::Id).map_err(QueryError::ParamDatasetIdInvalid)
+    }
+
+    /// The `datasetId` an attribute instance written with this selector
+    /// carries: `None` for the default instance, which has none (clause 4.5.5).
+    #[must_use]
+    pub fn into_named(self) -> Option<Identifier> {
+        match self {
+            DatasetSelector::Default => None,
+            DatasetSelector::Id(named) => Some(named),
+        }
     }
 
     /// Whether this selector names the Attribute instance whose `datasetId` is

@@ -91,6 +91,40 @@ async fn a_property_expands_to_its_value_unit_observation_and_dataset() {
     pretty_assertions::assert_eq!(speed.dataset_id().map(ToString::to_string).as_deref(), Some("urn:ngsi-ld:Dataset:a"));
 }
 
+/// Clause 4.5.5: `"datasetId": "@none"` is the default Attribute instance, so
+/// it expands to an instance with no `datasetId`, on every family and beside a
+/// named instance.
+#[tokio::test]
+async fn a_dataset_id_none_is_the_default_instance() {
+    let document = entity(
+        &engine(),
+        json!({
+            "id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle",
+            "speed": [
+                {"type": "Property", "value": 1, "datasetId": "@none"},
+                {"type": "Property", "value": 2, "datasetId": "urn:ngsi-ld:Dataset:a"}
+            ],
+            "owner": {"type": "Relationship", "object": "urn:ngsi-ld:Person:1", "datasetId": "@none"}
+        }),
+        Normalization::Entity,
+    )
+    .await
+    .expect("the fixture expands")
+    .agreed();
+
+    let owner = instance(&document, &term("owner"));
+    assert!(owner.dataset_id().is_none());
+    let speed = document.attributes().get(term("speed").as_str()).expect("speed is written");
+    pretty_assertions::assert_eq!(
+        speed
+            .instances()
+            .iter()
+            .map(|instance| instance.dataset_id().map(ToString::to_string))
+            .collect::<Vec<_>>(),
+        vec![None, Some("urn:ngsi-ld:Dataset:a".to_owned())]
+    );
+}
+
 /// Every family in one entity, each with a sub-attribute nested twice.
 #[tokio::test]
 async fn every_family_expands_identically_on_both_paths() {

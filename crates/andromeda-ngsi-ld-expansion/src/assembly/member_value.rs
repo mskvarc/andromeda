@@ -19,7 +19,7 @@ use andromeda_ngsi_ld_entity::{
     system_instant::SystemInstant,
     unit_code::UnitCode,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, default_instance::DEFAULT_INSTANCE_TOKEN, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_unit_catalog::expanded_unit_code::{ExpandedUnitCodeError, UnitCodeRefusal};
 
 /// The refusal of a member not shaped as its expanded form shapes it.
@@ -105,24 +105,31 @@ pub fn system_instant(items: &[ExpandedItem], attribute: &AttributeName, member:
         })
 }
 
-/// The `datasetId` (clause 4.5.5).
+/// The `datasetId` (clause 4.5.5), `None` for the default instance.
+///
+/// "If no datasetId is provided, or "datasetId": "@none" is supplied, it is
+/// considered as the default Attribute instance", so the `@none` keyword is the
+/// absent member.
 ///
 /// # Errors
 ///
 /// Returns [`EntityRefusal::DatasetIdSentinel`] for the NGSI-LD Null and
-/// [`EntityRefusal::DatasetId`] for a text that is not an identifier.
-pub fn dataset_id(items: &[ExpandedItem], attribute: &AttributeName) -> Result<Identifier, EntityRefusal> {
+/// [`EntityRefusal::DatasetId`] for a text that is neither `@none` nor an
+/// identifier.
+pub fn dataset_id(items: &[ExpandedItem], attribute: &AttributeName) -> Result<Option<Identifier>, EntityRefusal> {
     if items.iter().any(is_null) {
         return Err(EntityRefusal::DatasetIdSentinel {
             attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
         });
     }
-    single_reference(items, attribute, MemberShape::DatasetId)?
-        .parse::<Identifier>()
-        .map_err(|source| EntityRefusal::DatasetId {
-            attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
-            source,
-        })
+    let text = single_reference(items, attribute, MemberShape::DatasetId)?;
+    if text == DEFAULT_INSTANCE_TOKEN {
+        return Ok(None);
+    }
+    text.parse::<Identifier>().map(Some).map_err(|source| EntityRefusal::DatasetId {
+        attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
+        source,
+    })
 }
 
 /// The `instanceId` (clause 4.5.7).

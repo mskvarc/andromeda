@@ -31,9 +31,8 @@ use crate::{
     language_negotiation::negotiated_entry,
     uri_decoding::DecodedTargets,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, default_instance::DEFAULT_INSTANCE_TOKEN, identifier::Identifier};
 use andromeda_ngsi_ld_model::attribute::instance::{Attribute, AttributeValue};
-use andromeda_ngsi_ld_query::dataset::DEFAULT_INSTANCE_TOKEN;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use serde::{Serialize, Serializer, ser::SerializeMap};

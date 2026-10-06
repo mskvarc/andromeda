@@ -147,7 +147,7 @@ impl InstanceParts {
         } else if iri == properties::OBJECT_TYPE.as_str() {
             self.object_types = Some(references_slot(&items, attribute, MemberShape::ObjectType)?);
         } else if iri == properties::DATASET_ID.as_str() {
-            self.dataset_id = Some(dataset_id(&items, attribute)?);
+            self.dataset_id = dataset_id(&items, attribute)?;
         } else if iri == properties::INSTANCE_ID.as_str() {
             self.instance_id = Some(instance_id(&items, attribute)?);
         } else if iri == properties::CREATED_AT.as_str() {

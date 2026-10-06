@@ -16,7 +16,7 @@
 use crate::{
     attribute::{
         geo_property_value::GeoPropertyValue,
-        instance_member::{InstanceMembers, ReadError, optional_member},
+        instance_member::{InstanceMembers, ReadError, optional_dataset_member, optional_member},
         instance_node::{geo_refusal, json, required, value_refusal},
         member_reading::MemberReading,
         merge_member::MergeMember,
@@ -131,7 +131,7 @@ impl MergeInstance {
             object_type: patched_member(members.object_type, RefusedMember::ObjectType)?,
             entity_id_sealed: members.entity_id_sealed.map(|seal| json(seal, RefusedMember::EntityIdSealed)).transpose()?,
             entity_type_sealed: members.entity_type_sealed.map(|seal| json(seal, RefusedMember::EntityTypeSealed)).transpose()?,
-            dataset_id: optional_member(system.dataset_id, RefusedMember::DatasetId)?,
+            dataset_id: optional_dataset_member(system.dataset_id)?,
             expires_at: patched_member(system.expires_at, RefusedMember::ExpiresAt)?,
             instance_id: optional_member(system.instance_id, RefusedMember::InstanceId)?,
             observed_at: patched_member(system.observed_at, RefusedMember::ObservedAt)?,

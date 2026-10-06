@@ -148,6 +148,32 @@ fn an_array_of_concise_instances_reads_as_a_multi_attribute() {
     );
 }
 
+/// Clause 4.5.5: `"datasetId": "@none"` is the default Attribute instance on
+/// every family, so it reads as an instance with no `datasetId`, and beside a
+/// named instance it keeps the two instances apart.
+#[test]
+fn a_dataset_id_none_reads_as_the_default_instance() {
+    for member in [
+        json!({"type": "Property", "value": 1, "datasetId": "@none"}),
+        json!({"type": "Relationship", "object": "urn:ngsi-ld:Person:1", "datasetId": "@none"}),
+        json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.5]}, "datasetId": "@none"}),
+        json!({"type": "LanguageProperty", "languageMap": {"fr": "Grand Place"}, "datasetId": "@none"}),
+    ] {
+        assert!(single(&member).dataset_id().is_none(), "{member}");
+    }
+    let member = json!([{"type": "Property", "value": 1, "datasetId": "@none"}, {"type": "Property", "value": 2, "datasetId": "urn:ngsi-ld:Dataset:a"}]);
+    let Ok(AttributeValue::Multiple(instances)) = read("speed", &member) else {
+        panic!("a multi-attribute");
+    };
+    assert_eq!(
+        instances
+            .iter()
+            .map(|instance| instance.dataset_id().map(|id| id.as_str().to_owned()))
+            .collect::<Vec<_>>(),
+        vec![None, Some("urn:ngsi-ld:Dataset:a".to_owned())]
+    );
+}
+
 /// S8: a geometry written as a JSON string is kept as its text (clause
 /// 4.7.2); a string that is no geometry is refused.
 #[test]

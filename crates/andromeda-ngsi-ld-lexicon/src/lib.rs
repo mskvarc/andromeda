@@ -24,6 +24,7 @@ pub mod attribute_type;
 pub mod coerced_term;
 pub mod constant_string;
 pub mod context_source_pseudonym;
+pub mod default_instance;
 pub mod dereferenceable_uri;
 pub mod entity_type_name;
 pub mod fractional_seconds;

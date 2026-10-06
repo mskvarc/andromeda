@@ -21,8 +21,10 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
+    identifier::Identifier,
     unit_code_admission::{UnitCodeAdmission, unit_code_admission},
 };
+use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_representation::{
     attribute_type_validation::AttributeNodeFault,
     compact_node::{CompactNode, NodeMembers},
@@ -268,7 +270,7 @@ impl<'n, N: CompactNode<'n>> InstanceMembers<'n, N> {
         }
         Ok(CommonAttributeFields {
             created_at: optional_member(system.created_at, RefusedMember::CreatedAt)?,
-            dataset_id: optional_member(system.dataset_id, RefusedMember::DatasetId)?,
+            dataset_id: optional_dataset_member(system.dataset_id)?,
             deleted_at: optional_member(system.deleted_at, RefusedMember::DeletedAt)?,
             expires_at: optional_member(system.expires_at, RefusedMember::ExpiresAt)?,
             instance_id: optional_member(system.instance_id, RefusedMember::InstanceId)?,
@@ -330,4 +332,18 @@ pub(crate) fn optional_member<'n, T: DeserializeOwned, N: CompactNode<'n>>(membe
     decoded_optional(member)
         .map_err(NodeReadError::Unreadable)?
         .map_err(|source| refused_member::<N>(name, NodeRefusal::Member { member: name, source }))
+}
+
+/// Read the optional `datasetId` of an instance (clause 4.5.5).
+///
+/// "If no datasetId is provided, or "datasetId": "@none" is supplied, it is
+/// considered as the default Attribute instance", so the keyword reads as no
+/// `datasetId` at all and the instance is the one an absent member makes.
+///
+/// # Errors
+///
+/// Returns [`NodeRefusal::Member`] when the member is neither the `@none`
+/// keyword nor a URI, and the node's [`CompactNode::Unreadable`].
+pub(crate) fn optional_dataset_member<'n, N: CompactNode<'n>>(member: Option<N>) -> Result<Option<Identifier>, ReadError<'n, N>> {
+    Ok(optional_member::<DatasetSelector, N>(member, RefusedMember::DatasetId)?.and_then(DatasetSelector::into_named))
 }

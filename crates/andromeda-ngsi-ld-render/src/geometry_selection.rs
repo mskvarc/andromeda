@@ -21,8 +21,8 @@
 //! that clause 4.5.4 gives the simplified one.
 
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::dataset::{DEFAULT_INSTANCE_TOKEN, DatasetSelector};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, default_instance::DEFAULT_INSTANCE_TOKEN};
+use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use std::borrow::Cow;
 
