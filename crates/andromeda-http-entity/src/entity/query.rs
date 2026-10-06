@@ -55,7 +55,11 @@ use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selection::ConsideredEntities};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::{pagination::policy::PaginationPolicy, query::entity::parameters::EntityQueryParameters};
+use andromeda_ngsi_ld_request::{
+    geometry_media_type::require_geojson_for_geometry_property,
+    pagination::policy::PaginationPolicy,
+    query::entity::parameters::EntityQueryParameters,
+};
 use axum::http::{HeaderMap, Uri as HttpUri};
 use futures::future::OptionFuture;
 use std::sync::Arc;
@@ -164,6 +168,8 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
             map_use,
             opts,
         } = admit_request(&state, &target, &context, protocol, &mut query, binding, &uri).await?;
+        // Clauses 5.7.2.4 and 6.3.4: refused before the store is read.
+        require_geojson_for_geometry_property(query.geometry_property.as_ref(), accept.media_type()).with_entity_instance(&uri)?;
 
         let count = if opts.count { CountPolicy::Emit } else { CountPolicy::Omit };
         let window = requested_window(pagination, &query, count, binding.page_pointers()).with_entity_instance(&uri)?;

@@ -11,7 +11,7 @@
 //! grammar, and there is one error chain either way.
 
 use crate::{query_narrowing::LocalScopeNarrowing, unsupported_representation::UnsupportedRepresentation};
-use andromeda_http_headers::ngsild_response_format::NgsiLdResponseFormat;
+use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_response_format::NgsiLdResponseFormat};
 use andromeda_linked_retrieval::admission::{AdmissionError, LinkedMember, LinkedOperation, ReachingMember};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict, temporal::grouping::GroupingParseError};
@@ -43,6 +43,10 @@ pub enum ParameterError {
     /// resource does not have.
     #[error("invalid NGSILD-Response-Format value: this resource has no '{0}' rendering")]
     ResponseFormatHeaderInvalid(NgsiLdResponseFormat),
+    /// `geometryProperty` was sent with a response media type other than
+    /// `application/geo+json` (clauses 5.7.1.4, 5.7.2.4 and 5.14.4.4).
+    #[error("geometryProperty is only applicable when the Accept header is application/geo+json, not {0}")]
+    GeometryPropertyWithoutGeoJson(ResponseMediaType),
     /// The `idPattern` parameter was present but empty.
     #[error("invalid idPattern: empty value")]
     IdPatternEmpty,

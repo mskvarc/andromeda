@@ -38,6 +38,7 @@ use andromeda_http_headers::{language::LanguageFilter, ngsild_entity_map::NgsiLd
 use andromeda_jsonld::user_context_admission::{SubmittedContext, admit_user_context};
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_render::response::ResponseRenderer;
+use andromeda_ngsi_ld_request::geometry_media_type::require_geojson_for_geometry_property;
 use std::slice::{from_mut, from_ref};
 
 /// The HTTP response a retrieval's answer becomes.
@@ -119,6 +120,7 @@ pub(crate) async fn get(
     // `format` or `options` returns 400, not 404 (clause 5.5.4 general
     // NGSI-LD request-parameter validation).
     params.validate().with_entity_instance(&uri)?;
+    require_geojson_for_geometry_property(params.geometry_property.as_ref(), accept.media_type()).with_entity_instance(&uri)?;
 
     let sys_attrs = params.sys_attrs().with_entity_instance(&uri)?;
     // Clause 4.21 governs the single-entity retrieval exactly as it governs

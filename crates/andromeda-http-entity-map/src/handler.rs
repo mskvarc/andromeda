@@ -220,7 +220,7 @@ pub async fn create_from_query(
     let context = admit_user_context(state.entity_query.engine(), SubmittedContext::from(context))
         .await
         .with_entity_map_instance(&uri)?;
-    validate_entity_map_query(&query, &uri)?;
+    validate_entity_map_query(&query, accept.media_type(), &uri)?;
     let window = membership_window(pagination, &query.page, &query.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
     let forwarded_query = forwarded_query_string(&uri, filters);
@@ -259,7 +259,7 @@ pub async fn create_from_query_post(
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_map_instance(&uri)?;
     let body = body.admitted(&context)?;
     let mut query = EntityQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
-    validate_entity_map_query(&query, &uri)?;
+    validate_entity_map_query(&query, accept.media_type(), &uri)?;
     let window = membership_window(pagination, &query.page, &query.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
     let forwarded_query = body_query_string(&query, filters, &uri);

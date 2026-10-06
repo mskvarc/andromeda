@@ -30,6 +30,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::OrderGeometryCollection
         | ParameterError::DropKeepExclusive
         | ParameterError::DatasetIdWithDeleteAll
+        | ParameterError::GeometryPropertyWithoutGeoJson(_)
         | ParameterError::Projection(_)
         | ParameterError::LimitZeroWithoutCount
         | ParameterError::CursorWithOffset
@@ -54,6 +55,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
 #[cfg(test)]
 mod tests {
     use crate::parameter_failure::classify_parameter_error;
+    use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_ngsi_ld_request::error::ParameterError;
     use pretty_assertions::assert_eq;
@@ -91,6 +93,16 @@ mod tests {
     fn cursor_with_offset_is_bad_request_data() {
         assert_eq!(
             classify_parameter_error(&ParameterError::CursorWithOffset).error_type(),
+            NgsiLdErrorType::BadRequestData
+        );
+    }
+
+    /// Clauses 5.7.1.4 and 5.7.2.4: `geometryProperty` without a `GeoJSON`
+    /// `Accept` is `BadRequestData`.
+    #[test]
+    fn geometry_property_without_geojson_is_bad_request_data() {
+        assert_eq!(
+            classify_parameter_error(&ParameterError::GeometryPropertyWithoutGeoJson(ResponseMediaType::Json)).error_type(),
             NgsiLdErrorType::BadRequestData
         );
     }

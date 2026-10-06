@@ -1,11 +1,15 @@
 //! Entity Map request validation owned by its HTTP binding.
 
-use crate::error::{EntityMapResultExt, bad_request_data};
+use crate::error::EntityMapResultExt;
+use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_linked_retrieval::admission::TemporalJoin;
-use andromeda_ngsi_ld_request::query::{
-    entity::{operation::EntityQueryOperation, parameters::EntityQueryParameters},
-    temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
+use andromeda_ngsi_ld_request::{
+    geometry_media_type::require_geojson_for_geometry_property,
+    query::{
+        entity::{operation::EntityQueryOperation, parameters::EntityQueryParameters},
+        temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
+    },
 };
 use axum::http::Uri;
 
@@ -15,14 +19,9 @@ use axum::http::Uri;
 /// `geometryProperty`, which the clause admits only with a `GeoJSON` `Accept`;
 /// the map resources render no `GeoJSON` (clause 6.34.3.1), so its presence is
 /// always an error of type `BadRequestData`.
-pub(crate) fn validate_entity_map_query(query: &EntityQueryParameters, uri: &Uri) -> Result<(), ProblemResponse> {
+pub(crate) fn validate_entity_map_query(query: &EntityQueryParameters, media_type: ResponseMediaType, uri: &Uri) -> Result<(), ProblemResponse> {
     query.validate(EntityQueryOperation::EntityMap).with_entity_map_instance(uri)?;
-    if query.geometry_property.is_some() {
-        return Err(bad_request_data(
-            "geometryProperty is only applicable when the Accept header is application/geo+json, which an EntityMap is never rendered as",
-            uri,
-        ));
-    }
+    require_geojson_for_geometry_property(query.geometry_property.as_ref(), media_type).with_entity_map_instance(uri)?;
     Ok(())
 }
 
@@ -41,6 +40,7 @@ pub(crate) fn validate_temporal_entity_map_query(params: &TemporalQueryParameter
 #[cfg(test)]
 mod tests {
     use crate::validation::{validate_entity_map_query, validate_temporal_entity_map_query};
+    use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_linked_retrieval::admission::TemporalJoin;
     use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
     use axum::http::{StatusCode, Uri};
@@ -62,9 +62,9 @@ mod tests {
     /// and one limited to the local scope is not.
     #[test]
     fn a_creation_without_any_narrowing_input_is_a_bad_request() {
-        assert!(validate_entity_map_query(&entity_query("id=urn:ngsi-ld:Vehicle:1"), &uri()).is_err());
-        assert!(validate_entity_map_query(&entity_query("local=true"), &uri()).is_ok());
-        assert!(validate_entity_map_query(&entity_query("type=Vehicle"), &uri()).is_ok());
+        assert!(validate_entity_map_query(&entity_query("id=urn:ngsi-ld:Vehicle:1"), ResponseMediaType::Json, &uri()).is_err());
+        assert!(validate_entity_map_query(&entity_query("local=true"), ResponseMediaType::Json, &uri()).is_ok());
+        assert!(validate_entity_map_query(&entity_query("type=Vehicle"), ResponseMediaType::Json, &uri()).is_ok());
     }
 
     /// Clause 5.14.5.4 carries the clause 5.7.4.4 narrowing rule (itself the
@@ -83,18 +83,25 @@ mod tests {
     /// the map resource never renders.
     #[test]
     fn a_geometry_property_is_refused_on_entity_map_creation() {
-        let refused = validate_entity_map_query(&entity_query("type=Vehicle&geometryProperty=location"), &uri()).expect_err("refused");
+        let refused = validate_entity_map_query(&entity_query("type=Vehicle&geometryProperty=location"), ResponseMediaType::Json, &uri()).expect_err("refused");
         pretty_assertions::assert_eq!(refused.problem().status_code(), StatusCode::BAD_REQUEST);
-        assert!(validate_entity_map_query(&entity_query("type=Vehicle"), &uri()).is_ok());
+        assert!(validate_entity_map_query(&entity_query("type=Vehicle"), ResponseMediaType::Json, &uri()).is_ok());
     }
 
     /// Clause 5.14.4.4: a nested projection and a filter hop both need a
     /// retrieving join the request did not ask for.
     #[test]
     fn linked_entity_references_without_a_join_are_refused_on_entity_map_creation() {
-        assert!(validate_entity_map_query(&entity_query("type=Vehicle&pick=linkedTo%7Bspeed%7D"), &uri()).is_err());
-        assert!(validate_entity_map_query(&entity_query("type=Vehicle&q=linkedTo%7Bspeed%7D%3E5"), &uri()).is_err());
-        assert!(validate_entity_map_query(&entity_query("type=Vehicle&join=inline&pick=linkedTo%7Bspeed%7D"), &uri()).is_ok());
+        assert!(validate_entity_map_query(&entity_query("type=Vehicle&pick=linkedTo%7Bspeed%7D"), ResponseMediaType::Json, &uri()).is_err());
+        assert!(validate_entity_map_query(&entity_query("type=Vehicle&q=linkedTo%7Bspeed%7D%3E5"), ResponseMediaType::Json, &uri()).is_err());
+        assert!(
+            validate_entity_map_query(
+                &entity_query("type=Vehicle&join=inline&pick=linkedTo%7Bspeed%7D"),
+                ResponseMediaType::Json,
+                &uri()
+            )
+            .is_ok()
+        );
     }
 
     /// Clause 5.14.5.4: no Linked Entity retrieval on the temporal creation,
