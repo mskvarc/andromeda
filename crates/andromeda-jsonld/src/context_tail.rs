@@ -17,20 +17,15 @@
 //! document happens to be stored under, is what JSON-LD resolves it against.
 
 use crate::{
+    context_value::ContextEntry,
     core_context::is_ngsi_ld_core_context_url,
-    core_context_precedence::IMPORT_KEYWORD,
+    core_context_precedence::{IMPORT_KEYWORD, defines_nothing_but_an_import},
     engine::context_url::is_absolute_iri,
     hosted_context_recognizer::{HostedContextRecognizer, HostedReference},
 };
+use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, IriBuf, IriRefBuf};
-use serde_json::{Map, Value};
-
-/// The keywords that may stand beside `@import` in a definition that leaves
-/// the imported context in force: `@version` states the processing mode and
-/// `@protected` protects the definitions that follow, and neither defines a
-/// term or changes an active-context setting (JSON-LD 1.1 section 9.15).
-pub(crate) const IMPORT_ONLY_KEYWORDS: [&str; 3] = [IMPORT_KEYWORD, "@version", "@protected"];
 
 /// The last context a `@context` value leaves in force.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,8 +53,8 @@ pub enum ContextTail {
 impl ContextTail {
     /// The tail of a context document, `{"@context": ...}`, as written.
     #[must_use]
-    pub fn of_document(document: &Value) -> ContextTail {
-        match document.get("@context") {
+    pub fn of_document(document: JsonPiece<'_>) -> ContextTail {
+        match document.member("@context") {
             Some(context) => ContextTail::of_context(context),
             None => ContextTail::LocalDefinitions,
         }
@@ -68,13 +63,18 @@ impl ContextTail {
     /// The tail of a `@context` value: a reference, a definition, or an array
     /// of them processed in order.
     #[must_use]
-    pub fn of_context(context: &Value) -> ContextTail {
-        match context {
-            Value::String(reference) => ContextTail::of_reference(reference),
-            Value::Array(entries) => entries.last().map_or(ContextTail::LocalDefinitions, ContextTail::of_context),
-            Value::Object(definition) => ContextTail::of_definition(definition),
-            Value::Null => ContextTail::LocalDefinitions,
-            Value::Bool(_) | Value::Number(_) => ContextTail::Unresolvable,
+    pub fn of_context(context: JsonPiece<'_>) -> ContextTail {
+        match context.kind() {
+            JsonKind::String => context
+                .as_str()
+                .map_or(ContextTail::Unresolvable, |reference| ContextTail::of_reference(&reference)),
+            JsonKind::Array => context
+                .elements()
+                .and_then(|entries| entries.last().copied())
+                .map_or(ContextTail::LocalDefinitions, ContextTail::of_context),
+            JsonKind::Object => ContextTail::of_definition(context),
+            JsonKind::Null => ContextTail::LocalDefinitions,
+            JsonKind::Boolean | JsonKind::Number => ContextTail::Unresolvable,
         }
     }
 
@@ -83,14 +83,14 @@ impl ContextTail {
     ///
     /// A relative reference to one of the tenant's own stored `@context`s is
     /// read as the identifier `hosted` recognises it by, exactly as processing
-    /// reads it (`engine::context_url`), so the tail follows the stored
-    /// document. Any other relative reference cannot be followed. Any other
-    /// context is read as [`Self::of_context`] reads it; an absolute reference
-    /// to a stored context is the loader's to recognise when it is followed.
+    /// reads it (`document_context`), so the tail follows the stored document.
+    /// Any other relative reference cannot be followed. Any other context is
+    /// read as [`Self::of_context`] reads it; an absolute reference to a stored
+    /// context is the loader's to recognise when it is followed.
     #[must_use]
-    pub fn of_request_context(context: &Value, hosted: &dyn HostedContextRecognizer) -> ContextTail {
+    pub fn of_request_context(context: &ContextEntry<'_>, hosted: &dyn HostedContextRecognizer) -> ContextTail {
         match context {
-            Value::String(reference) if !is_absolute_iri(reference) => match IriRefBuf::new(reference.as_str()) {
+            ContextEntry::Reference(reference) if !is_absolute_iri(reference) => match IriRefBuf::new(reference.as_ref()) {
                 Ok(relative) => match hosted.recognize(&relative) {
                     HostedReference::Own(identifier) => match identifier.to_iri() {
                         Ok(stored) => ContextTail::Reference(stored),
@@ -103,7 +103,10 @@ impl ContextTail {
                 },
                 Err(_not_a_reference) => ContextTail::Unresolvable,
             },
-            other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_)) => ContextTail::of_context(other),
+            ContextEntry::Reference(reference) => ContextTail::of_reference(reference),
+            ContextEntry::Definition(definition) => ContextTail::of_definition(definition.written()),
+            ContextEntry::Null => ContextTail::LocalDefinitions,
+            ContextEntry::Malformed(_) => ContextTail::Unresolvable,
         }
     }
 
@@ -160,9 +163,15 @@ impl ContextTail {
     /// but `@version` and `@protected` leaves the imported context in force
     /// last. A term, `@vocab`, `@base`, `@language` or `@direction` beside the
     /// import is the definition's own and is in force after it.
-    fn of_definition(definition: &Map<String, Value>) -> ContextTail {
-        match definition.get(IMPORT_KEYWORD) {
-            Some(Value::String(imported)) if definition.keys().all(|key| IMPORT_ONLY_KEYWORDS.contains(&key.as_str())) => ContextTail::of_reference(imported),
+    fn of_definition(definition: JsonPiece<'_>) -> ContextTail {
+        let members = definition.members().unwrap_or_default();
+        let imported = members
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == IMPORT_KEYWORD).then_some(*value))
+            .and_then(JsonPiece::as_str);
+        match imported {
+            Some(imported) if defines_nothing_but_an_import(members.iter().map(|(key, _)| key.as_ref())) => ContextTail::of_reference(&imported),
             Some(_) | None => ContextTail::LocalDefinitions,
         }
     }
@@ -172,9 +181,11 @@ impl ContextTail {
 mod tests {
     use crate::{
         context_tail::ContextTail,
+        context_value::ContextEntry,
         core_context::{NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V18_URL},
         hosted_context_recognizer::{HostedContextRecognizer, HostedReference, NoHostedContexts},
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::JsonLdContextId;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::{IriBuf, IriRefBuf};
@@ -186,6 +197,24 @@ mod tests {
 
     fn relative(value: &str) -> IriRefBuf {
         IriRefBuf::new(value.to_owned()).expect("a valid IRI reference")
+    }
+
+    /// `value` as an admitted literal.
+    fn literal(value: &serde_json::Value) -> JsonLiteral {
+        JsonLiteral::admit(&value.to_string()).expect("an admissible document")
+    }
+
+    fn of_document(document: &serde_json::Value) -> ContextTail {
+        ContextTail::of_document(literal(document).piece())
+    }
+
+    fn of_context(context: &serde_json::Value) -> ContextTail {
+        ContextTail::of_context(literal(context).piece())
+    }
+
+    fn of_request_context(context: &serde_json::Value, hosted: &dyn HostedContextRecognizer) -> ContextTail {
+        let context = literal(context);
+        ContextTail::of_request_context(&ContextEntry::of(context.piece()), hosted)
     }
 
     /// The stored identifier the recogniser below knows.
@@ -213,14 +242,8 @@ mod tests {
     /// context is followed through the identifier the tenant stores it under.
     #[test]
     fn a_root_relative_request_reference_to_a_stored_context_follows_its_identifier() {
-        pretty_assertions::assert_eq!(
-            ContextTail::of_request_context(&json!(STORED_PATH), &StoredPath),
-            ContextTail::Reference(url(STORED))
-        );
-        pretty_assertions::assert_eq!(
-            ContextTail::of_request_context(&json!(STORED_PATH), &NoHostedContexts),
-            ContextTail::Unresolvable
-        );
+        pretty_assertions::assert_eq!(of_request_context(&json!(STORED_PATH), &StoredPath), ContextTail::Reference(url(STORED)));
+        pretty_assertions::assert_eq!(of_request_context(&json!(STORED_PATH), &NoHostedContexts), ContextTail::Unresolvable);
     }
 
     /// An absolute reference stays the URL it is: the loader recognises it
@@ -228,16 +251,13 @@ mod tests {
     #[test]
     fn an_absolute_request_reference_stays_the_url_it_is() {
         let absolute = format!("http://127.0.0.1:1056{STORED_PATH}");
+        pretty_assertions::assert_eq!(of_request_context(&json!(absolute), &StoredPath), ContextTail::Reference(url(&absolute)));
         pretty_assertions::assert_eq!(
-            ContextTail::of_request_context(&json!(absolute), &StoredPath),
-            ContextTail::Reference(url(&absolute))
-        );
-        pretty_assertions::assert_eq!(
-            ContextTail::of_request_context(&json!(NGSI_LD_CORE_CONTEXT_URL.as_str()), &StoredPath),
+            of_request_context(&json!(NGSI_LD_CORE_CONTEXT_URL.as_str()), &StoredPath),
             ContextTail::CurrentCore
         );
         pretty_assertions::assert_eq!(
-            ContextTail::of_request_context(&json!({ "a": "https://example.com/a" }), &StoredPath),
+            of_request_context(&json!({ "a": "https://example.com/a" }), &StoredPath),
             ContextTail::LocalDefinitions
         );
     }
@@ -246,7 +266,7 @@ mod tests {
     fn a_document_ending_with_the_v1_9_core_ends_with_the_current_core() {
         let compound = json!({ "@context": ["ngsi-ld-test-suite.jsonld", NGSI_LD_CORE_CONTEXT_URL.as_str()] });
 
-        pretty_assertions::assert_eq!(ContextTail::of_document(&compound), ContextTail::CurrentCore);
+        pretty_assertions::assert_eq!(of_document(&compound), ContextTail::CurrentCore);
     }
 
     #[test]
@@ -254,7 +274,7 @@ mod tests {
         for core in [NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V18_URL, NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL] {
             let document = json!({ "@context": [{ "a": "https://example.com/a" }, core.as_str()] });
 
-            pretty_assertions::assert_eq!(ContextTail::of_document(&document), ContextTail::OtherCore, "{core}");
+            pretty_assertions::assert_eq!(of_document(&document), ContextTail::OtherCore, "{core}");
         }
     }
 
@@ -262,17 +282,14 @@ mod tests {
     fn a_document_importing_the_core_first_then_defining_terms_ends_with_its_own_definitions() {
         let document = json!({ "@context": [NGSI_LD_CORE_CONTEXT_URL.as_str(), { "@vocab": "https://example.com/" }] });
 
-        pretty_assertions::assert_eq!(ContextTail::of_document(&document), ContextTail::LocalDefinitions);
+        pretty_assertions::assert_eq!(of_document(&document), ContextTail::LocalDefinitions);
     }
 
     #[test]
     fn a_document_ending_with_a_reference_defers_to_the_referenced_document() {
         let document = json!({ "@context": [{ "a": "https://example.com/a" }, "https://example.com/next.jsonld"] });
 
-        pretty_assertions::assert_eq!(
-            ContextTail::of_document(&document),
-            ContextTail::Reference(url("https://example.com/next.jsonld"))
-        );
+        pretty_assertions::assert_eq!(of_document(&document), ContextTail::Reference(url("https://example.com/next.jsonld")));
     }
 
     /// JSON-LD 1.1 API section 4.1.2: a relative reference inside a remote
@@ -281,7 +298,7 @@ mod tests {
     /// until then.
     #[test]
     fn a_relative_reference_is_kept_until_it_resolves_against_the_document_it_was_read_from() {
-        let tail = ContextTail::of_document(&json!({ "@context": "next.jsonld" }));
+        let tail = of_document(&json!({ "@context": "next.jsonld" }));
 
         pretty_assertions::assert_eq!(tail, ContextTail::Relative(relative("next.jsonld")));
         pretty_assertions::assert_eq!(
@@ -321,17 +338,14 @@ mod tests {
     #[test]
     fn an_import_leaves_the_imported_context_in_force_only_when_nothing_else_is_defined() {
         pretty_assertions::assert_eq!(
-            ContextTail::of_context(&json!({ "@import": NGSI_LD_CORE_CONTEXT_URL.as_str(), "@version": 1.1 })),
+            of_context(&json!({ "@import": NGSI_LD_CORE_CONTEXT_URL.as_str(), "@version": 1.1 })),
             ContextTail::CurrentCore
         );
         pretty_assertions::assert_eq!(
-            ContextTail::of_context(&json!({ "@import": NGSI_LD_CORE_CONTEXT_URL.as_str(), "a": "https://example.com/a" })),
+            of_context(&json!({ "@import": NGSI_LD_CORE_CONTEXT_URL.as_str(), "a": "https://example.com/a" })),
             ContextTail::LocalDefinitions
         );
-        pretty_assertions::assert_eq!(
-            ContextTail::of_context(&json!({ "@import": NGSI_LD_CORE_CONTEXT_V18_URL.as_str() })),
-            ContextTail::OtherCore
-        );
+        pretty_assertions::assert_eq!(of_context(&json!({ "@import": NGSI_LD_CORE_CONTEXT_V18_URL.as_str() })), ContextTail::OtherCore);
     }
 
     /// A hosted context's root-relative path is a relative reference like any
@@ -354,19 +368,19 @@ mod tests {
     #[test]
     fn protected_beside_an_import_leaves_the_import_in_force_and_vocab_does_not() {
         pretty_assertions::assert_eq!(
-            ContextTail::of_context(&json!({ "@import": NGSI_LD_CORE_CONTEXT_URL.as_str(), "@protected": true })),
+            of_context(&json!({ "@import": NGSI_LD_CORE_CONTEXT_URL.as_str(), "@protected": true })),
             ContextTail::CurrentCore
         );
         pretty_assertions::assert_eq!(
-            ContextTail::of_context(&json!({ "@import": NGSI_LD_CORE_CONTEXT_URL.as_str(), "@protected": true, "@vocab": "https://example.com/" })),
+            of_context(&json!({ "@import": NGSI_LD_CORE_CONTEXT_URL.as_str(), "@protected": true, "@vocab": "https://example.com/" })),
             ContextTail::LocalDefinitions
         );
     }
 
     #[test]
     fn a_nullification_or_an_empty_array_leaves_no_core_in_force() {
-        pretty_assertions::assert_eq!(ContextTail::of_context(&json!(null)), ContextTail::LocalDefinitions);
-        pretty_assertions::assert_eq!(ContextTail::of_context(&json!([])), ContextTail::LocalDefinitions);
-        pretty_assertions::assert_eq!(ContextTail::of_document(&json!({})), ContextTail::LocalDefinitions);
+        pretty_assertions::assert_eq!(of_context(&json!(null)), ContextTail::LocalDefinitions);
+        pretty_assertions::assert_eq!(of_context(&json!([])), ContextTail::LocalDefinitions);
+        pretty_assertions::assert_eq!(of_document(&json!({})), ContextTail::LocalDefinitions);
     }
 }

@@ -6,13 +6,9 @@
 //! caller hands the request to the processor ([`crate::entity_expansion`]).
 
 use crate::{
-    assembly::{attribute_fragment, entity_document},
+    assembly::{attribute_fragment, entity_document, temporal_document::temporal_document},
     attribute_fragment::AttributeFragment,
-    compact_walk::{
-        element::{Expanded, expand_element},
-        member::expand_member,
-        object::property_name,
-    },
+    compact_walk::element::Expanded,
     decline::Decline,
     expanded_tree::{ExpandedItem, ExpandedNode},
     normalization::Normalization,
@@ -24,9 +20,12 @@ use crate::{
 use andromeda_jsonld::engine::expansion_context::ExpansionContext;
 use andromeda_ngsi_ld_entity::{document::EntityDocument, refusal::EntityRefusal};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
-use jsonld::Term;
-use serde_json::Value;
+use andromeda_ngsi_ld_model::{
+    attribute::instance::AttributeValue,
+    entity::{Entity, EntityPatch},
+    entity_system_times::EntitySystemTimes,
+    temporal::temporal_document::TemporalDocument,
+};
 
 /// Expands requests under one processed request context.
 #[derive(Clone, Copy, Debug)]
@@ -51,7 +50,7 @@ impl<'c> TypedExpander<'c> {
     /// Returns the [`EntityRefusal`] of an expanded document that is not a
     /// write.
     pub fn entity<M: WrittenMember>(&self, entity: &Entity<M>, normalization: Normalization) -> Result<TypedExpansion<EntityDocument>, EntityRefusal> {
-        self.document(|scope| entity_node(scope, entity, normalization))
+        self.document(|scope| entity_node(scope, entity, normalization), entity_document)
     }
 
     /// Expand an entity fragment the transport decoded into the typed compact
@@ -65,20 +64,22 @@ impl<'c> TypedExpander<'c> {
         patch: &EntityPatch<M>,
         normalization: Normalization,
     ) -> Result<TypedExpansion<EntityDocument>, EntityRefusal> {
-        self.document(|scope| patch_node(scope, patch, normalization))
+        self.document(|scope| patch_node(scope, patch, normalization), entity_document)
     }
 
-    /// Expand an entity fragment held as JSON (append, update) that already
-    /// went through its concise rewrite.
+    /// Expand the Temporal Evolution of an entity, which a peer answered with
+    /// and the compact model read into an entity whose Scope history is the
+    /// attribute `scope`, `system_times` being the entity's own clause 4.8
+    /// times.
     ///
     /// # Errors
     ///
     /// As [`TypedExpander::entity`].
-    pub fn normalized_fragment(&self, fragment: &Value) -> Result<TypedExpansion<EntityDocument>, EntityRefusal> {
-        if !fragment.is_object() {
-            return Ok(TypedExpansion::Declined(Decline::MalformedJsonLd));
-        }
-        self.document(|scope| expand_element(scope, None, fragment))
+    pub fn temporal(&self, entity: &Entity<AttributeValue>, system_times: EntitySystemTimes) -> Result<TypedExpansion<TemporalDocument>, EntityRefusal> {
+        self.document(
+            |scope| entity_node(scope, entity, Normalization::Entity),
+            |node| temporal_document(node, system_times),
+        )
     }
 
     /// Expand the attribute fragment of a Partial Attribute Update or a
@@ -97,34 +98,16 @@ impl<'c> TypedExpander<'c> {
         }
     }
 
-    /// Expand the attribute fragment of a temporal write (clause 5.6.12)
-    /// held as JSON, that already went through its
-    /// concise rewrite, written for the attribute the request path names.
-    ///
-    /// # Errors
-    ///
-    /// Returns the [`EntityRefusal`] of a fragment that is not one instance.
-    pub fn normalized_attribute(&self, attribute: &AttributeName, fragment: &Value) -> Result<TypedExpansion<AttributeFragment>, EntityRefusal> {
-        let walked = TermScope::root(self.context).and_then(|scope| {
-            let key = attribute.as_str();
-            let term = scope.expand_key(key)?;
-            let Term::Id(property) = term.as_ref() else {
-                return Err(Decline::MalformedJsonLd);
-            };
-            let name = property_name(property).ok_or(Decline::MalformedJsonLd)?;
-            Ok((name, expand_member(&scope, key, fragment)?.unwrap_or_default()))
-        });
-        match walked {
-            Ok((name, items)) => attribute_fragment(&name, items).map(TypedExpansion::Expanded),
-            Err(decline) => Ok(TypedExpansion::Declined(decline)),
-        }
-    }
-
-    /// Walk a document with `walk` and read the entity it expanded to.
-    fn document(self, walk: impl FnOnce(&TermScope<'c>) -> Result<Expanded, Decline>) -> Result<TypedExpansion<EntityDocument>, EntityRefusal> {
+    /// Walk a document with `walk` and assemble what it expanded to with
+    /// `assemble`.
+    fn document<T>(
+        self,
+        walk: impl FnOnce(&TermScope<'c>) -> Result<Expanded, Decline>,
+        assemble: impl FnOnce(Option<ExpandedNode>) -> Result<T, EntityRefusal>,
+    ) -> Result<TypedExpansion<T>, EntityRefusal> {
         let walked = TermScope::root(self.context).and_then(|scope| walk(&scope)).and_then(entity_node_of);
         match walked {
-            Ok(node) => entity_document(node).map(TypedExpansion::Expanded),
+            Ok(node) => assemble(node).map(TypedExpansion::Expanded),
             Err(decline) => Ok(TypedExpansion::Declined(decline)),
         }
     }

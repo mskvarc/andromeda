@@ -79,7 +79,7 @@ impl Serialize for BoundingBoxBody<'_> {
 
 /// The `coordinates` member of one geometry: nested arrays of positions whose
 /// depth the geometry type decides (IETF RFC 7946 sections 3.1.2 to 3.1.7).
-struct Coordinates<'a>(&'a GeometryForm);
+pub(crate) struct Coordinates<'a>(pub(crate) &'a GeometryForm);
 
 impl Serialize for Coordinates<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn a_geometry_writes_its_box_and_foreign_members() {
         let written = json!({"type": "Point", "coordinates": [1.0, 2.0], "bbox": [1.0, 2.0, 1.0, 2.0], "plotName": {"b": 1, "a": [2.5]}});
-        let geometry = Geometry::from_geojson_value(&written).expect("a valid geometry");
+        let geometry = Geometry::from_geojson_text(&written.to_string()).expect("a valid geometry");
         let streamed: serde_json::Value = serde_json::from_str(&serde_json::to_string(&geometry).expect("renders")).expect("JSON");
         pretty_assertions::assert_eq!(streamed, written);
     }
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn a_form_writes_its_type_and_positions() {
         let written = json!({"type": "Point", "coordinates": [1.0, 2.0], "bbox": [1.0, 2.0, 1.0, 2.0]});
-        let geometry = Geometry::from_geojson_value(&written).expect("a valid geometry");
+        let geometry = Geometry::from_geojson_text(&written.to_string()).expect("a valid geometry");
         let streamed: serde_json::Value = serde_json::from_str(&serde_json::to_string(geometry.form()).expect("renders")).expect("JSON");
         pretty_assertions::assert_eq!(streamed, json!({"type": "Point", "coordinates": [1.0, 2.0]}));
     }
@@ -167,7 +167,7 @@ mod tests {
             json!({"type": "Polygon", "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]]}),
             json!({"type": "MultiPolygon", "coordinates": [[[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]], [[[5.0, 5.0], [6.0, 5.0], [6.0, 6.0], [5.0, 5.0]]]]}),
         ] {
-            let geometry = Geometry::from_geojson_value(&written).expect("a valid geometry");
+            let geometry = Geometry::from_geojson_text(&written.to_string()).expect("a valid geometry");
             let streamed = serde_json::to_string(&geometry).expect("renders");
             let reference = serde_json::to_string(&geometry.form().to_geojson()).expect("renders");
             pretty_assertions::assert_eq!(

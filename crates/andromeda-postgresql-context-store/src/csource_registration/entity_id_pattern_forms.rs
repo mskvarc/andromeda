@@ -23,15 +23,28 @@
 
 use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
 use andromeda_ngsi_ld_query::portable_pattern::{PortablePattern, RenderingRevision};
-use serde_json::{Map, Value};
+use indexmap::IndexMap;
+use serde::{Serialize, Serializer};
 
 /// What a registration stores about its identifier patterns.
 #[derive(Debug, PartialEq)]
-pub(crate) struct StoredPatternForms {
+pub(crate) struct StoredPatternForms<'a> {
     /// Each pattern as written, mapped to its restatement.
-    pub(crate) forms: Value,
+    pub(crate) forms: IndexMap<&'a str, Restatement<'a>>,
     /// The rendering revision that produced [`StoredPatternForms::forms`].
     pub(crate) revision: RenderingRevision,
+}
+
+/// The restatement of one pattern, written as the text of its portable form.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Restatement<'a>(&'a PortablePattern);
+
+// Hand-written: `PortablePattern` is a foreign type without a serde
+// implementation, and a derive on this newtype would write a wrapper object.
+impl Serialize for Restatement<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0.as_str())
+    }
 }
 
 /// The identifier-pattern restatements for a registration's `information`,
@@ -39,23 +52,23 @@ pub(crate) struct StoredPatternForms {
 ///
 /// Two entries declaring the same pattern share one member: the same text has
 /// the same restatement.
-pub(crate) fn stored_pattern_forms(information: &[RegistrationInfo]) -> Option<StoredPatternForms> {
-    let forms: Map<String, Value> = information
+pub(crate) fn stored_pattern_forms(information: &[RegistrationInfo]) -> Option<StoredPatternForms<'_>> {
+    let forms: IndexMap<&str, Restatement<'_>> = information
         .iter()
         .filter_map(|entry| entry.entities.as_deref())
         .flatten()
         .filter_map(|selector| selector.id_pattern.as_ref())
-        .map(|pattern| (pattern.as_str().to_owned(), Value::String(pattern.portable().as_str().to_owned())))
+        .map(|pattern| (pattern.as_str(), Restatement(pattern.portable())))
         .collect();
     (!forms.is_empty()).then_some(StoredPatternForms {
-        forms: Value::Object(forms),
+        forms,
         revision: PortablePattern::RENDERING_REVISION,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::csource_registration::entity_id_pattern_forms::{StoredPatternForms, stored_pattern_forms};
+    use crate::csource_registration::entity_id_pattern_forms::stored_pattern_forms;
     use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
     use andromeda_ngsi_ld_query::portable_pattern::PortablePattern;
     use pretty_assertions::assert_eq;
@@ -74,16 +87,15 @@ mod tests {
             {"entities": [{"type": "Bee", "idPattern": "(?i)^urn:ngsi-ld:čebela:"}, {"type": "Hive", "id": "urn:ngsi-ld:Hive:1"}]},
             {"entities": [{"type": "Vehicle", "idPattern": "^urn:ngsi-ld:Vehicle:.*"}], "propertyNames": ["speed"]}
         ]));
+        let stored = stored_pattern_forms(&information).expect("patterns are declared");
         assert_eq!(
-            stored_pattern_forms(&information),
-            Some(StoredPatternForms {
-                forms: json!({
-                    "(?i)^urn:ngsi-ld:čebela:": "^[Uu][Rr][Nn]:[Nn][Gg][Ssſ][Ii]-[Ll][Dd]:[Čč][Ee][Bb][Ee][Ll][Aa]:",
-                    "^urn:ngsi-ld:Vehicle:.*": "^urn:ngsi-ld:Vehicle:.*"
-                }),
-                revision: PortablePattern::RENDERING_REVISION,
+            serde_json::to_value(&stored.forms).expect("the forms write"),
+            json!({
+                "(?i)^urn:ngsi-ld:čebela:": "^[Uu][Rr][Nn]:[Nn][Gg][Ssſ][Ii]-[Ll][Dd]:[Čč][Ee][Bb][Ee][Ll][Aa]:",
+                "^urn:ngsi-ld:Vehicle:.*": "^urn:ngsi-ld:Vehicle:.*"
             })
         );
+        assert_eq!(stored.revision, PortablePattern::RENDERING_REVISION);
     }
 
     /// The same pattern declared twice is stored once.
@@ -94,7 +106,7 @@ mod tests {
             {"entities": [{"type": "Hive", "idPattern": "(?i)čebela"}]}
         ]));
         assert_eq!(
-            stored_pattern_forms(&information).map(|stored| stored.forms),
+            stored_pattern_forms(&information).map(|stored| serde_json::to_value(&stored.forms).expect("the forms write")),
             Some(json!({"(?i)čebela": "[Čč][Ee][Bb][Ee][Ll][Aa]"}))
         );
     }

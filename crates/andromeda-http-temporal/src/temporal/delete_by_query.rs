@@ -19,7 +19,15 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use serde_json::json;
+use serde::Serialize;
+
+/// The body of a dry-run answer: how many history instances a real delete would
+/// remove.
+#[derive(Debug, Serialize)]
+struct WouldDelete {
+    /// The count the delete would have removed.
+    deleted: u64,
+}
 
 pub async fn delete_by_query(
     ExistingTargetedTenantState {
@@ -36,7 +44,7 @@ pub async fn delete_by_query(
     match outcome {
         // A dry run removed nothing and reports what it would have; the count is
         // the vendor extension's own response shape, not an NGSI-LD collection.
-        TemporalDeleteOutcome::DryRun { would_delete } => Ok((StatusCode::OK, Json(json!({ "deleted": would_delete }))).into_response()),
+        TemporalDeleteOutcome::DryRun { would_delete } => Ok((StatusCode::OK, Json(WouldDelete { deleted: would_delete })).into_response()),
         TemporalDeleteOutcome::Deleted { .. } => Ok(StatusCode::NO_CONTENT.into_response()),
     }
 }

@@ -16,7 +16,7 @@ use andromeda_http_extraction::{
     context_target::{ContextTargetProvider, ContextTargetResolutionError, ExistingTargetedTenantState, SnapshotTargetResolver},
     entity_batch::BatchBody,
     entity_query::EntityQuery,
-    jsonld::JsonLdDocument,
+    jsonld::JsonLd,
     language::LanguageNegotiation,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
@@ -32,6 +32,7 @@ use andromeda_http_extraction::{
 };
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
 use axum::{
@@ -119,7 +120,7 @@ async fn entity_query(_query: EntityQuery) -> StatusCode {
     StatusCode::OK
 }
 
-async fn entity_body(_body: JsonLdDocument) -> StatusCode {
+async fn entity_body(_body: JsonLd<Entity>) -> StatusCode {
     StatusCode::OK
 }
 

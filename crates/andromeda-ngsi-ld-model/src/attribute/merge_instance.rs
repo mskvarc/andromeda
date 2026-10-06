@@ -21,6 +21,7 @@ use crate::{
         member_reading::MemberReading,
         merge_member::MergeMember,
         merge_value::MergeValue,
+        nested_null::NestedMergeMember,
         one_or_many::OneOrMany,
         patched::{Patched, is_ngsi_ld_null, patched_member},
         property::UnitCodeRef,
@@ -29,7 +30,7 @@ use crate::{
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember, RefusedNode},
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, coerced_term::CoercedTerm, identifier::Identifier};
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeMembers};
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use chrono::{DateTime, Utc};
@@ -69,9 +70,9 @@ pub struct MergeInstance {
     /// `unitCode`, a Property's own.
     pub unit_code: Option<Patched<UnitCodeRef>>,
     /// `valueType`, the property families' own.
-    pub value_type: Option<Patched<NgsiLdReference>>,
+    pub value_type: Option<Patched<CoercedTerm>>,
     /// `objectType`, the relationship families' own.
-    pub object_type: Option<Patched<OneOrMany<NgsiLdReference>>>,
+    pub object_type: Option<Patched<OneOrMany<CoercedTerm>>>,
     /// The `entityIdSealed` of an `ngsildproof` Property (clause 4.5.2.2).
     pub entity_id_sealed: Option<JsonLiteral>,
     /// The `entityTypeSealed` of an `ngsildproof` Property (clause 4.5.2.2).
@@ -226,7 +227,7 @@ impl Serialize for MergeInstance {
         optional_entry(&mut map, compact_properties::INSTANCE_ID, self.instance_id.as_ref())?;
         optional_entry(&mut map, compact_properties::OBSERVED_AT, self.observed_at.as_ref())?;
         for (name, member) in &self.sub_attributes {
-            map.serialize_entry(name.as_str(), member)?;
+            map.serialize_entry(name.as_str(), &NestedMergeMember(member))?;
         }
         map.end()
     }

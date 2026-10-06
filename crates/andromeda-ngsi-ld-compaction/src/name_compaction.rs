@@ -137,6 +137,7 @@ impl NameCompaction {
 #[cfg(test)]
 mod tests {
     use crate::name_compaction::NameCompaction;
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_vocabulary::expanded::classes;
     use serde_json::json;
@@ -151,12 +152,18 @@ mod tests {
     /// The clause C.2.4 vocabulary, carried in the request body so the test
     /// needs no network.
     fn example_context() -> ContextSpec {
-        ContextSpec::from_body(json!({
-            "Vehicle": "http://example.org/vehicle/Vehicle",
-            "brandName": "http://example.org/vehicle/brandName",
-            "isParked": {"@type": "@id", "@id": "http://example.org/common/isParked"},
-            "testedAt": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"}
-        }))
+        ContextSpec::from_body(
+            JsonLiteral::admit(
+                &json!({
+                    "Vehicle": "http://example.org/vehicle/Vehicle",
+                    "brandName": "http://example.org/vehicle/brandName",
+                    "isParked": {"@type": "@id", "@id": "http://example.org/common/isParked"},
+                    "testedAt": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"}
+                })
+                .to_string(),
+            )
+            .expect("an admissible literal"),
+        )
     }
 
     #[tokio::test]
@@ -223,11 +230,17 @@ mod tests {
     /// candidates: shortest first, then lexicographically least.
     #[tokio::test]
     async fn the_shortest_declaration_of_one_iri_is_the_name_rendered() {
-        let names = names(&ContextSpec::from_body(json!({
-            "zz": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"},
-            "aaa": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"},
-            "yy": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"}
-        })))
+        let names = names(&ContextSpec::from_body(
+            JsonLiteral::admit(
+                &json!({
+                    "zz": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"},
+                    "aaa": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"},
+                    "yy": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"}
+                })
+                .to_string(),
+            )
+            .expect("an admissible literal"),
+        ))
         .await;
         pretty_assertions::assert_eq!(names.compact_attr_iri("http://example.org/test/testedAt").as_ref(), "yy");
     }

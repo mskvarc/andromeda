@@ -51,9 +51,6 @@ pub enum RegistrationError {
     /// Query compilation failed.
     #[error(transparent)]
     Query(#[from] QueryError),
-    /// JSON representation processing failed.
-    #[error(transparent)]
-    Representation(#[from] serde_json::Error),
     /// The persistence adapter could not complete the requested operation.
     #[error("registration persistence failed: {0}")]
     Persistence(#[source] PersistenceFailure),

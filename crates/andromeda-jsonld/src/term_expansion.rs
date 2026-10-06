@@ -89,9 +89,10 @@ const fn expansion_failure(error: &JsonLdError) -> TermExpansionFailure {
         | JsonLdError::ContextUrlNotIri(_)
         | JsonLdError::JsonLdContextText(_)
         | JsonLdError::JsonLdContextShape
-        | JsonLdError::DocumentShape
         | JsonLdError::ContextGraph(_)
-        | JsonLdError::Json(_) => TermExpansionFailure::ContextUnprocessable,
+        | JsonLdError::Json(_)
+        | JsonLdError::ContextText(_)
+        | JsonLdError::ProcessorText(_) => TermExpansionFailure::ContextUnprocessable,
     }
 }
 
@@ -123,6 +124,6 @@ mod tests {
     fn a_json_ld_failure_is_classified_by_what_went_wrong() {
         pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::TermNotExpanded), TermExpansionFailure::NotExpanded);
         pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::TypeNotExpanded), TermExpansionFailure::NotExpanded);
-        pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::DocumentShape), TermExpansionFailure::ContextUnprocessable);
+        pretty_assertions::assert_eq!(expansion_failure(&JsonLdError::JsonLdContextShape), TermExpansionFailure::ContextUnprocessable);
     }
 }

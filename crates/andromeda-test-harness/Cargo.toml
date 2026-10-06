@@ -21,7 +21,7 @@ futures = "0.3.34"
 http = "1.5.0"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 reqwest = { version = "0.13.5", features = ["json"] }
-serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
+serde_json = "1.0.151"
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }
 thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["rt", "sync", "time"] }

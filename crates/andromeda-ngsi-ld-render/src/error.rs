@@ -25,9 +25,13 @@ pub enum RenderedShape {
     /// A clause 4.5.16 `GeoJSON` `FeatureCollection`.
     #[strum(serialize = "GeoJSON FeatureCollection")]
     GeoJsonFeatureCollection,
-    /// The `@context` member a body carries (clause 6.3.6).
-    #[strum(serialize = "@context")]
-    Context,
+    /// A clause 4.5.6 Temporal Evolution of an Entity.
+    #[strum(serialize = "temporal entity")]
+    TemporalEntity,
+    /// A resource that is no entity: a Subscription, a Registration, a
+    /// Snapshot, an `EntityMap`, a batch operation result or type information.
+    #[strum(serialize = "resource")]
+    Resource,
 }
 
 /// A rendering that could not be built.
@@ -41,6 +45,10 @@ pub enum RenderError {
         /// What `serde_json` reported.
         source: serde_json::Error,
     },
+    /// A Temporal Evolution was asked for as `GeoJSON`, which clause 4.5.16
+    /// defines for Entities only.
+    #[error("a Temporal Evolution has no GeoJSON representation")]
+    TemporalGeoJson,
 }
 
 impl RenderError {
@@ -78,7 +86,8 @@ mod tests {
             RenderedShape::Entity,
             RenderedShape::GeoJsonFeature,
             RenderedShape::GeoJsonFeatureCollection,
-            RenderedShape::Context,
+            RenderedShape::TemporalEntity,
+            RenderedShape::Resource,
         ];
         let names: Vec<String> = shapes.iter().map(ToString::to_string).collect();
         let mut unique = names.clone();

@@ -10,7 +10,6 @@ use andromeda_linked_retrieval::{
     typed::TypedEntities,
 };
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection};
 use andromeda_ngsi_ld_render::{
     notification_entity::{StampedInstants, TargetSpelling},
@@ -25,7 +24,7 @@ use std::{num::NonZeroU32, slice::from_ref, sync::Arc};
 
 /// An entity read from its compact document.
 fn entity(document: &Value) -> Entity {
-    deserialize_exact(document).expect("the entity decodes")
+    serde_json::from_str(&document.to_string()).expect("the entity decodes")
 }
 
 /// The projection that narrows nothing.
@@ -48,11 +47,12 @@ fn current(entity: Entity) -> NotifiedEntity {
 }
 
 /// The shape a subscription naming no `ngsildConformance` writes in.
-const fn shape(format: ResponseFormat, targets: TargetSpelling) -> WrittenShape {
+const fn shape<'a>(format: ResponseFormat, targets: TargetSpelling) -> WrittenShape<'a> {
     WrittenShape {
         format,
         targets,
         fallback: None,
+        language: None,
     }
 }
 

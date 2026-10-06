@@ -9,7 +9,7 @@ use crate::{
     error::temporal_problem,
     extension_gate::TemporalExtensionGate,
     history_read::TemporalHistoryRead,
-    join::{apply_temporal_join, single_retrieval_payload},
+    join::apply_temporal_join,
     request_context_admission::admit_request_context,
     temporal::{
         AcceptFormatNoGeo,
@@ -21,27 +21,23 @@ use crate::{
         ProblemResponse,
         Response,
         ResponseContextSource,
-        ResponsePayload,
         ResultInstanceExt,
         StatusCode,
-        TemporalSimplifyPayload,
-        TemporalSimplifyRenderer,
         TenantState,
         TypedPath,
-        Value,
         retrieve_forwarding::{RetrievalSources, RetrievedHistory, distributed_retrieval, resolve_retrieve_map},
     },
+    temporal_answer::{RetrievedAnswer, retrieved_history},
 };
 use andromeda_entity_map::reuse::EntityMapUse;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::{admitted_temporal_query::AdmittedTemporalQuery, context_target, response_context_request::ResponseContextRequest};
-use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_http_response::{collection::NgsiLdCollectionResponse, content_range::build_content_range};
+use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
+use andromeda_http_response::{collection::NgsiLdCollectionResponse, content_range::build_content_range, rendered_response::RenderedResponse};
 use andromeda_jsonld::user_context_admission::SubmittedContext;
-use andromeda_linked_retrieval::edge::LinkedEdge;
+use andromeda_ngsi_ld_render::structural_projection::StructuralProjection;
 use andromeda_ngsi_ld_request::query::temporal::operation::TemporalQueryOperation;
 use andromeda_temporal::{error::TemporalError, temporal_invariant::TemporalInvariant};
-use axum::http::Uri as RequestUri;
 
 pub async fn get(
     context_target::ExistingTargetedTenantState {
@@ -78,10 +74,10 @@ pub async fn get(
     let retrieved = if is_local {
         let result = local_result.with_instance(&uri)?;
         RetrievedHistory {
-            value: result.value,
+            history: result.history,
             range: result.range,
             warnings: Vec::new(),
-            linked_edges: result.linked_edges,
+            projection: result.projection,
             entity_map_uri: None,
         }
     } else {
@@ -91,6 +87,7 @@ pub async fn get(
         };
         distributed_retrieval(
             RetrievalSources {
+                service,
                 forwarding: &state.forwarding,
                 entity_maps: &state.entity_maps,
                 triggering,
@@ -106,10 +103,10 @@ pub async fn get(
         .await?
     };
     let RetrievedHistory {
-        value,
+        history,
         range,
         warnings,
-        linked_edges,
+        projection,
         entity_map_uri,
     } = retrieved;
 
@@ -120,7 +117,20 @@ pub async fn get(
         params: &params,
         context: &context,
     };
-    let (payload, warnings) = retrieval_payload(&read, value, &linked_edges, warnings, &uri).await?;
+    // The history is compacted under the request context once every holder's
+    // part has been merged into it (clause 5.7.3); the join then reads the
+    // compact roots.
+    let bodies = service.compact_histories(vec![history], &context).await.with_instance(&uri)?;
+    let (resolved, warnings) = apply_temporal_join(&read, &bodies, warnings).await.with_instance(&uri)?;
+    let plan = resolved.plan();
+    let Some(body) = bodies.first() else {
+        return Err(temporal_problem(&TemporalError::from(TemporalInvariant::RetrievalWithoutRoot), &uri));
+    };
+    let answer = retrieved_history(body, plan.as_ref(), Some(StructuralProjection::from(&projection)));
+    let (answer_shape, answer) = match answer {
+        RetrievedAnswer::Single(answer) => (AnswerShape::Single, answer),
+        RetrievedAnswer::Collection(answer) => (AnswerShape::Collection, answer),
+    };
 
     // Table 6.19.3.1-1: 201 when an EntityMap has been (re)created, 206 when
     // the history was truncated, 200 otherwise.
@@ -131,79 +141,80 @@ pub async fn get(
     } else {
         StatusCode::OK
     };
-    let is_collection = matches!(payload, ResponsePayload::Collection(_));
     // Table 6.19.3.1-2 carries the 203 row and clause 6.3.6 the
     // `Preference-Applied` echo, so the preference the request expressed is the
     // one that renders; `NgsiLdResponse` turns the outcome into both.
-    let rendered = ResponseContextSource::new(state.temporal.engine(), &context, &state.context_hosting, &api_root)
-        .start_rendering_temporal(accept.media_type(), protocol.prefer.rendering_preferences(), params.selected_format())
+    let rendering = ResponseContextSource::new(state.temporal.engine(), &context, &state.context_hosting, &api_root)
+        .start_rendering_normalized(accept.media_type(), protocol.prefer.rendering_preferences())
         .await
-        .with_instance(&uri)?
-        .with_payload(payload)
-        .render()
         .with_instance(&uri)?;
+    let rendered = answer.render(rendering, &params, &uri)?;
 
-    // One assembly point. The two builders are distinct types, so the match is
-    // on which one is being built, never on which metadata to attach.
-    if is_collection {
-        let mut builder = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
-        if let Some(map_uri) = entity_map_uri {
-            builder = builder.with_entity_map_uri(map_uri);
-        }
-        if let Some(range) = content_range {
-            builder = builder.with_content_range(range);
-        }
-        return Ok(builder.into_response());
-    }
-    let mut builder = NgsiLdResponse::new(status, rendered).with_warnings(warnings);
-    if let Some(map_uri) = entity_map_uri {
-        builder = builder.with_entity_map_uri(map_uri);
-    }
-    if let Some(range) = content_range {
-        builder = builder.with_content_range(range);
-    }
-    Ok(builder.into_response())
+    Ok(retrieval_response(
+        answer_shape,
+        RetrievalHead {
+            status,
+            warnings,
+            entity_map_uri,
+            content_range,
+        },
+        rendered,
+    ))
 }
 
-/// The payload the retrieval answers with, and the warnings that accompany it.
-///
-/// `@none` and an absent `join` retrieve no linked entity at all (clause
-/// 4.5.23), and the retrieval answers with its one entity, simplified when
-/// the request asked for it. A flat join turns the retrieval into a
-/// collection; everything else about the response -- status, `Content-Range`,
-/// `NGSILD-EntityMap`, warnings -- is identical either way, which is why only
-/// the payload is decided here and the response is assembled once by the
-/// caller.
-///
-/// # Errors
-///
-/// The classified failure of the traversal or of the `keyValues` projection,
-/// and [`TemporalError::Internal`] when a join left the retrieval without its
-/// root, which an inline join rewriting its root in place cannot do.
-async fn retrieval_payload(
-    read: &TemporalHistoryRead<'_>,
-    value: Value,
-    linked_edges: &[LinkedEdge],
+/// What a retrieval says about its body beside the body.
+struct RetrievalHead {
+    /// Table 6.19.3.1-1: 201 when an Entity Map has been (re)created, 206 when
+    /// the history was truncated, 200 otherwise.
+    status: StatusCode,
+    /// The clause 6.3.17 warnings of the read.
     warnings: Vec<NgsiLdWarning>,
-    instance: &RequestUri,
-) -> Result<(ResponsePayload, Vec<NgsiLdWarning>), ProblemResponse> {
-    let mut roots = vec![value];
-    let applied = apply_temporal_join(read, &mut roots, linked_edges, warnings).await.with_instance(instance)?;
-    let without_root = || temporal_problem(&TemporalError::from(TemporalInvariant::RetrievalWithoutRoot), instance);
-    if let Some(shape) = applied.shape {
-        let payload = single_retrieval_payload(shape, roots).ok_or_else(without_root)?;
-        return Ok((payload, applied.warnings));
+    /// The Entity Map the retrieval ran under, when one applies (clause 5.5.14).
+    entity_map_uri: Option<Identifier>,
+    /// The `Content-Range` of a history that was cut short.
+    content_range: Option<NgsiLdContentRange>,
+}
+
+/// The response a retrieval answers with.
+///
+/// One assembly point: the two builders are distinct types, so the match is on
+/// which one is being built, never on which metadata to attach.
+fn retrieval_response(shape: AnswerShape, head: RetrievalHead, rendered: RenderedResponse) -> Response {
+    let RetrievalHead {
+        status,
+        warnings,
+        entity_map_uri,
+        content_range,
+    } = head;
+    match shape {
+        AnswerShape::Collection => {
+            let mut builder = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
+            if let Some(map_uri) = entity_map_uri {
+                builder = builder.with_entity_map_uri(map_uri);
+            }
+            if let Some(range) = content_range {
+                builder = builder.with_content_range(range);
+            }
+            builder.into_response()
+        }
+        AnswerShape::Single => {
+            let mut builder = NgsiLdResponse::new(status, rendered).with_warnings(warnings);
+            if let Some(map_uri) = entity_map_uri {
+                builder = builder.with_entity_map_uri(map_uri);
+            }
+            if let Some(range) = content_range {
+                builder = builder.with_content_range(range);
+            }
+            builder.into_response()
+        }
     }
-    let value = roots.into_iter().next().ok_or_else(without_root)?;
-    let data: Value = if read.params.is_simplified() {
-        TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Single(value))
-            .render()
-            .with_instance(instance)?
-            .into_single()
-            .with_instance(instance)?
-    } else {
-        value
-    };
-    let payload = ResponsePayload::Single(data);
-    Ok((payload, applied.warnings))
+}
+
+/// Whether a retrieval answers one entity or, joined flat, a collection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnswerShape {
+    /// The entity itself.
+    Single,
+    /// The entity beside the Linked Entities a flat join reached.
+    Collection,
 }

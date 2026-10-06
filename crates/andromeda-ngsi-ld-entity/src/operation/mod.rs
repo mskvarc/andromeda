@@ -24,5 +24,7 @@ pub mod selection;
 #[cfg(test)]
 pub(crate) mod speed_entity;
 pub mod sub_attribute_patch;
+pub mod transient_versions;
 pub mod update;
 pub mod value_merge;
+pub mod version_merge;

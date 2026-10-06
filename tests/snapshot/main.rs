@@ -20,3 +20,4 @@ mod subscriptions;
 mod support;
 mod temporal;
 mod tenancy_resilience;
+mod typed_round_trip;

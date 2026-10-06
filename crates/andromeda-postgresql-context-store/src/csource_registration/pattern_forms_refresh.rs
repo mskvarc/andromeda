@@ -17,14 +17,13 @@
 //! alone, and a row a concurrent registration update rewrote first is not
 //! rewritten again: the update names the revision the row was read at.
 
-use crate::{csource_registration::entity_id_pattern_forms::stored_pattern_forms, error::ContextStoreError};
+use crate::{csource_registration::entity_id_pattern_forms::stored_pattern_forms, error::ContextStoreError, jsonb_text::JsonbText};
 use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
 use andromeda_ngsi_ld_query::portable_pattern::{PortablePattern, RenderingRevision};
 use andromeda_postgresql_schema::csr::Csr;
 use andromeda_postgresql_seaquery::placeholder::external_placeholder;
 use sea_query::{Expr, ExprTrait, Iden, PostgresQueryBuilder, Query};
-use serde_json::Value;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Row, types::Json};
 
 /// The registrations whose restatements a revision older than `current`
 /// rendered, with the `information` to render them from.
@@ -67,12 +66,12 @@ pub async fn refresh_stale_pattern_forms(pool: &PgPool) -> Result<u64, ContextSt
     for row in &stale {
         let id: String = row.try_get(Csr::Id.to_string().as_str())?;
         let read_at: i16 = row.try_get(Csr::EntityIdPatternFormsRevision.to_string().as_str())?;
-        let information: Value = row.try_get(Csr::Information.to_string().as_str())?;
-        let information: Vec<RegistrationInfo> = serde_json::from_value(information).map_err(ContextStoreError::StoredRegistrationInformation)?;
+        let information: JsonbText<'_> = row.try_get(Csr::Information.to_string().as_str())?;
+        let information: Vec<RegistrationInfo> = serde_json::from_slice(information.as_bytes()).map_err(ContextStoreError::StoredRegistrationInformation)?;
         let stored = stored_pattern_forms(&information);
         rewritten += sqlx::query(sqlx::AssertSqlSafe(rewrite.as_str()))
             .bind(&id)
-            .bind(stored.as_ref().map(|stored| &stored.forms))
+            .bind(stored.as_ref().map(|stored| Json(&stored.forms)))
             .bind(stored.as_ref().map(|stored| stored.revision.get()))
             .bind(read_at)
             .execute(pool)

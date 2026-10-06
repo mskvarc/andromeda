@@ -23,10 +23,10 @@ use andromeda_federation::config::SplitEntities;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_query::temporal::contributed_entities::{ContributedEntities, ContributedRendering};
 use andromeda_temporal::{service::TemporalService, split_settlement::SplitSettlement};
 use axum::http::Uri;
-use serde_json::Value;
 
 /// How a split query gathers and renders the entities a source contributed to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,21 +89,22 @@ async fn render_contributions(
     shape: ContributionShape,
     settlement: Option<&SplitSettlement>,
     instance: &Uri,
-) -> Result<Option<(Vec<Value>, Vec<NgsiLdWarning>)>, ProblemResponse> {
+) -> Result<Option<(Vec<TemporalHistory>, Vec<NgsiLdWarning>)>, ProblemResponse> {
     let (ContributionShape::MergedInstances, Some(history), Some(settlement)) = (shape, request.forwarded, settlement) else {
         return Ok(None);
     };
-    let mut parts: Vec<(Identifier, Vec<&Value>)> = settlement.retained.iter().map(|entity_id| (entity_id.clone(), Vec::new())).collect(); // clone: each part list owns the identifier it is rendered under
-    for answer in answered_parts(history) {
-        let Some(entity_id) = answer.get("id").and_then(Value::as_str).and_then(|raw| raw.parse::<Identifier>().ok()) else {
+    let mut parts: Vec<(Identifier, Vec<TemporalDocument>)> = settlement.retained.iter().map(|entity_id| (entity_id.clone(), Vec::new())).collect(); // clone: each part list owns the identifier it is rendered under
+    for answer in answered_documents(history) {
+        let Some(entity_id) = answer.id() else {
             continue;
         };
-        if let Some((_, answers)) = parts.iter_mut().find(|(held, _)| *held == entity_id) {
-            answers.push(answer);
+        if let Some((_, answers)) = parts.iter_mut().find(|(held, _)| held == entity_id) {
+            // clone: the sources' answers stay with the history their warnings and contributions are read from
+            answers.push(answer.clone());
         }
     }
     let rendering = service
-        .render_merged_aggregations(request.target, request.params, request.context, &parts)
+        .render_merged_aggregations(request.target, request.params, request.context, parts)
         .await
         .with_instance(instance)?;
     let warnings = rendering
@@ -149,17 +150,25 @@ pub(crate) fn contributed_entities(
         return ContributedEntities::default();
     };
     match filtering {
-        SplitEntities::Split if carries_split_filters(params) => ContributedEntities::new(
-            answered_parts(history).filter_map(|answer| answer.get("id")?.as_str()?.parse::<Identifier>().ok()),
-            rendering,
-        ),
+        SplitEntities::Split if carries_split_filters(params) => {
+            ContributedEntities::new(answered_parts(history).filter_map(|answer| answer.id().cloned()), rendering)
+        } // clone: the set owns the identifiers it exempts
         SplitEntities::Split | SplitEntities::Complete => ContributedEntities::default(),
     }
 }
 
 /// Every entity part any source answered with.
-fn answered_parts(history: &ForwardedHistory) -> impl Iterator<Item = &Value> {
+fn answered_parts(history: &ForwardedHistory) -> impl Iterator<Item = &TemporalHistory> {
     history.sources.iter().flat_map(|source| source.entities.iter())
+}
+
+/// Every part any source answered with its instances; an aggregate holds none
+/// to judge or to aggregate again.
+fn answered_documents(history: &ForwardedHistory) -> impl Iterator<Item = &TemporalDocument> {
+    answered_parts(history).filter_map(|answer| match answer {
+        TemporalHistory::Instances(document) => Some(document),
+        TemporalHistory::Aggregates(_) => None,
+    })
 }
 
 /// What folding the contributed entities into the merge reads of the request.
@@ -191,7 +200,7 @@ pub(crate) struct ContributionMerge<'r> {
 pub(crate) async fn merge_with_contributions(
     service: &TemporalService,
     merge: ContributionMerge<'_>,
-    local_entities: Vec<Value>,
+    local_entities: Vec<TemporalHistory>,
     forwarded: Option<ForwardedHistory>,
     instance: &Uri,
 ) -> Result<MergedTemporalHistory, ProblemResponse> {
@@ -203,9 +212,16 @@ pub(crate) async fn merge_with_contributions(
     };
     let settlement = settle_contributions(service, settled, merge.contributed, instance).await?;
     let rendered = render_contributions(service, settled, merge.shape, settlement.as_ref(), instance).await?;
-    let mut merged = merge_forwarded_history(local_entities, forwarded, merge.filtering, merge.shape.remote_parts(), instance)?;
+    let mut merged = merge_forwarded_history(
+        local_entities,
+        forwarded,
+        merge.filtering,
+        merge.shape.remote_parts(),
+        merge.params.timeproperty_or_default(),
+        instance,
+    )?;
     if let Some(settlement) = settlement {
-        retain_settled(&mut merged.entities, merge.contributed, settlement, &mut merged.warnings);
+        retain_settled(&mut merged.entities, merge.contributed, &settlement);
     }
     if let Some((entities, warnings)) = rendered {
         merged.entities.extend(entities);
@@ -229,7 +245,7 @@ async fn settle_contributions(
     let (Some(history), false) = (request.forwarded, contributed.is_empty()) else {
         return Ok(None);
     };
-    let answered: Vec<&Value> = answered_parts(history).collect();
+    let answered: Vec<&TemporalDocument> = answered_documents(history).collect();
     let settlement = service
         .settle_split_filters(request.target, request.params, request.context, &answered)
         .await
@@ -238,41 +254,39 @@ async fn settle_contributions(
 }
 
 /// Drop every merged entity a source contributed to whose gathered parts the
-/// filters did not keep, and report every answered part that decided nothing
-/// (clause 6.3.17).
-fn retain_settled(entities: &mut Vec<Value>, contributed: &ContributedEntities, settlement: SplitSettlement, warnings: &mut Vec<NgsiLdWarning>) {
-    let SplitSettlement {
-        retained,
-        warnings: unreadable,
-    } = settlement;
+/// filters did not keep.
+fn retain_settled(entities: &mut Vec<TemporalHistory>, contributed: &ContributedEntities, settlement: &SplitSettlement) {
     entities.retain(|entity| {
-        let Some(entity_id) = entity.get("id").and_then(Value::as_str).and_then(|id| id.parse::<Identifier>().ok()) else {
+        let Some(entity_id) = entity.id() else {
             return true;
         };
-        !contributed.contains(&entity_id) || retained.contains(&entity_id)
+        !contributed.contains(entity_id) || settlement.retained.contains(entity_id)
     });
-    warnings.extend(
-        unreadable
-            .into_iter()
-            .map(|warning| NgsiLdWarning::RevalidationFailed(format!("{}: {}", warning.entity_id, warning.message))),
-    );
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal::query::split_contribution::{carries_split_filters, retain_settled};
-    use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+    use crate::{
+        temporal::query::split_contribution::{carries_split_filters, retain_settled},
+        test_history::held_history,
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
     use andromeda_ngsi_ld_query::{
         scope::query::ScopeQuery,
         temporal::contributed_entities::{ContributedEntities, ContributedRendering},
     };
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
-    use andromeda_temporal::{service::TemporalQueryWarning, split_settlement::SplitSettlement};
+    use andromeda_temporal::split_settlement::SplitSettlement;
     use serde_json::json;
 
     fn id(raw: &str) -> Identifier {
         raw.parse().expect("a valid identifier")
+    }
+
+    /// The history of the entity `identifier` names, holding no attribute.
+    async fn history(identifier: &str) -> TemporalHistory {
+        held_history(json!({"id": identifier, "type": "Vehicle"})).await
     }
 
     /// Clause 5.7.4.4: "If no values filter query is provided, then S5 is
@@ -289,27 +303,21 @@ mod tests {
 
     /// A contributed entity the filters did not keep leaves the merge; an
     /// entity no source contributed to was decided by the store and stays.
-    #[test]
-    fn only_contributed_entities_the_filters_rejected_are_dropped() {
+    #[tokio::test]
+    async fn only_contributed_entities_the_filters_rejected_are_dropped() {
         let mut entities = vec![
-            json!({"id": "urn:ngsi-ld:Vehicle:1"}),
-            json!({"id": "urn:ngsi-ld:Vehicle:2"}),
-            json!({"id": "urn:ngsi-ld:Vehicle:3"}),
+            history("urn:ngsi-ld:Vehicle:1").await,
+            history("urn:ngsi-ld:Vehicle:2").await,
+            history("urn:ngsi-ld:Vehicle:3").await,
         ];
         let contributed = ContributedEntities::new([id("urn:ngsi-ld:Vehicle:1"), id("urn:ngsi-ld:Vehicle:2")], ContributedRendering::Local);
         let settlement = SplitSettlement {
             retained: [id("urn:ngsi-ld:Vehicle:2")].into_iter().collect(),
-            warnings: vec![TemporalQueryWarning {
-                entity_id: id("urn:ngsi-ld:Vehicle:1"),
-                message: "unreadable".to_owned(),
-            }],
         };
-        let mut warnings = Vec::new();
-        retain_settled(&mut entities, &contributed, settlement, &mut warnings);
-        pretty_assertions::assert_eq!(entities, vec![json!({"id": "urn:ngsi-ld:Vehicle:2"}), json!({"id": "urn:ngsi-ld:Vehicle:3"})]);
+        retain_settled(&mut entities, &contributed, &settlement);
         pretty_assertions::assert_eq!(
-            warnings,
-            vec![NgsiLdWarning::RevalidationFailed("urn:ngsi-ld:Vehicle:1: unreadable".to_owned())]
+            entities.iter().filter_map(|entity| entity.id().map(ToString::to_string)).collect::<Vec<_>>(),
+            vec!["urn:ngsi-ld:Vehicle:2", "urn:ngsi-ld:Vehicle:3"]
         );
     }
 }

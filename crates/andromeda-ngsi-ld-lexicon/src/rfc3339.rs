@@ -30,7 +30,11 @@
 //! like any other broker-held instant. The serde adapters below are that same
 //! rendering reached through `#[serde(with = …)]`.
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, SubsecRound, Utc};
+
+/// The fractional digits clause 4.6.3 admits at most, and the resolution of a
+/// `TIMESTAMPTZ`.
+const MICROSECOND_DIGITS: u16 = 6;
 
 /// Render a UTC timestamp as RFC 3339, keeping exactly the sub-second precision
 /// it carries: a whole second as `2024-06-15T12:30:00Z`, a millisecond instant
@@ -42,9 +46,15 @@ use chrono::{DateTime, SecondsFormat, Utc};
 /// spelling the client sent for the whole-second and millisecond cases the
 /// conformance suite exercises, while still carrying the microsecond resolution
 /// clause 4.6.3 caps a `DateTime` at and PostgreSQL `TIMESTAMPTZ` stores.
+///
+/// An instant finer than a microsecond -- a Linux clock reads nanoseconds --
+/// is rendered at the microsecond the store keeps it at, discarding the
+/// remainder the way the `TIMESTAMPTZ` column does, so a response written
+/// before the instant was stored and one read back after agree, and no
+/// rendering ever carries the nine digits clause 4.6.3 forbids.
 #[must_use]
 pub fn sub_second(dt: DateTime<Utc>) -> String {
-    dt.to_rfc3339_opts(SecondsFormat::AutoSi, true)
+    dt.trunc_subsecs(MICROSECOND_DIGITS).to_rfc3339_opts(SecondsFormat::AutoSi, true)
 }
 
 /// Serialize and deserialize a required `DateTime<Utc>` as an RFC 3339 string.
@@ -153,6 +163,20 @@ mod tests {
     fn a_microsecond_instant_renders_at_full_six_digits() {
         let dt = Utc.with_ymd_and_hms(2026, 3, 1, 10, 0, 0).unwrap() + chrono::Duration::microseconds(123_456);
         pretty_assertions::assert_eq!(sub_second(dt), "2026-03-01T10:00:00.123456Z");
+    }
+
+    /// Clause 4.6.3 admits six fractional digits at most, and a nanosecond clock
+    /// reading is stored at the microsecond, so both spell the same instant.
+    #[test]
+    fn a_nanosecond_instant_renders_at_the_microsecond_it_is_stored_at() {
+        let dt = Utc.with_ymd_and_hms(2026, 10, 6, 13, 29, 28).unwrap() + chrono::Duration::nanoseconds(90_386);
+        pretty_assertions::assert_eq!(sub_second(dt), "2026-10-06T13:29:28.000090Z");
+    }
+
+    #[test]
+    fn a_nanosecond_instant_within_a_millisecond_renders_as_that_millisecond() {
+        let dt = Utc.with_ymd_and_hms(2026, 10, 6, 13, 29, 28).unwrap() + chrono::Duration::nanoseconds(123_000_999);
+        pretty_assertions::assert_eq!(sub_second(dt), "2026-10-06T13:29:28.123Z");
     }
 
     #[test]

@@ -12,7 +12,7 @@ use andromeda_entity::query::EntityQueryService;
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, queried::linked_states::LinkedStates};
-use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
+use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_query::{
     filter::{
         eval::evaluate,
@@ -31,13 +31,10 @@ use chrono::Utc;
 ///
 /// Clause 5.7.2.4: with `splitEntities` no single source held enough of an
 /// entity to decide `q`, the geoquery or `scopeQ`, so those are evaluated once
-/// here, over the merged result. Each entity is expanded once, by the typed expansion, under the request's
-/// context, and the filters are evaluated over the typed document it expands
-/// to. An entity that cannot be expanded into the request's context cannot be
-/// matched against filters written in that context, so it is dropped rather
-/// than admitted unfiltered; a context that cannot be prepared drops them all.
-/// The entities a `rel{…}` hop of `q` crosses into (clause 4.9) are read from
-/// `target` as they stand now.
+/// here, over the merged result. The merged entities are already in the
+/// model, so the filters, expanded under the request's context, are evaluated
+/// over the document each one is. The entities a `rel{…}` hop of `q` crosses
+/// into (clause 4.9) are read from `target` as they stand now.
 ///
 /// # Errors
 ///
@@ -85,19 +82,13 @@ pub(crate) async fn retain_matching(
         .with_entity_instance(instance)?;
     let compiled_scope = deferred.scope_q;
 
-    let Ok(expansion) = EntityExpansion::prepare(service.engine(), context).await else {
-        return Ok(MergedEntities {
-            entities: Vec::new(),
-            warnings,
-            contributions,
-        });
-    };
-    let mut documents = Vec::with_capacity(entities.len());
-    for entity in entities {
-        if let Ok(document) = expansion.entity(&entity, Normalization::Entity).await {
-            documents.push((entity, document));
-        }
-    }
+    let documents: Vec<(ReceivedState, EntityDocument)> = entities
+        .into_iter()
+        .map(|version| {
+            let document = EntityDocument::from(&version.state);
+            (version, document)
+        })
+        .collect();
     let linked = match compiled_q.as_ref().filter(|expr| expr.contains_linked_hop()) {
         Some(expr) => {
             let roots: Vec<&EntityDocument> = documents.iter().map(|(_, document)| document).collect();

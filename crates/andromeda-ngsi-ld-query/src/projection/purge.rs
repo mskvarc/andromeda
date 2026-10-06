@@ -1,6 +1,6 @@
 //! Purge modes of the delete-entities-by-query operation (clause 5.6.21).
 
-use crate::{dataset::DatasetSelector, error::QueryError};
+use crate::dataset::DatasetSelector;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
 /// Which `datasetId` instances a `drop`/`keep` purge removes (clause 4.5.5).
@@ -71,39 +71,9 @@ impl PurgeMode {
     }
 }
 
-/// Parse the comma-separated `drop` / `keep` parameter value.
-///
-/// Clause 5.6.21 names attributes, so a value outside the clause 4.6.2 name
-/// grammar cannot name one and the request is rejected rather than silently
-/// purging nothing.
-///
-/// # Errors
-///
-/// Returns [`QueryError::AttributeNameInvalid`] when an entry is outside the
-/// clause 4.6.2 attribute-name grammar.
-pub fn parse_attribute_list(raw: &str) -> Result<Vec<AttributeName>, QueryError> {
-    raw.split(',')
-        .map(|entry| entry.trim().parse().map_err(QueryError::AttributeNameInvalid))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn a_comma_separated_list_yields_one_name_per_entry() {
-        let parsed = parse_attribute_list("speed, colour").expect("parses");
-        let rendered: Vec<&str> = parsed.iter().map(AttributeName::as_str).collect();
-        assert_eq!(rendered, vec!["speed", "colour"]);
-    }
-
-    #[test]
-    fn a_value_outside_the_attribute_name_grammar_is_rejected() {
-        let error = parse_attribute_list("speed,bad name").expect_err("must reject");
-        assert!(matches!(error, QueryError::AttributeNameInvalid { .. }), "got {error:?}");
-    }
 
     /// The unfiltered scope removes the whole attribute, which is what
     /// preserves the clause 5.6.21 default.

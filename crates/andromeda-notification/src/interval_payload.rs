@@ -13,13 +13,18 @@ use crate::{
         carried_entities::{CarriedShape, NotifiedLinks, carried_entities},
         compaction::compact_notified_state,
         entity_instants::{ExpiryStamp, notified_instants},
-        join::{PeriodicJoin, linked_attribute_index, periodic_linked_graph},
         notified_entity::NotifiedEntity,
         selection::{Selection, SelectionRule},
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::{port::reader::EntityReader, query::EntityQueryService};
+use andromeda_entity::{
+    port::reader::EntityReader,
+    query::{
+        EntityQueryService,
+        notification_join::{NotificationJoin, linked_attribute_index, notification_linked_graph},
+    },
+};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_linked_retrieval::{join::RetrievingJoin, narrowing::list::ListInForce};
 use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
@@ -33,6 +38,7 @@ use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_render::{
     notification_data::DataShape,
     notification_entity::TargetSpelling,
+    notification_language::NotificationLanguage,
     notified_changes::HeldAttributes,
     structural_projection::StructuralProjection,
 };
@@ -89,13 +95,13 @@ impl PeriodicPayload<'_> {
         }
         let linked = match RetrievingJoin::from_mode(sub.notification.join) {
             Some(_) => {
-                let join = PeriodicJoin {
+                let join = NotificationJoin {
                     target: self.target,
                     join_level: sub.notification.effective_join_level(),
                     sys_attrs,
                     context: &context,
                 };
-                periodic_linked_graph(self.entity_query, &roots, join).await
+                notification_linked_graph(self.entity_query, &roots, join).await
             }
             None => None,
         };
@@ -115,6 +121,7 @@ impl PeriodicPayload<'_> {
                 previous: None,
             })
             .collect();
+        let language = sub.delivery.lang.as_ref().map(NotificationLanguage::of);
         let shape = CarriedShape {
             format: sub.notification.format.unwrap_or_default(),
             join: sub.notification.join,
@@ -124,6 +131,7 @@ impl PeriodicPayload<'_> {
             projection: StructuralProjection::from(&projection),
             list: rule.list,
             conformance: sub.delivery.ngsild_conformance,
+            language: language.as_ref(),
         };
         let links = indexed.as_ref().map(|(graph, index)| NotifiedLinks { graph, index });
         carried_entities(&notified, links, shape, data)

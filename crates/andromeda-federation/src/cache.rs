@@ -129,14 +129,16 @@ mod tests {
         source_continuation::SourceContinuation,
     };
     use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+    use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use serde_json::{Value, json};
-    use std::time::Duration;
+    use serde_json::json;
+    use std::{sync::Arc, time::Duration};
     use url::Url;
 
-    fn response(body: Value) -> ForwardedResponse {
+    fn response(body: &str) -> ForwardedResponse {
         ForwardedResponse {
-            body,
+            body: Arc::from(body.as_bytes()),
+            naming: Box::new(ContextSpec::none()),
             warnings: Vec::new(),
             entity_map: None,
             continuation: SourceContinuation::Complete,
@@ -170,9 +172,9 @@ mod tests {
         let registration = registration(Some("PT10S"), "2024-01-01T00:00:00Z");
         let key = CacheKey::new(&registration, &url(), None);
         assert!(cache.lookup(&key).is_none());
-        cache.store(key.clone(), &response(json!([{"id": "urn:ngsi-ld:Vehicle:1"}])), Duration::from_secs(10)); // clone: looked up below
+        cache.store(key.clone(), &response(r#"[{"id":"urn:ngsi-ld:Vehicle:1"}]"#), Duration::from_secs(10)); // clone: looked up below
         let hit = cache.lookup(&key).expect("hit");
-        pretty_assertions::assert_eq!(hit.body, json!([{"id": "urn:ngsi-ld:Vehicle:1"}]));
+        pretty_assertions::assert_eq!(&*hit.body, br#"[{"id":"urn:ngsi-ld:Vehicle:1"}]"#.as_slice());
         assert!(matches!(hit.warnings.as_slice(), [NgsiLdWarning::ResponseIsStale(_)]));
     }
 
@@ -181,7 +183,7 @@ mod tests {
         let cache = ForwardedGetCache::new(8);
         let registration = registration(Some("PT10S"), "2024-01-01T00:00:00Z");
         let key = CacheKey::new(&registration, &url(), None);
-        cache.store(key.clone(), &response(json!([])), Duration::ZERO); // clone: looked up below
+        cache.store(key.clone(), &response("[]"), Duration::ZERO); // clone: looked up below
         assert!(cache.lookup(&key).is_none());
         assert!(cache.entries.is_empty());
     }
@@ -191,7 +193,7 @@ mod tests {
         let cache = ForwardedGetCache::new(8);
         let before = registration(Some("PT10S"), "2024-01-01T00:00:00Z");
         let after = registration(Some("PT10S"), "2024-06-01T00:00:00Z");
-        cache.store(CacheKey::new(&before, &url(), None), &response(json!([])), Duration::from_secs(10));
+        cache.store(CacheKey::new(&before, &url(), None), &response("[]"), Duration::from_secs(10));
         assert!(cache.lookup(&CacheKey::new(&after, &url(), None)).is_none());
     }
 
@@ -205,8 +207,8 @@ mod tests {
             &Url::parse("https://peer.example.org/ngsi-ld/v1/entities?type=Car").expect("valid URL"),
             None,
         );
-        cache.store(first, &response(json!([])), Duration::from_secs(10));
-        cache.store(second.clone(), &response(json!([])), Duration::from_secs(10)); // clone: looked up below
+        cache.store(first, &response("[]"), Duration::from_secs(10));
+        cache.store(second.clone(), &response("[]"), Duration::from_secs(10)); // clone: looked up below
         assert!(cache.lookup(&second).is_none());
         pretty_assertions::assert_eq!(cache.entries.len(), 1);
     }

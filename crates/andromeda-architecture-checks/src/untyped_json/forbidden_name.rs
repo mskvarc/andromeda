@@ -16,7 +16,8 @@ const SERDE_JSON_TREE_MEMBERS: [&str; 5] = ["Value", "Map", "json", "to_value", 
 pub(crate) enum UntypedTree {
     /// `serde_json::Value` and the functions and macro that build or convert it.
     SerdeJson,
-    /// The JSON processor's `jstrict` tree, re-exported as `jsonld_syntax::Value`.
+    /// The JSON processor's `jstrict` tree, re-exported as `jsonld_syntax::Value`
+    /// and again as `jsonld::syntax::Value`.
     Processor,
 }
 
@@ -39,7 +40,7 @@ pub(crate) fn untyped_tree_of(segments: &[String]) -> Option<UntypedTree> {
     let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
     match segments.as_slice() {
         ["serde_json", member, ..] | ["serde_json", "value", member, ..] if SERDE_JSON_TREE_MEMBERS.contains(member) => Some(UntypedTree::SerdeJson),
-        ["jstrict", ..] | ["jsonld_syntax", "Value", ..] => Some(UntypedTree::Processor),
+        ["jstrict", ..] | ["jsonld_syntax", "Value", ..] | ["jsonld", "syntax", "Value", ..] => Some(UntypedTree::Processor),
         _ => None,
     }
 }

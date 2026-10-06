@@ -18,7 +18,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-problem-details",
-        "andromeda-ngsi-ld-render",
         "andromeda-ngsi-ld-request",
         "andromeda-snapshot",
         "andromeda-temporal",

@@ -107,12 +107,6 @@ impl ResponseMediaType {
         }
     }
 
-    /// Whether the `@context` belongs in the response body.
-    #[must_use]
-    pub const fn include_context_in_body(&self) -> bool {
-        matches!(self, ResponseMediaType::JsonLd)
-    }
-
     /// Where clause 6.3.4 places this media type in the list it calls
     /// significant, counting from the front.
     ///
@@ -220,13 +214,6 @@ mod tests {
             pretty_assertions::assert_eq!(variant.media_type(), media_type);
             pretty_assertions::assert_eq!(variant.as_str(), media_type.to_string());
         }
-    }
-
-    #[test]
-    fn only_json_ld_carries_the_context_in_the_body() {
-        assert!(!ResponseMediaType::Json.include_context_in_body());
-        assert!(ResponseMediaType::JsonLd.include_context_in_body());
-        assert!(!ResponseMediaType::GeoJson.include_context_in_body());
     }
 
     #[test]

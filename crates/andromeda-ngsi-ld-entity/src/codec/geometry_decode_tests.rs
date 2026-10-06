@@ -46,7 +46,7 @@ fn expanded_node(geometry_type: &str, coordinates: &Value) -> Value {
 
 /// The geometry a compact `GeoJSON` object reads as.
 fn compact(value: &Value) -> GeometryForm {
-    GeometryForm::from_compact_value(value).expect("compact GeoJSON")
+    GeometryForm::from_compact_text(&value.to_string()).expect("compact GeoJSON")
 }
 
 #[test]

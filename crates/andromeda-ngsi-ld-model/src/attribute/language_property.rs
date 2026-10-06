@@ -1,7 +1,7 @@
 //! The `LanguageProperty` attribute family and its language map (ETSI GS CIM 009 clause 5.2.32).
 
 use crate::attribute::common_fields::CommonAttributeFields;
-use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
+use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
 use derive_more::{Deref, DerefMut, From};
 use indexmap::IndexMap;
 use langtag::{InvalidLangTag, LangTagBuf};
@@ -92,7 +92,7 @@ pub struct LanguageProperty {
     /// Language-indexed string map.
     pub language_map: LanguageMap,
     /// Fixed JSON-LD datatype for language-tagged strings.
-    pub value_type: Option<NgsiLdReference>,
+    pub value_type: Option<CoercedTerm>,
     /// Previous language map emitted in notifications when `showChanges` is active.
     pub previous_language_map: Option<LanguageMap>,
     /// Members shared with every other attribute family.
@@ -103,7 +103,7 @@ pub struct LanguageProperty {
 #[cfg(test)]
 mod tests {
     use crate::attribute::{instance::Attribute, language_property::LanguageProperty};
-    use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
+    use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
 
     #[test]
     fn language_property_round_trip_supports_previous_language_map() {
@@ -118,7 +118,7 @@ mod tests {
             panic!("expected LanguageProperty");
         };
         assert!(property.previous_language_map.is_some());
-        pretty_assertions::assert_eq!(property.value_type.as_ref().map(NgsiLdReference::as_str), Some("langString"));
+        pretty_assertions::assert_eq!(property.value_type.as_ref().map(CoercedTerm::as_str), Some("langString"));
     }
 
     #[test]

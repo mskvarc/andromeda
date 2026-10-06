@@ -42,11 +42,14 @@ pub struct HealthCheckDetails {
 mod tests {
     use crate::{
         component::{ComponentDetail, ComponentName},
+        details::ComponentDetails,
+        mqtt_details::MqttDetails,
+        postgresql_details::PostgreSqlDetails,
         report::{HealthCheckDetails, HealthCheckResponse, HealthCheckType},
         status::HealthStatus,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use serde_json::{Value, json};
+    use serde_json::json;
     use std::collections::BTreeMap;
     use urn_rs::UrnBuilder;
 
@@ -55,28 +58,28 @@ mod tests {
             .build()
             .expect("a well-formed URN");
 
-        let mut pg_details = BTreeMap::new();
-        pg_details.insert("poolSize".to_owned(), Value::from(5));
-        pg_details.insert("idleConnections".to_owned(), Value::from(3));
-        pg_details.insert("pingLatencyMs".to_owned(), Value::from(2));
-
-        let mut mqtt_details = BTreeMap::new();
-        mqtt_details.insert("activeConnections".to_owned(), Value::from(1));
-        mqtt_details.insert("unhealthyConnections".to_owned(), Value::from(0));
-
         let mut components = BTreeMap::new();
         components.insert(
             ComponentName::PostgreSql,
             ComponentDetail {
                 status: HealthStatus::Up,
-                details: pg_details,
+                details: Some(ComponentDetails::PostgreSql(PostgreSqlDetails::Reachable {
+                    idle_connections: 3,
+                    ping_latency_ms: 2,
+                    pool_size: 5,
+                })),
             },
         );
         components.insert(
             ComponentName::Mqtt,
             ComponentDetail {
                 status: HealthStatus::Up,
-                details: mqtt_details,
+                details: Some(ComponentDetails::Mqtt(MqttDetails {
+                    active_connections: 1,
+                    connections: Vec::new(),
+                    degraded_connections: 0,
+                    unhealthy_connections: 0,
+                })),
             },
         );
 
@@ -104,6 +107,7 @@ mod tests {
                         "status": "up",
                         "details": {
                             "activeConnections": 1,
+                            "degradedConnections": 0,
                             "unhealthyConnections": 0
                         }
                     },

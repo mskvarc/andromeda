@@ -7,11 +7,18 @@
 //! dropped.
 
 use crate::core_aliases::core_term_aliases;
-use andromeda_jsonld::engine::{context_compactor::ContextCompactor, expanded_input::ExpandedInput, options::CompactOptions};
+use andromeda_json_literal::piece::JsonPiece;
+use andromeda_jsonld::{
+    context_spec::ContextSpec,
+    engine::{context_compactor::ContextCompactor, expanded_text::ExpandedText, options::CompactOptions, processor::JsonLdEngine},
+};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_representation::{compact_node::aliased_node::AliasedNode, sys_attrs::SysAttrsInclusion};
+use andromeda_ngsi_ld_representation::{
+    compact_node::{CompactNode, NodeShape, aliased_node::AliasedNode},
+    sys_attrs::SysAttrsInclusion,
+};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -25,20 +32,21 @@ pub(crate) async fn processor_entity(
     now: DateTime<Utc>,
 ) -> Result<Entity, String> {
     let expanded = match sys_attrs {
-        SysAttrsInclusion::Include => stored.clone(), // clone: the processor consumes a copy, the corpus keeps the stored document
+        SysAttrsInclusion::Include => serde_json::to_vec(stored).expect("the stored document renders"),
         SysAttrsInclusion::Strip => {
             let mut state = EntityState::from_slice(&serde_json::to_vec(stored).expect("the stored document renders")).expect("the stored document is a state");
             state.strip_attribute_instants();
-            serde_json::to_value(&state).expect("the stripped state renders")
+            serde_json::to_vec(&state).expect("the stripped state renders")
         }
     };
     let compacted = compactor
-        .compact(ExpandedInput::Canonical(expanded), CompactOptions::default())
+        .compact(ExpandedText::Canonical(&expanded), CompactOptions::default())
         .await
         .map_err(|error| error.to_string())?;
-    let object = match &compacted {
-        Value::Array(items) => items.first().unwrap_or(&compacted),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => &compacted,
+    let compacted = JsonPiece::new(&compacted);
+    let object = match compacted.shape() {
+        NodeShape::Array(items) => items.into_iter().next().unwrap_or(compacted),
+        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => compacted,
     };
     let aliases = core_term_aliases(compactor.processed_context().await.map_err(|error| error.to_string())?.active_context());
     let mut entity = <Entity>::from_node(AliasedNode::new(object, &aliases)).map_err(|error| error.to_string())?;
@@ -49,12 +57,9 @@ pub(crate) async fn processor_entity(
     Ok(entity)
 }
 
-/// The compact JSON the processor gives for an assembled expanded document,
-/// or the rendering of its failure.
-pub(crate) async fn processor_document(compactor: &ContextCompactor<'_>, document: &Value) -> Result<Value, String> {
-    compactor
-        // clone: the processor consumes the document the corpus keeps
-        .compact(ExpandedInput::Assembled(document.clone()), CompactOptions::default())
-        .await
-        .map_err(|error| error.to_string())
+/// The processor's expansion of `entity` under `spec`, as JSON.
+pub(crate) async fn expanded(engine: &JsonLdEngine, entity: &Value, spec: &ContextSpec) -> Value {
+    let context = engine.expansion_context(spec).await.expect("the context processes");
+    let text = serde_json::to_vec(entity).expect("the entity renders");
+    context.expand_text(engine, &text).await.expect("the entity expands").into_serde_json()
 }

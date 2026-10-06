@@ -56,6 +56,16 @@ pub enum StoredSubscriptionError {
     /// The `notification` column does not deserialize.
     #[error("the stored subscription notification parameters do not deserialize: {0}")]
     Notification(#[source] serde_json::Error),
+    /// The `notification` column holds the JSON `null` literal, so the
+    /// subscription has no notification parameters.
+    #[error("the stored subscription holds no notification parameters")]
+    NotificationAbsent,
+    /// The `geo_q` column does not deserialize.
+    #[error("the stored subscription geoQ does not deserialize: {0}")]
+    GeoQ(#[source] serde_json::Error),
+    /// The `temporal_q` column does not deserialize.
+    #[error("the stored subscription temporalQ does not deserialize: {0}")]
+    TemporalQ(#[source] serde_json::Error),
     /// The `lang` column is not a language tag.
     #[error("a stored subscription lang is not a language tag: {0}")]
     Lang(#[source] InvalidLangTag<String>),

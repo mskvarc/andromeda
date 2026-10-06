@@ -8,6 +8,7 @@
 //! scoped contexts, `@nest`, map containers. The ETSI test-suite context is
 //! read from the copy the JSON-LD crate keeps; nothing is fetched.
 
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
 use serde_json::{Value, json};
 
@@ -38,10 +39,10 @@ pub(crate) struct TestContext {
 }
 
 /// A body context.
-fn body(name: &'static str, decision: Decision, context: Value) -> TestContext {
+fn body(name: &'static str, decision: Decision, context: &Value) -> TestContext {
     TestContext {
         name,
-        spec: ContextSpec::from_body(context),
+        spec: ContextSpec::from_body(JsonLiteral::admit(&context.to_string()).expect("an admissible context")),
         decision,
     }
 }
@@ -60,7 +61,7 @@ pub(crate) fn test_contexts() -> Vec<TestContext> {
 fn term_contexts() -> Vec<TestContext> {
     let etsi: Value = serde_json::from_str(ETSI_COMPOUND_CONTEXT).expect("the ETSI compound context is JSON");
     vec![
-        body("etsi-compound", Decision::Walk, etsi.get("@context").cloned().unwrap_or(Value::Null)),
+        body("etsi-compound", Decision::Walk, &etsi.get("@context").cloned().unwrap_or(Value::Null)),
         TestContext {
             name: "none",
             spec: ContextSpec::none(),
@@ -74,23 +75,23 @@ fn term_contexts() -> Vec<TestContext> {
         body(
             "terms",
             Decision::Walk,
-            json!({
+            &json!({
                 "Vehicle": default_context("Vehicle"),
                 "brandName": "http://example.org/vehicle/brandName",
                 "speed": default_context("speed"),
                 "isParked": {"@type": "@id", "@id": default_context("isParked")}
             }),
         ),
-        body("vocab", Decision::Walk, json!({"@vocab": "https://example.org/vocab/"})),
+        body("vocab", Decision::Walk, &json!({"@vocab": "https://example.org/vocab/"})),
         body(
             "prefixes",
             Decision::Walk,
-            json!({"ex": "http://example.org/vehicle/", "def": DEFAULT_CONTEXT, "geo": "https://purl.org/geojson/vocab#"}),
+            &json!({"ex": "http://example.org/vehicle/", "def": DEFAULT_CONTEXT, "geo": "https://purl.org/geojson/vocab#"}),
         ),
         body(
             "id-coerced",
             Decision::Walk,
-            json!({
+            &json!({
                 "isParked": {"@id": default_context("isParked"), "@type": "@id"},
                 "owner": {"@id": default_context("street"), "@type": "@id"},
                 "ref": {"@id": default_context("ref"), "@type": "@vocab"}
@@ -99,7 +100,7 @@ fn term_contexts() -> Vec<TestContext> {
         body(
             "datatype-coerced",
             Decision::Walk,
-            json!({
+            &json!({
                 "testedAt": {"@id": default_context("brandName"), "@type": "https://uri.etsi.org/ngsi-ld/DateTime"},
                 "count": {"@id": default_context("count"), "@type": "http://www.w3.org/2001/XMLSchema#integer"}
             }),
@@ -107,7 +108,7 @@ fn term_contexts() -> Vec<TestContext> {
         body(
             "json-coerced",
             Decision::Walk,
-            json!({
+            &json!({
                 "j": {"@id": "https://uri.etsi.org/ngsi-ld/hasJSON", "@type": "@json"},
                 "config": {"@id": default_context("config"), "@type": "@json"},
                 "payload": {"@id": default_context("payload"), "@type": "@json"}
@@ -122,7 +123,7 @@ fn container_contexts() -> Vec<TestContext> {
         body(
             "language-container",
             Decision::Walk,
-            json!({
+            &json!({
                 "vals": {"@id": "https://uri.etsi.org/ngsi-ld/hasValue", "@container": "@language"},
                 "street": {"@id": default_context("street"), "@container": "@language"},
                 "label": {"@id": default_context("label"), "@container": ["@language", "@set"]}
@@ -131,7 +132,7 @@ fn container_contexts() -> Vec<TestContext> {
         body(
             "list-container",
             Decision::Walk,
-            json!({
+            &json!({
                 "seq": {"@id": default_context("seq"), "@container": "@list"},
                 "readings": {"@id": default_context("readings"), "@container": "@list"}
             }),
@@ -139,14 +140,14 @@ fn container_contexts() -> Vec<TestContext> {
         body(
             "set-container",
             Decision::Walk,
-            json!({
+            &json!({
                 "speed": {"@id": default_context("speed"), "@container": "@set"},
                 "objs": {"@id": "https://uri.etsi.org/ngsi-ld/hasObject", "@type": "@id", "@container": "@set"},
                 "tps": {"@id": "@type", "@container": "@set"}
             }),
         ),
-        body("default-language", Decision::Walk, json!({"@language": "en", "@direction": "ltr"})),
-        body("base", Decision::Walk, json!({"@base": "http://example.org/entities/"})),
+        body("default-language", Decision::Walk, &json!({"@language": "en", "@direction": "ltr"})),
+        body("base", Decision::Walk, &json!({"@base": "http://example.org/entities/"})),
     ]
 }
 
@@ -154,22 +155,22 @@ fn container_contexts() -> Vec<TestContext> {
 /// the processor.
 fn claiming_contexts() -> Vec<TestContext> {
     vec![
-        body("value-hijack", Decision::Walk, json!({"v": "https://uri.etsi.org/ngsi-ld/hasValue"})),
+        body("value-hijack", Decision::Walk, &json!({"v": "https://uri.etsi.org/ngsi-ld/hasValue"})),
         body(
             "family-hijack",
             Decision::Walk,
-            json!({"P": "https://uri.etsi.org/ngsi-ld/Property", "G": "https://uri.etsi.org/ngsi-ld/GeoProperty"}),
+            &json!({"P": "https://uri.etsi.org/ngsi-ld/Property", "G": "https://uri.etsi.org/ngsi-ld/GeoProperty"}),
         ),
-        body("point-hijack", Decision::Walk, json!({"Pt": "https://purl.org/geojson/vocab#Point"})),
+        body("point-hijack", Decision::Walk, &json!({"Pt": "https://purl.org/geojson/vocab#Point"})),
         body(
             "coordinates-hijack",
             Decision::Processor,
-            json!({"c": {"@id": "https://purl.org/geojson/vocab#coordinates", "@container": "@list"}}),
+            &json!({"c": {"@id": "https://purl.org/geojson/vocab#coordinates", "@container": "@list"}}),
         ),
         body(
             "protected-redefinition",
             Decision::Walk,
-            json!([
+            &json!([
                 {"@protected": true, "speed": "http://example.org/protected/speed"},
                 {"speed": "http://example.org/redefined/speed"}
             ]),
@@ -177,22 +178,22 @@ fn claiming_contexts() -> Vec<TestContext> {
         body(
             "type-scoped",
             Decision::Processor,
-            json!({"Vehicle": {"@id": default_context("Vehicle"), "@context": {"speed": "http://example.org/scoped/speed"}}}),
+            &json!({"Vehicle": {"@id": default_context("Vehicle"), "@context": {"speed": "http://example.org/scoped/speed"}}}),
         ),
         body(
             "property-scoped",
             Decision::Processor,
-            json!({"address": {"@id": default_context("address"), "@context": {"street": "http://example.org/scoped/street"}}}),
+            &json!({"address": {"@id": default_context("address"), "@context": {"street": "http://example.org/scoped/street"}}}),
         ),
         body(
             "nest",
             Decision::Processor,
-            json!({"n": "@nest", "speed": {"@id": default_context("speed"), "@nest": "n"}}),
+            &json!({"n": "@nest", "speed": {"@id": default_context("speed"), "@nest": "n"}}),
         ),
         body(
             "index-container",
             Decision::Processor,
-            json!({"speed": {"@id": default_context("speed"), "@container": "@index"}}),
+            &json!({"speed": {"@id": default_context("speed"), "@container": "@index"}}),
         ),
     ]
 }

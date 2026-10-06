@@ -17,16 +17,16 @@ use andromeda_http_response::{
     problem_response::ProblemResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_request::entity::GetEntityParams;
 use axum::http::Uri as HttpUri;
 use tracing::warn;
 
 /// What the distributed part of a retrieval brought back (clause 5.7.1.4).
 pub(crate) struct ForwardedRetrieval {
-    /// The entity, merged from every source that held it.
-    pub(crate) entity: Option<Entity>,
+    /// The entity, merged on the model from every source that held it.
+    pub(crate) entity: Option<ReceivedState>,
     /// The clause 6.3.17 warnings of both forwarding phases.
     pub(crate) warnings: Vec<NgsiLdWarning>,
     /// What each source contributed to the map of the request (clause 5.2.39).
@@ -66,7 +66,7 @@ impl RetrieveForwarding<'_> {
     /// Returns the answer of the one proxied source that declined the
     /// representation (Table 6.4.3.2-3), which is the operation's answer, and
     /// the 503 of a registration store that is saturated or unreachable.
-    pub(crate) async fn run(&self, local_entity: Option<Entity>) -> Result<ForwardedRetrieval, ProblemResponse> {
+    pub(crate) async fn run(&self, local_entity: Option<ReceivedState>) -> Result<ForwardedRetrieval, ProblemResponse> {
         let primary = self.phase(CsrModeFilter::ExcludeAuxiliary).await?;
         if let Some(status) = primary.sources.single_source_status {
             return Err(single_source_declined(status, self.uri));

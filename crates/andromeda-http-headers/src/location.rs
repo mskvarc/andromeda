@@ -16,10 +16,6 @@ impl Location {
         let value = value.as_ref();
         (!value.is_empty()).then(|| HeaderValue::from_str(value).ok()).flatten().map(Self)
     }
-    /// Borrow the encoded URI-reference.
-    pub const fn as_header_value(&self) -> &HeaderValue {
-        &self.0
-    }
 }
 
 impl headers::Header for Location {

@@ -25,10 +25,10 @@ use crate::{
     registry_invariant::RegistryInvariant,
     store::ContextRegistryStore,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::compound_context_host::WrapperUse;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use moka::sync::Cache;
-use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 
 /// How many stored identifiers one tenant remembers at most.
@@ -71,7 +71,7 @@ impl ImplicitContextHosting {
     /// Returns [`ContextRegistryError::Persistence`] when the store cannot
     /// record or read the Context, and [`ContextRegistryError::Invariant`] when
     /// an identifier cannot be built or a freshly minted one is already held.
-    pub async fn host(&self, document: &Value, locator: &dyn HostedContextLocator, usage: WrapperUse) -> Result<JsonLdContextId, ContextRegistryError> {
+    pub async fn host(&self, document: &JsonLiteral, locator: &dyn HostedContextLocator, usage: WrapperUse) -> Result<JsonLdContextId, ContextRegistryError> {
         let policy = InsertionPolicy::over(self.store.as_ref(), locator);
         let identity = ContentIdentity::of(document)?;
         // A document with no canonical form cannot be shared, so it is stored
@@ -122,6 +122,7 @@ mod tests {
         store::{ContextRegistryFuture, ContextRegistryStore},
         stored_context::StoredContext,
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{compound_context_host::WrapperUse, context_cache::DownloadedContext};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
     use serde_json::{Value, json};
@@ -131,6 +132,10 @@ mod tests {
     };
     use tokio::time::sleep;
     use url::Url;
+
+    fn literal(value: &Value) -> JsonLiteral {
+        JsonLiteral::admit(&value.to_string()).expect("an admissible document")
+    }
 
     /// A store that accepts every insert and records the serving URL of each.
     #[derive(Default)]
@@ -148,7 +153,7 @@ mod tests {
         fn insert<'a>(
             &'a self,
             _identifier: &'a JsonLdContextId,
-            _payload: &'a Value,
+            _payload: &'a JsonLiteral,
             serving_url: &'a Url,
             _kind: ContextCreationKind,
         ) -> ContextRegistryFuture<'a, ContextInsertion> {
@@ -192,8 +197,8 @@ mod tests {
         }
     }
 
-    fn wrapper() -> Value {
-        json!({ "@context": ["https://example.com/a.jsonld", "https://example.com/b.jsonld"] })
+    fn wrapper() -> JsonLiteral {
+        literal(&json!({ "@context": ["https://example.com/a.jsonld", "https://example.com/b.jsonld"] }))
     }
 
     #[tokio::test]

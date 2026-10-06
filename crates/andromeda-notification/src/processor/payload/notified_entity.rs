@@ -15,6 +15,7 @@ use andromeda_linked_retrieval::{
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_render::{
     notification_entity::{NotificationEntity, StampedInstants, TargetSpelling},
+    notification_language::NotificationLanguage,
     notified_changes::{DeletedInstances, HeldAttributes, NotifiedChanges},
     structural_projection::StructuralProjection,
     version::fallback::VersionFallback,
@@ -27,7 +28,7 @@ use std::sync::Arc;
 /// `notification.format`, the spelling of Relationship targets, and the clause
 /// 4.3.6.8 fallback of its `ngsildConformance`.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct WrittenShape {
+pub(crate) struct WrittenShape<'a> {
     /// The `notification.format`.
     pub(crate) format: ResponseFormat,
     /// How Relationship targets are spelled.
@@ -35,6 +36,8 @@ pub(crate) struct WrittenShape {
     /// The fallback every entity is amended by, if the subscription names an
     /// older version.
     pub(crate) fallback: Option<VersionFallback>,
+    /// The subscription's `lang`, which every entity is reduced under.
+    pub(crate) language: Option<&'a NotificationLanguage>,
 }
 
 /// The instances a change deleted, as the state before it held them.
@@ -82,12 +85,13 @@ impl NotifiedEntity {
     /// into it.
     pub(crate) fn notified<'a>(
         &'a self,
-        shape: WrittenShape,
+        shape: WrittenShape<'a>,
         join: Option<InlineCursor<'a, TypedEntities>>,
         projection: StructuralProjection<'a>,
     ) -> NotificationEntity<'a> {
         let notified = NotificationEntity::new(&self.entity, &self.stamped, shape.format, shape.targets)
             .with_projection(projection)
+            .with_language(shape.language)
             .with_fallback(shape.fallback);
         let notified = match self.changes() {
             Some(changes) => notified.with_changes(changes),
@@ -102,6 +106,8 @@ impl NotifiedEntity {
 
 /// One Linked Entity a flat join appends (clause 4.5.23.3), to be written as
 /// `shape` says, by the rule its first encounter decided.
-pub(crate) const fn linked_entity<'a>(linked: &FlatEntity<'a, TypedEntities>, shape: WrittenShape) -> NotificationEntity<'a> {
-    NotificationEntity::linked(linked, shape.format, shape.targets).with_fallback(shape.fallback)
+pub(crate) const fn linked_entity<'a>(linked: &FlatEntity<'a, TypedEntities>, shape: WrittenShape<'a>) -> NotificationEntity<'a> {
+    NotificationEntity::linked(linked, shape.format, shape.targets)
+        .with_fallback(shape.fallback)
+        .with_language(shape.language)
 }

@@ -27,7 +27,7 @@
 //! The policy and its consequences are set out in `docs/timestamp-precision.md`.
 
 use crate::fractional_seconds::{FractionalSecondsError, accept_comma_decimal_separator, reject_excess_fractional_digits};
-use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, SecondsFormat, Timelike, Utc, format::ParseErrorKind};
+use chrono::{DateTime, NaiveDate, NaiveTime, SecondsFormat, Timelike, Utc, format::ParseErrorKind};
 use derive_more::{AsRef, Deref, Display};
 use std::str::FromStr;
 use thiserror::Error;
@@ -168,23 +168,11 @@ fn storable_floor() -> Option<DateTime<Utc>> {
     Some(NaiveDate::from_ymd_opt(year, month, day)?.and_time(NaiveTime::MIN).and_utc())
 }
 
-/// The calendar year of the storable floor, for callers reporting the accepted range.
-#[must_use]
-pub const fn earliest_storable_year() -> i32 {
-    JULIAN_DAY_ZERO.0
-}
-
-/// The calendar year of the storable ceiling, which is `chrono`'s own year ceiling.
-#[must_use]
-pub fn latest_storable_year() -> i32 {
-    DateTime::<Utc>::MAX_UTC.year()
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
         fractional_seconds::FractionalSecondsError,
-        ngsi_ld_date_time::{NgsiLdDateTime, NgsiLdDateTimeError, earliest_storable_year, latest_storable_year},
+        ngsi_ld_date_time::{NgsiLdDateTime, NgsiLdDateTimeError},
     };
     use chrono::{DateTime, NaiveDate, NaiveTime, Timelike, Utc};
 
@@ -356,12 +344,6 @@ mod tests {
             matches!(error, NgsiLdDateTimeError::FractionalSeconds(FractionalSecondsError::AmbiguousSeparator)),
             "got {error:?}"
         );
-    }
-
-    #[test]
-    fn the_reported_storable_years_bracket_the_accepted_range() {
-        pretty_assertions::assert_eq!(earliest_storable_year(), -4713);
-        assert!(latest_storable_year() > 262_000, "got {}", latest_storable_year());
     }
 
     #[test]

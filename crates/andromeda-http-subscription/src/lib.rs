@@ -25,6 +25,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-response",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-problem-details",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-render",

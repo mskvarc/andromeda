@@ -265,13 +265,6 @@ impl MqttTransportPool {
         summaries
     }
 
-    /// Whether every pooled connection is answering, which an empty pool
-    /// vacuously is.
-    #[must_use]
-    pub fn all_healthy(&self) -> bool {
-        self.connections.iter().all(|entry| entry.value().state.is_healthy())
-    }
-
     /// Disconnect every pooled connection.
     pub async fn shutdown_all(&self) {
         let connections: Vec<_> = self.connections.iter().map(|entry| Arc::clone(entry.value())).collect();
@@ -385,12 +378,6 @@ mod tests {
 
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(dialer.calls.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn a_pool_that_has_opened_nothing_is_healthy() {
-        let pool = MqttTransportPool::new(MqttPoolConfig::default(), Arc::new(RumqttcDialer));
-        assert!(pool.all_healthy());
     }
 
     #[tokio::test]

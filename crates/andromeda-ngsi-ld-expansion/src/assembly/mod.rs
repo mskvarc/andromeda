@@ -10,6 +10,7 @@ pub mod geometry_node;
 pub mod instance;
 pub mod member_value;
 pub mod null_sentinel;
+pub mod temporal_document;
 pub mod written_value;
 
 use crate::{

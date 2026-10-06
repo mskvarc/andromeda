@@ -1,7 +1,7 @@
 //! Persistence-shaped row structs for the `jsonld_contexts` table.
 
+use andromeda_json_literal::JsonLiteral;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use sqlx::types::Json;
 
 /// Full metadata row (detailed projection).
@@ -24,7 +24,7 @@ pub(crate) struct ContextMetadataRow {
     /// Access counter.
     pub number_of_hits: i64,
     /// Arbitrary extra info JSON column.
-    pub extra_info: Option<Value>,
+    pub extra_info: Option<Json<JsonLiteral>>,
 }
 
 /// Summary row (id + url only).
@@ -40,7 +40,7 @@ pub(crate) struct ContextSummaryRow {
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct FreshContextRow {
     /// The stored `@context` document.
-    pub payload: Json<Value>,
+    pub payload: Json<JsonLiteral>,
     /// When the row lapses, when it has an expiry.
     pub expires_at: Option<DateTime<Utc>>,
     /// The URL the row is keyed by, if any.

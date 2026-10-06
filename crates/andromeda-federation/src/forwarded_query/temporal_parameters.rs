@@ -33,38 +33,40 @@ impl ForwardedQuery {
     }
 
     /// The representation and aggregation the client asked for.
+    ///
+    /// An aggregated representation (clause 4.5.19) is asked of the source as
+    /// it was asked of this broker: an aggregate of a part is merged as the
+    /// aggregate it is. Every other representation is asked as the normalized
+    /// instances of the window (clause 4.5.7), whatever `format` or `options`
+    /// token the client used: the answers of every holder are gathered as
+    /// instances and written once, in the representation the client asked for,
+    /// so `temporalValues` pairs are never merged as arrays.
     fn push_requested_representation(&mut self, params: &TemporalQueryParameters) {
+        let format = params.selected_format();
         self.push_optional(ForwardedParameter::LastN, params.last_n.map(|last_n| last_n.to_string()));
-        // Clause 6.3.12: `normalized` is the absence of a temporal `format`, not
-        // a value a source accepts. The grouped extension format is never
-        // forwarded (study §4.10): grouping is applied by this broker after the
-        // merge, so a source is asked for the plain aggregated representation and
-        // `aggrGroupBy` stays local.
-        self.push_optional(
-            ForwardedParameter::Format,
-            params
-                .format
-                .as_ref()
-                .and_then(WrittenValue::if_supported)
-                .filter(|format| **format != TemporalFormat::Normalized)
-                .map(|format| match format {
-                    TemporalFormat::GroupedValues => TemporalFormat::AggregatedValues.to_string(),
-                    TemporalFormat::Normalized | TemporalFormat::TemporalValues | TemporalFormat::AggregatedValues => format.to_string(),
-                }),
-        );
-        self.push_temporal_options(params);
-        self.push_optional(
-            ForwardedParameter::AggrMethods,
-            params
-                .aggr_methods
-                .as_deref()
-                .filter(|methods| !methods.is_empty())
-                .map(|methods| methods.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
-        );
-        self.push_optional(
-            ForwardedParameter::AggrPeriodDuration,
-            params.aggr_period_duration.map(|period| period.as_iso8601()),
-        );
+        match format {
+            // The grouped extension format is never forwarded (study section
+            // 4.10): grouping is applied by this broker after the merge, so a
+            // source is asked for the plain aggregated representation and
+            // `aggrGroupBy` stays local.
+            TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues => {
+                self.push(ForwardedParameter::Format, TemporalFormat::AggregatedValues.to_string());
+                self.push_optional(
+                    ForwardedParameter::AggrMethods,
+                    params
+                        .aggr_methods
+                        .as_deref()
+                        .filter(|methods| !methods.is_empty())
+                        .map(|methods| methods.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")),
+                );
+                self.push_optional(
+                    ForwardedParameter::AggrPeriodDuration,
+                    params.aggr_period_duration.map(|period| period.as_iso8601()),
+                );
+            }
+            TemporalFormat::Normalized | TemporalFormat::TemporalValues => {}
+        }
+        self.push_instance_representation(params);
     }
 
     /// The normalized instance representation, with the system times when the
@@ -81,25 +83,6 @@ impl ForwardedQuery {
         };
         if requested || positioned_on_a_system_time {
             self.push(ForwardedParameter::Options, SYS_ATTRS_OPTION.to_string());
-        }
-    }
-
-    /// The temporal `options` tokens: the representation a source answers in
-    /// has to be the one the local history is rendered in for the two to merge,
-    /// so the deprecated `options` spelling of the format travels as written.
-    fn push_temporal_options(&mut self, params: &TemporalQueryParameters) {
-        let Some(options) = params.options.as_ref().and_then(WrittenValue::if_supported) else {
-            return;
-        };
-        let mut tokens = Vec::new();
-        if let Some(format) = options.format {
-            tokens.push(format.to_string());
-        }
-        if options.sys_attrs == SysAttrsInclusion::Include {
-            tokens.push(SYS_ATTRS_OPTION.to_string());
-        }
-        if !tokens.is_empty() {
-            self.push(ForwardedParameter::Options, tokens.join(","));
         }
     }
 }
@@ -128,6 +111,17 @@ mod tests {
             requested.contains("aggrMethods=avg%2Cmax") && requested.contains("format=aggregatedValues"),
             "{requested}"
         );
+    }
+
+    /// A `temporalValues` read is asked of a source as the normalized instances
+    /// of the window, so the answers of every holder merge as instances.
+    #[test]
+    fn a_temporal_values_read_is_asked_as_instances() {
+        let requested = forwarded(
+            "timerel=after&timeAt=2020-01-01T00:00:00Z&format=temporalValues&lastN=3",
+            TemporalAnswer::AsRequested,
+        );
+        pretty_assertions::assert_eq!(requested, "timerel=after&timeAt=2020-01-01T00%3A00%3A00Z&lastN=3");
     }
 
     /// Clause 4.8: an instance carries its system times only when asked, so a

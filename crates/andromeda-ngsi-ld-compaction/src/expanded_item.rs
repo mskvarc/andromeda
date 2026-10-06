@@ -8,8 +8,12 @@
 //! own `@id`, and the larger nodes -- attribute instances, geometries,
 //! structured values -- stay borrowed from the model and are walked in place.
 
-use crate::{compacted::Compacted, compacted_mode::CompactedMode, undecidable::Undecidable};
-use andromeda_json_literal::JsonLiteral;
+use crate::{
+    compacted::{Compacted, ProcessorCompacted},
+    compacted_mode::CompactedMode,
+    undecidable::Undecidable,
+};
+use andromeda_json_literal::{JsonLiteral, processor_json::read_processor_json};
 use andromeda_ngsi_ld_entity::{
     document::instance_document::InstanceDocument,
     expanded_value::{ExpandedValue, ValueNode},
@@ -166,7 +170,7 @@ pub(crate) fn scalar_of<'a>(value: &Value<IriBuf>) -> Compacted<'a> {
             Literal::String(text) => Compacted::String(Box::from(text.as_str())),
         },
         Value::LangString(string) => Compacted::String(Box::from(string.as_str())),
-        Value::Json(json) => Compacted::from(json.clone()),
+        Value::Json(json) => read_processor_json(json.clone(), &mut ProcessorCompacted), // clone: the expanded item keeps its literal
     }
 }
 
@@ -206,9 +210,9 @@ fn json_value(json: &JsonLiteral) -> Result<Value<IriBuf>, Undecidable> {
 
 /// A number in the exact spelling the canonical codec writes it with.
 fn number_buf(number: &JsonNumber) -> Result<NumberBuf, Undecidable> {
-    serde_json::to_value(number)
-        .and_then(serde_json::from_value::<serde_json::Number>)
-        .map(NumberBuf::from)
+    serde_json::to_string(number)
+        .map_err(|_| Undecidable::UnrepresentableValue)?
+        .parse()
         .map_err(|_| Undecidable::UnrepresentableValue)
 }
 

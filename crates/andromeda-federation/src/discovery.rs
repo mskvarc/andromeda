@@ -3,7 +3,6 @@
 use crate::{
     FederationService,
     cache::Cacheability,
-    document_rewording::DocumentVocabulary,
     entity_read::own_loop_warning,
     error::FederationError,
     forwarded_names::ForwardedNames,
@@ -41,7 +40,9 @@ impl FederationService {
         } = request;
         if self.is_loop_detected(triggering.via) {
             return vec![ForwardedDiscoveryResult {
+                registration_id: None,
                 body: None,
+                naming: ContextSpec::none(),
                 warnings: vec![own_loop_warning()],
             }];
         }
@@ -92,30 +93,26 @@ impl FederationService {
                     }
                     Err(error) => Err(error),
                 };
-                let read = SourceRead::builder()
-                    .registration(&csr)
-                    .inbound(context)
-                    .triggering(triggering)
-                    .vocabulary(DocumentVocabulary::Discovery)
-                    .build();
+                let read = SourceRead::builder().registration(&csr).inbound(context).triggering(triggering).build();
                 // Clause 6.3.17 allows caching for `/entities` only.
                 let outcome = self.forward_get(read, url, Cacheability::Uncacheable).await;
+                let registration_id = Some(csr.id.clone()); // clone: the answer names the registration it came from
                 match outcome {
                     ForwardGetOutcome::Success(response) => Some(ForwardedDiscoveryResult {
+                        registration_id,
                         body: Some(response.body),
+                        naming: *response.naming,
                         warnings: response.warnings,
                     }),
                     // 404 is not abnormal per spec clause 6.3.17
                     ForwardGetOutcome::NotFound(_) => None,
-                    other @ (ForwardGetOutcome::InvalidPayload(_)
-                    | ForwardGetOutcome::UnreadableNames(_)
-                    | ForwardGetOutcome::ErrorStatus(_)
-                    | ForwardGetOutcome::Transport(_)
-                    | ForwardGetOutcome::LoopDetected) => {
+                    other @ (ForwardGetOutcome::ErrorStatus(_) | ForwardGetOutcome::Transport(_) | ForwardGetOutcome::LoopDetected) => {
                         let warning = other.warning(&csr.id)?;
                         warn!("Discovery forwarding to context source {} failed: {}", csr.id, warning);
                         Some(ForwardedDiscoveryResult {
+                            registration_id,
                             body: None,
+                            naming: ContextSpec::none(),
                             warnings: vec![warning],
                         })
                     }

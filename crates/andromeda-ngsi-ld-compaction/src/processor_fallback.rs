@@ -8,15 +8,18 @@
 
 use crate::{compaction_error::CompactionError, term_context::TermContext};
 use andromeda_json_literal::piece::JsonPiece;
-use andromeda_jsonld::engine::{context_compactor::ContextCompactor, expanded_input::ExpandedInput, options::CompactOptions};
+use andromeda_jsonld::engine::{context_compactor::ContextCompactor, expanded_text::ExpandedText, options::CompactOptions};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{entity::Entity, node_refusal::NodeReadError};
+use andromeda_ngsi_ld_model::{
+    entity::{Entity, EntityPatch},
+    node_refusal::NodeReadError,
+    temporal::{temporal_attribute::TemporalAttribute, temporal_entity::TemporalEntity},
+};
 use andromeda_ngsi_ld_representation::{
     compact_node::{CompactNode, NodeShape, aliased_node::AliasedNode},
     sys_attrs::SysAttrsInclusion,
 };
-use serde_json::{Value, value::RawValue};
 use std::{convert::Infallible, sync::Arc};
 
 /// Compact entity state through the processor.
@@ -28,14 +31,12 @@ pub(crate) async fn entity_through_processor(
     sys_attrs: SysAttrsInclusion,
 ) -> Result<Entity, CompactionError> {
     let document = match sys_attrs {
-        SysAttrsInclusion::Include => serde_json::to_value(state),
-        SysAttrsInclusion::Strip => serde_json::to_value(without_instance_times(state)),
+        SysAttrsInclusion::Include => serde_json::to_vec(state),
+        SysAttrsInclusion::Strip => serde_json::to_vec(&without_instance_times(state)),
     }
     .map_err(CompactionError::Encode)?;
-    let compacted = compactor.compact(ExpandedInput::Canonical(document), CompactOptions::default()).await?;
-    let text = serde_json::to_string(&compacted).map_err(CompactionError::Encode)?;
-    let raw: &RawValue = serde_json::from_str(&text).map_err(CompactionError::Encode)?;
-    let mut entity = read_entity(AliasedNode::new(JsonPiece::new(raw), terms.aliases()))?;
+    let compacted = compactor.compact(ExpandedText::Canonical(&document), CompactOptions::default()).await?;
+    let mut entity = read_entity(AliasedNode::new(JsonPiece::new(&compacted), terms.aliases()))?;
     if let Some(id) = id_override {
         // clone: the compact entity owns the identifier it is read by
         entity.id = id.clone();
@@ -46,20 +47,87 @@ pub(crate) async fn entity_through_processor(
 /// The entity a compacted document holds: the document, or the first node of
 /// the array the processor answered with.
 fn read_entity<'n, N: CompactNode<'n, Unreadable = Infallible>>(document: N) -> Result<Entity, CompactionError> {
-    let node = match document.shape() {
-        NodeShape::Array(nodes) => nodes.into_iter().next().unwrap_or(document),
-        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => document,
-    };
-    <Entity>::from_node(node).map_err(|error| match error {
+    <Entity>::from_node(first_node(document)).map_err(|error| match error {
         NodeReadError::Refused(refused) => CompactionError::Refused(refused),
         NodeReadError::Unreadable(never) => match never {},
     })
 }
 
-/// Compact a written document through the processor.
-pub(crate) async fn document_through_processor(compactor: &ContextCompactor<'_>, document: &EntityDocument) -> Result<Value, CompactionError> {
-    let document = serde_json::to_value(document).map_err(CompactionError::Encode)?;
-    Ok(compactor.compact(ExpandedInput::Assembled(document), CompactOptions::default()).await?)
+/// The partial entity a compacted document holds, read as [`read_entity`]
+/// reads an entity.
+fn read_patch<'n, N: CompactNode<'n, Unreadable = Infallible>>(document: N) -> Result<EntityPatch, CompactionError> {
+    <EntityPatch>::from_node(first_node(document)).map_err(|error| match error {
+        NodeReadError::Refused(refused) => CompactionError::Refused(refused),
+        NodeReadError::Unreadable(never) => match never {},
+    })
+}
+
+/// The document itself, or the first node of the array the processor answered
+/// with.
+fn first_node<'n, N: CompactNode<'n>>(document: N) -> N {
+    match document.shape() {
+        NodeShape::Array(nodes) => nodes.into_iter().next().unwrap_or(document),
+        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => document,
+    }
+}
+
+/// Compact a written document through the processor, reading the compacted
+/// text as the partial entity a fragment is.
+pub(crate) async fn document_patch_through_processor(
+    compactor: &ContextCompactor<'_>,
+    terms: &TermContext,
+    document: &EntityDocument,
+) -> Result<EntityPatch, CompactionError> {
+    let document = serde_json::to_vec(document).map_err(CompactionError::Encode)?;
+    let compacted = compactor.compact(ExpandedText::Assembled(&document), CompactOptions::default()).await?;
+    read_patch(AliasedNode::new(JsonPiece::new(&compacted), terms.aliases()))
+}
+
+/// Compact the document of a Temporal Evolution through the processor,
+/// reading the compacted text as the compact Temporal Evolution it is.
+pub(crate) async fn temporal_through_processor(
+    compactor: &ContextCompactor<'_>,
+    terms: &TermContext,
+    document: &EntityDocument,
+) -> Result<TemporalEntity, CompactionError> {
+    let document = serde_json::to_vec(document).map_err(CompactionError::Encode)?;
+    let compacted = compactor.compact(ExpandedText::Assembled(&document), CompactOptions::default()).await?;
+    let compacted = AliasedNode::new(JsonPiece::new(&compacted), terms.aliases());
+    let node = match compacted.shape() {
+        NodeShape::Array(nodes) => nodes.into_iter().next().unwrap_or(compacted),
+        NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => compacted,
+    };
+    TemporalEntity::from_node(node).map_err(|error| match error {
+        NodeReadError::Refused(refused) => CompactionError::Refused(refused),
+        NodeReadError::Unreadable(never) => match never {},
+    })
+}
+
+/// Compact the document of a reified Scope history through the processor,
+/// reading the compacted text for its `scope` member.
+pub(crate) async fn scope_history_through_processor(
+    compactor: &ContextCompactor<'_>,
+    terms: &TermContext,
+    document: &EntityDocument,
+) -> Result<Option<TemporalAttribute>, CompactionError> {
+    let document = serde_json::to_vec(document).map_err(CompactionError::Encode)?;
+    let compacted = compactor.compact(ExpandedText::Assembled(&document), CompactOptions::default()).await?;
+    TemporalAttribute::scope_history_of(first_node(AliasedNode::new(JsonPiece::new(&compacted), terms.aliases()))).map_err(|error| match error {
+        NodeReadError::Refused(refused) => CompactionError::Refused(refused),
+        NodeReadError::Unreadable(never) => match never {},
+    })
+}
+
+/// Compact a written document through the processor, reading the compacted
+/// text as the compact entity it is.
+pub(crate) async fn document_entity_through_processor(
+    compactor: &ContextCompactor<'_>,
+    terms: &TermContext,
+    document: &EntityDocument,
+) -> Result<Entity, CompactionError> {
+    let document = serde_json::to_vec(document).map_err(CompactionError::Encode)?;
+    let compacted = compactor.compact(ExpandedText::Assembled(&document), CompactOptions::default()).await?;
+    read_entity(AliasedNode::new(JsonPiece::new(&compacted), terms.aliases()))
 }
 
 /// `state` without the clause 4.8 times of its top-level instances, which a

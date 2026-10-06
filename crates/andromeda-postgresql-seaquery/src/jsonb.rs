@@ -1,10 +1,7 @@
-//! JSONB access: key existence and the two escapes a jsonpath needs on its way
-//! into a statement.
+//! JSONB access: key existence and the escape a jsonpath object key needs on
+//! its way into a statement.
 
-use crate::{
-    literal::{escape_single_quoted, text_literal},
-    pg_operator::PgBinaryOperator,
-};
+use crate::{literal::text_literal, pg_operator::PgBinaryOperator};
 use sea_query::{Func, FunctionCall, Iden, SimpleExpr};
 
 /// The `jsonb_array_elements_text` set-returning function.
@@ -223,17 +220,6 @@ pub fn escape_jsonpath_key(key: &str) -> String {
     key.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// Escape a jsonpath for embedding in a single-quoted SQL literal.
-///
-/// Applied unconditionally by every builder that interpolates a jsonpath into
-/// `'…'`. An attribute IRI containing an apostrophe would otherwise terminate
-/// the literal early; `geoproperty` and `orderBy` both carry request-supplied
-/// IRIs, and an absolute IRI passes JSON-LD expansion unchanged.
-#[must_use]
-pub fn escape_jsonpath(jsonpath: &str) -> String {
-    escape_single_quoted(jsonpath)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,11 +245,6 @@ mod tests {
     #[test]
     fn a_jsonpath_key_escapes_backslashes_and_double_quotes() {
         assert_eq!(escape_jsonpath_key("a\\b\"c"), "a\\\\b\\\"c");
-    }
-
-    #[test]
-    fn a_jsonpath_literal_doubles_apostrophes() {
-        assert_eq!(escape_jsonpath("$[0].\"o'brien\""), "$[0].\"o''brien\"");
     }
 
     #[test]

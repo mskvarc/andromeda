@@ -1,5 +1,8 @@
 //! The notification endpoint this broker advertises to context sources.
 
+use andromeda_ngsi_ld_lexicon::dereferenceable_uri::DereferenceableUri;
+use andromeda_ngsi_ld_model::subscription::Endpoint;
+use mediatype::{MediaTypeBuf, names};
 use url::Url;
 
 /// The path of the inbound notification resource below the API base.
@@ -39,6 +42,21 @@ impl ReceiverEndpoint {
     pub const fn url(&self) -> &Url {
         &self.0
     }
+
+    /// The notification endpoint (clause 5.2.15) a subscription placed at a
+    /// context source names, so that the source notifies this broker in plain
+    /// JSON.
+    #[must_use]
+    pub fn notification_endpoint(&self) -> Endpoint {
+        Endpoint {
+            uri: DereferenceableUri::from(self.0.clone()), // clone: the endpoint owns its URI apart from the receiver
+            accept: Some(MediaTypeBuf::new(names::APPLICATION, names::JSON)),
+            receiver_info: None,
+            notifier_info: None,
+            cooldown: None,
+            timeout: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -57,6 +75,16 @@ mod tests {
             let endpoint = ReceiverEndpoint::from_advertised(&Url::parse(advertised).expect("valid URL")).expect("receiver");
             pretty_assertions::assert_eq!(endpoint.url().as_str(), expected, "{advertised}");
         }
+    }
+
+    /// Clause 5.8.1.4: a copy at a source notifies this broker's receiver and
+    /// accepts plain JSON.
+    #[test]
+    fn the_notification_endpoint_names_the_receiver_and_accepts_plain_json() {
+        let receiver = ReceiverEndpoint::from_advertised(&Url::parse("http://broker-a:1056").expect("valid URL")).expect("receiver");
+        let endpoint = receiver.notification_endpoint();
+        pretty_assertions::assert_eq!(endpoint.uri.as_str(), "http://broker-a:1056/ngsi-ld/v1/notifications");
+        pretty_assertions::assert_eq!(endpoint.accept.map(|accept| accept.to_string()), Some("application/json".to_owned()));
     }
 
     #[test]

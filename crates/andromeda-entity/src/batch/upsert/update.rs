@@ -5,8 +5,7 @@ use crate::{
     EntityService,
     batch::{
         BatchResult,
-        UpsertPolicy,
-        admitted_batch::AdmittedBatchEntity,
+        admitted_batch::{AdmittedBatchEntity, prepared_chunk},
         chunk::{ChunkWrite, UpdatedStates},
         chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
         prepare::PreparedEntity,
@@ -15,7 +14,6 @@ use crate::{
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     side_effect::SideEffectPlacement,
-    write_admission::BatchWrite,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{
@@ -26,7 +24,6 @@ use andromeda_ngsi_ld_entity::{
     system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::attribute::instance::AttributeValue;
 use std::sync::Arc;
 
 /// What an update-mode upsert is built from on each attempt.
@@ -132,7 +129,7 @@ impl EntityService {
     pub(in crate::batch) async fn batch_upsert_update_chunk(
         &self,
         placement: SideEffectPlacement<'_>,
-        chunk: Vec<AdmittedBatchEntity<AttributeValue>>,
+        chunk: Vec<AdmittedBatchEntity>,
         errors: &mut Vec<(Identifier, EntityError)>,
     ) -> Result<UpsertOutcome, EntityError> {
         // Clause 5.6.8.4: "If there were an existing Entity with the same Entity
@@ -147,8 +144,7 @@ impl EntityService {
         // therefore states the update branch's admission, and the create branch
         // refuses the entity when its payload carries an NGSI-LD Null: that
         // branch is clause 5.6.1, which supports none.
-        let (prepared, mut chunk_errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Upsert(UpsertPolicy::Update)).await;
-        errors.append(&mut chunk_errors);
+        let prepared = prepared_chunk(chunk);
         let rewrite = UpdateRewrite {
             service: self,
             target: placement.target(),

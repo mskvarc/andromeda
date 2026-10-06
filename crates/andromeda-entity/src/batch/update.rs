@@ -15,7 +15,7 @@ use crate::{
     EntityService,
     batch::{
         BatchResult,
-        admitted_batch::AdmittedBatchEntity,
+        admitted_batch::{AdmittedBatchEntity, prepared_chunk},
         chunk::UpdatedStates,
         chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
         prepare::PreparedEntity,
@@ -24,7 +24,6 @@ use crate::{
     entity_validation_reason::EntityValidationReason,
     error::EntityError,
     side_effect::SideEffectPlacement,
-    write_admission::BatchWrite,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{
@@ -35,7 +34,6 @@ use andromeda_ngsi_ld_entity::{
     system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::attribute::instance::AttributeValue;
 
 /// Whether a `noOverwrite` append of `fragment` onto `entity` can add nothing:
 /// the fragment names at least one member and every member it names is
@@ -133,7 +131,7 @@ impl EntityService {
     pub(super) async fn batch_update_chunk(
         &self,
         placement: SideEffectPlacement<'_>,
-        chunk: Vec<AdmittedBatchEntity<AttributeValue>>,
+        chunk: Vec<AdmittedBatchEntity>,
         overwrite: OverwritePolicy,
     ) -> Result<BatchResult, EntityError> {
         // Clause 5.5.4 excepts only the fragments "used in partial update and
@@ -155,7 +153,8 @@ impl EntityService {
         // because clause 5.6.2's NGSI-LD Null support is a statement about the
         // Update Attributes operation and its Entity Fragment, not about a
         // whole Entity submitted to a batch.
-        let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Update).await;
+        let prepared = prepared_chunk(chunk);
+        let mut errors = Vec::new();
         let rewrite = UpdateRewrite {
             service: self,
             target: placement.target(),

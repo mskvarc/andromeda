@@ -10,8 +10,7 @@
 //! numbers stay in doc comments.
 
 use crate::csr_member::CsrMember;
-use andromeda_ngsi_ld_geometry::geojson::GeometryError;
-use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
+use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfoError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use iri_rs::InvalidIri;
@@ -20,23 +19,6 @@ use thiserror::Error;
 /// Why a registration request is invalid.
 #[derive(Debug, Error)]
 pub enum RegistrationValidationReason {
-    /// The `id` member was not a URI, or was one too long to be an
-    /// identifier (clause 5.2.9).
-    #[error("id must be a valid URI: {source}")]
-    IdNotUri {
-        /// Why the `id` is not an identifier.
-        #[source]
-        source: IdentifierParseError,
-    },
-    /// The `type` member was not `ContextSourceRegistration` (clause 5.2.9).
-    #[error("type must be 'ContextSourceRegistration'")]
-    TypeNotContextSourceRegistration,
-    /// The `endpoint` member was explicitly null in an update.
-    #[error("endpoint must not be null")]
-    EndpointMustNotBeNull,
-    /// The `information` member was explicitly null in an update.
-    #[error("information must not be null")]
-    InformationMustNotBeNull,
     /// The `information` array was present but empty (Table 5.2.9-1).
     #[error("information must not be an empty array")]
     InformationMustNotBeEmpty,
@@ -65,38 +47,20 @@ pub enum RegistrationValidationReason {
         /// The absent member.
         member: CsrMember,
     },
-    /// A member expected to be a string was not one.
-    #[error("'{member}' must be a string")]
-    MemberNotString {
-        /// The member whose value was not a string.
+    /// A member that clause 5.5.8 does not let a body remove was carried as
+    /// `null`, or a creation body carried a member as `null`.
+    #[error("{member} must not be null")]
+    MemberMustNotBeNull {
+        /// The member carried as `null`.
         member: CsrMember,
     },
-    /// A typed member was not the JSON shape its data type requires.
-    #[error("invalid '{member}' value: {source}")]
-    MemberValue {
-        /// The member whose value was rejected.
-        member: CsrMember,
-        /// The JSON shape violation.
+    /// A name the request's `@context` expanded a term of the body to is not a
+    /// name NGSI-LD can carry.
+    #[error("a term of the registration expands to a name NGSI-LD cannot carry: {source}")]
+    ExpandedName {
+        /// Why the expanded name is not a name.
         #[source]
-        source: serde_json::Error,
-    },
-    /// A `DateTime` member was a string outside the RFC 3339 grammar.
-    #[error("invalid '{member}' value: {source}")]
-    DateTimeMember {
-        /// The member whose value was rejected.
-        member: CsrMember,
-        /// The timestamp grammar violation.
-        #[source]
-        source: chrono::ParseError,
-    },
-    /// A `Duration` member was a string outside the ISO 8601 grammar.
-    ///
-    /// The `iso8601_duration` parse error implements neither `Display` nor
-    /// `Error`, so it cannot be chained; the message names the grammar instead.
-    #[error("invalid '{member}' value: not an ISO 8601 duration")]
-    DurationMember {
-        /// The member whose value was rejected.
-        member: CsrMember,
+        source: NgsiLdReferenceError,
     },
     /// A `q` filter named an attribute that did not expand to an IRI.
     #[error("q names a non-IRI attribute: {source}")]
@@ -111,22 +75,6 @@ pub enum RegistrationValidationReason {
         /// The expansion failure.
         #[source]
         source: InvalidIri<String>,
-    },
-    /// A submitted `GeoProperty` geometry was not decodable `GeoJSON`.
-    #[error("invalid GeoProperty geometry: {source}")]
-    GeoPropertyGeometry {
-        /// The geometry decoding failure.
-        #[source]
-        source: GeometryError,
-    },
-    /// A stored geometry member being carried through an update was not decodable.
-    #[error("invalid existing {member} GeoJSON: {source}")]
-    ExistingGeometry {
-        /// The member whose stored geometry could not be read back.
-        member: CsrMember,
-        /// The geometry decoding failure.
-        #[source]
-        source: GeometryError,
     },
     /// The discovery query parameters were rejected by the parameter model.
     #[error(transparent)]

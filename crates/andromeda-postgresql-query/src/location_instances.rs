@@ -168,7 +168,7 @@ mod tests {
     fn geo(georel: GeoRel) -> GeoQuery {
         GeoQuery {
             georel,
-            geometry: Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses"),
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses"),
             geoproperty: LOCATION.parse().expect("valid attribute name"),
         }
     }
@@ -311,7 +311,7 @@ mod tests {
     fn the_dataset_instance_arm_prefilters_both_sides_of_the_antimeridian() {
         let geo = GeoQuery {
             georel: near("300"),
-            geometry: Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [179.999, -17.0] })).expect("point parses"),
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [179.999, -17.0] })).expect("point parses"),
             geoproperty: LOCATION.parse().expect("valid attribute name"),
         };
         let (sql, _) = render(

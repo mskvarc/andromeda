@@ -6,7 +6,6 @@
 //! and `csf` match the registration's own members as clause 5.11.2.4 describes.
 
 use crate::compiled::CompiledCsrSubscription;
-use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_geometry::{geometry::Geometry, relation::matches as geometry_matches};
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_model::{
@@ -22,7 +21,6 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBSERVATION_SPACE, OPERATION_SPACE};
 use chrono::Utc;
-use serde_json::Value;
 
 /// Whether registration changes notify `sub` at all: the subscription is
 /// live and change-driven.
@@ -102,13 +100,13 @@ fn geo_query_admits(geo_q: &GeoQuery, registration: &ContextSourceRegistration) 
     let Some(declared) = registration_geometry(geo_q, registration) else {
         return true;
     };
-    Geometry::from_geojson_value(declared).is_ok_and(|subject| geometry_matches(&geo_q.georel, &subject.planar(), &geo_q.geometry.planar()))
+    geometry_matches(&geo_q.georel, &declared.planar(), &geo_q.geometry.planar())
 }
 
 /// The registration geometry a `geoQ` names (Table 5.2.9-1): `observationSpace`
 /// or `operationSpace` when the geoproperty is one of them, `location` for
 /// every other `GeoProperty` including the clause 5.11.2.4 default.
-fn registration_geometry<'registration>(geo_q: &GeoQuery, registration: &'registration ContextSourceRegistration) -> Option<&'registration Value> {
+fn registration_geometry<'registration>(geo_q: &GeoQuery, registration: &'registration ContextSourceRegistration) -> Option<&'registration Geometry> {
     let geoproperty = geo_q.geoproperty.as_str();
     if geoproperty == OBSERVATION_SPACE.as_str() {
         registration.coverage.observation_space.as_ref()
@@ -135,18 +133,11 @@ fn context_source_filter_admits(sub: &CompiledCsrSubscription, registration: &Co
     let Some(csf) = &sub.compiled_csf else {
         return true;
     };
-    // The registration model holds its Context Source Properties as a parsed
-    // tree, which the filter reads as the JSON text it spells; a parsed tree
-    // names no member twice, nests no deeper than its reader allows and holds
-    // only the numbers its store kept, so its text is always admitted.
-    let Some(properties) = registration
-        .additional_properties
-        .as_ref()
-        .and_then(|properties| JsonLiteral::admit(&properties.to_string()).ok())
-    else {
-        return false;
-    };
-    ContextSourceProperties::of(properties.piece()).is_some_and(|properties| evaluate(csf, properties, NoLinkedEntities))
+    evaluate(
+        csf,
+        ContextSourceProperties::of_registration(&registration.additional_properties),
+        NoLinkedEntities,
+    )
 }
 
 #[cfg(test)]
@@ -318,10 +309,9 @@ mod tests {
     #[test]
     fn the_geoquery_is_matched_against_the_registration_location() {
         let mut sub = subscription();
-        sub.geo_q = SubscriptionGeoFilter::from_stored(
-            Some(&json!({"georel": "near;maxDistance==3000", "geometry": "Point", "coordinates": [13.404, 52.520]})),
-            "urn:ngsi-ld:Subscription:csource",
-        );
+        let stored =
+            serde_json::from_value(json!({"georel": "near;maxDistance==3000", "geometry": "Point", "coordinates": [13.404, 52.520]})).expect("a readable geoQ");
+        sub.geo_q = SubscriptionGeoFilter::from_stored(Some(&stored), "urn:ngsi-ld:Subscription:csource");
         let berlin = registration(&json!({"location": {"type": "Point", "coordinates": [13.404, 52.520]}}));
         let paris = registration(&json!({"location": {"type": "Point", "coordinates": [2.349, 48.853]}}));
         assert!(notified_of_change(&sub, &berlin));
@@ -335,7 +325,9 @@ mod tests {
     #[test]
     fn a_stored_geo_q_that_no_longer_compiles_selects_no_registration() {
         let mut sub = subscription();
-        sub.geo_q = SubscriptionGeoFilter::from_stored(Some(&json!({"georel": "near;maxDistance==3000"})), "urn:ngsi-ld:Subscription:csource");
+        let stored = serde_json::from_value(json!({"georel": "near;maxDistance==3000", "geometry": "Point", "coordinates": "[13.404, "}))
+            .expect("a readable geoQ whose string-encoded coordinates are no JSON");
+        sub.geo_q = SubscriptionGeoFilter::from_stored(Some(&stored), "urn:ngsi-ld:Subscription:csource");
         assert!(!notified_of_change(&sub, &registration(&json!({}))));
         assert!(!notified_of_change(
             &sub,

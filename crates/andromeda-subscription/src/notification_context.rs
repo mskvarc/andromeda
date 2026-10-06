@@ -17,6 +17,7 @@
 //! which is not the `@context` applicable for the Subscription.
 
 use crate::{error::SubscriptionError, subscription_context::SubscriptionContext};
+use andromeda_json_literal::piece::JsonKind;
 use andromeda_jsonld::{
     compound_context_host::WrapperUse,
     context_spec::ContextSpec,
@@ -24,10 +25,13 @@ use andromeda_jsonld::{
     presented_context::ContextLinkTarget,
     request_context::RequestContext,
 };
-use serde_json::Value;
+use andromeda_ngsi_ld_model::clearable::Clearable;
+use iri_rs::IriBuf;
 
-/// Initialise the `jsonldContext` member of a subscription payload from the
-/// `@context` applicable to the request, when the payload names none itself.
+/// Initialise the `jsonldContext` member of a subscription request from the
+/// `@context` applicable to the request, when the request names none itself.
+/// A create body has nothing stored to delete, so a member it clears names
+/// none either.
 ///
 /// A request that supplied no context of its own, and a subscription the
 /// broker places under the core context, leave the member absent, so its
@@ -39,14 +43,14 @@ use serde_json::Value;
 /// cannot be loaded, and [`SubscriptionError::ContextHosting`] when the
 /// applicable context needs a wrapper that cannot be hosted.
 pub(crate) async fn initialize_notification_context(
-    payload: &mut Value,
+    jsonld_context: &mut Clearable<IriBuf>,
     subscription_context: SubscriptionContext<'_>,
     engine: &JsonLdEngine,
 ) -> Result<(), SubscriptionError> {
     let SubscriptionContext::Request { context, host } = subscription_context else {
         return Ok(());
     };
-    if payload.get("jsonldContext").is_some() || names_no_context(context) {
+    if jsonld_context.as_set().is_some() || names_no_context(context) {
         return Ok(());
     }
     let presented = engine.presented_context(context).await?;
@@ -54,32 +58,33 @@ pub(crate) async fn initialize_notification_context(
         ContextLinkTarget::Reference(url) => url,
         ContextLinkTarget::Hosted(value) => host.host(&value, WrapperUse::StoredReference).await?,
     };
-    if let Some(object) = payload.as_object_mut() {
-        object.insert("jsonldContext".to_owned(), Value::String(stored.into_inner()));
-    }
+    *jsonld_context = Clearable::Set(stored);
     Ok(())
 }
 
 /// Whether the request supplied no `@context` of its own.
-const fn names_no_context(context: &ContextSpec) -> bool {
+fn names_no_context(context: &ContextSpec) -> bool {
     match context.request_context() {
-        RequestContext::Default | RequestContext::Body(Value::Null) => true,
-        RequestContext::Link(_) | RequestContext::Body(Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_)) => false,
+        RequestContext::Default => true,
+        RequestContext::Body(body) => body.piece().kind() == JsonKind::Null,
+        RequestContext::Link(_) => false,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{error::SubscriptionError, notification_context::initialize_notification_context, subscription_context::SubscriptionContext};
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{
         compound_context_host::{CompoundContextHost, CompoundContextHostFuture, ContextHostingError, NoCompoundContextHost, WrapperUse},
         context_spec::ContextSpec,
         engine::processor::JsonLdEngine,
         user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
     };
+    use andromeda_ngsi_ld_model::clearable::Clearable;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
-    use serde_json::{Value, json};
+    use serde_json::json;
     use std::sync::Mutex;
 
     const WRAPPER: &str = "https://broker.example/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:wrapper";
@@ -87,11 +92,11 @@ mod tests {
     /// A host that records what it hosted and answers one fixed URL.
     #[derive(Debug, Default)]
     struct RecordingHost {
-        hosted: Mutex<Vec<Value>>,
+        hosted: Mutex<Vec<JsonLiteral>>,
     }
 
     impl CompoundContextHost for RecordingHost {
-        fn host<'a>(&'a self, context: &'a Value, _usage: WrapperUse) -> CompoundContextHostFuture<'a> {
+        fn host<'a>(&'a self, context: &'a JsonLiteral, _usage: WrapperUse) -> CompoundContextHostFuture<'a> {
             Box::pin(async move {
                 self.hosted.lock().expect("the recording lock").push(context.clone()); // clone: the record keeps its own copy
                 Ok(IriBuf::new(WRAPPER.to_owned()).expect("a valid URL"))
@@ -117,15 +122,15 @@ mod tests {
         IriBuf::new(url.to_owned()).expect("a valid IRI")
     }
 
-    fn stored_context(payload: &Value) -> Option<&str> {
-        payload.get("jsonldContext").and_then(Value::as_str)
+    fn stored_context(jsonld_context: Option<&IriBuf>) -> Option<&str> {
+        jsonld_context.map(IriBuf::as_str)
     }
 
     /// Clause 5.8.1.4: a request naming only a core context is answered, and
     /// notified, under the v1.9 core context, stored as the one URL it is.
     #[tokio::test]
     async fn a_presented_single_url_is_stored_verbatim() {
-        let mut payload = json!({});
+        let mut payload = Clearable::Absent;
         let context = ContextSpec::from_link(iri_ref("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld"));
         let host = RecordingHost::default();
 
@@ -140,7 +145,7 @@ mod tests {
         .await
         .expect("initialised");
 
-        pretty_assertions::assert_eq!(stored_context(&payload), Some(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        pretty_assertions::assert_eq!(stored_context(payload.as_set()), Some(NGSI_LD_CORE_CONTEXT_URL.as_str()));
         assert!(host.hosted.lock().expect("the recording lock").is_empty());
     }
 
@@ -148,8 +153,8 @@ mod tests {
     /// presented value, whose absolute URL is stored.
     #[tokio::test]
     async fn an_inline_context_is_hosted_and_its_url_stored() {
-        let mut payload = json!({});
-        let context = ContextSpec::from_body(json!({ "speed": "https://example.com/speed" }));
+        let mut payload = Clearable::Absent;
+        let context = ContextSpec::from_body(JsonLiteral::admit(&json!({ "speed": "https://example.com/speed" }).to_string()).expect("an admissible literal"));
         let host = RecordingHost::default();
 
         initialize_notification_context(
@@ -163,10 +168,10 @@ mod tests {
         .await
         .expect("initialised");
 
-        pretty_assertions::assert_eq!(stored_context(&payload), Some(WRAPPER));
+        pretty_assertions::assert_eq!(stored_context(payload.as_set()), Some(WRAPPER));
         pretty_assertions::assert_eq!(
             *host.hosted.lock().expect("the recording lock"),
-            vec![json!([{ "speed": "https://example.com/speed" }, NGSI_LD_CORE_CONTEXT_URL.as_str()])]
+            vec![JsonLiteral::admit(&json!([{ "speed": "https://example.com/speed" }, NGSI_LD_CORE_CONTEXT_URL.as_str()]).to_string()).expect("admissible")]
         );
     }
 
@@ -174,8 +179,8 @@ mod tests {
     /// the notifications under the core context alone.
     #[tokio::test]
     async fn a_wrapper_that_cannot_be_hosted_fails_the_request() {
-        let mut payload = json!({});
-        let context = ContextSpec::from_body(json!({ "speed": "https://example.com/speed" }));
+        let mut payload = Clearable::Absent;
+        let context = ContextSpec::from_body(JsonLiteral::admit(&json!({ "speed": "https://example.com/speed" }).to_string()).expect("an admissible literal"));
 
         let result = initialize_notification_context(
             &mut payload,
@@ -191,14 +196,14 @@ mod tests {
             matches!(result, Err(SubscriptionError::ContextHosting(ContextHostingError::NoHost))),
             "{result:?}"
         );
-        assert!(stored_context(&payload).is_none());
+        assert!(stored_context(payload.as_set()).is_none());
     }
 
     /// An explicit `jsonldContext` member takes precedence (clause 5.8.1.4).
     #[tokio::test]
     async fn an_explicit_member_takes_precedence_over_the_applicable_context() {
-        let mut payload = json!({"jsonldContext": "https://example.com/explicit.jsonld"});
-        let context = ContextSpec::from_body(json!({ "speed": "https://example.com/speed" }));
+        let mut payload = Clearable::Set(iri_ref("https://example.com/explicit.jsonld"));
+        let context = ContextSpec::from_body(JsonLiteral::admit(&json!({ "speed": "https://example.com/speed" }).to_string()).expect("an admissible literal"));
 
         initialize_notification_context(
             &mut payload,
@@ -211,14 +216,14 @@ mod tests {
         .await
         .expect("untouched");
 
-        pretty_assertions::assert_eq!(stored_context(&payload), Some("https://example.com/explicit.jsonld"));
+        pretty_assertions::assert_eq!(stored_context(payload.as_set()), Some("https://example.com/explicit.jsonld"));
     }
 
     /// Clause 5.5.5: a request that supplied no context leaves the member
     /// absent.
     #[tokio::test]
     async fn no_supplied_context_leaves_the_field_absent() {
-        let mut payload = json!({});
+        let mut payload = Clearable::Absent;
 
         initialize_notification_context(
             &mut payload,
@@ -231,19 +236,19 @@ mod tests {
         .await
         .expect("untouched");
 
-        assert!(stored_context(&payload).is_none(), "{payload}");
+        assert!(stored_context(payload.as_set()).is_none(), "{payload:?}");
     }
 
     /// A subscription the broker places under the core context has nothing to
     /// host and leaves the member absent.
     #[tokio::test]
     async fn a_broker_placed_subscription_leaves_the_field_absent() {
-        let mut payload = json!({});
+        let mut payload = Clearable::Absent;
 
         initialize_notification_context(&mut payload, SubscriptionContext::CoreOnly, &engine())
             .await
             .expect("untouched");
 
-        assert!(stored_context(&payload).is_none(), "{payload}");
+        assert!(stored_context(payload.as_set()).is_none(), "{payload:?}");
     }
 }

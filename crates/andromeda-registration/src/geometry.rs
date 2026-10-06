@@ -1,67 +1,111 @@
-//! Geometry extraction for registration creation and updates.
+//! The geometry members of a registration body.
 //!
-//! The repository is forbidden from inspecting `Value`; the service layer
-//! decodes inbound `GeoProperty` wrappers into a [`Geometry`] before any CSR
-//! insert or update.
+//! A registration writes `location`, `observationSpace` and `operationSpace` as
+//! a `GeoJSON` geometry or as the `GeoProperty` carrying one (clause 5.2.9). The
+//! body reads either into a [`Geometry`], and the budget a geometry is admitted
+//! under (clause 6.3.2) is checked on the geometry the body holds.
 
-use crate::{csr_member::CsrMember, error::RegistrationError, registration_validation_reason::RegistrationValidationReason};
+use crate::{csr_member::CsrMember, error::RegistrationError};
+use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
 use andromeda_ngsi_ld_geometry::{
     geometry::Geometry,
-    geometry_census::{GeometryCensusError, GeometryCensusLimits, compact_geometry_census, text_geometry_census},
+    geometry_census::{GeometryCensusLimits, GeometryOverLimit},
 };
-use serde_json::Value;
+use andromeda_ngsi_ld_number::json_value::value_census::{ValueCensusError, count_values_within};
+use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 
-/// The members of a registration that hold a geometry (clause 5.2.9).
-const GEOMETRY_MEMBERS: [CsrMember; 3] = [CsrMember::Location, CsrMember::ObservationSpace, CsrMember::OperationSpace];
+/// The `type` a `GeoProperty` carrying a geometry is written with.
+const GEO_PROPERTY_TYPE: &str = "GeoProperty";
 
-/// If `v` is a `GeoProperty` wrapper `{"type":"GeoProperty","value":{...}}`,
-/// decode the inner `GeoJSON` geometry. Otherwise treat `v` itself as a raw
-/// `GeoJSON` geometry.
-pub fn unwrap_geo_property_to_geometry(v: &Value) -> Result<Geometry, RegistrationError> {
-    let geometry = if v.get("type").and_then(|t| t.as_str()) == Some("GeoProperty")
-        && let Some(inner) = v.get("value")
-    {
-        inner
-    } else {
-        v
-    };
-    Geometry::from_geojson_value(geometry).map_err(|source| RegistrationError::Validation(RegistrationValidationReason::GeoPropertyGeometry { source }))
+/// A geometry member as a registration body writes it (clause 5.2.9): the
+/// `GeoJSON` geometry itself, or the `GeoProperty` whose `value` is one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegistrationGeometry(Geometry);
+
+impl RegistrationGeometry {
+    /// The geometry the member spells.
+    #[must_use]
+    pub fn into_geometry(self) -> Geometry {
+        self.0
+    }
+
+    /// The geometry the member spells, borrowed.
+    #[must_use]
+    pub const fn geometry(&self) -> &Geometry {
+        &self.0
+    }
 }
 
-/// Admit the geometries a registration payload writes when each stays within
+impl<'de> Deserialize<'de> for RegistrationGeometry {
+    /// Read the member as the `GeoProperty` it is when it names that type and
+    /// carries a `value`, and as a bare geometry otherwise.
+    ///
+    /// The member is held as admitted text while its form is decided, because a
+    /// geometry object does not say which form it has until its `type` is
+    /// read, whichever order its members were written in.
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<RegistrationGeometry, D::Error> {
+        let written = JsonLiteral::deserialize(deserializer)?;
+        let geometry = geo_property_value(written.piece()).unwrap_or_else(|| written.piece());
+        serde_json::from_str::<Geometry>(geometry.text())
+            .map(RegistrationGeometry)
+            .map_err(DeserializeError::custom)
+    }
+}
+
+/// The `value` of `member` when it is a `GeoProperty`.
+fn geo_property_value(member: JsonPiece<'_>) -> Option<JsonPiece<'_>> {
+    let named = member.member("type")?.as_str()?;
+    (named == GEO_PROPERTY_TYPE).then(|| member.member("value")).flatten()
+}
+
+/// Admit the geometries a registration body writes when each stays within
 /// `limits` (clause 6.3.2: a written input larger than the broker processes is
 /// "Request Entity too large").
 ///
-/// Counted on the payload as written, before anything is expanded or built
-/// from it, a geometry encoded as a string from its text; a member that is no
-/// geometry holds no positions and is left to the registration validation.
+/// A geometry is counted for the positions it holds and for the JSON values it
+/// holds besides them: its `bbox` and the foreign members IETF RFC 7946 section
+/// 6.1 allows.
 ///
 /// # Errors
 ///
 /// Returns [`RegistrationError::GeometryTooLarge`] naming the first member
 /// whose geometry holds more positions, or more other values, than `limits`
 /// admits.
-pub fn admit_registration_geometries(payload: &Value, limits: GeometryCensusLimits) -> Result<(), RegistrationError> {
-    GEOMETRY_MEMBERS.into_iter().try_for_each(|member| {
-        let Some(value) = payload.get(member.key()) else {
-            return Ok(());
-        };
-        let geometry = match value.get("type").and_then(Value::as_str) {
-            Some("GeoProperty") => value.get("value").unwrap_or(&Value::Null),
-            Some(_) | None => value,
-        };
-        let values = limits.value_tally();
-        let counted = match geometry {
-            Value::String(text) => text_geometry_census(text, limits.positions, &values),
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => {
-                compact_geometry_census(geometry, limits.positions, &values)
-            }
-        };
-        match counted {
-            Ok(_) | Err(GeometryCensusError::Syntax(_)) => Ok(()),
-            Err(GeometryCensusError::OverLimit(over)) => Err(RegistrationError::GeometryTooLarge { member, over }),
+pub fn admit_registration_geometries<'a>(
+    members: impl IntoIterator<Item = (CsrMember, &'a Geometry)>,
+    limits: GeometryCensusLimits,
+) -> Result<(), RegistrationError> {
+    members
+        .into_iter()
+        .try_for_each(|(member, geometry)| admit_geometry(geometry, limits).map_err(|over| RegistrationError::GeometryTooLarge { member, over }))
+}
+
+/// Admit one geometry under `limits`.
+fn admit_geometry(geometry: &Geometry, limits: GeometryCensusLimits) -> Result<(), GeometryOverLimit> {
+    limits.admit_positions(geometry.form().position_count())?;
+    let Some(members) = geometry.members() else {
+        return Ok(());
+    };
+    let bbox = members.bbox().map_or(0, |bbox| 1 + bbox.ordinates().count());
+    let mut values = bbox;
+    for (_, foreign) in members.foreign().iter() {
+        values = values.saturating_add(1).saturating_add(foreign_values(foreign, limits)?);
+        if values > limits.values.get() {
+            return Err(GeometryOverLimit::Values { limit: limits.values });
         }
-    })
+    }
+    Ok(())
+}
+
+/// The JSON values one foreign member holds, refused once it holds more than
+/// the limit alone.
+fn foreign_values(foreign: &JsonLiteral, limits: GeometryCensusLimits) -> Result<usize, GeometryOverLimit> {
+    match count_values_within(foreign.text().as_bytes(), limits.values) {
+        Ok(counted) => Ok(counted.get()),
+        Err(ValueCensusError::OverLimit { limit }) => Err(GeometryOverLimit::Values { limit }),
+        // A literal is admitted text, so the reader never refuses its syntax.
+        Err(ValueCensusError::Syntax(_)) => Ok(0),
+    }
 }
 
 #[cfg(test)]
@@ -69,7 +113,7 @@ mod tests {
     use crate::{
         csr_member::CsrMember,
         error::RegistrationError,
-        geometry::{admit_registration_geometries, unwrap_geo_property_to_geometry},
+        geometry::{RegistrationGeometry, admit_registration_geometries},
     };
     use andromeda_ngsi_ld_geometry::{
         geometry::Geometry,
@@ -79,69 +123,60 @@ mod tests {
     use serde_json::json;
     use std::num::NonZeroUsize;
 
-    fn roundtrip(geometry: &Geometry) -> serde_json::Value {
-        serde_json::to_value(geometry).expect("serialize")
+    fn read(member: &serde_json::Value) -> Result<Geometry, serde_json::Error> {
+        serde_json::from_str::<RegistrationGeometry>(&member.to_string()).map(RegistrationGeometry::into_geometry)
+    }
+
+    fn limits(positions: usize, values: usize) -> GeometryCensusLimits {
+        GeometryCensusLimits {
+            positions: GeometryPositionLimit::new(NonZeroUsize::new(positions).expect("a positive limit")),
+            values: JsonValueLimit::new(NonZeroUsize::new(values).expect("a positive limit")),
+        }
     }
 
     #[test]
     fn geo_property_wrapper_returns_inner_value() {
         let input = json!({ "type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]} });
-        let geometry = unwrap_geo_property_to_geometry(&input).expect("decode");
-        pretty_assertions::assert_eq!(roundtrip(&geometry), json!({"type": "Point", "coordinates": [1.0, 2.0]}));
+        let geometry = read(&input).expect("decode");
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(&geometry).expect("serialize"),
+            json!({"type": "Point", "coordinates": [1.0, 2.0]})
+        );
     }
 
     #[test]
     fn raw_geojson_returns_as_is() {
         let input = json!({"type": "Point", "coordinates": [1.0, 2.0]});
-        let geometry = unwrap_geo_property_to_geometry(&input).expect("decode");
-        pretty_assertions::assert_eq!(roundtrip(&geometry), json!({"type": "Point", "coordinates": [1.0, 2.0]}));
+        let geometry = read(&input).expect("decode");
+        pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialize"), input);
+    }
+
+    #[test]
+    fn invalid_geometry_returns_error() {
+        let input = json!({ "type": "Property", "value": {"type": "Point", "coordinates": [1.0, 2.0]} });
+        assert!(read(&input).is_err());
+    }
+
+    /// A refused geometry names its own refusal, such as the position that lies
+    /// off the CRS84 axes, as it does anywhere a geometry is read.
+    #[test]
+    fn a_refused_geometry_names_why() {
+        let error = read(&json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [0.0, 91.0]}})).expect_err("latitude 91");
+        assert!(error.to_string().contains("latitude 91 is outside [-90, 90]"), "{error}");
+    }
+
+    /// Clause 4.7.2 admits a geometry as a string only for a `GeoProperty` the
+    /// entity model reads; a registration holds the geometry object itself.
+    #[test]
+    fn a_geometry_written_as_a_string_is_no_registration_geometry() {
+        let encoded = serde_json::Value::String(json!({"type": "Point", "coordinates": [1.0, 2.0]}).to_string());
+        assert!(read(&encoded).is_err());
     }
 
     #[test]
     fn a_registration_location_past_the_position_budget_is_refused() {
-        let limit = GeometryCensusLimits {
-            positions: GeometryPositionLimit::new(NonZeroUsize::new(2).expect("a positive limit")),
-            values: JsonValueLimit::new(NonZeroUsize::new(20).expect("a positive limit")),
-        };
-        let line = json!({"type": "LineString", "coordinates": [[0, 0], [1, 1], [2, 2]]});
-        let refused =
-            admit_registration_geometries(&json!({"location": {"type": "GeoProperty", "value": line}}), limit).expect_err("three positions exceed two");
-        assert!(
-            matches!(
-                refused,
-                RegistrationError::GeometryTooLarge {
-                    member: CsrMember::Location,
-                    ..
-                }
-            ),
-            "{refused:?}"
-        );
-        let refused = admit_registration_geometries(&json!({"operationSpace": line}), limit).expect_err("a bare geometry is counted too");
-        assert!(
-            matches!(
-                refused,
-                RegistrationError::GeometryTooLarge {
-                    member: CsrMember::OperationSpace,
-                    ..
-                }
-            ),
-            "{refused:?}"
-        );
-        assert!(admit_registration_geometries(&json!({"location": {"type": "Point", "coordinates": [0, 0]}}), limit).is_ok());
-        assert!(admit_registration_geometries(&json!({"information": []}), limit).is_ok());
-    }
-
-    /// Clause 4.7.2: a geometry encoded as a string is counted from its text,
-    /// its foreign members among the values besides its positions.
-    #[test]
-    fn a_string_encoded_registration_geometry_is_counted_before_it_is_parsed() {
-        let limit = GeometryCensusLimits {
-            positions: GeometryPositionLimit::new(NonZeroUsize::new(2).expect("a positive limit")),
-            values: JsonValueLimit::new(NonZeroUsize::new(20).expect("a positive limit")),
-        };
-        let line = json!({"type": "LineString", "coordinates": [[0, 0], [1, 1], [2, 2]]}).to_string();
-        let refused =
-            admit_registration_geometries(&json!({"location": {"type": "GeoProperty", "value": line}}), limit).expect_err("three positions exceed two");
+        let line = read(&json!({"type": "LineString", "coordinates": [[0, 0], [1, 1], [2, 2]]})).expect("a line");
+        let refused = admit_registration_geometries([(CsrMember::Location, &line)], limits(2, 20)).expect_err("three positions exceed two");
         assert!(
             matches!(
                 refused,
@@ -152,8 +187,28 @@ mod tests {
             ),
             "{refused:?}"
         );
-        let padded = json!({"type": "Point", "coordinates": [0, 0], "foreign": (0..40).collect::<Vec<u32>>()}).to_string();
-        let refused = admit_registration_geometries(&json!({"location": padded}), limit).expect_err("forty values exceed twenty");
+        let refused = admit_registration_geometries([(CsrMember::OperationSpace, &line)], limits(2, 20)).expect_err("a bare geometry is counted too");
+        assert!(
+            matches!(
+                refused,
+                RegistrationError::GeometryTooLarge {
+                    member: CsrMember::OperationSpace,
+                    ..
+                }
+            ),
+            "{refused:?}"
+        );
+        let point = read(&json!({"type": "Point", "coordinates": [0, 0]})).expect("a point");
+        assert!(admit_registration_geometries([(CsrMember::Location, &point)], limits(2, 20)).is_ok());
+        assert!(admit_registration_geometries([], limits(2, 20)).is_ok());
+    }
+
+    /// IETF RFC 7946 section 6.1: the foreign members of a geometry cost the
+    /// values they hold besides its positions.
+    #[test]
+    fn a_registration_geometry_past_the_value_budget_is_refused() {
+        let padded = read(&json!({"type": "Point", "coordinates": [0, 0], "foreign": (0..40).collect::<Vec<u32>>()})).expect("a padded point");
+        let refused = admit_registration_geometries([(CsrMember::Location, &padded)], limits(2, 20)).expect_err("forty values exceed twenty");
         assert!(
             matches!(
                 refused,
@@ -164,11 +219,6 @@ mod tests {
             ),
             "{refused:?}"
         );
-    }
-
-    #[test]
-    fn invalid_geometry_returns_error() {
-        let input = json!({ "type": "Property", "value": {"type": "Point", "coordinates": [1.0, 2.0]} });
-        assert!(unwrap_geo_property_to_geometry(&input).is_err());
+        assert!(admit_registration_geometries([(CsrMember::Location, &padded)], limits(2, 100)).is_ok());
     }
 }

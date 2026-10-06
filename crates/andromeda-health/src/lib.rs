@@ -18,7 +18,10 @@
 
 pub mod aggregate;
 pub mod component;
+pub mod details;
 pub mod indicator;
+pub mod mqtt_details;
+pub mod postgresql_details;
 pub mod report;
 pub mod status;
 

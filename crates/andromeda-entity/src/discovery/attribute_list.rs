@@ -18,8 +18,17 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, ngsi_ld_urn::AttributeListId};
 use andromeda_ngsi_ld_model::attribute_list::{AttributeInfo, AttributeList, AttributeListType, AttributeResourceType};
-use serde_json::Value;
 use std::collections::HashMap;
+
+/// The attributes the broker knows, in the representation the request asked
+/// for.
+#[derive(Debug)]
+pub enum AttributeCollection {
+    /// Clause 5.2.27 `AttributeList` of the names.
+    List(AttributeList),
+    /// One clause 5.2.28 record per attribute (clause 4.5.14 `details=true`).
+    Detailed(Vec<AttributeInfo>),
+}
 
 /// The entity types an attribute is known to belong to, across the local
 /// store and the registry.
@@ -44,7 +53,7 @@ impl EntityDiscoveryService {
         representation: AttributeCollectionRepresentation,
         scope: DiscoveryScope,
         context: &ContextSpec,
-    ) -> Result<Value, EntityError> {
+    ) -> Result<AttributeCollection, EntityError> {
         let local = self.store.attribute_entity_types(target).await?;
         let mut attr_data: HashMap<AttributeName, AttributeMetadata> = HashMap::with_capacity(local.len());
         for (attribute, entity_types) in local {
@@ -73,7 +82,7 @@ impl EntityDiscoveryService {
 /// cardinality 0..1 and clause 5.7.9.5 asks only for the names, so neither
 /// is reported here; clause 5.7.10 is where an attribute's families and
 /// count are answered.
-fn detailed_attributes(attr_data: HashMap<AttributeName, AttributeMetadata>, names: &NameCompaction) -> Result<Value, EntityError> {
+fn detailed_attributes(attr_data: HashMap<AttributeName, AttributeMetadata>, names: &NameCompaction) -> Result<AttributeCollection, EntityError> {
     let mut attributes = Vec::with_capacity(attr_data.len());
     for (iri, meta) in attr_data {
         attributes.push(
@@ -87,23 +96,21 @@ fn detailed_attributes(attr_data: HashMap<AttributeName, AttributeMetadata>, nam
     }
     attributes.sort_by(|left, right| left.id.cmp(&right.id));
 
-    Ok(serde_json::to_value(attributes)?)
+    Ok(AttributeCollection::Detailed(attributes))
 }
 
 /// The clause 5.2.27 `AttributeList` of the attribute names, each
 /// compacted under the context `names` compacts against.
-fn attribute_name_list(attr_iris: impl IntoIterator<Item = AttributeName>, names: &NameCompaction) -> Result<Value, EntityError> {
+fn attribute_name_list(attr_iris: impl IntoIterator<Item = AttributeName>, names: &NameCompaction) -> Result<AttributeCollection, EntityError> {
     let mut compacted_names = compacted_attribute_names(names, attr_iris)?;
     compacted_names.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     let compacted_names = compacted_names;
 
     let id = AttributeListId::mint().map_err(EntityInvariant::MintedAttributeListId)?;
 
-    let list = AttributeList {
+    Ok(AttributeCollection::List(AttributeList {
         id,
         type_: AttributeListType,
         attribute_list: compacted_names,
-    };
-
-    Ok(serde_json::to_value(list)?)
+    }))
 }

@@ -4,9 +4,9 @@
 //! context sources contribute, rather than from the local rows.
 
 use crate::temporal::TemporalQueryParameters;
-use andromeda_federation::temporal_last_n::truncate_to_last_n;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
-use serde_json::Value;
 
 /// Bound the merged history and cut the requested page from it.
 ///
@@ -22,12 +22,17 @@ use serde_json::Value;
 /// identifiers. No other order reaches this point, because clause 5.7.4.4
 /// refuses an ordering on a query not limited to the local scope. The window
 /// is the one the client asked for, by offset or by cursor alike.
-fn merged_page(entities: Vec<Value>, params: &TemporalQueryParameters, window: &PageWindow, count: CountPolicy) -> (Vec<Value>, Option<usize>) {
+fn merged_page(
+    entities: Vec<TemporalHistory>,
+    params: &TemporalQueryParameters,
+    window: &PageWindow,
+    count: CountPolicy,
+) -> (Vec<TemporalHistory>, Option<usize>) {
     let mut bounded = entities;
     if let Some(last_n) = params.last_n {
         let timeproperty = params.timeproperty_or_default();
         for entity in &mut bounded {
-            truncate_to_last_n(entity, last_n, timeproperty);
+            entity.keep_last(timeproperty, last_n);
         }
     }
     bounded.sort_by(|left, right| identifier_key(left).cmp(identifier_key(right)));
@@ -39,10 +44,10 @@ fn merged_page(entities: Vec<Value>, params: &TemporalQueryParameters, window: &
     (window.cut(bounded, identifier_key), total)
 }
 
-/// The identifier a merged temporal entity is ordered by; one without a
-/// readable `id` has the empty key and sorts first.
-fn identifier_key(entity: &Value) -> &str {
-    entity.get("id").and_then(Value::as_str).unwrap_or_default()
+/// The identifier a merged temporal entity is ordered by; one that names none
+/// has the empty key and sorts first.
+fn identifier_key(entity: &TemporalHistory) -> &str {
+    entity.id().map_or("", Identifier::as_str)
 }
 
 /// What the page cut of a temporal query reads once the context sources have
@@ -61,10 +66,75 @@ pub(crate) struct MergedPageCut<'page> {
 }
 
 /// Cut the page the client asked for from the merged collection.
-pub(crate) fn cut_merged_page(merged_entities: Vec<Value>, cut: MergedPageCut<'_>, params: &TemporalQueryParameters) -> (Vec<Value>, Option<usize>) {
+pub(crate) fn cut_merged_page(
+    merged_entities: Vec<TemporalHistory>,
+    cut: MergedPageCut<'_>,
+    params: &TemporalQueryParameters,
+) -> (Vec<TemporalHistory>, Option<usize>) {
     let MergedPageCut { window, count, local_total } = cut;
     match window {
         Some(window) => merged_page(merged_entities, params, window, count),
         None => (merged_entities, local_total),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        temporal::{
+            TemporalQueryParameters,
+            query::merged_page::{MergedPageCut, cut_merged_page},
+        },
+        test_history::held_history,
+    };
+    use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
+    use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
+    use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
+    use serde_json::json;
+
+    /// An entity whose `speed` was observed once a day for five days.
+    async fn observed_daily(id: &str) -> TemporalHistory {
+        let speed: Vec<_> = (1..=5)
+            .map(|day| json!({"type": "Property", "value": day, "observedAt": format!("2024-01-0{day}T00:00:00Z")}))
+            .collect();
+        held_history(json!({"id": id, "type": "Vehicle", "https://example.com/speed": speed})).await
+    }
+
+    /// Clause 5.7.4.4 (T-D4): `lastN` bounds the instances of the merged
+    /// history, keeping the most recent ones, and every response lists its
+    /// instances oldest first.
+    #[tokio::test]
+    async fn last_n_after_merge_keeps_ascending_order() {
+        let params = TemporalQueryParameters {
+            last_n: Some(3),
+            ..TemporalQueryParameters::default()
+        };
+        let window = PageWindow::unbounded();
+        let (page, total) = cut_merged_page(
+            vec![observed_daily("urn:ngsi-ld:Vehicle:2").await, observed_daily("urn:ngsi-ld:Vehicle:1").await],
+            MergedPageCut {
+                window: Some(&window),
+                count: CountPolicy::Emit,
+                local_total: None,
+            },
+            &params,
+        );
+        assert_eq!(total, Some(2));
+        assert_eq!(
+            page.iter().filter_map(|entity| entity.id().map(ToString::to_string)).collect::<Vec<_>>(),
+            vec!["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]
+        );
+        for entity in &page {
+            let TemporalHistory::Instances(document) = entity else {
+                panic!("a history of instances");
+            };
+            let days: Vec<_> = document
+                .instances()
+                .filter_map(|(_, instance)| instance.instant_on(TimeProp::Observed))
+                .collect();
+            assert_eq!(days.len(), 3);
+            assert!(days.windows(2).all(|pair| pair[0] < pair[1]), "{days:?}");
+            assert_eq!(days[2].to_rfc3339(), "2024-01-05T00:00:00+00:00");
+        }
     }
 }

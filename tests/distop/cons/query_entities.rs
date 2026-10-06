@@ -239,6 +239,122 @@ async fn distop_query_entities_discards_expired_entities_in_remote_array() {
     topology.finish().await.expect("topology cleanup");
 }
 
+/// Register an inclusive `queryEntity` source of `entity_type` on the front
+/// broker that answers every query with `answer`, and query the front broker
+/// for `entity_type` with `extra` appended to the query string.
+async fn query_answered_by_source(label: &str, answer: impl FnOnce(&str) -> Value, extra: &str) -> (Vec<Value>, String) {
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let mock = ContextSourceAdapter::start().await;
+    let vtype = topology.id("Vehicle");
+    let registration = CsrBuilder::new(&topology.id(&format!("registration:{label}")), &mock.url(""))
+        .mode("inclusive")
+        .entity_type(&vtype)
+        .operations(&["queryEntity"])
+        .build();
+    assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &answer(&vtype)).await;
+
+    let response = front
+        .client()
+        .query_entities(&format!("type={}&{extra}", urlencoding::encode(&vtype)), "application/ld+json", None)
+        .await
+        .expect("query");
+    assert_status(&response, 200);
+    let entities = json_body(&response).as_array().cloned().unwrap_or_default();
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+    (entities, vtype)
+}
+
+/// Clause 5.7.2.4: `attrs` selects attributes by name after the merge as it
+/// does locally, so `attrs=speed` keeps `speed` and drops `maxspeed`, whose
+/// name only ends the same way.
+#[tokio::test]
+async fn distop_query_entities_attrs_after_merge_is_an_exact_match() {
+    let id = "Vehicle:attrs-exact";
+    let (entities, _) = query_answered_by_source(
+        "attrs-exact",
+        |vtype| {
+            json!([entity(
+                &format!("urn:ngsi-ld:{id}"),
+                vtype,
+                &[("speed", property(json!(50))), ("maxspeed", property(json!(120)))]
+            )])
+        },
+        "attrs=speed",
+    )
+    .await;
+    let [merged] = entities.as_slice() else {
+        panic!("one entity is answered, got {entities:?}");
+    };
+    assert_eq!(merged["speed"]["value"], json!(50), "the named attribute is kept: {merged}");
+    assert!(
+        merged.get("maxspeed").is_none(),
+        "an attribute that only ends like the named one is dropped: {merged}"
+    );
+}
+
+/// Clause 5.7.2.4: the geo-properties a source answers are selected by `attrs`
+/// like every other attribute, so `location` does not survive the merge of a
+/// query that did not name it.
+#[tokio::test]
+async fn distop_query_entities_attrs_after_merge_filters_geo_properties() {
+    let (entities, _) = query_answered_by_source(
+        "attrs-geo",
+        |vtype| {
+            json!([entity(
+                "urn:ngsi-ld:Vehicle:attrs-geo",
+                vtype,
+                &[
+                    ("speed", property(json!(50))),
+                    (
+                        "location",
+                        json!({ "type": "GeoProperty", "value": { "type": "Point", "coordinates": [1.0, 2.0] } })
+                    ),
+                ]
+            )])
+        },
+        "attrs=speed",
+    )
+    .await;
+    let [merged] = entities.as_slice() else {
+        panic!("one entity is answered, got {entities:?}");
+    };
+    assert_eq!(merged["speed"]["value"], json!(50), "the named attribute is kept: {merged}");
+    assert!(merged.get("location").is_none(), "a geo-property the query did not name is dropped: {merged}");
+}
+
+/// Clause 5.7.2.4: an entity left with only a geo-property its query named is
+/// still an entity of the answer, not an empty one to be discarded.
+#[tokio::test]
+async fn distop_query_entities_an_entity_left_with_only_location_is_kept() {
+    let (entities, _) = query_answered_by_source(
+        "attrs-only-location",
+        |vtype| {
+            json!([entity(
+                "urn:ngsi-ld:Vehicle:attrs-only-location",
+                vtype,
+                &[
+                    ("speed", property(json!(50))),
+                    (
+                        "location",
+                        json!({ "type": "GeoProperty", "value": { "type": "Point", "coordinates": [1.0, 2.0] } })
+                    ),
+                ]
+            )])
+        },
+        "attrs=location",
+    )
+    .await;
+    let [merged] = entities.as_slice() else {
+        panic!("the entity left with only its location is answered, got {entities:?}");
+    };
+    assert_eq!(merged["location"]["value"]["type"], json!("Point"), "the named geo-property is kept: {merged}");
+    assert!(merged.get("speed").is_none(), "the attribute the query did not name is dropped: {merged}");
+}
+
 /// Per-source Entity Arrays merge per clause 4.5.5: a same-id entity is merged
 /// across sources, and distinct-id entities coexist. Confirms REQ-CONS-31.
 #[tokio::test]

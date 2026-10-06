@@ -15,7 +15,6 @@
 pub mod aliased_node;
 mod piece_node;
 pub mod produced_node;
-pub mod value_node;
 
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, written_geometry::WrittenGeometry};

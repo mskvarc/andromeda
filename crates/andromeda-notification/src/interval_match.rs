@@ -158,7 +158,9 @@ mod tests {
     fn a_periodic_geo_q_that_no_longer_compiles_carries_no_entity() {
         let mut subscription = serde_json::to_value(speeding()).expect("the subscription serialises");
         subscription["q"] = Value::Null;
-        subscription["geoQ"] = json!({"georel": "near;maxDistance==2000"});
+        // Coordinates a string encodes are read when the `geoQ` is compiled, so
+        // ones that are no JSON make a stored `geoQ` that no longer compiles.
+        subscription["geoQ"] = json!({"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": "[1, "});
         let subscription: Subscription = serde_json::from_value(subscription).expect("valid subscription");
         let matched = apply_subscription_filters(
             &subscription,

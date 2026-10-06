@@ -34,7 +34,7 @@ use serde_json::{Value, json};
 /// documents compare by numeric value as the round-trip contract states.
 fn by_value(value: Value) -> Value {
     match value {
-        Value::Number(number) => JsonNumber::try_from(&number).map_or(Value::Number(number), |exact| exact.to_json_value()),
+        Value::Number(number) => JsonNumber::try_from(&number).map_or(Value::Number(number), |exact| Value::Number(exact.to_serde_number())),
         Value::Array(items) => Value::Array(items.into_iter().map(by_value).collect()),
         Value::Object(members) => Value::Object(members.into_iter().map(|(key, member)| (key, by_value(member))).collect()),
         other @ (Value::Null | Value::Bool(_) | Value::String(_)) => other,

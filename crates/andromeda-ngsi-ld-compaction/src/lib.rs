@@ -26,6 +26,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod aggregated_entity;
 mod carrier_items;
 mod compacted;
 mod compacted_mode;

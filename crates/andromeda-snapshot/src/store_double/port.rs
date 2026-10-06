@@ -11,13 +11,13 @@ use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::snapshot_target::SnapshotTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
+    key_value_pair::KeyValuePair,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use iso8601_duration::Duration as Iso8601Duration;
-use serde_json::Value;
 use std::sync::atomic::Ordering;
 use url::Url;
 
@@ -215,7 +215,7 @@ impl SnapshotStore for StoreDouble {
         _lifetime: Option<&'life2 Iso8601Duration>,
         _priority: Option<SnapshotPriority>,
         _endpoint: Option<Option<&'life3 Url>>,
-        _receiver_info: Option<Option<Value>>,
+        _receiver_info: Option<Option<Vec<KeyValuePair>>>,
         _new_expires_at: Option<DateTime<Utc>>,
     ) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>
     where

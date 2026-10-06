@@ -24,9 +24,8 @@ mod single_write;
 
 use crate::{
     FederationService,
-    document_rewording::DocumentVocabulary,
     error::FederationError,
-    forwarded_body::ForwardedBody,
+    forwarded_content::ForwardedContent,
     forwarded_payload::ItemBody,
     forwarded_write::{ForwardWrite, WritePayload},
     forwarding_url::forwarding_url,
@@ -36,19 +35,15 @@ use crate::{
     provision_batch::{
         batch_answer::batch_outcomes,
         fallback_plan::{FallbackPlan, SingleWrite, follow_up_write, plan_for},
-        narrowing::{NarrowedEntity, ResolvedEntity, narrow_input},
-        single_write::single_write_request,
+        narrowing::{NarrowedEntity, narrow_input},
+        single_write::{SingleWriteRequest, single_write_request},
     },
     request::TriggeringRequest,
-    term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{
-    batch_contexts::{BatchContext, ContextGroups},
-    context_spec::ContextSpec,
-};
-use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec};
+use andromeda_ngsi_ld_entity::{document::EntityDocument, operation::selection::OverwritePolicy};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_render::version::adapted_payload::AdaptedPayload;
 use andromeda_ngsi_ld_request::options::UpsertMode;
@@ -98,19 +93,18 @@ impl BatchProvisionOperation {
 }
 
 /// One entity of the client's array.
+#[derive(Clone, Copy)]
 pub struct BatchEntity<'a> {
     /// The entity identifier.
     pub id: &'a Identifier,
-    /// The compact entity type used for registration matching; a deletion
-    /// names none.
-    pub entity_type: Option<&'a EntityTypeName>,
-    /// The entity as the client sent it, without an inline `@context`,
-    /// serialised only for a registration it matches; a deletion carries none.
-    pub body: Option<&'a dyn ForwardedBody>,
+    /// The document the clause 5.5.4 admission expanded the entity to; its
+    /// types are what registrations are matched on (clause 5.12). A deletion
+    /// carries none.
+    pub document: Option<&'a EntityDocument>,
     /// The context the entity was submitted under: its own `@context` in an
     /// `application/ld+json` batch, the request's `Link` context otherwise
     /// (clause 5.5.7). JSON-LD applies a top-level node's `@context` to that
-    /// node alone, so every entity is read, matched and forwarded under its own;
+    /// node alone, so every entity is forwarded spelled back from its own;
     /// entities naming one context share its identity.
     pub context: &'a BatchContext,
 }
@@ -151,13 +145,10 @@ impl FederationService {
     ///
     /// # Errors
     ///
-    /// Returns [`FederationError::JsonLd`] when an entity type of the array
-    /// cannot be expanded against the request's context,
-    /// [`FederationError::Registration`] when the candidate registrations
-    /// cannot be read, and [`FederationError::ForwardedBody`] when an entity a
-    /// registration matches cannot be serialised for it. A source that rejects part of the array does not fail
-    /// the call: its rejections are reported per entity in the returned
-    /// [`BatchForwardedResult`]s.
+    /// Returns [`FederationError::Registration`] when the candidate
+    /// registrations cannot be read. A source that rejects part of the array
+    /// does not fail the call: its rejections are reported per entity in the
+    /// returned [`BatchForwardedResult`]s.
     pub async fn forward_batch(&self, target: &ContextTarget, request: ForwardBatchRequest<'_>) -> Result<Vec<BatchForwardedResult>, FederationError> {
         if !target.permits_federation() {
             return Ok(Vec::new());
@@ -166,29 +157,6 @@ impl FederationService {
             debug!("Loop detected in Via header chain, skipping batch provision forwarding");
             return Ok(Vec::new());
         }
-        // Every entity is read under the context it was submitted with, and the
-        // entities naming the same context share one resolution of it.
-        let mut by_context = ContextGroups::default();
-        for (position, entity) in request.entities.iter().enumerate() {
-            by_context.push(entity.context, (position, entity));
-        }
-        let groups = by_context
-            .iter()
-            .map(|(context, members)| (TermResolver::new(&self.engine, context.spec()), members))
-            .collect::<Vec<_>>();
-        let mut resolved = Vec::with_capacity(request.entities.len());
-        for (resolver, members) in &groups {
-            for &(position, entity) in *members {
-                let entity_type = match entity.entity_type {
-                    Some(name) => Some(resolver.expand_type(name.as_str()).await?),
-                    None => None,
-                };
-                resolved.push((position, ResolvedEntity { entity, entity_type, resolver }));
-            }
-        }
-        // The forwarded array keeps the order the client submitted it in.
-        resolved.sort_by_key(|(position, _)| *position);
-        let resolved = resolved.into_iter().map(|(_, entity)| entity).collect::<Vec<_>>();
         // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
         let candidates = self
             .csr_repo
@@ -199,19 +167,18 @@ impl FederationService {
             .collect::<Vec<_>>();
         let candidates = &candidates;
         let request = &request;
-        let resolved = &resolved;
         let results = stream::iter(candidates)
             .map(|csr| async move {
-                let narrowed = narrow_input(csr, candidates, resolved).await?;
+                let narrowed = narrow_input(csr, candidates, request.entities);
                 if narrowed.is_empty() {
-                    return Ok::<_, FederationError>(Vec::new());
+                    return Vec::new();
                 }
-                Ok(self.drive_registration(csr, narrowed, request).await)
+                self.drive_registration(csr, narrowed, request).await
             })
             .buffer_unordered(self.csr_concurrency)
-            .collect::<Vec<Result<Vec<BatchForwardedResult>, FederationError>>>()
+            .collect::<Vec<Vec<BatchForwardedResult>>>()
             .await;
-        Ok(results.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect())
+        Ok(results.into_iter().flatten().collect())
     }
 
     /// Drive one registration through the clause 5.6.7.4 ladder for its
@@ -247,7 +214,7 @@ impl FederationService {
                             .iter_mut()
                             .filter_map(|entity| {
                                 Some(ItemBody {
-                                    body: entity.body.take()?,
+                                    document: entity.body.take()?,
                                     context: entity.context,
                                 })
                             })
@@ -314,7 +281,7 @@ impl FederationService {
         entity: &NarrowedEntity<'_>,
         request: &ForwardBatchRequest<'_>,
     ) -> ForwardedWriteOutcome {
-        let (url, method, body) = single_write_request(write, csr.access.endpoint.url(), entity);
+        let SingleWriteRequest { url, method, body } = single_write_request(write, csr.access.endpoint.url(), entity);
         let outcome = self
             .forward_write(ForwardWrite {
                 registration: csr,
@@ -334,7 +301,7 @@ impl FederationService {
         let Some(follow_up) = follow_up_write(follow_up) else {
             return ForwardedWriteOutcome::UpsertFollowUpNotAdvertised;
         };
-        let (url, method, body) = single_write_request(follow_up, csr.access.endpoint.url(), entity);
+        let SingleWriteRequest { url, method, body } = single_write_request(follow_up, csr.access.endpoint.url(), entity);
         self.forward_write(ForwardWrite {
             registration: csr,
             url,
@@ -349,11 +316,10 @@ impl FederationService {
 
 /// What one single-entity fallback write carries: the entity's document, or
 /// nothing for a deletion, under the context the entity was submitted with.
-const fn entity_payload<'a>(body: Option<&'a [u8]>, context: &'a ContextSpec) -> WritePayload<'a> {
+const fn entity_payload<'a>(body: Option<&'a EntityDocument>, context: &'a ContextSpec) -> WritePayload<'a> {
     match body {
-        Some(bytes) => WritePayload::Document {
-            bytes,
-            vocabulary: DocumentVocabulary::Entities,
+        Some(document) => WritePayload::Document {
+            content: ForwardedContent::Entity(document),
             element: AdaptedPayload::Entity,
             context,
         },

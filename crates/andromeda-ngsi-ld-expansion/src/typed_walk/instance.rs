@@ -137,6 +137,7 @@ fn family_members(node: &mut NodeBuilder, scope: &TermScope<'_>, instance: &Attr
         }
         Attribute::GeoProperty(geo_property) => {
             add_geo_value(node, scope, compact_properties::VALUE, &geo_property.value)?;
+            add_optional(node, scope, compact_properties::UNIT_CODE, geo_property.unit_code.as_ref())?;
             add_optional(node, scope, compact_properties::VALUE_TYPE, geo_property.value_type.as_ref())
         }
         Attribute::VocabProperty(vocab_property) => {
@@ -153,6 +154,7 @@ fn family_members(node: &mut NodeBuilder, scope: &TermScope<'_>, instance: &Attr
         }
         Attribute::ListProperty(list_property) => {
             add_value_list(node, scope, &list_property.value_list)?;
+            add_optional(node, scope, compact_properties::UNIT_CODE, list_property.unit_code.as_ref())?;
             add_optional(node, scope, compact_properties::VALUE_TYPE, list_property.value_type.as_ref())
         }
         Attribute::ListRelationship(list_relationship) => {

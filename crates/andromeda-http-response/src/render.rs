@@ -2,7 +2,7 @@
 //!
 //! `andromeda-ngsi-ld-render` takes values: a media type, the `@context` in the
 //! one carrier the response uses, and the `Prefer` tokens that change how a
-//! payload is written. A handler holds an axum extractor and the
+//! body is written. A handler holds an axum extractor and the
 //! [`PresentedContext`] its engine resolved from the request's `@context`
 //! (clauses 5.2.3, 4.4 and 5.5.7), and this is the one place those are turned
 //! into the other.
@@ -17,10 +17,11 @@
 use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
 use andromeda_jsonld::{
     compound_context_host::{CompoundContextHost, ContextHostingError, WrapperUse},
+    error::JsonLdError,
     presented_context::{ContextLinkTarget, PresentedContext},
 };
-use andromeda_ngsi_ld_lexicon::{spec_version::SpecVersion, temporal_format::TemporalFormat};
-use andromeda_ngsi_ld_render::{context::ResponseContext, response::ResponseRenderer, version::adapted_payload::AdaptedPayload};
+use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
+use andromeda_ngsi_ld_render::{context::ResponseContext, response::ResponseRenderer};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::IriBuf;
@@ -28,9 +29,9 @@ use iri_rs::IriBuf;
 /// Configure a response renderer from a handler's media type, context,
 /// preferences and the representation its payload is already rendered in.
 ///
-/// Returns the renderer before its payload; the caller attaches that with
-/// [`ResponseRenderer::with_payload`], which is the only route to a runnable
-/// response, so a handler cannot render a body without one.
+/// Returns the renderer before its body; the caller attaches that with
+/// `with_entities`, `with_body` or `with_collection`, which are the only routes
+/// to a runnable response, so a handler cannot render a body without one.
 ///
 /// `format` is a parameter rather than a `with_*` step because forgetting it is
 /// not a missed optimization. Clause 4.3.6.8's fallback tables are applied to
@@ -77,9 +78,9 @@ pub async fn start_rendering<'a>(
 /// `options` parameter that would select another.
 ///
 /// This exists so that a handler with nothing to decide states that, rather
-/// than passing a representation it never chose. A temporal answer belongs to
-/// [`start_rendering_temporal`] instead: it is reified the same way, but two of
-/// the clause 4.3.6.8 fallbacks read differently on it.
+/// than passing a representation it never chose. A temporal answer is written
+/// by its own writer, which reads the clause 6.3.12 representation from the
+/// payload, so it too starts here.
 ///
 /// # Errors
 ///
@@ -93,51 +94,24 @@ pub async fn start_rendering_normalized<'a>(
     start_rendering(media_type, context, host, preferences, ResponseFormat::Normalized).await
 }
 
-/// Configure a response renderer for the Temporal Evolution of an Entity
-/// (clause 4.5.6).
-///
-/// The temporal representation is reified in the same way an
-/// [`ResponseFormat::Normalized`] Entity is -- its own `temporalValues` and
-/// `aggregatedValues` renderings change what an Attribute instance holds and
-/// not whether the Attribute is an object naming its `type` -- so it is read
-/// under the normalized representation, and the client cannot select another.
-///
-/// What it does not share with an Entity is how clause 4.3.6.8 reads an
-/// Attribute's array and its `observedAt`, which is why a temporal answer says
-/// so here rather than reaching for [`start_rendering_normalized`]. `format` is
-/// the clause 6.3.12 representation the answer was rendered in, because the two
-/// simplified ones carry the sequence in time inside a member of the attribute
-/// rather than as the attribute's own array. See [`AdaptedPayload`].
-///
-/// # Errors
-///
-/// As [`start_rendering`].
-pub async fn start_rendering_temporal<'a>(
-    media_type: ResponseMediaType,
-    context: PresentedContext,
-    host: &dyn CompoundContextHost,
-    preferences: RenderingPreferences,
-    format: TemporalFormat,
-) -> Result<ResponseRenderer<'a>, ContextHostingError> {
-    Ok(start_rendering_normalized(media_type, context, host, preferences)
-        .await?
-        .with_adapted_payload(AdaptedPayload::of_temporal(format)))
-}
-
 /// Configure a response renderer for a resource that always answers under the
 /// core context alone, in the normalized representation.
 ///
 /// The core context is one URL, so its `Link` names it as is and nothing is
 /// ever hosted.
-#[must_use]
-pub fn start_rendering_core<'a>(media_type: ResponseMediaType, preferences: RenderingPreferences) -> ResponseRenderer<'a> {
+///
+/// # Errors
+///
+/// Returns [`JsonLdError::ContextText`] when the core context URL cannot be
+/// written as a JSON string, which no URL fails to be.
+pub fn start_rendering_core<'a>(media_type: ResponseMediaType, preferences: RenderingPreferences) -> Result<ResponseRenderer<'a>, JsonLdError> {
     let context = match ContextCarrier::of(media_type, preferences.geo_json_body) {
-        ContextCarrier::Body => ResponseContext::Body(PresentedContext::core().into_value()),
+        ContextCarrier::Body => ResponseContext::Body(PresentedContext::core()?.into_literal()),
         ContextCarrier::Link => ResponseContext::Link(IriBuf::from(NGSI_LD_CORE_CONTEXT_URL)),
     };
-    ResponseRenderer::new(media_type, context)
+    Ok(ResponseRenderer::new(media_type, context)
         .with_requested_version(preferences.requested_version)
-        .with_format(ResponseFormat::Normalized)
+        .with_format(ResponseFormat::Normalized))
 }
 
 /// Configure a response renderer for the body of a partial success.
@@ -193,7 +167,7 @@ impl ContextCarrier {
 /// `Link` header and no single URL names it: a body embeds the value itself.
 async fn response_context(context: PresentedContext, host: &dyn CompoundContextHost, carrier: ContextCarrier) -> Result<ResponseContext, ContextHostingError> {
     match carrier {
-        ContextCarrier::Body => Ok(ResponseContext::Body(context.into_value())),
+        ContextCarrier::Body => Ok(ResponseContext::Body(context.into_literal())),
         ContextCarrier::Link => match context.link_target() {
             ContextLinkTarget::Reference(target) => Ok(ResponseContext::Link(target)),
             ContextLinkTarget::Hosted(wrapped) => Ok(ResponseContext::Link(host.host(&wrapped, WrapperUse::Response).await?)),
@@ -205,12 +179,16 @@ async fn response_context(context: PresentedContext, host: &dyn CompoundContextH
 mod tests {
     use crate::render::{ContextCarrier, RenderingPreferences, response_context, start_rendering_core, start_rendering_partial_success};
     use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{
         compound_context_host::{CompoundContextHost, CompoundContextHostFuture, NoCompoundContextHost, WrapperUse},
         context_spec::ContextSpec,
         presented_context::{NoLoadedContexts, PresentedContext},
     };
-    use andromeda_ngsi_ld_render::{context::ResponseContext, response::ResponsePayload};
+    use andromeda_ngsi_ld_render::{
+        context::ResponseContext,
+        response::{ResponseHead, ResponseRenderer},
+    };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
@@ -222,17 +200,17 @@ mod tests {
     /// A host that records what it was asked to host and answers one fixed URL.
     #[derive(Debug, Default)]
     struct RecordingHost {
-        hosted: Mutex<Vec<Value>>,
+        hosted: Mutex<Vec<JsonLiteral>>,
     }
 
     impl RecordingHost {
-        fn hosted(&self) -> Vec<Value> {
+        fn hosted(&self) -> Vec<JsonLiteral> {
             self.hosted.lock().expect("the recording lock").clone() // clone: the assertion reads a snapshot
         }
     }
 
     impl CompoundContextHost for RecordingHost {
-        fn host<'a>(&'a self, context: &'a Value, _usage: WrapperUse) -> CompoundContextHostFuture<'a> {
+        fn host<'a>(&'a self, context: &'a JsonLiteral, _usage: WrapperUse) -> CompoundContextHostFuture<'a> {
             Box::pin(async move {
                 self.hosted.lock().expect("the recording lock").push(context.clone()); // clone: the record keeps its own copy
                 Ok(IriBuf::new(WRAPPER_URL.to_owned()).expect("a valid URL"))
@@ -249,7 +227,9 @@ mod tests {
     }
 
     fn compound_spec() -> ContextSpec {
-        ContextSpec::from_body(json!(["https://example.com/a.jsonld", "https://example.com/b.jsonld"]))
+        ContextSpec::from_body(
+            JsonLiteral::admit(&json!(["https://example.com/a.jsonld", "https://example.com/b.jsonld"]).to_string()).expect("an admissible literal"),
+        )
     }
 
     /// Clause 6.3.6 and clause 4.5.16: which media type embeds the context and
@@ -277,12 +257,12 @@ mod tests {
     async fn a_link_naming_one_string_hosts_nothing() {
         let host = RecordingHost::default();
 
-        let context = response_context(PresentedContext::core(), &host, ContextCarrier::Link)
+        let context = response_context(PresentedContext::core().expect("the core context"), &host, ContextCarrier::Link)
             .await
             .expect("a context");
 
         pretty_assertions::assert_eq!(context, ResponseContext::Link(iri(NGSI_LD_CORE_CONTEXT_URL.as_str())));
-        pretty_assertions::assert_eq!(host.hosted(), Vec::<Value>::new());
+        pretty_assertions::assert_eq!(host.hosted(), Vec::<JsonLiteral>::new());
     }
 
     /// Annex C.8: a presented value of several contexts is linked through one
@@ -299,11 +279,17 @@ mod tests {
         pretty_assertions::assert_eq!(host.hosted(), vec![body]);
         pretty_assertions::assert_eq!(
             host.hosted(),
-            vec![json!([
-                "https://example.com/a.jsonld",
-                "https://example.com/b.jsonld",
-                NGSI_LD_CORE_CONTEXT_URL.as_str()
-            ])]
+            vec![
+                JsonLiteral::admit(
+                    &json!([
+                        "https://example.com/a.jsonld",
+                        "https://example.com/b.jsonld",
+                        NGSI_LD_CORE_CONTEXT_URL.as_str()
+                    ])
+                    .to_string()
+                )
+                .expect("an admissible literal")
+            ]
         );
     }
 
@@ -319,13 +305,19 @@ mod tests {
 
         pretty_assertions::assert_eq!(
             context,
-            ResponseContext::Body(json!([
-                "https://example.com/a.jsonld",
-                "https://example.com/b.jsonld",
-                NGSI_LD_CORE_CONTEXT_URL.as_str()
-            ]))
+            ResponseContext::Body(
+                JsonLiteral::admit(
+                    &json!([
+                        "https://example.com/a.jsonld",
+                        "https://example.com/b.jsonld",
+                        NGSI_LD_CORE_CONTEXT_URL.as_str()
+                    ])
+                    .to_string()
+                )
+                .expect("an admissible literal")
+            )
         );
-        pretty_assertions::assert_eq!(host.hosted(), Vec::<Value>::new());
+        pretty_assertions::assert_eq!(host.hosted(), Vec::<JsonLiteral>::new());
     }
 
     #[tokio::test]
@@ -337,31 +329,30 @@ mod tests {
 
     /// Clause 6.3.6: a partial success names no context at all, so it never
     /// asks a host.
+    /// The body and head a renderer writes for one resource.
+    fn written(renderer: ResponseRenderer<'_>) -> (Value, ResponseHead) {
+        let mut body = Vec::new();
+        let head = renderer.with_body(&json!({ "id": "urn:x" })).render_into(&mut body).expect("a written body");
+        (serde_json::from_slice(&body).expect("the body is JSON"), head)
+    }
+
     #[test]
     fn a_partial_success_names_no_context() {
-        let rendered = start_rendering_partial_success()
-            .with_payload(ResponsePayload::Batch(json!({ "success": [], "errors": [] })))
-            .render()
-            .expect("a rendering");
+        let (body, head) = written(start_rendering_partial_success());
 
-        pretty_assertions::assert_eq!(rendered.head.context_link, None);
-        pretty_assertions::assert_eq!(rendered.value.get("@context"), None);
+        pretty_assertions::assert_eq!(head.context_link, None);
+        pretty_assertions::assert_eq!(head.media_type, ResponseMediaType::Json);
+        pretty_assertions::assert_eq!(body.get("@context"), None);
     }
 
     #[test]
     fn a_core_resource_embeds_or_advertises_the_core_context_without_a_host() {
-        let embedded = start_rendering_core(ResponseMediaType::JsonLd, RenderingPreferences::default())
-            .with_payload(ResponsePayload::Single(json!({ "id": "urn:x" })))
-            .render()
-            .expect("a rendering");
-        let linked = start_rendering_core(ResponseMediaType::Json, RenderingPreferences::default())
-            .with_payload(ResponsePayload::Single(json!({ "id": "urn:x" })))
-            .render()
-            .expect("a rendering");
+        let (embedded, embedded_head) = written(start_rendering_core(ResponseMediaType::JsonLd, RenderingPreferences::default()).expect("a renderer"));
+        let (linked, linked_head) = written(start_rendering_core(ResponseMediaType::Json, RenderingPreferences::default()).expect("a renderer"));
 
-        pretty_assertions::assert_eq!(embedded.value["@context"], json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
-        pretty_assertions::assert_eq!(embedded.head.context_link, None);
-        pretty_assertions::assert_eq!(linked.head.context_link, Some(iri(NGSI_LD_CORE_CONTEXT_URL.as_str())));
-        assert!(linked.value.get("@context").is_none(), "{}", linked.value);
+        pretty_assertions::assert_eq!(embedded["@context"], json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        pretty_assertions::assert_eq!(embedded_head.context_link, None);
+        pretty_assertions::assert_eq!(linked_head.context_link, Some(iri(NGSI_LD_CORE_CONTEXT_URL.as_str())));
+        assert!(linked.get("@context").is_none(), "{linked}");
     }
 }

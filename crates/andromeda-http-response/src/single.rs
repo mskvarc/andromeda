@@ -1,4 +1,4 @@
-//! NGSI-LD response type for single entities with pre-rendered payload.
+//! NGSI-LD response type for single resources with a body already written.
 
 use crate::{
     headers::{CommonHeadersOptions, apply_common_headers},
@@ -15,15 +15,12 @@ use headers::HeaderMapExt;
 
 /// NGSI-LD response wrapper for a single entity.
 ///
-/// Constructed from what the rendering pipeline produced -- a rendered
-/// document or a typed entity body already written:
+/// Constructed from a typed body already written into a [`RenderedResponse`]:
 ///
 /// ```ignore
 /// let host = context_hosting.for_request(&api_root);
-/// let rendered = start_rendering(media_type, engine.presented_context(&context).await?, &host, prefer, format)
-///     .await?
-///     .with_payload(ResponsePayload::Single(entity_value))
-///     .render()?;
+/// let renderer = start_rendering(media_type, engine.presented_context(&context).await?, &host, prefer, format).await?;
+/// let rendered = RenderedResponse::resource(renderer.with_body(&resource))?;
 /// NgsiLdResponse::ok(rendered)
 ///     .with_location(location)
 ///     .into_response()
@@ -48,10 +45,10 @@ pub struct NgsiLdResponse {
 impl NgsiLdResponse {
     /// Create a response with a specific status code.
     #[must_use]
-    pub fn new(status: StatusCode, rendered: impl Into<RenderedResponse>) -> NgsiLdResponse {
+    pub const fn new(status: StatusCode, rendered: RenderedResponse) -> NgsiLdResponse {
         NgsiLdResponse {
             status,
-            rendered: rendered.into(),
+            rendered,
             location: None,
             entity_map_uri: None,
             content_range: None,
@@ -62,7 +59,7 @@ impl NgsiLdResponse {
 
     /// Create a 200 OK response.
     #[must_use]
-    pub fn ok(rendered: impl Into<RenderedResponse>) -> NgsiLdResponse {
+    pub const fn ok(rendered: RenderedResponse) -> NgsiLdResponse {
         NgsiLdResponse::new(StatusCode::OK, rendered)
     }
 
@@ -124,6 +121,6 @@ impl IntoResponse for NgsiLdResponse {
             headers.typed_insert(cr.clone());
         }
 
-        (status, headers, body).into_response()
+        (status, headers, body.into_body()).into_response()
     }
 }

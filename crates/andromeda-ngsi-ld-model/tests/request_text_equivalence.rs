@@ -7,12 +7,13 @@
 //! write as a plain JSON literal, kept in the spelling they wrote it in, and
 //! the annex C corpus; the cases below it cover what the corpus leaves out.
 
+use andromeda_json_literal::piece::JsonPiece;
 use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     entity::{Entity, EntityPatch},
     request_body::RequestBody,
 };
-use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, number_range::refuse_numbers_out_of_range};
+use andromeda_ngsi_ld_number::json_value::text_admission::admit_json_text;
 use andromeda_ngsi_ld_representation::compact_node::produced_node::ProducedNode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json, value::RawValue};
@@ -40,20 +41,22 @@ trait ReadFromNode: Sized {
 
 impl ReadFromNode for Entity {
     fn read(document: &Value) -> Result<Entity, String> {
-        <Entity>::from_node(ProducedNode::new(document)).map_err(|error| error.to_string())
+        let text = RawValue::from_string(document.to_string()).map_err(|error| error.to_string())?;
+        <Entity>::from_node(ProducedNode::new(JsonPiece::new(&text))).map_err(|error| error.to_string())
     }
 }
 
 impl ReadFromNode for EntityPatch {
     fn read(document: &Value) -> Result<EntityPatch, String> {
-        <EntityPatch>::from_node(ProducedNode::new(document)).map_err(|error| error.to_string())
+        let text = RawValue::from_string(document.to_string()).map_err(|error| error.to_string())?;
+        <EntityPatch>::from_node(ProducedNode::new(JsonPiece::new(&text))).map_err(|error| error.to_string())
     }
 }
 
 /// Decode `text` the parsed-tree way.
 fn through_tree<T: ReadFromNode>(text: &str) -> Result<T, String> {
     let mut document: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
-    canonicalize_numbers(&mut document).map_err(|error| error.to_string())?;
+    admit_json_text(text.as_bytes()).map_err(|error| error.to_string())?;
     if let Value::Object(members) = &mut document {
         members.remove("@context");
     }
@@ -63,7 +66,7 @@ fn through_tree<T: ReadFromNode>(text: &str) -> Result<T, String> {
 /// Decode `text` straight from the text, its numbers checked first as the
 /// transport checks them.
 fn through_text<T: RequestBody>(text: &str) -> Result<T, String> {
-    refuse_numbers_out_of_range(text.as_bytes()).map_err(|error| error.to_string())?;
+    admit_json_text(text.as_bytes()).map_err(|error| error.to_string())?;
     T::from_request_text(text.as_bytes()).map_err(|error| error.to_string())
 }
 

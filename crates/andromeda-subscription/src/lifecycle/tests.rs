@@ -1,5 +1,6 @@
 use crate::{
     csource::CsrSubscriptionVariant,
+    deleted_members::DeletedMembers,
     endpoint_admission::SubscriptionEndpointValidator,
     endpoint_refusal::EndpointRefusal,
     entity::EntitySubscriptionVariant,
@@ -12,6 +13,7 @@ use crate::{
 };
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::processor::JsonLdEngine,
@@ -21,7 +23,9 @@ use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, Geometry
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
+    request_body::RequestBody,
     subscription::{Subscription, SubscriptionStatus},
+    subscription_request::SubscriptionRequest,
 };
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_query::{
@@ -171,7 +175,7 @@ impl SubscriptionForwardingHook for RecordingHook {
         Ok(())
     }
 
-    async fn updated(&self, _subscription: &Subscription, _context: &ContextSpec) -> Result<(), SubscriptionError> {
+    async fn updated(&self, _subscription: &Subscription, _deleted: &DeletedMembers, _context: &ContextSpec) -> Result<(), SubscriptionError> {
         Ok(())
     }
 
@@ -402,8 +406,9 @@ async fn written_context_after_update(fragment: Value, context: &ContextSpec) ->
             values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
         },
     );
+    let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes()).expect("a readable fragment");
     let updated = service
-        .update(&ContextTarget::Live, &uri("urn:ngsi-ld:Subscription:stored"), fragment, &context)
+        .update(&ContextTarget::Live, &uri("urn:ngsi-ld:Subscription:stored"), request, &context)
         .await;
     assert!(updated.is_ok(), "{updated:?}");
     written
@@ -420,7 +425,7 @@ async fn written_context_after_update(fragment: Value, context: &ContextSpec) ->
 /// would have needed a hosted wrapper there.
 #[tokio::test]
 async fn an_update_naming_a_request_context_keeps_the_stored_jsonld_context() {
-    let context = ContextSpec::from_body(json!({ "speed": "https://example.com/speed" }));
+    let context = ContextSpec::from_body(JsonLiteral::admit(&json!({ "speed": "https://example.com/speed" }).to_string()).expect("an admissible literal"));
 
     let written = written_context_after_update(json!({ "q": "speed>1" }), &context).await;
 
@@ -563,11 +568,7 @@ async fn listed(window: &PageWindow) -> (Vec<String>, i64, Option<(Identifier, I
         .list_for_response(&ContextTarget::Live, window, &ContextSpec::none())
         .await
         .expect("the store lists");
-    let ids = listing
-        .subscriptions
-        .iter()
-        .filter_map(|subscription| subscription.get("id").and_then(Value::as_str).map(str::to_owned))
-        .collect();
+    let ids = listing.subscriptions.iter().map(|subscription| subscription.id.as_str().to_owned()).collect();
     (ids, listing.total, listing.boundary)
 }
 

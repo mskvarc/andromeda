@@ -3,18 +3,17 @@
 
 use crate::{
     FederationService,
-    document_rewording::DocumentVocabulary,
+    attribute_coverage::{matching_attributes, narrowed_document},
     error::FederationError,
-    forwarded_body::ForwardedBody,
+    forwarded_content::ForwardedContent,
     forwarded_names::ForwardedNames,
-    forwarded_write::{PlannedBody, PlannedWrite},
+    forwarded_write::{PlannedBody, PlannedContent, PlannedWrite},
     forwarding_context::BodyPresence,
     forwarding_url::forwarding_url,
     operation::ProvisionResource,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     provision_plan::{ProvisionPlan, RegistrationSelection},
     registration_payload::forwarding_decision,
-    registration_selection::{collect_matching_attrs, filter_fragment_for_registration},
     request::ForwardProvisionRequest,
     term_resolver::TermResolver,
 };
@@ -23,53 +22,54 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_ngsi_ld_render::version::adapted_payload::AdaptedPayload;
 use iri_rs::IriBuf;
+use std::borrow::Cow;
 use url::Url;
 
+/// What decides which attributes of one write a registration covers.
+#[derive(Clone, Copy)]
+struct WriteCoverage<'a> {
+    /// The entity types the registrations were matched on.
+    entity_types: &'a [IriBuf],
+    /// The attribute the request path names, by its expanded name.
+    expanded_attribute: Option<&'a AttributeName>,
+    /// The expanded names of the attributes the content writes.
+    requested: &'a [AttributeName],
+}
+
 impl FederationService {
-    /// Forward a single NGSI-LD provision operation carrying `body`.
+    /// Forward a single NGSI-LD provision operation carrying `content`.
     ///
     /// # Errors
     ///
-    /// As [`FederationService::plan_provision`], and
-    /// [`FederationError::ForwardedBody`] when a registration matched and the
-    /// payload cannot be serialised for it. A source that rejects the write
-    /// does not fail the call: its rejection is reported as one of the returned
-    /// [`ForwardedWriteResult`]s.
+    /// As [`FederationService::plan_provision`]. A source that rejects the
+    /// write does not fail the call: its rejection is reported as one of the
+    /// returned [`ForwardedWriteResult`]s.
     pub async fn forward_provision(
         &self,
         target: &ContextTarget,
         request: ForwardProvisionRequest<'_>,
-        body: Option<&dyn ForwardedBody>,
+        content: Option<ForwardedContent<'_>>,
     ) -> Result<Vec<ForwardedWriteResult>, FederationError> {
         let plan = self.plan_provision(target, &request).await?;
-        let payload = match body.map(|body| plan.payload(body)).transpose() {
-            Ok(payload) => payload.flatten(),
-            Err(error) => {
-                let failed: Result<(), &FederationError> = Err(&error);
-                plan.timer.finish_result(&failed);
-                return Err(error);
-            }
-        };
-        self.execute_provision(plan, &request, payload.as_deref()).await
+        self.execute_provision(plan, &request, content).await
     }
 
-    /// Send a planned provision operation whose payload, serialised by
-    /// [`ProvisionPlan::payload`], is `payload`.
+    /// Send a planned provision operation whose admitted content is `content`.
     ///
     /// # Errors
     ///
-    /// Returns [`FederationError::JsonLd`] when a payload attribute cannot be
-    /// expanded against the request context. A source that rejects the write
-    /// does not fail the call: its rejection is reported as one of the returned
+    /// Returns [`FederationError::JsonLd`] when the request's own names cannot
+    /// be spelled for a registration. A source that rejects the write does
+    /// not fail the call: its rejection is reported as one of the returned
     /// [`ForwardedWriteResult`]s.
     pub async fn execute_provision(
         &self,
         plan: ProvisionPlan,
         request: &ForwardProvisionRequest<'_>,
-        payload: Option<&[u8]>,
+        content: Option<ForwardedContent<'_>>,
     ) -> Result<Vec<ForwardedWriteResult>, FederationError> {
         let ProvisionPlan { timer, selection } = plan;
-        let result = self.send_provision(selection, request, payload).await;
+        let result = self.send_provision(selection, request, content).await;
         timer.finish_result(&result);
         result
     }
@@ -79,23 +79,25 @@ impl FederationService {
         &self,
         selection: RegistrationSelection,
         request: &ForwardProvisionRequest<'_>,
-        payload: Option<&[u8]>,
+        content: Option<ForwardedContent<'_>>,
     ) -> Result<Vec<ForwardedWriteResult>, FederationError> {
         let RegistrationSelection {
             mut settled,
             receiving,
             not_advertising,
             entity_types,
+            expanded_attribute,
         } = selection;
         if receiving.is_empty() && not_advertising.is_empty() {
             return Ok(settled);
         }
         let resolver = TermResolver::new(&self.engine, request.context);
+        let requested = content.as_ref().map(ForwardedContent::written_attributes).unwrap_or_default();
         for csr in not_advertising {
             // Clauses 5.6.1.4 and following: a proxied registration that
             // does not support the operation still owns its attributes, so
             // the write fails for them instead of landing here.
-            let proxied_attrs = collect_matching_attrs(&csr, &entity_types, Some(request.entity_id), request.attribute_name, payload, &resolver).await?;
+            let proxied_attrs = matching_attributes(&csr, &entity_types, Some(request.entity_id), expanded_attribute.as_ref(), &requested);
             let mode = proxied_mode(&csr);
             settled.push(ForwardedWriteResult {
                 registration_id: csr.id,
@@ -107,7 +109,12 @@ impl FederationService {
 
         let mut planned: Vec<PlannedWrite<'_>> = Vec::new();
         for csr in receiving {
-            if let Some(write) = self.plan_write(csr, request, payload, &entity_types, &resolver).await? {
+            let coverage = WriteCoverage {
+                entity_types: &entity_types,
+                expanded_attribute: expanded_attribute.as_ref(),
+                requested: &requested,
+            };
+            if let Some(write) = self.plan_write(csr, request, content, coverage, &resolver).await {
                 planned.push(write);
             }
         }
@@ -116,44 +123,53 @@ impl FederationService {
         Ok(settled)
     }
 
-    /// Plan the one forwarded write to `csr` for `request`, whose payload
-    /// serialised to `body`, or `None` when the registration covers nothing of
-    /// the body once it is narrowed to what the registration declares (clause
-    /// 4.3.6.1).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`FederationError::JsonLd`] when a body attribute cannot be
-    /// expanded against the request context.
+    /// Plan the one forwarded write to `csr` for `request`, whose admitted
+    /// content is `content`, or `None` when the registration covers nothing of
+    /// the content once it is narrowed to what the registration declares
+    /// (clause 4.3.6.1).
     async fn plan_write<'a>(
         &self,
         csr: ContextSourceRegistration,
         request: &ForwardProvisionRequest<'a>,
-        body: Option<&[u8]>,
-        entity_types: &[IriBuf],
+        content: Option<ForwardedContent<'a>>,
+        coverage: WriteCoverage<'_>,
         resolver: &TermResolver<'_>,
-    ) -> Result<Option<PlannedWrite<'a>>, FederationError> {
-        let url = self.write_url(&csr, request, body, resolver).await;
+    ) -> Option<PlannedWrite<'a>> {
+        let presence = match content {
+            Some(_) => BodyPresence::Present,
+            None => BodyPresence::Absent,
+        };
+        let url = self.write_url(&csr, request, presence, resolver).await;
 
         let proxied_attrs = if is_proxied(&csr) {
-            collect_matching_attrs(&csr, entity_types, Some(request.entity_id), request.attribute_name, body, resolver).await?
+            matching_attributes(
+                &csr,
+                coverage.entity_types,
+                Some(request.entity_id),
+                coverage.expanded_attribute,
+                coverage.requested,
+            )
         } else {
             Vec::new()
         };
 
-        let narrowed = if request.attribute_name.is_none() {
-            filter_fragment_for_registration(body, &csr, entity_types, Some(request.entity_id), resolver).await?
-        } else {
-            body.map(<[u8]>::to_vec)
-        };
-        if body.is_some() && narrowed.is_none() {
-            return Ok(None);
-        }
-        // The attribute a request path names is written alone (clauses 5.6.4,
-        // 5.6.14 and 5.6.19); every other body is an entity fragment.
-        let vocabulary = match request.attribute_name {
-            Some(_) => DocumentVocabulary::Attribute,
-            None => DocumentVocabulary::Entities,
+        let planned = match content {
+            None => None,
+            Some(ForwardedContent::Entity(document)) if request.attribute_name.is_none() => Some(PlannedContent::Entity(Box::new(narrowed_document(
+                document,
+                &csr,
+                coverage.entity_types,
+                Some(request.entity_id),
+            )?))),
+            // The Scope history follows the evolution to every registration
+            // that receives it, as the Scope paths of an entity do.
+            Some(ForwardedContent::Evolution { document, scope_history }) => Some(PlannedContent::Evolution {
+                document: Box::new(narrowed_document(document, &csr, coverage.entity_types, Some(request.entity_id))?),
+                scope_history,
+            }),
+            // The attribute a request path names is written alone (clauses 5.6.4, 5.6.14 and 5.6.19).
+            Some(ForwardedContent::Entity(document)) => Some(PlannedContent::Entity(Box::new(Cow::Borrowed(document)))),
+            Some(ForwardedContent::Attribute { name, instance }) => Some(PlannedContent::Attribute { name, instance }),
         };
         // A temporal body's attribute arrays are the clause 4.5.7 sequences of
         // instances in time, which the clause 4.3.6.8 fallback reads apart
@@ -162,17 +178,17 @@ impl FederationService {
             ProvisionResource::Entities => AdaptedPayload::Entity,
             ProvisionResource::TemporalEntities => AdaptedPayload::TemporalEvolution,
         };
-        Ok(Some(PlannedWrite {
+        Some(PlannedWrite {
             registration: csr,
             url,
             method: request.method.clone(), // clone: each planned write owns the method it sends
-            body: narrowed.map(|bytes| PlannedBody { bytes, vocabulary, element }),
+            body: planned.map(|content| PlannedBody { content, element }),
             proxied_attrs,
             context: request.context,
             triggering: request.triggering,
             // A single-entity provision runs under no Entity Map.
             linked_map: None,
-        }))
+        })
     }
 
     /// The URL one forwarded write to `csr` is sent to, with the attribute its
@@ -183,13 +199,9 @@ impl FederationService {
         &self,
         csr: &ContextSourceRegistration,
         request: &ForwardProvisionRequest<'_>,
-        body: Option<&[u8]>,
+        presence: BodyPresence,
         resolver: &TermResolver<'_>,
     ) -> Result<Url, FederationError> {
-        let presence = match body {
-            Some(_) => BodyPresence::Present,
-            None => BodyPresence::Absent,
-        };
         let decision = forwarding_decision(csr, request.context, presence)?;
         let naming = decision.context.naming(request.context);
         let names = ForwardedNames::prepare(&self.engine, resolver, &naming, decision.context.rewording()).await?;
@@ -257,18 +269,22 @@ pub(crate) fn proxied_mode(csr: &ContextSourceRegistration) -> ForwardingMode {
 mod tests {
     use crate::{
         FederationService,
-        counted_body::CountedBody,
         fixed_registration_store::offline_service,
+        forwarded_content::ForwardedContent,
         operation::{ForwardingOperation, ProvisionResource},
-        outcome::ForwardedWriteOutcome,
+        outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
         provision::spelled_suffix,
         request::{ForwardProvisionRequest, TriggeringRequest},
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+    use indexmap::IndexMap;
     use serde_json::json;
+
+    const SPEED: &str = "https://example.org/speed";
 
     const ENTITY_ID: &str = "urn:ngsi-ld:Vehicle:1";
 
@@ -289,8 +305,21 @@ mod tests {
         .expect("valid registration")
     }
 
-    /// Forward a create of the fixture entity whose payload is `body`.
-    async fn forward_create(service: &FederationService, body: &CountedBody) -> Vec<ForwardedWriteOutcome> {
+    /// The admitted document of a Vehicle carrying one `speed` instance.
+    fn vehicle_document() -> EntityDocument {
+        let speed: AttributeName = SPEED.parse().expect("an attribute name");
+        EntityDocument::new(
+            Some(ENTITY_ID.parse().expect("valid identifier")),
+            Vec::new(),
+            None,
+            None,
+            IndexMap::from([(speed, AttributeMember::Instances(vec![InstanceDocument::builder().build()]))]),
+        )
+    }
+
+    /// Forward a create of the fixture entity whose admitted content is
+    /// `document`.
+    async fn forward_create(service: &FederationService, document: &EntityDocument) -> Vec<ForwardedWriteResult> {
         let entity_id: Identifier = ENTITY_ID.parse().expect("valid identifier");
         let context = ContextSpec::none();
         service
@@ -308,23 +337,17 @@ mod tests {
                     query_string: None,
                     triggering: TriggeringRequest { via: None, headers: None },
                 },
-                Some(body),
+                Some(ForwardedContent::Entity(document)),
             )
             .await
             .expect("the forwarding completes")
-            .into_iter()
-            .map(|result| result.outcome)
-            .collect()
     }
 
-    /// Clause 5.12: a write no registration matches is not forwarded, and its
-    /// payload is never serialised.
+    /// Clause 5.12: a write no registration matches is not forwarded.
     #[tokio::test]
-    async fn a_write_no_registration_matches_never_serialises_its_payload() {
-        let body = CountedBody::new(json!({"id": ENTITY_ID, "type": "Vehicle", "speed": {"type": "Property", "value": 1}}));
-        let outcomes = forward_create(&offline_service(Vec::new()), &body).await;
-        assert!(outcomes.is_empty(), "{outcomes:?}");
-        pretty_assertions::assert_eq!(body.serialisations(), 0);
+    async fn a_write_no_registration_matches_is_not_forwarded() {
+        let results = forward_create(&offline_service(Vec::new()), &vehicle_document()).await;
+        assert!(results.is_empty(), "{:?}", results.iter().map(|result| &result.outcome).collect::<Vec<_>>());
     }
 
     /// The attribute segment is the one after the `attrs` collection, so an
@@ -348,13 +371,16 @@ mod tests {
         pretty_assertions::assert_eq!(spelled_suffix(None, Some(&spelled)), Vec::<&str>::new());
     }
 
-    /// Clauses 5.6.1.4 and following: once a registration matches, the
-    /// payload is serialised once to decide what the registration claims.
+    /// Clauses 5.6.1.4 and following: a proxied registration that advertises
+    /// no write still claims the attributes the content writes, by their
+    /// expanded names.
     #[tokio::test]
-    async fn a_matched_registration_serialises_the_payload_once() {
-        let body = CountedBody::new(json!({"id": ENTITY_ID, "type": "Vehicle", "speed": {"type": "Property", "value": 1}}));
-        let outcomes = forward_create(&offline_service(vec![exclusive_registration_advertising_no_write()]), &body).await;
-        assert!(matches!(outcomes.as_slice(), [ForwardedWriteOutcome::NotAdvertised]), "{outcomes:?}");
-        pretty_assertions::assert_eq!(body.serialisations(), 1);
+    async fn a_matched_registration_claims_the_expanded_names_of_the_content() {
+        let results = forward_create(&offline_service(vec![exclusive_registration_advertising_no_write()]), &vehicle_document()).await;
+        let [result] = results.as_slice() else {
+            panic!("exactly the one registration answers: {}", results.len());
+        };
+        assert!(matches!(result.outcome, ForwardedWriteOutcome::NotAdvertised), "{:?}", result.outcome);
+        pretty_assertions::assert_eq!(result.proxied_attrs, vec![SPEED.parse::<AttributeName>().expect("an attribute name")]);
     }
 }

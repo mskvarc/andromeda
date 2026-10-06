@@ -10,12 +10,14 @@
 //! are written.
 
 use crate::{
+    contextual_body::open_object,
     entity_body::{
         linked_entities::AttributeJoin,
         member_walk::MemberWalk,
         notified_member::{MemberInstances, NotifiedMember},
         reified_member::{Reification, ReifiedMember},
         simplified_member::SimplifiedMember,
+        structural_rule::keeps,
     },
     notification_entity::StampedInstants,
     notified_changes::NotifiedChanges,
@@ -31,9 +33,6 @@ use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer, ser::SerializeMap};
-
-/// The member a JSON-LD document declares its context in.
-const CONTEXT_MEMBER: &str = "@context";
 
 /// Whether the entity's `id` is written as one of its members.
 ///
@@ -51,20 +50,6 @@ pub(crate) enum IdentifierMember {
     Mandatory,
     /// The `id` stands outside the members written.
     Promoted,
-}
-
-/// How the four clause 4.8 and 4.22 entity timestamps are spelled.
-///
-/// The two spellings agree on every instant a broker holds; they are kept
-/// apart because the entity reading of clause 4.5.4 and the clause 4.15
-/// reading spell the instant through RFC 3339 directly while every other
-/// rendering writes the typed timestamp.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum InstantSpelling {
-    /// The typed timestamp's own rendering.
-    Typed,
-    /// RFC 3339 with the sub-second precision the instant carries.
-    SubSecond,
 }
 
 /// One entity in a clause 4.5 representation.
@@ -100,33 +85,14 @@ impl TypedEntity<'_> {
     /// Whether the clause 4.21 rule keeps one structural member: a Linked
     /// Entity's own rule, or else the request's.
     pub(crate) fn keeps(&self, keyword: Keyword) -> bool {
-        match (self.narrowing, self.projection) {
-            (Some(rule), _) => rule.keyword(keyword).is_write(),
-            (None, Some(projection)) => projection.keeps(&keyword.term()),
-            (None, None) => true,
-        }
-    }
-
-    /// Whether the request asked for nothing beyond the representation: no
-    /// language to negotiate, no member to project and no entity to nest.
-    const fn plain(&self) -> bool {
-        self.walk.language_filter.is_none() && self.projection.is_none() && self.join.is_none() && self.narrowing.is_none()
-    }
-
-    /// How the entity timestamps are spelled.
-    const fn instant_spelling(&self) -> InstantSpelling {
-        if self.walk.language_filter.is_some() || (self.format.is_simplified() && self.plain()) {
-            InstantSpelling::SubSecond
-        } else {
-            InstantSpelling::Typed
-        }
+        keeps(self.narrowing, self.projection, keyword)
     }
 }
 
 impl Serialize for TypedEntity<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let entity = self.entity;
-        let mut object = serializer.serialize_map(None)?;
+        let mut object = open_object(serializer, self.context, None)?;
         let writes_id = match self.identifier {
             IdentifierMember::Written => self.keeps(Keyword::Id),
             IdentifierMember::Mandatory => true,
@@ -147,7 +113,6 @@ impl Serialize for TypedEntity<'_> {
         {
             object.serialize_entry(ProjectionTerm::SCOPE_KEYWORD, scope)?;
         }
-        let spelling = self.instant_spelling();
         let stamped = self.stamped.copied().unwrap_or_default();
         // The expiry a notification stamps is the entity's own member as much
         // as the one the entity carries, so the fallback drops both.
@@ -173,11 +138,8 @@ impl Serialize for TypedEntity<'_> {
                 StampPrecedence::StampFirst,
             ),
         ] {
-            let own = own.map(|instant| EntityInstant { instant, spelling });
-            let stamp = stamp.map(|instant| EntityInstant {
-                instant,
-                spelling: InstantSpelling::SubSecond,
-            });
+            let own = own.map(|instant| EntityInstant { instant });
+            let stamp = stamp.map(|instant| EntityInstant { instant });
             let written = match precedence {
                 StampPrecedence::OwnFirst => own.or(stamp),
                 StampPrecedence::StampFirst => stamp.or(own),
@@ -193,7 +155,7 @@ impl Serialize for TypedEntity<'_> {
             if self.narrowing.is_some_and(|rule| rule.member(name).is_skip()) {
                 continue;
             }
-            let walk = self.walk.with_join(open.as_ref().map(|open| AttributeJoin { open, attribute: name }));
+            let walk = self.walk.with_join(open.as_ref().map(|open| AttributeJoin::Entity { open, attribute: name }));
             match &self.changes {
                 None => object.serialize_entry(name, &self.member_under(MemberInstances::Held(member), walk))?,
                 Some(changes) => {
@@ -216,9 +178,6 @@ impl Serialize for TypedEntity<'_> {
                     object.serialize_entry(name, &self.member_under(MemberInstances::Notified(&notified), self.walk.with_join(None)))?;
                 }
             }
-        }
-        if let Some(context) = self.context {
-            object.serialize_entry(CONTEXT_MEMBER, context)?;
         }
         object.end()
     }
@@ -269,20 +228,17 @@ enum StampPrecedence {
     StampFirst,
 }
 
-/// One entity timestamp in the spelling the rendering gives it.
+/// One of the clause 4.8 and 4.22 entity timestamps, written as RFC 3339 with
+/// the sub-second precision the instant carries, at most the microsecond
+/// clause 4.6.3 admits.
 #[derive(Debug, Clone, Copy)]
 struct EntityInstant {
     /// The instant.
     instant: DateTime<Utc>,
-    /// How it is spelled.
-    spelling: InstantSpelling,
 }
 
 impl Serialize for EntityInstant {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self.spelling {
-            InstantSpelling::Typed => self.instant.serialize(serializer),
-            InstantSpelling::SubSecond => serializer.serialize_str(&sub_second(self.instant)),
-        }
+        serializer.serialize_str(&sub_second(self.instant))
     }
 }

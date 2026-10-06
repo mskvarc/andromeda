@@ -349,6 +349,24 @@ mod tests {
         );
     }
 
+    /// Table 5.2.39-2: a map with local and remote holders and a linked map
+    /// decodes to the typed model and writes back the body it was parsed from.
+    #[test]
+    fn an_entity_map_round_trips_through_its_typed_model() {
+        let body = json!({
+            "id": "urn:ngsi-ld:EntityMap:round-trip",
+            "type": "EntityMap",
+            "expiresAt": "2030-01-01T00:00:00Z",
+            "entityMap": {
+                "urn:ngsi-ld:Vehicle:9": ["@none", "urn:ngsi-ld:ContextSourceRegistration:c"],
+                "urn:ngsi-ld:Vehicle:10": ["urn:ngsi-ld:ContextSourceRegistration:c"]
+            },
+            "linkedMaps": {"urn:ngsi-ld:ContextSourceRegistration:c": "urn:ngsi-ld:EntityMap:c"}
+        });
+        let map: EntityMap = serde_json::from_value(body.clone()).expect("the body decodes to the typed EntityMap");
+        pretty_assertions::assert_eq!(serde_json::to_value(&map).expect("the map serialises"), body);
+    }
+
     #[test]
     fn a_map_without_output_members_still_parses() {
         let map: EntityMap =

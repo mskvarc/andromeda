@@ -28,14 +28,12 @@ fn summary<'n, N: CompactNode<'n>>(node: N) -> String {
     }
 }
 
-/// Text read in place and a parsed document read alike, member order aside:
-/// a parsed object keeps its members sorted.
+/// Text is read in place, level by level, into the shape it is written as.
 #[test]
-fn text_and_a_parsed_document_have_the_same_shape() {
-    let document = json!({"a": [1, "x\u{e9}", null, true, {"b": false}], "c": {"d": 2.5}});
-    let text = raw(&document);
+fn text_is_read_into_the_shape_it_is_written_as() {
+    let text = raw(&json!({"a": [1, "x\u{e9}", null, true, {"b": false}], "c": {"d": 2.5}}));
     let piece = andromeda_json_literal::piece::JsonPiece::new(&text);
-    pretty_assertions::assert_eq!(summary(piece), summary(&document));
+    pretty_assertions::assert_eq!(summary(piece), "{a:[number,\"x\u{e9}\",null,true,{b:false}],c:{d:number}}");
 }
 
 /// A member written twice counts as written last, as a parsed tree keeps it.
@@ -57,17 +55,14 @@ fn a_value_of_request_text_is_admitted_as_a_literal() {
     pretty_assertions::assert_eq!(literal.text(), r#"{"n":1.5}"#);
 }
 
-/// A string node decodes through the string, from text and from a tree.
+/// A string node decodes through the string.
 #[test]
 fn a_string_node_decodes_as_the_type_it_names() {
-    let document = json!({"id": "urn:ngsi-ld:T:1", "bad": "not a uri"});
-    let text = raw(&document);
+    let text = raw(&json!({"id": "urn:ngsi-ld:T:1", "bad": "not a uri"}));
     let piece = andromeda_json_literal::piece::JsonPiece::new(&text);
     for (member, decodes) in [("id", true), ("bad", false)] {
         let from_text = piece.member(member).expect("the member").decoded::<Identifier>().expect("readable");
-        let from_tree = document[member].decoded::<Identifier>().expect("readable");
         pretty_assertions::assert_eq!(from_text.is_ok(), decodes, "{member}");
-        pretty_assertions::assert_eq!(from_tree.is_ok(), decodes, "{member}");
     }
 }
 

@@ -6,13 +6,12 @@
 //! and the codec writes the token, neither consulting the catalog again.
 
 use andromeda_unit_catalog::{
-    expanded_unit_code::{ExpandedUnitCodeError, UnitCodeRefusal, compacted_unit_code_identity},
+    expanded_unit_code::{ExpandedUnitCodeError, UnitCodeRefusal, unit_code_identity},
     unit_code_id::UnitCodeId,
     unit_code_registry::registry,
     unit_code_token::UnitCodeToken,
 };
 use derive_more::Display;
-use serde_json::Value;
 
 /// A registered UN/CEFACT common code.
 #[derive(Clone, Copy, Debug, Display, Eq, Hash, PartialEq)]
@@ -33,9 +32,7 @@ impl UnitCode {
     /// code the catalog registers, and [`ExpandedUnitCodeError::Catalog`] when
     /// the compiled-in catalog does not parse.
     pub fn resolve(code: &str) -> Result<UnitCode, ExpandedUnitCodeError> {
-        // The catalog's own resolution of a compacted member is the one rule a
-        // written unit code is held to; it reads the code from a JSON string.
-        let id = compacted_unit_code_identity(&Value::String(code.to_owned()))?;
+        let id = unit_code_identity(code)?;
         // An identity the registry just assigned always names an entry; a
         // catalog that cannot name it registers no such code.
         let entry = registry()?

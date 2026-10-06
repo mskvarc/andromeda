@@ -10,7 +10,7 @@ use crate::{
         InstanceFamily,
         InstanceIdentity,
         IntoResponse,
-        JsonLdDocument,
+        JsonLd,
         LocalOnlyParams,
         LocalOutcome,
         Method,
@@ -30,7 +30,9 @@ use crate::{
     },
     written_evolution_admission::admit_written_instance,
 };
+use andromeda_federation::forwarded_content::ForwardedContent;
 use andromeda_http_extraction::context_target;
+use andromeda_ngsi_ld_model::temporal::written_temporal_entity::WrittenTemporalEntity;
 
 pub async fn update_attr_instance(
     // Clause 6.3.20: the parameters are read first, before the tenant is
@@ -43,11 +45,12 @@ pub async fn update_attr_instance(
     }: TenantState,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     TypedPath((id, attr_id, instance_id)): TypedPath<(Identifier, AttributeName, Identifier)>,
-    JsonLdDocument { document: payload, context }: JsonLdDocument,
+    JsonLd { body, context }: JsonLd<WrittenTemporalEntity>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_request_context(state.temporal.engine(), context, &uri).await?;
+    let payload = body.admitted(&context)?;
     let service = &state.temporal;
     let path_suffix = format!("/attrs/{attr_id}/{instance_id}");
     // Clause 4.5.7 carries an `instanceId` as a URI; which of the two stored
@@ -70,39 +73,50 @@ pub async fn update_attr_instance(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
+    let request = ForwardProvisionRequest {
+        resource: ProvisionResource::TemporalEntities,
+        entity_id: &id,
+        entity_type_compact: None,
+        attribute_name: Some(&attr_id),
+        method: Method::PATCH,
+        context: &context,
+        operation: ForwardingOperation::UpdateTemporalAttributeInstance,
+        path_suffix: Some(&path_suffix),
+        query_string: None,
+        triggering: TriggeringRequest {
+            via: incoming_via.as_ref(),
+            headers: Some(&headers),
+        },
+    };
+    let plan = state.forwarding.plan_provision(&target, &request).await.with_instance(&uri)?;
+    // The registrations the plan sends the fragment to read the document it
+    // expands to; a write no registration covers expands nothing. The
+    // admitted fragment includes only the new instance, so it holds no Scope
+    // history.
+    let document = if plan.reads_payload() {
+        Some(service.forwardable_document(&payload, &context).await.with_instance(&uri)?)
+    } else {
+        None
+    };
     let forwarded = state
         .forwarding
-        .forward_provision(
-            &target,
-            ForwardProvisionRequest {
-                resource: ProvisionResource::TemporalEntities,
-                entity_id: &id,
-                entity_type_compact: None,
-                attribute_name: Some(&attr_id),
-                method: Method::PATCH,
-                context: &context,
-                operation: ForwardingOperation::UpdateTemporalAttributeInstance,
-                path_suffix: Some(&path_suffix),
-                query_string: None,
-                triggering: TriggeringRequest {
-                    via: incoming_via.as_ref(),
-                    headers: Some(&headers),
-                },
-            },
-            Some(&payload),
+        .execute_provision(
+            plan,
+            &request,
+            document.as_ref().map(|evolution| ForwardedContent::Entity(evolution.document())),
         )
         .await
         .with_instance(&uri)?;
 
     // Clause 5.6.14.4: an instance of an attribute a proxied registration
     // covers is modified at the source and needs no further processing.
-    let local = if collect_proxied_attrs(&forwarded).contains(&attr_id) {
-        LocalOutcome::NothingRemained
-    } else {
+    let local = if collect_proxied_attrs(&forwarded).is_empty() {
         local_temporal_outcome(
             service.modify_attr_instance(&target, &id, &attr_id, &instance, payload, &context).await,
             &forwarded,
         )
+    } else {
+        LocalOutcome::NothingRemained
     };
     provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

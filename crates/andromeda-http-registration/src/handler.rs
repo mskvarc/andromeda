@@ -9,7 +9,7 @@ use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     api_root::ApiRoot,
     context::ContextUrl,
-    jsonld::JsonLdDocument,
+    jsonld::JsonLd,
     pagination_policy::RequestPagination,
     prefer::PreferHeader,
     query::ValidatedQuery,
@@ -25,12 +25,13 @@ use andromeda_http_response::{
     internal_failure_summary::InternalFailureSummary,
     pagination::{PageOutcome, append_page_links},
     problem_response::ProblemResponse,
+    rendered_response::RenderedResponse,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::count_policy::CountPolicy;
-use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, registration::RegistrationRenderer, response::ResponsePayload};
+use andromeda_ngsi_ld_render::registration::RegistrationRenderer;
 use andromeda_ngsi_ld_request::{
     empty::EmptyParams,
     pagination::{
@@ -39,7 +40,7 @@ use andromeda_ngsi_ld_request::{
     },
     query::{QUERY_PAGE_SIZE, csr::CsrQueryParameters},
 };
-use andromeda_registration::query::DiscoveredRegistrations;
+use andromeda_registration::{query::DiscoveredRegistrations, registration_body::RegistrationBody};
 use axum::{
     extract::OriginalUri,
     http::StatusCode,
@@ -52,12 +53,13 @@ pub(crate) async fn create(
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ProvisionableTenantState(state): RegistrationTenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
-    JsonLdDocument { document: payload, context }: JsonLdDocument,
+    JsonLd { body, context }: JsonLd<RegistrationBody>,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(state.registrations.engine(), context)
         .await
         .with_registration_instance(&uri)?;
-    let identifier = state.registrations.create(payload, &context).await.with_registration_instance(&uri)?;
+    let body = body.admitted(&context)?;
+    let identifier = state.registrations.create(body, &context).await.with_registration_instance(&uri)?;
     Ok(with_location(
         StatusCode::CREATED.into_response(),
         format!("/ngsi-ld/v1/csourceRegistrations/{identifier}"),
@@ -74,21 +76,20 @@ pub(crate) async fn get(
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
     let registration = state.registrations.get(&registration_id, &context).await.with_registration_instance(&uri)?;
-    let payload = RegistrationRenderer::new(registration)
+    let rendered = RegistrationRenderer::new(&registration)
         .with_sys_attrs(params.parse_options().with_registration_instance(&uri)?.sys_attrs)
         .with_pick(params.pick.as_deref())
         .with_omit(params.omit.as_deref())
         .with_language_filter(params.lang.as_ref())
-        .render();
-    let rendered = ResponseContextSource::new(state.registrations.engine(), &context, &state.context_hosting, &api_root)
+        .render()
+        .with_registration_instance(&uri)?;
+    let ready = ResponseContextSource::new(state.registrations.engine(), &context, &state.context_hosting, &api_root)
         .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
         .await
         .with_registration_instance(&uri)?
-        .with_geometry_selection(GeometrySelection::new(params.geometry_property.as_ref(), &[]))
-        .with_payload(ResponsePayload::Single(payload))
-        .render()
-        .with_registration_instance(&uri)?;
-    Ok(NgsiLdResponse::ok(rendered).into_response())
+        .with_body(&rendered);
+    let response = RenderedResponse::resource(ready).with_registration_instance(&uri)?;
+    Ok(NgsiLdResponse::ok(response).into_response())
 }
 
 pub(crate) async fn query(
@@ -133,7 +134,7 @@ pub(crate) async fn query(
         .await
         .with_registration_instance(&uri)?;
     let registrations = registrations
-        .into_iter()
+        .iter()
         .map(|registration| {
             RegistrationRenderer::new(registration)
                 .with_sys_attrs(options.sys_attrs)
@@ -142,15 +143,14 @@ pub(crate) async fn query(
                 .with_language_filter(params.lang.as_ref())
                 .render()
         })
-        .collect::<Vec<_>>();
-    let rendered = ResponseContextSource::new(state.registrations.engine(), &context, &state.context_hosting, &api_root)
+        .collect::<Result<Vec<_>, _>>()
+        .with_registration_instance(&uri)?;
+    let ready = ResponseContextSource::new(state.registrations.engine(), &context, &state.context_hosting, &api_root)
         .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
         .await
         .with_registration_instance(&uri)?
-        .with_geometry_selection(GeometrySelection::new(params.geometry_property.as_ref(), &[]))
-        .with_payload(ResponsePayload::Collection(registrations))
-        .render()
-        .with_registration_instance(&uri)?;
+        .with_collection(&registrations);
+    let rendered = RenderedResponse::resource(ready).with_registration_instance(&uri)?;
     let total_count = usize::try_from(total).map_err(|error| {
         internal_problem(
             format!("registration count does not fit the response platform: {error}"),
@@ -190,14 +190,15 @@ pub(crate) async fn update(
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(registration_id): TypedPath<Identifier>,
-    JsonLdDocument { document: payload, context }: JsonLdDocument,
+    JsonLd { body, context }: JsonLd<RegistrationBody>,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(state.registrations.engine(), context)
         .await
         .with_registration_instance(&uri)?;
+    let body = body.admitted(&context)?;
     state
         .registrations
-        .update(&registration_id, payload, &context)
+        .update(&registration_id, body, &context)
         .await
         .with_registration_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -213,4 +214,65 @@ pub(crate) async fn delete(
 ) -> Result<Response, ProblemResponse> {
     state.registrations.delete(&registration_id).await.with_registration_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use andromeda_http_extraction::jsonld::JsonLd;
+    use andromeda_http_response::extraction_rejection::ExtractorRejection;
+    use andromeda_jsonld::user_context_admission::AdmittedContext;
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use andromeda_registration::registration_body::RegistrationBody;
+    use axum::{
+        body::Body,
+        extract::FromRequest,
+        http::{
+            Request,
+            header::{CONTENT_LENGTH, CONTENT_TYPE},
+        },
+    };
+
+    /// The result of reading `body` as the body of a Create Context Source
+    /// Registration request, once the request context was admitted.
+    async fn read(body: &'static str) -> Result<RegistrationBody, String> {
+        let request = Request::builder()
+            .uri("/ngsi-ld/v1/csourceRegistrations")
+            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_LENGTH, body.len())
+            .body(Body::from(body))
+            .expect("the request builds");
+        let JsonLd { body, .. } = JsonLd::<RegistrationBody>::from_request(request, &())
+            .await
+            .map_err(|rejection: ExtractorRejection| format!("{rejection:?}"))?;
+        body.admitted(&AdmittedContext::core_only()).map_err(|problem| {
+            assert_eq!(problem.problem().error_type(), NgsiLdErrorType::BadRequestData);
+            problem.problem().detail().to_owned()
+        })
+    }
+
+    /// Clause 5.9.2: a registration with a `GeoProperty` location and a member
+    /// the specification does not define is read from the request text.
+    #[tokio::test]
+    async fn a_registration_is_read_into_its_typed_body_from_the_request_text() {
+        let read = read(
+            r#"{"type": "ContextSourceRegistration", "endpoint": "https://source.example.org", "information": [{"propertyNames": ["speed"]}], "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.5]}}, "tier": 3}"#,
+        )
+        .await;
+        assert!(read.is_ok(), "{read:?}");
+    }
+
+    /// Clause 5.5.4: a member outside Table 5.2.9-1 is `BadRequestData`, and
+    /// the refusal names the member it found it in.
+    #[tokio::test]
+    async fn a_member_outside_its_restriction_is_bad_request_data_naming_the_member() {
+        let detail = read(r#"{"type": "ContextSourceRegistration", "endpoint": "https://source.example.org", "information": [{"propertyNames": ["speed"]}], "management": {"timeout": 0}}"#)
+            .await
+            .expect_err("a zero timeout is refused");
+        assert!(detail.contains("management"), "{detail}");
+
+        let detail = read(r#"{"type": "ContextSourceRegistration", "endpoint": "https://source.example.org", "information": [{"propertyNames": ["speed"]}], "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [0.0, 91.0]}}}"#)
+            .await
+            .expect_err("a latitude past the pole is refused");
+        assert!(detail.contains("location"), "{detail}");
+    }
 }

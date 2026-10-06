@@ -7,10 +7,14 @@
 //! document is processed under is [`crate::document_context`], and into the
 //! `@context` a response names is [`crate::presented_context`].
 
-use crate::{core_context::is_ngsi_ld_core_context_url, document_context::resolve_context_value, request_context::RequestContext};
+use crate::{
+    core_context::is_ngsi_ld_core_context_url,
+    document_context::{ReferenceReading, ResolvedContext, resolved_context},
+    request_context::RequestContext,
+};
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, IriBuf};
-use serde_json::Value;
 use std::sync::Arc;
 
 /// How the NGSI-LD core context joins the context a request named when a
@@ -74,7 +78,7 @@ impl ContextSpec {
 
     /// A spec for a request whose body named `context` as its `@context`.
     #[must_use]
-    pub const fn from_body(context: Value) -> ContextSpec {
+    pub const fn from_body(context: JsonLiteral) -> ContextSpec {
         ContextSpec::from_request(RequestContext::Body(context))
     }
 
@@ -103,7 +107,7 @@ impl ContextSpec {
 
     /// The body `@context`, if the request carried one.
     #[must_use]
-    pub const fn body_context(&self) -> Option<&Value> {
+    pub const fn body_context(&self) -> Option<&JsonLiteral> {
         self.context.body()
     }
 
@@ -125,10 +129,11 @@ impl ContextSpec {
         NGSI_LD_CORE_CONTEXT_URL
     }
 
-    /// The `@context` value a document is processed under for this spec.
+    /// The `@context` a document is processed under for this spec, its
+    /// references as written.
     #[must_use]
-    pub fn to_context_value(&self) -> Option<Value> {
-        resolve_context_value(None, self)
+    pub fn resolved_context(&self) -> ResolvedContext {
+        resolved_context(self, ReferenceReading::AsWritten)
     }
 
     /// The key a process-wide cache keeps the context this spec processes to
@@ -139,30 +144,23 @@ impl ContextSpec {
     /// context it names is a released core context, all of which are embedded
     /// in the broker: an embedded context cannot change, while a context
     /// fetched from a URL carries the lifetime its origin granted (clause
-    /// 6.3.16), which the loader enforces each time it resolves it. The key is
-    /// the serialized `@context` the spec resolves to, which is exactly what
-    /// gets processed, so two specs share a key only when they would process
-    /// the same value.
+    /// 6.3.16), which the loader enforces each time it resolves it.
     #[must_use]
     pub fn embedded_context_key(&self) -> Option<Arc<str>> {
         let embedded_only = self.body_context().is_none() && self.link_context().is_none_or(|url| is_ngsi_ld_core_context_url(url.as_ref()));
-        if !embedded_only {
-            return None;
-        }
-        self.context_key()
+        embedded_only.then(|| self.context_key())
     }
 
     /// The key one engine keeps the context this spec processes to under, for
     /// as long as the documents it was processed from stay what the loader
-    /// resolves (`engine::processed_context_cache`), or `None` when the spec
-    /// resolves to no `@context` at all.
+    /// resolves (`engine::processed_context_cache`).
     ///
-    /// The key is the serialized `@context` the spec resolves to, which is
-    /// exactly what gets processed, so two specs share a key only when they
-    /// would process the same value.
+    /// The key is the resolved `@context` text, which is exactly what gets
+    /// processed, so two specs share a key only when they would process the
+    /// same value.
     #[must_use]
-    pub(crate) fn context_key(&self) -> Option<Arc<str>> {
-        self.to_context_value().map(|value| Arc::from(value.to_string()))
+    pub fn context_key(&self) -> Arc<str> {
+        self.resolved_context().key()
     }
 }
 
@@ -173,9 +171,23 @@ mod tests {
         core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
         request_context::RequestContext,
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
     use serde_json::json;
+
+    fn body(value: &serde_json::Value) -> ContextSpec {
+        ContextSpec::from_body(literal(value))
+    }
+
+    fn literal(value: &serde_json::Value) -> JsonLiteral {
+        JsonLiteral::admit(&value.to_string()).expect("an admissible context")
+    }
+
+    /// The resolved context of `spec`, as JSON.
+    fn resolved(spec: &ContextSpec) -> serde_json::Value {
+        serde_json::from_str(spec.resolved_context().text()).expect("the resolved context is JSON")
+    }
 
     /// A context URL as the absolute IRI a `Link` header resolves to.
     fn iri(url: &str) -> IriBuf {
@@ -193,15 +205,12 @@ mod tests {
 
     #[test]
     fn an_empty_spec_resolves_to_the_core_context() {
-        let context = ContextSpec::none().to_context_value().expect("a context value");
-        pretty_assertions::assert_eq!(context, json!([NGSI_LD_CORE_CONTEXT_URL]));
+        pretty_assertions::assert_eq!(resolved(&ContextSpec::none()), json!([NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]
     fn a_link_context_is_processed_first_and_the_core_context_last() {
-        let context = ContextSpec::from_link(iri("https://example.com/context.jsonld"))
-            .to_context_value()
-            .expect("a context value");
+        let context = resolved(&ContextSpec::from_link(iri("https://example.com/context.jsonld")));
         pretty_assertions::assert_eq!(context, json!(["https://example.com/context.jsonld", NGSI_LD_CORE_CONTEXT_URL]));
     }
 
@@ -214,7 +223,7 @@ mod tests {
     #[test]
     fn a_core_only_spec_resolves_to_the_core_url_array() {
         let spec = ContextSpec::core_only();
-        pretty_assertions::assert_eq!(spec.to_context_value().expect("a context value"), json!([NGSI_LD_CORE_CONTEXT_URL]));
+        pretty_assertions::assert_eq!(resolved(&spec), json!([NGSI_LD_CORE_CONTEXT_URL]));
         pretty_assertions::assert_eq!(spec.core_policy(), CoreContextPolicy::Only);
     }
 
@@ -226,9 +235,9 @@ mod tests {
         assert!(linked.body_context().is_none());
         pretty_assertions::assert_eq!(linked.request_context(), &RequestContext::Link(iri("https://example.com/a.jsonld")));
 
-        let bodied = ContextSpec::from_body(json!("https://example.com/a.jsonld"));
+        let bodied = body(&json!("https://example.com/a.jsonld"));
         assert!(bodied.link_context().is_none());
-        pretty_assertions::assert_eq!(bodied.body_context(), Some(&json!("https://example.com/a.jsonld")));
+        pretty_assertions::assert_eq!(bodied.body_context(), Some(&literal(&json!("https://example.com/a.jsonld"))));
 
         pretty_assertions::assert_eq!(ContextSpec::none().request_context(), &RequestContext::Default);
     }
@@ -237,9 +246,7 @@ mod tests {
     /// processed as the v1.9 one, last.
     #[test]
     fn a_core_context_alias_the_request_supplied_is_processed_as_the_current_one_last() {
-        let context = ContextSpec::from_body(json!([NGSI_LD_CORE_CONTEXT_V16_URL.as_str(), "https://example.com/context.jsonld"]))
-            .to_context_value()
-            .expect("a context value");
+        let context = resolved(&body(&json!([NGSI_LD_CORE_CONTEXT_V16_URL.as_str(), "https://example.com/context.jsonld"])));
 
         pretty_assertions::assert_eq!(context, json!(["https://example.com/context.jsonld", NGSI_LD_CORE_CONTEXT_URL]));
     }
@@ -248,9 +255,7 @@ mod tests {
     /// v1.9 core context alone.
     #[test]
     fn a_link_naming_an_older_core_context_resolves_to_the_current_core_context() {
-        let context = ContextSpec::from_link(iri(NGSI_LD_CORE_CONTEXT_V16_URL.as_str()))
-            .to_context_value()
-            .expect("a context value");
+        let context = resolved(&ContextSpec::from_link(iri(NGSI_LD_CORE_CONTEXT_V16_URL.as_str())));
         pretty_assertions::assert_eq!(context, json!([NGSI_LD_CORE_CONTEXT_URL]));
     }
 
@@ -282,7 +287,7 @@ mod tests {
 
     #[test]
     fn a_spec_carrying_a_body_context_has_no_embedded_context_key() {
-        let spec = ContextSpec::from_body(json!({ "speed": "https://example.com/speed" }));
+        let spec = body(&json!({ "speed": "https://example.com/speed" }));
         assert!(spec.embedded_context_key().is_none());
     }
 

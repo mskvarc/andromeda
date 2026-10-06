@@ -14,6 +14,8 @@ mod clone;
 mod clone_context;
 /// Creating a Snapshot's control record, preparation row and branch schemas.
 mod creation;
+/// Encoding a typed value as the `jsonb` a statement writes.
+mod jsonb_value;
 /// Row-to-domain conversions for snapshot records.
 pub mod mapper;
 mod metadata_change;

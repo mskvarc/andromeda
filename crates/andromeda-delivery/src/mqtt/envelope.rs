@@ -58,8 +58,9 @@ mod tests {
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use mediatype::MediaTypeBuf;
-    use serde_json::{Value, json};
-    use std::str::FromStr;
+    use serde::Deserialize;
+    use serde_json::{Value, json, value::RawValue};
+    use std::{collections::BTreeMap, str::FromStr};
     use url::Url;
 
     fn request(accept: &str, receiver_info: Option<&[KeyValuePair]>, tenant: Option<&TenantName>) -> DeliveryRequest {
@@ -134,6 +135,33 @@ mod tests {
         let req = request("application/json", None, None);
         let written = String::from_utf8(build_envelope(&req).expect("the envelope is written")).expect("UTF-8");
         assert!(written.ends_with(&format!(r#""body":{}}}"#, req.body.text())), "{written}");
+    }
+
+    /// Clause 7.2 (MQTT binding): the envelope's `body` member is the very
+    /// document the HTTP delivery sends as its body, read back from the
+    /// envelope as raw text, and `metadata` holds what HTTP carries in headers.
+    #[test]
+    fn the_mqtt_envelope_wraps_the_written_body() {
+        #[derive(Deserialize)]
+        struct ReadEnvelope<'a> {
+            #[serde(borrow)]
+            metadata: BTreeMap<&'a str, &'a str>,
+            #[serde(borrow)]
+            body: &'a RawValue,
+        }
+
+        let req = notification(
+            &json!({"id": "urn:ngsi-ld:Notification:1", "type": "Notification", "data": [{"id": "urn:ngsi-ld:Building:1", "type": "Building", "n": 1.10}]}),
+            "application/ld+json",
+            None,
+            None,
+        );
+        let published = build_envelope(&req).expect("the envelope is written");
+        let read: ReadEnvelope<'_> = serde_json::from_slice(&published).expect("the envelope parses");
+
+        pretty_assertions::assert_eq!(read.body.get(), req.body.text());
+        pretty_assertions::assert_eq!(read.metadata.get("Content-Type"), Some(&"application/ld+json"));
+        pretty_assertions::assert_eq!(read.metadata.keys().copied().collect::<Vec<_>>(), vec!["Content-Type"]);
     }
 
     #[test]

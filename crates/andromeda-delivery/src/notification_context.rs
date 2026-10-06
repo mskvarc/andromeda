@@ -9,8 +9,9 @@
 
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{engine::processor::JsonLdEngine, error::JsonLdError};
+#[cfg(test)]
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::IriBuf;
-use serde::Deserialize;
 
 /// The `@context` of one subscription's notification, in the spelling each
 /// carrier names.
@@ -34,11 +35,9 @@ impl NotificationContext {
     ///
     /// Returns the [`JsonLdError`] a document the `jsonldContext` names could
     /// not be loaded with (clause 5.5.6): no notification can be rendered
-    /// under a context that cannot be read. Returns [`JsonLdError::Json`] when
-    /// the resolved context cannot be held as JSON text, which no context the
-    /// processor resolves can be.
+    /// under a context that cannot be read.
     pub async fn resolve(jsonld_context: Option<&IriBuf>, engine: &JsonLdEngine) -> Result<NotificationContext, JsonLdError> {
-        let body_context = JsonLiteral::deserialize(&engine.notification_body_context(jsonld_context).await?)?;
+        let body_context = engine.notification_body_context(jsonld_context).await?;
         Ok(NotificationContext {
             jsonld_context: jsonld_context.cloned(), // clone: the context outlives the subscription it was read from
             body_context,
@@ -68,7 +67,7 @@ impl NotificationContext {
     /// transports' own unit tests.
     #[cfg(test)]
     pub(crate) fn core() -> NotificationContext {
-        let core = JsonLiteral::admit(&format!("\"{}\"", andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL)).expect("the core context is a JSON string");
+        let core = JsonLiteral::string(NGSI_LD_CORE_CONTEXT_URL.as_str()).expect("the core context is a JSON string");
         NotificationContext::stated(None, core)
     }
 }

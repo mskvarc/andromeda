@@ -40,7 +40,7 @@ mod tests {
             .map(|index| json!([f64::from(u32::try_from(index).expect("a small fixture index")) * 0.001, 0.5]))
             .collect();
         ring.push(json!([0.0, 0.5]));
-        Geometry::from_geojson_value(&json!({"type": "Polygon", "coordinates": [ring]})).expect("a valid polygon")
+        serde_json::from_value::<Geometry>(json!({"type": "Polygon", "coordinates": [ring]})).expect("a valid polygon")
     }
 
     /// Limits of `positions` positions.

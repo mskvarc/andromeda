@@ -32,8 +32,8 @@ use andromeda_postgresql_encoding::{
         write_i16_opt,
         write_i32_opt,
         write_i64,
-        write_jsonb_opt,
         write_jsonb_text,
+        write_null,
         write_text_opt,
         write_timestamptz,
         write_timestamptz_opt,
@@ -191,10 +191,11 @@ pub(crate) fn encode_history_copy_stream(rows: &[AttributeHistoryRow]) -> Result
 /// Returns [`CopyFieldError`] when the document is longer than a field prefix
 /// can announce.
 fn write_stored_json(buf: &mut Vec<u8>, json: Option<&RawValue>) -> Result<(), CopyFieldError> {
-    match json {
-        Some(json) => write_jsonb_text(buf, json.get()),
-        None => write_jsonb_opt(buf, None),
-    }
+    let Some(json) = json else {
+        write_null(buf);
+        return Ok(());
+    };
+    write_jsonb_text(buf, json.get())
 }
 
 const fn estimated_stream_bytes(rows: usize) -> usize {

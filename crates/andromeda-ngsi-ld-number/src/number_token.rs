@@ -15,46 +15,26 @@ enum Sign {
     NonNegative,
 }
 
-/// The letter introducing a token's exponent part.
+/// Whether a token carries an exponent part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExponentMarker {
-    /// `e`, the spelling `serde_json`'s reader gives every exponent it reads.
-    Lower,
-    /// `E`, the spelling `BigDecimal` gives a small value's exponent.
-    Upper,
-}
-
-/// Whether a token's exponent part spells its sign.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExponentSign {
-    /// The exponent digits follow a `+` or `-`.
-    Explicit,
-    /// The exponent digits follow the marker directly.
-    Implicit,
-}
-
-/// How a token's exponent part is written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Exponent {
-    /// The letter introducing the exponent.
-    marker: ExponentMarker,
-    /// Whether the exponent spells its sign.
-    sign: ExponentSign,
+enum Exponent {
+    /// The token ends after its integer or fraction digits.
+    Absent,
+    /// The token ends with `e` or `E`, an optional sign and digits.
+    Present,
 }
 
 /// A JSON number token split into the parts RFC 8259 section 6 names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct NumberToken<'a> {
-    /// The whole token.
-    text: &'a str,
     /// The optional minus sign.
     sign: Sign,
     /// The integer part: `0` or a digit run without a leading zero.
     integer: &'a str,
     /// The digits after the decimal point, when there is one.
     fraction: Option<&'a str>,
-    /// The exponent part's spelling, when there is one.
-    exponent: Option<Exponent>,
+    /// Whether the token has an exponent part.
+    exponent: Exponent,
 }
 
 impl<'a> NumberToken<'a> {
@@ -79,22 +59,16 @@ impl<'a> NumberToken<'a> {
             None => (None, rest),
         };
         let exponent = if rest.is_empty() {
-            None
+            Exponent::Absent
         } else {
-            let (marker, exponent) = rest
-                .strip_prefix('e')
-                .map(|exponent| (ExponentMarker::Lower, exponent))
-                .or_else(|| rest.strip_prefix('E').map(|exponent| (ExponentMarker::Upper, exponent)))?;
-            let (sign, digits) = exponent
-                .strip_prefix(['+', '-'])
-                .map_or((ExponentSign::Implicit, exponent), |digits| (ExponentSign::Explicit, digits));
+            let exponent = rest.strip_prefix(['e', 'E'])?;
+            let digits = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
             if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
                 return None;
             }
-            Some(Exponent { marker, sign })
+            Exponent::Present
         };
         Some(NumberToken {
-            text,
             sign,
             integer,
             fraction,
@@ -112,7 +86,7 @@ impl<'a> NumberToken<'a> {
     /// the first significant digit of a value below one -- so a token this
     /// answers `false` for may still be canonical and merely gets re-rendered.
     pub(crate) fn is_canonical(&self) -> bool {
-        if self.exponent.is_some() {
+        if self.exponent == Exponent::Present {
             return false;
         }
         match self.fraction {
@@ -120,19 +94,6 @@ impl<'a> NumberToken<'a> {
             None => !self.integer.ends_with('0'),
             Some(fraction) => !fraction.ends_with('0') && (self.integer != "0" || fraction.bytes().take_while(|digit| *digit == b'0').count() <= 1),
         }
-    }
-
-    /// Whether this token is already the spelling [`JsonNumber`](crate::JsonNumber)
-    /// renders and its value lies within the PostgreSQL `NUMERIC` range,
-    /// decided from its digits alone.
-    ///
-    /// A canonical token carries no exponent and no trailing fractional zero,
-    /// so its integer and fraction digit runs are exactly the integral and
-    /// fractional digits the range is stated over.
-    pub(crate) fn is_canonical_within_range(&self) -> bool {
-        self.is_canonical()
-            && i64::try_from(self.integer.len()).is_ok_and(|digits| digits <= MAX_INTEGRAL_DIGITS)
-            && i64::try_from(self.fraction.map_or(0, str::len)).is_ok_and(|digits| digits <= MAX_FRACTIONAL_DIGITS)
     }
 
     /// Whether this token carries no exponent and its value lies within the
@@ -143,40 +104,9 @@ impl<'a> NumberToken<'a> {
     /// fractional digits the range is stated over. A token with an exponent is
     /// left to the exact check.
     pub(crate) fn is_plainly_within_range(&self) -> bool {
-        self.exponent.is_none()
+        self.exponent == Exponent::Absent
             && i64::try_from(self.integer.len()).is_ok_and(|digits| digits <= MAX_INTEGRAL_DIGITS)
             && i64::try_from(self.fraction.map_or(0, |fraction| fraction.trim_end_matches('0').len())).is_ok_and(|digits| digits <= MAX_FRACTIONAL_DIGITS)
-    }
-
-    /// Whether `serde_json`'s reader gives this token back byte for byte when
-    /// it reads the token's own serialization.
-    ///
-    /// The reader spells every exponent `e` followed by an explicit sign, and
-    /// reads `-0` as the 64-bit integer zero, which it spells `0`. Every other
-    /// token it keeps.
-    pub(crate) fn reads_back_unchanged(&self) -> bool {
-        self.text != "-0"
-            && self.exponent.is_none_or(|exponent| {
-                exponent
-                    == Exponent {
-                        marker: ExponentMarker::Lower,
-                        sign: ExponentSign::Explicit,
-                    }
-            })
-    }
-
-    /// Whether `serde_json` hands this token to a visitor as a 64-bit integer.
-    ///
-    /// Its reader and its value deserializer agree on exactly these tokens: a
-    /// non-negative one that parses as `u64` and a negative one that parses as
-    /// `i64`. For every other token the two take different visitor paths.
-    pub(crate) fn is_64_bit_integer(&self) -> bool {
-        self.fraction.is_none()
-            && self.exponent.is_none()
-            && match self.sign {
-                Sign::NonNegative => self.text.parse::<u64>().is_ok(),
-                Sign::Negative => self.text.parse::<i64>().is_ok(),
-            }
     }
 }
 
@@ -188,7 +118,6 @@ fn split_digits(text: &str) -> (&str, &str) {
 #[cfg(test)]
 mod tests {
     use crate::{JsonNumber, MAX_FRACTIONAL_DIGITS, MAX_INTEGRAL_DIGITS, number_token::NumberToken};
-    use serde_json::{Number, Value};
     use std::str::FromStr;
 
     /// Tokens covering signs, zeros, 64-bit boundaries, fractions and both
@@ -278,58 +207,6 @@ mod tests {
                 .iter()
                 .all(|token| NumberToken::parse(token).is_some_and(|parsed| !parsed.is_canonical()))
         );
-    }
-
-    #[test]
-    fn reading_back_unchanged_matches_what_serde_json_reads_from_the_token() {
-        for token in VALID_TOKENS {
-            let reread = serde_json::from_str::<Value>(token).expect("a valid token").to_string();
-            let parsed = NumberToken::parse(token).expect("a valid token");
-            pretty_assertions::assert_eq!(parsed.reads_back_unchanged(), reread == token, "{token} reads back as {reread}");
-        }
-    }
-
-    #[test]
-    fn only_integers_inside_the_u64_or_i64_range_are_64_bit_integers() {
-        let integers = ["0", "-0", "5", "-5", "18446744073709551615", "9223372036854775807", "-9223372036854775808"];
-        let others = [
-            "18446744073709551616",
-            "-9223372036854775809",
-            "0.1",
-            "1e2",
-            "1.0",
-            "340282366920938463463374607431768211456",
-        ];
-        assert!(
-            integers
-                .iter()
-                .all(|token| NumberToken::parse(token).is_some_and(|parsed| parsed.is_64_bit_integer()))
-        );
-        assert!(
-            others
-                .iter()
-                .all(|token| NumberToken::parse(token).is_some_and(|parsed| !parsed.is_64_bit_integer()))
-        );
-    }
-
-    /// The digit fast path agrees with the exact decimal on every token it
-    /// admits: canonical, and accepted by the full range check.
-    #[test]
-    fn a_canonical_token_within_range_is_admitted_without_a_decimal() {
-        for token in ["0", "5", "-5", "21.5", "-0.05", "14.550000001", "18446744073709551616", "0.100000000000000005"] {
-            let parsed = NumberToken::parse(token).expect("a valid token");
-            assert!(parsed.is_canonical_within_range(), "{token}");
-            assert!(JsonNumber::try_from(Number::from_string_unchecked(token.to_owned())).is_ok(), "{token}");
-        }
-    }
-
-    #[test]
-    fn a_token_needing_a_decimal_is_left_to_the_exact_check() {
-        let too_fine = format!("0.{}1", "1".repeat(usize::try_from(MAX_FRACTIONAL_DIGITS).expect("a small constant")));
-        for token in ["-0", "1.50", "1e2", "0.001", too_fine.as_str()] {
-            let parsed = NumberToken::parse(token).expect("a valid token");
-            assert!(!parsed.is_canonical_within_range(), "{token}");
-        }
     }
 
     /// The plain range check agrees with the exact decimal on every token

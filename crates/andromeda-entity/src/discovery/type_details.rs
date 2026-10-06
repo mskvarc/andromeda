@@ -14,7 +14,6 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::entity_type_list::{EntityType, EntityTypeType};
-use serde_json::Value;
 
 impl EntityDiscoveryService {
     /// Return detailed information for all entity types, including their
@@ -28,7 +27,7 @@ impl EntityDiscoveryService {
     /// could not be read, [`EntityError::JsonLd`] when the request context
     /// does not resolve or process, and [`EntityError::Internal`] when a stored
     /// type or attribute name does not read back as one.
-    pub async fn type_details(&self, target: &ContextTarget, scope: DiscoveryScope, context: &ContextSpec) -> Result<Value, EntityError> {
+    pub async fn type_details(&self, target: &ContextTarget, scope: DiscoveryScope, context: &ContextSpec) -> Result<Vec<EntityType>, EntityError> {
         let mut summaries = self.store.entity_type_attributes(target).await?;
         union_type_summaries(&mut summaries, self.registered_types(scope).await?);
 
@@ -43,6 +42,6 @@ impl EntityDiscoveryService {
             });
         }
 
-        Ok(serde_json::to_value(entity_types)?)
+        Ok(entity_types)
     }
 }

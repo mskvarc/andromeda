@@ -15,7 +15,6 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::attribute_list::AttributeInfo;
-use serde_json::Value;
 
 /// What is known about one attribute across the local store and the registry.
 struct AttributeFacts {
@@ -51,7 +50,7 @@ impl EntityDiscoveryService {
         attr_id: &AttributeName,
         scope: DiscoveryScope,
         context: &ContextSpec,
-    ) -> Result<Value, EntityError> {
+    ) -> Result<AttributeInfo, EntityError> {
         let prepared_context = self.engine.prepare_term_context(context);
         let names = request_name_compaction(&self.engine, context).await?;
         let attr_iri_buf = self.engine.expand_term(attr_id.as_str(), &prepared_context).await?;
@@ -88,14 +87,12 @@ impl EntityDiscoveryService {
 
         // Clause 5.2.28 fixes `attributeTypes` to the attribute family names; the
         // store already mapped the payload's expanded `@type` IRIs to them.
-        let attr = AttributeInfo::builder()
+        Ok(AttributeInfo::builder()
             .attribute_name(compacted_attribute_name(&names, &attr_iri)?)
             .id(attr_iri_buf)
             .attribute_types(facts.attribute_types)
             .attribute_count(Some(facts.instance_count))
             .type_names(compacted_type_names(&names, facts.entity_types)?)
-            .build();
-
-        Ok(serde_json::to_value(attr)?)
+            .build())
     }
 }

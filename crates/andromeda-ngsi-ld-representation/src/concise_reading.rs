@@ -239,44 +239,50 @@ fn coordinates_member(token: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        compact_node::{CompactNode, NodeMembers, NodeShape},
-        concise_reading::{ArrayReading, ArrayRefusal, ObjectReading, ObjectRefusal, bare_value_family, read_array, read_object, typeless_value_family},
+        compact_node::{CompactNode, NodeShape},
+        concise_reading::{self, ArrayReading, ArrayRefusal, ObjectReading, ObjectRefusal},
+        written_json::WrittenJson,
     };
-    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
     use serde_json::{Value, json};
 
-    /// The members of the object `value` is.
-    fn object(value: &Value) -> NodeMembers<'_, &Value> {
-        match value.shape() {
-            NodeShape::Object(members) => members,
-            other @ (NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Geometry(_)) => {
-                panic!("an object: {other:?}")
-            }
-        }
-    }
-
-    /// The elements of the array `value` is.
-    fn array(value: &Value) -> Vec<&Value> {
-        value.as_array().unwrap_or_else(|| panic!("an array: {value}")).iter().collect()
-    }
-
-    /// The same reading from the text of `value`, read in place.
+    /// The reading of the object `value` is, from the text it is written as.
     fn read_from_text(value: &Value) -> Result<ObjectReading, ObjectRefusal> {
-        let literal = JsonLiteral::admit(&value.to_string()).expect("the fixture is JSON");
-        match literal.piece().shape() {
-            NodeShape::Object(members) => read_object(&members),
+        let written = WrittenJson::of(value);
+        match written.node().shape() {
+            NodeShape::Object(members) => concise_reading::read_object(&members),
             other @ (NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Array(_) | NodeShape::Geometry(_)) => {
                 panic!("an object: {other:?}")
             }
         }
+    }
+
+    /// The reading of the array `value` is, from the text it is written as.
+    fn read_array_of(value: &Value) -> Result<ArrayReading, ArrayRefusal> {
+        let written = WrittenJson::of(value);
+        match written.node().shape() {
+            NodeShape::Array(items) => concise_reading::read_array(&items),
+            other @ (NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Object(_) | NodeShape::Geometry(_)) => {
+                panic!("an array: {other:?}")
+            }
+        }
+    }
+
+    /// The family a bare value reads back as, from the text it is written as.
+    fn bare_value_family(value: &Value) -> Option<AttributeType> {
+        concise_reading::bare_value_family(WrittenJson::of(value).node())
+    }
+
+    /// The family of a typeless value, from the text it is written as.
+    fn typeless_value_family(value: &Value) -> AttributeType {
+        concise_reading::typeless_value_family(WrittenJson::of(value).node())
     }
 
     #[test]
     fn an_object_declaring_an_attribute_type_is_an_instance_of_it() {
         for family in AttributeType::ALL {
             let node = json!({"type": family.to_string(), family.compact_value_key(): 1});
-            pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::Instance(family)), "{family}");
+            pretty_assertions::assert_eq!(read_from_text(&node), Ok(ObjectReading::Instance(family)), "{family}");
         }
     }
 
@@ -286,7 +292,7 @@ mod tests {
             json!({"type": "Point", "coordinates": [1.0, 2.0]}),
             json!({"type": "GeometryCollection", "geometries": []}),
         ] {
-            pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::GeoPropertyValue), "{node}");
+            pretty_assertions::assert_eq!(read_from_text(&node), Ok(ObjectReading::GeoPropertyValue), "{node}");
         }
     }
 
@@ -295,7 +301,7 @@ mod tests {
     #[test]
     fn a_geometry_type_without_its_coordinates_is_refused() {
         for node in [json!({"type": "Point"}), json!({"type": "GeometryCollection", "coordinates": []})] {
-            pretty_assertions::assert_eq!(read_object(&object(&node)), Err(ObjectRefusal::GeometryWithoutCoordinates), "{node}");
+            pretty_assertions::assert_eq!(read_from_text(&node), Err(ObjectRefusal::GeometryWithoutCoordinates), "{node}");
         }
     }
 
@@ -305,7 +311,7 @@ mod tests {
     fn a_type_naming_no_attribute_type_is_refused() {
         for node in [json!({"type": "Feature", "x": 1}), json!({"type": "Propertyy", "value": 1})] {
             pretty_assertions::assert_eq!(
-                read_object(&object(&node)),
+                read_from_text(&node),
                 Err(ObjectRefusal::NotAnAttributeType(strum::ParseError::VariantNotFound)),
                 "{node}"
             );
@@ -315,7 +321,7 @@ mod tests {
     #[test]
     fn a_type_that_is_not_a_string_is_refused() {
         for node in [json!({"type": 7, "value": 1}), json!({"type": ["Property"], "value": 1})] {
-            pretty_assertions::assert_eq!(read_object(&object(&node)), Err(ObjectRefusal::TypeNotAString), "{node}");
+            pretty_assertions::assert_eq!(read_from_text(&node), Err(ObjectRefusal::TypeNotAString), "{node}");
         }
     }
 
@@ -329,14 +335,14 @@ mod tests {
             (json!({"objectList": ["urn:ngsi-ld:X:1"]}), AttributeType::ListRelationship),
             (json!({"json": {"k": 1}}), AttributeType::JsonProperty),
         ] {
-            pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::Instance(family)), "{node}");
+            pretty_assertions::assert_eq!(read_from_text(&node), Ok(ObjectReading::Instance(family)), "{node}");
         }
     }
 
     #[test]
     fn a_typeless_object_with_two_value_members_is_refused() {
         let node = json!({"object": "urn:ngsi-ld:X:1", "languageMap": {"en": "x"}});
-        pretty_assertions::assert_eq!(read_object(&object(&node)), Err(ObjectRefusal::SeveralValueMembers));
+        pretty_assertions::assert_eq!(read_from_text(&node), Err(ObjectRefusal::SeveralValueMembers));
     }
 
     /// Clause 4.5.2.3, "type": "If missing, "Property" can be inferred by the
@@ -344,7 +350,7 @@ mod tests {
     #[test]
     fn a_typeless_object_with_value_is_a_property_instance() {
         for node in [json!({"value": 42}), json!({"value": 42, "accuracy": 0.5}), json!({"value": {"value": 5}})] {
-            pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::Instance(AttributeType::Property)), "{node}");
+            pretty_assertions::assert_eq!(read_from_text(&node), Ok(ObjectReading::Instance(AttributeType::Property)), "{node}");
         }
     }
 
@@ -352,7 +358,7 @@ mod tests {
     #[test]
     fn a_typeless_object_whose_value_is_a_geometry_is_a_geo_property_instance() {
         let node = json!({"value": {"type": "Point", "coordinates": [1.0, 2.0]}});
-        pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::Instance(AttributeType::GeoProperty)));
+        pretty_assertions::assert_eq!(read_from_text(&node), Ok(ObjectReading::Instance(AttributeType::GeoProperty)));
     }
 
     /// The other family's value member names the family; the `value` it then
@@ -360,20 +366,20 @@ mod tests {
     #[test]
     fn a_typeless_object_with_value_and_another_value_member_is_that_family() {
         let node = json!({"value": 1, "object": "urn:ngsi-ld:X:1"});
-        pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::Instance(AttributeType::Relationship)));
+        pretty_assertions::assert_eq!(read_from_text(&node), Ok(ObjectReading::Instance(AttributeType::Relationship)));
     }
 
     #[test]
     fn any_other_object_is_a_property_value() {
         for node in [json!({"a": 1}), json!({}), json!({"Type": "Point", "coordinates": [1.0, 2.0]})] {
-            pretty_assertions::assert_eq!(read_object(&object(&node)), Ok(ObjectReading::PropertyValue), "{node}");
+            pretty_assertions::assert_eq!(read_from_text(&node), Ok(ObjectReading::PropertyValue), "{node}");
         }
     }
 
     #[test]
     fn an_array_of_instances_reads_as_instances() {
         let node = json!([{"value": 25, "datasetId": "urn:ngsi-ld:Dataset:a"}, {"type": "Property", "value": 30}]);
-        pretty_assertions::assert_eq!(read_array(&array(&node)), Ok(ArrayReading::Instances));
+        pretty_assertions::assert_eq!(read_array_of(&node), Ok(ArrayReading::Instances));
     }
 
     #[test]
@@ -384,21 +390,21 @@ mod tests {
             json!([{"a": 1}]),
             json!([{"type": "Point", "coordinates": [1.0, 2.0]}]),
         ] {
-            pretty_assertions::assert_eq!(read_array(&array(&node)), Ok(ArrayReading::PropertyValue), "{node}");
+            pretty_assertions::assert_eq!(read_array_of(&node), Ok(ArrayReading::PropertyValue), "{node}");
         }
     }
 
     #[test]
     fn an_array_mixing_instances_and_values_is_refused() {
         let node = json!([{"value": 25, "datasetId": "urn:ngsi-ld:Dataset:a"}, 30]);
-        pretty_assertions::assert_eq!(read_array(&array(&node)), Err(ArrayRefusal::MixedInstancesAndValues));
+        pretty_assertions::assert_eq!(read_array_of(&node), Err(ArrayRefusal::MixedInstancesAndValues));
     }
 
     #[test]
     fn a_refused_element_refuses_its_array() {
         let node = json!([1, {"type": "Feature"}]);
         pretty_assertions::assert_eq!(
-            read_array(&array(&node)),
+            read_array_of(&node),
             Err(ArrayRefusal::Element {
                 index: 1,
                 refusal: ObjectRefusal::NotAnAttributeType(strum::ParseError::VariantNotFound),
@@ -434,22 +440,6 @@ mod tests {
         );
         for value in [json!(42), json!({"type": "Feature"}), json!(r#"{"type": "Point", "coordinates": [1.0, 2.0]}"#)] {
             pretty_assertions::assert_eq!(typeless_value_family(&value), AttributeType::Property, "{value}");
-        }
-    }
-
-    /// The reading of a request's text and of a parsed document agree.
-    #[test]
-    fn text_and_a_parsed_document_read_alike() {
-        for node in [
-            json!({"type": "Property", "value": 1}),
-            json!({"type": "Point", "coordinates": [1.0, 2.0]}),
-            json!({"type": "Point"}),
-            json!({"type": 7}),
-            json!({"object": "urn:ngsi-ld:X:1", "vocab": "x"}),
-            json!({"value": {"type": "Point", "coordinates": [1.0, 2.0]}}),
-            json!({"a": 1}),
-        ] {
-            pretty_assertions::assert_eq!(read_from_text(&node), read_object(&object(&node)), "{node}");
         }
     }
 }

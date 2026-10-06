@@ -89,13 +89,6 @@ impl LinkValue {
         self
     }
 
-    /// Set the `profile` parameter (RFC 8288 section 3.4, clause 6.3.21).
-    #[must_use]
-    pub fn set_profile(mut self, profile: IriBuf) -> LinkValue {
-        self.profile = Some(profile);
-        self
-    }
-
     /// Build a link-value with optional `rel` and `type` parameters.
     #[must_use]
     pub fn with_params(target: IriRefBuf, rel: Option<RelationType>, media_type: Option<MediaTypeBuf>) -> LinkValue {
@@ -259,10 +252,12 @@ mod tests {
 
     #[test]
     fn every_parameter_set_appears_in_the_rendering() {
-        let value = LinkValue::new(iri_ref("http://example.com/ctx.jsonld"))
+        let mut value = LinkValue::new(iri_ref("http://example.com/ctx.jsonld"))
             .push_rel(RelationType::JsonLdContext)
-            .set_media_type("application/ld+json".parse::<MediaTypeBuf>().expect("valid media type"))
-            .set_profile(iri("https://uri.etsi.org/ngsi-ld/profile/version"));
+            .set_media_type("application/ld+json".parse::<MediaTypeBuf>().expect("valid media type"));
+        value
+            .apply_param(r#"profile="https://uri.etsi.org/ngsi-ld/profile/version""#)
+            .expect("a profile parameter applies");
         assert!(value.to_string().contains(r#"profile="https://uri.etsi.org/ngsi-ld/profile/version""#));
     }
 

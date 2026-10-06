@@ -1,7 +1,7 @@
 //! The Relationship attribute family (ETSI GS CIM 009 clause 5.2.6).
 
 use crate::attribute::{common_fields::CommonAttributeFields, inline_entity::InlineEntity, one_or_many::OneOrMany};
-use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{coerced_term::CoercedTerm, uri::Uri};
 use serde::Serialize;
 use serde_with::skip_serializing_none;
 
@@ -12,8 +12,8 @@ use serde_with::skip_serializing_none;
 pub struct Relationship {
     /// One or more target object URIs.
     pub object: OneOrMany<Uri>,
-    /// Optional target node type(s).
-    pub object_type: Option<OneOrMany<NgsiLdReference>>,
+    /// Optional target node type(s), as written: type names or URIs (Table 5.2.6-1).
+    pub object_type: Option<OneOrMany<CoercedTerm>>,
     /// Previous target object emitted in notifications when `showChanges` is active.
     pub previous_object: Option<OneOrMany<Uri>>,
     /// Inline linked entity or entities returned for `join=inline`.
@@ -26,6 +26,35 @@ pub struct Relationship {
 #[cfg(test)]
 mod tests {
     use crate::attribute::{instance::Attribute, one_or_many::OneOrMany};
+    use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
+
+    /// Table 5.2.6-1 allows "short hand string(s) (type name) or URI(s)" as
+    /// `objectType`, so a hyphenated type term the context defines is read in
+    /// the single and the array form and serialised verbatim.
+    #[test]
+    fn a_hyphenated_object_type_term_is_read_in_both_forms_and_serialised_verbatim() {
+        for (written, expected) in [
+            (serde_json::json!("smart-building"), vec!["smart-building"]),
+            (serde_json::json!(["smart-building", "schema:Place"]), vec!["smart-building", "schema:Place"]),
+        ] {
+            let attr: Attribute = serde_json::from_value(serde_json::json!({"type": "Relationship", "object": "urn:ngsi-ld:Entity:1", "objectType": written}))
+                .expect("relationship");
+            let Attribute::Relationship(relationship) = attr else {
+                panic!("expected Relationship");
+            };
+            let terms: Vec<&str> = relationship.object_type.iter().flat_map(OneOrMany::iter).map(CoercedTerm::as_str).collect();
+            pretty_assertions::assert_eq!(terms, expected);
+            pretty_assertions::assert_eq!(serde_json::to_value(&relationship).expect("serialises")["objectType"], written);
+        }
+    }
+
+    #[test]
+    fn an_object_type_holding_whitespace_is_refused() {
+        assert!(
+            serde_json::from_value::<Attribute>(serde_json::json!({"type": "Relationship", "object": "urn:ngsi-ld:Entity:1", "objectType": "smart building"}))
+                .is_err()
+        );
+    }
 
     #[test]
     fn relationship_round_trip_supports_object_arrays_and_object_type() {

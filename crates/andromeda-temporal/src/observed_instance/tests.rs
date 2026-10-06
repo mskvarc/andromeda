@@ -403,7 +403,7 @@ fn a_geo_property_records_its_geometry_however_it_was_written() {
             [[1.0, 1.0], [1.0, 2.0], [2.0, 2.0], [1.0, 1.0]]
         ]
     });
-    let written = Geometry::from_geojson_value(&polygon).expect("the fixture is a valid Polygon");
+    let written = Geometry::from_geojson_text(&polygon.to_string()).expect("the fixture is a valid Polygon");
     let point = |x: f64, y: f64| json!({"@list": [{"@value": x}, {"@value": y}]});
     let node = json!({
         "@type": ["https://purl.org/geojson/vocab#Polygon"],

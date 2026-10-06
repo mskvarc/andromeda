@@ -364,7 +364,7 @@ mod tests {
         let mut geo = empty_query();
         geo.selection.geo = Some(GeoQuery {
             georel: GeoRel::Within,
-            geometry: Geometry::from_geojson_value(&serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
         let mut scope = empty_query();

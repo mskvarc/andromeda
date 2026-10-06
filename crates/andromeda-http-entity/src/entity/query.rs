@@ -31,10 +31,15 @@ use crate::{
         with_linked_resolution_warnings,
     },
     error::public_error,
+    join::JoinRequest,
     read_rendering::{EntityRepresentation, matched_entities, settle_representation},
     state::EntityRouteServices,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_entity::query::{
+    EntityQueryService,
+    entity_versions::{VersionRead, held_version},
+};
 use andromeda_entity_map::recording::PageMatches;
 use andromeda_federation::{
     config::SplitEntities,
@@ -44,10 +49,12 @@ use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{api_root::ApiRoot, context_target, pagination_policy::RequestPagination, response_context_request::ResponseContextRequest};
 use andromeda_jsonld::user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context};
 use andromeda_linked_retrieval::{plan::JoinPlan, typed::TypedEntities};
+use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selection::ConsideredEntities};
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{pagination::policy::PaginationPolicy, query::entity::parameters::EntityQueryParameters};
 use axum::http::{HeaderMap, Uri as HttpUri};
 use futures::future::OptionFuture;
@@ -198,19 +205,17 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let deferred = split_entities.then(|| query.defer_split_filters());
         let page = QueryPage::of(window, count, forwarded.as_ref(), binding.page_pointers());
 
-        let (local_window, local_count) = page.local_read();
-        let (local_entities, local_total) = service
-            .query(&target, &query, &local_window, local_count, &context)
-            .await
-            .with_entity_instance(&uri)?;
-        let merged = merge_contributions(local_entities, forwarded, &query, &uri)?;
+        let (local_versions, local_total) = local_versions(service, &target, &query, &page, &context, &uri).await?;
+        let merged = merge_contributions(service, local_versions, forwarded, &query, &context, &uri).await?;
         let MergedEntities {
-            entities,
+            entities: versions,
             warnings,
             contributions,
         } = retain_matching(service, &target, merged, deferred, &context, &uri).await?;
-        let split_survivors = split_entities.then(|| split_match_set(&entities));
-        let (mut entities, total_count) = page.cut(entities, local_total);
+        let split_survivors = split_entities.then(|| split_match_set(&versions));
+        let (mut versions, total_count) = page.cut(versions, |version| version.state.id().as_str(), local_total);
+        let carried = ResolvedJoin::carried_by(&mut versions);
+        let mut entities = compacted_page(service, &versions, opts.sys_attrs, &query, &context, &uri).await?;
 
         // Clause 4.21: the request's `pick`/`omit` (or `attrs`) govern both
         // the matching entities and, through the list in force, every Linked
@@ -222,7 +227,8 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
 
         // The join resolves before the EntityMap is recorded so a minted map
         // can include the linked ids (clauses 5.5.14 and 5.7.2.4).
-        let mut resolved = ResolvedJoin::of_query(service, &target, &entities, &context, &query, opts.sys_attrs, request_projection.list())
+        let join = JoinRequest::of_query(&query, opts.sys_attrs, request_projection.list(), &carried);
+        let mut resolved = ResolvedJoin::prepare(service, &target, &entities, &context, &join)
             .await
             .with_entity_instance(&uri)?;
         // Clause 6.3.17: a Linked Entity the join could not reach leaves the
@@ -280,8 +286,52 @@ fn geometry_selection(query: &EntityQueryParameters) -> GeometrySelection<'_> {
 /// Clause 5.5.9.3: under `splitEntities` those are the whole match set the
 /// reused map is pruned against, so they are captured over the full result,
 /// before the page window narrows it. A non-split page prunes per source.
-fn split_match_set(entities: &[Entity]) -> Vec<Identifier> {
-    entities.iter().map(|entity| entity.id.clone()).collect() // clone: the map pruning owns the identifiers it keeps
+fn split_match_set(versions: &[ReceivedState]) -> Vec<Identifier> {
+    versions.iter().map(|version| version.state.id().clone()).collect() // clone: the map pruning owns the identifiers it keeps
+}
+
+/// The page of entities this broker holds itself, read as the versions a
+/// merge builds on, with the count the store took.
+///
+/// # Errors
+///
+/// The classified failure of the local query.
+async fn local_versions(
+    service: &EntityQueryService,
+    target: &ContextTarget,
+    query: &EntityQueryParameters,
+    page: &QueryPage,
+    context: &AdmittedContext,
+    instance: &HttpUri,
+) -> Result<(Vec<ReceivedState>, Option<i64>), ProblemResponse> {
+    let (local_window, local_count) = page.local_read();
+    let (rows, total) = service
+        .query_states(target, query, &local_window, local_count, context)
+        .await
+        .with_entity_instance(instance)?;
+    Ok((rows.into_iter().map(held_version).collect(), total))
+}
+
+/// The page of merged entities, compacted once under the request context:
+/// what every holder contributed is written the same way.
+///
+/// # Errors
+///
+/// The classified failure of a compaction.
+async fn compacted_page(
+    service: &EntityQueryService,
+    versions: &[ReceivedState],
+    sys_attrs: SysAttrsInclusion,
+    query: &EntityQueryParameters,
+    context: &AdmittedContext,
+    instance: &HttpUri,
+) -> Result<Vec<Entity>, ProblemResponse> {
+    let read = VersionRead {
+        id_override: None,
+        sys_attrs,
+        dataset_ids: query.dataset_id.as_deref().unwrap_or_default(),
+    };
+    service.compact_versions(versions, &read, context).await.with_entity_instance(instance)
 }
 
 /// Fold what the context sources contributed onto the entities this broker
@@ -289,18 +339,27 @@ fn split_match_set(entities: &[Entity]) -> Vec<Identifier> {
 ///
 /// # Errors
 ///
-/// `TooManyResults` when the merged collection exceeds the budget the sources
-/// were walked under (clause 4.12).
-fn merge_contributions(
-    local_entities: Vec<Entity>,
+/// The classified failure of expanding the query's `attrs`, which clause 5.7.2
+/// applies after the merge, and `TooManyResults` when the merged collection
+/// exceeds the budget the sources were walked under (clause 4.12).
+async fn merge_contributions(
+    service: &EntityQueryService,
+    local_entities: Vec<ReceivedState>,
     forwarded: Option<ForwardedQueryResults>,
     query: &EntityQueryParameters,
+    context: &AdmittedContext,
     instance: &HttpUri,
 ) -> Result<MergedEntities, ProblemResponse> {
     match forwarded {
-        Some(results) => results
-            .merge_onto(local_entities, query.attrs.as_deref())
-            .map_err(|exceeded| public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), instance)),
+        Some(results) => {
+            let attrs = service
+                .expand_attribute_names(query.attrs.as_deref().unwrap_or_default(), context)
+                .await
+                .with_entity_instance(instance)?;
+            results
+                .merge_onto(local_entities, &attrs)
+                .map_err(|exceeded| public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), instance))
+        }
         None => Ok(MergedEntities::local(local_entities)),
     }
 }

@@ -21,7 +21,6 @@ use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_temporal::error::TemporalError;
 use axum::http::Uri;
-use std::fmt::Display;
 
 /// A typed failure consumed by Entity Map routes.
 pub trait EntityMapHttpClassify {
@@ -100,10 +99,6 @@ where
 
 pub(crate) fn bad_request_data(detail: impl Into<String>, instance: &Uri) -> ProblemResponse {
     ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail).with_instance(instance.clone())
-}
-
-pub(crate) fn internal_problem(source: &impl Display, summary: InternalFailureSummary, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::internal(source, summary).with_instance(instance.clone())
 }
 
 #[cfg(test)]

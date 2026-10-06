@@ -6,11 +6,18 @@
 //! clause 5.5.4 rules on its shape are decided on the members at the top of
 //! the body alone. They are read from the text straight away, every other
 //! member skipped unread, so a body carrying a geometry of a million positions
-//! is never built into a JSON tree to find out whether it names a context.
+//! is never built into a JSON tree to find out whether it names a context. No
+//! JSON tree is built at all: the reader is the minimal typed scan the
+//! extractors need (an empty array, the presence, shape and value of the
+//! `@context`, and a string `id`).
 
+use andromeda_json_literal::{JsonLiteral, piece::JsonKind};
 use andromeda_ngsi_ld_number::json_value::value_census::MemberName;
-use serde::de::{DeserializeSeed, Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor};
-use serde_json::{Deserializer as JsonReader, Value};
+use serde::{
+    Deserialize,
+    de::{DeserializeSeed, Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor},
+};
+use serde_json::Deserializer as JsonReader;
 use std::fmt;
 use thiserror::Error;
 
@@ -39,19 +46,19 @@ pub(crate) enum BodyContextError {
 #[derive(Debug, Default)]
 pub(crate) struct ObjectEnvelope {
     /// The `@context` member, as written.
-    context: Option<Value>,
+    context: Option<JsonLiteral>,
     /// The `id` member, when it is a string.
     id: Option<String>,
 }
 
 impl ObjectEnvelope {
     /// The `@context` member, as written.
-    pub(crate) const fn context(&self) -> Option<&Value> {
+    pub(crate) const fn context(&self) -> Option<&JsonLiteral> {
         self.context.as_ref()
     }
 
     /// Take the `@context` member, as written.
-    pub(crate) fn into_context(self) -> Option<Value> {
+    pub(crate) fn into_context(self) -> Option<JsonLiteral> {
         self.context
     }
 
@@ -105,10 +112,11 @@ impl BodyEnvelope {
     /// Clause 5.5.4: any other shape is data that is not syntactically correct
     /// according to the API data type definitions.
     pub(crate) fn contexts_are_well_formed(&self) -> bool {
-        self.contexts().all(|context| match context {
-            Value::Null | Value::String(_) | Value::Object(_) => true,
-            Value::Array(items) => items.iter().all(|item| matches!(item, Value::Null | Value::String(_) | Value::Object(_))),
-            Value::Bool(_) | Value::Number(_) => false,
+        let is_entry = |kind: JsonKind| matches!(kind, JsonKind::Null | JsonKind::String | JsonKind::Object);
+        self.contexts().all(|context| match context.piece().kind() {
+            JsonKind::Null | JsonKind::String | JsonKind::Object => true,
+            JsonKind::Array => context.piece().elements().unwrap_or_default().into_iter().all(|item| is_entry(item.kind())),
+            JsonKind::Boolean | JsonKind::Number => false,
         })
     }
 
@@ -121,7 +129,7 @@ impl BodyEnvelope {
     /// Returns [`BodyContextError::Missing`] for a body naming none and
     /// [`BodyContextError::Divergent`] for an array whose members name
     /// different ones.
-    pub(crate) fn into_body_context(self) -> Result<Value, BodyContextError> {
+    pub(crate) fn into_body_context(self) -> Result<JsonLiteral, BodyContextError> {
         match self {
             BodyEnvelope::Object(object) => object.into_context().ok_or(BodyContextError::Missing),
             BodyEnvelope::Array(items) => {
@@ -138,7 +146,7 @@ impl BodyEnvelope {
     }
 
     /// Every top-level `@context` the body carries.
-    fn contexts(&self) -> impl Iterator<Item = &Value> {
+    fn contexts(&self) -> impl Iterator<Item = &JsonLiteral> {
         let (own, items) = match self {
             BodyEnvelope::Object(object) => (object.context(), &[][..]),
             BodyEnvelope::Array(items) => (None, items.as_slice()),
@@ -258,6 +266,67 @@ impl<'de> Visitor<'de> for ItemSeed {
     }
 }
 
+/// The `id` member of an object, when it is a string; any other value is read
+/// to its end and is no identifier.
+#[derive(Debug)]
+struct IdMember(Option<String>);
+
+impl<'de> Deserialize<'de> for IdMember {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<IdMember, D::Error> {
+        deserializer.deserialize_any(IdMemberVisitor)
+    }
+}
+
+/// Reads the `id` member of an object.
+#[derive(Clone, Copy, Debug)]
+struct IdMemberVisitor;
+
+impl<'de> Visitor<'de> for IdMemberVisitor {
+    type Value = IdMember;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("any JSON value")
+    }
+
+    fn visit_bool<E: DeserializeError>(self, _value: bool) -> Result<IdMember, E> {
+        Ok(IdMember(None))
+    }
+
+    fn visit_i64<E: DeserializeError>(self, _value: i64) -> Result<IdMember, E> {
+        Ok(IdMember(None))
+    }
+
+    fn visit_u64<E: DeserializeError>(self, _value: u64) -> Result<IdMember, E> {
+        Ok(IdMember(None))
+    }
+
+    fn visit_f64<E: DeserializeError>(self, _value: f64) -> Result<IdMember, E> {
+        Ok(IdMember(None))
+    }
+
+    fn visit_str<E: DeserializeError>(self, value: &str) -> Result<IdMember, E> {
+        Ok(IdMember(Some(value.to_owned())))
+    }
+
+    fn visit_string<E: DeserializeError>(self, value: String) -> Result<IdMember, E> {
+        Ok(IdMember(Some(value)))
+    }
+
+    fn visit_unit<E: DeserializeError>(self) -> Result<IdMember, E> {
+        Ok(IdMember(None))
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut items: A) -> Result<IdMember, A::Error> {
+        while items.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(IdMember(None))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut members: A) -> Result<IdMember, A::Error> {
+        while members.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        Ok(IdMember(None))
+    }
+}
+
 /// Read the members of an object the rules ask about, every other member
 /// skipped unread; a member written twice counts as written last, as a parsed
 /// tree keeps it.
@@ -275,12 +344,7 @@ fn read_object<'de, A: MapAccess<'de>>(mut members: A) -> Result<Option<ObjectEn
         first = false;
         match name.as_str() {
             CONTEXT_MEMBER => envelope.context = Some(members.next_value()?),
-            ID_MEMBER => {
-                envelope.id = match members.next_value::<Value>()? {
-                    Value::String(id) => Some(id),
-                    Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => None,
-                };
-            }
+            ID_MEMBER => envelope.id = members.next_value::<IdMember>()?.0,
             _other => {
                 members.next_value::<IgnoredAny>()?;
             }
@@ -292,7 +356,12 @@ fn read_object<'de, A: MapAccess<'de>>(mut members: A) -> Result<Option<ObjectEn
 #[cfg(test)]
 mod tests {
     use crate::body_envelope::{BodyContextError, BodyEnvelope};
+    use andromeda_json_literal::JsonLiteral;
     use serde_json::json;
+
+    fn literal(value: &serde_json::Value) -> JsonLiteral {
+        JsonLiteral::admit(&value.to_string()).expect("an admissible context")
+    }
 
     fn envelope(text: &str) -> BodyEnvelope {
         BodyEnvelope::read(text.as_bytes()).expect("valid JSON")
@@ -306,13 +375,30 @@ mod tests {
             panic!("an object");
         };
         pretty_assertions::assert_eq!(object.id(), Some("urn:ngsi-ld:T:1"));
-        pretty_assertions::assert_eq!(read.into_body_context(), Ok(json!(["https://example.org/a"])));
+        pretty_assertions::assert_eq!(read.into_body_context(), Ok(literal(&json!(["https://example.org/a"]))));
+    }
+
+    #[test]
+    fn an_id_that_is_no_string_is_read_to_its_end_and_is_no_identifier() {
+        for text in [
+            r#"{"id":5,"@context":"x"}"#,
+            r#"{"id":{"a":[1,{"b":null}]},"@context":"x"}"#,
+            r#"{"id":[1,2],"@context":"x"}"#,
+            r#"{"id":null,"@context":"x"}"#,
+        ] {
+            let read = envelope(text);
+            let BodyEnvelope::Object(object) = &read else {
+                panic!("an object: {text}");
+            };
+            pretty_assertions::assert_eq!(object.id(), None, "{text}");
+            assert!(read.has_context(), "{text}");
+        }
     }
 
     #[test]
     fn an_array_names_the_context_every_member_carries() {
         let shared = envelope(r#"[{"@context":"https://example.org/a"},{"@context":"https://example.org/a"}]"#);
-        pretty_assertions::assert_eq!(shared.into_body_context(), Ok(json!("https://example.org/a")));
+        pretty_assertions::assert_eq!(shared.into_body_context(), Ok(literal(&json!("https://example.org/a"))));
         let divergent = envelope(r#"[{"@context":"https://example.org/a"},{"@context":"https://example.org/b"}]"#);
         pretty_assertions::assert_eq!(divergent.into_body_context(), Err(BodyContextError::Divergent));
         let partial = envelope(r#"[{"@context":"https://example.org/a"},7]"#);
@@ -338,7 +424,7 @@ mod tests {
 
     #[test]
     fn the_last_context_written_is_the_one_read() {
-        pretty_assertions::assert_eq!(envelope(r#"{"@context":"a","@context":"b"}"#).into_body_context(), Ok(json!("b")));
+        pretty_assertions::assert_eq!(envelope(r#"{"@context":"a","@context":"b"}"#).into_body_context(), Ok(literal(&json!("b"))));
     }
 
     #[test]

@@ -4,6 +4,7 @@
 
 use crate::{
     error::SubscriptionForwardingError,
+    inbound::InboundCsourceNotification,
     minted_subscription_id::mint_subscription_id,
     reduced_copy::{FilterCarriage, ReducedSubscription},
     service::SubscriptionForwardingService,
@@ -12,11 +13,12 @@ use andromeda_federation::subscription::{SubscriptionForward, SubscriptionForwar
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
-    notification::{CsrTriggerReason, ReceivedCsourceNotification},
+    notification::CsrTriggerReason,
+    received::ReceivedElement,
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
     subscription::Subscription,
 };
-use andromeda_subscription::forwarding_hook::ForwardedCopy;
+use andromeda_subscription::{deleted_members::DeletedMembers, forwarding_hook::ForwardedCopy};
 use tracing::{debug, warn};
 
 /// What one registration named in a companion notification calls for.
@@ -70,23 +72,26 @@ impl SubscriptionForwardingService {
             .map_err(SubscriptionForwardingError::from)
     }
 
-    /// Carry out one decision for `subscription` at `registration`.
+    /// Carry out one decision for `subscription` at `registration`; `deleted`
+    /// names the members the local update removed, which an update of the
+    /// copy sends as deletions.
     pub(crate) async fn apply_forward_decision(
         &self,
         subscription: &Subscription,
         registration: &ContextSourceRegistration,
         decision: ForwardDecision,
+        deleted: &DeletedMembers,
         context: &ContextSpec,
     ) -> Result<(), SubscriptionForwardingError> {
         let carriage = FilterCarriage::for_split(self.federation.split_entities(subscription.delivery.split_entities));
         match decision {
             ForwardDecision::Create => {
                 let minted = mint_subscription_id()?;
-                let copy = ReducedSubscription::reduce(subscription, registration, &self.receiver, &minted, carriage);
-                let body = serde_json::to_vec(&copy.document)?;
+                // Boxed: the copy is held across the forward, and the request is a wide value.
+                let copy = Box::new(ReducedSubscription::reduce(subscription, registration, &self.receiver, &minted, carriage).request);
                 let forwarded = self
                     .federation
-                    .forward_subscription(registration, SubscriptionForward::Create { body: &body, context })
+                    .forward_subscription(registration, SubscriptionForward::Create { body: &copy, context })
                     .await;
                 if forwarded.admission == SubscriptionForwardAdmission::NotAdvertised {
                     debug!(subscription = %subscription.id, registration = %registration.id, "registration does not advertise createSubscription");
@@ -109,15 +114,16 @@ impl SubscriptionForwardingService {
                 self.router.register(&remote, &self.tenant).await?;
             }
             ForwardDecision::Update { remote } => {
-                let copy = ReducedSubscription::reduce(subscription, registration, &self.receiver, &remote, carriage);
-                let body = serde_json::to_vec(&copy.as_fragment())?;
+                // Boxed: the fragment is held across the forward, and the request is a wide value.
+                let fragment =
+                    Box::new(ReducedSubscription::reduce(subscription, registration, &self.receiver, &remote, carriage).as_fragment(deleted, carriage));
                 let forwarded = self
                     .federation
                     .forward_subscription(
                         registration,
                         SubscriptionForward::Update {
                             remote_id: &remote,
-                            body: &body,
+                            body: &fragment,
                             context,
                         },
                     )
@@ -154,7 +160,7 @@ impl SubscriptionForwardingService {
     /// reduced copies the notification calls for.
     pub async fn handle_csource_notification(
         &self,
-        notification: &ReceivedCsourceNotification,
+        notification: &InboundCsourceNotification,
         context: &ContextSpec,
     ) -> Result<(), SubscriptionForwardingError> {
         let Some(local) = self.mappings.local_of_companion(&notification.subscription_id).await? else {
@@ -170,24 +176,26 @@ impl SubscriptionForwardingService {
         let Some(trigger) = notification.trigger_reason else {
             return Ok(());
         };
-        for value in &notification.data {
-            let registration: ContextSourceRegistration = match serde_json::from_value(value.clone()) {
-                // clone: deserialisation consumes the value while the notification stays borrowed
-                Ok(registration) => registration,
-                Err(error) => {
-                    warn!(subscription = %local, %error, "companion notification carried a registration that does not parse");
+        // The copies the local subscription holds are read once: the
+        // registrations one notification names are distinct, so a decision
+        // taken for one leaves the copy of another as it was read.
+        let copies = self.mappings.forwarded_of(&local).await?;
+        for element in &notification.data {
+            let registration = match element {
+                ReceivedElement::Read(registration) => registration,
+                ReceivedElement::Refused(refusal) => {
+                    warn!(subscription = %local, %refusal, "companion notification carried a registration that does not parse");
                     continue;
                 }
             };
-            let existing = self
-                .mappings
-                .forwarded_of(&local)
-                .await?
-                .into_iter()
+            let existing = copies
+                .iter()
                 .find(|copy| copy.registration == registration.id)
-                .map(|copy| copy.remote_subscription);
+                .map(|copy| copy.remote_subscription.clone()); // clone: the decision owns the identifier of the copy it acts on
             let decision = decide(trigger, registration.access.mode.unwrap_or_default(), existing);
-            self.apply_forward_decision(&subscription, &registration, decision, context).await?;
+            // A registration change deletes nothing of the subscription.
+            self.apply_forward_decision(&subscription, registration, decision, &DeletedMembers::default(), context)
+                .await?;
         }
         Ok(())
     }

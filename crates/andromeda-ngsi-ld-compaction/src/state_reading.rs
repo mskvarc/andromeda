@@ -6,13 +6,7 @@
 //! defines for a core term read as that term. No JSON document of the entity
 //! is written on the way.
 
-use crate::{
-    compacted::Compacted,
-    compaction_error::CompactionError,
-    term_context::TermContext,
-    undecidable::Undecidable,
-    walk::{GeometryOutput, Walk},
-};
+use crate::{compacted::Compacted, compaction_error::CompactionError, term_context::TermContext, undecidable::Undecidable, walk::Walk};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity::Entity, node_refusal::NodeReadError};
@@ -37,7 +31,7 @@ pub(crate) fn walk_entity(
     id_override: Option<&Identifier>,
     sys_attrs: SysAttrsInclusion,
 ) -> Result<Entity, WalkError> {
-    let tree = Compacted::Object(Walk::new(terms, GeometryOutput::Typed).compact_state(state, sys_attrs)?);
+    let tree = Compacted::Object(Walk::new(terms).compact_state(state, sys_attrs)?);
     let mut entity = <Entity>::from_node(AliasedNode::new(&tree, terms.aliases())).map_err(|error| {
         WalkError::Refused(match error {
             NodeReadError::Refused(refused) => CompactionError::Refused(refused),

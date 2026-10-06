@@ -34,7 +34,8 @@ pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
         | JsonLdError::ContextUrlNotIri(_)
         | JsonLdError::JsonLdContextText(_)
         | JsonLdError::JsonLdContextShape
-        | JsonLdError::DocumentShape
+        | JsonLdError::ContextText(_)
+        | JsonLdError::ProcessorText(_)
         | JsonLdError::ContextGraph(_)
         | JsonLdError::Json(_) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
     }

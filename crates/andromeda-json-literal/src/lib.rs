@@ -10,6 +10,7 @@
 
 pub mod admission;
 pub mod equality;
+pub mod json_text;
 pub mod merge_patch;
 pub mod null_sentinel;
 pub mod piece;
@@ -19,6 +20,7 @@ mod transcription;
 use crate::{
     admission::{JsonLiteralError, canonical_text},
     equality::same_value,
+    json_text::quoted,
     piece::JsonPiece,
     transcription::transcribed,
 };
@@ -64,6 +66,22 @@ impl JsonLiteral {
         RawValue::from_string(text)
             .map(JsonLiteral)
             .map_err(|source| JsonLiteralError::Syntax { source })
+    }
+
+    /// The literal `null`.
+    #[must_use]
+    pub fn null() -> JsonLiteral {
+        JsonLiteral(RawValue::NULL.to_owned())
+    }
+
+    /// The JSON string `text`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JsonLiteralError::Syntax`] when the JSON reader refuses the
+    /// quoted text, which a string written by [`quoted`] never makes it do.
+    pub fn string(text: &str) -> Result<JsonLiteral, JsonLiteralError> {
+        JsonLiteral::from_admitted_text(quoted(text))
     }
 
     /// The admitted JSON text.

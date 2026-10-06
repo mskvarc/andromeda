@@ -19,12 +19,12 @@ use crate::{
     served_context::ServedContext,
     store::ContextRegistryStore,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{compound_context_host::WrapperUse, context_subtree::context_subtree, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::IriBuf;
-use serde_json::Value;
 use std::sync::Arc;
 
 /// Maximum stored rows included in the current unpaginated HTTP representation.
@@ -65,7 +65,7 @@ impl ContextRegistryService {
     /// [`ContextRegistryError::Persistence`] when the store cannot record the
     /// hosted Context, and [`ContextRegistryError::Invariant`] when a freshly
     /// minted identifier is not one or is already held.
-    pub async fn create(&self, payload: Value, locator: &dyn HostedContextLocator) -> Result<JsonLdContextId, ContextRegistryError> {
+    pub async fn create(&self, payload: &JsonLiteral, locator: &dyn HostedContextLocator) -> Result<JsonLdContextId, ContextRegistryError> {
         let document = hosted_context_subtree(payload)?;
         InsertionPolicy::over(self.store.as_ref(), locator)
             .fresh(&document, ContextCreationKind::Hosted)
@@ -96,7 +96,7 @@ impl ContextRegistryService {
     /// cannot be built or a freshly minted one is already held.
     pub async fn create_implicitly(
         &self,
-        payload: Value,
+        payload: &JsonLiteral,
         locator: &dyn HostedContextLocator,
         usage: WrapperUse,
     ) -> Result<JsonLdContextId, ContextRegistryError> {
@@ -111,9 +111,8 @@ impl ContextRegistryService {
     /// Returns [`ContextRegistryError::Persistence`] when the store cannot read
     /// the stored rows, [`ContextRegistryError::Invariant`] when the embedded
     /// core Context URL does not parse as a resource identifier or carries no
-    /// representable metadata, and [`ContextRegistryError::Representation`] when
-    /// the assembled listing cannot be serialized.
-    pub async fn list(&self, kind: Option<ContextKind>, detail_level: ContextDetailLevel) -> Result<Value, ContextRegistryError> {
+    /// representable metadata.
+    pub async fn list(&self, kind: Option<ContextKind>, detail_level: ContextDetailLevel) -> Result<ListedContexts, ContextRegistryError> {
         let include_core = kind.is_none() || kind == Some(ContextKind::ImplicitlyCreated);
         let counter = self.engine.hit_counter();
         let _flush_held_off = match (&counter, detail_level) {
@@ -139,13 +138,13 @@ impl ContextRegistryService {
                         fold_pending_hits(counter, entry);
                     }
                 }
-                serialize(metadata)
+                Ok(ListedContexts::Detailed(metadata))
             }
             ListedContexts::Summary(mut identifiers) => {
                 if include_core {
                     identifiers.push(core_context_identifier()?);
                 }
-                serialize(identifiers)
+                Ok(ListedContexts::Summary(identifiers))
             }
         }
     }
@@ -163,10 +162,8 @@ impl ContextRegistryService {
     /// the identifier, or when the row disappears between its read and its access
     /// update. Returns [`ContextRegistryError::Persistence`] when the store cannot
     /// complete the read or the access update,
-    /// [`ContextRegistryError::Invariant`] when an embedded core Context has no
-    /// representable metadata or document, and
-    /// [`ContextRegistryError::Representation`] when the metadata cannot be
-    /// serialized.
+    /// and [`ContextRegistryError::Invariant`] when an embedded core Context
+    /// has no representable metadata or document.
     pub async fn get(&self, requested: &ContextIdentifier, detail_level: ContextDetailLevel) -> Result<ServedContext, ContextRegistryError> {
         // Clause 5.13.4.4: "It shall give back ResourceNotFound if the
         // identifier is not found." An identifier that keys no row at all is
@@ -178,7 +175,7 @@ impl ContextRegistryService {
         };
         if core_context::is_core_context(identifier) {
             return match detail_level {
-                ContextDetailLevel::Full => serialize(core_context::metadata(identifier)?).map(ServedContext::Metadata),
+                ContextDetailLevel::Full => core_context::metadata(identifier).map(|metadata| ServedContext::Metadata(Box::new(metadata))),
                 ContextDetailLevel::Summary => core_context::payload().map(ServedContext::Embedded),
             };
         }
@@ -216,7 +213,7 @@ impl ContextRegistryService {
                 if let Some(counter) = &counter {
                     fold_pending_hits(counter, &mut metadata);
                 }
-                serialize(*metadata).map(ServedContext::Metadata)
+                Ok(ServedContext::Metadata(metadata))
             }
             FetchedContext::Payload(document) => Ok(ServedContext::Stored {
                 document,
@@ -342,7 +339,7 @@ impl ContextRegistryService {
 /// Returns [`ContextRegistryError::NoLocalContext`] when the payload is not a
 /// JSON object, is one that carries no top-level `@context` member, or carries
 /// one that holds no JSON-LD context.
-fn hosted_context_subtree(payload: Value) -> Result<Value, ContextRegistryError> {
+fn hosted_context_subtree(payload: &JsonLiteral) -> Result<JsonLiteral, ContextRegistryError> {
     context_subtree(payload).map_err(ContextRegistryError::NoLocalContext)
 }
 
@@ -354,11 +351,6 @@ fn core_context_identifier() -> Result<Identifier, ContextRegistryError> {
         .map_err(|error| RegistryInvariant::CoreContextIdentifier(error).into())
 }
 
-/// Serialize a registry representation with one policy-owned error category.
-fn serialize<T: serde::Serialize>(value: T) -> Result<Value, ContextRegistryError> {
-    serde_json::to_value(value).map_err(ContextRegistryError::Representation)
-}
-
 #[cfg(test)]
 mod identity_tests;
 
@@ -368,6 +360,7 @@ mod tests {
         error::ContextRegistryError,
         service::{core_context_identifier, hosted_context_subtree},
     };
+    use andromeda_json_literal::JsonLiteral;
     use serde_json::json;
 
     #[test]
@@ -391,8 +384,8 @@ mod tests {
         });
 
         pretty_assertions::assert_eq!(
-            hosted_context_subtree(supplied)?,
-            json!({ "@context": { "Building": "https://example.com/Building" } })
+            hosted_context_subtree(&JsonLiteral::admit(&supplied.to_string()).expect("admissible"))?,
+            JsonLiteral::admit(&json!({ "@context": { "Building": "https://example.com/Building" } }).to_string()).expect("admissible")
         );
         Ok(())
     }
@@ -410,7 +403,10 @@ mod tests {
             json!({ "@context": 5 }),
         ] {
             assert!(
-                matches!(hosted_context_subtree(supplied), Err(ContextRegistryError::NoLocalContext(_))),
+                matches!(
+                    hosted_context_subtree(&JsonLiteral::admit(&supplied.to_string()).expect("admissible")),
+                    Err(ContextRegistryError::NoLocalContext(_))
+                ),
                 "a document with no top-level @context must be refused"
             );
         }

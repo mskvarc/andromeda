@@ -101,6 +101,7 @@ mod tests {
         service_test_double::service,
         simplified_names::{apply_simplified_names, is_fully_qualified},
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
@@ -114,11 +115,17 @@ mod tests {
     /// The coercing `@context` clause C.6 prints, beside a plain declaration
     /// and the term whose definition coerces an identifier.
     fn coercing_context() -> ContextSpec {
-        ContextSpec::from_body(json!({
-            "brandName": "http://example.org/vehicle/brandName",
-            "isParked": {"@type": "@id", "@id": "http://example.org/common/isParked"},
-            "testedAt": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"}
-        }))
+        ContextSpec::from_body(
+            JsonLiteral::admit(
+                &json!({
+                    "brandName": "http://example.org/vehicle/brandName",
+                    "isParked": {"@type": "@id", "@id": "http://example.org/common/isParked"},
+                    "testedAt": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id": "http://example.org/test/testedAt"}
+                })
+                .to_string(),
+            )
+            .expect("an admissible literal"),
+        )
     }
 
     /// One Entity whose Attribute keys are the names the document compaction

@@ -15,8 +15,6 @@ pub enum TaskHealthState {
     Running,
     /// Waiting for restart eligibility after a transient failure.
     BackingOff,
-    /// A startup task completed successfully.
-    Completed,
     /// The task observed cancellation and stopped.
     Cancelled,
     /// Restart policy was exhausted.
@@ -29,10 +27,7 @@ impl TaskHealthState {
     /// Whether no further execution is active for this registration.
     #[must_use]
     pub const fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            TaskHealthState::Completed | TaskHealthState::Cancelled | TaskHealthState::Failed | TaskHealthState::ForcedTermination
-        )
+        matches!(self, TaskHealthState::Cancelled | TaskHealthState::Failed | TaskHealthState::ForcedTermination)
     }
 }
 

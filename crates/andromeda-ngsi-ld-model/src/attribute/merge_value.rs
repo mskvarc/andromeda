@@ -14,7 +14,7 @@ use crate::{
     node_refusal::RefusedMember,
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, reference::NgsiLdReference, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, coerced_term::CoercedTerm, uri::Uri};
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
 use serde::Serialize;
 
@@ -29,7 +29,7 @@ pub enum MergeValue {
     /// A `GeoProperty`'s `value`.
     GeoProperty(GeoPropertyValue),
     /// A `VocabProperty`'s `vocab`.
-    VocabProperty(OneOrMany<NgsiLdReference>),
+    VocabProperty(OneOrMany<CoercedTerm>),
     /// A `LanguageProperty`'s `languageMap`.
     LanguageProperty(LanguageMapPatch),
     /// A `JsonProperty`'s `json`.

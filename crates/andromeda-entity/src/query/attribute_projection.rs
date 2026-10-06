@@ -40,6 +40,7 @@ pub async fn narrow_compact_entity(entity: &mut Entity, list: ListInForce<'_>, e
 #[cfg(test)]
 mod tests {
     use crate::query::{attribute_expansion::AttributeExpansions, attribute_projection::narrow_compact_entity};
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_linked_retrieval::narrowing::list::ListInForce;
     use andromeda_ngsi_ld_model::entity::Entity;
@@ -56,7 +57,7 @@ mod tests {
     }
 
     fn context() -> ContextSpec {
-        ContextSpec::from_body(json!({ "speed": SPEED, "owner": OWNER, "name": NAME }))
+        ContextSpec::from_body(JsonLiteral::admit(&json!({ "speed": SPEED, "owner": OWNER, "name": NAME }).to_string()).expect("an admissible literal"))
     }
 
     fn entity() -> Entity {

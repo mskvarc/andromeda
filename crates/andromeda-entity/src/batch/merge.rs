@@ -14,7 +14,7 @@ use crate::{
     EntityService,
     batch::{
         BatchResult,
-        admitted_batch::AdmittedBatchEntity,
+        admitted_batch::{AdmittedBatchEntity, prepared_chunk},
         chunk::UpdatedStates,
         chunk_read_modify_write::{ChunkRewrite, PlannedWrite},
         prepare::PreparedEntity,
@@ -22,7 +22,6 @@ use crate::{
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     side_effect::SideEffectPlacement,
-    write_admission::BatchWrite,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{
@@ -32,7 +31,6 @@ use andromeda_ngsi_ld_entity::{
     system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::attribute::merge_member::MergeMember;
 
 /// Merging each entity of a chunk into the entity as an attempt read it
 /// (clause 5.6.20.4 runs the merge of clause 5.6.17 per entity).
@@ -84,14 +82,11 @@ impl ChunkRewrite for MergeRewrite<'_> {
 }
 
 impl EntityService {
-    pub(super) async fn batch_merge_chunk(
-        &self,
-        placement: SideEffectPlacement<'_>,
-        chunk: Vec<AdmittedBatchEntity<MergeMember>>,
-    ) -> Result<BatchResult, EntityError> {
+    pub(super) async fn batch_merge_chunk(&self, placement: SideEffectPlacement<'_>, chunk: Vec<AdmittedBatchEntity>) -> Result<BatchResult, EntityError> {
         // Clause 5.6.20 is the batch form of Merge Entity, whose fragments carry
         // the NGSI-LD Null to arbitrary depth (clause 5.5.12).
-        let (prepared, mut errors) = self.prepare_admitted_chunk(chunk, BatchWrite::Merge).await;
+        let prepared = prepared_chunk(chunk);
+        let mut errors = Vec::new();
         let rewrite = MergeRewrite {
             service: self,
             target: placement.target(),

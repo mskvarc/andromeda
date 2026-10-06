@@ -15,7 +15,10 @@ use andromeda_ngsi_ld_lexicon::{
     temporal_format::TemporalFormat,
     time_prop::TimeProp,
 };
-use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
+use andromeda_ngsi_ld_model::{
+    entity_system_times::EntitySystemTimes,
+    temporal::{TemporalHistoryRow, temporal_document::TemporalDocument},
+};
 use andromeda_ngsi_ld_query::{
     projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection},
     temporal::compiled::CompiledTemporalQuery,
@@ -34,16 +37,13 @@ type TemporalAttrMap = IndexMap<AttributeName, (AttributeType, Vec<InstanceDocum
 #[derive(Debug)]
 pub struct TemporalEntityBuildResult {
     /// The assembled temporal entity: several instances per `datasetId`, each
-    /// with its `instanceId` (clause 4.5.7).
-    pub entity: EntityDocument,
+    /// with its `instanceId` (clause 4.5.7), and the family of every attribute
+    /// the cut left without an instance, which clause 4.5.9 still needs to name
+    /// the attribute's `type` and member.
+    pub document: TemporalDocument,
     /// The least and most recent instants the representation carries on the
     /// requested axis, Scope history aside.
     pub time_range: Option<TimeRange>,
-    /// The family of every attribute the cut left without an instance, keyed
-    /// by its expanded name: an empty instance array no longer says whether it
-    /// held Properties or Relationships, which clause 4.5.9 still needs to name
-    /// the attribute's `type` and member.
-    pub emptied: IndexMap<AttributeName, AttributeType>,
 }
 
 /// Assembles a temporal entity representation from decoded history rows.
@@ -159,9 +159,8 @@ impl TemporalEntityRenderer<'_> {
         );
 
         Ok(TemporalEntityBuildResult {
-            entity,
+            document: TemporalDocument::new(entity, EntitySystemTimes::default(), emptied),
             time_range: min_time.zip(max_time),
-            emptied,
         })
     }
 }
@@ -311,7 +310,9 @@ mod tests {
         TemporalEntityRenderer::new(&entity_id(), &entity_types(), rows, &compiled, None)
             .render()
             .expect("the rows render")
-            .entity
+            .document
+            .into_parts()
+            .0
     }
 
     fn carries(entity: &EntityDocument, name: &str) -> bool {
@@ -440,11 +441,16 @@ mod tests {
         let built = TemporalEntityRenderer::new(&entity_id(), &entity_types(), rows, &compiled, Some(cut))
             .render()
             .expect("the rows render");
-        assert_eq!(instances(&built.entity, "https://example.com/speed"), Some(2));
-        assert_eq!(instances(&built.entity, "https://example.com/fuel"), Some(0));
+        assert_eq!(instances(built.document.entity(), "https://example.com/speed"), Some(2));
+        assert_eq!(instances(built.document.entity(), "https://example.com/fuel"), Some(0));
         assert_eq!(built.time_range, Some((instant() + Duration::minutes(1), instant() + Duration::minutes(2))));
         assert_eq!(
-            built.emptied.into_iter().collect::<Vec<_>>(),
+            built
+                .document
+                .emptied()
+                .iter()
+                .map(|(name, family)| (name.clone(), *family))
+                .collect::<Vec<_>>(),
             vec![(attr_name("fuel"), AttributeType::Property)],
             "the emptied attribute keeps its family for clause 4.5.9"
         );

@@ -1,6 +1,6 @@
 //! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.12).
 
-use crate::{attribute_name_csv, key_value_pair::KeyValuePair, notification::NotificationTrigger};
+use crate::{attribute_name_csv, delivery_seconds, key_value_pair::KeyValuePair, notification::NotificationTrigger, query::temporal_query::TemporalQuery};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     constant_string,
@@ -13,6 +13,7 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     filter::expression::Expr,
+    geo::input::GeoQueryInput,
     pattern::Pattern,
     projection::grammar::ProjectionList,
     scope::query::ScopeQuery,
@@ -24,7 +25,6 @@ use iri_rs::IriBuf;
 use langtag::LangTagBuf;
 use mediatype::MediaTypeBuf;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use serde_with::{DisplayFromStr, serde_as};
 use std::num::NonZeroU32;
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
@@ -245,7 +245,7 @@ pub struct SubscriptionFilters {
     pub q: Option<Expr>,
     /// Geo-spatial query expression (clause 5.2.13).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub geo_q: Option<Value>,
+    pub geo_q: Option<GeoQueryInput>,
     /// Scope query expression (clause 4.19).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope_q: Option<ScopeQuery>,
@@ -259,7 +259,7 @@ pub struct SubscriptionFilters {
     pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Temporal query expression (clause 5.2.21).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub temporal_q: Option<Value>,
+    pub temporal_q: Option<TemporalQuery>,
     /// Attributes whose `q` values are expanded through the subscription's
     /// `@context` by JSON-LD type coercion before the filter is evaluated
     /// (Table 5.2.12-1 `expandValues`).
@@ -290,10 +290,10 @@ pub struct SubscriptionFilters {
 #[builder(field_defaults(default = Default::default()))]
 pub struct SubscriptionDelivery {
     /// Periodic notification interval in seconds (alternative to watched attributes).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "delivery_seconds::serialize")]
     pub time_interval: Option<f64>,
     /// Minimum interval in seconds between consecutive notifications (clause 5.2.12).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "delivery_seconds::serialize")]
     pub throttling: Option<f64>,
     /// Preferred language for multi-language properties.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -483,9 +483,9 @@ mod tests {
             "entities": [{"type": "Vehicle", "idPattern": "urn:ngsi-ld:Vehicle:.*"}],
             "watchedAttributes": ["speed"],
             "notificationTrigger": ["entityUpdated"],
-            "timeInterval": 30.0,
+            "timeInterval": 30,
             "q": "speed>50",
-            "geoQ": {"georel": "near;maxDistance==2000"},
+            "geoQ": {"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [13.4, 52.5]},
             "scopeQ": "/Madrid",
             "csf": "type==\"ContextSourceRegistration\"",
             "datasetId": ["urn:ngsi-ld:Dataset:1", "@none"],
@@ -501,8 +501,8 @@ mod tests {
                 "status": "ok"
             },
             "expiresAt": "2030-12-31T23:59:59Z",
-            "throttling": 5.0,
-            "temporalQ": {"timerel": "after"},
+            "throttling": 5,
+            "temporalQ": {"timeAt": "2024-01-01T00:00:00Z", "timerel": "after"},
             "lang": "en",
             "jsonldContext": "https://example.com/context.jsonld",
             "localOnly": true,

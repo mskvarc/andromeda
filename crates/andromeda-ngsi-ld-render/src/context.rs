@@ -12,8 +12,8 @@
 //! the HTTP binding's. The caller settles both and hands the answer down as a
 //! [`ResponseContext`], so the renderer writes exactly what it is given.
 
+use andromeda_json_literal::JsonLiteral;
 use iri_rs::IriBuf;
-use serde_json::Value;
 
 /// A response's `@context`, in the one carrier the response uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,7 +21,7 @@ pub enum ResponseContext {
     /// Embedded as the `@context` member of the body: one context as a
     /// string, several as an array (clause 5.2.3, "flattened to a single
     /// string if necessary").
-    Body(Value),
+    Body(JsonLiteral),
     /// Advertised by the one JSON-LD context `Link` header the response
     /// carries (clause 6.3.6; JSON-LD 1.1 section 6.1 admits no second one).
     /// The target is absolute: a relative context link would resolve against

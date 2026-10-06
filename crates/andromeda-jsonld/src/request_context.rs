@@ -12,8 +12,9 @@
 //! context link headers"). [`RequestContext`] is that choice, so a request can
 //! never be read as having named both, or as having named several links.
 
+use crate::context_value::{ContextEntry, context_entries};
+use andromeda_json_literal::JsonLiteral;
 use iri_rs::IriBuf;
-use serde_json::Value;
 
 /// The `@context` a request named, in the one place it named it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -27,7 +28,7 @@ pub enum RequestContext {
     Link(IriBuf),
     /// The request named its context in its body's `@context` member, as
     /// written: a reference, a context definition, or an array of those.
-    Body(Value),
+    Body(JsonLiteral),
 }
 
 impl RequestContext {
@@ -42,32 +43,44 @@ impl RequestContext {
 
     /// The body `@context` member, when the request carried one.
     #[must_use]
-    pub const fn body(&self) -> Option<&Value> {
+    pub const fn body(&self) -> Option<&JsonLiteral> {
         match self {
             RequestContext::Body(context) => Some(context),
             RequestContext::Default | RequestContext::Link(_) => None,
         }
     }
 
-    /// The contexts the request named, in the order JSON-LD processes them,
-    /// each written as the `@context` entry it is: the one `Link` target as a
-    /// string, or the entries of the body member.
+    /// The contexts the request named, in the order JSON-LD processes them:
+    /// the one `Link` target as a reference, or the entries of the body
+    /// member.
     #[must_use]
-    pub fn entries(&self) -> Vec<Value> {
+    pub fn entries(&self) -> Vec<ContextEntry<'_>> {
         match self {
-            RequestContext::Default | RequestContext::Body(Value::Null) => Vec::new(),
-            RequestContext::Link(url) => vec![Value::String(url.as_str().to_owned())],
-            RequestContext::Body(Value::Array(entries)) => entries.clone(), // clone: the request keeps the context it named
-            RequestContext::Body(context @ (Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_))) => vec![context.clone()], // clone: the request keeps the context it named
+            RequestContext::Default => Vec::new(),
+            RequestContext::Link(url) => vec![ContextEntry::reference(url.as_str())],
+            RequestContext::Body(context) => context_entries(context.piece()),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::request_context::RequestContext;
+    use crate::{
+        context_value::{EntriesShape, written_entries},
+        request_context::RequestContext,
+    };
+    use andromeda_json_literal::JsonLiteral;
     use iri_rs::IriBuf;
     use serde_json::json;
+
+    fn body(value: &serde_json::Value) -> RequestContext {
+        RequestContext::Body(JsonLiteral::admit(&value.to_string()).expect("an admissible context"))
+    }
+
+    /// The entries `context` names, written as one array.
+    fn entries(context: &RequestContext) -> serde_json::Value {
+        serde_json::from_str(&written_entries(&context.entries(), EntriesShape::Array)).expect("the entries are JSON")
+    }
 
     fn iri(url: &str) -> IriBuf {
         IriBuf::new(url.to_owned()).expect("a valid IRI")
@@ -77,7 +90,7 @@ mod tests {
     fn a_request_naming_no_context_has_no_entries() {
         let context = RequestContext::default();
         pretty_assertions::assert_eq!(context, RequestContext::Default);
-        pretty_assertions::assert_eq!(context.entries(), Vec::<serde_json::Value>::new());
+        assert!(context.entries().is_empty());
         assert!(context.link().is_none());
         assert!(context.body().is_none());
     }
@@ -85,7 +98,7 @@ mod tests {
     #[test]
     fn a_link_context_is_its_one_target() {
         let context = RequestContext::Link(iri("https://example.com/a.jsonld"));
-        pretty_assertions::assert_eq!(context.entries(), vec![json!("https://example.com/a.jsonld")]);
+        pretty_assertions::assert_eq!(entries(&context), json!(["https://example.com/a.jsonld"]));
         pretty_assertions::assert_eq!(context.link().map(IriBuf::as_str), Some("https://example.com/a.jsonld"));
         assert!(context.body().is_none());
     }
@@ -93,24 +106,17 @@ mod tests {
     /// JSON-LD processes an `@context` array in order, repeats included.
     #[test]
     fn a_body_array_is_its_entries_in_order_with_repeats() {
-        let context = RequestContext::Body(json!(["https://example.com/a.jsonld", {"t": "https://example.com/t"}, "https://example.com/a.jsonld"]));
+        let context = body(&json!(["https://example.com/a.jsonld", {"t": "https://example.com/t"}, "https://example.com/a.jsonld"]));
         pretty_assertions::assert_eq!(
-            context.entries(),
-            vec![
-                json!("https://example.com/a.jsonld"),
-                json!({"t": "https://example.com/t"}),
-                json!("https://example.com/a.jsonld")
-            ]
+            entries(&context),
+            json!(["https://example.com/a.jsonld", {"t": "https://example.com/t"}, "https://example.com/a.jsonld"])
         );
         assert!(context.link().is_none());
     }
 
     #[test]
     fn a_single_body_context_is_one_entry_and_null_is_none() {
-        pretty_assertions::assert_eq!(
-            RequestContext::Body(json!({"t": "https://example.com/t"})).entries(),
-            vec![json!({"t": "https://example.com/t"})]
-        );
-        pretty_assertions::assert_eq!(RequestContext::Body(json!(null)).entries(), Vec::<serde_json::Value>::new());
+        pretty_assertions::assert_eq!(entries(&body(&json!({"t": "https://example.com/t"}))), json!([{"t": "https://example.com/t"}]));
+        assert!(body(&json!(null)).entries().is_empty());
     }
 }

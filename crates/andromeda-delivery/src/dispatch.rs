@@ -226,12 +226,72 @@ impl NotificationTransport for TransportHandle<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{dispatch::classify, error::TransportError, outcome::DeliveryOutcome};
+    use crate::{
+        dispatch::{TransportDispatcher, classify},
+        endpoint::transport::EndpointTransport,
+        error::TransportError,
+        http::config::HttpTransportConfig,
+        mqtt::config::MqttPoolConfig,
+        notification_body::NotificationBody,
+        notification_context::NotificationContext,
+        outcome::DeliveryOutcome,
+        request::{DeliveryRequest, NotificationDelivery},
+        stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage},
+    };
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use std::{
         net::{IpAddr, Ipv4Addr},
+        str::FromStr,
+        sync::Arc,
         time::Duration,
     };
     use url::Url;
+
+    /// The delivery of one written notification to a streaming endpoint of
+    /// `subscription`.
+    fn streamed(subscription: &Identifier, notification_id: &Identifier) -> DeliveryRequest {
+        let endpoint = Url::parse("https://receiver.example.com/stream").expect("a well-formed endpoint URI");
+        let context = NotificationContext::core();
+        let document = serde_json::json!({
+            "id": notification_id.as_str(),
+            "type": "Notification",
+            "subscriptionId": subscription.as_str(),
+            "data": []
+        });
+        NotificationDelivery::builder()
+            .endpoint_uri(&endpoint)
+            .context(&context)
+            .subscription_id(subscription)
+            .build()
+            .assemble(NotificationBody::written(notification_id, &document).expect("a written notification"))
+    }
+
+    /// Clause 5.3.1: the notification's own `id` is the SSE event `id:` and
+    /// rides inside the data of both streams, which carry the written text
+    /// unchanged.
+    #[tokio::test]
+    async fn sse_and_ws_frames_carry_the_notification_id() {
+        let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
+        let notification_id = Identifier::from_str("urn:ngsi-ld:Notification:abc").expect("a well-formed notification id");
+        let sse = Arc::new(ConnectionRegistry::<SseNotificationEvent>::new());
+        let ws = Arc::new(ConnectionRegistry::<WsNotificationMessage>::new());
+        let dispatcher = TransportDispatcher::new(HttpTransportConfig::default(), MqttPoolConfig::default(), Arc::clone(&sse), Arc::clone(&ws))
+            .expect("the dispatcher is built");
+        let (_sse_connection, mut sse_events, _sse_token) = sse.register(&subscription, 4);
+        let (_ws_connection, mut ws_messages, _ws_token) = ws.register(&subscription, 4);
+        let request = streamed(&subscription, &notification_id);
+
+        assert!(dispatcher.deliver(&EndpointTransport::Sse, &request).await.is_delivered());
+        assert!(dispatcher.deliver(&EndpointTransport::WebSocket, &request).await.is_delivered());
+
+        let event = sse_events.recv().await.expect("an SSE event");
+        pretty_assertions::assert_eq!(event.event_id, notification_id);
+        pretty_assertions::assert_eq!(event.data.as_str(), request.body.text());
+        let message = ws_messages.recv().await.expect("a WebSocket message");
+        pretty_assertions::assert_eq!(message.data.as_str(), request.body.text());
+        let named: serde_json::Value = serde_json::from_str(&message.data).expect("the frame is JSON");
+        pretty_assertions::assert_eq!(named["id"], serde_json::json!(notification_id.as_str()));
+    }
 
     #[test]
     fn a_success_is_delivered_and_not_retried() {

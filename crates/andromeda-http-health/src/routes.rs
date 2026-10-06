@@ -63,7 +63,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use std::{collections::BTreeMap, error::Error};
+    use std::error::Error;
     use tower::ServiceExt;
 
     /// An indicator that always reports the status it was built with, and records
@@ -82,7 +82,7 @@ mod tests {
         async fn check(&self) -> ComponentDetail {
             ComponentDetail {
                 status: self.status,
-                details: BTreeMap::new(),
+                details: None,
             }
         }
     }

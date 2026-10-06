@@ -7,10 +7,13 @@
 //! form is another matter, and is told apart: it is a fault of the tree being
 //! read, not of what a client or a peer wrote.
 
-use crate::attribute::geo_property::TypedGeometryRefusal;
+use crate::{
+    attribute::geo_property::TypedGeometryRefusal,
+    temporal::{aggregated_decoding::AggregateRefusal, plural_member_refusal::PluralMemberRefusal},
+};
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, reference::NgsiLdReferenceError};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_number::json_value::json_pointer::{JsonPointer, JsonPointerSegment};
 use andromeda_ngsi_ld_representation::attribute_type_validation::AttributeNodeFault;
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
@@ -103,7 +106,7 @@ pub enum NodeRefusal {
         member: RefusedMember,
     },
     /// A member does not decode as what the entity or the family holds in it.
-    #[error("invalid `{member}` member: {source}")]
+    #[error("invalid '{member}' member: {source}")]
     Member {
         /// The member.
         member: RefusedMember,
@@ -112,7 +115,7 @@ pub enum NodeRefusal {
         source: serde_json::Error,
     },
     /// A value carrying `type` and `coordinates` is no `GeoJSON` geometry.
-    #[error("invalid `{member}` member: {source}")]
+    #[error("invalid '{member}' member: {source}")]
     Value {
         /// The member.
         member: RefusedMember,
@@ -121,7 +124,7 @@ pub enum NodeRefusal {
         source: GeometryError,
     },
     /// A `GeoProperty` geometry is not read as the typed geometry.
-    #[error("invalid `{member}` member: {source}")]
+    #[error("invalid '{member}' member: {source}")]
     Geometry {
         /// The member.
         member: RefusedMember,
@@ -130,7 +133,7 @@ pub enum NodeRefusal {
         source: TypedGeometryRefusal,
     },
     /// A value held as JSON is no JSON value the broker admits.
-    #[error("invalid `{member}` member: {source}")]
+    #[error("invalid '{member}' member: {source}")]
     Literal {
         /// The member.
         member: RefusedMember,
@@ -138,8 +141,26 @@ pub enum NodeRefusal {
         #[source]
         source: JsonLiteralError,
     },
+    /// A `unitCode` stands on a family that is unitless (clauses 4.5.3.2,
+    /// 4.5.18.2, 4.5.20.2, 4.5.22.2 and 4.5.24.2 prohibit it).
+    #[error("attribute '{attribute}': a {family} carries no 'unitCode'")]
+    UnitCodeForbidden {
+        /// The attribute carrying the unit.
+        attribute: AttributeName,
+        /// The unitless family.
+        family: AttributeType,
+    },
+    /// A `unitCode` is no UN/CEFACT common code (Table 5.2.5-1).
+    #[error("attribute '{attribute}': 'unitCode' is not a UN/CEFACT common code")]
+    UnitCodeUnusable {
+        /// The attribute carrying the unit.
+        attribute: AttributeName,
+        /// The decoding's failure.
+        #[source]
+        source: serde_json::Error,
+    },
     /// A list member is no JSON array.
-    #[error("the `{member}` member is no array")]
+    #[error("the '{member}' member is no array")]
     NotAnArray {
         /// The member.
         member: RefusedMember,
@@ -147,6 +168,14 @@ pub enum NodeRefusal {
     /// A member name is no attribute name (clause 4.6.2).
     #[error("invalid attribute name: {0}")]
     AttributeName(#[source] NgsiLdReferenceError),
+    /// An attribute written in the simplified temporal representation (clause
+    /// 4.5.9) is none the representation admits.
+    #[error(transparent)]
+    PluralMember(#[from] Box<PluralMemberRefusal>),
+    /// An attribute written in the aggregated representation (clause 4.5.19)
+    /// is none the representation admits.
+    #[error(transparent)]
+    Aggregate(#[from] AggregateRefusal),
 }
 
 /// A refusal and where it stands, from the top of the document read.

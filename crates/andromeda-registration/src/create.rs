@@ -5,38 +5,39 @@ use crate::{
     context_source_properties::expand_context_source_properties,
     error::RegistrationError,
     geometry::admit_registration_geometries,
-    identifier::{client_registration_id, generate_registration_id},
+    identifier::generate_registration_id,
     mode_rules::check_conflicts,
-    payload::extract_create_params,
+    registration_body::RegistrationBody,
     validation::{RegistrationShape, validate_shape},
 };
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::{CsrChangeEvent, CsrTriggerReason};
-use serde_json::Value;
+use std::mem::take;
 
 impl RegistrationService {
-    /// Create a context-source registration from a JSON-LD payload.
+    /// Create a context-source registration from its request body.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrationError::Validation`] when `id` is not a URI or a
-    /// member of the payload falls outside Table 5.2.9-1,
-    /// [`RegistrationError::AlreadyExists`] when the payload names an
-    /// identifier the store already holds, [`RegistrationError::Conflict`]
+    /// Returns [`RegistrationError::Validation`] when a member of the body
+    /// falls outside Table 5.2.9-1, [`RegistrationError::AlreadyExists`] when
+    /// the body names an identifier the store already holds,
+    /// [`RegistrationError::GeometryTooLarge`] when a geometry holds more than
+    /// the broker accepts, [`RegistrationError::Conflict`]
     /// when a proxied footprint overlaps an existing registration or context
     /// data the broker already holds (clause 5.9.2.4),
     /// [`RegistrationError::JsonLd`] when the request context cannot be
-    /// processed or the payload cannot be expanded, [`RegistrationError::Internal`]
+    /// processed or the body cannot be expanded, [`RegistrationError::Internal`]
     /// when no identifier could be minted for an anonymous registration,
     /// and [`RegistrationError::Persistence`] when the store rejects the
     /// write.
-    pub async fn create(&self, payload: Value, context: &AdmittedContext) -> Result<Identifier, RegistrationError> {
-        // Counted before the payload is expanded or a geometry built from it.
-        admit_registration_geometries(&payload, self.geometry_limits)?;
-        let id = match payload.get("id").and_then(Value::as_str) {
-            Some(raw) => {
-                let id = client_registration_id(raw)?;
+    pub async fn create(&self, body: RegistrationBody, context: &AdmittedContext) -> Result<Identifier, RegistrationError> {
+        // Counted before the body is expanded.
+        admit_registration_geometries(body.geometries(), self.geometry_limits)?;
+        let mut body = body;
+        let id = match body.id.take() {
+            Some(id) => {
                 if self.repo.exists(&id).await? {
                     return Err(RegistrationError::already_exists(&id));
                 }
@@ -49,14 +50,13 @@ impl RegistrationService {
         // registration before any of its names is expanded under it.
         self.engine.expansion_context(context).await?;
 
-        let expanded_properties = expand_context_source_properties(&self.engine, &payload, context).await?;
-        let mut payload = payload;
-        if let Some(information) = payload.get_mut("information") {
+        let properties = expand_context_source_properties(&self.engine, take(&mut body.additional_properties), context).await?;
+        if let Some(information) = body.information.as_set_mut() {
             self.expand_information(information, context).await?;
         }
 
-        let mut params = extract_create_params(&payload)?;
-        params.additional_properties = expanded_properties;
+        let mut params = body.into_create_params()?;
+        params.additional_properties = properties;
         validate_shape(&RegistrationShape {
             mode: params.mode,
             information: &params.information,

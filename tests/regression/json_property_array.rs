@@ -91,7 +91,9 @@ async fn regression_r81_a_json_array_reads_back_as_written_in_every_representati
     let client = scope.client();
     let id = scope.id("JsonArrayProbe:read");
     let tickets = json!([{"id": "85a6cc52-0589-45f9", "value": "Overstay 60 minutes"}]);
-    let nested = json!([{"a": 1}, [1, 2], "text"]);
+    // Clause 4.5.24.2: `json` is "a raw JSON object (or array of objects)", so
+    // the array holds objects; member and element order differ from sorted order.
+    let nested = json!([{"b": 2, "a": 1}, {"z": [1, 2], "y": "text"}]);
     let meta = json!([{"k": "v"}]);
     create(
         client,

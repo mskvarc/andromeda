@@ -158,12 +158,6 @@ impl EntityRowRefs {
         Expr::col((self.search.clone(), column.into_iden()))
     }
 
-    /// The `entity_search` relation's name, for a statement that joins it.
-    #[must_use]
-    pub fn search_relation(&self) -> DynIden {
-        self.search.clone()
-    }
-
     /// A column of the `entity_documents` row, reached as the joined row's
     /// column or, when the row is not joined, by a scalar subquery keyed on the
     /// identity row -- the same two shapes the payload is reached in.

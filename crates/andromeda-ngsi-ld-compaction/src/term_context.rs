@@ -9,7 +9,12 @@
 //! compaction depend on more than the term itself (see
 //! [`Undecidable`](crate::undecidable::Undecidable)).
 
-use crate::{compacted::Compacted, core_aliases::core_term_aliases, undecidable::Undecidable};
+use crate::{
+    compacted::{Compacted, ProcessorCompacted},
+    core_aliases::core_term_aliases,
+    undecidable::Undecidable,
+};
+use andromeda_json_literal::processor_json::read_processor_json;
 use andromeda_jsonld::engine::compaction_context::CompactionContext;
 use andromeda_ngsi_ld_representation::compact_node::aliased_node::CoreTermAliases;
 use dashmap::DashMap;
@@ -144,14 +149,14 @@ impl TermContext {
     /// A value object compacted under `key` (JSON-LD 1.1 API section 6.3).
     pub(crate) fn value<'a>(&self, value: &Value<IriBuf>, key: &str) -> Result<Compacted<'a>, Undecidable> {
         compact_value(no_vocabulary(), value, None, self.context(), Some(key), self.options)
-            .map(Compacted::from)
+            .map(|compacted| read_processor_json(compacted, &mut ProcessorCompacted))
             .map_err(confused)
     }
 
     /// A node reference compacted under `key`.
     pub(crate) fn node_reference<'a>(&self, id: &Id<IriBuf, BlankIdBuf>, key: &str) -> Result<Compacted<'a>, Undecidable> {
         compact_node_reference(no_vocabulary(), id, None, self.context(), Some(key), self.options)
-            .map(Compacted::from)
+            .map(|compacted| read_processor_json(compacted, &mut ProcessorCompacted))
             .map_err(confused)
     }
 

@@ -216,6 +216,11 @@ mod tests {
         value.parse().unwrap_or_else(|error| panic!("invalid {description} fixture: {error}"))
     }
 
+    /// A stored `geoQ`, read as the request model reads it.
+    fn stored_geo_q(wire: serde_json::Value) -> GeoQueryInput {
+        serde_json::from_value(wire).expect("a readable geoQ")
+    }
+
     fn make_sub() -> CompiledSubscription {
         CompiledSubscription {
             id: parse_fixture("urn:ngsi-ld:Subscription:test", "subscription URI"),
@@ -248,6 +253,7 @@ mod tests {
             compiled_csf: None,
             local_only: false,
             ngsild_conformance: None,
+            lang: None,
             notification_projection: Projection::default(),
         }
     }
@@ -351,18 +357,18 @@ mod tests {
         // request's `georel`/`geometry`/`coordinates` must compile to the same
         // value. They used to be two types, one of them stringly-typed, and
         // only one of them had an in-memory evaluator.
-        let from_subscription = compile_geo_q(&serde_json::json!({
+        let from_subscription = compile_geo_q(&stored_geo_q(serde_json::json!({
             "georel": "near;maxDistance==1000",
             "geometry": "Point",
             "coordinates": [13.4, 52.5],
             "geoproperty": LOCATION
-        }))
+        })))
         .expect("the subscription geoQ fixture did not compile");
 
         let request_geo = GeoQueryInput::from_wire(
             "near;maxDistance==1000",
             "Point",
-            serde_json::json!([13.4, 52.5]),
+            serde_json::from_value(serde_json::json!([13.4, 52.5])).expect("coordinates"),
             Some(parse_fixture("location", "geoproperty")),
         )
         .expect("a valid test fixture");
@@ -379,12 +385,12 @@ mod tests {
 
     #[test]
     fn a_subscription_geo_filter_accepts_only_entities_inside_the_relation() {
-        let geo_query = compile_geo_q(&serde_json::json!({
+        let geo_query = compile_geo_q(&stored_geo_q(serde_json::json!({
             "georel": "near;maxDistance==1000",
             "geometry": "Point",
             "coordinates": [13.4, 52.5],
             "geoproperty": LOCATION
-        }))
+        })))
         .expect("the subscription geoQ fixture did not compile");
 
         assert!(geo_query.matches_entity(&located(13.4, 52.5)));
@@ -405,15 +411,21 @@ mod tests {
             "no geoQ admits every entity"
         );
 
-        sub.compiled_geo_q =
-            SubscriptionGeoFilter::from_stored(Some(&serde_json::json!({"georel": "near;maxDistance==1000"})), "urn:ngsi-ld:Subscription:test");
+        sub.compiled_geo_q = SubscriptionGeoFilter::from_stored(
+            Some(&stored_geo_q(
+                serde_json::json!({"georel": "near;maxDistance==1000", "geometry": "Point", "coordinates": "[13.4, "}),
+            )),
+            "urn:ngsi-ld:Subscription:test",
+        );
         assert!(
             !matches_entity_filters(&sub, &located(13.4, 52.5), NoLinkedEntities),
             "an unusable geoQ admits nothing"
         );
 
         sub.compiled_geo_q = SubscriptionGeoFilter::from_stored(
-            Some(&serde_json::json!({"georel": "near;maxDistance==1000", "geometry": "Point", "coordinates": [13.4, 52.5]})),
+            Some(&stored_geo_q(
+                serde_json::json!({"georel": "near;maxDistance==1000", "geometry": "Point", "coordinates": [13.4, 52.5]}),
+            )),
             "urn:ngsi-ld:Subscription:test",
         );
         assert!(

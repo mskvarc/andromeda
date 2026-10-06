@@ -2,7 +2,7 @@
 
 use crate::attribute::common_fields::CommonAttributeFields;
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
+use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
 use serde::Serialize;
 use serde_with::skip_serializing_none;
 
@@ -15,7 +15,7 @@ pub struct JsonProperty {
     /// 4.5.24.2).
     pub json: JsonLiteral,
     /// Optional JSON-LD datatype for `json`.
-    pub value_type: Option<NgsiLdReference>,
+    pub value_type: Option<CoercedTerm>,
     /// Previous JSON payload emitted in notifications when `showChanges` is active.
     pub previous_json: Option<JsonLiteral>,
     /// Members shared with every other attribute family.

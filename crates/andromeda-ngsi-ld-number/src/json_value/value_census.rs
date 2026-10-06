@@ -25,7 +25,7 @@
 //! a census that counts part of a text differently, such as the positions of a
 //! geometry, counts the rest of it exactly as this one does.
 
-use crate::json_value::decode_route::SERDE_JSON_PRIVATE_NUMBER_MEMBER;
+use crate::json_value::reader_private_members::SERDE_JSON_PRIVATE_NUMBER_MEMBER;
 use derive_more::Display;
 use serde::de::{DeserializeSeed, Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::Deserializer as JsonReader;

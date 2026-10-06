@@ -6,61 +6,45 @@ use crate::{
     error::RegistrationError,
     geometry::admit_registration_geometries,
     mode_rules::check_conflicts,
-    payload::extract_update_fragment,
-    registration_validation_reason::RegistrationValidationReason,
+    registration_body::RegistrationBody,
     resolved_update::apply_fragment,
     validation::{RegistrationShape, validate_shape},
 };
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{
-    notification::{CsrChangeEvent, CsrTriggerReason},
-    registration::ContextSourceRegistrationType,
-};
-use serde_json::Value;
+use andromeda_ngsi_ld_model::notification::{CsrChangeEvent, CsrTriggerReason};
+use std::mem::take;
 
 impl RegistrationService {
     /// Merge an update fragment into an existing registration.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrationError::Validation`] when the fragment names a
-    /// `type` other than `ContextSourceRegistration`, nulls a member clause
-    /// 5.5.8 does not allow to be removed, or leaves the merged registration
-    /// outside Table 5.2.9-1, [`RegistrationError::NotFound`] when no
+    /// Returns [`RegistrationError::Validation`] when the fragment nulls a
+    /// member clause 5.5.8 does not allow to be removed, or leaves the merged
+    /// registration outside Table 5.2.9-1,
+    /// [`RegistrationError::GeometryTooLarge`] when a geometry holds more than
+    /// the broker accepts, [`RegistrationError::NotFound`] when no
     /// registration carries `id`, [`RegistrationError::Conflict`] when the
     /// merged footprint overlaps an existing registration or local context
     /// data (clause 5.9.3.4), [`RegistrationError::JsonLd`] when the fragment
     /// cannot be expanded, and [`RegistrationError::Persistence`] when the
     /// store rejects the read or the write.
-    pub async fn update(&self, id: &Identifier, payload: Value, context: &AdmittedContext) -> Result<(), RegistrationError> {
-        // Counted before the fragment is expanded or a geometry built from it.
-        admit_registration_geometries(&payload, self.geometry_limits)?;
-        // A fragment may omit `type`, but one it carries has to be the
-        // registration type (clause 5.2.9).
-        if let Some(type_value) = payload.get("type") {
-            serde_json::from_value::<ContextSourceRegistrationType>(type_value.clone()) // clone: serde owns the member while the fragment remains borrowed.
-                .map_err(|_| RegistrationError::Validation(RegistrationValidationReason::TypeNotContextSourceRegistration))?;
-        }
-        if payload.get("information").is_some_and(Value::is_null) {
-            return Err(RegistrationError::Validation(RegistrationValidationReason::InformationMustNotBeNull));
-        }
-        if payload.get("endpoint").is_some_and(Value::is_null) {
-            return Err(RegistrationError::Validation(RegistrationValidationReason::EndpointMustNotBeNull));
-        }
-
-        let expanded_properties = expand_context_source_properties(&self.engine, &payload, context).await?;
-        let mut payload = payload;
-        if let Some(information) = payload.get_mut("information") {
+    pub async fn update(&self, id: &Identifier, body: RegistrationBody, context: &AdmittedContext) -> Result<(), RegistrationError> {
+        // Counted before the fragment is expanded.
+        admit_registration_geometries(body.geometries(), self.geometry_limits)?;
+        let mut body = body;
+        let properties = expand_context_source_properties(&self.engine, take(&mut body.additional_properties), context).await?;
+        if let Some(information) = body.information.as_set_mut() {
             self.expand_information(information, context).await?;
         }
 
+        let mut fragment = body.into_update_fragment()?;
+        fragment.additional_properties = properties;
         let existing = self.repo.get(id).await?.ok_or_else(|| RegistrationError::not_found(id))?;
         // clone: the change event carries the registration as it stood, and the merge consumes it
         let pre_update_snapshot = Box::new(existing.clone());
-        let mut fragment = extract_update_fragment(&payload)?;
-        fragment.additional_properties = expanded_properties;
-        let resolved = apply_fragment(existing, &fragment)?;
+        let resolved = apply_fragment(existing, &fragment);
         // Clause 5.9.3.4 evaluates the rules against the registration as it
         // will be after the merge, not against the fragment alone.
         validate_shape(&RegistrationShape {
@@ -91,8 +75,10 @@ mod tests {
         error::RegistrationError,
         fixed_probe::FixedProbe,
         fixed_store::{FixedStore, registration},
+        registration_body::RegistrationBody,
         store::RegistrationStore,
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{
         context_spec::ContextSpec,
         engine::processor::JsonLdEngine,
@@ -100,8 +86,9 @@ mod tests {
     };
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_model::request_body::RequestBody;
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::{num::NonZeroUsize, sync::Arc};
 
     const REGISTRATION_ID: &str = "urn:ngsi-ld:ContextSourceRegistration:update";
@@ -133,6 +120,11 @@ mod tests {
         REGISTRATION_ID.parse().expect("valid URI")
     }
 
+    /// The body a request carrying `document` is decoded to.
+    fn body_of(document: &Value) -> RegistrationBody {
+        RegistrationBody::from_request_text(document.to_string().as_bytes()).expect("a registration body")
+    }
+
     fn baseline_store() -> Arc<FixedStore> {
         Arc::new(FixedStore::new(vec![registration(
             REGISTRATION_ID,
@@ -148,14 +140,23 @@ mod tests {
     async fn shorthand_names_in_the_fragment_expand_under_the_request_context() {
         let store = baseline_store();
         let service = service(&store);
-        let context = ContextSpec::from_body(json!({
-            "Vehicle": "https://example.org/Vehicle",
-            "speed": "https://example.org/speed"
-        }));
+        let context = ContextSpec::from_body(
+            JsonLiteral::admit(
+                &json!({
+                    "Vehicle": "https://example.org/Vehicle",
+                    "speed": "https://example.org/speed"
+                })
+                .to_string(),
+            )
+            .expect("an admissible literal"),
+        );
         let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle" } ], "propertyNames": ["speed"] } ] });
         let context = admitted(&service, context).await;
 
-        service.update(&registration_id(), fragment, &context).await.expect("the fragment applies");
+        service
+            .update(&registration_id(), body_of(&fragment), &context)
+            .await
+            .expect("the fragment applies");
 
         let written = store.updated_information();
         pretty_assertions::assert_eq!(written.len(), 1);
@@ -179,7 +180,7 @@ mod tests {
 
         let context = admitted(&service, ContextSpec::none()).await;
         let error = service
-            .update(&registration_id(), fragment, &context)
+            .update(&registration_id(), body_of(&fragment), &context)
             .await
             .expect_err("the registration is unknown");
 

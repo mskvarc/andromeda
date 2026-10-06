@@ -1,5 +1,6 @@
 //! The Table 6.5.3.4-1 parameters a clause 5.6.17 merge is performed under.
 
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use andromeda_ngsi_ld_representation::merge_representation::MergeRepresentation;
 use chrono::{DateTime, Utc};
@@ -25,6 +26,10 @@ pub struct MergeOptions<'a> {
     /// The clause 4.17 selector the target entity's types must satisfy; a
     /// target outside it is not the entity the request names.
     pub type_selector: Option<&'a TypeExprRaw>,
+    /// The expanded names of the attributes proxied registrations took out of
+    /// the fragment (clause 4.3.6.3), which a rewritten fragment must not
+    /// bring back into the local merge.
+    pub claimed: &'a [AttributeName],
 }
 
 impl MergeOptions<'_> {

@@ -6,8 +6,8 @@ use crate::{
     port::retrieved_entity::RetrievedEntity,
     query::{
         EntityQueryService,
-        dataset_filter::filter_entity_by_dataset_id,
-        projection_remainder::projection_remainder,
+        entity_versions::held_version,
+        projection_remainder::state_remainder,
         pushdown_refusal::refuse_unnarrowable,
         residual::finish_page,
         state_projection::{keeps_a_standing_attribute, narrow_state},
@@ -16,10 +16,9 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
-use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     dataset::DatasetSelector,
@@ -58,24 +57,26 @@ pub struct RetrievalNarrowing<'a> {
 }
 
 impl EntityQueryService {
-    /// Retrieve a single entity by identifier (clause 5.6.3), narrowed to what
-    /// the request selected.
+    /// Read the entity this broker holds for a single-entity retrieval
+    /// (clause 5.6.3), narrowed to what the request selected, as the version
+    /// a distributed retrieval merges what its sources answer onto.
     ///
     /// # Errors
     ///
     /// Returns [`EntityError::not_found`] when no entity with that identifier
     /// exists, when its types fall outside the requested type selector, or when
-    /// `attrs` selected none of the attributes it has, and
-    /// otherwise whatever the store or the context expansion failed with.
-    pub async fn get_inner(
+    /// `attrs` or the clause 4.21 projection selected none of the members it
+    /// has, and otherwise whatever the store or the context expansion failed
+    /// with.
+    pub async fn read_held(
         &self,
         target: &ContextTarget,
         id: &Identifier,
         narrowing: &RetrievalNarrowing<'_>,
         context: &ContextSpec,
-    ) -> Result<Entity, EntityError> {
+    ) -> Result<ReceivedState, EntityError> {
         let timer = entity::start(EntityOperation::Retrieve);
-        let result: Result<Entity, EntityError> = async {
+        let result: Result<ReceivedState, EntityError> = async {
             // Clause 4.8: the entity-level system times sit on the stored row
             // beside the state, so they are read with it rather than asked for
             // in a second read.
@@ -95,34 +96,17 @@ impl EntityQueryService {
 
             let now = Utc::now();
             let state = self.narrow_to_selection(state, id, narrowing, context, now).await?;
-            let compactor = self.engine().compactor(context);
-            let read = EntityRead {
-                id_override: Some(id),
-                sys_attrs: narrowing.sys_attrs,
-                now,
-            };
-            let mut entity = EntityCompactor::new(&compactor).entity(&state, &read).await?;
-
-            if narrowing.sys_attrs == SysAttrsInclusion::Include {
-                entity = entity.with_sys_attrs(&sys_attrs);
-            }
-
             // Tables 6.4.3.2-1 and 5.2.14.1-1 make `attrs` "a synonym for
             // pick", so the clause 5.7.1.4 rule `attrs` obeys is the same rule here,
             // and clause 5.7.1.5 reduces the Entity "down to only contain the
             // defined Entity members" -- an Entity left with none of them is an
             // Entity the retrieval cannot answer with.
             if let Some(projection) = narrowing.projection
-                && projection_remainder(&entity, projection).is_nothing()
+                && state_remainder(&state, projection, now).is_nothing()
             {
                 return Err(EntityError::not_found(id));
             }
-
-            if !narrowing.dataset_ids.is_empty() {
-                filter_entity_by_dataset_id(&mut entity, narrowing.dataset_ids);
-            }
-
-            Ok(entity)
+            Ok(held_version(RetrievedEntity { state, sys_attrs }))
         }
         .await;
         timer.finish_result(&result);
@@ -174,74 +158,22 @@ impl EntityQueryService {
         Ok(Arc::new(narrowed))
     }
 
-    /// Execute a parameterized entity query (clause 5.7.2) over the page
-    /// `window` selects, returning that page of matching entities and, when
-    /// `count` asks for it, the clause 6.3.13 count of every match.
-    ///
-    /// # Errors
-    ///
-    /// Reports [`EntityError::JsonLd`] when the request or a result cannot be
-    /// expanded or compacted against `context`, [`EntityError::Query`] when the
-    /// request's filter expressions are not well formed,
-    /// [`EntityError::OperationNotSupported`] when the store cannot narrow a
-    /// predicate at all (clause 5.5.2), and [`EntityError::Persistence`] when
-    /// the store could not answer the query.
-    pub async fn query(
-        &self,
-        target: &ContextTarget,
-        query: &EntityQueryParameters,
-        window: &PageWindow,
-        count: CountPolicy,
-        context: &ContextSpec,
-    ) -> Result<(Vec<Entity>, Option<i64>), EntityError> {
-        let timer = entity::start(EntityOperation::Query);
-        let result: Result<(Vec<Entity>, Option<i64>), EntityError> = async {
-            let (rows, total_count) = self.query_states(target, query, window, count, context).await?;
-            let sys_attrs = query.parse_options()?.sys_attrs;
-
-            let compactor = self.engine().compactor(context);
-            let entity_compactor = EntityCompactor::new(&compactor);
-            let read = EntityRead {
-                id_override: None,
-                sys_attrs,
-                now: Utc::now(),
-            };
-            let mut entities = Vec::with_capacity(rows.len());
-            for RetrievedEntity { state, sys_attrs: times } in rows {
-                let entity = entity_compactor.entity(&state, &read).await?;
-                // Clause 4.8: the entity-level system times were read by the
-                // page statement itself, beside the payload.
-                entities.push(match sys_attrs {
-                    SysAttrsInclusion::Include => entity.with_sys_attrs(&times),
-                    SysAttrsInclusion::Strip => entity,
-                });
-            }
-
-            if let Some(dataset_ids) = query.dataset_id.as_deref() {
-                for entity in &mut entities {
-                    filter_entity_by_dataset_id(entity, dataset_ids);
-                }
-            }
-
-            Ok((entities, total_count))
-        }
-        .await;
-        timer.finish_result(&result);
-        result
-    }
-
     /// Select the page `window` selects of a parameterized entity query
     /// (clause 5.7.2) as the stored states it matched, each narrowed to the query's `attrs` and
     /// clause 4.21 projection and read with its entity-level clause 4.8 system
     /// times, with the optional clause 6.3.13 count.
     ///
-    /// The states are what [`EntityQueryService::query`] compacts: no expiry
-    /// (clause 4.22), `datasetId` (clause 4.5.5) or system-time (clause 4.8)
-    /// rule of the rendering has been applied to them yet.
+    /// The states are what [`EntityQueryService::compact_versions`] writes:
+    /// no expiry (clause 4.22), `datasetId` (clause 4.5.5) or system-time
+    /// (clause 4.8) rule of the rendering has been applied to them yet.
     ///
     /// # Errors
     ///
-    /// As [`EntityQueryService::query`], except that no result is compacted.
+    /// Reports [`EntityError::JsonLd`] when the request cannot be expanded
+    /// against `context`, [`EntityError::Query`] when the request's filter
+    /// expressions are not well formed, [`EntityError::OperationNotSupported`]
+    /// when the store cannot narrow a predicate at all (clause 5.5.2), and
+    /// [`EntityError::Persistence`] when the store could not answer the query.
     pub async fn query_states(
         &self,
         target: &ContextTarget,
@@ -250,20 +182,26 @@ impl EntityQueryService {
         count: CountPolicy,
         context: &ContextSpec,
     ) -> Result<(Vec<RetrievedEntity>, Option<i64>), EntityError> {
-        let compiled = self.compile_query_cached(query, context).await?;
-        // The spatial index narrows only the default `location` instances;
-        // the store still evaluates the geo-query, so the refusal below reads
-        // the selection the store is actually handed.
-        let narrowed = self.spatial_prefilter(target, &compiled).await;
-        refuse_unnarrowable(*self.query_store.profile(), &narrowed.selection)?;
-        let outcome = self.query_store.query_compiled(target, &narrowed, window, count).await?;
-        let mut page = finish_page(outcome, window, count)?;
-        for row in &mut page.rows {
-            // The store decoded each state into its own allocation, so this
-            // borrows it mutably without a copy.
-            narrow_to_query(Arc::make_mut(&mut row.state), &compiled);
+        let timer = entity::start(EntityOperation::Query);
+        let result: Result<(Vec<RetrievedEntity>, Option<i64>), EntityError> = async {
+            let compiled = self.compile_query_cached(query, context).await?;
+            // The spatial index narrows only the default `location` instances;
+            // the store still evaluates the geo-query, so the refusal below reads
+            // the selection the store is actually handed.
+            let narrowed = self.spatial_prefilter(target, &compiled).await;
+            refuse_unnarrowable(*self.query_store.profile(), &narrowed.selection)?;
+            let outcome = self.query_store.query_compiled(target, &narrowed, window, count).await?;
+            let mut page = finish_page(outcome, window, count)?;
+            for row in &mut page.rows {
+                // The store decoded each state into its own allocation, so this
+                // borrows it mutably without a copy.
+                narrow_to_query(Arc::make_mut(&mut row.state), &compiled);
+            }
+            Ok((page.rows, page.total_count))
         }
-        Ok((page.rows, page.total_count))
+        .await;
+        timer.finish_result(&result);
+        result
     }
 
     /// Execute a compiled query returning only the identifiers of the matching

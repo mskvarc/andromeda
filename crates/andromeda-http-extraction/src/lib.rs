@@ -7,15 +7,16 @@
 
 pub mod accept;
 pub mod addressed_uri;
-mod admitted_document;
 pub mod admitted_temporal_query;
 pub mod api_root;
 mod batch_array;
 pub mod batch_body_refusal;
 pub mod batch_item_refusal;
 pub mod blocking_decode;
+mod body_admission;
 mod body_envelope;
 pub mod classification;
+mod content_kind;
 pub mod content_length_precondition;
 pub mod context;
 pub mod context_target;
@@ -27,6 +28,7 @@ pub mod json_payload;
 pub mod json_value_budget;
 pub mod jsonld;
 pub mod language;
+pub mod notification_body;
 pub mod operation_hit_scope;
 pub mod pagination_policy;
 pub mod prefer;
@@ -58,6 +60,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-space",
         "andromeda-http-headers",
         "andromeda-http-response",
+        "andromeda-json-literal",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",

@@ -10,7 +10,7 @@
 //! so every level runs on sufficient stack.
 
 use crate::{
-    assembly::{attribute_fragment, entity_document, member_value::malformed},
+    assembly::{attribute_fragment, entity_document, member_value::malformed, temporal_document::temporal_document},
     attribute_fragment::AttributeFragment,
     compact_walk::literal::direction_of,
     expanded_tree::{ExpandedItem, ExpandedNode, Scalar, ValueObject},
@@ -20,8 +20,9 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_native_stack::on_sufficient_stack;
 use andromeda_ngsi_ld_entity::{document::EntityDocument, member_shape::MemberShape, refusal::EntityRefusal};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_model::{entity_system_times::EntitySystemTimes, temporal::temporal_document::TemporalDocument};
 use iri_rs::IriBuf;
-use jsonld::{ExpandedDocument, IndexedObject, Node, Object, Value as ObjectValue, object::Literal, syntax::Value as JsonLdValue};
+use jsonld::{ExpandedDocument, IndexedObject, Node, NodeParts, Object, Value as ObjectValue, object::Literal};
 use rdfx::BlankIdBuf;
 
 /// Read the processor's expansion of an entity document.
@@ -33,6 +34,16 @@ use rdfx::BlankIdBuf;
 /// assembly's refusal of the node.
 pub fn decode_entity(document: ExpandedDocument<IriBuf, BlankIdBuf>) -> Result<EntityDocument, EntityRefusal> {
     entity_document(top_level_node(document)?)
+}
+
+/// Read the processor's expansion of a Temporal Evolution, `system_times`
+/// being the entity's own clause 4.8 times it was written with.
+///
+/// # Errors
+///
+/// As [`decode_entity`].
+pub fn decode_temporal(document: ExpandedDocument<IriBuf, BlankIdBuf>, system_times: EntitySystemTimes) -> Result<TemporalDocument, EntityRefusal> {
+    temporal_document(top_level_node(document)?, system_times)
 }
 
 /// Read the processor's expansion of an attribute fragment written as
@@ -105,7 +116,7 @@ fn value_item(value: ObjectValue<IriBuf>) -> Result<ExpandedItem, EntityRefusal>
                 direction: direction.map(direction_of),
             }))
         }
-        ObjectValue::Json(json) => json_value(&json).map(ExpandedItem::Json),
+        ObjectValue::Json(json) => JsonLiteral::from_processor_json(&json).map(ExpandedItem::Json).map_err(|_| unsupported()),
     }
 }
 
@@ -121,24 +132,27 @@ fn scalar(literal: Literal) -> Result<Scalar, EntityRefusal> {
 
 /// Read one node object.
 fn node_item(node: Node<IriBuf, BlankIdBuf>) -> Result<ExpandedNode, EntityRefusal> {
-    if node.graph.is_some() || node.included.is_some() || node.reverse_properties.is_some() {
+    let NodeParts {
+        id,
+        types,
+        graph,
+        included,
+        properties,
+        reverse_properties,
+    } = node.into_parts();
+    if graph.is_some() || included.is_some() || reverse_properties.is_some() {
         return Err(unsupported());
     }
     let mut expanded = ExpandedNode {
-        id: node.id.as_ref().map(id_text),
-        types: node.types.unwrap_or_default().iter().map(id_text).collect(),
+        id: id.as_ref().map(id_text),
+        types: types.unwrap_or_default().iter().map(id_text).collect(),
         members: Vec::new(),
     };
-    for (property, objects) in node.properties {
+    for (property, objects) in properties {
         let values = objects.into_iter().map(item).collect::<Result<Vec<_>, EntityRefusal>>()?;
         expanded.add_member(id_text(&property), values);
     }
     Ok(expanded)
-}
-
-/// A JSON literal as the model carries it, numbers keeping their exact text.
-fn json_value(json: &JsonLdValue) -> Result<JsonLiteral, EntityRefusal> {
-    JsonLiteral::from_processor_json(json).map_err(|_| unsupported())
 }
 
 /// The refusal of an expanded shape no NGSI-LD document holds.

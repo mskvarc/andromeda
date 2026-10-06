@@ -48,8 +48,11 @@ impl LinkedRepresentation for TypedEntities {
     }
 }
 
-/// The edges one attribute instance names.
-fn instance_edges(from: &Identifier, attribute: &AttributeName, instance: &Attribute, out: &mut Vec<LinkedEdge>) {
+/// The edges one attribute instance names, appended to `out`: the targets of a
+/// Relationship's `object` or of a `ListRelationship`'s `objectList`, in order.
+/// Every representation of an entity that holds typed instances reads its
+/// edges through this.
+pub fn instance_edges(from: &Identifier, attribute: &AttributeName, instance: &Attribute, out: &mut Vec<LinkedEdge>) {
     match instance {
         Attribute::Relationship(relationship) => {
             targets_of(from, attribute, relationship.object.iter(), eligibility(relationship.object_type.as_ref()), out);

@@ -1,17 +1,21 @@
 //! What the MQTT pool reports to `/health`.
 
-use crate::mqtt::{
-    health::{ConnectionHealth, MqttConnectionHealthSummary},
-    pool::MqttTransportPool,
+use crate::{
+    endpoint::mqtt::MqttVersion,
+    mqtt::{
+        health::{ConnectionHealth, MqttConnectionHealthSummary},
+        pool::MqttTransportPool,
+    },
 };
 use andromeda_health::{
     component::{ComponentDetail, ComponentName},
+    details::ComponentDetails,
     indicator::HealthIndicator,
+    mqtt_details::{MqttConnectionDetail, MqttConnectionState, MqttDetails, MqttProtocolVersion},
     status::HealthStatus,
 };
 use async_trait::async_trait;
-use serde_json::{Map, Value};
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 /// Health indicator for MQTT notification delivery.
 ///
@@ -48,38 +52,37 @@ impl HealthIndicator for MqttHealthIndicator {
             (_, _) => HealthStatus::Down,
         };
 
-        let mut details = BTreeMap::new();
-        details.insert("activeConnections".to_owned(), Value::from(total));
-        details.insert("unhealthyConnections".to_owned(), Value::from(unhealthy));
-        details.insert("degradedConnections".to_owned(), Value::from(degraded));
-        if !summaries.is_empty() {
-            details.insert("connections".to_owned(), Value::Array(summaries.into_iter().map(describe).collect()));
+        ComponentDetail {
+            status,
+            details: Some(ComponentDetails::Mqtt(MqttDetails {
+                active_connections: total,
+                connections: summaries.into_iter().map(describe).collect(),
+                degraded_connections: degraded,
+                unhealthy_connections: unhealthy,
+            })),
         }
-
-        ComponentDetail { status, details }
     }
 }
 
 /// One connection, as it appears in the health response.
-fn describe(summary: MqttConnectionHealthSummary) -> Value {
-    let mut connection = Map::new();
-    connection.insert("host".to_owned(), Value::String(summary.authority.host_str().into_owned()));
-    connection.insert("port".to_owned(), Value::from(summary.authority.port()));
-    connection.insert("version".to_owned(), Value::String(summary.version.to_string()));
-    connection.insert("health".to_owned(), Value::String(summary.health.to_string()));
-    connection.insert("secondsSinceHealthy".to_owned(), Value::from(summary.seconds_since_healthy));
-
-    if let Some(uptime) = summary.broker_uptime {
-        connection.insert("brokerUptime".to_owned(), Value::String(uptime));
+fn describe(summary: MqttConnectionHealthSummary) -> MqttConnectionDetail {
+    MqttConnectionDetail {
+        broker_clients_connected: summary.clients_connected,
+        broker_uptime: summary.broker_uptime,
+        broker_version: summary.broker_version,
+        health: match summary.health {
+            ConnectionHealth::Healthy => MqttConnectionState::Healthy,
+            ConnectionHealth::Degraded => MqttConnectionState::Degraded,
+            ConnectionHealth::Unhealthy => MqttConnectionState::Unhealthy,
+        },
+        host: summary.authority.host_str().into_owned(),
+        port: summary.authority.port(),
+        seconds_since_healthy: summary.seconds_since_healthy,
+        version: match summary.version {
+            MqttVersion::V311 => MqttProtocolVersion::V311,
+            MqttVersion::V5 => MqttProtocolVersion::V5,
+        },
     }
-    if let Some(version) = summary.broker_version {
-        connection.insert("brokerVersion".to_owned(), Value::String(version));
-    }
-    if let Some(clients) = summary.clients_connected {
-        connection.insert("brokerClientsConnected".to_owned(), Value::String(clients));
-    }
-
-    Value::Object(connection)
 }
 
 #[cfg(test)]
@@ -95,8 +98,8 @@ mod tests {
             pool::MqttTransportPool,
         },
     };
-    use andromeda_health::{component::ComponentName, indicator::HealthIndicator, status::HealthStatus};
-    use serde_json::{Value, json};
+    use andromeda_health::{component::ComponentName, details::ComponentDetails, indicator::HealthIndicator, mqtt_details::MqttDetails, status::HealthStatus};
+    use serde_json::json;
     use std::{str::FromStr, sync::Arc};
 
     fn indicator() -> MqttHealthIndicator {
@@ -112,10 +115,15 @@ mod tests {
     async fn a_broker_that_has_opened_no_connection_reports_up_and_lists_none() {
         let detail = indicator().check().await;
         pretty_assertions::assert_eq!(detail.status, HealthStatus::Up);
-        pretty_assertions::assert_eq!(detail.details["activeConnections"], Value::from(0));
-        pretty_assertions::assert_eq!(detail.details["unhealthyConnections"], Value::from(0));
-        pretty_assertions::assert_eq!(detail.details["degradedConnections"], Value::from(0));
-        assert!(!detail.details.contains_key("connections"));
+        pretty_assertions::assert_eq!(
+            detail.details,
+            Some(ComponentDetails::Mqtt(MqttDetails {
+                active_connections: 0,
+                connections: Vec::new(),
+                degraded_connections: 0,
+                unhealthy_connections: 0,
+            }))
+        );
     }
 
     #[test]
@@ -129,6 +137,8 @@ mod tests {
             broker_version: None,
             clients_connected: None,
         });
+
+        let rendered = serde_json::to_value(&rendered).expect("serialises");
 
         pretty_assertions::assert_eq!(rendered["host"], json!("broker"));
         pretty_assertions::assert_eq!(rendered["port"], json!(1883));

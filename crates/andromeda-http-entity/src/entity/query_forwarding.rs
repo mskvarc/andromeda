@@ -29,12 +29,12 @@ use andromeda_federation::{
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{declined_representation::single_source_declined, forwarding_failure::local_federation_failure};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::filter::{expansion::expand_csf_expr, expression::Expr};
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::http::Uri as HttpUri;
+use iri_rs::IriBuf;
 use tracing::warn;
 
 /// What the two forwarding phases of a query brought back.
@@ -68,6 +68,8 @@ impl ForwardedQueryResults {
     /// Fold what the sources returned onto the entities the broker holds
     /// itself: the primary phase's answers first, then the auxiliary ones,
     /// which only supplement what is present already (clause 4.3.6.2).
+    /// `attrs` holds the expanded names of the query's `attrs`, which clause
+    /// 5.7.2 applies after the merge.
     ///
     /// # Errors
     ///
@@ -75,7 +77,7 @@ impl ForwardedQueryResults {
     /// budget the sources were walked under: the local rows were read one past
     /// it, so a larger collection is refused rather than paged from a
     /// truncation (clause 4.12).
-    pub(crate) fn merge_onto(self, local_entities: Vec<Entity>, attrs: Option<&[AttributeName]>) -> Result<MergedEntities, EntityBudgetExceeded> {
+    pub(crate) fn merge_onto(self, local_entities: Vec<ReceivedState>, attrs: &[IriBuf]) -> Result<MergedEntities, EntityBudgetExceeded> {
         let merged = if self.primary.is_empty() {
             local_entities
         } else {
@@ -98,8 +100,8 @@ impl ForwardedQueryResults {
 /// The entities a query answers with before its page is cut, together with
 /// what the forwarding reported about the sources that helped.
 pub(crate) struct MergedEntities {
-    /// The local and forwarded entities, merged.
-    pub(crate) entities: Vec<Entity>,
+    /// The local and forwarded entities, merged on the model.
+    pub(crate) entities: Vec<ReceivedState>,
     /// The clause 6.3.17 warnings of the forwarding phases.
     pub(crate) warnings: Vec<NgsiLdWarning>,
     /// What each source contributed to the map of the request (clause 5.2.39).
@@ -108,7 +110,7 @@ pub(crate) struct MergedEntities {
 
 impl MergedEntities {
     /// The answer of a query no context source contributed to.
-    pub(crate) const fn local(entities: Vec<Entity>) -> MergedEntities {
+    pub(crate) const fn local(entities: Vec<ReceivedState>) -> MergedEntities {
         MergedEntities {
             entities,
             warnings: Vec::new(),

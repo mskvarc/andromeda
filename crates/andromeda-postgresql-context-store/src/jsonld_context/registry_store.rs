@@ -32,6 +32,7 @@ use andromeda_context_registry::{
     store::{ContextRegistryFuture, ContextRegistryStore},
     stored_context::StoredContext,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_cache::DownloadedContext;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
@@ -39,7 +40,6 @@ use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use iri_rs::IriBuf;
 use sea_query::{InsertStatement, PostgresQueryBuilder, error::Error as SeaQueryError};
 use sea_query_sqlx::SqlxBinder;
-use serde_json::Value;
 use sqlx::types::Json;
 use url::Url;
 
@@ -47,7 +47,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
     fn insert<'a>(
         &'a self,
         identifier: &'a JsonLdContextId,
-        payload: &'a Value,
+        payload: &'a JsonLiteral,
         serving_url: &'a Url,
         kind: ContextCreationKind,
     ) -> ContextRegistryFuture<'a, ContextInsertion> {
@@ -104,7 +104,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
                 }
                 ContextDetailLevel::Summary => {
                     let (sql, values) = payload_by_identifier_query(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
-                    let row: Option<(Json<Value>,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    let row: Option<(Json<JsonLiteral>,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                         .fetch_optional(&self.pool)
                         .await
                         .map_err(|error| persistence_error(error))?;
@@ -158,12 +158,8 @@ impl ContextRegistryStore for JsonLdContextRepository {
 
     fn replace_download<'a>(&'a self, identifier: &'a Identifier, download: &'a DownloadedContext) -> ContextRegistryFuture<'a, ContextMutation> {
         Box::pin(async move {
-            let (sql, values) = replace_download_update(
-                identifier.as_str(),
-                download.document_url.as_str(),
-                download.document.clone(), // clone: the bound statement owns its JSON value while the caller keeps the download
-            )
-            .build_sqlx(PostgresQueryBuilder);
+            let (sql, values) =
+                replace_download_update(identifier.as_str(), download.document_url.as_str(), &download.document).build_sqlx(PostgresQueryBuilder);
             let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                 .execute(&self.pool)
                 .await
@@ -178,7 +174,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
 async fn insert_context(
     repository: &JsonLdContextRepository,
     identifier: &JsonLdContextId,
-    payload: &Value,
+    payload: &JsonLiteral,
     serving_url: &Url,
     kind: ContextCreationKind,
 ) -> Result<ContextInsertion, ContextRegistryError> {
@@ -197,13 +193,13 @@ async fn insert_context(
 /// `apiRoot` path prefix and with its tenant parameter, and is stored exactly
 /// as minted: the clause 6.30 path is the binding's to build, never this
 /// adapter's.
-fn insert_statement(identifier: &JsonLdContextId, payload: &Value, serving_url: &Url, kind: ContextCreationKind) -> Result<InsertStatement, SeaQueryError> {
-    hosted_insert(
-        identifier.as_ref(),
-        Some(serving_url.as_str()),
-        created_kind(kind),
-        payload.clone(), // clone: the bound statement owns its JSON value while the caller keeps the document for a retry.
-    )
+fn insert_statement(
+    identifier: &JsonLdContextId,
+    payload: &JsonLiteral,
+    serving_url: &Url,
+    kind: ContextCreationKind,
+) -> Result<InsertStatement, SeaQueryError> {
+    hosted_insert(identifier.as_ref(), Some(serving_url.as_str()), created_kind(kind), payload)
 }
 
 /// Convert the affected-row count of a conflict-free insert into its outcome.
@@ -240,9 +236,9 @@ const fn mutation(rows_affected: u64) -> ContextMutation {
 mod tests {
     use crate::jsonld_context::registry_store::{insert_statement, insertion, mutation, persistence_error};
     use andromeda_context_registry::{creation_kind::ContextCreationKind, error::ContextRegistryError, insertion::ContextInsertion, mutation::ContextMutation};
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::JsonLdContextId;
     use sea_query::PostgresQueryBuilder;
-    use serde_json::json;
     use url::Url;
 
     /// Clause 6.2 lets the `apiRoot` carry a path prefix: the serving URL the
@@ -254,9 +250,14 @@ mod tests {
         let minted = "https://gw.example.com/broker/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b";
         let serving_url = Url::parse(minted).expect("a URL");
 
-        let sql = insert_statement(&identifier, &json!({ "@context": {} }), &serving_url, ContextCreationKind::ImplicitlyCreated)
-            .expect("the statement builds")
-            .to_string(PostgresQueryBuilder);
+        let sql = insert_statement(
+            &identifier,
+            &JsonLiteral::admit(r#"{"@context": {}}"#).expect("an admissible document"),
+            &serving_url,
+            ContextCreationKind::ImplicitlyCreated,
+        )
+        .expect("the statement builds")
+        .to_string(PostgresQueryBuilder);
 
         assert!(sql.contains(&format!("'{minted}'")), "{sql}");
     }

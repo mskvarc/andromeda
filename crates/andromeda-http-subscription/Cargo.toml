@@ -24,6 +24,7 @@ andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-render.workspace = true
@@ -33,7 +34,6 @@ andromeda-tenancy.workspace = true
 axum = { version = "0.8.9", features = ["ws"] }
 futures = "0.3.34"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 thiserror = "2.0.21"
 tokio = "1.53.2"
 tokio-util = "0.7.19"

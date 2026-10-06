@@ -1,5 +1,6 @@
 //! The invariants Context Registry policy relies on, and how each one broke.
 
+use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_lexicon::{
     identifier::IdentifierParseError,
     ngsi_ld_urn::{JsonLdContextId, JsonLdContextIdParseError},
@@ -16,7 +17,7 @@ use thiserror::Error;
 pub enum RegistryInvariant {
     /// The embedded core Context document is not JSON.
     #[error("the embedded core Context document is not JSON: {0}")]
-    CoreContextDocument(#[source] serde_json::Error),
+    CoreContextDocument(#[source] JsonLiteralError),
     /// The embedded core Context URL is not an identifier.
     #[error("the embedded core Context URL is not an identifier: {0}")]
     CoreContextIdentifier(#[source] IdentifierParseError),

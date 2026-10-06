@@ -11,6 +11,7 @@ use crate::{
     registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
+use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use axum::http::Method;
 use pretty_assertions::{assert_eq, assert_ne};
 use serde_json::{Value, json};
@@ -419,4 +420,121 @@ async fn distop_entity_bc_relationship_sub_attr_observed_at_removed() {
         "a relationship observedAt is removed: {}",
         forwarded["parkedIn"]
     );
+}
+
+/// A Subscription is no Entity data: forwarded to a 1.0 source, the reduced
+/// copy keeps its own `expiresAt` and every `entities` selector (Tables
+/// 4.3.6.8-x describe Entity data alone). The request names its `@context` in
+/// the body, as clause 6.3.5 requires of an `application/ld+json` body.
+#[tokio::test]
+async fn a_forwarded_subscription_keeps_its_expiry() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
+    let mock = ContextSourceAdapter::start().await;
+    let vehicle_type = topology.id("Vehicle");
+    mock.set_stub(Method::POST, "/ngsi-ld/v1/subscriptions", 201).await;
+    let registration = CsrBuilder::new(&topology.id("registration:bc-subscription"), &mock.url(""))
+        .mode("inclusive")
+        .entity_type(&vehicle_type)
+        .operations(&["federationOps"])
+        .context_source_info(CONFORMANCE_KEY, "1.0")
+        .build();
+    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+
+    let subscription = json!({
+        "id": topology.id("Subscription:bc-subscription"),
+        "type": "Subscription",
+        "entities": [{ "type": vehicle_type }, { "type": vehicle_type, "idPattern": "^urn:ngsi-ld:.*" }],
+        "expiresAt": "2099-01-01T00:00:00Z",
+        "notification": { "format": "normalized", "endpoint": { "uri": "http://127.0.0.1:9/notify", "accept": "application/json" } },
+        "@context": COMPOUND_CONTEXT.as_str()
+    });
+    assert_status(&client.create_subscription(&subscription).await.expect("create subscription"), 201);
+
+    let forwarded: Value = mock.next_request(CAPTURE_TIMEOUT).await.json().expect("forwarded subscription is JSON");
+    assert_eq!(
+        forwarded["expiresAt"].as_str(),
+        Some("2099-01-01T00:00:00Z"),
+        "the subscription keeps its expiry: {forwarded}"
+    );
+    assert_eq!(
+        forwarded["entities"].as_array().map(Vec::len),
+        Some(2),
+        "every selector is forwarded: {forwarded}"
+    );
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A partial attribute update forwarded to a 1.0 source loses the members that
+/// version does not define on the attribute (Tables 4.3.6.8-2 and -3).
+#[tokio::test]
+async fn a_forwarded_attribute_patch_is_amended() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
+    let mock = ContextSourceAdapter::start().await;
+    let entity_id = topology.id("Vehicle:bc-attribute-patch");
+    let path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
+    let registration = CsrBuilder::new(&topology.id("registration:bc-attribute-patch"), &mock.url(""))
+        .mode("inclusive")
+        .entity_id(&entity_id)
+        .operations(&["updateAttrs"])
+        .context_source_info(CONFORMANCE_KEY, "1.0")
+        .build();
+    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    mock.set_stub(Method::PATCH, &path, 204).await;
+
+    let fragment = json!({ "value": 10, "observedAt": "2025-01-01T00:00:00Z", "unitCode": "KMH", "@context": COMPOUND_CONTEXT.as_str() });
+    let response = client.partial_update_attr(&entity_id, "speed", &fragment).await.expect("partial update");
+    assert!(response.status.as_u16() != 404, "a matched registration must not 404");
+
+    let forwarded: Value = mock.next_request(CAPTURE_TIMEOUT).await.json().expect("forwarded patch is JSON");
+    assert!(forwarded.get("observedAt").is_none(), "observedAt is removed for a 1.0 source: {forwarded}");
+    assert!(forwarded.get("unitCode").is_none(), "unitCode is removed for a 1.0 source: {forwarded}");
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A temporal write is no set of datasets: forwarded to a 1.0 source, an
+/// attribute keeps every instance and the `observedAt` that places it in time
+/// (clause 4.5.7).
+#[tokio::test]
+async fn a_forwarded_temporal_write_keeps_its_instances() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
+    let mock = ContextSourceAdapter::start().await;
+    let entity_id = topology.id("Vehicle:bc-temporal-write");
+    let registration = CsrBuilder::new(&topology.id("registration:bc-temporal-write"), &mock.url(""))
+        .mode("inclusive")
+        .entity_id(&entity_id)
+        .operations(&["upsertTemporal"])
+        .context_source_info(CONFORMANCE_KEY, "1.0")
+        .build();
+    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    mock.set_stub(Method::POST, "/ngsi-ld/v1/temporal/entities", 201).await;
+
+    let body = json!({
+        "id": entity_id,
+        "type": "Vehicle",
+        "speed": [
+            { "type": "Property", "value": 1, "observedAt": "2025-01-01T00:00:00Z" },
+            { "type": "Property", "value": 2, "observedAt": "2025-01-02T00:00:00Z" },
+            { "type": "Property", "value": 3, "observedAt": "2025-01-03T00:00:00Z" }
+        ],
+        "@context": COMPOUND_CONTEXT.as_str()
+    });
+    let created = client.create_temporal_entity(&body).await.expect("temporal upsert");
+    assert!(created.status.is_success(), "the temporal write succeeds: {}", created.status);
+
+    let forwarded: Value = mock.next_request(CAPTURE_TIMEOUT).await.json().expect("forwarded temporal body is JSON");
+    pretty_assertions::assert_eq!(forwarded["speed"].as_array().map(Vec::len), Some(3), "every instance is forwarded: {forwarded}");
+    assert!(
+        forwarded["speed"][0].get("observedAt").is_some(),
+        "observedAt stays on a temporal instance: {forwarded}"
+    );
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
 }

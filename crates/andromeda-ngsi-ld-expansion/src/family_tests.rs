@@ -3,7 +3,7 @@
 //! 4.18, 4.22, 5.2.4 to 5.2.38).
 
 use crate::{
-    expansion_fixture::{attribute, engine, entity, fragment, patch},
+    expansion_fixture::{attribute, engine, entity, patch},
     normalization::Normalization,
 };
 use andromeda_ngsi_ld_entity::{
@@ -299,7 +299,7 @@ async fn a_concise_entity_is_rewritten_before_it_is_expanded() {
 /// paths read it by expanded name).
 #[tokio::test]
 async fn a_structured_value_is_a_node_of_expanded_members() {
-    let document = fragment(
+    let document = patch(
         &engine(),
         json!({"address": {"type": "Property", "value": {"street": "Main", "geo": {"lat": 1, "tags": ["a", "b"]}}}}),
         Normalization::Entity,
@@ -323,11 +323,12 @@ async fn a_structured_value_is_a_node_of_expanded_members() {
     pretty_assertions::assert_eq!(tags.len(), 2);
 }
 
-/// Clause 4.5.22.3: the core context does not type `objectList` `@id`, so a
-/// concise JSON list expands to value objects, which the model keeps as such.
+/// Clause 4.5.22.3: the compact model reads a concise `objectList` into the
+/// Relationship objects Table 5.2.37-1 normalizes it to, which expand to the
+/// wrapped items the core context types `@id`, on both paths.
 #[tokio::test]
-async fn a_concise_object_list_expands_to_plain_string_items() {
-    let document = fragment(
+async fn a_concise_object_list_expands_to_wrapped_items() {
+    let document = patch(
         &engine(),
         json!({"id": "urn:ngsi-ld:Thing:1", "type": "Thing", "parts": {"type": "ListRelationship", "objectList": ["urn:ngsi-ld:Part:1", "urn:ngsi-ld:Part:2"]}}),
         Normalization::Entity,
@@ -339,8 +340,8 @@ async fn a_concise_object_list_expands_to_plain_string_items() {
     pretty_assertions::assert_eq!(
         instance(&document, &term("parts")).value(),
         &ValueSlot::Set(WrittenValue::ObjectList(vec![
-            ListObject::Literal("urn:ngsi-ld:Part:1".parse().expect("a URI")),
-            ListObject::Literal("urn:ngsi-ld:Part:2".parse().expect("a URI")),
+            ListObject::Wrapped("urn:ngsi-ld:Part:1".parse().expect("a URI")),
+            ListObject::Wrapped("urn:ngsi-ld:Part:2".parse().expect("a URI")),
         ]))
     );
 }
@@ -374,7 +375,8 @@ async fn an_attribute_fragment_is_one_instance_under_its_expanded_name() {
         .expect("the fixture expands")
         .agreed();
     pretty_assertions::assert_eq!(partial.name().as_str(), term("speed"));
-    pretty_assertions::assert_eq!(partial.instance().family(), None);
+    // The compact model reads `value` as the member of a Property (clause 4.5.2.3).
+    pretty_assertions::assert_eq!(partial.instance().family(), Some(AttributeType::Property));
 
     let replaced = attribute(&engine, "speed", json!({"type": "Property", "value": 7, "datasetId": "urn:ngsi-ld:Dataset:b"}))
         .await

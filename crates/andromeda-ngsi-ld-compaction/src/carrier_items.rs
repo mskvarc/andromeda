@@ -8,7 +8,7 @@
 //! written instance carry the same shapes, so both build their items here.
 
 use crate::{compacted_mode::CompactedMode, expanded_item::ExpandedItem, undecidable::Undecidable};
-use andromeda_json_literal::JsonLiteral;
+use andromeda_json_literal::{JsonLiteral, processor_json::processor_string};
 use andromeda_ngsi_ld_entity::{
     document::value_carrier::ValueCarrier,
     expanded_value::ExpandedValue,
@@ -18,7 +18,6 @@ use andromeda_ngsi_ld_entity::{
 };
 use andromeda_ngsi_ld_vocabulary::NULL_URI;
 use jsonld::Value;
-use jsonld_syntax::Value as JsonValue;
 
 /// One node reference per IRI.
 pub(crate) fn references<'a, 'i, M: CompactedMode>(iris: impl IntoIterator<Item = &'i str>) -> Vec<ExpandedItem<'a, M>> {
@@ -86,7 +85,7 @@ pub(crate) fn deletion<'a, M: CompactedMode>(carrier: ValueCarrier) -> Vec<Expan
     let null = NULL_URI.as_str();
     vec![match carrier {
         ValueCarrier::Object | ValueCarrier::Vocab => ExpandedItem::reference(null),
-        ValueCarrier::Json => ExpandedItem::Value(Value::Json(JsonValue::String(null.into()))),
+        ValueCarrier::Json => ExpandedItem::Value(Value::Json(processor_string(null))),
         ValueCarrier::ValueList | ValueCarrier::ObjectList => ExpandedItem::List(vec![ExpandedItem::text(null)]),
         ValueCarrier::Value | ValueCarrier::LanguageMap => ExpandedItem::text(null),
     }]

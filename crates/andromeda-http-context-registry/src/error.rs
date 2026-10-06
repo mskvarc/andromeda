@@ -23,10 +23,9 @@ pub fn classify_context_registry_error(error: &ContextRegistryError) -> Classifi
         // Backpressure, not a fault: shed as 503 with `Retry-After`, not a 500.
         ContextRegistryError::StoreSaturated => ClassifiedReport::store_saturated(error.to_string()),
         ContextRegistryError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
-        ContextRegistryError::MissingSourceUrl { .. }
-        | ContextRegistryError::Persistence { .. }
-        | ContextRegistryError::Representation { .. }
-        | ContextRegistryError::Invariant { .. } => ClassifiedReport::internal(error, InternalFailureSummary::new("internal context-registry error")),
+        ContextRegistryError::MissingSourceUrl { .. } | ContextRegistryError::Persistence { .. } | ContextRegistryError::Invariant { .. } => {
+            ClassifiedReport::internal(error, InternalFailureSummary::new("internal context-registry error"))
+        }
     }
 }
 

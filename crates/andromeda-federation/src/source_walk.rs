@@ -41,9 +41,8 @@ use crate::{
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_ngsi_ld_model::{query::body::Query, registration::ContextSourceRegistration};
 use futures::{StreamExt, stream};
-use serde_json::Value;
 use std::{collections::HashSet, mem, num::NonZeroU32};
 use url::Url;
 
@@ -56,9 +55,9 @@ pub(crate) trait WalkedAnswer: Sized {
     /// One element of the Entity Array the source answers with.
     type Element;
 
-    /// Read one fetched page, or `None` for a 404, which contributes nothing
-    /// (clause 6.3.17).
-    fn read(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> Option<Self>;
+    /// Read one fetched page: `None` for a 404, which contributes nothing
+    /// (clause 6.3.17), beside how many elements the page carried.
+    fn read(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> ReadPage<Self>;
 
     /// The elements gathered into this answer.
     fn elements(&mut self) -> &mut Vec<Self::Element>;
@@ -72,6 +71,25 @@ pub(crate) trait WalkedAnswer: Sized {
     /// Take over what a later page of the same answer reported beside its
     /// elements, once the walk has taken the elements themselves.
     fn absorb(&mut self, page: Self);
+}
+
+/// One page of a source's answer, read.
+pub(crate) struct ReadPage<A> {
+    /// What the page was read into; `None` for a 404.
+    pub(crate) answer: Option<A>,
+    /// How many elements the page carried, as the source counts them: the
+    /// members of an Entity Array, one for a single entity, none for anything
+    /// else -- including any the broker then discards, such as an expired
+    /// entity (clause 5.7.2.4), because that is what the source's own `offset`
+    /// counts.
+    pub(crate) sent: usize,
+}
+
+impl<A> ReadPage<A> {
+    /// A page that carried no element.
+    pub(crate) const fn empty(answer: Option<A>) -> ReadPage<A> {
+        ReadPage { answer, sent: 0 }
+    }
 }
 
 /// The page size each source is asked for.
@@ -89,8 +107,8 @@ enum NextPage {
     Offset {
         /// The URL of the first page, whose `offset` is replaced.
         url: Url,
-        /// The serialized `Query` body every page repeats.
-        body: Vec<u8>,
+        /// The `Query` body every page repeats.
+        body: Box<Query>,
     },
 }
 
@@ -107,7 +125,7 @@ enum Fetch {
     /// A GET of a query page.
     Get(Result<Url, FederationError>),
     /// A POST batch query page.
-    Post(Result<Url, FederationError>, Vec<u8>),
+    Post(Result<Url, FederationError>, Box<Query>),
 }
 
 /// One page a walk requested: the page a `next` pointer named, or the page of
@@ -217,9 +235,9 @@ impl FederationService {
         };
         let error_status = outcome.error_status();
         let mut position = AnswerPosition::default();
-        let first_sent = elements_sent(&outcome);
+        let ReadPage { answer, sent: first_sent } = A::read(registration, outcome);
         position.advance(first_sent);
-        let Some(mut gathered) = A::read(registration, outcome) else {
+        let Some(mut gathered) = answer else {
             return Ok(SourceAnswer {
                 mode,
                 error_status,
@@ -259,9 +277,7 @@ impl FederationService {
                     (outcome, PageEnd::Continue(NextPage::Offset { url, body }))
                 }
             };
-            let sent = elements_sent(&outcome);
-            position.advance(sent);
-            let page = match outcome {
+            let ReadPage { answer: page, sent } = match outcome {
                 success @ ForwardGetOutcome::Success(_) => A::read(registration, success),
                 ForwardGetOutcome::NotFound(warnings) => {
                     gathered.warnings().extend(warnings);
@@ -270,17 +286,14 @@ impl FederationService {
                         .push(incomplete_answer(registration, "no longer found the next page of its answer"));
                     break;
                 }
-                failure @ (ForwardGetOutcome::InvalidPayload(_)
-                | ForwardGetOutcome::UnreadableNames(_)
-                | ForwardGetOutcome::ErrorStatus(_)
-                | ForwardGetOutcome::Transport(_)
-                | ForwardGetOutcome::LoopDetected) => {
+                failure @ (ForwardGetOutcome::ErrorStatus(_) | ForwardGetOutcome::Transport(_) | ForwardGetOutcome::LoopDetected) => {
                     // Clause 6.3.17: the entities already gathered stand, and
                     // the failure says the answer is incomplete.
                     gathered.warnings().extend(failure.warning(&registration.id));
                     break;
                 }
             };
+            position.advance(sent);
             let Some(mut page) = page else {
                 break;
             };
@@ -317,30 +330,11 @@ impl FederationService {
             .inbound(conditions.context)
             .triggering(conditions.triggering)
             .linked_map(conditions.entity_map.location_for(&registration.id))
-            .vocabulary(conditions.vocabulary)
             .build();
         match fetch {
             Fetch::Get(url) => self.forward_get(read, url, conditions.cacheability).await,
             Fetch::Post(url, body) => self.forward_post_query(read, url, &body).await,
         }
-    }
-}
-
-/// How many elements a page carried, as the source counts them: the members
-/// of an Entity Array, one for a single entity, none for anything else.
-const fn elements_sent(outcome: &ForwardGetOutcome) -> usize {
-    match outcome {
-        ForwardGetOutcome::Success(response) => match &response.body {
-            Value::Array(items) => items.len(),
-            Value::Object(_) => 1,
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => 0,
-        },
-        ForwardGetOutcome::NotFound(_)
-        | ForwardGetOutcome::InvalidPayload(_)
-        | ForwardGetOutcome::UnreadableNames(_)
-        | ForwardGetOutcome::ErrorStatus(_)
-        | ForwardGetOutcome::Transport(_)
-        | ForwardGetOutcome::LoopDetected => 0,
     }
 }
 
@@ -353,12 +347,9 @@ fn pointer_continuation(registration: &ContextSourceRegistration, outcome: &Forw
             SourceContinuation::Next(url) => PageEnd::Continue(NextPage::Pointer(Url::clone(url))),
             SourceContinuation::Unfollowable(reason) => PageEnd::Stop(Some(incomplete_answer(registration, &reason.to_string()))),
         },
-        ForwardGetOutcome::NotFound(_)
-        | ForwardGetOutcome::InvalidPayload(_)
-        | ForwardGetOutcome::UnreadableNames(_)
-        | ForwardGetOutcome::ErrorStatus(_)
-        | ForwardGetOutcome::Transport(_)
-        | ForwardGetOutcome::LoopDetected => PageEnd::Stop(None),
+        ForwardGetOutcome::NotFound(_) | ForwardGetOutcome::ErrorStatus(_) | ForwardGetOutcome::Transport(_) | ForwardGetOutcome::LoopDetected => {
+            PageEnd::Stop(None)
+        }
     }
 }
 
@@ -395,7 +386,10 @@ mod tests {
     use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
-    use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+    use andromeda_ngsi_ld_model::{
+        registration::ContextSourceRegistration,
+        temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory},
+    };
     use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
     use andromeda_test_mocks::{
         callback_path::CallbackPath,
@@ -561,7 +555,7 @@ mod tests {
         outcome
             .results
             .iter()
-            .flat_map(|answer| answer.entities.iter().filter_map(|entity| entity["id"].as_str().map(str::to_owned)))
+            .flat_map(|answer| answer.entities.iter().filter_map(|entity| entity.id().map(ToString::to_string)))
             .collect()
     }
 
@@ -570,7 +564,7 @@ mod tests {
         outcome
             .results
             .iter()
-            .flat_map(|answer| answer.entities.iter().map(|entity| entity.id.as_str().to_owned()))
+            .flat_map(|answer| answer.entities.iter().map(|received| received.state.id().as_str().to_owned()))
             .collect()
     }
 
@@ -970,14 +964,19 @@ mod tests {
             .await
     }
 
-    /// The `speed` values a history walk gathered for the one entity.
+    /// The values a history walk gathered for the one entity, each instance
+    /// identified by its value.
     fn speed_values(outcome: &ForwardReadOutcome<ForwardedTemporalEntities>) -> Vec<i64> {
         outcome
             .results
             .iter()
             .flat_map(|answer| answer.entities.iter())
-            .flat_map(|entity| entity["speed"].as_array().cloned().unwrap_or_default())
-            .filter_map(|instance| instance["value"].as_i64())
+            .filter_map(|history| match history {
+                TemporalHistory::Instances(document) => Some(document),
+                TemporalHistory::Aggregates(_) => None,
+            })
+            .flat_map(TemporalDocument::instances)
+            .filter_map(|(_, instance)| instance.instance_id()?.as_str().rsplit(':').next()?.parse().ok())
             .collect()
     }
 

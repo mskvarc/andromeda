@@ -75,7 +75,7 @@ impl ListingRequest {
     /// response platform, which no client input can provoke.
     pub(crate) fn respond(
         &self,
-        rendered: impl Into<RenderedResponse>,
+        rendered: RenderedResponse,
         total: i64,
         boundary: Option<(Identifier, Identifier)>,
         returned: usize,

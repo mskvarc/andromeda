@@ -71,21 +71,6 @@ impl<T> NonEmpty<T> {
     pub fn map<U>(self, convert: impl FnMut(T) -> U) -> NonEmpty<U> {
         NonEmpty(self.0.into_iter().map(convert).collect())
     }
-
-    /// Map every borrowed element, keeping the order and the non-emptiness.
-    pub fn map_ref<U>(&self, convert: impl FnMut(&T) -> U) -> NonEmpty<U> {
-        NonEmpty(self.0.iter().map(convert).collect())
-    }
-
-    /// Map every element through a fallible conversion, stopping at the first
-    /// failure.
-    ///
-    /// # Errors
-    ///
-    /// Returns the first error `convert` reports.
-    pub fn try_map<U, E>(self, convert: impl FnMut(T) -> Result<U, E>) -> Result<NonEmpty<U>, E> {
-        self.0.into_iter().map(convert).collect::<Result<Vec<U>, E>>().map(NonEmpty)
-    }
 }
 
 impl<T> TryFrom<Vec<T>> for NonEmpty<T> {

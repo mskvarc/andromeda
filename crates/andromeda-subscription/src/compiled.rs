@@ -31,6 +31,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
+use langtag::LangTagBuf;
 use mediatype::MediaTypeBuf;
 use std::{collections::HashSet, num::NonZeroU32};
 use url::Url;
@@ -171,6 +172,9 @@ pub struct CompiledSubscription {
     /// conform to before they are sent (Table 5.2.12-1 `ngsildConformance`,
     /// clauses 5.8.6 and 4.3.6.8); `None` amends nothing.
     pub ngsild_conformance: Option<SpecVersion>,
+    /// The language every notified `LanguageProperty` is reduced to (Table
+    /// 5.2.12-1 `lang`, clause 4.15); `None` leaves the language maps whole.
+    pub lang: Option<LangTagBuf>,
 }
 
 impl CompiledSubscription {

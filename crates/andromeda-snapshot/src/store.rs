@@ -9,8 +9,10 @@
 use crate::{branch_condition::BranchCondition, error::SnapshotError};
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::snapshot_target::SnapshotTarget;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
+    key_value_pair::KeyValuePair,
     query::body::Query,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
@@ -18,13 +20,12 @@ use andromeda_ngsi_ld_model::{
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use iso8601_duration::Duration as Iso8601Duration;
-use serde_json::Value;
 use url::Url;
 
-/// Pre-serialised columns for a snapshot record.
+/// The typed columns of a snapshot record.
 ///
-/// The policy layer materialises the JSON, lifetime and priority
-/// representations once and hands them over; the store writes them verbatim.
+/// The policy layer hands over the typed values, lifetime and priority
+/// representation once; the store encodes each JSON column from its type.
 #[derive(Debug)]
 pub struct InsertSnapshotParams<'a> {
     /// Snapshot identifier.
@@ -33,24 +34,25 @@ pub struct InsertSnapshotParams<'a> {
     pub snapshot_queries: Option<&'a [Query]>,
     /// Typed temporal query definitions, serialized by the SQL adapter.
     pub snapshot_temporal_queries: Option<&'a [Query]>,
-    /// Resolved request context used by the asynchronous query executor.
-    pub query_context_json: Value,
+    /// Resolved request `@context` used by the asynchronous query executor,
+    /// held as the JSON the context resolved to.
+    pub query_context: JsonLiteral,
     /// Typed ISO-8601 duration for the snapshot's lifetime.
     pub snapshot_lifetime: Option<&'a Iso8601Duration>,
     /// Numeric encoding of [`SnapshotPriority`].
     pub snapshot_priority: i16,
     /// Endpoint URL.
     pub endpoint: Option<&'a Url>,
-    /// Pre-serialised JSON for the notification receiver info.
-    pub receiver_info_json: Option<Value>,
+    /// Notification receiver info.
+    pub receiver_info: Option<&'a [KeyValuePair]>,
     /// Current lifecycle status.
     pub status: SnapshotStatus,
     /// Source Snapshot identifier for clone preparation; absent for capture.
     pub clone_source_id: Option<&'a Identifier>,
-    /// Pre-serialised JSON for the entity-query execution details.
-    pub queries_details_json: Option<Value>,
-    /// Pre-serialised JSON for the temporal-query execution details.
-    pub temporal_queries_details_json: Option<Value>,
+    /// Entity-query execution details.
+    pub queries_details: Option<&'a [ExecutionResultDetails]>,
+    /// Temporal-query execution details.
+    pub temporal_queries_details: Option<&'a [ExecutionResultDetails]>,
     /// Creation timestamp.
     pub created_at: DateTime<Utc>,
     /// Last-modified timestamp.
@@ -68,8 +70,8 @@ pub struct SnapshotPreparationJob {
     pub snapshot: Snapshot,
     /// Source Snapshot for clone jobs; absent for query capture jobs.
     pub clone_source_id: Option<Identifier>,
-    /// Resolved request context persisted with the preparation job.
-    pub query_context: Value,
+    /// Resolved request `@context` persisted with the preparation job.
+    pub query_context: JsonLiteral,
 }
 
 /// Storing Snapshot control resources and their lifecycle state.
@@ -171,7 +173,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
         lifetime: Option<&'life2 Iso8601Duration>,
         priority: Option<SnapshotPriority>,
         endpoint: Option<Option<&'life3 Url>>,
-        receiver_info: Option<Option<Value>>,
+        receiver_info: Option<Option<Vec<KeyValuePair>>>,
         new_expires_at: Option<DateTime<Utc>>,
     ) -> BoxFuture<'async_trait, Result<u64, SnapshotError>>
     where

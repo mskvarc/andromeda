@@ -18,19 +18,19 @@ use andromeda_http_response::{
     internal_failure_summary::InternalFailureSummary,
     problem_response::ProblemResponse,
     render::{RenderingPreferences, start_rendering_core},
+    rendered_response::RenderedResponse,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{snapshot_clone::SnapshotCloneInput, snapshot_input::SnapshotInput, snapshot_patch::SnapshotPatch};
+use andromeda_ngsi_ld_model::{snapshot::Snapshot, snapshot_clone::SnapshotCloneInput, snapshot_input::SnapshotInput, snapshot_patch::SnapshotPatch};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
-use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::empty::EmptyParams;
 use andromeda_snapshot::service::purge::PurgeOutcome;
 use axum::{
     Json,
     extract::OriginalUri,
-    http::StatusCode,
+    http::{StatusCode, Uri},
     response::{IntoResponse, Response},
 };
 
@@ -70,13 +70,17 @@ pub async fn get(
     TypedPath(snapshot_id): TypedPath<Identifier>,
 ) -> Result<Response, ProblemResponse> {
     let snapshot = state.snapshots.get(&snapshot_id).await.with_snapshot_instance(&uri)?;
+    snapshot_response(accept, &snapshot, &uri)
+}
 
-    let body = serde_json::to_value(&snapshot).map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, &uri))?;
-    let rendered = start_rendering_core(accept.media_type(), RenderingPreferences::default())
-        .with_payload(ResponsePayload::Single(body))
-        .render()
-        .map_err(|error| internal_problem(&error, InternalFailureSummary::new("failed to render the snapshot"), &uri))?;
-    Ok(NgsiLdResponse::ok(rendered).into_response())
+/// The 200 response carrying one Snapshot, written straight from its typed
+/// resource under the core context (clause 6.3.6).
+fn snapshot_response(accept: AcceptFormatNoGeo, snapshot: &Snapshot, uri: &Uri) -> Result<Response, ProblemResponse> {
+    let renderer = start_rendering_core(accept.media_type(), RenderingPreferences::default())
+        .map_err(|error| internal_problem(&error, InternalFailureSummary::new("failed to render the snapshot"), uri))?;
+    let written = RenderedResponse::resource(renderer.with_body(snapshot))
+        .map_err(|error| internal_problem(&error, InternalFailureSummary::new("failed to render the snapshot"), uri))?;
+    Ok(NgsiLdResponse::ok(written).into_response())
 }
 
 /// PATCH /ngsi-ld/v1/snapshots/{snapshot_id} -- Update snapshot status.
@@ -94,13 +98,7 @@ pub async fn update(
     // refuses an `@context` embedded below its top level all the same.
     let patch = body.context_free(context)?;
     let updated = state.snapshots.update(&snapshot_id, patch).await.with_snapshot_instance(&uri)?;
-
-    let body = serde_json::to_value(&updated).map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, &uri))?;
-    let rendered = start_rendering_core(accept.media_type(), RenderingPreferences::default())
-        .with_payload(ResponsePayload::Single(body))
-        .render()
-        .map_err(|error| internal_problem(&error, InternalFailureSummary::new("failed to render the snapshot"), &uri))?;
-    Ok(NgsiLdResponse::ok(rendered).into_response())
+    snapshot_response(accept, &updated, &uri)
 }
 
 /// DELETE /ngsi-ld/v1/snapshots/{snapshot_id} -- Delete a snapshot.

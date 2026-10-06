@@ -137,13 +137,10 @@ macro_rules! workspace_architecture {
                 $crate::string_typed_error::assert_no_string_typed_errors(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
-            /// No production source names an untyped JSON tree beyond the baseline.
+            /// No production source names an untyped JSON tree.
             #[test]
             fn json_is_held_typed_not_as_an_untyped_tree() {
-                $crate::untyped_json::assert_no_untyped_json(
-                    concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root),
-                    $crate::untyped_json_baseline::UNTYPED_JSON_BASELINE,
-                );
+                $crate::untyped_json::assert_no_untyped_json(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
             /// No production file crosses the length ceiling off the baseline.

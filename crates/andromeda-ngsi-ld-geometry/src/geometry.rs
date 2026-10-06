@@ -18,12 +18,10 @@ use crate::{
     form::GeometryForm,
     geojson::GeometryError,
     geojson_members::GeoJsonMembers,
-    geometry_members::{ForeignMemberReading, GeometryMembers},
-    geometry_type::GeometryType,
     planar::PlanarGeometry,
+    written_geometry::WrittenGeometry,
 };
 use geojson::Geometry as GeoJsonGeometry;
-use serde_json::{Map, Value};
 
 /// A geometry attached to an NGSI-LD `GeoProperty` (clause 5.2.7).
 ///
@@ -63,59 +61,25 @@ impl Geometry {
         }
     }
 
-    /// Build from an arbitrary JSON value that is expected to encode a `GeoJSON`
-    /// geometry object.
+    /// Build from the text of a compact `GeoJSON` geometry object, which ETSI
+    /// GS CIM 009 v1.9.1 clause 4.7.2 also accepts as the content of a string
+    /// "if and only if it can be parsed into a JSON Object" that is a valid
+    /// RFC 7946 geometry.
     ///
     /// # Errors
     ///
-    /// Returns the [`GeometryError`] naming what is missing or misplaced if
-    /// `value` is not a `GeoJSON` geometry object, [`GeometryError::Position`] if one of its positions has
-    /// an ordinate count RFC 7946 gives no meaning to or lies off the CRS84
-    /// axes, [`GeometryError::LineString`] or [`GeometryError::LinearRing`]
-    /// for a line or ring RFC 7946 does not admit, or
-    /// [`GeometryError::GeometryCollectionUnsupported`] if it is a
+    /// Returns [`GeometryError::EncodedNotJson`] for text that is no single JSON
+    /// value, the [`GeometryError`] naming what is missing or misplaced if the
+    /// value is not a `GeoJSON` geometry object, [`GeometryError::Position`] if
+    /// one of its positions has an ordinate count RFC 7946 gives no meaning to
+    /// or lies off the CRS84 axes, [`GeometryError::LineString`] or
+    /// [`GeometryError::LinearRing`] for a line or ring RFC 7946 does not
+    /// admit, or [`GeometryError::GeometryCollectionUnsupported`] if it is a
     /// `GeometryCollection`.
-    pub fn from_geojson_value(value: &Value) -> Result<Geometry, GeometryError> {
-        GeometryMembers::of_object(value.as_object().ok_or(GeometryError::NotAnObject)?, ForeignMemberReading::Kept)?.into_geometry()
-    }
-
-    /// Build from a `GeoProperty` value as written: a `GeoJSON` geometry
-    /// object, or a string holding one, which ETSI GS CIM 009 v1.9.1 clause
-    /// 4.7.2 accepts "if and only if it can be parsed into a JSON Object" that
-    /// is a valid RFC 7946 geometry.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GeometryError::EncodedNotJson`] for a string that is no JSON
-    /// text, and otherwise the errors of [`Geometry::from_geojson_value`].
-    pub fn from_written_value(value: &Value) -> Result<Geometry, GeometryError> {
-        match value {
-            Value::String(text) => Geometry::from_geojson_value(&serde_json::from_str::<Value>(text).map_err(GeometryError::EncodedNotJson)?),
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => Geometry::from_geojson_value(value),
-        }
-    }
-
-    /// Build from the separate geometry type and coordinates used by NGSI-LD
-    /// query parameters and subscription `geoQ` objects.
-    ///
-    /// Coordinates are explicitly narrowed to finite `f64` values at this
-    /// domain boundary, then inserted into a JSON object without passing through
-    /// a generic serializer. This matters when `serde_json` arbitrary precision
-    /// is enabled: a parsed number carries a private raw-number token that an
-    /// incompatible serializer can otherwise expose as an object instead of a
-    /// coordinate number.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GeometryError::NonFiniteCoordinate`] when an ordinate cannot
-    /// be represented as a finite `f64`, or the same typed errors as
-    /// [`Geometry::from_geojson_value`] when the coordinates do not form the
-    /// requested RFC 7946 geometry.
-    pub fn from_type_and_coordinates(geometry_type: GeometryType, coordinates: Value) -> Result<Geometry, GeometryError> {
-        let mut object = Map::new();
-        object.insert("type".to_owned(), Value::String(geometry_type.to_string()));
-        object.insert("coordinates".to_owned(), coordinates_as_f64(coordinates)?);
-        Geometry::from_geojson_value(&Value::Object(object))
+    pub fn from_geojson_text(text: &str) -> Result<Geometry, GeometryError> {
+        serde_json::from_str::<WrittenGeometry>(text)
+            .map_err(GeometryError::EncodedNotJson)?
+            .into_geometry()
     }
 
     /// The geometry as received: every position with the altitude and the
@@ -166,34 +130,6 @@ impl Geometry {
         geometry.bbox = self.members().and_then(GeoJsonMembers::bbox).map(|bbox| bbox.ordinates().collect());
         geometry
     }
-
-    /// The compact `GeoJSON` geometry object, with its `bbox` and its foreign
-    /// members, as a JSON tree.
-    ///
-    /// # Errors
-    ///
-    /// Returns the `serde_json` failure of writing the geometry, which no
-    /// geometry raises.
-    pub fn to_geojson_value(&self) -> Result<Value, serde_json::Error> {
-        serde_json::to_value(self)
-    }
-}
-
-/// Narrow arbitrary-precision JSON coordinate numbers to the finite binary64
-/// domain used by `geo`, `geojson` and `PostGIS` geometry operations.
-fn coordinates_as_f64(value: Value) -> Result<Value, GeometryError> {
-    match value {
-        Value::Number(number) => {
-            let coordinate = number
-                .as_f64()
-                .filter(|coordinate| coordinate.is_finite())
-                .ok_or(GeometryError::NonFiniteCoordinate)?;
-            let number = serde_json::Number::from_f64(coordinate).ok_or(GeometryError::NonFiniteCoordinate)?;
-            Ok(Value::Number(number))
-        }
-        Value::Array(values) => values.into_iter().map(coordinates_as_f64).collect::<Result<Vec<_>, _>>().map(Value::Array),
-        Value::Null | Value::Bool(_) | Value::String(_) | Value::Object(_) => Ok(value),
-    }
 }
 
 #[cfg(test)]
@@ -204,11 +140,15 @@ mod tests {
         form::GeometryForm,
         geojson::GeometryError,
         geometry::Geometry,
-        geometry_type::GeometryType,
         linear_ring::LinearRingError,
         position::PositionError,
     };
     use serde_json::Value;
+
+    /// Read `value` as the compact `GeoJSON` text it is written as.
+    fn read(value: &Value) -> Result<Geometry, GeometryError> {
+        Geometry::from_geojson_text(&value.to_string())
+    }
 
     /// Where a refused position sits and what is wrong with it.
     fn refused_position(error: &GeometryError) -> (CoordinatePath, PositionError) {
@@ -226,7 +166,6 @@ mod tests {
             | GeometryError::InvalidBbox(_)
             | GeometryError::NotAnArray { .. }
             | GeometryError::NonNumericOrdinate { .. }
-            | GeometryError::NonFiniteCoordinate
             | GeometryError::GeometryCollectionUnsupported
             | GeometryError::ForeignMember(_)) => {
                 panic!("expected a refused position, got {other:?}")
@@ -270,7 +209,7 @@ mod tests {
     fn a_geometry_collection_is_refused_as_a_geoproperty_geometry() {
         // ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes GeometryCollection from
         // the geometries a GeoProperty value may take.
-        let error = Geometry::from_geojson_value(&collection_json()).expect_err("a collection is not an allowed geometry");
+        let error = read(&collection_json()).expect_err("a collection is not an allowed geometry");
         assert!(matches!(error, GeometryError::GeometryCollectionUnsupported), "got {error:?}");
     }
 
@@ -287,15 +226,8 @@ mod tests {
 
     #[test]
     fn a_geojson_point_round_trips_through_the_domain_type() {
-        let geometry = Geometry::from_geojson_value(&point_json()).expect("point parses");
+        let geometry = read(&point_json()).expect("point parses");
         pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), point_json());
-    }
-
-    #[test]
-    fn separate_type_and_arbitrary_precision_coordinates_decode_without_exposing_the_raw_number_token() {
-        let coordinates: Value = serde_json::from_str("[0.100000000000000005,52.5]").expect("coordinates parse");
-        let geometry = Geometry::from_type_and_coordinates(GeometryType::Point, coordinates).expect("point parses");
-        pretty_assertions::assert_eq!(geometry.to_geojson().value.type_name(), "Point");
     }
 
     #[test]
@@ -304,7 +236,7 @@ mod tests {
             "type": "Polygon",
             "coordinates": [[[1.0, 2.0], [5.0, 2.0], [5.0, 91.0], [1.0, 2.0]]]
         });
-        let error = Geometry::from_geojson_value(&polygon).expect_err("a vertex past the pole is no position");
+        let error = read(&polygon).expect_err("a vertex past the pole is no position");
         pretty_assertions::assert_eq!(
             refused_position(&error),
             (CoordinatePath::new(vec![0, 2]), PositionError::LatitudeOutOfRange { latitude: 91.0 })
@@ -329,7 +261,7 @@ mod tests {
                 ]
             ]
         });
-        let error = Geometry::from_geojson_value(&multi_polygon).expect_err("a hole vertex past the antimeridian is no position");
+        let error = read(&multi_polygon).expect_err("a hole vertex past the antimeridian is no position");
         pretty_assertions::assert_eq!(
             refused_position(&error),
             (CoordinatePath::new(vec![1, 1, 1]), PositionError::LongitudeOutOfRange { longitude: -181.0 })
@@ -355,39 +287,27 @@ mod tests {
                 PositionError::LatitudeOutOfRange { latitude: -95.0 },
             ),
         ] {
-            let error = Geometry::from_geojson_value(&geometry).expect_err("one position off the axes refuses the geometry");
+            let error = read(&geometry).expect_err("one position off the axes refuses the geometry");
             pretty_assertions::assert_eq!(refused_position(&error), (CoordinatePath::new(at), source), "{geometry}");
         }
     }
 
     #[test]
-    fn a_reference_geometry_past_a_pole_is_refused_like_a_payload_geometry() {
-        // The coordinates of the informative ETSI GS CIM 009 v1.9.1 Annex C.4
-        // example, which name a latitude of 100.
-        let error = Geometry::from_type_and_coordinates(GeometryType::Point, serde_json::json!([-1, 100])).expect_err("latitude 100 is no position");
-        pretty_assertions::assert_eq!(
-            refused_position(&error),
-            (CoordinatePath::default(), PositionError::LatitudeOutOfRange { latitude: 100.0 })
-        );
-    }
-
-    #[test]
-    fn a_coordinate_outside_the_finite_f64_domain_is_rejected_at_the_geometry_boundary() {
-        let coordinates: Value = serde_json::from_str("[1e400,52.5]").expect("JSON number parses");
-        let error = Geometry::from_type_and_coordinates(GeometryType::Point, coordinates).expect_err("coordinate must be rejected");
-        assert!(matches!(error, GeometryError::NonFiniteCoordinate), "got {error:?}");
+    fn a_coordinate_outside_the_finite_f64_domain_is_no_ordinate() {
+        let error = Geometry::from_geojson_text(r#"{"type": "Point", "coordinates": [1e400, 52.5]}"#).expect_err("coordinate must be rejected");
+        assert!(matches!(error, GeometryError::NonNumericOrdinate { .. }), "got {error:?}");
     }
 
     #[test]
     fn an_elevated_point_serialises_back_to_the_json_it_arrived_as() {
-        let geometry = Geometry::from_geojson_value(&elevated_point_json()).expect("elevated point parses");
+        let geometry = read(&elevated_point_json()).expect("elevated point parses");
         pretty_assertions::assert_eq!(geometry.dimension(), GeometryDimension::ThreeD);
         pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), elevated_point_json());
     }
 
     #[test]
     fn an_elevated_polygon_round_trips_with_every_altitude() {
-        let geometry = Geometry::from_geojson_value(&elevated_polygon_json()).expect("closed polygon parses");
+        let geometry = read(&elevated_polygon_json()).expect("closed polygon parses");
         pretty_assertions::assert_eq!(geometry.dimension(), GeometryDimension::ThreeD);
         pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), elevated_polygon_json());
     }
@@ -400,7 +320,7 @@ mod tests {
             "type": "Polygon",
             "coordinates": [[[1.0, 2.0], [5.0, 2.0], [5.0, 8.0], [1.0, 8.0]]]
         });
-        let error = Geometry::from_geojson_value(&open).expect_err("an open ring is no ring");
+        let error = read(&open).expect_err("an open ring is no ring");
         assert!(
             matches!(error, GeometryError::LinearRing { ref at, source: LinearRingError::Open } if *at == CoordinatePath::new(vec![0])),
             "got {error:?}"
@@ -409,13 +329,13 @@ mod tests {
 
     #[test]
     fn a_malformed_geometry_value_is_a_typed_error() {
-        let error = Geometry::from_geojson_value(&serde_json::json!({ "type": "Nonsense", "coordinates": [] })).expect_err("must reject");
+        let error = read(&serde_json::json!({ "type": "Nonsense", "coordinates": [] })).expect_err("must reject");
         assert!(matches!(error, GeometryError::UnknownType(_)), "got {error:?}");
     }
 
     #[test]
     fn a_point_with_four_ordinates_is_a_position_error() {
-        let error = Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0] })).expect_err("must reject");
+        let error = read(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0] })).expect_err("must reject");
         assert!(
             matches!(
                 error,
@@ -430,7 +350,7 @@ mod tests {
 
     #[test]
     fn the_bounding_rectangle_of_a_polygon_covers_every_vertex() {
-        let geometry = Geometry::from_geojson_value(&polygon_json()).expect("polygon parses");
+        let geometry = read(&polygon_json()).expect("polygon parses");
         let rect = geometry.planar().bounding_rect().expect("non-empty geometry has a bounding rect");
         pretty_assertions::assert_eq!(rect.min(), geo::Coord { x: 1.0, y: 2.0 });
         pretty_assertions::assert_eq!(rect.max(), geo::Coord { x: 5.0, y: 8.0 });
@@ -438,7 +358,7 @@ mod tests {
 
     #[test]
     fn geometry_serde_round_trips_without_loss() {
-        let geometry = Geometry::from_geojson_value(&polygon_json()).expect("polygon parses");
+        let geometry = read(&polygon_json()).expect("polygon parses");
         let encoded = serde_json::to_value(&geometry).expect("serialises");
         let decoded: Geometry = serde_json::from_value(encoded).expect("deserialises");
         pretty_assertions::assert_eq!(decoded, geometry);
@@ -446,15 +366,9 @@ mod tests {
 
     #[test]
     fn two_geometries_differing_only_in_altitude_are_not_equal() {
-        let flat = Geometry::from_geojson_value(&point_json()).expect("point parses");
-        let elevated = Geometry::from_geojson_value(&elevated_point_json()).expect("elevated point parses");
+        let flat = read(&point_json()).expect("point parses");
+        let elevated = read(&elevated_point_json()).expect("elevated point parses");
         assert!(flat != elevated, "an altitude-only difference is a difference");
-    }
-
-    #[test]
-    fn a_geometry_renders_as_the_compact_geojson_object_it_was_read_from() {
-        let geometry = Geometry::from_geojson_value(&elevated_point_json()).expect("elevated point parses");
-        pretty_assertions::assert_eq!(geometry.to_geojson_value().expect("a JSON tree"), elevated_point_json());
     }
 
     /// IETF RFC 7946 sections 5 and 6.1, ETSI GS CIM 009 v1.9.1 clause 4.6.4:
@@ -462,15 +376,14 @@ mod tests {
     #[test]
     fn a_geometry_with_members_serialises_them_beside_its_coordinates() {
         let written = serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0], "bbox": [1.0, 2.0, 1.0, 2.0], "title": "x"});
-        let geometry = Geometry::from_geojson_value(&written).expect("a point");
+        let geometry = read(&written).expect("a point");
         pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), written);
-        pretty_assertions::assert_eq!(geometry.to_geojson_value().expect("a JSON tree"), written);
     }
 
     /// A geometry without members holds one empty pointer for them.
     #[test]
     fn a_geometry_without_members_allocates_no_member_box() {
-        let geometry = Geometry::from_geojson_value(&point_json()).expect("a point");
+        let geometry = read(&point_json()).expect("a point");
         assert!(geometry.members().is_none());
         assert!(size_of::<Geometry>() <= size_of::<GeometryForm>() + size_of::<usize>());
     }
@@ -478,17 +391,16 @@ mod tests {
     /// Clause 4.7.2: a string is a geometry if and only if it parses into a
     /// valid geometry object.
     #[test]
-    fn a_written_string_is_a_geometry_only_when_it_parses_into_one() {
-        let encoded = Value::String(point_json().to_string());
-        pretty_assertions::assert_eq!(
-            Geometry::from_written_value(&encoded).expect("an encoded point"),
-            Geometry::from_geojson_value(&point_json()).expect("a point")
-        );
-        let not_json = Geometry::from_written_value(&Value::String("POINT(1 2)".to_owned())).expect_err("no JSON text");
+    fn a_text_is_a_geometry_only_when_it_parses_into_one() {
+        let from_text = Geometry::from_geojson_text(&point_json().to_string()).expect("a point");
+        pretty_assertions::assert_eq!(from_text, serde_json::from_value::<Geometry>(point_json()).expect("a point"));
+        let not_json = Geometry::from_geojson_text("POINT(1 2)").expect_err("no JSON text");
         assert!(matches!(not_json, GeometryError::EncodedNotJson(_)), "{not_json:?}");
-        let not_an_object = Geometry::from_written_value(&Value::String("[1, 2]".to_owned())).expect_err("no object");
+        let trailing = Geometry::from_geojson_text(r#"{"type": "Point", "coordinates": [1, 2]} x"#).expect_err("trailing characters");
+        assert!(matches!(trailing, GeometryError::EncodedNotJson(_)), "{trailing:?}");
+        let not_an_object = Geometry::from_geojson_text("[1, 2]").expect_err("no object");
         assert!(matches!(not_an_object, GeometryError::NotAnObject), "{not_an_object:?}");
-        let not_a_geometry = Geometry::from_written_value(&Value::String("{\"a\": 1}".to_owned())).expect_err("no geometry");
+        let not_a_geometry = Geometry::from_geojson_text("{\"a\": 1}").expect_err("no geometry");
         assert!(matches!(not_a_geometry, GeometryError::MissingType), "{not_a_geometry:?}");
     }
 }

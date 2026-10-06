@@ -24,5 +24,6 @@ pub(crate) mod object_list_body;
 pub(crate) mod reified_instance;
 pub(crate) mod reified_member;
 pub(crate) mod simplified_member;
+pub(crate) mod structural_rule;
 pub(crate) mod typed_entity;
 pub(crate) mod value_body;

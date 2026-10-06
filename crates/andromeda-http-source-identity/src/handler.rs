@@ -19,8 +19,7 @@ use andromeda_http_extraction::{
     query::ValidatedQuery,
     tenant::TenantHeader,
 };
-use andromeda_http_response::{problem_response::ProblemResponse, single::NgsiLdResponse};
-use andromeda_ngsi_ld_render::response::ResponsePayload;
+use andromeda_http_response::{problem_response::ProblemResponse, rendered_response::RenderedResponse, single::NgsiLdResponse};
 use andromeda_ngsi_ld_request::empty::EmptyParams;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use axum::{
@@ -44,10 +43,9 @@ use chrono::Utc;
 ///
 /// # Errors
 ///
-/// Returns a [`ProblemResponse`] when the typed identity cannot be serialized
-/// for the renderer, when a document the request context names cannot be
-/// loaded or its wrapper cannot be hosted, or when the negotiated
-/// representation cannot be rendered.
+/// Returns a [`ProblemResponse`] when a document the request context names
+/// cannot be loaded or its wrapper cannot be hosted, or when the identity
+/// cannot be written in the negotiated representation.
 pub async fn get(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before anything else is resolved.
@@ -60,21 +58,19 @@ pub async fn get(
     ContextUrl(context): ContextUrl,
 ) -> Result<Response, ProblemResponse> {
     let tenant = TenantRef::from_header(tenant.into_inner());
-    let value = serde_json::to_value(state.identity_at(&tenant, Utc::now()))
-        .map_err(SourceIdentityError::from)
-        .map_err(|error| classify(&error).with_instance(uri.clone()))?;
+    let identity = state.identity_at(&tenant, Utc::now());
     let default_tenant = state
         .contexts()
         .resolve()
         .await
         .map_err(|error| classify_tenancy_error(&error).with_instance(uri.clone()))?;
-    let rendered = ResponseContextSource::new(&default_tenant.engine, &context, &default_tenant.context_hosting, &api_root)
+    let ready = ResponseContextSource::new(&default_tenant.engine, &context, &default_tenant.context_hosting, &api_root)
         .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
         .await
         .map_err(SourceIdentityError::from)
         .map_err(|error| classify(&error).with_instance(uri.clone()))?
-        .with_payload(ResponsePayload::Single(value))
-        .render()
+        .with_body(&identity);
+    let rendered = RenderedResponse::resource(ready)
         .map_err(SourceIdentityError::from)
         .map_err(|error| classify(&error).with_instance(uri))?;
     Ok(NgsiLdResponse::ok(rendered).into_response())

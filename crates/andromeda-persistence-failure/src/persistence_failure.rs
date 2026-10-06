@@ -106,13 +106,6 @@ impl PersistenceFailure {
         self
     }
 
-    /// Whether this failure is load or contention rather than a fault: the
-    /// operation did not persist and can run again unchanged.
-    #[must_use]
-    pub const fn is_backpressure(self) -> bool {
-        matches!(self, PersistenceFailure::Saturated | PersistenceFailure::RolledBack)
-    }
-
     /// Whether the operation can be sent again unchanged, and why, or whether
     /// the failure is a fault no retry mends.
     #[must_use]
@@ -143,30 +136,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn saturation_and_rollback_are_backpressure() {
-        assert!(PersistenceFailure::Saturated.is_backpressure());
-        assert!(PersistenceFailure::RolledBack.is_backpressure());
-    }
-
-    #[test]
-    fn every_other_failure_is_not_backpressure() {
-        for failure in [
-            PersistenceFailure::Unavailable,
-            PersistenceFailure::Misconfigured,
-            PersistenceFailure::ConstraintViolated,
-            PersistenceFailure::StatementRejected,
-            PersistenceFailure::RecordMissing,
-            PersistenceFailure::Undecodable,
-            PersistenceFailure::Unencodable,
-            PersistenceFailure::StatementUnbuildable,
-            PersistenceFailure::SchemaMismatch,
-            PersistenceFailure::ContractBroken,
-        ] {
-            assert!(!failure.is_backpressure(), "{failure}");
-        }
-    }
-
-    #[test]
     fn unavailability_is_retryable_as_an_unreachable_store() {
         assert_eq!(PersistenceFailure::Unavailable.retryability(), Retryability::Retryable(RetryCause::Unreachable));
         assert_eq!(PersistenceFailure::Saturated.retryability(), Retryability::Retryable(RetryCause::Saturated));
@@ -188,11 +157,6 @@ mod tests {
         ] {
             assert_eq!(failure.retryability(), Retryability::Fault, "{failure}");
         }
-    }
-
-    #[test]
-    fn unavailability_is_not_backpressure() {
-        assert!(!PersistenceFailure::Unavailable.is_backpressure());
     }
 
     #[test]

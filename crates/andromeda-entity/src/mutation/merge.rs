@@ -34,7 +34,8 @@ impl EntityService {
     /// `admitted` is `patch` as the clause 5.5.4 admission expanded it. That is
     /// the fragment the merge applies unless `format` or `lang` asks for it to
     /// be rewritten against the stored entity first: the rewritten fragment is
-    /// a different document, so `patch` is admitted again once rewritten.
+    /// a different document, so `patch` is admitted again once rewritten, and
+    /// the attributes `options.claimed` names are taken out of it.
     ///
     /// The merge is computed from a state read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
@@ -75,7 +76,14 @@ impl EntityService {
                 // the value urn:ngsi-ld:null". Clause 4.18 admits the sentinel as
                 // the whole value of `scope`, which clause 5.5.12 then reads as
                 // the deletion of that member.
-                self.admit_remaining_entity::<MergeEntity>(&adapted, context).await?.into_document()
+                let rewritten = self.admit_entity_write::<MergeEntity>(&adapted, context).await?;
+                // Clause 4.3.6.3: the fragment as written still names the
+                // attributes proxied registrations took, and the rewrite must
+                // not bring them back into this merge.
+                match rewritten.local_remainder(options.claimed) {
+                    Some(remainder) => remainder.into_document(),
+                    None => return Ok(()),
+                }
             } else {
                 admitted.into_document()
             };

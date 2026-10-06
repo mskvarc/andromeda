@@ -36,7 +36,8 @@ mod tests {
 
     #[test]
     fn a_present_geometry_binds_as_its_ewkb_buffer() {
-        let geometry = GeometryForm::from_compact_value(&serde_json::json!({ "type": "Point", "coordinates": [13.38, 52.52] })).expect("point parses");
+        let geometry =
+            GeometryForm::from_compact_text(&serde_json::json!({ "type": "Point", "coordinates": [13.38, 52.52] }).to_string()).expect("point parses");
         let bytes = geometry_bytes(Some(&geometry)).expect("encodes").expect("present");
         assert_eq!(bytes.first(), Some(&0x01), "PostGIS reads little-endian EWKB: {bytes:?}");
     }

@@ -39,9 +39,7 @@ impl RegistrationHttpClassify for RegistrationError {
             RegistrationError::StoreSaturated => ClassifiedReport::store_saturated(self.to_string()),
             RegistrationError::StoreUnavailable => ClassifiedReport::store_unavailable(self.to_string()),
             RegistrationError::Persistence(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("the registration store is unavailable")),
-            RegistrationError::Representation(_) | RegistrationError::Internal(_) => {
-                ClassifiedReport::internal(self, InternalFailureSummary::new("internal registration error"))
-            }
+            RegistrationError::Internal(_) => ClassifiedReport::internal(self, InternalFailureSummary::new("internal registration error")),
         }
     }
 }
@@ -101,10 +99,7 @@ pub(crate) fn internal_problem(detail: impl Display, summary: InternalFailureSum
 mod tests {
     use crate::error::RegistrationHttpClassify;
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryOverLimit, GeometryPositionLimit};
-    use andromeda_ngsi_ld_lexicon::{
-        identifier::{Identifier, IdentifierParseError},
-        uri::UriParseError,
-    };
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_registration::{
@@ -121,9 +116,7 @@ mod tests {
         let identifier = "urn:ngsi-ld:ContextSourceRegistration:1".parse::<Identifier>()?;
         for (error, expected) in [
             (
-                RegistrationError::Validation(RegistrationValidationReason::IdNotUri {
-                    source: IdentifierParseError::Malformed(UriParseError),
-                }),
+                RegistrationError::Validation(RegistrationValidationReason::MemberRequired { member: CsrMember::Endpoint }),
                 NgsiLdErrorType::BadRequestData,
             ),
             (

@@ -9,6 +9,7 @@
 use crate::{
     snapshot::{
         branch_schema::{promote_staging_schema, publish_empty_branch},
+        jsonb_value::optional_jsonb,
         mapper::row_to_snapshot,
         metadata_change::MetadataChange,
         persistence_error,
@@ -21,6 +22,7 @@ use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
+    key_value_pair::KeyValuePair,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
 };
@@ -145,7 +147,7 @@ pub(crate) async fn update_snapshot_metadata(
     lifetime: Option<&Iso8601Duration>,
     priority: Option<SnapshotPriority>,
     endpoint: MetadataChange<&Url>,
-    receiver_info: MetadataChange<serde_json::Value>,
+    receiver_info: MetadataChange<Vec<KeyValuePair>>,
     new_expires_at: Option<DateTime<Utc>>,
 ) -> Result<u64, SnapshotError> {
     let mut transaction = pool.begin().await.map_err(|error| persistence_error(error))?;
@@ -176,10 +178,10 @@ pub(crate) async fn update_snapshot_metadata(
     match receiver_info {
         MetadataChange::Unchanged => {}
         MetadataChange::Cleared => {
-            statement.value(Snapshots::ReceiverInfo, None::<serde_json::Value>);
+            statement.value(Snapshots::ReceiverInfo, SimpleExpr::Keyword(Keyword::Null));
         }
         MetadataChange::Set(receiver_info) => {
-            statement.value(Snapshots::ReceiverInfo, Some(receiver_info));
+            statement.value(Snapshots::ReceiverInfo, optional_jsonb(Some(receiver_info.as_slice()))?);
         }
     }
     statement.and_where(Expr::col(Snapshots::Id).eq(id.as_str()));
@@ -240,14 +242,8 @@ pub(crate) async fn update_status(
     let statement = Query::update()
         .table(SnapshotPreparation::Table)
         .value(SnapshotPreparation::Status, stored_status(status).code())
-        .value(
-            SnapshotPreparation::QueriesDetails,
-            Expr::val(queries_details.and_then(|d| serde_json::to_value(d).ok())),
-        )
-        .value(
-            SnapshotPreparation::TemporalQueriesDetails,
-            Expr::val(temporal_queries_details.and_then(|d| serde_json::to_value(d).ok())),
-        )
+        .value(SnapshotPreparation::QueriesDetails, optional_jsonb(queries_details)?)
+        .value(SnapshotPreparation::TemporalQueriesDetails, optional_jsonb(temporal_queries_details)?)
         .value(SnapshotPreparation::ModifiedAt, now())
         .value(SnapshotPreparation::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .value(SnapshotPreparation::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))

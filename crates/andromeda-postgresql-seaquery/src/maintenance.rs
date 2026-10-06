@@ -109,12 +109,6 @@ pub fn backend_pid() -> SimpleExpr {
     Func::cust(MaintenanceFunction::PgBackendPid).into()
 }
 
-/// `EXTRACT(EPOCH FROM clock_timestamp() - value)`.
-#[must_use]
-pub fn age_seconds(value: SimpleExpr) -> SimpleExpr {
-    Expr::cust_with_exprs("EXTRACT(EPOCH FROM (clock_timestamp() - $1))", [value])
-}
-
 /// Maintenance-related PostgreSQL functions absent from `SeaQuery`.
 #[derive(Clone, Copy, Iden)]
 enum MaintenanceFunction {

@@ -154,7 +154,7 @@ pub(crate) fn integer_of(instance: &Instance) -> Option<i64> {
     match instance.value() {
         FamilyValue::Property { values, .. } => match values.as_slice() {
             [ExpandedValue::Literal(literal)] => match literal.value() {
-                LiteralValue::Number(number) => number.to_json_value().as_i64(),
+                LiteralValue::Number(number) => number.to_string().parse::<i64>().ok(),
                 LiteralValue::String(_) | LiteralValue::Boolean(_) => None,
             },
             [ExpandedValue::Json(_) | ExpandedValue::Node(_) | ExpandedValue::List(_)] | [] | [_, _, ..] => None,

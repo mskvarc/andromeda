@@ -56,6 +56,7 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-context-commit",
+        "andromeda-json-literal",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-number",

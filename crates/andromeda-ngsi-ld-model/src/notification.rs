@@ -5,7 +5,7 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, value::RawValue};
+use serde_json::value::RawValue;
 use strum::{Display, EnumCount, EnumIter, EnumString};
 use typed_builder::TypedBuilder;
 
@@ -146,35 +146,6 @@ impl NotificationData {
     }
 }
 
-/// A Notification as a context source sends it to this broker (clause 5.3.1).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReceivedNotification {
-    /// The sender's notification identifier.
-    pub id: Identifier,
-    /// Always `Notification`.
-    #[serde(rename = "type")]
-    pub type_: NotificationType,
-    /// The subscription the notification answers, as the sender knows it.
-    pub subscription_id: Identifier,
-    /// When the sender generated the notification.
-    pub notified_at: DateTime<Utc>,
-    /// The entity representations it carries.
-    pub data: ReceivedNotificationData,
-}
-
-/// The `data` member of a received Notification (Table 5.3.1-1): "NGSI-LD
-/// Entity[] or `FeatureCollection`".
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(untagged)]
-pub enum ReceivedNotificationData {
-    /// The notified Entities, each in the format the sender wrote it in.
-    Entities(Vec<Value>),
-    /// The notified Entities as one clause 5.2.30 `GeoJSON`
-    /// `FeatureCollection`.
-    FeatureCollection(Map<String, Value>),
-}
-
 /// Trigger reason for CSR notifications (ETSI GS CIM 009 clause 5.3.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "camelCase")]
@@ -232,41 +203,10 @@ pub struct CsourceNotification<'a> {
     pub trigger_reason: CsrTriggerReason,
 }
 
-/// A `CsourceNotification` as a context source sends it to this broker
-/// (clause 5.3.2).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReceivedCsourceNotification {
-    /// The sender's notification identifier.
-    pub id: Identifier,
-    /// Always `ContextSourceNotification`.
-    #[serde(rename = "type")]
-    pub type_: CsourceNotificationType,
-    /// The subscription the notification answers, as the sender knows it.
-    pub subscription_id: Identifier,
-    /// When the sender generated the notification.
-    pub notified_at: DateTime<Utc>,
-    /// The registration representations it carries.
-    #[serde(default)]
-    pub data: Vec<Value>,
-    /// Why the notification fired.
-    #[serde(default)]
-    pub trigger_reason: Option<CsrTriggerReason>,
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
-        notification::{
-            CsourceNotification,
-            CsrTriggerReason,
-            Notification,
-            NotificationData,
-            NotificationTrigger,
-            ReceivedNotification,
-            ReceivedNotificationData,
-            effective_notification_triggers,
-        },
+        notification::{CsourceNotification, CsrTriggerReason, Notification, NotificationData, NotificationTrigger, effective_notification_triggers},
         registration::ContextSourceRegistration,
     };
     use andromeda_json_literal::JsonLiteral;
@@ -377,19 +317,6 @@ mod tests {
         pretty_assertions::assert_eq!(rendered["data"][0]["id"], json!("urn:ngsi-ld:ContextSourceRegistration:1"));
     }
 
-    #[test]
-    fn a_received_notification_rejects_any_other_type_token() {
-        let error = serde_json::from_value::<ReceivedNotification>(json!({
-            "id": "urn:ngsi-ld:Notification:1",
-            "type": "CsourceNotification",
-            "subscriptionId": "urn:ngsi-ld:Subscription:1",
-            "notifiedAt": "2024-06-15T12:30:00Z",
-            "data": []
-        }))
-        .expect_err("a foreign discriminator is rejected");
-        assert!(error.to_string().contains("invalid value"), "{error}");
-    }
-
     /// The written `data` is carried into the notification byte for byte, an
     /// exact decimal included.
     #[test]
@@ -405,20 +332,5 @@ mod tests {
             .build();
         let encoded = serde_json::to_string(&notification).expect("notification JSON");
         assert!(encoded.contains("0.100000000000000005"), "{encoded}");
-    }
-
-    /// Table 5.3.1-1: received `data` is an Entity array or a
-    /// `FeatureCollection`, and each shape reads back as the variant it was
-    /// written as.
-    #[test]
-    fn received_notification_data_is_an_entity_array_or_a_feature_collection() {
-        let entities: ReceivedNotificationData = serde_json::from_value(json!([{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"}])).expect("an Entity array");
-        assert!(
-            matches!(entities, ReceivedNotificationData::Entities(ref list) if list.len() == 1),
-            "{entities:?}"
-        );
-
-        let collection: ReceivedNotificationData = serde_json::from_value(json!({"type": "FeatureCollection", "features": []})).expect("a FeatureCollection");
-        assert!(matches!(collection, ReceivedNotificationData::FeatureCollection(ref map) if map.get("type") == Some(&json!("FeatureCollection"))));
     }
 }

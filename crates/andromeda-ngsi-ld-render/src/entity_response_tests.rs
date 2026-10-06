@@ -1,45 +1,35 @@
-//! The typed entity response writes, for every representation and option,
-//! exactly the body the document pipeline renders from the same entity with
-//! its Relationship targets decoded by the document rule of
-//! [`crate::uri_decoding`]: the same JSON once parsed, member order aside (IETF
-//! RFC 8259 section 4 makes it insignificant). The walk decodes each target as
-//! it writes it, so the two agree only if both decode exactly the same members,
-//! in every representation -- the simplified one included, whose document keeps
-//! nothing that would tell a target apart.
+//! The typed entity response over a corpus of entities: what it writes for
+//! every representation, `@context` carrier, `lang` filter, structural rule
+//! and requested version, and what it says about itself in its head.
 //!
-//! Under a clause 4.3.6.8 version fallback the typed walk applies the fallback
-//! tables as it writes, and the document pipeline applies the same tables to
-//! the finished document; the two agree on every entity whose members both
-//! readings treat alike. Where the typed walk reads a fallback the document
-//! reading cannot -- sub-attributes, nested Linked Entities, `showChanges`
-//! members -- the expectation is asserted on its own
-//! ([`crate::entity_response_fallback_tests`]).
+//! The expectations are stated outright rather than taken from a second
+//! reading of the same entity: clause 6.3.6 for where the `@context` goes,
+//! clause 4.3.6.8 for the outcome of a requested version, clause 4.6.2 for the
+//! Relationship targets and clause 4.5.16 for the `GeoJSON` envelope. The
+//! version fallback tables themselves are asserted in
+//! [`crate::entity_response_fallback_tests`].
 
 use crate::{
     context::ResponseContext,
-    entity::EntityRenderer,
     entity_response::{EntityBody, EntityPayload},
     geometry_selection::GeometrySelection,
-    response::{ResponseHead, ResponsePayload, ResponseRenderer, enveloped},
+    response::{ResponseHead, ResponseRenderer},
     structural_projection::StructuralProjection,
-    uri_decoding::decode_percent_encoded_uris,
-    version::{adaptation::VersionAdaptation, renderer::VersionRenderer},
+    version::adaptation::VersionAdaptation,
 };
 use andromeda_http_headers::{language::LanguageFilter, media_type::ResponseMediaType};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
+use andromeda_json_literal::JsonLiteral;
+use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_model::{
     attribute::instance::{Attribute, AttributeValue},
     entity::Entity,
 };
-use andromeda_ngsi_ld_query::{
-    dataset::DatasetSelector,
-    projection::{compiled::Projection, term::ProjectionTerm},
-};
+use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use iri_rs::IriBuf;
 use serde_json::{Value, json};
 
-/// The entities every combination is rendered over: each attribute family in
+/// The entities every combination is written over: each attribute family in
 /// every shape it takes, the members carried verbatim, percent-encoded
 /// Relationship targets in every place the presentation-boundary decoding
 /// reaches, client values shaped like Relationships, an entity typed like a
@@ -200,6 +190,11 @@ fn entities() -> Vec<Entity> {
         .collect()
 }
 
+/// The corpus entity named `id`.
+fn entity(id: &str) -> Entity {
+    entities().into_iter().find(|entity| entity.id.as_str() == id).expect("a corpus entity")
+}
+
 /// A projection keeping the given structural members only.
 fn pick(terms: Vec<ProjectionTerm>) -> Projection {
     Projection { pick: terms, omit: Vec::new() }
@@ -235,51 +230,51 @@ fn language_filters() -> Vec<Option<LanguageFilter>> {
     ]
 }
 
+/// The context both `@context` carriers hold: an embedded body or a `Link`.
+fn embedded() -> ResponseContext {
+    ResponseContext::Body(
+        JsonLiteral::admit(
+            &json!([
+                "https://example.org/ctx.jsonld",
+                "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"
+            ])
+            .to_string(),
+        )
+        .expect("an admissible literal"),
+    )
+}
+
 /// The `@context` carriers of clause 6.3.6, with the media type that uses
 /// each.
 fn carriers() -> Vec<(ResponseMediaType, ResponseContext)> {
     let link = || ResponseContext::Link(IriBuf::new("https://example.org/ctx.jsonld".to_owned()).expect("an IRI"));
-    let body = || {
-        ResponseContext::Body(json!([
-            "https://example.org/ctx.jsonld",
-            "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"
-        ]))
-    };
     vec![
         (ResponseMediaType::Json, link()),
-        (ResponseMediaType::JsonLd, body()),
-        (ResponseMediaType::GeoJson, body()),
+        (ResponseMediaType::JsonLd, embedded()),
+        (ResponseMediaType::GeoJson, embedded()),
         (ResponseMediaType::GeoJson, link()),
     ]
 }
 
-/// The clause 4.5.16.1 selections exercised: property name and `datasetId`
-/// selectors.
-fn selections() -> Vec<(Option<AttributeName>, Vec<DatasetSelector>)> {
-    let name = |raw: &str| Some(raw.parse::<AttributeName>().expect("an attribute name"));
-    let selectors = |raw: &[&str]| {
-        raw.iter()
-            .map(|selector| selector.parse().expect("a selector"))
-            .collect::<Vec<DatasetSelector>>()
-    };
-    vec![
-        (None, Vec::new()),
-        (None, selectors(&["urn:ngsi-ld:Dataset:a"])),
-        (None, selectors(&["urn:ngsi-ld:Dataset:b", "@none"])),
-        (None, selectors(&["urn:ngsi-ld:Dataset:only"])),
-        (name("observationSpace"), Vec::new()),
-        (name("observationSpace"), selectors(&["urn:ngsi-ld:Dataset:z"])),
-        (name("position"), Vec::new()),
-        (name("track"), Vec::new()),
-        (name("conciseGeometry"), Vec::new()),
-        (name("stamped"), Vec::new()),
-        (name("area"), Vec::new()),
-        (name("rawArray"), Vec::new()),
-    ]
+/// Every representation a response is written in.
+const FORMATS: [ResponseFormat; 4] = [
+    ResponseFormat::Normalized,
+    ResponseFormat::Concise,
+    ResponseFormat::KeyValues,
+    ResponseFormat::Simplified,
+];
+
+/// Whether one entity or a collection is answered.
+#[derive(Debug, Clone, Copy)]
+enum Shape {
+    /// One entity.
+    Single,
+    /// A collection.
+    Collection,
 }
 
-/// One rendering configuration.
-struct Rendering<'a> {
+/// One response configuration.
+struct Writing<'a> {
     /// The media type and context carrier.
     carrier: &'a (ResponseMediaType, ResponseContext),
     /// The representation.
@@ -292,206 +287,347 @@ struct Rendering<'a> {
     selection: GeometrySelection<'a>,
 }
 
-impl Rendering<'_> {
-    /// The renderer this configuration starts from.
-    fn renderer(&self) -> ResponseRenderer<'_> {
-        ResponseRenderer::new(self.carrier.0, self.carrier.1.clone()) // clone: each rendering owns its context
-            .with_format(self.format)
-            .with_requested_version(self.version)
-            .with_geometry_selection(self.selection)
+impl<'a> Writing<'a> {
+    /// The plain configuration of `carrier` in `format`.
+    fn of(carrier: &'a (ResponseMediaType, ResponseContext), format: ResponseFormat) -> Writing<'a> {
+        Writing {
+            carrier,
+            format,
+            language_filter: None,
+            version: None,
+            selection: GeometrySelection::default(),
+        }
     }
 
-    /// The body and head the document pipeline renders: each entity's
-    /// normalized document has its targets decoded by the document rule, is
-    /// read back, is rendered in the representation asked for, is adapted to
-    /// the requested version by the document reading of the fallback tables,
-    /// and is put in the pipeline's envelope. The pipeline's own decoding is
-    /// not run again over a document whose targets are decoded already: a
-    /// concise or simplified document no longer tells a target from a value.
-    fn by_document(&self, bodies: &[(&Entity, Option<StructuralProjection<'_>>)], shape: Shape) -> (Value, ResponseHead) {
-        let render = |(entity, projection): &(&Entity, Option<StructuralProjection<'_>>)| {
-            let mut normalized = EntityRenderer::new(entity).render().expect("the document reading renders");
-            decode_percent_encoded_uris(&mut normalized);
-            let decoded: Entity = serde_json::from_value(normalized).expect("the decoded document reads back");
-            let document = EntityRenderer::new(&decoded)
-                .with_optional_language_filter(self.language_filter)
-                .with_mode(self.format)
-                .with_optional_structural_projection(*projection)
-                .render()
-                .expect("the document reading renders");
-            match self.version {
-                Some(version) => VersionRenderer::new(version).with_format(self.format).with_payload(document).render().0,
-                None => document,
-            }
-        };
-        let payload = match shape {
-            Shape::Single => ResponsePayload::Single(bodies.first().map(render).expect("one entity")),
-            Shape::Collection => ResponsePayload::Collection(bodies.iter().map(render).collect()),
-        };
-        let shape = payload.envelope_shape(self.carrier.0);
-        let adaptation = self.version.map_or(VersionAdaptation::None, VersionAdaptation::requested);
-        let rendered = enveloped(self.renderer(), shape, payload.into_value(), adaptation).expect("the document pipeline renders");
-        (rendered.value, rendered.head)
-    }
-
-    /// The body and head the typed pipeline writes.
-    fn typed<'b>(&'b self, bodies: &[(&'b Entity, Option<StructuralProjection<'b>>)], shape: Shape) -> (Value, ResponseHead) {
+    /// The body and head written for `bodies`.
+    fn write<'b>(&'b self, bodies: &[(&'b Entity, Option<StructuralProjection<'b>>)], shape: Shape) -> (Value, ResponseHead) {
         let body = |&(entity, projection): &(&'b Entity, Option<StructuralProjection<'b>>)| EntityBody::new(entity, projection);
         let payload = match shape {
             Shape::Single => EntityPayload::Single(bodies.first().map(body).expect("one entity")),
             Shape::Collection => EntityPayload::Collection(bodies.iter().map(body).collect()),
         };
         let mut written = Vec::new();
-        let head = self
-            .renderer()
+        let head = ResponseRenderer::new(self.carrier.0, self.carrier.1.clone()) // clone: each writing owns its context
+            .with_format(self.format)
+            .with_requested_version(self.version)
+            .with_geometry_selection(self.selection)
             .with_entities(payload, self.language_filter)
             .render_into(&mut written)
-            .expect("the typed pipeline writes");
+            .expect("the entities are written");
         (serde_json::from_slice(&written).expect("the body is JSON"), head)
     }
+
+    /// The body written for one entity.
+    fn single(&self, entity: &Entity) -> (Value, ResponseHead) {
+        self.write(&[(entity, None)], Shape::Single)
+    }
 }
 
-/// Whether one entity or a collection is answered.
-#[derive(Debug, Clone, Copy)]
-enum Shape {
-    /// One entity.
-    Single,
-    /// A collection.
-    Collection,
-}
-
-/// Assert both pipelines agree on one configuration.
-fn assert_agree<'b>(rendering: &'b Rendering<'b>, bodies: &[(&'b Entity, Option<StructuralProjection<'b>>)], shape: Shape, label: &str) {
-    let (expected, expected_head) = rendering.by_document(bodies, shape);
-    let (written, head) = rendering.typed(bodies, shape);
-    pretty_assertions::assert_eq!(written, expected, "{label}");
-    pretty_assertions::assert_eq!(head, expected_head, "{label}");
-}
-
+/// Every entity is written, alone and as one collection, in every
+/// representation under every carrier, `lang` filter and structural rule, and
+/// each body is the JSON the shape asks for.
 #[test]
-fn every_entity_renders_alike_in_every_representation_and_option() {
+fn every_entity_is_written_in_every_representation_and_option() {
     let entities = entities();
-    let selections = selections();
     for carrier in &carriers() {
-        let selections: &[_] = if carrier.0 == ResponseMediaType::GeoJson {
-            &selections
-        } else {
-            &selections[..1]
-        };
-        for (property, selectors) in selections {
-            for format in [
-                ResponseFormat::Normalized,
-                ResponseFormat::Concise,
-                ResponseFormat::KeyValues,
-                ResponseFormat::Simplified,
-            ] {
-                assert_every_option_agrees(&entities, carrier, format, GeometrySelection::new(property.as_ref(), selectors));
+        for format in FORMATS {
+            for filter in &language_filters() {
+                for projection in &projections() {
+                    let writing = Writing {
+                        language_filter: filter.as_ref(),
+                        ..Writing::of(carrier, format)
+                    };
+                    let structural = projection.as_ref().map(StructuralProjection::from);
+                    for entity in &entities {
+                        let (body, head) = writing.write(&[(entity, structural)], Shape::Single);
+                        let label = format!("{} as {:?} {format:?} lang={filter:?} projection={projection:?}", entity.id, carrier.0);
+                        match carrier.0 {
+                            ResponseMediaType::GeoJson => pretty_assertions::assert_eq!(body["type"], "Feature", "{label}"),
+                            ResponseMediaType::Json | ResponseMediaType::JsonLd => assert!(body.is_object(), "{label}: {body}"),
+                        }
+                        pretty_assertions::assert_eq!(head.media_type, carrier.0, "{label}");
+                    }
+                    let collection: Vec<_> = entities.iter().map(|entity| (entity, structural)).collect();
+                    let (body, _) = writing.write(&collection, Shape::Collection);
+                    let label = format!("collection as {:?} {format:?} lang={filter:?} projection={projection:?}", carrier.0);
+                    match carrier.0 {
+                        ResponseMediaType::GeoJson => pretty_assertions::assert_eq!(body["type"], "FeatureCollection", "{label}"),
+                        ResponseMediaType::Json | ResponseMediaType::JsonLd => {
+                            pretty_assertions::assert_eq!(body.as_array().map(Vec::len), Some(entities.len()), "{label}");
+                        }
+                    }
+                }
             }
         }
     }
 }
 
-/// Assert both pipelines agree on every entity, alone and as one collection,
-/// under every `lang` filter and projection, in one carrier, representation and
-/// geometry selection.
-fn assert_every_option_agrees(entities: &[Entity], carrier: &(ResponseMediaType, ResponseContext), format: ResponseFormat, selection: GeometrySelection<'_>) {
-    for filter in &language_filters() {
-        for projection in &projections() {
-            let rendering = Rendering {
-                carrier,
-                format,
-                language_filter: filter.as_ref(),
-                version: None,
-                selection,
-            };
-            let structural = projection.as_ref().map(StructuralProjection::from);
-            for entity in entities {
-                let label = format!(
-                    "{} as {:?} {format:?} lang={filter:?} projection={projection:?} selection={selection:?}",
-                    entity.id, carrier.0
-                );
-                assert_agree(&rendering, &[(entity, structural)], Shape::Single, &label);
-            }
-            let collection: Vec<_> = entities.iter().map(|entity| (entity, structural)).collect();
-            let label = format!(
-                "collection as {:?} {format:?} lang={filter:?} projection={projection:?} selection={selection:?}",
-                carrier.0
-            );
-            assert_agree(&rendering, &collection, Shape::Collection, &label);
-        }
-    }
-}
-
-/// A clause 4.5.23 flat join: each entity of one collection narrowed by the
-/// rule that governs it.
+/// Clause 6.3.6: an `application/ld+json` body embeds its `@context`, first, on
+/// the entity or on every entity of a collection; an `application/json` body
+/// embeds none and advertises it in one `Link`; a `GeoJSON` body embeds it on
+/// the Feature or the `FeatureCollection` (clause 4.5.16) unless the `Link`
+/// carries it.
 #[test]
-fn a_collection_mixing_projections_renders_alike() {
+fn the_context_is_embedded_or_advertised_by_its_carrier() {
     let entities = entities();
-    let projections = projections();
-    let carriers = carriers();
-    for carrier in &carriers {
-        for format in [ResponseFormat::Normalized, ResponseFormat::Concise, ResponseFormat::Simplified] {
-            let rendering = Rendering {
-                carrier,
-                format,
-                language_filter: None,
-                version: None,
-                selection: GeometrySelection::default(),
-            };
-            let collection: Vec<_> = entities
-                .iter()
-                .zip(projections.iter().cycle())
-                .map(|(entity, projection)| (entity, projection.as_ref().map(StructuralProjection::from)))
-                .collect();
-            assert_agree(&rendering, &collection, Shape::Collection, &format!("{:?} {format:?}", carrier.0));
+    let building = &entities[1];
+    for carrier in &carriers() {
+        let writing = Writing::of(carrier, ResponseFormat::Normalized);
+        let (single, head) = writing.single(building);
+        let (collection, _) = writing.write(&[(building, None), (building, None)], Shape::Collection);
+        match &carrier.1 {
+            ResponseContext::Body(_) => {
+                assert!(single.get("@context").is_some(), "{:?}: {single}", carrier.0);
+                pretty_assertions::assert_eq!(head.context_link, None);
+                match carrier.0 {
+                    ResponseMediaType::GeoJson => assert!(collection.get("@context").is_some(), "{collection}"),
+                    ResponseMediaType::Json | ResponseMediaType::JsonLd => {
+                        let items = collection.as_array().expect("an array");
+                        assert!(items.iter().all(|item| item.get("@context").is_some()), "{collection}");
+                    }
+                }
+            }
+            ResponseContext::Link(target) => {
+                assert!(single.get("@context").is_none(), "{single}");
+                pretty_assertions::assert_eq!(head.context_link.as_ref(), Some(target));
+            }
+            ResponseContext::Absent => {
+                assert!(single.get("@context").is_none(), "{single}");
+                pretty_assertions::assert_eq!(head.context_link, None);
+            }
         }
     }
 }
 
-/// The corpus entities both readings of the fallback tables treat alike: every
-/// one but those carrying sub-attributes, a nested Linked Entity or
-/// `showChanges` members, which only the typed walk adapts, and the one whose
-/// attribute holds two default instances, of which the simplified document
-/// reading keeps the last and every typed representation the first.
-fn fallback_entities() -> Vec<Entity> {
-    let typed_only = [
-        "urn:ngsi-ld:Building:nested",
-        "urn:ngsi-ld:Building:changes",
-        "urn:ngsi-ld:Building:joined",
-        "urn:ngsi-ld:Building:defaults",
-    ];
-    entities().into_iter().filter(|entity| !typed_only.contains(&entity.id.as_str())).collect()
+/// Clause 6.3.6: the `@context` member of an `application/ld+json` entity is a
+/// member of the entity object itself, next to its own members.
+#[test]
+fn an_embedded_context_is_a_member_of_the_entity_object() {
+    let carrier = (ResponseMediaType::JsonLd, embedded());
+    let entity = entity("urn:ngsi-ld:Building:minimal");
+    let mut written = Vec::new();
+    ResponseRenderer::new(carrier.0, carrier.1)
+        .with_entities(EntityPayload::Single(EntityBody::new(&entity, None)), None)
+        .render_into(&mut written)
+        .expect("the entity is written");
+    let body: Value = serde_json::from_slice(&written).expect("the body is JSON");
+    pretty_assertions::assert_eq!(body["id"], "urn:ngsi-ld:Building:minimal");
+    pretty_assertions::assert_eq!(body["@context"][0], "https://example.org/ctx.jsonld");
+}
+
+/// The raw text one payload is written as under the embedded carrier of
+/// `media_type`.
+fn embedded_text(media_type: ResponseMediaType, format: ResponseFormat, payload: EntityPayload<'_>) -> String {
+    let mut written = Vec::new();
+    ResponseRenderer::new(media_type, embedded())
+        .with_format(format)
+        .with_entities(payload, None)
+        .render_into(&mut written)
+        .expect("the entities are written");
+    String::from_utf8(written).expect("a JSON body is UTF-8")
+}
+
+/// Clause 6.3.6: `@context` is the first member of an entity in every
+/// representation, of a `GeoJSON` Feature and of a `FeatureCollection`, and
+/// of every item of an entity array.
+#[test]
+fn a_response_context_member_comes_first_in_every_entity_body() {
+    let entity = entity("urn:ngsi-ld:Building:minimal");
+    for format in FORMATS {
+        let single = embedded_text(ResponseMediaType::JsonLd, format, EntityPayload::Single(EntityBody::new(&entity, None)));
+        assert!(single.starts_with(r#"{"@context":"#), "{format:?}: {single}");
+        let collection = embedded_text(
+            ResponseMediaType::JsonLd,
+            format,
+            EntityPayload::Collection(vec![EntityBody::new(&entity, None), EntityBody::new(&entity, None)]),
+        );
+        assert!(collection.starts_with(r#"[{"@context":"#), "{format:?}: {collection}");
+        assert!(collection.contains(r#"},{"@context":"#), "{format:?}: {collection}");
+        let feature = embedded_text(ResponseMediaType::GeoJson, format, EntityPayload::Single(EntityBody::new(&entity, None)));
+        assert!(feature.starts_with(r#"{"@context":"#), "{format:?}: {feature}");
+        let features = embedded_text(
+            ResponseMediaType::GeoJson,
+            format,
+            EntityPayload::Collection(vec![EntityBody::new(&entity, None)]),
+        );
+        assert!(features.starts_with(r#"{"@context":"#), "{format:?}: {features}");
+    }
 }
 
 /// Clause 4.3.6.8: a conformant or newer version leaves the body as it is
-/// (200), an older one adapts it (203); both agree with the document pipeline
-/// at every version the fallback tables name, in every representation.
+/// (200), an older one adapts it (203), at every version the fallback tables
+/// name, in every representation.
 #[test]
-fn a_requested_version_renders_alike() {
-    let entities = fallback_entities();
+fn a_requested_version_decides_the_outcome_and_a_current_one_changes_nothing() {
+    let entities = entities();
     let carriers = carriers();
     for carrier in &carriers {
         for version in SpecVersion::SUPPORTED {
-            for format in [
-                ResponseFormat::Normalized,
-                ResponseFormat::Concise,
-                ResponseFormat::KeyValues,
-                ResponseFormat::Simplified,
-            ] {
-                let rendering = Rendering {
-                    carrier,
-                    format,
-                    language_filter: None,
+            for format in FORMATS {
+                let adapted = Writing {
                     version: Some(version),
-                    selection: GeometrySelection::default(),
+                    ..Writing::of(carrier, format)
                 };
+                let plain = Writing::of(carrier, format);
                 for entity in &entities {
-                    assert_agree(&rendering, &[(entity, None)], Shape::Single, &format!("{} {version:?} {format:?}", entity.id));
+                    let (body, head) = adapted.single(entity);
+                    pretty_assertions::assert_eq!(
+                        head.version_adaptation,
+                        VersionAdaptation::requested(version),
+                        "{} {version:?} {format:?}",
+                        entity.id
+                    );
+                    if head.version_adaptation == VersionAdaptation::Unchanged {
+                        pretty_assertions::assert_eq!(body, plain.single(entity).0, "{} {version:?} {format:?}", entity.id);
+                    }
                 }
-                let collection: Vec<_> = entities.iter().map(|entity| (entity, None)).collect();
-                assert_agree(&rendering, &collection, Shape::Collection, &format!("collection {version:?} {format:?}"));
             }
         }
+    }
+}
+
+/// Clause 4.6.2: the percent-encoded Relationship targets are written
+/// decoded in every representation, and a client's own value -- a Property's
+/// value, a `JsonProperty`'s `json` -- is never decoded, whatever it holds.
+#[test]
+fn relationship_targets_are_decoded_in_every_representation_and_values_are_not() {
+    let families = entity("urn:ngsi-ld:Building:families");
+    let nested = entity("urn:ngsi-ld:Building:nested");
+    let carrier = (ResponseMediaType::Json, ResponseContext::Absent);
+    for format in FORMATS {
+        let writing = Writing::of(&carrier, format);
+        let (body, _) = writing.single(&families);
+        let text = body.to_string();
+        assert!(text.contains("urn:ngsi-ld:Person:x:1"), "{format:?}: {text}");
+        assert!(!text.contains("Person:x%3A1"), "{format:?}: {text}");
+        assert!(text.contains("urn%3Ajson%3Akept"), "{format:?} keeps the JsonProperty's own value: {text}");
+        let (body, _) = writing.single(&nested);
+        assert!(body.to_string().contains("urn%3Ain%3Avalue"), "{format:?} keeps a Property's own value: {body}");
+    }
+}
+
+/// Clause 4.6.2: only the targets of a Relationship and a `ListRelationship`
+/// are decoded, in both spellings of an `objectList` member.
+#[test]
+fn list_relationship_targets_are_decoded_in_both_object_list_spellings() {
+    let carrier = (ResponseMediaType::Json, ResponseContext::Absent);
+    let (normalized, _) = Writing::of(&carrier, ResponseFormat::Normalized).single(&entity("urn:ngsi-ld:Building:families"));
+    pretty_assertions::assert_eq!(
+        normalized["stops"]["objectList"],
+        json!([{"object": "urn:ngsi-ld:Stop:x:1"}, {"object": "urn:ngsi-ld:Stop:2"}])
+    );
+    let (simplified, _) = Writing::of(&carrier, ResponseFormat::Simplified).single(&entity("urn:ngsi-ld:Building:families"));
+    pretty_assertions::assert_eq!(simplified["stops"], json!(["urn:ngsi-ld:Stop:x:1", "urn:ngsi-ld:Stop:2"]));
+}
+
+/// An entity typed like a Relationship family is still an entity: its own
+/// members are values, and are not decoded.
+#[test]
+fn an_entity_typed_like_a_relationship_family_keeps_its_values() {
+    let carrier = (ResponseMediaType::Json, ResponseContext::Absent);
+    let (body, _) = Writing::of(&carrier, ResponseFormat::Normalized).single(&entity("urn:ngsi-ld:Relationship:typed-like-a-family"));
+    pretty_assertions::assert_eq!(body["object"]["value"], "urn%3Akept%3Aas%3Aa%3Avalue");
+}
+
+/// Clause 4.21: a structural rule narrows `id`, `type` and `scope` entity by
+/// entity, so a collection mixing rules is written by each entity's own.
+#[test]
+fn a_collection_mixing_projections_writes_each_entity_by_its_own_rule() {
+    let carrier = (ResponseMediaType::Json, ResponseContext::Absent);
+    let families = entity("urn:ngsi-ld:Building:families");
+    let omitted = omit(vec![ProjectionTerm::Type, ProjectionTerm::Scope]);
+    let kept = pick(vec![ProjectionTerm::Id, ProjectionTerm::Type]);
+    let bodies = [
+        (&families, Some(StructuralProjection::from(&omitted))),
+        (&families, Some(StructuralProjection::from(&kept))),
+        (&families, None),
+    ];
+    let (body, _) = Writing::of(&carrier, ResponseFormat::Normalized).write(&bodies, Shape::Collection);
+    let items = body.as_array().expect("an array");
+    assert!(items[0].get("type").is_none() && items[0].get("scope").is_none(), "{}", items[0]);
+    assert!(items[0].get("name").is_some(), "{}", items[0]);
+    assert!(items[1].get("type").is_some() && items[1].get("scope").is_none(), "{}", items[1]);
+    assert!(items[2].get("type").is_some() && items[2].get("scope").is_some(), "{}", items[2]);
+}
+
+/// Clause 4.15: a `lang` filter negotiates every `LanguageProperty`, and a
+/// filter that matches no language leaves the `@none` entry.
+#[test]
+fn a_lang_filter_negotiates_language_properties() {
+    let carrier = (ResponseMediaType::Json, ResponseContext::Absent);
+    let filter = LanguageFilter::parse("fr").expect("a filter");
+    let writing = Writing {
+        language_filter: Some(&filter),
+        ..Writing::of(&carrier, ResponseFormat::Normalized)
+    };
+    let (body, _) = writing.single(&entity("urn:ngsi-ld:Building:families"));
+    let text = body["street"].to_string();
+    assert!(text.contains("Grand Place") && !text.contains("Grote Markt"), "{text}");
+}
+
+/// Clause 4.5.16.1: a `GeoJSON` Feature takes the geometry of the property the
+/// request named.
+#[test]
+fn a_geojson_feature_takes_the_geometry_of_the_named_property() {
+    let carrier = (ResponseMediaType::GeoJson, embedded());
+    let property = "observationSpace".parse().expect("an attribute name");
+    let writing = Writing {
+        selection: GeometrySelection::new(Some(&property), &[]),
+        ..Writing::of(&carrier, ResponseFormat::Normalized)
+    };
+    let (body, _) = writing.single(&entity("urn:ngsi-ld:Building:datasets"));
+    pretty_assertions::assert_eq!(body["type"], "Feature");
+    pretty_assertions::assert_eq!(body["geometry"]["type"], "LineString");
+}
+
+/// Clause 4.5.2.2: the `entityIdSealed` and `entityTypeSealed` members of an
+/// `ngsildproof` Property are written bare, beside its `value`, in the
+/// normalized and the concise representations alike; the concise one does not
+/// collapse an instance that carries them.
+#[test]
+fn the_seals_of_an_ngsildproof_property_are_written_bare_in_both_reified_representations() {
+    let sealed: Entity = serde_json::from_value(json!({
+        "id": "urn:ngsi-ld:Store:002",
+        "type": "Store",
+        "address": {
+            "type": "Property",
+            "value": "x",
+            "ngsildproof": {
+                "type": "Property",
+                "value": {"type": "DataIntegrityProof"},
+                "entityIdSealed": "urn:ngsi-ld:Store:002",
+                "entityTypeSealed": "Store"
+            }
+        }
+    }))
+    .expect("a sealed entity decodes");
+    let carrier = (ResponseMediaType::Json, ResponseContext::Absent);
+    for format in [ResponseFormat::Normalized, ResponseFormat::Concise] {
+        let (body, _) = Writing::of(&carrier, format).single(&sealed);
+        let proof = &body["address"]["ngsildproof"];
+        pretty_assertions::assert_eq!(proof["entityIdSealed"], "urn:ngsi-ld:Store:002", "{format:?}: {body}");
+        pretty_assertions::assert_eq!(proof["entityTypeSealed"], "Store", "{format:?}: {body}");
+        pretty_assertions::assert_eq!(proof["value"]["type"], "DataIntegrityProof", "{format:?}: {body}");
+    }
+}
+
+/// Clauses 4.5.21.2 and 4.7.3: the `unitCode` of a `ListProperty` and of a
+/// `GeoProperty` is written as the bare member of the instance, in the
+/// normalized and the concise representations alike.
+#[test]
+fn the_unit_code_of_a_list_property_and_a_geo_property_is_written_as_their_own_member() {
+    let measured: Entity = serde_json::from_value(json!({
+        "id": "urn:ngsi-ld:Building:measured",
+        "type": "Building",
+        "depths": {"type": "ListProperty", "valueList": [300, 120], "unitCode": "MMT"},
+        "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.0, 52.0]}, "unitCode": "MMT"}
+    }))
+    .expect("an entity with units decodes");
+    let carrier = (ResponseMediaType::Json, ResponseContext::Absent);
+    for format in [ResponseFormat::Normalized, ResponseFormat::Concise] {
+        let (body, _) = Writing::of(&carrier, format).single(&measured);
+        pretty_assertions::assert_eq!(body["depths"]["unitCode"], "MMT", "{format:?}: {body}");
+        pretty_assertions::assert_eq!(body["location"]["unitCode"], "MMT", "{format:?}: {body}");
     }
 }
 

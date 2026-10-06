@@ -1,35 +1,28 @@
-//! Rendering the temporal evolution of one entity over a compiled window.
+//! Reading the temporal evolution of one entity over a compiled window.
 //!
-//! Three callers need exactly this and nothing more: the query endpoint renders
-//! it once per matching identifier, the clause 4.5.23 join renders it once per
-//! Linked Entity it resolves, and both must produce byte-identical
-//! representations for the same entity over the same window. Keeping the
-//! pipeline — history read, representation build, JSON-LD compaction, array
-//! normalisation, `temporalValues` projection — in one place is what
-//! guarantees that.
+//! Three callers need exactly this and nothing more: the query endpoint reads
+//! it once per matching identifier, the clause 4.5.23 join reads it once per
+//! Linked Entity it resolves, and both must produce the same history for the
+//! same entity over the same window. Keeping the pipeline -- history read and
+//! representation build -- in one place is what guarantees that. What is read
+//! is the history in its expanded form (or, for an aggregated representation,
+//! the aggregates); it is compacted under the request context only once every
+//! holder's part has been gathered (clause 5.7.3).
 //!
 //! The window arrives already compiled rather than as request parameters, so a
-//! caller that renders many entities compiles once instead of once per entity.
+//! caller that reads many entities compiles once instead of once per entity.
 
-use crate::{error::TemporalError, service::TemporalService, temporal_compaction::TemporalCompaction, temporal_invariant::TemporalInvariant};
+use crate::{error::TemporalError, grouping_depth::grouping_depth, service::TemporalService, temporal_invariant::TemporalInvariant};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_linked_retrieval::{edge::LinkedEdge, representation::LinkedRepresentation};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier, temporal_format::TemporalFormat};
-use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
+use andromeda_ngsi_ld_compaction::{aggregated_entity::aggregated_entity, entity_compactor::EntityCompactor};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
-use andromeda_ngsi_ld_render::{
-    structural_projection::StructuralProjection,
-    temporal::{
-        array_normalizer::TemporalArrayNormalizer,
-        entity::TemporalEntityRenderer,
-        history_row::TimeRange,
-        page_cut::{PageCut, largest_simultaneous_group},
-        temporal_evolutions::TemporalEvolutions,
-        values::TemporalValuesRenderer,
-    },
+use andromeda_ngsi_ld_render::temporal::{
+    entity::TemporalEntityRenderer,
+    history_row::TimeRange,
+    page_cut::{PageCut, largest_simultaneous_group},
 };
-use indexmap::IndexMap;
-use serde_json::Value;
 use std::slice;
 
 /// Name what an empty row set means, so the presence is read off a variant
@@ -55,33 +48,24 @@ pub(crate) enum HistoryPresence {
     Absent,
 }
 
-/// One entity's temporal representation, with the instants the caller needs
-/// in order to build a `Content-Range`.
+/// One entity's history, with the instants the caller needs in order to build
+/// a `Content-Range`.
 ///
-/// The range travels with the value because it is a property of *this*
-/// rendering: a caller aggregating many entities takes the widest range across
-/// them, which it cannot do once the representations have been flattened into
-/// a collection.
+/// The range travels with the history because it is a property of *this*
+/// reading: a caller aggregating many entities takes the widest range across
+/// them, which it cannot do once the histories have been flattened into a
+/// collection.
 #[derive(Debug)]
 pub(crate) struct RenderedTemporalEntity {
-    /// The compacted temporal representation.
-    pub(crate) value: Value,
+    /// The history the window selected.
+    pub(crate) history: TemporalHistory,
     /// Whether the window selected any history at all.
     pub(crate) presence: HistoryPresence,
-    /// The cut the representation was made at, present when it is part of a
-    /// partial response (clause 6.3.10).
+    /// The cut the history was made at, present when it is part of a partial
+    /// response (clause 6.3.10).
     pub(crate) cut: Option<PageCut>,
-    /// The earliest and latest instants the representation actually carries.
+    /// The earliest and latest instants the history actually carries.
     pub(crate) time_range: Option<TimeRange>,
-    /// The edges to the Linked Entities this entity names, read off the
-    /// representation before any format projection narrowed it.
-    ///
-    /// Clause 4.5.8 collapses each attribute's instances into parallel value
-    /// and timestamp arrays, which erases the `object` members a join needs to
-    /// follow. Collecting here — while the normalized form still exists — is
-    /// what lets `join=flat` work in every representation rather than silently
-    /// finding nothing outside the normalized one.
-    pub(crate) edges: Vec<LinkedEdge>,
 }
 
 /// One entity's history as its page read it, before the response's common cut
@@ -102,18 +86,19 @@ impl EntityHistoryPage {
 }
 
 impl TemporalService {
-    /// Render one entity's temporal evolution over an already-compiled window.
+    /// Read one entity's temporal evolution over an already-compiled window.
     ///
-    /// The aggregated representation of clause 4.5.19 bypasses JSON-LD
-    /// compaction entirely, because the aggregation keys are not IRIs and
-    /// compaction would drop them; that path is taken here so both callers get
-    /// the same treatment rather than one of them silently supporting fewer
-    /// formats. Any other representation is the entity's page, cut on its own
-    /// (clause 6.3.10): a caller rendering several entities into one response
-    /// reads their pages and cuts them together instead.
+    /// The aggregated representation of clause 4.5.19 is read as the
+    /// aggregates themselves, which carry the names of the request context
+    /// already, because the aggregation keys are not IRIs; that path is taken
+    /// here so both callers get the same treatment rather than one of them
+    /// silently supporting fewer formats. Any other representation is the
+    /// entity's page, cut on its own (clause 6.3.10): a caller reading several
+    /// entities into one response reads their pages and cuts them together
+    /// instead.
     ///
-    /// A window that selects nothing still renders — into a temporal entity
-    /// carrying no attribute instances — and says so through
+    /// A window that selects nothing still reads -- into a temporal entity
+    /// carrying no attribute instances -- and says so through
     /// [`RenderedTemporalEntity::presence`], because whether that is a result,
     /// an omission or a 404 is the caller's decision.
     ///
@@ -121,23 +106,22 @@ impl TemporalService {
     ///
     /// Returns [`TemporalError`] when the history cannot be read, a page would
     /// carry more instances sharing one timestamp than the broker's maximum,
-    /// the representation cannot be compacted, or the `temporalValues`
-    /// projection fails. Each caller decides whether that ends the operation or
-    /// merely drops one entity from it.
+    /// or an aggregate's names cannot be compacted. Each caller decides
+    /// whether that ends the operation or merely drops one entity from it.
     pub(crate) async fn render_one_temporal_entity(
         &self,
         target: &ContextTarget,
         entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
-        compaction: &TemporalCompaction<'_>,
+        compactor: &EntityCompactor<'_>,
     ) -> Result<RenderedTemporalEntity, TemporalError> {
         if compiled.representation.format.is_aggregated() {
-            return self.render_aggregated_entity(target, entity_id, entity_types, compiled, compaction).await;
+            return self.render_aggregated_entity(target, entity_id, entity_types, compiled, compactor).await;
         }
         let page = self.read_history_page(target, entity_id, compiled).await?;
         let cut = self.common_page_cut(compiled, slice::from_ref(&page))?;
-        self.render_history_page(page, entity_types, compiled, compaction, cut).await
+        render_history_page(page, entity_types, compiled, cut)
     }
 
     /// Read the page of one entity's history the compiled query selects.
@@ -184,73 +168,7 @@ impl TemporalService {
         Ok(cut)
     }
 
-    /// Render one entity's page at the response's common cut.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemporalError`] when the representation cannot be compacted or
-    /// the `temporalValues` projection fails.
-    pub(crate) async fn render_history_page(
-        &self,
-        page: EntityHistoryPage,
-        entity_types: &[EntityTypeName],
-        compiled: &CompiledTemporalQuery,
-        compaction: &TemporalCompaction<'_>,
-        cut: Option<PageCut>,
-    ) -> Result<RenderedTemporalEntity, TemporalError> {
-        let presence = page.presence();
-        let EntityHistoryPage { entity_id, rows } = page;
-        let built = TemporalEntityRenderer::new(&entity_id, entity_types, rows, compiled, cut)
-            .render()
-            .map_err(|error| TemporalError::from(TemporalInvariant::RenderedInstance(error)))?;
-        // Clause 5.7.3 / 5.5.7: the representation is compacted against the
-        // request @context, which is the core context alone when the client
-        // supplies none. A term the resolved context does not declare stays a
-        // full IRI; it is not truncated to a bare fragment, since a fragment is
-        // not a term the client could expand back (clause 5.7.6 renders type
-        // and attribute discovery the same way).
-        let compacted = compaction.document(&built.entity).await?;
-        let mut compacted = TemporalArrayNormalizer::new(compacted).render();
-        // Read the Linked Entities off the normalized form, before the clause
-        // 4.5.8 projection below erases the `object` members they live in, and
-        // before a list without `id` removes the identity the edges leave from.
-        let mut edges = Vec::new();
-        TemporalEvolutions::edges(&compacted, &mut edges);
-        // Clause 4.21, `id` / `type` half: the attribute half of the
-        // projection already ran inside `TemporalEntityRenderer` on the
-        // expanded representation, keyed by attribute IRI; `id` and `type`
-        // only exist as such once compaction has turned `@id` / `@type` into
-        // them, so their half of the structural rule runs here instead.
-        StructuralProjection::from(&compiled.projection).prune(&mut compacted);
-
-        let value = if compiled.representation.format == TemporalFormat::TemporalValues {
-            // The renderer names an attribute the cut emptied by the family its
-            // rows recorded, under the name the representation was compacted to.
-            let mut emptied = IndexMap::with_capacity(built.emptied.len());
-            if !built.emptied.is_empty() {
-                let names = compaction.names().await?;
-                for (attribute, family) in built.emptied {
-                    let name = names.compact_attr_iri(attribute.as_str()).parse::<AttributeName>().unwrap_or(attribute);
-                    emptied.insert(name, family);
-                }
-            }
-            TemporalValuesRenderer::new(compacted, compiled.window.timeproperty, emptied)
-                .render()
-                .map_err(TemporalError::Rendering)?
-        } else {
-            compacted
-        };
-
-        Ok(RenderedTemporalEntity {
-            value,
-            presence,
-            cut,
-            time_range: built.time_range,
-            edges,
-        })
-    }
-
-    /// Render the clause 4.5.19 aggregated representation of one entity.
+    /// Read the clause 4.5.19 aggregated representation of one entity.
     ///
     /// # Errors
     ///
@@ -263,13 +181,13 @@ impl TemporalService {
         entity_id: &Identifier,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
-        compaction: &TemporalCompaction<'_>,
+        compactor: &EntityCompactor<'_>,
     ) -> Result<RenderedTemporalEntity, TemporalError> {
         let rows = self.reader.query_entity_aggregation(target, entity_id, compiled).await?;
         // The grouped extension refuses a runaway grouping off the count of
-        // distinct groups it produced — one per row — mirroring the
-        // delete-by-query bound (study §4.9). `TooManyResults` is fatal to
-        // the whole operation, so the query loop must not demote it to a
+        // distinct groups it produced -- one per row -- mirroring the
+        // delete-by-query bound (study section 4.9). `TooManyResults` is fatal
+        // to the whole operation, so the query loop must not demote it to a
         // per-entity warning.
         if compiled.representation.format.is_grouped() {
             let groups = rows.len() as u64;
@@ -278,17 +196,44 @@ impl TemporalService {
             }
         }
         let presence = presence_of(rows.is_empty());
-        let value = self.build_aggregated_compacted(entity_id, entity_types, &rows, compiled, compaction).await?;
+        let aggregates = aggregated_entity(
+            entity_id.clone(), // clone: the aggregated entity owns the identifier it names
+            entity_types,
+            &rows,
+            &compiled.representation.aggr_methods,
+            grouping_depth(compiled),
+            compactor.names().await?,
+        );
         Ok(RenderedTemporalEntity {
-            value,
+            history: TemporalHistory::Aggregates(aggregates),
             presence,
             cut: None,
             time_range: None,
-            // Clause 4.5.19 aggregates numeric observations into buckets.
-            // A Relationship has nothing to aggregate and so never appears
-            // in an aggregated representation, which leaves a join over one
-            // with nothing to follow.
-            edges: Vec::new(),
         })
     }
+}
+
+/// Build one entity's page at the response's common cut.
+///
+/// # Errors
+///
+/// Returns [`TemporalError`] when a stored row no longer reads as the instance
+/// it recorded.
+pub(crate) fn render_history_page(
+    page: EntityHistoryPage,
+    entity_types: &[EntityTypeName],
+    compiled: &CompiledTemporalQuery,
+    cut: Option<PageCut>,
+) -> Result<RenderedTemporalEntity, TemporalError> {
+    let presence = page.presence();
+    let EntityHistoryPage { entity_id, rows } = page;
+    let built = TemporalEntityRenderer::new(&entity_id, entity_types, rows, compiled, cut)
+        .render()
+        .map_err(|error| TemporalError::from(TemporalInvariant::RenderedInstance(error)))?;
+    Ok(RenderedTemporalEntity {
+        history: TemporalHistory::Instances(built.document),
+        presence,
+        cut,
+        time_range: built.time_range,
+    })
 }

@@ -10,7 +10,7 @@ use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     api_root::ApiRoot,
     context::ContextUrl,
-    jsonld::JsonLdDocument,
+    jsonld::JsonLd,
     pagination_policy::RequestPagination,
     prefer::PreferHeader,
     query::ValidatedQuery,
@@ -19,10 +19,11 @@ use andromeda_http_extraction::{
     via::IncomingVia,
 };
 use andromeda_http_headers::via::Via;
-use andromeda_http_response::{headers::with_location, problem_response::ProblemResponse, single::NgsiLdResponse};
+use andromeda_http_response::{headers::with_location, problem_response::ProblemResponse, rendered_response::RenderedResponse, single::NgsiLdResponse};
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
-use andromeda_ngsi_ld_render::{response::ResponsePayload, subscription::SubscriptionRenderer};
+use andromeda_ngsi_ld_model::subscription_request::SubscriptionRequest;
+use andromeda_ngsi_ld_render::subscription::SubscriptionView;
 use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription_listing::ListParams};
 use andromeda_subscription::{subscription_context::SubscriptionContext, subscription_listing::SubscriptionListing};
 use axum::{
@@ -40,9 +41,10 @@ pub async fn create(
     OriginalUri(uri): OriginalUri,
     api_root: ApiRoot,
     IncomingVia(incoming_via): IncomingVia,
-    JsonLdDocument { document: payload, context }: JsonLdDocument,
+    JsonLd { body, context }: JsonLd<SubscriptionRequest>,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(&state.engine, context).await.with_subscription_instance(&uri)?;
+    let request = body.admitted(&context)?;
     let service = &state.csource_subscriptions;
     // Table 6.3.18-2: the created subscription must not forward a companion copy
     // back to any context source its request already passed through.
@@ -51,7 +53,7 @@ pub async fn create(
     let id = service
         .create(
             &state.live_target,
-            payload,
+            request,
             SubscriptionContext::Request {
                 context: &context,
                 host: &state.context_hosting.for_request(&api_root),
@@ -86,18 +88,15 @@ pub async fn get(
         .get_for_response(&state.live_target, &subscription_id, &context)
         .await
         .with_subscription_instance(&uri)?;
+    let view = SubscriptionView::of(&subscription, options.sys_attrs);
 
-    let subscription = SubscriptionRenderer::new(subscription).with_sys_attrs(options.sys_attrs).render();
-
-    let rendered = ResponseContextSource::new(&state.engine, &context, &state.context_hosting, &api_root)
+    let ready = ResponseContextSource::new(&state.engine, &context, &state.context_hosting, &api_root)
         .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
         .await
         .with_subscription_instance(&uri)?
-        .with_payload(ResponsePayload::Single(subscription))
-        .render()
-        .with_subscription_instance(&uri)?;
-    let response = NgsiLdResponse::ok(rendered).into_response();
-    Ok(response)
+        .with_body(&view);
+    let rendered = RenderedResponse::resource(ready).with_subscription_instance(&uri)?;
+    Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
 /// GET /ngsi-ld/v1/csourceSubscriptions -- Query context source subscriptions.
@@ -121,19 +120,17 @@ pub async fn query(
         .await
         .with_subscription_instance(&uri)?;
     let returned = subscriptions.len();
+    let views: Vec<SubscriptionView<'_>> = subscriptions
+        .iter()
+        .map(|subscription| SubscriptionView::of(subscription, listing.options.sys_attrs))
+        .collect();
 
-    let subscriptions = subscriptions
-        .into_iter()
-        .map(|sub| SubscriptionRenderer::new(sub).with_sys_attrs(listing.options.sys_attrs).render())
-        .collect::<Vec<_>>();
-
-    let rendered = ResponseContextSource::new(&state.engine, &context, &state.context_hosting, &api_root)
+    let ready = ResponseContextSource::new(&state.engine, &context, &state.context_hosting, &api_root)
         .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
         .await
         .with_subscription_instance(&uri)?
-        .with_payload(ResponsePayload::Collection(subscriptions))
-        .render()
-        .with_subscription_instance(&uri)?;
+        .with_collection(&views);
+    let rendered = RenderedResponse::resource(ready).with_subscription_instance(&uri)?;
     listing.respond(rendered, total, boundary, returned, &uri, accept.media_type())
 }
 
@@ -142,13 +139,14 @@ pub async fn update(
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Identifier>,
-    JsonLdDocument { document: payload, context }: JsonLdDocument,
+    JsonLd { body, context }: JsonLd<SubscriptionRequest>,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(&state.engine, context).await.with_subscription_instance(&uri)?;
+    let request = body.admitted(&context)?;
     let service = &state.csource_subscriptions;
 
     service
-        .update(&state.live_target, &subscription_id, payload, &context)
+        .update(&state.live_target, &subscription_id, request, &context)
         .await
         .with_subscription_instance(&uri)?;
 

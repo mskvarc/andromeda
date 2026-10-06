@@ -52,6 +52,9 @@ pub enum StoredSnapshotError {
     /// The `snapshot_temporal_queries` column does not deserialize.
     #[error("the stored snapshotTemporalQueries do not deserialize: {0}")]
     SnapshotTemporalQueries(#[source] serde_json::Error),
+    /// The `query_context` column is not an admissible JSON `@context`.
+    #[error("the stored snapshot query context is not an admissible JSON literal: {0}")]
+    QueryContext(#[source] serde_json::Error),
     /// The `receiver_info` column does not deserialize.
     #[error("the stored snapshot receiverInfo does not deserialize: {0}")]
     ReceiverInfo(#[source] serde_json::Error),

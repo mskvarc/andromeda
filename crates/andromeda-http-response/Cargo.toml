@@ -32,13 +32,14 @@ http-body = "1.1.0"
 iri-rs = "3.4.1"
 mediatype = "0.23.0"
 serde = "1.0.229"
-serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
+serde_json = "1.0.151"
 tracing = "0.1.44"
 url = "2.5.8"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-context-commit.workspace = true
+andromeda-json-literal.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true

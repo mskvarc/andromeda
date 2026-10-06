@@ -189,6 +189,7 @@ fn build_subscription(ordinal: usize, desc: &SubscriptionDesc) -> Result<Compile
         compiled_csf: None,
         local_only: false,
         ngsild_conformance: None,
+        lang: None,
         notification_projection: Projection::default(),
     })
 }

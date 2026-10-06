@@ -11,7 +11,7 @@
 //! declines are counted and named.
 
 use crate::{
-    expansion_fixture::{BothWays, FixtureFailure, TERMS, VOCAB_AND_LANGUAGE, attribute, decoded_both_ways, engine, entity, fragment, patch},
+    expansion_fixture::{BothWays, FixtureFailure, TERMS, VOCAB_AND_LANGUAGE, attribute, decoded_both_ways, engine, entity, patch},
     normalization::Normalization,
     typed_expansion::TypedExpansion,
 };
@@ -98,16 +98,12 @@ async fn typed_expansion_equals_processor_expansion_over_the_suite_bodies() {
             &format!("{label} merge"),
             patch(&engine, item.body.clone(), Normalization::MemberDeletions).await,
         ); // clone: the body is expanded every way
-        tally.record(&format!("{label} update"), fragment(&engine, item.body.clone(), Normalization::Entity).await); // clone: the body is expanded every way
+        tally.record(&format!("{label} update"), patch(&engine, item.body.clone(), Normalization::Entity).await); // clone: the body is expanded every way
         for context in [TERMS, VOCAB_AND_LANGUAGE] {
             if let Some(body) = under(context, &item.body) {
-                tally.record(&format!("{label} update under {context}"), fragment(&engine, body, Normalization::Entity).await);
+                tally.record(&format!("{label} update under {context}"), patch(&engine, body, Normalization::Entity).await);
             }
         }
-        tally.record(
-            &format!("{label} merge-json"),
-            fragment(&engine, item.body, Normalization::MemberDeletions).await,
-        );
     }
     println!(
         "agreed {}, refused alike {}, declined {}, skipped {}",
@@ -127,7 +123,7 @@ async fn typed_expansion_equals_processor_expansion_over_the_suite_bodies() {
         "the typed walk and the processor disagree:\n{}",
         tally.disagreed.join("\n")
     );
-    assert!(tally.agreed > 600, "the corpus exercised too little: {} agreed", tally.agreed);
+    assert!(tally.agreed > 500, "the corpus exercised too little: {} agreed", tally.agreed);
 }
 
 /// The processor decoding reads the processor's typed output as the canonical

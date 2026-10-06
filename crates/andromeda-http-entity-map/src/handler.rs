@@ -2,7 +2,7 @@
 
 use crate::{
     creation::{CreationRendering, MapCreation, create_map},
-    error::{EntityMapResultExt, bad_request_data, internal_problem},
+    error::{EntityMapResultExt, bad_request_data},
     forwarded_query_string::{ForwardedFilters, body_query_string, forwarded_query_string, forwarded_temporal_query_string, temporal_body_query_string},
     membership_window::membership_window,
     state::{EntityMapRouteServices, EntityMapTenantState},
@@ -25,7 +25,7 @@ use andromeda_http_extraction::{
     tenant_state,
     typed_path::TypedPath,
 };
-use andromeda_http_response::{internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse, single::NgsiLdResponse};
+use andromeda_http_response::{problem_response::ProblemResponse, rendered_response::RenderedResponse, single::NgsiLdResponse};
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     user_context_admission::{SubmittedContext, admit_user_context},
@@ -33,7 +33,7 @@ use andromeda_jsonld::{
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_query::page_window::PageWindow;
-use andromeda_ngsi_ld_render::{entity_map_body::EntityMapBody, response::ResponsePayload};
+use andromeda_ngsi_ld_render::entity_map_body::EntityMapBody;
 use andromeda_ngsi_ld_request::{
     body::entity_map::UpdateEntityMapBody,
     empty::EmptyParams,
@@ -61,16 +61,13 @@ pub async fn get(
 ) -> Result<Response, ProblemResponse> {
     let map = state.entity_maps.retrieve(&entity_map_id).await.with_entity_map_instance(&uri)?;
 
-    let value = serde_json::to_value(EntityMapBody::new(&map, prefer.requested_version))
-        .map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, &uri))?;
-    let rendered = ResponseContextSource::new(state.entity_query.engine(), &context, &state.context_hosting, &api_root)
+    let body = EntityMapBody::new(&map, prefer.requested_version);
+    let renderer = ResponseContextSource::new(state.entity_query.engine(), &context, &state.context_hosting, &api_root)
         .start_rendering_normalized(accept.media_type(), prefer.rendering_preferences())
         .await
-        .with_entity_map_instance(&uri)?
-        .with_payload(ResponsePayload::Single(value))
-        .render()
         .with_entity_map_instance(&uri)?;
-    Ok(NgsiLdResponse::ok(rendered).into_response())
+    let written = RenderedResponse::resource(renderer.with_body(&body)).with_entity_map_instance(&uri)?;
+    Ok(NgsiLdResponse::ok(written).into_response())
 }
 
 /// PATCH /ngsi-ld/v1/entityMaps/{entityMapId} -- Update an entity map (section 5.14.2).

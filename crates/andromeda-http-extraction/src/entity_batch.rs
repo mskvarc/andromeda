@@ -23,6 +23,7 @@ use crate::{
     undecodable_body::UndecodableBody,
 };
 use andromeda_http_response::problem_response::ProblemResponse;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{
     batch_contexts::{BatchContext, BatchContexts},
     context_spec::ContextSpec,
@@ -34,7 +35,7 @@ use andromeda_ngsi_ld_model::{
     entity::Entity,
     request_body::RequestBody,
 };
-use andromeda_ngsi_ld_number::json_value::number_range::{NumberRangeError, refuse_numbers_out_of_range};
+use andromeda_ngsi_ld_number::json_value::text_admission::{JsonTextRefusal, admit_json_text};
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchEntityError;
 use andromeda_ngsi_ld_representation::embedded_context_admission::{EmbeddedContext, find_embedded_context};
 use axum::{
@@ -45,7 +46,7 @@ use axum::{
 };
 use headers::HeaderMapExt;
 use mediatype::{MediaTypeBuf, names};
-use serde_json::{Value, value::RawValue};
+use serde_json::value::RawValue;
 use std::mem::take;
 
 /// The representation a batch request announced in its `Content-Type`.
@@ -209,7 +210,7 @@ struct DecodedItem<M> {
     /// an item that is no entity.
     entity: Result<Entity<M>, BatchItemRefusal>,
     /// The item's own top-level `@context`, as written.
-    own_context: Option<Value>,
+    own_context: Option<JsonLiteral>,
     /// The first `@context` the item embedded below its own top level.
     embedded: Option<EmbeddedContext>,
 }
@@ -286,8 +287,8 @@ impl<'b> BatchArrayItem<'b> {
     fn admit<M: MemberReading>(self, entity_id: &Uri, content_kind: ContentKind) -> Result<DecodedItem<M>, BatchItemRefusal> {
         IdentifierTooLong::check(entity_id.as_str())?;
         let text = self.text.get().as_bytes();
-        refuse_numbers_out_of_range(text)?;
-        let embedded = find_embedded_context(text).map_err(NumberRangeError::Syntax)?;
+        admit_json_text(text)?;
+        let embedded = find_embedded_context(text).map_err(JsonTextRefusal::Syntax)?;
 
         // The context is carried beside the entity, not decoded into it.
         let context = match self.envelope {
@@ -392,6 +393,7 @@ mod tests {
         request_json_value_limit::RequestJsonValueLimit,
     };
     use andromeda_http_response::problem_response::ProblemResponse;
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
     use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
@@ -674,6 +676,32 @@ mod tests {
         assert!(errors[0].error.detail.contains("/json/json/nested"), "{}", errors[0].error.detail);
     }
 
+    /// Clause 5.6.8.4 reports a failing item per entity, and clause 5.5.4 makes
+    /// an object naming one member twice `BadRequestData`: the item that
+    /// repeats a member is refused against its own `id`, naming the member,
+    /// and its neighbours are decoded.
+    #[tokio::test]
+    async fn an_item_naming_a_member_twice_is_refused_alone_naming_the_member() {
+        let batch = json_batch(
+            r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":10}},{"id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle","speed":{"type":"Property","value":20},"speed":{"type":"Property","value":21}},{"id":"urn:ngsi-ld:Vehicle:3","type":"Vehicle","speed":{"type":"Property","value":30}}]"#,
+        )
+        .await;
+        let (entities, errors) = parsed(&batch).await;
+
+        assert_eq!(entities.len(), 2, "{errors:?}");
+        pretty_assertions::assert_eq!(errors.len(), 1);
+        pretty_assertions::assert_eq!(errors[0].entity_id.as_str(), "urn:ngsi-ld:Vehicle:2");
+        pretty_assertions::assert_eq!(
+            errors[0].error.error_type,
+            BatchErrorKind::Known(ProblemClassification::Category(NgsiLdErrorType::BadRequestData))
+        );
+        assert!(
+            errors[0].error.detail.contains("the member at /speed is named twice"),
+            "{}",
+            errors[0].error.detail
+        );
+    }
+
     /// JSON-LD applies a top-level node's `@context` to that node alone, so each
     /// item of an `application/ld+json` batch is read against its own context,
     /// and items naming the same one share it.
@@ -688,8 +716,14 @@ mod tests {
         let ParsedBatch { items, context, errors } = parse_batch_entities::<AttributeValue>(&batch, &batch_uri()).await.expect("batch parses");
 
         assert!(errors.is_empty(), "{errors:?}");
-        pretty_assertions::assert_eq!(items[0].context.spec().body_context(), Some(&json!({"speed": "https://a.example/speed"})));
-        pretty_assertions::assert_eq!(items[1].context.spec().body_context(), Some(&json!({"speed": "https://b.example/speed"})));
+        pretty_assertions::assert_eq!(
+            items[0].context.spec().body_context(),
+            Some(&JsonLiteral::admit(&json!({"speed": "https://a.example/speed"}).to_string()).expect("an admissible literal"))
+        );
+        pretty_assertions::assert_eq!(
+            items[1].context.spec().body_context(),
+            Some(&JsonLiteral::admit(&json!({"speed": "https://b.example/speed"}).to_string()).expect("an admissible literal"))
+        );
         pretty_assertions::assert_eq!(items[0].context.id(), items[2].context.id(), "items naming one context share it");
         pretty_assertions::assert_ne!(items[0].context.id(), items[1].context.id());
         pretty_assertions::assert_eq!(context, ContextSpec::none(), "items naming several contexts leave the request the default one");
@@ -708,7 +742,8 @@ mod tests {
 
         let ParsedBatch { items, context, .. } = parse_batch_entities::<AttributeValue>(&batch, &batch_uri()).await.expect("batch parses");
 
-        let written = json!(["https://a.example/c.jsonld", "https://b.example/c.jsonld", "https://a.example/c.jsonld"]);
+        let written = JsonLiteral::admit(&json!(["https://a.example/c.jsonld", "https://b.example/c.jsonld", "https://a.example/c.jsonld"]).to_string())
+            .expect("an admissible literal");
         pretty_assertions::assert_eq!(context.body_context(), Some(&written));
         pretty_assertions::assert_eq!(items[0].context.id(), items[1].context.id());
     }

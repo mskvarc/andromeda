@@ -8,7 +8,8 @@
 //! ```
 //!
 //! and measures one step between [`CountingAllocator::mark`] and
-//! [`CountingAllocator::peak_above`]. The allocator counts every allocation of
+//! [`CountingAllocator::peak_above`] or [`CountingAllocator::allocations_since`].
+//! The allocator counts every allocation of
 //! the binary, so a measured step must not run beside another test of the same
 //! binary.
 
@@ -17,19 +18,27 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-/// The system allocator, counting the bytes it holds and the most it has held
-/// at once since the last [`CountingAllocator::mark`].
+/// The system allocator, counting the bytes it holds, the most it has held at
+/// once since the last [`CountingAllocator::mark`], and how many allocations it
+/// has made.
 #[derive(Debug, Default)]
 pub struct CountingAllocator {
     /// Bytes currently allocated.
     current: AtomicUsize,
     /// The most bytes allocated at once since the last mark.
     peak: AtomicUsize,
+    /// Allocations made, counting each reallocation as one.
+    allocations: AtomicUsize,
 }
 
-/// The bytes allocated when a measurement began.
+/// What was allocated when a measurement began.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HeapMark(usize);
+pub struct HeapMark {
+    /// Bytes held.
+    bytes: usize,
+    /// Allocations made.
+    allocations: usize,
+}
 
 impl CountingAllocator {
     /// An allocator that has counted nothing yet.
@@ -38,6 +47,7 @@ impl CountingAllocator {
         CountingAllocator {
             current: AtomicUsize::new(0),
             peak: AtomicUsize::new(0),
+            allocations: AtomicUsize::new(0),
         }
     }
 
@@ -46,17 +56,27 @@ impl CountingAllocator {
     pub fn mark(&self) -> HeapMark {
         let current = self.current.load(Ordering::SeqCst);
         self.peak.store(current, Ordering::SeqCst);
-        HeapMark(current)
+        HeapMark {
+            bytes: current,
+            allocations: self.allocations.load(Ordering::SeqCst),
+        }
     }
 
     /// The most bytes held at once since `mark`, above what was held at it.
     #[must_use]
     pub fn peak_above(&self, mark: HeapMark) -> usize {
-        self.peak.load(Ordering::SeqCst).saturating_sub(mark.0)
+        self.peak.load(Ordering::SeqCst).saturating_sub(mark.bytes)
+    }
+
+    /// How many allocations were made since `mark`.
+    #[must_use]
+    pub fn allocations_since(&self, mark: HeapMark) -> usize {
+        self.allocations.load(Ordering::SeqCst).saturating_sub(mark.allocations)
     }
 
     /// Count `size` more bytes and raise the peak.
     fn grow(&self, size: usize) {
+        self.allocations.fetch_add(1, Ordering::SeqCst);
         let current = self.current.fetch_add(size, Ordering::SeqCst).saturating_add(size);
         self.peak.fetch_max(current, Ordering::SeqCst);
     }
@@ -115,6 +135,7 @@ mod tests {
             allocator.dealloc(second, layout);
         }
         pretty_assertions::assert_eq!(allocator.peak_above(mark), 8192);
+        pretty_assertions::assert_eq!(allocator.allocations_since(mark), 2);
         let later = allocator.mark();
         pretty_assertions::assert_eq!(allocator.peak_above(later), 0, "a new mark restarts the peak");
     }

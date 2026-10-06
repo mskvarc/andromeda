@@ -117,15 +117,21 @@ impl<'a> ReifiedInstance<'a> {
     }
 
     /// Whether the instance carries a `unitCode` or a `valueType` the version
-    /// fallback keeps, which a bare value has nowhere to write.
+    /// fallback keeps, or a clause 4.5.2.2 seal, which a bare value has
+    /// nowhere to write.
     const fn carries_qualifier(&self) -> bool {
+        if let Attribute::Property(property) = self.attribute
+            && (property.entity_id_sealed.is_some() || property.entity_type_sealed.is_some())
+        {
+            return true;
+        }
         let (unit_code, value_type) = match self.attribute {
             Attribute::Property(property) => (property.unit_code.is_some(), property.value_type.is_some()),
-            Attribute::GeoProperty(geo_property) => (false, geo_property.value_type.is_some()),
+            Attribute::GeoProperty(geo_property) => (geo_property.unit_code.is_some(), geo_property.value_type.is_some()),
             Attribute::VocabProperty(vocab_property) => (false, vocab_property.value_type.is_some()),
             Attribute::LanguageProperty(language_property) => (false, language_property.value_type.is_some()),
             Attribute::JsonProperty(json_property) => (false, json_property.value_type.is_some()),
-            Attribute::ListProperty(list_property) => (false, list_property.value_type.is_some()),
+            Attribute::ListProperty(list_property) => (list_property.unit_code.is_some(), list_property.value_type.is_some()),
             Attribute::Relationship(_) | Attribute::ListRelationship(_) => (false, false),
         };
         (unit_code && self.keeps(InstanceMember::UnitCode)) || (value_type && self.keeps(InstanceMember::ValueType))
@@ -273,7 +279,11 @@ impl ReifiedInstance<'_> {
                     compact_properties::UNIT_CODE,
                     property.unit_code.as_ref().filter(|_| self.keeps(InstanceMember::UnitCode)),
                 )?;
-                serialize_present(object, compact_properties::VALUE_TYPE, property.value_type.as_ref().filter(|_| value_type))
+                serialize_present(object, compact_properties::VALUE_TYPE, property.value_type.as_ref().filter(|_| value_type))?;
+                // Clause 4.5.2.2: the seals of `ngsildproof` are non-reified
+                // members, each written as the value it is.
+                serialize_present(object, compact_properties::ENTITY_ID_SEALED, property.entity_id_sealed.as_ref())?;
+                serialize_present(object, compact_properties::ENTITY_TYPE_SEALED, property.entity_type_sealed.as_ref())
             }
             Attribute::Relationship(relationship) => serialize_present(
                 object,
@@ -291,6 +301,11 @@ impl ReifiedInstance<'_> {
                 vocab_property.value_type.as_ref().filter(|_| value_type),
             ),
             Attribute::GeoProperty(geo_property) => {
+                serialize_present(
+                    object,
+                    compact_properties::UNIT_CODE,
+                    geo_property.unit_code.as_ref().filter(|_| self.keeps(InstanceMember::UnitCode)),
+                )?;
                 serialize_present(object, compact_properties::VALUE_TYPE, geo_property.value_type.as_ref().filter(|_| value_type))
             }
             Attribute::LanguageProperty(language_property) => serialize_present(
@@ -302,6 +317,11 @@ impl ReifiedInstance<'_> {
                 serialize_present(object, compact_properties::VALUE_TYPE, json_property.value_type.as_ref().filter(|_| value_type))
             }
             Attribute::ListProperty(list_property) => {
+                serialize_present(
+                    object,
+                    compact_properties::UNIT_CODE,
+                    list_property.unit_code.as_ref().filter(|_| self.keeps(InstanceMember::UnitCode)),
+                )?;
                 serialize_present(object, compact_properties::VALUE_TYPE, list_property.value_type.as_ref().filter(|_| value_type))
             }
         }

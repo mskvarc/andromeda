@@ -214,11 +214,11 @@ mod tests {
     use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_snapshot::NgsiLdSnapshot, ngsild_tenant::NgsiLdTenant};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, positive_milliseconds::PositiveMilliseconds, tenant::TenantName};
-    use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
+    use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, notification::NotificationData};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriBuf;
     use mediatype::MediaTypeBuf;
-    use serde_json::json;
+    use serde_json::{json, value::RawValue};
     use std::str::FromStr;
     use url::Url;
 
@@ -365,6 +365,59 @@ mod tests {
         let rendered = link.to_header_string().expect("the Link encodes");
         assert!(rendered.contains("https://example.com/ctx.jsonld"), "{rendered}");
         assert!(!rendered.contains(NGSI_LD_CORE_CONTEXT_URL.as_str()), "{rendered}");
+    }
+
+    /// The notification of an endpoint accepting `accept`, written around
+    /// `data_text`, a `data` member the sender wrote once.
+    fn enveloped(accept: &str, data_text: &str) -> DeliveryRequest {
+        let endpoint = endpoint();
+        let subscription = subscription();
+        let accept = media(accept);
+        let context = context_of(Some("https://example.com/ctx.jsonld"));
+        let data = NotificationData::written(RawValue::from_string(data_text.to_owned()).expect("a JSON data member"));
+        NotificationDelivery::builder()
+            .endpoint_uri(&endpoint)
+            .accept(Some(&accept))
+            .context(&context)
+            .subscription_id(&subscription)
+            .build()
+            .notification(data)
+            .expect("the notification is written")
+    }
+
+    /// Clause 5.3.1: the `data` the sender wrote reaches the body as that
+    /// text and nowhere else, so an entity is in the notification once.
+    #[test]
+    fn an_entity_is_written_once_per_notification() {
+        let data = r#"[{"id":"urn:ngsi-ld:Building:1","type":"Building"},{"id":"urn:ngsi-ld:Building:2","type":"Building"}]"#;
+        let request = enveloped("application/json", data);
+        let text = request.body.text();
+        pretty_assertions::assert_eq!(text.matches(data).count(), 1, "{text}");
+        for entity in ["urn:ngsi-ld:Building:1", "urn:ngsi-ld:Building:2"] {
+            pretty_assertions::assert_eq!(text.matches(entity).count(), 1, "{text}");
+        }
+    }
+
+    /// Clause 6.3.6: an `application/ld+json` notification names its context
+    /// in its body, on the Notification and on every Entity of `data`, which
+    /// the sender wrote under that context; an `application/json` one names it
+    /// nowhere in the body (clause 6.3.8 puts it in the `Link` header).
+    #[test]
+    fn ld_json_entities_carry_their_context() {
+        let data = r#"[{"@context":"https://example.com/ctx.jsonld","id":"urn:ngsi-ld:Building:1","type":"Building"}]"#;
+        let json_ld: serde_json::Value = serde_json::from_str(enveloped("application/ld+json", data).body.text()).expect("a JSON body");
+        let expected = json!(["https://example.com/ctx.jsonld", NGSI_LD_CORE_CONTEXT_URL.as_str()]);
+        pretty_assertions::assert_eq!(json_ld["@context"], expected);
+        pretty_assertions::assert_eq!(json_ld["data"][0]["@context"], json!("https://example.com/ctx.jsonld"));
+
+        let plain: serde_json::Value = serde_json::from_str(
+            enveloped("application/json", r#"[{"id":"urn:ngsi-ld:Building:1","type":"Building"}]"#)
+                .body
+                .text(),
+        )
+        .expect("a JSON body");
+        assert!(plain.get("@context").is_none(), "{plain}");
+        assert!(plain["data"][0].get("@context").is_none(), "{plain}");
     }
 
     /// The written notification reaches the request as it was written.

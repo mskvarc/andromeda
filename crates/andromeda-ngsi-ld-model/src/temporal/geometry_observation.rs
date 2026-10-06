@@ -4,6 +4,7 @@
 //! them in, so a history row read back from an intent renders the geometry it
 //! recorded (ETSI GS CIM 009 v1.9.1 clause 4.6.4).
 
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_entity::{
     geometry_value::{ExpandedGeoJsonMembers, GeometryValue},
     refusal::EntityRefusal,
@@ -11,7 +12,6 @@ use andromeda_ngsi_ld_entity::{
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use serde::{Deserialize, Serializer, ser::SerializeStruct};
-use serde_json::Value;
 
 /// Write the geometry of an observation as its intent wire form.
 ///
@@ -35,7 +35,7 @@ pub(crate) struct GeometryWire {
     /// The positions, as compact `GeoJSON`.
     form: Geometry,
     /// The stored JSON of the members, when the geometry has any.
-    members: Option<Value>,
+    members: Option<JsonLiteral>,
 }
 
 impl GeometryWire {

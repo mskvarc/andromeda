@@ -1,7 +1,8 @@
 //! What the Serve @context operation answers with (clause 5.13.4).
 
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::loader::cache_lifetime::CacheLifetime;
-use serde_json::Value;
+use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
 
 /// One answer of the Serve @context operation.
 ///
@@ -9,16 +10,16 @@ use serde_json::Value;
 /// is why they are told apart here rather than left as one JSON value: only a
 /// document the broker stores itself can be changed or deleted behind the
 /// holder's back, by this process or another sharing the database.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ServedContext {
     /// The lifecycle metadata of an entry (`details=true`, clause 5.13.4.4).
-    Metadata(Value),
+    Metadata(Box<ContextMetadata>),
     /// An embedded NGSI-LD core context, which no operation can change.
-    Embedded(Value),
+    Embedded(JsonLiteral),
     /// A clause 5.13.1 `"Hosted"` or `"ImplicitlyCreated"` document.
     Stored {
         /// The stored document.
-        document: Value,
+        document: JsonLiteral,
         /// How long a holder may use its copy before asking again: the span
         /// after which this broker reads the stored row again itself.
         revalidation: CacheLifetime,

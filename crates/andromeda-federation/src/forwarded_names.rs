@@ -28,32 +28,11 @@ use andromeda_ngsi_ld_query::{
         expansion::{expand_csf_expr, expand_q_expr},
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
-        parser,
     },
     projection::grammar::RawProjectionTerm,
     type_selection::grammar::TypeExprRaw,
 };
-use serde_json::{Map, Value};
 use std::{future::Future, pin::Pin, str::FromStr};
-
-/// The Subscription member holding its entity selectors (Table 5.2.12-1).
-const ENTITIES_MEMBER: &str = "entities";
-/// The entity selector member holding its type selection (Table 5.2.8-1).
-const TYPE_MEMBER: &str = "type";
-/// The Subscription member listing its watched attributes (Table 5.2.12-1).
-const WATCHED_ATTRIBUTES_MEMBER: &str = "watchedAttributes";
-/// The Subscription member holding its notification parameters (Table
-/// 5.2.12-1).
-const NOTIFICATION_MEMBER: &str = "notification";
-/// The notification parameters member listing the notified attributes (Table
-/// 5.2.14-1).
-const NOTIFIED_ATTRIBUTES_MEMBER: &str = "attributes";
-/// The Subscription member holding its clause 4.9 query (Table 5.2.12-1).
-const Q_MEMBER: &str = "q";
-/// The Subscription member holding its geoquery (Table 5.2.12-1).
-const GEO_QUERY_MEMBER: &str = "geoQ";
-/// The geoquery member naming the `GeoProperty` it evaluates (Table 5.2.13-1).
-const GEOPROPERTY_MEMBER: &str = "geoproperty";
 
 /// The names one forwarded request carries, spelled in its forwarding context.
 pub(crate) struct ForwardedNames<'a> {
@@ -275,63 +254,6 @@ impl<'a> ForwardedNames<'a> {
             }
         }
     }
-
-    /// A reduced subscription document (clause 5.8.1.4) with every name it
-    /// carries spelled in the forwarding context: the entity selectors' types,
-    /// `watchedAttributes`, `notification.attributes`, `q` and the geoquery's
-    /// `geoproperty`. Every other member, which holds no name, is unchanged; the
-    /// reduced copy carries neither `jsonKeys` nor `expandValues`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`FederationError::Query`] when a member that carries names does
-    /// not parse, and the errors of [`ForwardedNames::attr`] and
-    /// [`ForwardedNames::q`] when one of its names does not reword.
-    pub(crate) async fn subscription_document(&self, document: Value) -> Result<Value, FederationError> {
-        let Value::Object(mut members) = document else {
-            return Ok(document);
-        };
-        if self.rewording == Rewording::AsInbound {
-            return Ok(Value::Object(members));
-        }
-        if let Some(Value::Array(selectors)) = members.get_mut(ENTITIES_MEMBER) {
-            for selector in selectors.iter_mut().filter_map(Value::as_object_mut) {
-                if let Some(Value::String(raw)) = selector.get_mut(TYPE_MEMBER) {
-                    let expression: TypeExprRaw = raw.parse()?;
-                    *raw = self.type_expr(&expression).await?.to_string();
-                }
-            }
-        }
-        self.reword_attribute_list(&mut members, WATCHED_ATTRIBUTES_MEMBER).await?;
-        if let Some(Value::Object(notification)) = members.get_mut(NOTIFICATION_MEMBER) {
-            self.reword_attribute_list(notification, NOTIFIED_ATTRIBUTES_MEMBER).await?;
-        }
-        if let Some(Value::String(raw)) = members.get_mut(Q_MEMBER) {
-            let expression = parser::parse(raw)?;
-            *raw = self.q(&expression, None).await?.to_string();
-        }
-        if let Some(Value::Object(geo)) = members.get_mut(GEO_QUERY_MEMBER)
-            && let Some(Value::String(raw)) = geo.get_mut(GEOPROPERTY_MEMBER)
-        {
-            let parsed: NgsiLdReference = raw.parse().map_err(|error| FederationError::from(FederationInvariant::ForwardedName(error)))?;
-            *raw = self.geoproperty(&parsed).await?.to_string();
-        }
-        Ok(Value::Object(members))
-    }
-
-    /// Reword the attribute names an array member of `object` holds.
-    async fn reword_attribute_list(&self, object: &mut Map<String, Value>, member: &str) -> Result<(), FederationError> {
-        let Some(Value::Array(names)) = object.get_mut(member) else {
-            return Ok(());
-        };
-        for name in names.iter_mut() {
-            if let Value::String(raw) = name {
-                let parsed: AttributeName = raw.parse().map_err(|error| FederationError::from(FederationInvariant::ForwardedName(error)))?;
-                *raw = self.attr(&parsed).await?.to_string();
-            }
-        }
-        Ok(())
-    }
 }
 
 /// A compacted spelling as the NGSI-LD name it has to be.
@@ -352,6 +274,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{forwarded_names::ForwardedNames, forwarding_context::Rewording, term_resolver::TermResolver};
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
     use andromeda_ngsi_ld_query::{filter::parser, type_selection::grammar::TypeExprRaw};
@@ -366,19 +289,31 @@ mod tests {
     /// The client's context: `speed` and `Vehicle` alias IRIs the forwarding
     /// context spells differently.
     fn inbound() -> ContextSpec {
-        ContextSpec::from_body(json!({
-            "speed": "https://example.org/speed",
-            "Vehicle": "https://example.org/Vehicle",
-            "brand": "https://example.org/brand"
-        }))
+        ContextSpec::from_body(
+            JsonLiteral::admit(
+                &json!({
+                    "speed": "https://example.org/speed",
+                    "Vehicle": "https://example.org/Vehicle",
+                    "brand": "https://example.org/brand"
+                })
+                .to_string(),
+            )
+            .expect("an admissible literal"),
+        )
     }
 
     /// The forwarding context: the same IRIs under other terms.
     fn configured() -> ContextSpec {
-        ContextSpec::from_body(json!({
-            "velocity": "https://example.org/speed",
-            "Car": "https://example.org/Vehicle"
-        }))
+        ContextSpec::from_body(
+            JsonLiteral::admit(
+                &json!({
+                    "velocity": "https://example.org/speed",
+                    "Car": "https://example.org/Vehicle"
+                })
+                .to_string(),
+            )
+            .expect("an admissible literal"),
+        )
     }
 
     fn attr(name: &str) -> AttributeName {
@@ -456,14 +391,26 @@ mod tests {
     #[tokio::test]
     async fn json_keys_members_stay_literal_while_their_attribute_is_reworded() {
         let engine = engine();
-        let inbound = ContextSpec::from_body(json!({
-            "speed": "https://example.org/speed",
-            "road": "https://example.org/street"
-        }));
-        let naming = ContextSpec::from_body(json!({
-            "velocity": "https://example.org/speed",
-            "street": "https://example.org/street"
-        }));
+        let inbound = ContextSpec::from_body(
+            JsonLiteral::admit(
+                &json!({
+                    "speed": "https://example.org/speed",
+                    "road": "https://example.org/street"
+                })
+                .to_string(),
+            )
+            .expect("an admissible literal"),
+        );
+        let naming = ContextSpec::from_body(
+            JsonLiteral::admit(
+                &json!({
+                    "velocity": "https://example.org/speed",
+                    "street": "https://example.org/street"
+                })
+                .to_string(),
+            )
+            .expect("an admissible literal"),
+        );
         let resolver = TermResolver::new(&engine, &inbound);
         let names = ForwardedNames::prepare(&engine, &resolver, &naming, Rewording::Reword)
             .await
@@ -518,33 +465,5 @@ mod tests {
         let reworded = names.query_string("csf=speed%5Broad%5D%3D%3D%22Main%22").await.expect("rewords");
         let pairs = form_urlencoded::parse(reworded.as_bytes()).into_owned().collect::<Vec<_>>();
         pretty_assertions::assert_eq!(pairs, vec![("csf".to_owned(), "velocity[road]==\"Main\"".to_owned())]);
-    }
-
-    #[tokio::test]
-    async fn a_subscription_document_rewords_every_name_it_carries() {
-        let engine = engine();
-        let inbound = inbound();
-        let naming = configured();
-        let resolver = TermResolver::new(&engine, &inbound);
-        let names = ForwardedNames::prepare(&engine, &resolver, &naming, Rewording::Reword)
-            .await
-            .expect("the forwarding context processes");
-        let document = json!({
-            "id": "urn:ngsi-ld:Subscription:forwarded-1",
-            "type": "Subscription",
-            "entities": [{"type": "Vehicle"}],
-            "watchedAttributes": ["speed"],
-            "q": "speed>10",
-            "geoQ": {"geometry": "Point", "coordinates": [1, 2], "georel": "near;maxDistance==10", "geoproperty": "speed"},
-            "notification": {"attributes": ["speed", "brand"], "endpoint": {"uri": "http://receiver.example.org/notify"}}
-        });
-        let reworded = names.subscription_document(document).await.expect("rewords");
-        pretty_assertions::assert_eq!(reworded["entities"][0]["type"], json!("Car"));
-        pretty_assertions::assert_eq!(reworded["watchedAttributes"], json!(["velocity"]));
-        pretty_assertions::assert_eq!(reworded["q"], json!("velocity>10"));
-        pretty_assertions::assert_eq!(reworded["geoQ"]["geoproperty"], json!("velocity"));
-        pretty_assertions::assert_eq!(reworded["notification"]["attributes"], json!(["velocity", "https://example.org/brand"]));
-        pretty_assertions::assert_eq!(reworded["notification"]["endpoint"]["uri"], json!("http://receiver.example.org/notify"));
-        pretty_assertions::assert_eq!(reworded["type"], json!("Subscription"));
     }
 }

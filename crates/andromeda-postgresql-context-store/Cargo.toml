@@ -23,6 +23,7 @@ andromeda-context-space.workspace = true
 andromeda-entity.workspace = true
 andromeda-entity-map.workspace = true
 andromeda-health.workspace = true
+andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-entity.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
@@ -78,7 +79,6 @@ uuid = { version = "1.27.0", features = ["v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
-andromeda-json-literal.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-test-fixtures.workspace = true
 pretty_assertions = "1.4.1"

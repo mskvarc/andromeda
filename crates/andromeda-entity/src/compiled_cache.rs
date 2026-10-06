@@ -295,6 +295,7 @@ impl Default for CompiledQueryCache {
 #[cfg(test)]
 mod tests {
     use crate::compiled_cache::{CompiledQueryKey, context_digest};
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
     use iri_rs::IriBuf;
@@ -360,7 +361,9 @@ mod tests {
         let url = "https://example.com/context.jsonld";
         let default = context_digest(&ContextSpec::none());
         let link = context_digest(&ContextSpec::from_link(context_iri(url)));
-        let body = context_digest(&ContextSpec::from_body(json!(url)));
+        let body = context_digest(&ContextSpec::from_body(
+            JsonLiteral::admit(&json!(url).to_string()).expect("an admissible literal"),
+        ));
 
         assert_ne!(default, link);
         assert_ne!(default, body);
@@ -371,12 +374,13 @@ mod tests {
     /// `[A, B, A]` leaves A's definitions in force where `[A, B]` leaves B's.
     #[test]
     fn a_repeated_context_is_part_of_the_digest() {
-        let repeated = ContextSpec::from_body(json!([
-            "https://example.com/a.jsonld",
-            "https://example.com/b.jsonld",
-            "https://example.com/a.jsonld"
-        ]));
-        let once = ContextSpec::from_body(json!(["https://example.com/a.jsonld", "https://example.com/b.jsonld"]));
+        let repeated = ContextSpec::from_body(
+            JsonLiteral::admit(&json!(["https://example.com/a.jsonld", "https://example.com/b.jsonld", "https://example.com/a.jsonld"]).to_string())
+                .expect("an admissible literal"),
+        );
+        let once = ContextSpec::from_body(
+            JsonLiteral::admit(&json!(["https://example.com/a.jsonld", "https://example.com/b.jsonld"]).to_string()).expect("an admissible literal"),
+        );
 
         assert_ne!(context_digest(&repeated), context_digest(&once));
     }

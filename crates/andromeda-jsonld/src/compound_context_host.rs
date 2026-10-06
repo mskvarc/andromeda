@@ -16,9 +16,9 @@
 //! URLs they are served under are known. This crate stores nothing and mints no
 //! URL itself.
 
+use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use iri_rs::{InvalidIri, IriBuf};
-use serde_json::Value;
 use std::{fmt::Debug, future::Future, pin::Pin};
 use thiserror::Error;
 
@@ -50,7 +50,7 @@ pub trait CompoundContextHost: Debug + Send + Sync {
     /// Hosting the same context twice answers the same URL whenever the
     /// implementation can share the entry, so a request repeated a thousand
     /// times names one stored document rather than a thousand.
-    fn host<'a>(&'a self, context: &'a Value, usage: WrapperUse) -> CompoundContextHostFuture<'a>;
+    fn host<'a>(&'a self, context: &'a JsonLiteral, usage: WrapperUse) -> CompoundContextHostFuture<'a>;
 }
 
 /// A host that stores nothing.
@@ -62,7 +62,7 @@ pub trait CompoundContextHost: Debug + Send + Sync {
 pub struct NoCompoundContextHost;
 
 impl CompoundContextHost for NoCompoundContextHost {
-    fn host<'a>(&'a self, _context: &'a Value, _usage: WrapperUse) -> CompoundContextHostFuture<'a> {
+    fn host<'a>(&'a self, _context: &'a JsonLiteral, _usage: WrapperUse) -> CompoundContextHostFuture<'a> {
         Box::pin(async { Err(ContextHostingError::NoHost) })
     }
 }
@@ -86,16 +86,24 @@ pub enum ContextHostingError {
     /// fails to be: a broken invariant, never a client mistake.
     #[error("the URL minted for a hosted @context is not an IRI: {0}")]
     MintedUrlNotIri(#[source] InvalidIri<String>),
+    /// The document `{"@context": context}` could not be written, which an
+    /// admitted context never fails to be: a broken invariant, never a client
+    /// mistake.
+    #[error("the hosted @context document could not be written: {0}")]
+    Unwritable(#[source] JsonLiteralError),
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::compound_context_host::{CompoundContextHost, ContextHostingError, NoCompoundContextHost, WrapperUse};
+    use crate::{
+        compound_context_host::{CompoundContextHost, ContextHostingError, NoCompoundContextHost, WrapperUse},
+        test_documents::literal,
+    };
     use serde_json::json;
 
     #[tokio::test]
     async fn a_host_that_stores_nothing_reports_that_no_host_is_attached() {
-        let context = json!(["https://example.com/a.jsonld", "https://example.com/b.jsonld"]);
+        let context = literal(&json!(["https://example.com/a.jsonld", "https://example.com/b.jsonld"]));
 
         assert!(matches!(
             NoCompoundContextHost.host(&context, WrapperUse::Response).await,

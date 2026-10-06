@@ -25,9 +25,9 @@ use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
 ///
 /// The simplified temporal representation of clause 4.5.9 moves the sequence of
 /// instances in time inside a plural member, which puts both rows back where
-/// Table 4.3.6.8-1 wrote them but leaves the attribute object holding members
-/// the fallback tables do not name, so it is walked by its own reading. Clause
-/// 4.5.19's aggregated representation shares that shape and that reading.
+/// Table 4.3.6.8-1 wrote them. Clause 4.5.19's aggregated representation shares
+/// that shape, so both are written by the temporal writers
+/// (`crate::temporal`) under the `SimplifiedTemporalEvolution` reading.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AdaptedPayload {
     /// An Entity, as clause 4.5.1 represents it.

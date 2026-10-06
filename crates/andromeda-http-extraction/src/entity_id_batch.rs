@@ -16,7 +16,7 @@ use crate::{
     batch_array::batch_items,
     batch_body_refusal::{BatchBodyRefusal, BatchMembers},
     batch_item_refusal::BatchItemRefusal,
-    jsonld::{AdmittedBody, admit_request_body, submitted_context},
+    body_admission::{AdmittedBody, admit_request_body, submitted_context},
     submitted_body::SubmittedBody,
 };
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
@@ -27,7 +27,12 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchEntityError;
 use axum::extract::{FromRequest, Request};
-use serde_json::Value;
+use serde::{
+    Deserialize,
+    Deserializer,
+    de::{Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor},
+};
+use std::fmt;
 
 /// The Entity IDs a batch delete names, and the ones refused per entity.
 #[derive(Debug)]
@@ -68,18 +73,85 @@ where
     }
 }
 
+/// One item of the array a batch delete carries, read to its end.
+#[derive(Debug)]
+enum EntityIdItem {
+    /// A string, which may name an entity.
+    Text(String),
+    /// `null`.
+    Null,
+    /// A number, a boolean, an array or an object: no entity identifier.
+    NoIdentifier,
+}
+
+impl<'de> Deserialize<'de> for EntityIdItem {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<EntityIdItem, D::Error> {
+        deserializer.deserialize_any(EntityIdItemVisitor)
+    }
+}
+
+/// Reads one item of the array a batch delete carries.
+#[derive(Clone, Copy, Debug)]
+struct EntityIdItemVisitor;
+
+impl<'de> Visitor<'de> for EntityIdItemVisitor {
+    type Value = EntityIdItem;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("any JSON value")
+    }
+
+    fn visit_bool<E: DeserializeError>(self, _value: bool) -> Result<EntityIdItem, E> {
+        Ok(EntityIdItem::NoIdentifier)
+    }
+
+    fn visit_i64<E: DeserializeError>(self, _value: i64) -> Result<EntityIdItem, E> {
+        Ok(EntityIdItem::NoIdentifier)
+    }
+
+    fn visit_u64<E: DeserializeError>(self, _value: u64) -> Result<EntityIdItem, E> {
+        Ok(EntityIdItem::NoIdentifier)
+    }
+
+    fn visit_f64<E: DeserializeError>(self, _value: f64) -> Result<EntityIdItem, E> {
+        Ok(EntityIdItem::NoIdentifier)
+    }
+
+    fn visit_str<E: DeserializeError>(self, value: &str) -> Result<EntityIdItem, E> {
+        Ok(EntityIdItem::Text(value.to_owned()))
+    }
+
+    fn visit_string<E: DeserializeError>(self, value: String) -> Result<EntityIdItem, E> {
+        Ok(EntityIdItem::Text(value))
+    }
+
+    fn visit_unit<E: DeserializeError>(self) -> Result<EntityIdItem, E> {
+        Ok(EntityIdItem::Null)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut items: A) -> Result<EntityIdItem, A::Error> {
+        while items.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(EntityIdItem::NoIdentifier)
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut members: A) -> Result<EntityIdItem, A::Error> {
+        while members.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        Ok(EntityIdItem::NoIdentifier)
+    }
+}
+
 /// The identifiers `body` names, or the refusal that fails the request.
 fn entity_id_batch(body: &[u8]) -> Result<EntityIdBatch, BatchBodyRefusal> {
-    let items = batch_items::<Value>(body, BatchMembers::EntityIds)?;
+    let items = batch_items::<EntityIdItem>(body, BatchMembers::EntityIds)?;
     let mut batch = EntityIdBatch {
         ids: Vec::with_capacity(items.len()),
         refused: Vec::new(),
     };
     for (index, item) in items.into_iter().enumerate() {
         let raw = match item {
-            Value::String(raw) => raw,
-            Value::Null => return Err(BatchBodyRefusal::NullItem { index }),
-            Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => return Err(BatchBodyRefusal::NotAnEntityId { index }),
+            EntityIdItem::Text(raw) => raw,
+            EntityIdItem::Null => return Err(BatchBodyRefusal::NullItem { index }),
+            EntityIdItem::NoIdentifier => return Err(BatchBodyRefusal::NotAnEntityId { index }),
         };
         match raw.parse::<Identifier>() {
             Ok(id) => batch.ids.push(id),

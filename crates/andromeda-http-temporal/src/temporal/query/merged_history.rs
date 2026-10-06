@@ -15,8 +15,9 @@ use andromeda_federation::{
     temporal_result::merge_temporal_query_results,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
+use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use axum::http::Uri;
-use serde_json::Value;
 
 /// Whether the entities the sources answered with join the local ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +33,7 @@ pub(crate) enum RemoteParts {
 /// The merged history of a temporal query, and what the sources contributed to it.
 pub(crate) struct MergedTemporalHistory {
     /// The local rows folded together with what every contacted source returned.
-    pub(crate) entities: Vec<Value>,
+    pub(crate) entities: Vec<TemporalHistory>,
     /// The clause 6.3.17 warnings the forwarding produced.
     pub(crate) warnings: Vec<NgsiLdWarning>,
     /// Which registration returned which entity, and under which map, captured
@@ -46,6 +47,8 @@ pub(crate) struct MergedTemporalHistory {
 /// entity the broker also holds, so its contribution joins the aggregation
 /// instead of only filling gaps.
 ///
+/// The instances of each merged entity are ordered by `timeproperty`.
+///
 /// # Errors
 ///
 /// The clause 4.12 `TooManyResults` refusal when the sources contributed and
@@ -53,10 +56,11 @@ pub(crate) struct MergedTemporalHistory {
 /// rows were read one past it, so a larger collection is refused rather than
 /// paged from a truncation.
 pub(crate) fn merge_forwarded_history(
-    local_entities: Vec<Value>,
+    local_entities: Vec<TemporalHistory>,
     forwarded: Option<ForwardedHistory>,
     filtering: SplitEntities,
     remote: RemoteParts,
+    timeproperty: TimeProp,
     instance: &Uri,
 ) -> Result<MergedTemporalHistory, ProblemResponse> {
     let Some(history) = forwarded else {
@@ -83,7 +87,7 @@ pub(crate) fn merge_forwarded_history(
         SplitEntities::Complete => sources,
     };
     let entities = match remote {
-        RemoteParts::Merged => merge_temporal_query_results(local_entities, sources),
+        RemoteParts::Merged => merge_temporal_query_results(local_entities, sources, timeproperty),
         RemoteParts::RenderedApart => local_entities,
     };
     if contributed {

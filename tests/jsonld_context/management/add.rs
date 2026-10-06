@@ -1,6 +1,7 @@
 //! Add @context (clause 5.13.2, binding 6.29.3.1; ETSI 050).
 
 use crate::{
+    broker_endpoints::broker_url,
     context_api::{cached_urls, create_context, extract_id, get_context, list_contexts},
     context_origin::ContextOrigin,
     ngsi_requests::{create_entity, create_subscription, delete_entity, delete_subscription},
@@ -111,6 +112,32 @@ async fn add_context_member_that_is_a_number_is_bad_request_data() {
 async fn add_context_array_holding_no_context_is_bad_request_data() {
     assert_refused_as_bad_request_data(&json!({ "@context": ["https://example.org/a.jsonld", 5] })).await;
     assert_refused_as_bad_request_data(&json!({ "@context": [["https://example.org/a.jsonld"]] })).await;
+}
+
+/// Clause 5.5.4 with IETF RFC 8259 section 4: a local context naming one term
+/// twice is data that is not syntactically correct, `BadRequestData`, and
+/// nothing is stored.
+#[tokio::test]
+async fn add_context_naming_a_term_twice_is_bad_request_data() {
+    let tenant = PrivateTenant::provisioned().await;
+    let body = r#"{"@context":{"A1":"urn:ngsi-ld:attributes:A1","A1":"urn:ngsi-ld:attributes:A2"}}"#;
+
+    let response = tenant
+        .client()
+        .post(broker_url("jsonldContexts"))
+        .header("Content-Type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .expect("create_context request failed");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let problem: serde_json::Value = response.json().await.expect("a problem details body");
+    assert_eq!(problem["type"], BAD_REQUEST_DATA_TYPE.as_str(), "{problem}");
+    let (status, hosted) = list_contexts(tenant.client(), "kind=Hosted").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(hosted.is_empty(), "nothing is stored: {hosted:?}");
+    tenant.finish().await;
 }
 
 /// `050_03_01`: a subscription whose `@context` is an array leaves an

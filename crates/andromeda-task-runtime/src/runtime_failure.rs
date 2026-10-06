@@ -15,9 +15,6 @@ pub enum RuntimeFailure {
     /// The wake channel of a durable drain closed while the task was active.
     #[error("drain wake channel closed while task was active")]
     DrainWakeChannelClosed,
-    /// A startup task was registered under a name the supervisor already holds.
-    #[error("duplicate startup task registration")]
-    DuplicateStartupRegistration,
     /// The spawned execution panicked or was aborted.
     #[error("task execution stopped outside its runtime contract: {0}")]
     ExecutionStopped(#[source] JoinError),

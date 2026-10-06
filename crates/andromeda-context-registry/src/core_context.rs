@@ -1,12 +1,12 @@
 //! Embedded NGSI-LD core Context representation and metadata.
 
 use crate::{error::ContextRegistryError, registry_invariant::RegistryInvariant};
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::core_context::{NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
 use chrono::Utc;
 use iri_rs::{Iri, IriBuf};
-use serde_json::Value;
 
 /// Whether an identifier names one of the embedded NGSI-LD core Context versions.
 pub(crate) fn is_core_context(identifier: &Identifier) -> bool {
@@ -14,8 +14,8 @@ pub(crate) fn is_core_context(identifier: &Identifier) -> bool {
 }
 
 /// Parse the embedded v1.9 core Context document.
-pub(crate) fn payload() -> Result<Value, ContextRegistryError> {
-    serde_json::from_str(NGSI_LD_CORE_CONTEXT_V19).map_err(|error| RegistryInvariant::CoreContextDocument(error).into())
+pub(crate) fn payload() -> Result<JsonLiteral, ContextRegistryError> {
+    JsonLiteral::admit(NGSI_LD_CORE_CONTEXT_V19).map_err(|error| RegistryInvariant::CoreContextDocument(error).into())
 }
 
 /// Build the virtual metadata record for an embedded core Context.
@@ -62,7 +62,7 @@ mod tests {
     fn embedded_v19_context_is_recognized_and_representable() -> Result<(), ContextRegistryError> {
         let identifier = identifier("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld")?;
         assert!(is_core_context(&identifier));
-        assert!(payload()?.get("@context").is_some());
+        assert!(payload()?.piece().member("@context").is_some());
         pretty_assertions::assert_eq!(metadata(&identifier)?.kind, ContextKind::ImplicitlyCreated);
         Ok(())
     }

@@ -467,7 +467,7 @@ mod tests {
     /// geometry without members leaves the members column empty.
     #[test]
     fn a_geometry_observation_is_stored_as_its_geometry() {
-        let (form, _) = Geometry::from_geojson_value(&json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 2.0, 30.0], [3.0, 4.0]]}))
+        let (form, _) = serde_json::from_value::<Geometry>(json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 2.0, 30.0], [3.0, 4.0]]}))
             .expect("a valid LineString")
             .into_parts();
         let row = observed_row(AttributeType::GeoProperty, TemporalValue::Geometry(GeometryValue::new(form.clone()))); // clone: the test compares the stored value against what it observed

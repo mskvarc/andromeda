@@ -367,3 +367,139 @@ async fn regression_prefer_version_simplified_answers_the_clause_4_5_4_shape_on_
 
     scope.finish().await.expect("cleanup failed");
 }
+
+/// Table 4.3.6.8-1 notes 2 and 3: with no default instance, "any other choice"
+/// of the instance a 1.0 target keeps "must be the same in every
+/// representation", so the normalized and the `keyValues` readings both fall
+/// back to the first instance in the order the entity holds them, not to the
+/// alphabetically first `datasetId`. Clause 4.3.6.8 answers 203 and names the
+/// version it applied in `Preference-Applied`.
+#[tokio::test]
+async fn regression_prefer_version_keyvalues_and_normalized_fall_back_to_the_same_instance() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Vehicle:prefer-same-instance");
+    create_entity(
+        client,
+        &json!({
+            "id": id,
+            "type": "Vehicle",
+            "speed": [
+                {"type": "Property", "value": 10, "datasetId": "urn:ngsi-ld:Dataset:z"},
+                {"type": "Property", "value": 20, "datasetId": "urn:ngsi-ld:Dataset:a"}
+            ],
+            "@context": [CORE_CONTEXT]
+        }),
+    )
+    .await;
+
+    let mut kept = Vec::new();
+    for selection in ["options=normalized", "options=keyValues"] {
+        let path = format!("/ngsi-ld/v1/entities/{}?{selection}", urlencoding::encode(&id));
+        let response = client
+            .raw(Method::GET, &path)
+            .header("Accept", "application/json")
+            .header("Prefer", "ngsi-ld=1.0")
+            .send()
+            .await
+            .expect("read request");
+        let body = response.json_value().expect("a read answers with JSON");
+        assert_eq!(response.status, StatusCode::NON_AUTHORITATIVE_INFORMATION, "{selection}: {body}");
+        let applied = response
+            .headers
+            .get("preference-applied")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        assert_eq!(applied.as_deref(), Some("ngsi-ld=1.0"), "{selection}");
+        // The normalized reading keeps the Property object, `keyValues` the bare value.
+        let speed = &body["speed"];
+        kept.push(speed.get("value").unwrap_or(speed).clone()); // clone: the collected readings outlive each response body
+    }
+    assert_eq!(kept, vec![json!(10), json!(10)], "both representations keep the first instance held");
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Tables 4.3.6.8-2 and 4.3.6.8-3 apply to every Property and Relationship, and
+/// a sub-attribute is one (clauses 4.5.2 and 4.5.3): at a 1.0 target a
+/// sub-attribute loses `observedAt` and `unitCode`, and a `LanguageProperty`
+/// sub-attribute is reformatted as a Property.
+#[tokio::test]
+async fn regression_prefer_version_sub_attributes_are_amended() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Vehicle:prefer-sub-attributes");
+    create_entity(
+        client,
+        &json!({
+            "id": id,
+            "type": "Vehicle",
+            "speed": {
+                "type": "Property",
+                "value": 21,
+                "accuracy": {"type": "Property", "value": 1, "unitCode": "CEL", "observedAt": "2025-01-01T00:00:00Z"},
+                "title": {"type": "LanguageProperty", "languageMap": {"en": "Fast"}}
+            },
+            "@context": [CORE_CONTEXT]
+        }),
+    )
+    .await;
+
+    let (_, unadapted) = retrieve(client, &id, "options=normalized", None).await;
+    let (status, body) = retrieve(client, &id, "options=normalized", Some("ngsi-ld=1.0")).await;
+
+    assert_eq!(unadapted["speed"]["accuracy"]["unitCode"], json!("CEL"), "{unadapted}");
+    assert_eq!(unadapted["speed"]["title"]["type"], json!("LanguageProperty"), "{unadapted}");
+    assert_eq!(status, StatusCode::NON_AUTHORITATIVE_INFORMATION, "{body}");
+    assert_eq!(body["speed"]["accuracy"], json!({"type": "Property", "value": 1}), "{body}");
+    assert_eq!(body["speed"]["title"], json!({"type": "Property", "value": {"en": "Fast"}}), "{body}");
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 4.5.23 nests a Linked Entity under `entity`, and Table 4.3.6.8-1
+/// removes the Entity `expiresAt` introduced at 1.9 for a 1.8 target from every
+/// Entity in the payload, the nested ones included.
+#[tokio::test]
+async fn regression_prefer_version_inline_joined_entities_are_amended() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Vehicle:prefer-inline-join");
+    let building = scope.id("Building:prefer-inline-join");
+    create_entity(
+        client,
+        &json!({"id": building, "type": "Building", "expiresAt": FAR_FUTURE, "@context": [CORE_CONTEXT]}),
+    )
+    .await;
+    create_entity(
+        client,
+        &json!({
+            "id": id,
+            "type": "Vehicle",
+            "refBuilding": {"type": "Relationship", "object": building},
+            "@context": [CORE_CONTEXT]
+        }),
+    )
+    .await;
+
+    let (_, unadapted) = retrieve(client, &id, "join=inline&joinLevel=1", None).await;
+    let (status, body) = retrieve(client, &id, "join=inline&joinLevel=1", Some("ngsi-ld=1.8")).await;
+
+    assert_eq!(
+        unadapted["refBuilding"]["entity"]["expiresAt"],
+        json!(FAR_FUTURE),
+        "the control carries the nested expiry: {unadapted}"
+    );
+    assert_eq!(status, StatusCode::NON_AUTHORITATIVE_INFORMATION, "{body}");
+    assert_eq!(
+        body["refBuilding"]["entity"]["id"],
+        json!(building),
+        "the Linked Entity is still nested: {body}"
+    );
+    assert!(
+        body["refBuilding"]["entity"].get("expiresAt").is_none(),
+        "the nested Entity is amended too: {body}"
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}

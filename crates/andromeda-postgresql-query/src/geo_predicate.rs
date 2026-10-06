@@ -347,7 +347,7 @@ mod tests {
     fn point_query(georel: GeoRel, geoproperty: &str) -> GeoQuery {
         GeoQuery {
             georel,
-            geometry: Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses"),
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses"),
             geoproperty: name(geoproperty),
         }
     }
@@ -364,7 +364,7 @@ mod tests {
     fn point_query_3d(georel: GeoRel, geoproperty: &str) -> GeoQuery {
         GeoQuery {
             georel,
-            geometry: Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0, 3.0] }))
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0, 3.0] }))
                 .expect("point with altitude parses"),
             geoproperty: name(geoproperty),
         }
@@ -618,7 +618,7 @@ mod tests {
                 max_distance: max_distance.map(|metres| PositiveDistance::from_str(metres).expect("positive distance")),
                 min_distance: min_distance.map(|metres| PositiveDistance::from_str(metres).expect("positive distance")),
             },
-            geometry: Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [longitude, latitude] })).expect("point parses"),
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [longitude, latitude] })).expect("point parses"),
             geoproperty: name(CUSTOM_GEOPROPERTY),
         }
     }

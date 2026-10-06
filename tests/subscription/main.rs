@@ -11,6 +11,7 @@ mod create;
 mod delete;
 mod delivery_state;
 mod helpers;
+mod member_validation;
 mod query;
 mod retrieve;
 mod update;

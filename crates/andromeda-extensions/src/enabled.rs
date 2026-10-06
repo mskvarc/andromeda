@@ -125,12 +125,6 @@ impl EnabledExtensions {
     pub fn cursor_pagination_enabled(&self) -> bool {
         self.enabled.contains(Extension::CursorPagination)
     }
-
-    /// Whether any extension at all is enabled.
-    #[must_use]
-    pub fn any_enabled(&self) -> bool {
-        !self.enabled.is_empty()
-    }
 }
 
 #[cfg(test)]
@@ -172,7 +166,6 @@ mod tests {
         assert!(enabled.temporal_linked_retrieval_enabled());
         assert!(enabled.tenant_management_enabled());
         assert!(enabled.cursor_pagination_enabled());
-        assert!(enabled.any_enabled());
     }
 
     /// The conformance override wins over every feature field at once, so a
@@ -213,13 +206,17 @@ mod tests {
             ..ExtensionsConfig::default()
         };
         assert!(!config.resolve().cursor_pagination_enabled());
-        assert!(!config.resolve().any_enabled());
     }
 
     #[test]
     fn the_empty_set_enables_nothing() {
         let enabled = EnabledExtensions::none();
-        assert!(!enabled.any_enabled());
+        assert!(!enabled.temporal_delete_by_query_enabled());
+        assert!(!enabled.purge_dataset_scope_enabled());
+        assert!(!enabled.temporal_aggregation_grouping_enabled());
+        assert!(!enabled.temporal_linked_retrieval_enabled());
+        assert!(!enabled.tenant_management_enabled());
+        assert!(!enabled.cursor_pagination_enabled());
     }
 
     #[test]

@@ -352,7 +352,7 @@ impl<'a> QueriedValueNode<'a> for &'a FixtureNode {
 /// JSON a client wrote.
 pub(crate) fn target_json(value: &TargetValue<'_>) -> Value {
     match value {
-        TargetValue::Number(number) => number.to_json_value(),
+        TargetValue::Number(number) => Value::Number(number.to_serde_number()),
         TargetValue::Text(text) => Value::String(text.to_string()),
         TargetValue::Boolean(boolean) => Value::Bool(*boolean),
         TargetValue::Json(json) => serde_json::from_str(json.text()).expect("the JSON a literal spells"),

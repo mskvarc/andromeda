@@ -12,10 +12,9 @@ use andromeda_context_commit::{
 };
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::stored_attribute_kind};
-use andromeda_postgresql_context_store::entity::{params::PreparedEntityColumns, staged_geometry::StagedGeometry};
+use andromeda_postgresql_context_store::entity::{params::PreparedEntityColumns, scope_label_paths::ScopeLabelPaths, staged_geometry::StagedGeometry};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, ltree::StoredScopePath};
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::{collections::HashMap, hash::Hash};
 
 /// Build parallel bind vectors for one fused entity statement.
@@ -40,15 +39,11 @@ pub(crate) fn columns_for(writes: &[IndexedWrite<'_>], names: &ResolvedWriteName
         let attribute_keys = key_array(projection.attributes.names(), &names.attributes, NameDictionary::AttributeName)?;
         columns.push_attribute_instances(instance_keys(&projection.attributes, &attribute_keys));
         columns.push_attribute_name_keys(attribute_keys);
-        columns.scope_paths_json.push(Value::Array(
+        columns.scope_paths_json.push(ScopeLabelPaths::new(
             // `entity_search.scope_paths` is only matched against: the
             // Entity's Scope is read back from its stored document, which keeps
             // the written text, so the label path alone is stored here.
-            projection
-                .scopes
-                .iter()
-                .map(|scope| Value::String(StoredScopePath::from(scope).label_path))
-                .collect(),
+            projection.scopes.iter().map(|scope| StoredScopePath::from(scope).label_path).collect(),
         ));
         columns
             .push_payload(&record.state)
@@ -160,7 +155,7 @@ mod tests {
         identifier::Identifier,
         scope::path::ScopePath,
     };
-    use andromeda_postgresql_context_store::entity::staged_geometry::StagedGeometry;
+    use andromeda_postgresql_context_store::entity::{scope_label_paths::ScopeLabelPaths, staged_geometry::StagedGeometry};
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
     use chrono::Utc;
     use serde_json::json;
@@ -323,7 +318,7 @@ mod tests {
         let writes = [scoped_write("urn:ngsi-ld:A", vec!["/a/b", "/c"], None)];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &resolved()).expect("valid columns");
-        pretty_assertions::assert_eq!(columns.scope_paths_json[0], json!(["a.b", "c"]));
+        pretty_assertions::assert_eq!(columns.scope_paths_json[0], ScopeLabelPaths::new(vec!["a.b".to_owned(), "c".to_owned()]));
     }
 
     /// Each state is encoded once, by the entity state codec, into the stored

@@ -1,18 +1,21 @@
 //! Re-assembling an inbound notification for the local subscriber (clause 5.8.6).
 //!
 //! A notification arriving under a forwarded copy's identifier is copied for
-//! the local subscription. When entities may be split, each entity in its
-//! `data` is completed from this broker's own copy and from every other
-//! registered source that holds it — never the sender, which already supplied
-//! its part — and the entities that fail the local subscription's filters are
-//! dropped. Whatever remains is delivered to the local endpoint under the local
-//! subscription's identifier.
+//! the local subscription. Each entity in its `data` is read into the model
+//! under the context it was written in; when entities may be split, it is
+//! completed on the model from this broker's own copy and from every other
+//! registered source that holds it -- never the sender, which already supplied
+//! its part -- and the entities that fail the local subscription's filters are
+//! dropped. Whatever remains is written the way a notification of the local
+//! subscription writes a local entity and delivered to the local endpoint
+//! under the local subscription's identifier.
 
 use crate::{
     error::SubscriptionForwardingError,
     forwarding_invariant::ForwardingInvariant,
+    inbound::{InboundData, InboundNotification},
     notification_narrowing::narrow_entity,
-    received_entity::ReceivedEntity,
+    received_entity::{NotifiedPart, read_notified},
     service::SubscriptionForwardingService,
 };
 use andromeda_delivery::{endpoint::transport::parse_endpoint_transport, notification_context::NotificationContext, request::NotificationDelivery};
@@ -30,19 +33,14 @@ use andromeda_federation::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
 use andromeda_ngsi_ld_entity::{document::EntityDocument, queried::linked_states::LinkedStates};
-use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
+use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, received_state::ReceivedDocument};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity::Entity,
-    notification::{ReceivedNotification, ReceivedNotificationData},
+    received::{ContextualEntity, ReceivedElement},
     registration::forwarding_mode::ForwardingMode,
 };
-use andromeda_ngsi_ld_render::{
-    geometry_selection::GeometrySelection,
-    notification_data::{DataShape, notification_data},
-    notification_entity::NotificationEntity,
-    version::{adapted_payload::AdaptedPayload, fallback::VersionFallback},
-};
+use andromeda_ngsi_ld_render::{geometry_selection::GeometrySelection, notification_data::DataShape};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::entity::GetEntityParams;
 use andromeda_subscription::{
@@ -52,13 +50,25 @@ use andromeda_subscription::{
     notification_slot::{NotificationSlot, NotificationSlotGate},
 };
 use chrono::Utc;
-use serde_json::Value;
 use tracing::{debug, warn};
 
 impl SubscriptionForwardingService {
     /// Complete one entity of the notification from this broker and from every
-    /// other holder (clause 5.8.6 split entities).
-    async fn reassemble_entity(&self, received: Entity, sender: &Identifier, context: &ContextSpec) -> Result<Entity, SubscriptionForwardingError> {
+    /// other holder (clause 5.8.6 split entities), on the model.
+    async fn reassemble_entity(
+        &self,
+        part: ReceivedDocument,
+        sender: &Identifier,
+        context: &ContextSpec,
+    ) -> Result<Option<ReceivedDocument>, SubscriptionForwardingError> {
+        let NotifiedPart { version, deletions } = match NotifiedPart::of(part) {
+            Ok(part) => part,
+            Err(refusal) => {
+                warn!(%refusal, "inbound notification carried a part that cannot be completed");
+                return Ok(None);
+            }
+        };
+        let id = version.state.id();
         let narrowing = RetrievalNarrowing {
             entity_type: None,
             attrs: &[],
@@ -66,8 +76,8 @@ impl SubscriptionForwardingService {
             dataset_ids: &[],
             projection: None,
         };
-        let local = match self.entity_query.get_inner(&self.live_target, &received.id, &narrowing, context).await {
-            Ok(entity) => Some(entity),
+        let local = match self.entity_query.read_held(&self.live_target, id, &narrowing, context).await {
+            Ok(held) => Some(held),
             Err(EntityError::NotFound { .. }) => None,
             Err(error) => return Err(error.into()),
         };
@@ -79,12 +89,9 @@ impl SubscriptionForwardingService {
             .forward_retrieve(
                 &self.live_target,
                 ForwardRetrieveRequest {
-                    entity_id: &received.id,
+                    entity_id: id,
                     exclude_registration: Some(sender),
-                    client_query: ClientQuery::EntityRetrieve {
-                        id: &received.id,
-                        params: &whole_entity,
-                    },
+                    client_query: ClientQuery::EntityRetrieve { id, params: &whole_entity },
                     context,
                     triggering: TriggeringRequest::default(),
                     mode_filter: CsrModeFilter::All,
@@ -105,45 +112,8 @@ impl SubscriptionForwardingService {
             });
         }
         sources.extend(remote.results);
-        merge_retrieve_results(Some(received), sources).ok_or_else(|| ForwardingInvariant::MergeProducedNothing.into())
-    }
-
-    /// One re-assembled entity of the notification under the local context,
-    /// or `None` when it cannot be read or the local subscription's filters
-    /// drop it (clause 5.8.6).
-    ///
-    /// A complete entity is filtered on the document it expanded to under the
-    /// sender's context; a split one is completed first and filtered on the
-    /// completed entity, expanded once under the local context.
-    async fn reassembled(
-        &self,
-        received: &ReceivedEntity,
-        reading: &ReassemblyReading<'_, '_>,
-        sender: &Identifier,
-    ) -> Result<Option<Entity>, SubscriptionForwardingError> {
-        if matches!(reading.completion, Completion::Complete) && !self.admits(reading.compiled, &received.document).await? {
-            return Ok(None);
-        }
-        let part = match received.respelled(reading.local_compactor).await {
-            Ok(entity) => entity,
-            Err(error) => {
-                warn!(%error, "inbound notification carried an entity that does not parse");
-                return Ok(None);
-            }
-        };
-        match &reading.completion {
-            Completion::Complete => Ok(Some(part)),
-            Completion::Split(local_expansion) => {
-                let merged = self.reassemble_entity(part, sender, reading.local_context).await?;
-                // The completed entity still carries the deletions the sender
-                // notified, which stay deletions (clause 5.8.6).
-                let document = local_expansion
-                    .entity(&merged, Normalization::MemberDeletions)
-                    .await
-                    .map_err(ForwardingInvariant::LocalExpansion)?;
-                Ok(self.admits(reading.compiled, &document).await?.then_some(merged))
-            }
-        }
+        let merged = merge_retrieve_results(Some(version), sources).ok_or(ForwardingInvariant::MergeProducedNothing)?;
+        Ok(Some(NotifiedPart::completed(merged, deletions)))
     }
 
     /// Whether the local subscription's filters admit `document`, the entities
@@ -161,31 +131,52 @@ impl SubscriptionForwardingService {
     }
 
     /// Every entity of an inbound notification re-assembled for the local
-    /// subscription; an entity that cannot be read, or that the local filters
-    /// drop, leaves the copy (clause 5.8.6).
+    /// subscription, in the local subscription's terms; an entity that cannot
+    /// be read, or that the local filters drop, leaves the copy (clause 5.8.6).
     async fn reassembled_entities(
         &self,
-        received_entities: &[Value],
-        inbound: &EntityExpansion<'_>,
+        received: &[ReceivedElement<ContextualEntity>],
         reading: &ReassemblyReading<'_, '_>,
         sender: &Identifier,
         local: &Identifier,
     ) -> Result<Vec<Entity>, SubscriptionForwardingError> {
         let local_terms = self.engine.prepare_term_context(reading.local_context);
         let mut local_expansions = AttributeExpansions::new(&self.engine, &local_terms);
-        let mut data = Vec::with_capacity(received_entities.len());
-        for value in received_entities {
-            let received = match ReceivedEntity::read(value, inbound).await {
-                Ok(received) => received,
-                Err(error) => {
-                    warn!(subscription = %local, %error, "inbound notification carried an entity that does not parse");
+        let mut data = Vec::with_capacity(received.len());
+        for element in received {
+            let contextual = match element {
+                ReceivedElement::Read(contextual) => contextual,
+                ReceivedElement::Refused(refusal) => {
+                    warn!(subscription = %local, %refusal, "inbound notification carried an entity that is refused");
                     continue;
                 }
             };
+            let part = match read_notified(&self.engine, reading.inbound, contextual).await {
+                Ok(part) => part,
+                Err(refusal) => {
+                    warn!(subscription = %local, %refusal, "inbound notification carried an entity that does not read");
+                    continue;
+                }
+            };
+            let completed = match reading.completion {
+                SplitEntities::Complete => Some(part),
+                SplitEntities::Split => self.reassemble_entity(part, sender, reading.local_context).await?,
+            };
             // Clause 5.8.6: entities failing the local filters leave the copy.
-            let Some(mut entity) = self.reassembled(&received, reading, sender).await? else {
+            let Some(ReceivedDocument { document, system_times }) = completed else {
                 continue;
             };
+            if !self.admits(reading.compiled, &document).await? {
+                continue;
+            }
+            let mut entity = match reading.local_compactor.document_entity(&document).await {
+                Ok(entity) => entity,
+                Err(error) => {
+                    warn!(subscription = %local, %error, "a re-assembled entity does not compact under the local context");
+                    continue;
+                }
+            };
+            system_times.restore(&mut entity);
             // `id` and `type` stay whatever the projection lists: Table 5.2.4-1
             // makes both mandatory, so the copy's `data` carries Entities.
             narrow_entity(&mut entity, reading.compiled, &mut local_expansions).await?;
@@ -205,7 +196,7 @@ impl SubscriptionForwardingService {
     /// [`SubscriptionForwardingError::Internal`] when a notification identifier
     /// cannot be minted, an entity cannot be rendered, or the local
     /// subscription's endpoint names no deliverable transport.
-    pub async fn handle_notification(&self, notification: &ReceivedNotification, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
+    pub async fn handle_notification(&self, notification: &InboundNotification, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
         let Some((local, sender)) = self.mappings.local_of_forwarded(&notification.subscription_id).await? else {
             return Err(SubscriptionForwardingError::UnknownSubscription {
                 subscription: notification.subscription_id.clone(), // clone: the error owns the identifier
@@ -214,8 +205,8 @@ impl SubscriptionForwardingService {
         // Every forwarded copy asks its source for `application/json`, so its
         // notifications carry an Entity array (Table 5.3.1-1); a
         // FeatureCollection names no Entity this copy can be re-assembled from.
-        let ReceivedNotificationData::Entities(received_entities) = &notification.data else {
-            warn!(subscription = %local, "inbound notification carried a FeatureCollection its forwarded copy did not ask for");
+        let InboundData::Entities(received) = &notification.data else {
+            warn!(subscription = %local, sender = %sender, "inbound notification carried a FeatureCollection its forwarded copy did not ask for");
             return Ok(());
         };
         let Some(stored) = self.subscriptions.get(&self.live_target, &local).await? else {
@@ -223,34 +214,13 @@ impl SubscriptionForwardingService {
             return Ok(());
         };
         let compiled = compile_subscription(&stored);
-        // Clause 5.2.12 `throttling` and Table 5.2.15-1 `cooldown` gate every
-        // notification the local subscription sends, and a re-assembled copy is
-        // no less one of them: it goes to the subscriber's own endpoint, under
-        // the local subscription's own identifier, and it writes the same
-        // `last_failure` and `last_notification` that suppress the
-        // subscription's other notifications. Table 5.2.15-1 admits no
-        // exception for where the notification came from -- "if requests are
-        // received before the cooldown period has expired, no notification is
-        // sent" -- so the slot is claimed here, before the re-assembly work,
-        // exactly as the locally-triggered path claims it before building.
-        let gate = NotificationSlotGate::at(Utc::now(), compiled.throttling_secs, compiled.endpoint_cooldown);
-        match self.subscriptions.claim_notification_slot(&self.live_target, &local, gate).await? {
-            NotificationSlot::Claimed => {}
-            NotificationSlot::Suppressed => {
-                debug!(subscription = %local, "re-assembled notification suppressed by the subscription's throttling or its endpoint's cooldown");
-                return Ok(());
-            }
-        }
         let subscription = stored.subscription;
-        let split = self.federation.split_entities(subscription.delivery.split_entities);
         // Clause 5.8.6: the copy is delivered under the local subscription's
         // `jsonldContext`. The sender spelled its part under the context of the
-        // copy it holds, and the other holders answer under whatever a
-        // retrieval asks for, so every part is read under the local context
-        // before the parts are merged and the result is rendered.
+        // copy it holds, and every part is read into the model under the
+        // context it was written in before the parts are merged and the result
+        // is written under the local context.
         let local_context = ContextSpec::for_subscription_context(subscription.delivery.jsonld_context.as_ref());
-
-        let format = subscription.notification.format.unwrap_or_default();
         let inbound = match EntityExpansion::prepare(&self.engine, context).await {
             Ok(inbound) => inbound,
             Err(error) => {
@@ -260,21 +230,14 @@ impl SubscriptionForwardingService {
         };
         let context_compactor = self.engine.compactor(&local_context);
         let local_compactor = EntityCompactor::new(&context_compactor);
-        let completion = match split {
-            SplitEntities::Complete => Completion::Complete,
-            SplitEntities::Split => Completion::Split(
-                EntityExpansion::prepare(&self.engine, &local_context)
-                    .await
-                    .map_err(ForwardingInvariant::LocalExpansion)?,
-            ),
-        };
         let reading = ReassemblyReading {
-            completion,
+            completion: self.federation.split_entities(subscription.delivery.split_entities),
             compiled: &compiled,
+            inbound: &inbound,
             local_context: &local_context,
             local_compactor: &local_compactor,
         };
-        let data = self.reassembled_entities(received_entities, &inbound, &reading, &sender, &local).await?;
+        let data = self.reassembled_entities(&received.0, &reading, &sender, &local).await?;
         if data.is_empty() {
             debug!(subscription = %local, "re-assembled notification carries no entity; nothing delivered");
             return Ok(());
@@ -292,25 +255,29 @@ impl SubscriptionForwardingService {
             .timeout(endpoint.timeout)
             .subscription_id(&local)
             .build();
-        // Clause 5.8.6: the copy is sent to the local subscription's endpoint,
-        // so its Entities are written in the local subscription's `format` and
-        // amended to its `ngsildConformance`; Table 5.3.1-1: the local
-        // endpoint's `accept` decides the shape of the copy's `data`, whatever
-        // shape the source sent.
-        let fallback = compiled
-            .ngsild_conformance
-            .and_then(|target| VersionFallback::new(target, AdaptedPayload::Entity));
-        let relayed: Vec<NotificationEntity<'_>> = data
-            .iter()
-            .map(|entity| NotificationEntity::relayed(entity, format).with_fallback(fallback))
-            .collect();
         let shape = DataShape {
             media_type: delivery.content_type(),
             selection: GeometrySelection::new(None, subscription.filters.dataset_id.as_deref().unwrap_or_default()),
             context: delivery.body_context(),
         };
-        let written = notification_data(&relayed, shape).map_err(ForwardingInvariant::Rendering)?;
+        let written = self.written_relay(&compiled, &subscription, &local_context, &data, shape).await?;
         let request = delivery.notification(written).map_err(ForwardingInvariant::WrittenNotification)?;
+        // Clause 5.2.12 `throttling` and Table 5.2.15-1 `cooldown` gate every
+        // notification the local subscription sends, and a re-assembled copy is
+        // no less one of them: it goes to the subscriber's own endpoint, under
+        // the local subscription's own identifier, and it writes the same
+        // `last_failure` and `last_notification` that suppress the
+        // subscription's other notifications. The slot is claimed only once
+        // the copy is ready to send, so a copy that failed before it was sent
+        // spends no slot and the sender's retry is delivered.
+        let gate = NotificationSlotGate::at(Utc::now(), compiled.throttling_secs, compiled.endpoint_cooldown);
+        match self.subscriptions.claim_notification_slot(&self.live_target, &local, gate).await? {
+            NotificationSlot::Claimed => {}
+            NotificationSlot::Suppressed => {
+                debug!(subscription = %local, "re-assembled notification suppressed by the subscription's throttling or its endpoint's cooldown");
+                return Ok(());
+            }
+        }
         let result = self.transport.deliver(&transport, &request).await;
         if result.is_delivered() {
             self.subscriptions.mark_success(&self.live_target, &local).await?;
@@ -325,23 +292,13 @@ impl SubscriptionForwardingService {
 /// subscription.
 struct ReassemblyReading<'r, 'c> {
     /// Whether the entities are completed from their other holders.
-    completion: Completion<'r>,
+    completion: SplitEntities,
     /// The local subscription, whose filters decide what the copy carries.
     compiled: &'r CompiledSubscription,
+    /// The notification's context, its entities read under it.
+    inbound: &'r EntityExpansion<'c>,
     /// The local subscription's context.
     local_context: &'r ContextSpec,
     /// The compactor of the local subscription's context.
     local_compactor: &'r EntityCompactor<'c>,
-}
-
-/// Whether the entities of an inbound notification are completed from their
-/// other holders (clause 5.8.6 split entities).
-enum Completion<'e> {
-    /// Every source holds complete entities: the received entity is the
-    /// entity.
-    Complete,
-    /// An entity may be split across holders: the received part is completed,
-    /// and the completed entity is expanded under the local context for the
-    /// local filters.
-    Split(EntityExpansion<'e>),
 }

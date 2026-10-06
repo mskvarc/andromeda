@@ -4,21 +4,22 @@
 //!
 //! Matching a write to registrations needs the entity identifier, its types
 //! and the attribute the request path names, never the payload. A write
-//! handler therefore plans its forwarding first and has its payload serialised
-//! only when a registration reads it: a write no registration covers -- the
-//! common case -- keeps its payload for the local write alone.
+//! handler therefore plans its forwarding first and has its payload compacted
+//! and written only for a registration that reads it: a write no registration
+//! covers -- the common case -- keeps its payload for the local write alone.
 
 use crate::{
     FederationService,
     error::FederationError,
-    forwarded_body::ForwardedBody,
+    federation_invariant::FederationInvariant,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     provision::{is_proxied, proxied_mode},
-    registration_selection::csr_has_matching_information,
+    registration_information::csr_has_matching_information,
     request::ForwardProvisionRequest,
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_telemetry::{
     federation_ops::{self, FederationOperation},
@@ -49,6 +50,8 @@ pub(crate) struct RegistrationSelection {
     pub(crate) not_advertising: Vec<ContextSourceRegistration>,
     /// The entity types the registrations were matched on.
     pub(crate) entity_types: Vec<IriBuf>,
+    /// The attribute the request path names, by its expanded name.
+    pub(crate) expanded_attribute: Option<AttributeName>,
 }
 
 impl ProvisionPlan {
@@ -56,20 +59,6 @@ impl ProvisionPlan {
     #[must_use]
     pub const fn reads_payload(&self) -> bool {
         !self.selection.receiving.is_empty() || !self.selection.not_advertising.is_empty()
-    }
-
-    /// The payload serialised once for every registration that reads it, or
-    /// `None` when no registration does.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`FederationError::ForwardedBody`] when a registration reads
-    /// the payload and it cannot be serialised.
-    pub fn payload(&self, body: &dyn ForwardedBody) -> Result<Option<Vec<u8>>, FederationError> {
-        if !self.reads_payload() {
-            return Ok(None);
-        }
-        body.to_json_bytes().map(Some).map_err(FederationError::ForwardedBody)
     }
 }
 
@@ -129,6 +118,11 @@ impl FederationService {
             Some(attribute) => Some(resolver.expand_attr(attribute.as_str()).await?),
             None => None,
         };
+        let expanded_name = expanded_attribute
+            .as_ref()
+            .map(|iri| iri.as_str().parse::<AttributeName>())
+            .transpose()
+            .map_err(|error| FederationError::from(FederationInvariant::ForwardedName(error)))?;
 
         // The store pre-filter is a coarse superset; clause-5.12 precision is
         // applied by csr_has_matching_information below. A single known type
@@ -179,6 +173,7 @@ impl FederationService {
             receiving,
             not_advertising,
             entity_types,
+            expanded_attribute: expanded_name,
         })
     }
 }

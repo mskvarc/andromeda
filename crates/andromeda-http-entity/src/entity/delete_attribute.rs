@@ -105,10 +105,10 @@ pub(crate) async fn delete_attr(
 
     // Clause 5.6.5.4: an attribute a proxied registration covers is deleted
     // at the source, never here; an inclusive one is deleted in both places.
-    let local = if collect_proxied_attrs(&forwarded).contains(&attr_id) {
-        LocalOutcome::NothingRemained
-    } else {
+    let local = if collect_proxied_attrs(&forwarded).is_empty() {
         LocalOutcome::processed(service.delete_attr(&target, &id, &attr_id, selection, &context).await, classify_entity_error)
+    } else {
+        LocalOutcome::NothingRemained
     };
     provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

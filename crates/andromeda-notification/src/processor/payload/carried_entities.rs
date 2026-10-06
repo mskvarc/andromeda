@@ -18,17 +18,16 @@ use crate::{
 };
 use andromeda_linked_retrieval::{
     graph::LinkedGraph,
-    join::RetrievingJoin,
     narrowing::{list::ListInForce, member::MemberRule},
-    plan::JoinPlan,
-    typed::TypedEntities,
 };
 use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationData};
 use andromeda_ngsi_ld_query::projection::attribute_iri_index::AttributeIriIndex;
 use andromeda_ngsi_ld_render::{
+    joined_notification::{join_plan, joined_entities},
     notification_data::{DataShape, notification_data},
-    notification_entity::{NotificationEntity, TargetSpelling},
+    notification_entity::TargetSpelling,
+    notification_language::NotificationLanguage,
     structural_projection::StructuralProjection,
     version::{adapted_payload::AdaptedPayload, fallback::VersionFallback},
 };
@@ -49,6 +48,9 @@ pub(crate) struct CarriedShape<'a> {
     pub(crate) list: ListInForce<'a>,
     /// The `ngsildConformance` the entities are amended to.
     pub(crate) conformance: Option<SpecVersion>,
+    /// The subscription's `lang` every entity is reduced under (Table
+    /// 5.2.12-1, clause 4.15).
+    pub(crate) language: Option<&'a NotificationLanguage>,
 }
 
 /// The Linked Entities a subscription's `join` reached, with the expansion of
@@ -94,24 +96,22 @@ pub(crate) fn carried_entities(
         projection,
         list,
         conformance,
+        language,
     } = shape;
     let fallback = conformance.and_then(|target| VersionFallback::new(target, AdaptedPayload::Entity));
-    let plan = RetrievingJoin::from_mode(join)
-        .zip(linked)
-        .map(|(join, linked)| JoinPlan::<TypedEntities>::new(join, linked.graph, MemberRule::new(list, linked.index)));
-    let written = WrittenShape { format, targets, fallback };
-    let entities: Vec<NotificationEntity<'_>> = match &plan {
-        Some(JoinPlan::Inline(inline)) => notified
-            .iter()
-            .map(|entity| entity.notified(written, Some(inline.cursor()), projection))
-            .collect(),
-        Some(JoinPlan::Flat(flat)) => notified
-            .iter()
-            .map(|entity| entity.notified(written, None, projection))
-            .chain(flat.linked().map(|linked| linked_entity(linked, written)))
-            .collect(),
-        None => notified.iter().map(|entity| entity.notified(written, None, projection)).collect(),
+    let plan = linked.and_then(|linked| join_plan(join, Some(linked.graph), MemberRule::new(list, linked.index)));
+    let written = WrittenShape {
+        format,
+        targets,
+        fallback,
+        language,
     };
+    let entities = joined_entities(
+        plan.as_ref(),
+        notified,
+        |entity, cursor| entity.notified(written, cursor, projection),
+        |linked| linked_entity(linked, written),
+    );
     Ok(notification_data(&entities, data)?)
 }
 
@@ -129,12 +129,12 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
     use andromeda_ngsi_ld_model::entity::Entity;
-    use andromeda_ngsi_ld_number::json_value::deserialize_exact;
     use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, term::ProjectionTerm};
     use andromeda_ngsi_ld_render::{
         geometry_selection::GeometrySelection,
         notification_data::DataShape,
         notification_entity::{StampedInstants, TargetSpelling},
+        notification_language::NotificationLanguage,
         notified_changes::HeldAttributes,
         structural_projection::StructuralProjection,
     };
@@ -145,7 +145,7 @@ mod tests {
     use std::{num::NonZeroU32, sync::Arc};
 
     fn entity(document: &Value) -> Entity {
-        deserialize_exact(document).expect("the entity decodes")
+        serde_json::from_str(&document.to_string()).expect("the entity decodes")
     }
 
     fn notified(document: &Value) -> NotifiedEntity {
@@ -228,6 +228,7 @@ mod tests {
             projection: StructuralProjection::from(projection),
             list: ListInForce::of(Some(projection), &[]),
             conformance: None,
+            language: None,
         }
     }
 
@@ -369,6 +370,31 @@ mod tests {
             inline[0]["locatedAt"]["entity"],
             json!({"id": "urn:ngsi-ld:City:Paris", "type": "City", "name": {"type": "Property", "value": {"fr": "Paris"}}})
         );
+    }
+
+    /// Table 5.2.12-1 `lang` with clause 4.15: the subscription's language
+    /// reduces every `LanguageProperty` of a notified entity, and a
+    /// subscription naming none leaves the language map whole.
+    #[test]
+    fn the_subscription_lang_reduces_every_language_property_of_the_payload() {
+        let projection = Projection::default();
+        let places = vec![notified(&json!({
+            "id": "urn:ngsi-ld:Place:1",
+            "type": "Place",
+            "name": {"type": "LanguageProperty", "languageMap": {"en": "Tower", "de": "Turm"}}
+        }))];
+        let german = NotificationLanguage::of(&"de".parse().expect("a language tag"));
+        let reduced = carried(
+            &places,
+            None,
+            CarriedShape {
+                language: Some(&german),
+                ..shape(None, &projection)
+            },
+        );
+        assert_eq!(reduced[0]["name"], json!({"type": "Property", "value": "Turm", "lang": "de"}));
+        let whole = carried(&places, None, shape(None, &projection));
+        assert_eq!(whole[0]["name"]["type"], json!("LanguageProperty"));
     }
 
     /// A Linked Entity the list leaves no member is not written, and the

@@ -23,12 +23,12 @@ use crate::error::TemporalError;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::source::RemoteReach;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel};
+use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::temporal::aggregation_period::AggregationPeriod;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::{fmt, num::NonZeroU32};
 
 /// The slice of history a forwarded Linked Entity retrieval must reproduce.
@@ -106,8 +106,10 @@ impl TemporalLinkedWindow {
 /// representations *and* report that part of what was asked for is missing.
 #[derive(Debug, Default)]
 pub struct RemoteTemporalLinkedEntities {
-    /// The temporal representations the source resolved, already compacted.
-    pub entities: Vec<Value>,
+    /// The history of every entity the source resolved, gathered by entity,
+    /// still in the context-independent form: the traversal compacts it under
+    /// the request context.
+    pub entities: Vec<TemporalHistory>,
     /// Every Linked Entity the attempt left unresolved.
     pub failures: Vec<LinkedResolutionFailure>,
 }

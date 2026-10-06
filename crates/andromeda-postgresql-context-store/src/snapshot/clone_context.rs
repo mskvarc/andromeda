@@ -14,6 +14,7 @@ use crate::{
         branch_schema::{promote_staging_schema, publish_empty_branch},
         branch_version::{condition_of, current_version},
         clone::clone_branch,
+        jsonb_value::optional_jsonb,
         persistence_error,
         preparation_claim::{lock_claimed_preparation, share_claimed_preparation},
         record::status_is_preparing,
@@ -174,11 +175,8 @@ async fn finalize_preparation(
     let statement = Query::update()
         .table(SnapshotPreparation::Table)
         .value(SnapshotPreparation::Status, stored_status(status).code())
-        .value(SnapshotPreparation::QueriesDetails, queries_details.map(serde_json::to_value).transpose()?)
-        .value(
-            SnapshotPreparation::TemporalQueriesDetails,
-            temporal_queries_details.map(serde_json::to_value).transpose()?,
-        )
+        .value(SnapshotPreparation::QueriesDetails, optional_jsonb(queries_details)?)
+        .value(SnapshotPreparation::TemporalQueriesDetails, optional_jsonb(temporal_queries_details)?)
         .value(SnapshotPreparation::ModifiedAt, now())
         .value(SnapshotPreparation::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .value(SnapshotPreparation::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))

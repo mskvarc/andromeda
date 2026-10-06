@@ -7,6 +7,7 @@ use crate::{
     gateway_failure::GatewayFailure,
 };
 use andromeda_jsonld::error::JsonLdError;
+use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_registration::error::RegistrationError;
@@ -70,6 +71,10 @@ pub enum FederationError {
     /// Query processing failed.
     #[error(transparent)]
     Query(#[from] QueryError),
+    /// The admitted content of a write could not be compacted under the
+    /// forwarding context of a registration (clause 4.3.6.6).
+    #[error(transparent)]
+    Compaction(#[from] CompactionError),
     /// An upstream representation was invalid.
     #[error(transparent)]
     Representation(#[from] serde_json::Error),

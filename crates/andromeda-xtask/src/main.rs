@@ -16,6 +16,7 @@ mod local_broker;
 mod readiness;
 mod sql_format;
 mod stack;
+mod suite_context_preload;
 mod test_binaries;
 
 fn main() -> ExitCode {

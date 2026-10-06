@@ -5,11 +5,10 @@ use crate::classified_report::ClassifiedReport;
 use andromeda_federation::{outcome::ForwardedWriteOutcome, remote_answer::describe_remote_answer};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
 use andromeda_ngsi_ld_problem_details::{
-    batch_operation::{BatchEntityError, BatchOperationResult, BatchProblemDetail},
+    batch_operation::{BatchEntityError, BatchOperationResult},
     error_type::NgsiLdErrorType,
     problem_detail::ProblemClassification,
 };
-use serde::Deserialize;
 
 /// Project one policy error through its binding-supplied exhaustive classifier.
 pub fn batch_entity_error<E>(entity_id: Uri, error: &E, classify: impl FnOnce(&E) -> ClassifiedReport) -> BatchEntityError {
@@ -38,17 +37,13 @@ pub fn batch_operation_result<E>(success: Vec<Identifier>, errors: Vec<(Identifi
 pub fn forwarded_write_error(entity_id: Uri, registration_id: &Identifier, outcome: &ForwardedWriteOutcome) -> Option<BatchEntityError> {
     let error = match outcome {
         ForwardedWriteOutcome::Completed { .. } => return None,
-        ForwardedWriteOutcome::RemoteHttpFailure { status, body } => match body.as_ref().and_then(|body| BatchProblemDetail::deserialize(body).ok()) {
+        ForwardedWriteOutcome::RemoteHttpFailure { status, body } => match body.problem() {
             Some(problem) => BatchEntityError {
                 entity_id,
                 registration_id: None,
                 error: problem,
             },
-            None => BatchEntityError::from_classification(
-                entity_id,
-                classification_for_remote_status(*status),
-                &describe_remote_answer(*status, body.as_ref()),
-            ),
+            None => BatchEntityError::from_classification(entity_id, classification_for_remote_status(*status), &describe_remote_answer(*status, None)),
         },
         ForwardedWriteOutcome::Transport(failure) => {
             let classification = if failure.is_timeout() {
@@ -96,11 +91,23 @@ const fn classification_for_remote_status(status: u16) -> ProblemClassification 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use andromeda_federation::{federation_invariant::FederationInvariant, outcome::TransportFailure};
-    use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType};
+    use crate::{
+        batch_projection::{batch_operation_result, forwarded_write_error},
+        classified_report::ClassifiedReport,
+    };
+    use andromeda_federation::{
+        answer_body::AnswerBody,
+        federation_invariant::FederationInvariant,
+        outcome::{ForwardedWriteOutcome, TransportFailure},
+    };
+    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
+    use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use serde_json::json;
-    use std::{error::Error, time::Duration};
+    use std::{error::Error, sync::Arc, time::Duration};
+
+    fn text(body: &serde_json::Value) -> AnswerBody {
+        AnswerBody::Text(Arc::from(body.to_string().into_bytes()))
+    }
 
     fn uri(raw: &str) -> Identifier {
         raw.parse().expect("valid URI")
@@ -116,7 +123,10 @@ mod tests {
             forwarded_write_error(
                 entity("urn:ngsi-ld:Entity:1"),
                 &uri("urn:ngsi-ld:ContextSourceRegistration:1"),
-                &ForwardedWriteOutcome::Completed { status: 204, body: None }
+                &ForwardedWriteOutcome::Completed {
+                    status: 204,
+                    body: AnswerBody::Absent
+                }
             )
             .is_none()
         );
@@ -129,7 +139,7 @@ mod tests {
             &uri("urn:ngsi-ld:ContextSourceRegistration:1"),
             &ForwardedWriteOutcome::RemoteHttpFailure {
                 status: 409,
-                body: Some(json!({"type": "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists", "title": "exists", "status": 409})),
+                body: text(&json!({"type": "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists", "title": "exists", "status": 409})),
             },
         )
         .expect("a failure contributes an error");
@@ -155,7 +165,7 @@ mod tests {
                 &uri("urn:ngsi-ld:ContextSourceRegistration:1"),
                 &ForwardedWriteOutcome::RemoteHttpFailure {
                     status,
-                    body: Some(json!({"message": "not a problem detail"})),
+                    body: text(&json!({"message": "not a problem detail"})),
                 },
             )
             .expect("a failure contributes an error");

@@ -7,7 +7,7 @@ use crate::{
     problem_document_error::ProblemDocumentError,
 };
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
-use iri_rs::IriRefBuf;
+use iri_rs::{IriRef, IriRefBuf, iri};
 use serde::{
     Deserialize,
     Deserializer,
@@ -104,6 +104,38 @@ pub struct BatchProblemDetail {
     pub error_type: BatchErrorKind,
     /// The human-readable explanation.
     pub detail: String,
+}
+
+/// The members of a problem document that names no `type`.
+#[derive(Deserialize)]
+struct UntypedProblem {
+    /// The explanation of this occurrence of the problem.
+    detail: Option<String>,
+    /// The short summary of the problem's type.
+    title: Option<String>,
+}
+
+impl BatchProblemDetail {
+    /// The problem detail a peer's answer text is, however complete the peer
+    /// wrote it: a document naming its `type`, or one that names none, which
+    /// RFC 7807 clause 3.1 reads as `about:blank` and which still carries the
+    /// `detail` (or else the `title`) a peer explained the failure with.
+    ///
+    /// `None` when the text is no problem document at all: no JSON object, or
+    /// one that names neither a `type`, a `detail` nor a `title`.
+    #[must_use]
+    pub fn from_answer(text: &[u8]) -> Option<BatchProblemDetail> {
+        serde_json::from_slice::<BatchProblemDetail>(text).ok().or_else(|| {
+            let untyped = serde_json::from_slice::<UntypedProblem>(text).ok()?;
+            if untyped.detail.is_none() && untyped.title.is_none() {
+                return None;
+            }
+            Some(BatchProblemDetail {
+                error_type: BatchErrorKind::Other(IriRefBuf::from(IriRef::<&str>::from(iri!("about:blank")))),
+                detail: detail_or_title(untyped.detail, untyped.title),
+            })
+        })
+    }
 }
 
 impl Serialize for BatchProblemDetail {
@@ -381,6 +413,29 @@ mod tests {
     #[test]
     fn a_problem_detail_missing_its_type_is_rejected() {
         assert!(serde_json::from_str::<BatchProblemDetail>(&json!({"detail": "x"}).to_string()).is_err());
+    }
+
+    /// RFC 7807 clause 3.1: a document naming no `type` is `about:blank`, and
+    /// a peer's explanation in it is still the most informative cause.
+    #[test]
+    fn a_peer_answer_naming_no_type_still_carries_its_detail() {
+        let parsed = BatchProblemDetail::from_answer(json!({"detail": "no access"}).to_string().as_bytes()).expect("a problem document");
+        pretty_assertions::assert_eq!(parsed.detail, "no access");
+        pretty_assertions::assert_eq!(parsed.error_type, BatchErrorKind::Other(iri_ref("about:blank")));
+        let titled = BatchProblemDetail::from_answer(json!({"title": "Forbidden"}).to_string().as_bytes()).expect("a problem document");
+        pretty_assertions::assert_eq!(titled.detail, "Forbidden");
+        assert!(BatchProblemDetail::from_answer(b"not json").is_none());
+        assert!(BatchProblemDetail::from_answer(br#"{"success":[],"errors":[]}"#).is_none());
+        let typed = BatchProblemDetail::from_answer(
+            json!({"type": "https://uri.etsi.org/ngsi-ld/errors/Conflict", "detail": "exists"})
+                .to_string()
+                .as_bytes(),
+        )
+        .expect("a typed problem document");
+        pretty_assertions::assert_eq!(
+            typed.error_type,
+            BatchErrorKind::Known(ProblemClassification::Category(NgsiLdErrorType::Conflict))
+        );
     }
 
     #[test]

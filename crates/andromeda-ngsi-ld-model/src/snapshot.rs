@@ -7,13 +7,13 @@ use andromeda_ngsi_ld_lexicon::{
     ngsi_ld_urn::SnapshotNotificationId,
     rfc3339::{datetime, optional_datetime},
 };
+use andromeda_ngsi_ld_problem_details::problem_detail::ProblemDetail;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use chrono::{DateTime, Utc};
 use derive_more::{Display, Into};
 use iri_rs::Iri;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use serde_with::skip_serializing_none;
 use strum::{Display as StrumDisplay, EnumIter, EnumString, IntoStaticStr};
 use thiserror::Error;
@@ -170,7 +170,7 @@ pub struct Snapshot {
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionResultDetails {
     /// RFC 7807 problem details for a failed execution.
-    pub problem_details: Option<Value>,
+    pub problem_details: Option<ProblemDetail>,
     /// Outcome of this single execution.
     pub result_status: ExecutionResultStatus,
 }
@@ -412,6 +412,41 @@ mod tests {
             value.get("queriesDetails").is_none() && value.get("temporalQueriesDetails").is_none(),
             "{value}"
         );
+    }
+
+    /// Clause 5.2.41 and 5.2.42: a Snapshot with a failed execution result
+    /// decodes to the typed model, `problemDetails` included, and writes back
+    /// the body it was parsed from.
+    #[test]
+    fn a_snapshot_round_trips_through_its_typed_model() {
+        let body = serde_json::json!({
+            "id": "urn:ngsi-ld:Snapshot:1",
+            "type": "Snapshot",
+            "snapshotQueries": [{"type": "Query", "entities": [{"type": "Vehicle"}]}],
+            "snapshotLifetime": "PT1H",
+            "snapshotPriority": 7,
+            "endpoint": "http://localhost:9000/status",
+            "receiverInfo": [{"key": "Authorization", "value": "Bearer token"}],
+            "snapshotStatus": "partial",
+            "snapshotQueriesDetails": [
+                {"resultStatus": "success"},
+                {
+                    "resultStatus": "failure",
+                    "problemDetails": {
+                        "type": "https://uri.etsi.org/ngsi-ld/errors/InternalError",
+                        "title": "Internal error",
+                        "status": 500,
+                        "detail": "the source is unavailable"
+                    }
+                }
+            ],
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:05Z",
+            "expiresAt": "2024-01-01T01:00:00Z",
+            "lastUsedAt": "2024-01-01T00:00:06Z"
+        });
+        let snapshot = serde_json::from_value::<Snapshot>(body.clone()).expect("the body decodes to the typed Snapshot");
+        pretty_assertions::assert_eq!(serde_json::to_value(&snapshot).expect("the snapshot serialises"), body);
     }
 
     /// The broker-minted snapshot timestamps keep their sub-second remainder

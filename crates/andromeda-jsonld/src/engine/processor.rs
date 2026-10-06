@@ -1,18 +1,18 @@
-//! Expanding a whole document.
+//! The JSON-LD processor, bound to this broker's context resolution.
 //!
 //! [`JsonLdEngine`] is the crate's public surface. Cloning it is cheap: the
-//! loader and every cache are shared. Compacting is
-//! [`crate::engine::context_compactor`]'s.
+//! loader and every cache are shared. Expanding is
+//! [`crate::engine::expansion_context`]'s, compacting
+//! [`crate::engine::context_compactor`]'s, and a single term is expanded by
+//! [`crate::engine::term_lookup`]; every one of them hands the processor JSON
+//! text it reads with its own non-recursive reader.
 
 use crate::{
     context_cache::DownloadedContext,
-    context_graph::check_document_contexts,
-    context_spec::{ContextSpec, CoreContextPolicy},
-    document_context::apply_context,
+    context_spec::ContextSpec,
     engine::{
         builder::JsonLdEngineBuilder,
         compaction_context::CompactionContext,
-        context_url::{canonical_context_urls, context_urls_of, resolve_relative_context_urls},
         expansion_context::ExpansionContext,
         processed_context_cache::ProcessedContextCache,
         term_lookup::TermCache,
@@ -23,11 +23,10 @@ use crate::{
     loader::{cache_lifetime::CacheLifetime, http::HttpContextLoader},
     presented_context::{PresentedContext, notification_body_context},
 };
-use contextual::WithContext;
+use andromeda_json_literal::JsonLiteral;
 use iri_rs::IriBuf;
-use jsonld::{JsonLdProcessor, RemoteDocument, syntax::IntoJson};
-use rdfx::vocabulary::{BlankIdIndex, IndexVocabulary, IriIndex};
-use serde_json::Value;
+#[cfg(test)]
+use std::cell::Cell;
 use std::sync::Arc;
 
 /// The JSON-LD processor, bound to this broker's context resolution.
@@ -125,58 +124,6 @@ impl JsonLdEngine {
         &self.term_cache
     }
 
-    /// Expand a document to its canonical form.
-    ///
-    /// Short names become IRIs and the result is always an array of node
-    /// objects.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`JsonLdError::Expansion`] on an expansion failure, or a
-    /// context-loading variant when a context did not resolve.
-    pub async fn expand(&self, document: Value, context: &ContextSpec) -> Result<Value, JsonLdError> {
-        let document = apply_context(document, context)?;
-        self.expand_prepared(document, context.core_policy()).await
-    }
-
-    /// Expand a document that already carries its effective `@context`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`JsonLdError::Expansion`] on an expansion failure, or a
-    /// context-loading variant when a context did not resolve.
-    pub(crate) async fn expand_prepared(&self, mut document: Value, core_policy: CoreContextPolicy) -> Result<Value, JsonLdError> {
-        resolve_relative_context_urls(&mut document, self.loader.hosted_contexts());
-        check_document_contexts(&self.loader, &document).await?;
-
-        // The diagnostic needs the document's `@context` and the conversion
-        // below consumes the document, so the context alone is kept — the
-        // happy path pays one shallow copy of it and nothing else.
-        let diagnostic_context = document.get("@context").cloned();
-        let remote: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, jsonld_syntax::Value::from_serde_json(document));
-        let mut vocabulary: IndexVocabulary<IriIndex, BlankIdIndex> = IndexVocabulary::new();
-
-        let expanded = match remote.expand_with(&mut vocabulary, &*self.loader).await {
-            Ok(expanded) => expanded,
-            Err(error) => {
-                let context_urls = diagnostic_context.as_ref().map(context_urls_of).unwrap_or_default();
-                tracing::warn!(
-                    "JSON-LD expansion failed. core_policy={:?}; applied_context={:?}; context_urls={:?}; canonical_context_urls={:?}; error={:?}",
-                    core_policy,
-                    diagnostic_context,
-                    context_urls,
-                    canonical_context_urls(&context_urls),
-                    error
-                );
-                return Err(error.into());
-            }
-        };
-
-        Ok(jsonld_syntax::Value::into_serde_json(
-            expanded.into_iter().collect::<Vec<_>>().into_with(&vocabulary).into_json(),
-        ))
-    }
-
     /// The `@context` a response to a request that supplied `context` names
     /// (clauses 5.2.3, 4.4 and 5.5.7).
     ///
@@ -199,7 +146,7 @@ impl JsonLdEngine {
     ///
     /// Returns the [`JsonLdError`] the `jsonldContext` document cannot be
     /// loaded with.
-    pub async fn notification_body_context(&self, jsonld_context: Option<&IriBuf>) -> Result<Value, JsonLdError> {
+    pub async fn notification_body_context(&self, jsonld_context: Option<&IriBuf>) -> Result<JsonLiteral, JsonLdError> {
         notification_body_context(jsonld_context, self.loader.as_ref()).await
     }
 
@@ -218,12 +165,31 @@ impl JsonLdEngine {
 }
 
 #[cfg(test)]
+thread_local! {
+    /// How many documents the JSON-LD processor expanded on this test thread.
+    static DOCUMENT_EXPANSIONS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Count one document handed to the expansion algorithm.
+#[cfg(test)]
+pub(crate) fn count_document_expansion() {
+    DOCUMENT_EXPANSIONS.with(|count| count.set(count.get() + 1));
+}
+
+/// How many documents the JSON-LD processor expanded on this test thread.
+#[cfg(test)]
+pub(crate) fn document_expansions() -> usize {
+    DOCUMENT_EXPANSIONS.with(Cell::get)
+}
+
+#[cfg(test)]
 mod tests {
     use crate::{
         context_spec::ContextSpec,
         core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
-        engine::{expanded_input::ExpandedInput, options::CompactOptions, preloaded_engine::engine_preloading, processor::JsonLdEngine},
+        engine::{expanded_text::ExpandedText, options::CompactOptions, preloaded_engine::engine_preloading, processor::JsonLdEngine},
         loader::test_origin::{TestOrigin, ok, redirect},
+        test_documents::{as_value, expanded_document, literal},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use serde_json::{Value, json};
@@ -235,13 +201,13 @@ mod tests {
 
     #[tokio::test]
     async fn expanding_an_entity_yields_an_array_whose_first_node_carries_the_identifier() {
-        let expanded = offline_engine()
-            .expand(
-                json!({ "@context": NGSI_LD_CORE_CONTEXT_URL, "id": "urn:ngsi-ld:Vehicle:001", "type": "Vehicle" }),
-                &ContextSpec::none(),
-            )
-            .await
-            .expect("expansion succeeds");
+        let expanded = expanded_document(
+            &offline_engine(),
+            &json!({ "@context": NGSI_LD_CORE_CONTEXT_URL, "id": "urn:ngsi-ld:Vehicle:001", "type": "Vehicle" }),
+            &ContextSpec::none(),
+        )
+        .await
+        .expect("expansion succeeds");
 
         assert!(expanded.is_array());
         pretty_assertions::assert_eq!(expanded[0].get("@id"), Some(&json!("urn:ngsi-ld:Vehicle:001")));
@@ -249,13 +215,13 @@ mod tests {
 
     #[tokio::test]
     async fn an_array_document_expands_to_an_array() {
-        let expanded = offline_engine()
-            .expand(
-                json!([{ "@context": NGSI_LD_CORE_CONTEXT_URL, "id": "urn:ngsi-ld:Vehicle:001", "type": "Vehicle" }]),
-                &ContextSpec::none(),
-            )
-            .await
-            .expect("expansion succeeds");
+        let expanded = expanded_document(
+            &offline_engine(),
+            &json!([{ "@context": NGSI_LD_CORE_CONTEXT_URL, "id": "urn:ngsi-ld:Vehicle:001", "type": "Vehicle" }]),
+            &ContextSpec::none(),
+        )
+        .await
+        .expect("expansion succeeds");
 
         assert!(expanded.is_array());
     }
@@ -268,29 +234,29 @@ mod tests {
         .expect("exact JSON");
         let engine = offline_engine();
         let context = ContextSpec::none();
-        let expanded = engine.expand(document, &context).await.expect("expansion succeeds");
+        let expanded: Value = expanded_document(&engine, &document, &context).await.expect("expansion succeeds");
         let expanded_json = serde_json::to_string(&expanded).expect("expanded JSON");
         pretty_assertions::assert_eq!(expanded_json.matches("0.100000000000000005").count(), 3);
         assert!(!expanded_json.contains("$serde_json::private::Number"), "{expanded_json}");
 
         let compacted = engine
             .compactor(&context)
-            .compact(ExpandedInput::Assembled(expanded), CompactOptions::default())
+            .compact(ExpandedText::Assembled(expanded_json.as_bytes()), CompactOptions::default())
             .await
             .expect("compaction succeeds");
-        let compacted_json = serde_json::to_string(&compacted).expect("compacted JSON");
+        let compacted_json = compacted.get();
         pretty_assertions::assert_eq!(compacted_json.matches("0.100000000000000005").count(), 3);
         assert!(!compacted_json.contains("$serde_json::private::Number"), "{compacted_json}");
     }
 
     #[tokio::test]
     async fn every_released_core_context_version_resolves_from_the_embedded_copies() {
-        let expanded = offline_engine()
-            .expand(
-                json!({ "@context": NGSI_LD_CORE_CONTEXT_V16_URL, "id": "urn:ngsi-ld:Vehicle:core-v16", "type": "Vehicle" }),
-                &ContextSpec::none(),
-            )
-            .await;
+        let expanded = expanded_document(
+            &offline_engine(),
+            &json!({ "@context": NGSI_LD_CORE_CONTEXT_V16_URL, "id": "urn:ngsi-ld:Vehicle:core-v16", "type": "Vehicle" }),
+            &ContextSpec::none(),
+        )
+        .await;
 
         assert!(expanded.is_ok(), "a released core context must resolve offline: {:?}", expanded.err());
     }
@@ -329,9 +295,9 @@ mod tests {
     #[tokio::test]
     async fn a_context_repeated_in_the_request_leaves_its_last_occurrence_in_force() {
         let engine = engine_with_two_speeds();
-        let context = ContextSpec::from_body(json!([REPEATED_A, REPEATED_B, REPEATED_A]));
+        let context = ContextSpec::from_body(literal(&json!([REPEATED_A, REPEATED_B, REPEATED_A])));
 
-        let expanded = engine.expand(vehicle_with_speed(), &context).await.expect("expansion succeeds");
+        let expanded = expanded_document(&engine, &vehicle_with_speed(), &context).await.expect("expansion succeeds");
 
         assert!(expanded[0].get("https://example.org/a#speed").is_some(), "{expanded}");
         assert!(expanded[0].get("https://example.org/b#speed").is_none(), "{expanded}");
@@ -344,13 +310,13 @@ mod tests {
     #[tokio::test]
     async fn a_repeated_context_is_presented_as_named_and_processed_under_its_last_occurrence() {
         let engine = engine_with_two_speeds();
-        let context = ContextSpec::from_body(json!([REPEATED_A, REPEATED_B, REPEATED_A]));
+        let context = ContextSpec::from_body(literal(&json!([REPEATED_A, REPEATED_B, REPEATED_A])));
 
-        let presented = engine.presented_context(&context).await.expect("the context is presented").into_value();
+        let presented = engine.presented_context(&context).await.expect("the context is presented").into_literal();
+        let presented = as_value(&presented);
         pretty_assertions::assert_eq!(presented, json!([REPEATED_A, REPEATED_B, REPEATED_A, NGSI_LD_CORE_CONTEXT_URL]));
 
-        let expanded = engine
-            .expand(vehicle_with_speed(), &ContextSpec::from_body(presented))
+        let expanded = expanded_document(&engine, &vehicle_with_speed(), &ContextSpec::from_body(literal(&presented)))
             .await
             .expect("expansion under the presented context succeeds");
         assert!(expanded[0].get("https://example.org/a#speed").is_some(), "{expanded}");
@@ -377,8 +343,7 @@ mod tests {
             .await;
         let engine = JsonLdEngine::builder().allow_remote(true).build().expect("engine builds");
 
-        let expanded = engine
-            .expand(vehicle_with_speed(), &ContextSpec::from_link(origin.url("/moved.jsonld")))
+        let expanded = expanded_document(&engine, &vehicle_with_speed(), &ContextSpec::from_link(origin.url("/moved.jsonld")))
             .await
             .expect("expansion succeeds");
 

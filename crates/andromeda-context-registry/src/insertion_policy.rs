@@ -18,9 +18,9 @@ use crate::{
     registry_invariant::RegistryInvariant,
     store::ContextRegistryStore,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
-use serde_json::Value;
 
 /// Stores new Contexts under the identifier clause 5.13 leaves to the broker.
 pub(crate) struct InsertionPolicy<'a> {
@@ -43,7 +43,7 @@ impl<'a> InsertionPolicy<'a> {
     /// Returns [`ContextRegistryError::Persistence`] when the store cannot
     /// record the Context, and [`ContextRegistryError::Invariant`] when the
     /// minted identifier is not one or is already held.
-    pub(crate) async fn fresh(&self, document: &Value, kind: ContextCreationKind) -> Result<JsonLdContextId, ContextRegistryError> {
+    pub(crate) async fn fresh(&self, document: &JsonLiteral, kind: ContextCreationKind) -> Result<JsonLdContextId, ContextRegistryError> {
         let identifier = JsonLdContextId::mint().map_err(RegistryInvariant::MintedIdentifier)?;
         let serving_url = self.locator.serving_url(&identifier);
         match self.store.insert(&identifier, document, &serving_url, kind).await? {
@@ -76,7 +76,7 @@ impl<'a> InsertionPolicy<'a> {
     /// Returns [`ContextRegistryError::Persistence`] when the store cannot
     /// record or read the Context, and [`ContextRegistryError::Invariant`] when
     /// a freshly minted identifier is not one or is already held.
-    pub(crate) async fn content_derived(&self, document: &Value, identity: &ContentIdentity) -> Result<JsonLdContextId, ContextRegistryError> {
+    pub(crate) async fn content_derived(&self, document: &JsonLiteral, identity: &ContentIdentity) -> Result<JsonLdContextId, ContextRegistryError> {
         let ContentIdentity::Derived { canonical, identifier } = identity else {
             return self.fresh(document, ContextCreationKind::ImplicitlyCreated).await;
         };
@@ -95,7 +95,7 @@ impl<'a> InsertionPolicy<'a> {
     async fn insert_derived(
         &self,
         derived: &JsonLdContextId,
-        document: &Value,
+        document: &JsonLiteral,
         canonical: &CanonicalContextDocument,
     ) -> Result<DerivedInsertion, ContextRegistryError> {
         let serving_url = self.locator.serving_url(derived);
@@ -152,7 +152,7 @@ impl ContentIdentity {
     ///
     /// Returns [`ContextRegistryError::Invariant`] when the derived identifier
     /// cannot be built, which the lexicon proves never happens.
-    pub(crate) fn of(document: &Value) -> Result<ContentIdentity, ContextRegistryError> {
+    pub(crate) fn of(document: &JsonLiteral) -> Result<ContentIdentity, ContextRegistryError> {
         let Ok(canonical) = CanonicalContextDocument::of(document) else {
             return Ok(ContentIdentity::Unshareable);
         };
@@ -188,12 +188,17 @@ mod tests {
         store::{ContextRegistryFuture, ContextRegistryStore},
         stored_context::StoredContext,
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_cache::DownloadedContext;
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
     use serde_json::{Value, json};
     use std::sync::Mutex;
     use url::Url;
     use uuid::{Uuid, Version};
+
+    fn literal(value: &Value) -> JsonLiteral {
+        JsonLiteral::admit(&value.to_string()).expect("an admissible document")
+    }
 
     /// A store whose inserts answer from a script, and which never holds a row
     /// when asked: the row the first insert collided with was deleted before
@@ -218,7 +223,7 @@ mod tests {
         fn insert<'a>(
             &'a self,
             identifier: &'a JsonLdContextId,
-            _payload: &'a Value,
+            _payload: &'a JsonLiteral,
             _serving_url: &'a Url,
             _kind: ContextCreationKind,
         ) -> ContextRegistryFuture<'a, ContextInsertion> {
@@ -266,7 +271,7 @@ mod tests {
     }
 
     /// The content identity of `document`.
-    fn identity(document: &Value) -> ContentIdentity {
+    fn identity(document: &JsonLiteral) -> ContentIdentity {
         ContentIdentity::of(document).expect("an identity")
     }
 
@@ -277,8 +282,8 @@ mod tests {
         Uuid::parse_str(local_id).expect("a hyphenated UUID").get_version()
     }
 
-    fn compound() -> Value {
-        json!({ "@context": ["https://e.org/a.jsonld", "https://e.org/b.jsonld"] })
+    fn compound() -> JsonLiteral {
+        literal(&json!({ "@context": ["https://e.org/a.jsonld", "https://e.org/b.jsonld"] }))
     }
 
     /// A row that vanished between the insert finding the identifier held and
@@ -319,8 +324,8 @@ mod tests {
     /// form is unshareable.
     #[test]
     fn a_content_identity_is_derived_once_from_the_canonical_form() {
-        let forward: Value = serde_json::from_str(r#"{"@context": {"a": "https://e.org/a", "b": "https://e.org/b"}}"#).expect("JSON");
-        let backward: Value = serde_json::from_str(r#"{"@context":{"b":"https://e.org/b","a":"https://e.org/a"}}"#).expect("JSON");
+        let forward = JsonLiteral::admit(r#"{"@context": {"a": "https://e.org/a", "b": "https://e.org/b"}}"#).expect("JSON");
+        let backward = JsonLiteral::admit(r#"{"@context":{"b":"https://e.org/b","a":"https://e.org/a"}}"#).expect("JSON");
         let (ContentIdentity::Derived { identifier: first, .. }, ContentIdentity::Derived { identifier: second, .. }) =
             (identity(&forward), identity(&backward))
         else {
@@ -328,7 +333,7 @@ mod tests {
         };
         pretty_assertions::assert_eq!(first, second);
 
-        let unshareable: Value = serde_json::from_str(r#"{"@context": {"@version": 1e400}}"#).expect("JSON");
+        let unshareable = JsonLiteral::admit(r#"{"@context": {"@version": 1e400}}"#).expect("an admissible literal");
         assert!(matches!(identity(&unshareable), ContentIdentity::Unshareable));
     }
 }

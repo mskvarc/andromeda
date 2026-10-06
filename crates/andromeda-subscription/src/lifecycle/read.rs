@@ -1,14 +1,19 @@
 //! Retrieving and listing subscriptions (ETSI GS CIM 009 clauses 5.8.3, 5.8.4,
 //! 5.11.4 and 5.11.5).
 
-use crate::{error::SubscriptionError, lifecycle::SubscriptionService, subscription_listing::SubscriptionListing, variant::SubscriptionVariant};
+use crate::{
+    error::SubscriptionError,
+    lifecycle::SubscriptionService,
+    response_compaction::compact_for_response,
+    subscription_listing::SubscriptionListing,
+    variant::SubscriptionVariant,
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use andromeda_ngsi_ld_query::page_window::PageWindow;
-use serde_json::Value;
 
 impl<V> SubscriptionService<V>
 where
@@ -32,7 +37,8 @@ where
             .ok_or_else(|| SubscriptionError::not_found(id))
     }
 
-    /// Retrieve a subscription and serialize it for an HTTP response.
+    /// Retrieve a subscription spelled for the reader of `context`, ready to be
+    /// written as a response.
     ///
     /// # Errors
     ///
@@ -40,18 +46,17 @@ where
     /// subscription under `id`, [`SubscriptionError::Persistence`] when the
     /// store cannot be read, and [`SubscriptionError::JsonLd`] when `context`
     /// cannot be resolved or the resource cannot be compacted against it.
-    pub async fn get_for_response(&self, target: &ContextTarget, id: &Identifier, context: &ContextSpec) -> Result<Value, SubscriptionError> {
+    pub async fn get_for_response(&self, target: &ContextTarget, id: &Identifier, context: &ContextSpec) -> Result<Subscription, SubscriptionError> {
         let subscription = self.get(target, id).await?;
-        self.variant.serialize_for_response(&subscription, &self.name_compaction(context).await?).await
+        Ok(self.presented(subscription, &self.name_compaction(context).await?).await)
     }
 
-    /// List the page `window` selects of the subscriptions, serialized for an
-    /// HTTP response, with the total and the boundary the neighbouring cursors
-    /// are built from (clauses 5.5.9 and 6.3.13).
+    /// List the page `window` selects of the subscriptions, spelled for the
+    /// reader of `context`, with the total and the boundary the neighbouring
+    /// cursors are built from (clauses 5.5.9 and 6.3.13).
     ///
     /// The listing comes back in ascending identifier order, so the first and
-    /// last identifiers are the page's boundary; they are captured before the
-    /// resources are serialized, which drops the typed identifier.
+    /// last identifiers are the page's boundary.
     ///
     /// # Errors
     ///
@@ -67,21 +72,29 @@ where
         let (subscriptions, total) = self.repo.list(target, window).await?;
         // clone: the boundary owns the two identifiers the cursor pointers are
         // built from, while the subscriptions themselves are consumed by the
-        // serialization below.
+        // compaction below.
         let boundary = subscriptions
             .first()
             .map(|subscription| subscription.id.clone())
             .zip(subscriptions.last().map(|subscription| subscription.id.clone()));
         let names = self.name_compaction(context).await?;
-        let mut compacted = Vec::with_capacity(subscriptions.len());
+        let mut presented = Vec::with_capacity(subscriptions.len());
         for subscription in subscriptions {
-            compacted.push(self.variant.serialize_for_response(&subscription, &names).await?);
+            presented.push(self.presented(subscription, &names).await);
         }
         Ok(SubscriptionListing {
-            subscriptions: compacted,
+            subscriptions: presented,
             total,
             boundary,
         })
+    }
+
+    /// A subscription in the reader's terms, with what this kind serves that
+    /// the store does not hold.
+    async fn presented(&self, subscription: Subscription, names: &NameCompaction) -> Subscription {
+        let mut presented = compact_for_response(subscription, names).await;
+        self.variant.present(&mut presented);
+        presented
     }
 
     /// The names of one response, compacted against the reader's `context`.

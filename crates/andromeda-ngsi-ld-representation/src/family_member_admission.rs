@@ -38,9 +38,13 @@
 //! leave a `ListProperty`'s inherited `unitCode` in place while removing its
 //! `value` — and `andromeda_ngsi_ld_lexicon::unit_code_admission` already owns
 //! that question.
+//!
+//! [`MemberAdmission`] is the two-state answer every admission rule of the
+//! representation gives for a member it judges.
 
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
+use std::str::FromStr;
+use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 
 /// Whether one attribute family admits a member.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -53,206 +57,103 @@ pub enum MemberAdmission {
     Forbidden,
 }
 
-/// Every compacted member that names some family's value.
+/// A compacted member that names some family's value.
 ///
 /// Both spellings of each of the eight families' value members — the current
 /// one of [`AttributeType::compact_value_key`] and the output-only one of
-/// [`AttributeType::previous_key`] — followed by the two linked-entity members
-/// of clause 4.5.23.2. Families sharing a value member (a Property and a
-/// `GeoProperty` share `value`) yield it more than once, which membership
-/// testing does not care about.
-pub fn cross_family_members() -> impl Iterator<Item = &'static str> {
-    AttributeType::ALL
-        .into_iter()
-        .flat_map(|family| [family.compact_value_key(), family.previous_key()])
-        .chain([compact_properties::ENTITY, compact_properties::ENTITY_LIST])
+/// [`AttributeType::previous_key`] — and the two linked-entity members of
+/// clause 4.5.23.2. The spellings are the ones the NGSI-LD Core `@context`
+/// gives these terms.
+#[derive(Clone, Copy, Debug, Display, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]
+#[strum(serialize_all = "camelCase")]
+pub enum ValueMember {
+    /// `entity`, the inline linked entity of a Relationship's `object`.
+    Entity,
+    /// `entityList`, the inline linked entities of a `ListRelationship`.
+    EntityList,
+    /// `json`, the value of a `JsonProperty`.
+    Json,
+    /// `languageMap`, the value of a `LanguageProperty`.
+    LanguageMap,
+    /// `object`, the value of a Relationship.
+    Object,
+    /// `objectList`, the value of a `ListRelationship`.
+    ObjectList,
+    /// `previousJson`, the previous value of a `JsonProperty`.
+    PreviousJson,
+    /// `previousLanguageMap`, the previous value of a `LanguageProperty`.
+    PreviousLanguageMap,
+    /// `previousObject`, the previous value of a Relationship.
+    PreviousObject,
+    /// `previousObjectList`, the previous value of a `ListRelationship`.
+    PreviousObjectList,
+    /// `previousValue`, the previous value of a Property or a `GeoProperty`.
+    PreviousValue,
+    /// `previousValueList`, the previous value of a `ListProperty`.
+    PreviousValueList,
+    /// `previousVocab`, the previous value of a `VocabProperty`.
+    PreviousVocab,
+    /// `value`, the value of a Property or a `GeoProperty`.
+    Value,
+    /// `valueList`, the value of a `ListProperty`.
+    ValueList,
+    /// `vocab`, the value of a `VocabProperty`.
+    Vocab,
 }
 
-/// Whether `attribute_type` admits the compacted member `member`.
+/// The value member `member` spells, when `attribute_type` may never carry it.
 ///
-/// A member no family claims is admitted: it is a sub-attribute name, or one
-/// of the members every family shares. A member some family claims is admitted
-/// only by the families whose own table declares it.
+/// A member no family claims is no prohibited member: it is a sub-attribute
+/// name, or one of the members every family shares. A member some family claims
+/// is prohibited on every family whose own table does not declare it.
 #[must_use]
-pub fn member_admission(attribute_type: AttributeType, member: &str) -> MemberAdmission {
-    let claimed_by_a_family = cross_family_members().any(|carrier| carrier == member);
-    if claimed_by_a_family && !attribute_type.reserved_fields().contains(&member) {
-        MemberAdmission::Forbidden
-    } else {
-        MemberAdmission::Admitted
-    }
+pub fn prohibited_member(attribute_type: AttributeType, member: &str) -> Option<ValueMember> {
+    ValueMember::from_str(member)
+        .ok()
+        .filter(|claimed| !attribute_type.reserved_fields().contains(&<&'static str>::from(*claimed)))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::family_member_admission::{MemberAdmission, cross_family_members, member_admission};
+    use crate::family_member_admission::{ValueMember, prohibited_member};
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+    use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
     use std::collections::BTreeSet;
+    use strum::IntoEnumIterator;
 
-    /// The distinct members some family claims, which is the set every
-    /// family's prohibition is drawn from.
-    fn claimed_members() -> BTreeSet<&'static str> {
-        cross_family_members().collect()
-    }
-
-    /// The members `attribute_type` may never carry.
-    fn forbidden_members(attribute_type: AttributeType) -> BTreeSet<&'static str> {
-        claimed_members()
+    /// The members are the two spellings of every family's value member and the
+    /// two linked-entity members, so the enum cannot drift from the tables of
+    /// the lexicon.
+    #[test]
+    fn the_value_members_are_every_familys_value_spellings_and_the_linked_entity_members() {
+        let claimed: BTreeSet<&str> = AttributeType::ALL
             .into_iter()
-            .filter(|member| member_admission(attribute_type, member) == MemberAdmission::Forbidden)
-            .collect()
+            .flat_map(|family| [family.compact_value_key(), family.previous_key()])
+            .chain([compact_properties::ENTITY, compact_properties::ENTITY_LIST])
+            .collect();
+        let members: BTreeSet<&str> = ValueMember::iter().map(<&'static str>::from).collect();
+        pretty_assertions::assert_eq!(members, claimed);
     }
 
+    /// Clause 4.5.2.2, "Prohibited": a Property never includes `object`.
     #[test]
-    fn the_claimed_members_are_the_seven_value_members_their_output_only_spellings_and_the_two_linked_entity_members() {
-        pretty_assertions::assert_eq!(
-            claimed_members(),
-            BTreeSet::from([
-                "entity",
-                "entityList",
-                "json",
-                "languageMap",
-                "object",
-                "objectList",
-                "previousJson",
-                "previousLanguageMap",
-                "previousObject",
-                "previousObjectList",
-                "previousValue",
-                "previousValueList",
-                "previousVocab",
-                "value",
-                "valueList",
-                "vocab",
-            ])
-        );
+    fn a_property_prohibits_the_object_member_of_a_relationship() {
+        pretty_assertions::assert_eq!(prohibited_member(AttributeType::Property, "object"), Some(ValueMember::Object));
     }
 
-    /// Clause 4.5.2.2 and clause 4.5.2.3, "Prohibited", verbatim.
+    /// Clause 4.5.3.2: a Relationship declares `object` for itself.
     #[test]
-    fn a_property_forbids_exactly_the_members_clause_4_5_2_2_lists() {
-        pretty_assertions::assert_eq!(
-            forbidden_members(AttributeType::Property),
-            BTreeSet::from([
-                "entity",
-                "entityList",
-                "json",
-                "languageMap",
-                "object",
-                "objectList",
-                "previousJson",
-                "previousLanguageMap",
-                "previousObject",
-                "previousObjectList",
-                "previousValueList",
-                "previousVocab",
-                "valueList",
-                "vocab",
-            ])
-        );
+    fn a_relationship_does_not_prohibit_its_own_object_member() {
+        pretty_assertions::assert_eq!(prohibited_member(AttributeType::Relationship, "object"), None);
     }
 
-    /// Clause 4.5.3.2 and clause 4.5.3.3, "Prohibited", less the `unitCode`
-    /// entry `andromeda_ngsi_ld_lexicon::unit_code_admission` owns.
+    /// A sub-attribute name and the members every family shares are claimed by
+    /// no family.
     #[test]
-    fn a_relationship_forbids_exactly_the_members_clause_4_5_3_2_lists() {
-        pretty_assertions::assert_eq!(
-            forbidden_members(AttributeType::Relationship),
-            BTreeSet::from([
-                "entityList",
-                "json",
-                "languageMap",
-                "objectList",
-                "previousJson",
-                "previousLanguageMap",
-                "previousObjectList",
-                "previousValue",
-                "previousValueList",
-                "previousVocab",
-                "value",
-                "valueList",
-                "vocab",
-            ])
-        );
-    }
-
-    /// Clause 4.5.18.2: a `LanguageProperty` differs from the Property of
-    /// clause 4.5.2.2 by carrying `languageMap` instead of `value`, so it
-    /// forbids `value` and inherits the rest of the Property prohibition.
-    #[test]
-    fn a_language_property_forbids_value_and_every_other_familys_value_member() {
-        let forbidden = forbidden_members(AttributeType::LanguageProperty);
-        assert!(forbidden.contains("value"), "clause 4.5.18.2: {forbidden:?}");
-        assert!(forbidden.contains("previousValue"), "clause 4.5.18.2: {forbidden:?}");
-        assert!(
-            !forbidden.contains("languageMap"),
-            "a LanguageProperty declares its own value member: {forbidden:?}"
-        );
-        assert!(!forbidden.contains("previousLanguageMap"), "{forbidden:?}");
-    }
-
-    /// Clause 4.5.20.2 for a `VocabProperty` and clause 4.5.24.2 for a
-    /// `JsonProperty`: each forbids `value` and keeps its own specialization.
-    #[test]
-    fn the_vocab_and_json_families_forbid_value_and_keep_their_own_specialized_member() {
-        for (attribute_type, own, own_previous) in [
-            (AttributeType::VocabProperty, "vocab", "previousVocab"),
-            (AttributeType::JsonProperty, "json", "previousJson"),
-        ] {
-            let forbidden = forbidden_members(attribute_type);
-            assert!(forbidden.contains("value"), "{attribute_type}: {forbidden:?}");
-            assert!(forbidden.contains("previousValue"), "{attribute_type}: {forbidden:?}");
-            assert!(!forbidden.contains(own), "{attribute_type}: {forbidden:?}");
-            assert!(!forbidden.contains(own_previous), "{attribute_type}: {forbidden:?}");
-        }
-    }
-
-    /// Clause 4.5.21.2: `value` is a generalization of `valueList`, so a
-    /// `ListProperty` forbids it while keeping the `unitCode` clause 4.5.2.2
-    /// gives every Property.
-    #[test]
-    fn a_list_property_forbids_the_generalized_value_but_not_its_inherited_unit_code() {
-        let forbidden = forbidden_members(AttributeType::ListProperty);
-        assert!(forbidden.contains("value"), "clause 4.5.21.2: {forbidden:?}");
-        assert!(forbidden.contains("previousValue"), "clause 4.5.21.2: {forbidden:?}");
-        assert!(!forbidden.contains("valueList"), "{forbidden:?}");
-        pretty_assertions::assert_eq!(member_admission(AttributeType::ListProperty, "unitCode"), MemberAdmission::Admitted);
-    }
-
-    /// Clause 4.5.22.2: `object` generalizes `objectList` and `entity`
-    /// generalizes `entityList`, so a `ListRelationship` forbids both
-    /// generalizations and keeps both specializations.
-    #[test]
-    fn a_list_relationship_forbids_the_generalized_object_and_entity_members() {
-        let forbidden = forbidden_members(AttributeType::ListRelationship);
-        assert!(forbidden.contains("object"), "clause 4.5.22.2: {forbidden:?}");
-        assert!(forbidden.contains("previousObject"), "clause 4.5.22.2: {forbidden:?}");
-        assert!(forbidden.contains("entity"), "clause 4.5.22.2: {forbidden:?}");
-        assert!(!forbidden.contains("objectList"), "{forbidden:?}");
-        assert!(!forbidden.contains("entityList"), "{forbidden:?}");
-    }
-
-    #[test]
-    fn every_family_admits_its_own_value_member_and_its_own_output_only_spelling() {
-        for attribute_type in AttributeType::ALL {
-            pretty_assertions::assert_eq!(
-                member_admission(attribute_type, attribute_type.compact_value_key()),
-                MemberAdmission::Admitted,
-                "{attribute_type}"
-            );
-            pretty_assertions::assert_eq!(
-                member_admission(attribute_type, attribute_type.previous_key()),
-                MemberAdmission::Admitted,
-                "{attribute_type}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_sub_attribute_name_and_the_shared_members_are_admitted_by_every_family() {
+    fn a_member_no_family_claims_is_prohibited_on_none() {
         for attribute_type in AttributeType::ALL {
             for member in ["speed", "observedAt", "datasetId", "instanceId", "createdAt", "expiresAt"] {
-                pretty_assertions::assert_eq!(member_admission(attribute_type, member), MemberAdmission::Admitted, "{attribute_type}/{member}");
+                pretty_assertions::assert_eq!(prohibited_member(attribute_type, member), None, "{attribute_type}/{member}");
             }
         }
     }

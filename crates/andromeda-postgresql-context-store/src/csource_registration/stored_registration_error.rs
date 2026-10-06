@@ -48,6 +48,18 @@ pub enum StoredRegistrationError {
     /// The `management_interval` column does not deserialize.
     #[error("a stored registration managementInterval does not deserialize: {0}")]
     ManagementInterval(#[source] serde_json::Error),
+    /// The `location` column does not deserialize into a geometry.
+    #[error("a stored registration location does not deserialize: {0}")]
+    Location(#[source] serde_json::Error),
+    /// The `observation_space` column does not deserialize into a geometry.
+    #[error("a stored registration observationSpace does not deserialize: {0}")]
+    ObservationSpace(#[source] serde_json::Error),
+    /// The `operation_space` column does not deserialize into a geometry.
+    #[error("a stored registration operationSpace does not deserialize: {0}")]
+    OperationSpace(#[source] serde_json::Error),
+    /// The `additional_properties` column does not deserialize.
+    #[error("a stored registration's Context Source Properties do not deserialize: {0}")]
+    AdditionalProperties(#[source] serde_json::Error),
     /// The `endpoint` column is not a dereferenceable URI.
     #[error("a stored registration endpoint is not a dereferenceable URI: {0}")]
     Endpoint(#[source] NotDereferenceable),

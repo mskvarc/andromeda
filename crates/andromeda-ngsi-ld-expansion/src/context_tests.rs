@@ -4,11 +4,12 @@
 use crate::{
     decline::Decline,
     entity_expansion::EntityExpansion,
-    expansion_fixture::{TERMS, UNSUPPORTED, VOCAB_AND_LANGUAGE, admitted, engine, entity, fragment},
+    expansion_fixture::{TERMS, UNSUPPORTED, VOCAB_AND_LANGUAGE, admitted, engine, entity, patch},
     normalization::Normalization,
     typed_expander::TypedExpander,
     typed_expansion::TypedExpansion,
 };
+use andromeda_json_literal::piece::JsonPiece;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::{
     document::{
@@ -20,8 +21,12 @@ use andromeda_ngsi_ld_entity::{
     literal::LiteralValue,
     value_mode::{Fragment, FragmentMember},
 };
+use andromeda_ngsi_ld_model::{
+    attribute::{instance::AttributeValue, member_reading::MemberReading},
+    entity::EntityPatch,
+};
 use iri_rs::IriBuf;
-use serde_json::{Value, json};
+use serde_json::{Value, json, value::RawValue};
 
 /// The one instance written for `attribute`.
 fn instance<'a>(document: &'a EntityDocument, attribute: &str) -> &'a InstanceDocument {
@@ -135,7 +140,7 @@ async fn a_user_context_cannot_redefine_a_core_term() {
 /// while a user default `@language` tags every plain string.
 #[tokio::test]
 async fn the_core_vocabulary_shadows_a_user_one_and_a_default_language_tags_strings() {
-    let document = fragment(
+    let document = patch(
         &engine(),
         json!({"@context": VOCAB_AND_LANGUAGE, "note": {"type": "Property", "value": "hello"}, "headline": {"type": "Property", "value": "t"}}),
         Normalization::Entity,
@@ -162,7 +167,8 @@ async fn a_linked_context_decides_terms_like_a_body_context() {
     let spec = ContextSpec::from_link(IriBuf::new(TERMS.to_owned()).expect("an IRI"));
     let context = engine.expansion_context(&spec).await.expect("the context processes");
     let (body, _) = admitted(json!({"speed": {"type": "Property", "value": 1}}));
-    let TypedExpansion::Expanded(document) = TypedExpander::new(&context).normalized_fragment(&body).expect("expands") else {
+    let fragment: EntityPatch = serde_json::from_value(body).expect("a typed fragment");
+    let TypedExpansion::Expanded(document) = TypedExpander::new(&context).entity_patch(&fragment, Normalization::Entity).expect("expands") else {
         panic!("the walk expands it");
     };
     assert!(document.attributes().contains_key("https://example.org/terms#speed"));
@@ -215,11 +221,15 @@ async fn what_the_walk_does_not_model_goes_to_the_processor() {
         ),
     ];
     for (body, expected) in cases {
-        let both = fragment(&engine, body.clone(), Normalization::Entity).await.expect("the fixture expands"); // clone: the fallback below expands the same body
+        let both = patch(&engine, body.clone(), Normalization::Entity).await.expect("the fixture expands"); // clone: the fallback below expands the same body
         pretty_assertions::assert_eq!(both.typed.expect("no refusal"), TypedExpansion::Declined(expected));
         let (body, spec) = admitted(body);
+        let fragment: EntityPatch = serde_json::from_value(body).expect("a typed fragment");
         let expansion = EntityExpansion::prepare(&engine, &spec).await.expect("the context processes");
-        let processed = expansion.entity_fragment(body, Normalization::Entity).await.map_err(|error| error.to_string());
+        let processed = expansion
+            .entity_patch(&fragment, Normalization::Entity)
+            .await
+            .map_err(|error| error.to_string());
         pretty_assertions::assert_eq!(processed, both.processor.map_err(|refusal| refusal.to_string()));
     }
 }
@@ -235,13 +245,10 @@ async fn an_attribute_fragment_the_walk_declines_is_expanded_by_the_processor() 
         .await
         .expect("the core context processes");
     let name = "reading".parse().expect("an attribute name");
-    let fragment = expansion
-        .attribute_fragment(
-            &name,
-            json!({"type": "Property", "value": {"@context": {"level": "https://example.org/level"}, "level": 3}}),
-        )
-        .await
-        .expect("the processor expands it");
+    let written = json!({"type": "Property", "value": {"@context": {"level": "https://example.org/level"}, "level": 3}});
+    let text = RawValue::from_string(written.to_string()).expect("the fixture is JSON");
+    let written_member = AttributeValue::from_fragment_node("reading", JsonPiece::new(&text)).expect("a typed attribute");
+    let fragment = expansion.attribute(&name, &written_member).await.expect("the processor expands it");
 
     pretty_assertions::assert_eq!(fragment.name().as_str(), "https://uri.etsi.org/ngsi-ld/default-context/reading");
     let value = node(fragment.instance());

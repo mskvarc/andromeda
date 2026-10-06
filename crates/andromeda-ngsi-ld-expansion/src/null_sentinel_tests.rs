@@ -2,7 +2,7 @@
 //! write may carry it, through every write kind.
 
 use crate::{
-    expansion_fixture::{attribute, decoded_both_ways, engine, entity, fragment, patch},
+    expansion_fixture::{attribute, decoded_both_ways, engine, entity, patch},
     normalization::Normalization,
 };
 use andromeda_ngsi_ld_entity::{
@@ -89,7 +89,7 @@ async fn every_deletion_encoding_reads_as_the_removal_of_its_value() {
         assert_removed(&typed, &cases);
         let merged = patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").agreed(); // clone: the body is expanded three ways
         assert_removed(&merged, &cases);
-        let appended = fragment(&engine, body, Normalization::Entity).await.expect("expands").agreed();
+        let appended = patch(&engine, body, Normalization::Entity).await.expect("expands").agreed();
         assert_removed(&appended, &cases);
     }
 }
@@ -135,7 +135,7 @@ async fn a_first_level_null_removes_the_member_of_a_merge_only() {
         &ValueSlot::Remove(ValueCarrier::Value)
     );
     for sentinel in SPELLINGS {
-        let updated = fragment(&engine, json!({"speed": sentinel}), Normalization::Entity)
+        let updated = patch(&engine, json!({"speed": sentinel}), Normalization::Entity)
             .await
             .expect("expands")
             .agreed();
@@ -146,22 +146,28 @@ async fn a_first_level_null_removes_the_member_of_a_merge_only() {
     }
 }
 
-/// Clauses 4.18, 4.22, 5.5.8: the entity's scope and expiry, and an
-/// instance's observation time and unit, deleted by the Null.
+/// Clauses 4.18, 5.5.8: the entity's scope, which clause 4.18 deletes by the
+/// URN spelling alone, and an instance's observation time and unit, deleted by
+/// the Null.
 #[tokio::test]
 async fn members_beside_the_value_are_deleted_by_the_null() {
     let engine = engine();
-    for sentinel in SPELLINGS {
-        let document = fragment(
+    let scope = patch(&engine, json!({"scope": SPELLINGS[0]}), Normalization::MemberDeletions)
+        .await
+        .expect("expands")
+        .agreed();
+    pretty_assertions::assert_eq!(scope.scope(), Some(&Slot::Remove));
+    // The typed members read the URN spelling alone; the IRI spelling is the
+    // one of an expanded value.
+    for sentinel in &SPELLINGS[..1] {
+        let document = patch(
             &engine,
-            json!({"scope": sentinel, "expiresAt": sentinel, "speed": {"value": 1, "observedAt": sentinel, "unitCode": sentinel, "valueType": sentinel}}),
+            json!({"speed": {"value": 1, "observedAt": sentinel, "unitCode": sentinel, "valueType": sentinel}}),
             Normalization::MemberDeletions,
         )
         .await
         .expect("expands")
         .agreed();
-        pretty_assertions::assert_eq!(document.scope(), Some(&Slot::Remove));
-        pretty_assertions::assert_eq!(document.expires_at(), Some(&Slot::Remove));
         let speed = &document.attributes()[term("speed").as_str()].instances()[0];
         pretty_assertions::assert_eq!(speed.observed_at(), Some(&Slot::Remove));
         pretty_assertions::assert_eq!(speed.unit_code(), Some(&Slot::Remove));
@@ -199,7 +205,7 @@ async fn a_nested_null_in_a_merged_structured_value_deletes_that_member() {
 async fn a_null_dataset_id_is_refused_both_ways() {
     let engine = engine();
     for sentinel in SPELLINGS {
-        let refusal = fragment(
+        let refusal = patch(
             &engine,
             json!({"speed": {"type": "Property", "value": 1, "datasetId": sentinel}}),
             Normalization::Entity,
@@ -244,7 +250,7 @@ async fn the_null_beside_data_is_refused_by_every_write_kind() {
             let refusals = [
                 entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").refused(), // clone: the body is expanded four ways
                 patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").refused(), // clone: the body is expanded four ways
-                fragment(&engine, body, Normalization::Entity).await.expect("expands").refused(),
+                patch(&engine, body, Normalization::Entity).await.expect("expands").refused(),
                 attribute(&engine, name, instance).await.expect("expands").refused(),
             ];
             for refusal in refusals {

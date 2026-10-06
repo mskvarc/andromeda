@@ -1,7 +1,7 @@
 //! The `ListRelationship` attribute family (ETSI GS CIM 009 clause 5.2.37).
 
 use crate::attribute::{common_fields::CommonAttributeFields, inline_entity::InlineEntity, object_list::RelationshipObjectList, one_or_many::OneOrMany};
-use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
+use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
 use serde::Serialize;
 use serde_with::skip_serializing_none;
 
@@ -12,8 +12,8 @@ use serde_with::skip_serializing_none;
 pub struct ListRelationship {
     /// Ordered list of target object URIs.
     pub object_list: RelationshipObjectList,
-    /// Optional target node type(s).
-    pub object_type: Option<OneOrMany<NgsiLdReference>>,
+    /// Optional target node type(s), as written: type names or URIs (Table 5.2.37-1).
+    pub object_type: Option<OneOrMany<CoercedTerm>>,
     /// Inline linked entities returned for `join=inline`.
     pub entity_list: Option<InlineEntity>,
     /// Previous object list emitted in notifications when `showChanges` is active.

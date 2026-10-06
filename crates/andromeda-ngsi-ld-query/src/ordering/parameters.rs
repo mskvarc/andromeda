@@ -5,9 +5,14 @@ use crate::ordering::{
     geometry::{OrderingGeometry, OrderingGeometryError},
     term::OrderTerm,
 };
-use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_type::GeometryType};
-use serde::{Deserialize, Deserializer, Serialize, de::Error as DeserializeError};
-use serde_json::Value;
+use andromeda_ngsi_ld_geometry::{geometry_type::GeometryType, query_coordinates::QueryCoordinates};
+use serde::{
+    Deserialize,
+    Deserializer,
+    Serialize,
+    de::{Error as DeserializeError, SeqAccess, Visitor},
+};
+use std::fmt;
 use typed_builder::TypedBuilder;
 
 /// Parameters that order entity results (ETSI GS CIM 009 v1.9.1 clause 5.2.43).
@@ -34,27 +39,14 @@ struct OrderingParametersWire {
     #[serde(default)]
     collation: Option<IcuCollation>,
     /// Geometry coordinates, or JSON text carrying them in a query string.
-    #[serde(alias = "orderFrom", default, deserialize_with = "deserialize_optional_coordinates")]
-    coordinates: Option<Value>,
+    #[serde(alias = "orderFrom", default)]
+    coordinates: Option<QueryCoordinates>,
     /// Geometry type, defaulting to Point when coordinates are present.
     #[serde(alias = "orderGeometry", default)]
     geometry: Option<GeometryType>,
     /// Ordering terms.
     #[serde(rename = "orderBy", default, deserialize_with = "deserialize_order_by")]
     order_by: Vec<OrderTerm>,
-}
-
-/// Parse optional coordinates, decoding query-string JSON exactly once.
-fn deserialize_optional_coordinates<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Option::<Value>::deserialize(deserializer)?
-        .map(|value| match value {
-            Value::String(raw) => serde_json::from_str(&raw).map_err(DeserializeError::custom),
-            other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => Ok(other),
-        })
-        .transpose()
 }
 
 // A derive cannot combine the optional geometry type and coordinates into the
@@ -70,7 +62,9 @@ impl<'de> Deserialize<'de> for OrderingParameters {
             (None, Some(_)) => return Err(DeserializeError::custom("orderGeometry requires orderFrom")),
             (Some(coordinates), geometry) => {
                 let geometry_type = geometry.unwrap_or(GeometryType::Point);
-                let geometry = Geometry::from_type_and_coordinates(geometry_type, coordinates)
+                let written = coordinates.into_written().map_err(DeserializeError::custom)?;
+                let geometry = written
+                    .read_as(geometry_type)
                     .map_err(|error| DeserializeError::custom(OrderingGeometryError::Geometry(error)))?;
                 Some(OrderingGeometry::new(geometry))
             }
@@ -89,21 +83,41 @@ fn deserialize_order_by<'de, D>(deserializer: D) -> Result<Vec<OrderTerm>, D::Er
 where
     D: Deserializer<'de>,
 {
-    let value = Option::<Value>::deserialize(deserializer)?;
-    match value {
-        None => Ok(Vec::new()),
-        Some(Value::String(raw)) => raw
+    deserializer.deserialize_any(OrderByVisitor)
+}
+
+/// Reads the `orderBy` member as the terms it spells, never as a JSON tree.
+struct OrderByVisitor;
+
+impl<'de> Visitor<'de> for OrderByVisitor {
+    type Value = Vec<OrderTerm>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("orderBy must be a string array or comma-separated string")
+    }
+
+    fn visit_unit<E: DeserializeError>(self) -> Result<Vec<OrderTerm>, E> {
+        Ok(Vec::new())
+    }
+
+    fn visit_none<E: DeserializeError>(self) -> Result<Vec<OrderTerm>, E> {
+        Ok(Vec::new())
+    }
+
+    fn visit_str<E: DeserializeError>(self, terms: &str) -> Result<Vec<OrderTerm>, E> {
+        terms
             .split(',')
             .map(str::trim)
             .map(|term| term.parse().map_err(DeserializeError::custom))
-            .collect(),
-        Some(Value::Array(values)) => values
-            .into_iter()
-            .map(|value| serde_json::from_value(value).map_err(DeserializeError::custom))
-            .collect(),
-        Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_)) => {
-            Err(DeserializeError::custom("orderBy must be a string array or comma-separated string"))
+            .collect()
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut terms: A) -> Result<Vec<OrderTerm>, A::Error> {
+        let mut read = Vec::with_capacity(terms.size_hint().unwrap_or(0));
+        while let Some(term) = terms.next_element()? {
+            read.push(term);
         }
+        Ok(read)
     }
 }
 
@@ -122,6 +136,25 @@ mod tests {
         pretty_assertions::assert_eq!(ordering.order_by[0].direction, OrderDirection::DistAsc);
         let geometry = ordering.geometry.expect("reference geometry").geometry.to_geojson();
         pretty_assertions::assert_eq!(geometry.value.type_name(), GeometryType::Point.to_string());
+    }
+
+    /// Clause 5.2.43 Table 5.2.43-1 and the GET binding: `orderFrom` carries
+    /// JSON text and `orderBy` a comma-separated list, and both read as the
+    /// JSON body's array members do.
+    #[test]
+    fn the_query_string_spelling_reads_as_the_body_spelling() {
+        let ordering: OrderingParameters = serde_json::from_value(serde_json::json!({
+            "orderBy": "location;dist-asc, name;asc",
+            "orderFrom": "[13.4, 52.5]"
+        }))
+        .expect("valid ordering");
+        pretty_assertions::assert_eq!(ordering.order_by.len(), 2);
+        let body: OrderingParameters = serde_json::from_value(serde_json::json!({
+            "orderBy": ["location;dist-asc", "name;asc"],
+            "coordinates": [13.4, 52.5]
+        }))
+        .expect("valid ordering");
+        pretty_assertions::assert_eq!(ordering, body);
     }
 
     #[test]

@@ -10,12 +10,13 @@
 //! `Scalar`; the only thing they need from JSON-LD is a
 //! [`TermExpander`].
 
+#[cfg(test)]
+use crate::filter::parser;
 use crate::{
     error::QueryError,
     filter::{
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
-        parser,
         path::{AttrPath, QueryPath, expanded_attribute_name},
         predicate::Predicate,
         scalar::{CompareValue, Scalar},
@@ -26,7 +27,8 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 
-/// Parse and expand a `q` filter expression.
+/// Parse and expand a `q` filter expression, as the tests of this crate state
+/// one.
 ///
 /// Returns `None` when `q` is absent or empty.
 ///
@@ -36,7 +38,8 @@ use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 /// clause 4.9 grammar, and [`QueryError::TermExpansion`],
 /// [`QueryError::TermNotAnIri`] or [`QueryError::AttributeNameInvalid`] when a
 /// term does not expand to a usable attribute name.
-pub async fn expand_q_expression(q: Option<&str>, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Option<Expr>, QueryError> {
+#[cfg(test)]
+pub(crate) async fn expand_q_expression(q: Option<&str>, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Option<Expr>, QueryError> {
     let Some(q_str) = q.map(str::trim).filter(|trimmed| !trimmed.is_empty()) else {
         return Ok(None);
     };

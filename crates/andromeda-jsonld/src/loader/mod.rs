@@ -10,7 +10,6 @@
 //! The steps are split by what they own rather than kept in one file: what a
 //! response grants a cache ([`cache_lifetime`]), how a document is downloaded
 //! and validated ([`remote_document`]), against which URL its relative
-//! context references resolve (`relative_context_references`), how the
 //! durable tier is read and
 //! written ([`durable_cache`]), what an in-process entry is and how long it
 //! lives ([`loaded_context`]), what a context owes when its durable write
@@ -45,9 +44,6 @@ pub(crate) mod offline_settings;
 pub(crate) mod own_context;
 /// What a context keeps while its durable write is still owed.
 pub mod pending_persistence;
-/// Resolving a downloaded document's relative context references against the
-/// URL it was finally read from.
-pub(crate) mod relative_context_references;
 /// Downloading and parsing one remote `@context` document.
 pub mod remote_document;
 /// A durable cache row whose document a unit test can replace.

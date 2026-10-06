@@ -36,7 +36,6 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
         TemporalError::StoreUnavailable => ClassifiedReport::store_unavailable(error.to_string()),
         TemporalError::Commit(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to persist temporal history")),
         TemporalError::Persistence(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("the temporal store is unavailable")),
-        TemporalError::Rendering(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to render the temporal representation")),
         TemporalError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal temporal error")),
     }
 }
@@ -49,7 +48,6 @@ mod tests {
     use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use andromeda_ngsi_ld_query::error::QueryError;
-    use andromeda_ngsi_ld_render::temporal::values::TemporalValuesError;
     use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
     use andromeda_ngsi_ld_request::{error::ParameterError, unsupported_representation::UnsupportedRepresentation};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -95,7 +93,7 @@ mod tests {
             ),
             (
                 "JsonLd",
-                TemporalError::JsonLd(JsonLdError::DocumentShape),
+                TemporalError::JsonLd(JsonLdError::JsonLdContextShape),
                 NgsiLdErrorType::BadRequestData,
                 None,
             ),
@@ -117,12 +115,6 @@ mod tests {
                 TemporalError::Persistence(PersistenceFailure::StatementRejected),
                 NgsiLdErrorType::InternalError,
                 Some(("the temporal store is unavailable", "the store rejected a statement")),
-            ),
-            (
-                "Rendering",
-                TemporalError::Rendering(TemporalValuesError::InvalidDatasetId),
-                NgsiLdErrorType::InternalError,
-                Some(("failed to render the temporal representation", "invalid datasetId")),
             ),
             (
                 "Internal",

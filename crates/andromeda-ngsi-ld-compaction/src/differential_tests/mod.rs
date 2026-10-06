@@ -17,16 +17,21 @@ use crate::{
     compacted::Compacted,
     differential_tests::contexts::{Decision, test_contexts},
     entity_compactor::{EntityCompactor, EntityRead},
+    processor_fallback::{document_entity_through_processor, entity_through_processor, scope_history_through_processor, temporal_through_processor},
     state_reading::{WalkError, walk_entity},
     term_context::TermContext,
-    walk::{GeometryOutput, Walk},
+    walk::Walk,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_entity::{
+    document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument},
+    entity_state::EntityState,
+};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::{entity::Entity, entity_system_times::EntitySystemTimes, temporal::temporal_document::TemporalDocument};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, TimeZone, Utc};
+use indexmap::IndexMap;
 use serde_json::{Value, json};
 
 /// An engine that resolves only what is embedded, never the network.
@@ -135,7 +140,7 @@ async fn a_json_property_array_is_returned_as_written() {
     };
     for written in [json!([{"id": "a"}]), json!([{"a": 1}, [1, 2], "text"]), json!([])] {
         let entity = json!({"id": "urn:ngsi-ld:Thing:tickets", "type": "Thing", "tickets": {"type": "JsonProperty", "json": written}});
-        let expanded = engine.expand(entity, &ContextSpec::none()).await.expect("the entity expands");
+        let expanded = oracle::expanded(&engine, &entity, &ContextSpec::none()).await;
         let state = state_of(&serde_json::to_value(&expanded).expect("the expansion renders"));
         let compacted = typed.entity(&state, &read).await.expect("the entity compacts");
         let compacted = serde_json::to_value(&compacted).expect("the compact entity renders");
@@ -166,7 +171,7 @@ async fn every_document_is_read_from_the_walk_with_its_geometries_kept_typed_und
     for document in corpus::stored_documents(&engine).await {
         let state = state_of(&document.expanded);
         let tree = Compacted::Object(
-            Walk::new(&terms, GeometryOutput::Typed)
+            Walk::new(&terms)
                 .compact_state(&state, SysAttrsInclusion::Include)
                 .expect("the walk decides the core context"),
         );
@@ -222,18 +227,157 @@ async fn an_entity_read_by_another_identifier_is_named_after_it_by_both_readings
     }
 }
 
+/// A Temporal Evolution read from the walk's tree is the one the processor's
+/// compaction reads, under every context, or is refused alike.
 #[tokio::test]
-async fn every_written_document_compacts_as_the_processor_compacts_it_under_every_context() {
+async fn every_written_document_reads_as_the_temporal_entity_the_processor_compacts_it_to_under_every_context() {
+    let engine = offline_engine();
+    let mut compared = 0_usize;
+    for context in test_contexts() {
+        let compactor = engine.compactor(&context.spec);
+        let typed = EntityCompactor::new(&compactor);
+        let terms = TermContext::new(compactor.processed_context().await.expect("the context processes"));
+        for (name, expanded) in documents::written_documents() {
+            let document =
+                EntityDocument::from_slice(&serde_json::to_vec(&expanded).expect("the document renders")).expect("the canonical codec reads the document");
+            let evolution = TemporalDocument::new(document.clone(), EntitySystemTimes::default(), IndexMap::new()); // clone: the oracle reads the same document
+            let expected = temporal_through_processor(&compactor, &terms, &document)
+                .await
+                .map(|entity| format!("{entity:?}"))
+                .map_err(|error| error.to_string());
+            let actual = typed
+                .temporal(&evolution)
+                .await
+                .map(|entity| format!("{entity:?}"))
+                .map_err(|error| error.to_string());
+            pretty_assertions::assert_eq!(actual, expected, "{name} under {}", context.name);
+            compared += 1;
+        }
+    }
+    assert!(compared > 0, "no document was compared");
+}
+
+/// The document holding the reified Scope instances under the Scope IRI, as a
+/// temporal write expands them.
+fn scope_history_document() -> EntityDocument {
+    let scope: AttributeName = "https://uri.etsi.org/ngsi-ld/scope".parse().expect("an attribute name");
+    let instances = documents::scope_history_instances()
+        .iter()
+        .map(|instance| InstanceDocument::from_slice(&scope, &serde_json::to_vec(instance).expect("the instance renders")).expect("the instance decodes"))
+        .collect();
+    EntityDocument::new(None, Vec::new(), None, None, IndexMap::from([(scope, AttributeMember::Instances(instances))]))
+}
+
+/// The reified Scope history read from the walk's tree is the one the
+/// processor's compaction reads, under every context: those the walk decides
+/// and those it leaves to the processor.
+#[tokio::test]
+async fn a_scope_history_reads_as_the_processor_compacts_it_under_every_context() {
+    let engine = offline_engine();
+    let document = scope_history_document();
+    let mut compared = 0_usize;
+    for context in test_contexts() {
+        let compactor = engine.compactor(&context.spec);
+        let typed = EntityCompactor::new(&compactor);
+        let terms = TermContext::new(compactor.processed_context().await.expect("the context processes"));
+        let expected = scope_history_through_processor(&compactor, &terms, &document)
+            .await
+            .map(|history| format!("{history:?}"))
+            .map_err(|error| error.to_string());
+        let actual = typed
+            .scope_history(&document)
+            .await
+            .map(|history| format!("{history:?}"))
+            .map_err(|error| error.to_string());
+        pretty_assertions::assert_eq!(actual, expected, "under {}", context.name);
+        compared += 1;
+    }
+    assert!(compared > 0, "no context was compared");
+}
+
+/// Clause 4.5.6: whichever way a context is compacted, both Scope instances
+/// are read with their temporal members; the processor fallback reads them from
+/// the compacted bytes.
+#[tokio::test]
+async fn the_processor_fallback_reads_both_instances_of_a_scope_history() {
+    let engine = offline_engine();
+    let document = scope_history_document();
+    let core = test_contexts()
+        .into_iter()
+        .find(|context| matches!(context.decision, Decision::Walk))
+        .expect("a context the walk decides");
+    let compactor = engine.compactor(&core.spec);
+    let terms = TermContext::new(compactor.processed_context().await.expect("the context processes"));
+    let history = scope_history_through_processor(&compactor, &terms, &document)
+        .await
+        .expect("the history compacts")
+        .expect("the document holds a Scope history");
+    pretty_assertions::assert_eq!(history.instances().len(), 2);
+    let rendered = serde_json::to_value(history.into_member()).expect("the history renders");
+    pretty_assertions::assert_eq!(rendered[0]["value"], json!("/Madrid/Gardens"));
+    pretty_assertions::assert_eq!(rendered[0]["createdAt"], json!("2025-01-01T00:00:01Z"));
+    pretty_assertions::assert_eq!(rendered[1]["deletedAt"], json!("2025-01-02T00:00:00Z"));
+}
+
+/// A document holding no Scope history gives none.
+#[tokio::test]
+async fn a_document_without_a_scope_history_gives_none() {
+    let engine = offline_engine();
+    let spec = ContextSpec::core_only();
+    let compactor = engine.compactor(&spec);
+    let document = EntityDocument::default();
+    let history = EntityCompactor::new(&compactor).scope_history(&document).await.expect("the document compacts");
+    assert!(history.is_none());
+}
+
+#[tokio::test]
+async fn every_written_document_reads_as_the_entity_the_processor_compacts_it_to_under_every_context() {
     let engine = offline_engine();
     for context in test_contexts() {
         let compactor = engine.compactor(&context.spec);
         let typed = EntityCompactor::new(&compactor);
+        let terms = TermContext::new(compactor.processed_context().await.expect("the context processes"));
         for (name, expanded) in documents::written_documents() {
             let document =
                 EntityDocument::from_slice(&serde_json::to_vec(&expanded).expect("the document renders")).expect("the canonical codec reads the document");
-            let expected = oracle::processor_document(&compactor, &expanded).await;
-            let actual = typed.document(&document).await.map_err(|error| error.to_string());
+            let expected = rendered(
+                document_entity_through_processor(&compactor, &terms, &document)
+                    .await
+                    .map_err(|error| error.to_string()),
+            );
+            let actual = rendered(typed.document_entity(&document).await.map_err(|error| error.to_string()));
             pretty_assertions::assert_eq!(actual, expected, "{name} under {}", context.name);
         }
     }
+}
+
+/// The fallback hands the processor the canonical bytes of the stored state:
+/// a type-scoped context leaves the walk undecided (`Vehicle` scopes `speed`),
+/// and the entity the fallback reads from those bytes is the one the processor
+/// gives for the stored document.
+#[tokio::test]
+async fn the_processor_fallback_reads_bytes() {
+    let engine = offline_engine();
+    let scoped = test_contexts()
+        .into_iter()
+        .find(|context| context.name == "type-scoped")
+        .expect("the type-scoped context");
+    let compactor = engine.compactor(&scoped.spec);
+    let terms = TermContext::new(compactor.processed_context().await.expect("the context processes"));
+    let corpus = corpus::stored_documents(&engine).await;
+    let vehicle = corpus
+        .iter()
+        .find(|document| document.name == "http-identifiers")
+        .expect("the corpus holds a Vehicle");
+    let state = state_of(&vehicle.expanded);
+
+    assert!(matches!(
+        walk_entity(&terms, &state, None, SysAttrsInclusion::Include),
+        Err(WalkError::Undecidable(_))
+    ));
+    let fallback = entity_through_processor(&compactor, &terms, &state, None, SysAttrsInclusion::Include)
+        .await
+        .map_err(|error| error.to_string());
+    let expected = oracle::processor_entity(&compactor, &vehicle.expanded, None, SysAttrsInclusion::Include, now()).await;
+    pretty_assertions::assert_eq!(rendered(fallback), rendered(expected));
 }

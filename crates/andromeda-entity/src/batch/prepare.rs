@@ -321,6 +321,7 @@ mod tests {
         notification_recording_harness::recording_service,
         write_admission::BatchWrite,
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, written_value::ValueSlot};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -378,9 +379,15 @@ mod tests {
     #[tokio::test]
     async fn an_entity_the_walk_declines_is_expanded_by_the_processor() {
         let (service, _recorded) = recording_service().await;
-        let context = ContextSpec::from_body(json!({
-            "Vehicle": {"@id": "https://example.org/Vehicle", "@context": {"speed": "https://typed.example.org/speed"}}
-        }));
+        let context = ContextSpec::from_body(
+            JsonLiteral::admit(
+                &json!({
+                    "Vehicle": {"@id": "https://example.org/Vehicle", "@context": {"speed": "https://typed.example.org/speed"}}
+                })
+                .to_string(),
+            )
+            .expect("an admissible literal"),
+        );
 
         let prepared = service
             .prepare_group(vec![vehicle(0)], &context, BatchExecution::Inline, service.screening(BatchWrite::Create))
@@ -430,9 +437,15 @@ mod tests {
             ("typed walk", ContextSpec::core_only()),
             (
                 "processor",
-                ContextSpec::from_body(json!({
-                    "Vehicle": {"@id": "https://example.org/Vehicle", "@context": {"brand": "https://typed.example.org/brand"}}
-                })),
+                ContextSpec::from_body(
+                    JsonLiteral::admit(
+                        &json!({
+                            "Vehicle": {"@id": "https://example.org/Vehicle", "@context": {"brand": "https://typed.example.org/brand"}}
+                        })
+                        .to_string(),
+                    )
+                    .expect("an admissible literal"),
+                ),
             ),
         ]
     }

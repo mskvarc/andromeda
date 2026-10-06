@@ -6,14 +6,16 @@
 
 use andromeda_health::{
     component::{ComponentDetail, ComponentName},
+    details::ComponentDetails,
     indicator::HealthIndicator,
+    postgresql_details::PostgreSqlDetails,
     status::HealthStatus,
 };
 use async_trait::async_trait;
 use sea_query::{Expr, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::PgPool;
-use std::{collections::BTreeMap, time::Instant};
+use std::time::Instant;
 
 /// Health indicator for the PostgreSQL database backend.
 ///
@@ -48,24 +50,19 @@ impl HealthIndicator for DatabaseHealthIndicator {
         // reachable; reporting the cap keeps the detail a number either way.
         let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
 
-        let mut details = BTreeMap::new();
         match result {
-            Ok(_answered) => {
-                details.insert("poolSize".to_owned(), serde_json::Value::from(self.pool.size()));
-                details.insert("idleConnections".to_owned(), serde_json::Value::from(self.pool.num_idle()));
-                details.insert("pingLatencyMs".to_owned(), serde_json::Value::from(elapsed_ms));
-                ComponentDetail {
-                    status: HealthStatus::Up,
-                    details,
-                }
-            }
-            Err(error) => {
-                details.insert("error".to_owned(), serde_json::Value::String(error.to_string()));
-                ComponentDetail {
-                    status: HealthStatus::Down,
-                    details,
-                }
-            }
+            Ok(_answered) => ComponentDetail {
+                status: HealthStatus::Up,
+                details: Some(ComponentDetails::PostgreSql(PostgreSqlDetails::Reachable {
+                    idle_connections: self.pool.num_idle(),
+                    ping_latency_ms: elapsed_ms,
+                    pool_size: self.pool.size(),
+                })),
+            },
+            Err(error) => ComponentDetail {
+                status: HealthStatus::Down,
+                details: Some(ComponentDetails::PostgreSql(PostgreSqlDetails::Unreachable { error: error.to_string() })),
+            },
         }
     }
 }

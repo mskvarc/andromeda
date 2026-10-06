@@ -22,18 +22,40 @@ use andromeda_ngsi_ld_vocabulary::NULL_URI;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// Reading the aggregated representation a peer answered with.
+pub mod aggregated_decoding;
+/// The aggregated representation of the Temporal Evolution of an Entity.
+pub mod aggregated_entity;
 /// The geometry of one observation as a durable intent carries it.
 mod geometry_observation;
 /// The wire form a durable intent persists a history row in.
 mod history_row_wire;
 /// The members an observed instance carries beside its value.
 pub mod observation_metadata;
+/// Why a simplified temporal attribute is refused.
+pub mod plural_member_refusal;
+/// The Temporal Evolutions a context source answered with.
+pub mod received_temporal;
+/// Unfolding the simplified temporal representation while a body is read.
+mod simplified_unfold;
 /// The structured value of one observation and the JSON a history row stores it as.
 pub mod structured_value;
 /// Reading and writing the stored JSON of a structured value.
 pub mod structured_value_codec;
 #[cfg(test)]
 mod structured_value_tests;
+/// The instances of one attribute of a Temporal Evolution.
+pub mod temporal_attribute;
+/// The Temporal Evolution of one entity in an answer.
+pub mod temporal_body;
+/// The expanded Temporal Evolution of an Entity.
+pub mod temporal_document;
+/// The Temporal Evolution of an Entity, compact and normalized.
+pub mod temporal_entity;
+/// The history of one entity as the operations gather it.
+pub mod temporal_history;
+/// The Temporal Evolution a client writes.
+pub mod written_temporal_entity;
 
 /// A single decoded value from temporal history storage.
 ///
@@ -210,7 +232,7 @@ pub enum AggregationAverage {
 /// key was absent, `urn:ngsi-ld:null` for an explicit NGSI-LD Null value key,
 /// and the rendered value otherwise. The value is carried as text because it is
 /// a JSON object key, which is unstructured by construction.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum GroupKeyValue {
     /// The key was absent for this row.
     Absent,

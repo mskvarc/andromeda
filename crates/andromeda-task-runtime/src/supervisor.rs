@@ -1,27 +1,21 @@
 //! Named task supervision on a supplied Tokio execution host.
 
 use crate::{
-    criticality::TaskCriticality,
-    failure::TaskFailure,
     failure_report::FailureReport,
-    lifecycle_event::{LifecycleEventKind, TaskLifecycleEvent},
+    lifecycle_event::TaskLifecycleEvent,
     registration::{TaskRegistration, TaskRegistrationError},
-    runtime_failure::RuntimeFailure,
-    startup_task::{StartupFailure, StartupTask, StartupTaskError},
-    task_health::{TaskHealth, TaskHealthSnapshot, TaskHealthState},
+    task_health::{TaskHealth, TaskHealthSnapshot},
     task_name::TaskName,
-    task_observer::{DriverTerminal, TerminatedTask, apply_criticality, emit, join_failure, observe_terminal},
+    task_observer::{DriverTerminal, TerminatedTask, join_failure, observe_terminal},
 };
-use andromeda_telemetry::task_failure::record_task_failure;
 use dashmap::{DashMap, mapref::entry::Entry};
 use std::{
-    error::Error,
     sync::{
         Arc,
         Weak,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 use tokio::{
     runtime::Handle,
@@ -168,64 +162,6 @@ impl TaskSupervisor {
         Some(snapshot)
     }
 
-    /// Return current health for every registered task, ordered by task name.
-    pub async fn health_snapshots(&self) -> Vec<TaskHealthSnapshot> {
-        let records: Vec<_> = self.inner.health.iter().map(|entry| Arc::clone(entry.value())).collect(); // collect: DashMap guards cannot be held across asynchronous lock acquisition.
-        let mut snapshots = Vec::with_capacity(records.len());
-        for health in records {
-            let mut snapshot = health.read().await.snapshot();
-            snapshot.cancellation_requested = self.inner.cancellation.is_cancelled();
-            snapshots.push(snapshot);
-        }
-        snapshots.sort_by(|left, right| left.name.cmp(&right.name));
-        snapshots
-    }
-
-    /// Run one finite startup task and wait for its result before composition publishes resources.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StartupTaskError`] when the task name is already reserved by this supervisor, when the operation reports a [`TaskFailure`], or when the spawned operation panics or is aborted.
-    pub async fn run_startup<E>(&self, task: StartupTask<E>) -> Result<(), StartupTaskError<E>>
-    where
-        E: Error + Send + 'static,
-    {
-        let (registration, operation) = task.into_parts();
-        let health = self.reserve(&registration).map_err(|error| StartupTaskError {
-            name: error.name,
-            failure: StartupFailure::Runtime(TaskFailure::permanent(RuntimeFailure::DuplicateStartupRegistration)),
-        })?;
-        let name = registration.name().clone(); // clone: health, lifecycle and the returned error each identify the task independently.
-        health.write().await.running(SystemTime::now());
-        self.emit(TaskLifecycleEvent::new(name.clone(), LifecycleEventKind::Started)); // clone: the startup result still needs its task name.
-        let operation_cancellation = self.inner.cancellation.child_token();
-        let result = self.inner.host.spawn(operation(operation_cancellation)).await;
-        match result {
-            Ok(Ok(())) => {
-                health.write().await.terminal(TaskHealthState::Completed);
-                self.emit(TaskLifecycleEvent::new(name, LifecycleEventKind::Completed));
-                Ok(())
-            }
-            Ok(Err(failure)) => {
-                self.finish_startup_failure(&health, &name, registration.criticality(), &FailureReport::of(&failure))
-                    .await;
-                Err(StartupTaskError {
-                    name,
-                    failure: StartupFailure::Operation(failure),
-                })
-            }
-            Err(join_error) => {
-                let failure = join_failure(join_error);
-                self.finish_startup_failure(&health, &name, registration.criticality(), &FailureReport::of(&failure))
-                    .await;
-                Err(StartupTaskError {
-                    name,
-                    failure: StartupFailure::Runtime(failure),
-                })
-            }
-        }
-    }
-
     /// Cooperatively stop every active task and forcibly terminate deadline violators.
     pub async fn shutdown(&self) {
         self.request_cancellation();
@@ -323,28 +259,5 @@ impl TaskSupervisor {
                 grace_period,
             }),
         );
-    }
-
-    /// Publish a lifecycle event without requiring an attached observer.
-    fn emit(&self, event: TaskLifecycleEvent) {
-        emit(&self.inner.lifecycle, event);
-    }
-
-    /// Record and escalate a failed startup operation.
-    async fn finish_startup_failure(&self, health: &RwLock<TaskHealth>, name: &TaskName, criticality: TaskCriticality, failure: &FailureReport) {
-        let mut health = health.write().await;
-        health.failed_attempt(SystemTime::now(), failure);
-        health.terminal(TaskHealthState::Failed);
-        drop(health);
-        record_task_failure(failure.class().into(), criticality.into());
-        self.emit(TaskLifecycleEvent::new(
-            name.clone(), // clone: the startup error retains its own task identity.
-            LifecycleEventKind::Failed {
-                class: failure.class(),
-                summary: failure.shared_summary(),
-                criticality,
-            },
-        ));
-        apply_criticality(&self.inner.cancellation, &self.inner.process_cancellation, criticality);
     }
 }

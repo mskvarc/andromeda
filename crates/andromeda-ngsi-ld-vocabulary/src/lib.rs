@@ -52,20 +52,6 @@ pub const NULL_URI: Iri<&'static str> = iri!("urn:ngsi-ld:null");
 /// The expanded-IRI spelling of the NGSI-LD null sentinel (clause 5.5.12).
 pub const NULL_IRI: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/null");
 
-/// The core context's aliases of the JSON-LD `@id` and `@type` keywords, which
-/// name no IRI and so are absent from the term table.
-const CORE_KEYWORD_ALIASES: [&str; 2] = ["id", "type"];
-
-/// Whether `name` is a JSON-LD keyword or a term of the core context.
-///
-/// Such a name is spelled the same under every `@context`, because the core
-/// context has absolute precedence (clause 5.5.7), and inside an attribute it
-/// names one of the attribute's own members rather than a sub-attribute.
-#[must_use]
-pub fn is_core_term(name: &str) -> bool {
-    name.starts_with('@') || CORE_KEYWORD_ALIASES.contains(&name) || compact_to_expanded(name).is_some()
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -153,18 +139,6 @@ mod tests {
     fn prefix_constants_are_correct() {
         pretty_assertions::assert_eq!(prefix::NGSI_LD.as_str(), "https://uri.etsi.org/ngsi-ld/");
         pretty_assertions::assert_eq!(prefix::GEOJSON.as_str(), "https://purl.org/geojson/vocab#");
-    }
-
-    /// Keywords, the two keyword aliases and the core terms read the same in
-    /// every context; a user term does not.
-    #[test]
-    fn core_terms_are_told_apart_from_user_terms() {
-        for core in ["@context", "id", "type", "value", "object", "objectList", "entity", "observedAt"] {
-            assert!(crate::is_core_term(core), "{core}");
-        }
-        for user in ["speed", "isParkedIn", "objectTypeName"] {
-            assert!(!crate::is_core_term(user), "{user}");
-        }
     }
 
     #[test]

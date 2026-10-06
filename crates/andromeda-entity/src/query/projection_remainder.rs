@@ -17,8 +17,11 @@
 //! (`andromeda_ngsi_ld_query::projection::projected_members`), so the count and
 //! the page are taken over the entities that keep a member.
 
+use crate::query::state_projection::keeps_a_standing_attribute;
+use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
+use chrono::{DateTime, Utc};
 use derive_more::IsVariant;
 
 /// What a clause 4.21 projection left of an entity.
@@ -46,6 +49,25 @@ pub fn projection_remainder(entity: &Entity, projection: &Projection) -> Project
     // are members of the rendered representation rather than of the typed
     // entity, so the keyword rule is what decides whether they will be written.
     let survives = entity.has_attribute_members() || entity.scope.is_some() || projection.keeps(&ProjectionTerm::Id) || projection.keeps(&ProjectionTerm::Type);
+    if survives {
+        ProjectionRemainder::Members
+    } else {
+        ProjectionRemainder::Nothing
+    }
+}
+
+/// What `projection` left of `state`, at `now`.
+///
+/// `state` must already have been narrowed by the projection: this reads the
+/// members that survived. An attribute whose every instance expired at `now`
+/// is not one the compacted entity will carry (clause 4.22).
+#[must_use]
+pub fn state_remainder(state: &EntityState, projection: &Projection, now: DateTime<Utc>) -> ProjectionRemainder {
+    if projection.is_empty() {
+        return ProjectionRemainder::Members;
+    }
+    let survives =
+        keeps_a_standing_attribute(state, now) || state.scope().is_some() || projection.keeps(&ProjectionTerm::Id) || projection.keeps(&ProjectionTerm::Type);
     if survives {
         ProjectionRemainder::Members
     } else {

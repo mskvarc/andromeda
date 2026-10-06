@@ -6,6 +6,7 @@
 //! Clause 4.5.17 gives the simplified rendering the same envelope.
 
 use crate::{
+    contextual_body::open_object,
     entity_body::{
         feature_geometry::{FeatureGeometry, feature_geometry},
         typed_entity::{IdentifierMember, TypedEntity},
@@ -58,16 +59,13 @@ impl<'a> FeatureBody<'a> {
 
 impl Serialize for FeatureBody<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut feature = serializer.serialize_map(None)?;
+        let mut feature = open_object(serializer, self.context, None)?;
         feature.serialize_entry("type", FEATURE)?;
         feature.serialize_entry("geometry", &self.geometry)?;
         if self.entity.keeps(Keyword::Id) {
             feature.serialize_entry("id", &self.entity.entity.id)?;
         }
         feature.serialize_entry("properties", &self.entity)?;
-        if let Some(context) = self.context {
-            feature.serialize_entry("@context", context)?;
-        }
         feature.end()
     }
 }

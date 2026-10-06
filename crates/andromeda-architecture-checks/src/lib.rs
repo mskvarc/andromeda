@@ -25,7 +25,6 @@ pub mod sql;
 pub mod string_typed_error;
 pub mod type_erased_error;
 pub mod untyped_json;
-pub mod untyped_json_baseline;
 
 /// Declarative macros that generate caller-side architecture tests.
 #[macro_use]

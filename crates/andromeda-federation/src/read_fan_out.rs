@@ -9,20 +9,22 @@
 use crate::{
     FederationService,
     cache::Cacheability,
-    document_rewording::DocumentVocabulary,
     entity_read::mode_admitted,
     error::FederationError,
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, MatchedSources},
     read_binding::{ReadIntent, read_binding_for},
-    registration_selection::registration_scope_admits,
+    registration_information::registration_scope_admits,
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
     source_read::SourceRead,
 };
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, context_source_properties::ContextSourceProperties, forwarding_mode::ForwardingMode};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::{
+    query::body::Query,
+    registration::{ContextSourceRegistration, context_source_properties::ContextSourceProperties, forwarding_mode::ForwardingMode},
+};
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate, expression::Expr},
     queried_entity::linked_entities::NoLinkedEntities,
@@ -31,7 +33,7 @@ use andromeda_ngsi_ld_query::{
 };
 use futures::{StreamExt, stream};
 use http::StatusCode;
-use serde_json::{Map, Value};
+use indexmap::IndexMap;
 use std::cell::OnceCell;
 use tracing::warn;
 use url::Url;
@@ -95,8 +97,9 @@ pub(crate) enum ForwardedRead {
     PostQuery {
         /// The `/entityOperations/query` URL, or the error that stopped it.
         url: Result<Url, FederationError>,
-        /// The serialized `Query` body (clause 6.23).
-        body: Vec<u8>,
+        /// The `Query` body (clause 6.23), boxed because it is the widest
+        /// member of a read.
+        body: Box<Query>,
     },
 }
 
@@ -119,9 +122,6 @@ pub(crate) struct ForwardedGetConditions<'a> {
     /// The `EntityMap` the read runs under, which fixes the location each
     /// source is told.
     pub(crate) entity_map: EntityMapInUse<'a>,
-    /// What kind of answer every source returns, which decides where its names
-    /// sit when it is read back in the client's terms (clause 4.3.6.6).
-    pub(crate) vocabulary: DocumentVocabulary,
 }
 
 /// What one contacted registration answered, before the caller folds it.
@@ -193,37 +193,42 @@ impl FederationService {
     /// the same way before the two are compared; the added properties are
     /// stored under expanded names already.
     async fn passes_source_filter(&self, registration: &ContextSourceRegistration, filter: &Expr, prepared_context: &PreparedTermContext) -> bool {
-        let document = match serde_json::to_value(registration) {
-            Ok(Value::Object(members)) => members,
-            Ok(Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => return false,
+        let written = match serde_json::to_string(registration)
+            .map_err(|source| JsonLiteralError::Syntax { source })
+            .and_then(|text| JsonLiteral::admit(&text))
+        {
+            Ok(written) => written,
             Err(error) => {
                 warn!(registration = %registration.id, %error, "a stored registration could not be written back for the context source filter");
                 return false;
             }
         };
-        let mut expanded = Map::with_capacity(document.len());
-        for (name, value) in document {
-            match self.engine.expand_term(&name, prepared_context).await {
-                Ok(iri) => {
-                    expanded.insert(iri.to_string(), value);
-                }
+        let Some(members) = written.piece().members() else {
+            return false;
+        };
+        let mut properties: IndexMap<AttributeName, JsonLiteral> = IndexMap::with_capacity(members.len());
+        for (name, value) in members {
+            let expanded = match self.engine.expand_term(&name, prepared_context).await {
+                Ok(iri) => iri,
                 Err(error) => {
                     warn!(registration = %registration.id, member = %name, %error, "a registration member name could not be expanded for the context source filter");
+                    continue;
+                }
+            };
+            match (expanded.as_str().parse::<AttributeName>(), value.to_literal()) {
+                (Ok(name), Ok(value)) => {
+                    properties.insert(name, value);
+                }
+                (Err(error), _) => {
+                    warn!(registration = %registration.id, member = %name, %error, "an expanded registration member name is no attribute name for the context source filter");
+                }
+                (_, Err(error)) => {
+                    warn!(registration = %registration.id, member = %name, %error, "a registration member could not be read as JSON for the context source filter");
                 }
             }
         }
-        let properties = match serde_json::to_string(&expanded)
-            .map_err(|source| JsonLiteralError::Syntax { source })
-            .and_then(|text| JsonLiteral::admit(&text))
-        {
-            Ok(properties) => properties,
-            Err(error) => {
-                warn!(registration = %registration.id, %error, "a stored registration could not be read as JSON for the context source filter");
-                return false;
-            }
-        };
         // Context Source Properties carry no Relationship a hop could cross.
-        ContextSourceProperties::of(properties.piece()).is_some_and(|properties| evaluate(filter, properties, NoLinkedEntities))
+        evaluate(filter, ContextSourceProperties::of_registration(&properties), NoLinkedEntities)
     }
 
     /// Send each target the forwarded read it resolved to -- a GET or a POST
@@ -242,7 +247,6 @@ impl FederationService {
             triggering,
             cacheability,
             entity_map,
-            vocabulary,
         } = conditions;
         stream::iter(targets)
             .map(|(registration, forwarded)| async move {
@@ -251,7 +255,6 @@ impl FederationService {
                     .inbound(context)
                     .triggering(triggering)
                     .linked_map(entity_map.location_for(&registration.id))
-                    .vocabulary(vocabulary)
                     .build();
                 let outcome = match forwarded {
                     ForwardedRead::Get(url) => self.forward_get(source, url, cacheability).await,
@@ -323,6 +326,7 @@ mod tests {
         read_fan_out::{ReadSelection, ReadServing, SourceAnswer, read_outcome},
         request::{CsrModeFilter, EntityMapInUse},
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
     use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
     use andromeda_ngsi_ld_query::filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, parser};
@@ -431,7 +435,8 @@ mod tests {
         );
         let beta = registration_with("urn:ngsi-ld:csr:beta", json!({"https://example.org/sourceGroup": "beta"}));
         let service = offline_service(vec![alpha, beta]);
-        let context = ContextSpec::from_body(json!({"sourceGroup": "https://example.org/sourceGroup"}));
+        let context =
+            ContextSpec::from_body(JsonLiteral::admit(&json!({"sourceGroup": "https://example.org/sourceGroup"}).to_string()).expect("an admissible literal"));
         let selected = |q: &'static str| {
             let service = &service;
             let context = &context;

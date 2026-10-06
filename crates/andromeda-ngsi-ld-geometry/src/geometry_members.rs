@@ -1,8 +1,8 @@
 //! What the members of a compact `GeoJSON` geometry object say, and the
 //! geometry they spell.
 //!
-//! A geometry object is read member by member, from a parsed tree or straight
-//! from a deserializer, into [`GeometryMembers`]; only once every member is
+//! A geometry object is read member by member, straight from a deserializer,
+//! into [`GeometryMembers`]; only once every member is
 //! known is the geometry built, because the `type` that decides how
 //! `coordinates` nest may come after them. The `bbox` of IETF RFC 7946 section
 //! 5 and the members section 6.1 calls foreign are kept beside the form, so the
@@ -12,15 +12,13 @@
 use crate::{
     bounding_box::BoundingBox,
     coordinate_tape::CoordinateTape,
-    foreign_members::{ForeignMemberName, ForeignMembers},
+    foreign_members::ForeignMembers,
     form::GeometryForm,
     geojson::GeometryError,
     geojson_members::GeoJsonMembers,
     geometry::Geometry,
     geometry_type::GeometryType,
 };
-use andromeda_json_literal::JsonLiteral;
-use serde_json::{Map, Value};
 use std::str::FromStr;
 
 /// The `GeoJSON` `type` token of a `GeometryCollection`, which ETSI GS CIM 009
@@ -96,7 +94,7 @@ impl JsonLdKeywords {
     }
 }
 
-/// Whether reading a parsed geometry object keeps its foreign members.
+/// Whether reading a geometry object keeps its foreign members.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ForeignMemberReading {
     /// They are kept, for a reader that builds the whole geometry.
@@ -107,7 +105,7 @@ pub(crate) enum ForeignMemberReading {
 
 /// The members of one geometry object.
 ///
-/// A member written twice counts as written last, as a parsed tree keeps it.
+/// A member written twice counts as written last.
 #[derive(Debug, Default)]
 pub(crate) struct GeometryMembers {
     /// What the `type` member says.
@@ -125,37 +123,8 @@ pub(crate) struct GeometryMembers {
 }
 
 impl GeometryMembers {
-    /// The members of a geometry object already parsed into a tree.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GeometryError::ForeignMember`] when a kept foreign member is
-    /// not a JSON value the broker admits.
-    pub(crate) fn of_object(object: &Map<String, Value>, reading: ForeignMemberReading) -> Result<GeometryMembers, GeometryError> {
-        let mut foreign = ForeignMembers::default();
-        if reading == ForeignMemberReading::Kept {
-            for (name, value) in object {
-                if let Ok(name) = ForeignMemberName::try_from(name.as_str()) {
-                    foreign.insert(name, JsonLiteral::admit(&value.to_string()).map_err(GeometryError::ForeignMember)?);
-                }
-            }
-        }
-        Ok(GeometryMembers {
-            geometry_type: object.get("type").and_then(Value::as_str).map_or(TypeMember::Missing, TypeMember::of),
-            geometries: match object.get("geometries") {
-                Some(Value::Array(_)) => GeometriesMember::Array,
-                Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) | None => GeometriesMember::Absent,
-            },
-            bbox: object.get("bbox").map(CoordinateTape::of_value),
-            coordinates: object.get("coordinates").map(CoordinateTape::of_value),
-            foreign,
-            json_ld_keywords: object
-                .keys()
-                .fold(JsonLdKeywords::Absent, |keywords, name| keywords.and(JsonLdKeywords::of(name))),
-        })
-    }
-
-    /// The geometry form the members spell, the `bbox` checked beside it.
+    /// The geometry the members spell, with its `bbox` and its foreign
+    /// members.
     ///
     /// # Errors
     ///
@@ -165,16 +134,6 @@ impl GeometryMembers {
     /// for members that spell no `GeoJSON` geometry,
     /// [`GeometryError::GeometryCollectionUnsupported`] for a
     /// `GeometryCollection`, and the refusals of the coordinates' nesting.
-    pub(crate) fn read(&self) -> Result<GeometryForm, GeometryError> {
-        self.read_with_box().map(|(form, _)| form)
-    }
-
-    /// The geometry the members spell, with its `bbox` and its foreign
-    /// members.
-    ///
-    /// # Errors
-    ///
-    /// As [`GeometryMembers::read`].
     pub(crate) fn into_geometry(self) -> Result<Geometry, GeometryError> {
         let (form, bbox) = self.read_with_box()?;
         Ok(Geometry::with_members(form, GeoJsonMembers::non_empty(bbox, self.foreign)))

@@ -2,38 +2,30 @@
 
 use crate::{
     FederationService,
-    batch_query_body::{build_batch_query_body, selectors_from_query},
+    answer_reading::{ReceivedAnswer, received_answer},
     cache::Cacheability,
     config::SplitEntities,
-    document_rewording::DocumentVocabulary,
-    entity_result::parse_forwarded_entities,
     error::FederationError,
+    forwarded_batch_query::batch_query,
     forwarded_parameter::ForwardedParameter,
     forwarded_query::ForwardedQuery,
     forwarding_context::BodyPresence,
     forwarding_url::{build_batch_query_url, build_query_url, build_retrieve_url},
     operation::ForwardingOperation,
-    outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedEntities, ForwardedResponse, MatchedSources},
+    outcome::{ForwardReadOutcome, ForwardedEntities, MatchedSources},
     query_forwarding_error::QueryForwardingError,
     read_binding::{ReadBinding, ReadIntent, read_binding_for},
     read_fan_out::{ForwardedGetConditions, ForwardedRead, ReadSelection, ReadServing, expand_registration_targets, read_outcome},
     registration_narrowing::Narrowing,
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest, QueryDelivery},
-    source_walk::{SOURCE_PAGE_SIZE, WalkedAnswer},
+    source_walk::SOURCE_PAGE_SIZE,
     term_resolver::TermResolver,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{
-    entity::Entity,
-    registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
-};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use andromeda_telemetry::federation_ops::{self, FederationOperation};
-use chrono::Utc;
-use serde_json::Value;
 use std::slice::from_ref;
-use tracing::warn;
 
 /// Whether a registration's mode is admitted by a forwarding phase.
 pub(crate) fn mode_admitted(registration: &ContextSourceRegistration, mode_filter: CsrModeFilter) -> bool {
@@ -66,101 +58,7 @@ fn own_loop_outcome() -> ForwardReadOutcome<ForwardedEntities> {
     }
 }
 
-/// A Query Entities answer walks page by page as the entities each page carried.
-impl WalkedAnswer for ForwardedEntities {
-    type Element = Entity;
-
-    fn read(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> Option<ForwardedEntities> {
-        FederationService::entities_of(registration, outcome)
-    }
-
-    fn elements(&mut self) -> &mut Vec<Entity> {
-        &mut self.entities
-    }
-
-    fn warnings(&mut self) -> &mut Vec<NgsiLdWarning> {
-        &mut self.warnings
-    }
-
-    fn identifier(element: &Entity) -> Option<Identifier> {
-        Some(element.id.clone()) // clone: the walk remembers the identifier after the entity moves into the answer
-    }
-
-    fn absorb(&mut self, page: ForwardedEntities) {
-        self.warnings.extend(page.warnings);
-    }
-}
-
 impl FederationService {
-    /// Read a forwarded GET into the entities it carried, with the clause
-    /// 6.3.17 warning for every abnormal outcome. A 404 contributes nothing.
-    ///
-    /// A query answers with an array and a retrieval with one object, but
-    /// either shape is read from either: a retrieval continuing a clause 4.5.23
-    /// flat join answers with the entity and its linked entities side by side.
-    pub(crate) fn entities_of(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> Option<ForwardedEntities> {
-        let mode = registration.access.mode.unwrap_or_default();
-        let with_warnings = |entities, warnings, linked_map| {
-            Some(ForwardedEntities {
-                registration_id: Some(registration.id.clone()), // clone: the result names the registration it came from
-                mode,
-                entities,
-                warnings,
-                linked_map,
-            })
-        };
-        match outcome {
-            ForwardGetOutcome::Success(ForwardedResponse {
-                body: Value::Array(items),
-                warnings: cs_warnings,
-                entity_map,
-                ..
-            }) => {
-                let (entities, parse_warnings) = parse_forwarded_entities(&registration.id, items, Utc::now());
-                let mut warnings = cs_warnings;
-                warnings.extend(parse_warnings);
-                with_warnings(entities, warnings, entity_map)
-            }
-            ForwardGetOutcome::Success(ForwardedResponse {
-                body: object @ Value::Object(_),
-                warnings: cs_warnings,
-                entity_map,
-                ..
-            }) => {
-                let (entities, parse_warnings) = parse_forwarded_entities(&registration.id, vec![object], Utc::now());
-                let mut warnings = cs_warnings;
-                warnings.extend(parse_warnings);
-                with_warnings(entities, warnings, entity_map)
-            }
-            ForwardGetOutcome::Success(ForwardedResponse {
-                body: Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_),
-                ..
-            }) => {
-                warn!("Context source {} returned an unexpected response shape", registration.id);
-                with_warnings(
-                    Vec::new(),
-                    vec![NgsiLdWarning::RevalidationFailed(format!(
-                        "Context source {} returned unexpected response type",
-                        registration.id
-                    ))],
-                    None,
-                )
-            }
-            // A 404 is not abnormal (clause 6.3.17), but the warnings the
-            // source reported about the sources behind it still travel.
-            ForwardGetOutcome::NotFound(cs_warnings) => (!cs_warnings.is_empty()).then(|| with_warnings(Vec::new(), cs_warnings, None)).flatten(),
-            other @ (ForwardGetOutcome::InvalidPayload(_)
-            | ForwardGetOutcome::UnreadableNames(_)
-            | ForwardGetOutcome::ErrorStatus(_)
-            | ForwardGetOutcome::Transport(_)
-            | ForwardGetOutcome::LoopDetected) => {
-                let warning = other.warning(&registration.id)?;
-                warn!("Forwarding to context source {} failed: {}", registration.id, warning);
-                with_warnings(Vec::new(), vec![warning], None)
-            }
-        }
-    }
-
     /// Forward an entity query to the matching context sources (clause
     /// 5.7.2.4), each sent the part of the client's query it is registered
     /// for, and gather every page of each source's answer (clauses 4.3.6.7,
@@ -255,19 +153,18 @@ impl FederationService {
             }
             let matched = targets.len();
             let answers = self
-                .fan_out_walk(
+                .fan_out_walk::<ReceivedAnswer>(
                     targets,
                     ForwardedGetConditions {
                         context,
                         triggering,
                         cacheability: Cacheability::Cacheable,
                         entity_map,
-                        vocabulary: DocumentVocabulary::Entities,
                     },
                     budget,
                 )
                 .await?;
-            Ok(read_outcome(answers, matched))
+            Ok(self.answered_states(read_outcome(answers, matched)).await)
         }
         .await;
         timer.finish_result(&result);
@@ -352,17 +249,16 @@ impl FederationService {
             let answers = self
                 .fan_out_read(
                     targets,
-                    FederationService::entities_of,
+                    |registration, outcome| received_answer(registration, outcome).answer,
                     ForwardedGetConditions {
                         context,
                         triggering,
                         cacheability: Cacheability::Cacheable,
                         entity_map,
-                        vocabulary: DocumentVocabulary::Entities,
                     },
                 )
                 .await;
-            Ok(read_outcome(answers, matched))
+            Ok(self.answered_states(read_outcome(answers, matched)).await)
         }
         .await;
         timer.finish_result(&result);
@@ -378,14 +274,17 @@ fn query_read(registration: &ContextSourceRegistration, query: &ForwardedQuery, 
     match binding {
         ReadBinding::Query => ForwardedRead::Get(build_query_url(endpoint, &query.to_query_string())),
         ReadBinding::BatchQuery => {
-            let selectors = selectors_from_query(query);
-            let body = build_batch_query_body(&selectors, query.value_of(ForwardedParameter::Attrs));
             // Clause 6.23 carries the query in the body; the page size travels
             // as the URI parameter clause 6.3.10 defines for it.
             let page = format!("{}={}", ForwardedParameter::Limit, SOURCE_PAGE_SIZE);
-            ForwardedRead::PostQuery {
-                url: build_batch_query_url(endpoint, &page),
-                body,
+            match batch_query(query) {
+                Ok(body) => ForwardedRead::PostQuery {
+                    url: build_batch_query_url(endpoint, &page),
+                    body: Box::new(body),
+                },
+                // A query that cannot be written is the registration's failure
+                // to prepare, which a read reports as its own.
+                Err(error) => ForwardedRead::Get(Err(error)),
             }
         }
     }

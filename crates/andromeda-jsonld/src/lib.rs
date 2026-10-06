@@ -60,6 +60,7 @@ pub mod context_subtree;
 pub mod context_tail;
 pub mod context_term;
 pub mod context_validation;
+pub mod context_value;
 pub mod core_context;
 pub mod core_context_precedence;
 pub mod document_context;
@@ -72,6 +73,9 @@ pub mod operation_hit_scope;
 pub mod presented_context;
 pub mod request_context;
 pub mod term_expansion;
+/// Fixture documents for unit tests.
+#[cfg(test)]
+pub(crate) mod test_documents;
 pub mod user_context_admission;
 
 #[cfg(test)]
@@ -79,6 +83,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-configuration-scalars",
         "andromeda-http-headers",
+        "andromeda-json-literal",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-representation",

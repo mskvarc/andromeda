@@ -4,7 +4,8 @@
 //! An instance names its family in `type`, or implies it (clause 4.5.2.3 and
 //! its siblings). Each family has a member holding its value and one holding
 //! the previous value `showChanges` reports, and some have members of their
-//! own: `unitCode` on a Property, `valueType` on the property families,
+//! own: `unitCode` on a Property, a `GeoProperty` and a `ListProperty`,
+//! `valueType` on the property families,
 //! `objectType` and the inline `entity` / `entityList` of a clause 4.5.23 join
 //! on the relationship families. The system members of clauses 4.5.5, 4.5.7,
 //! 4.8 and 4.22 belong to every family, and every other member is a
@@ -13,15 +14,19 @@
 //! exactly as the family's own members are in a decoded document.
 
 use crate::{
-    attribute::{common_fields::CommonAttributeFields, instance::AttributeValue, member_reading::MemberReading},
+    attribute::{common_fields::CommonAttributeFields, instance::AttributeValue, member_reading::MemberReading, property::UnitCodeRef},
     compact_member::decoded_optional,
     node_refusal::{NodeReadError, NodeRefusal, RefusedMember},
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    unit_code_admission::{UnitCodeAdmission, unit_code_admission},
+};
 use andromeda_ngsi_ld_representation::{
     attribute_type_validation::AttributeNodeFault,
     compact_node::{CompactNode, NodeMembers},
-    family_member_admission::MemberAdmission,
+    family_member_admission::{MemberAdmission, prohibited_member},
     proof_seal_admission::{ProofSealMember, proof_seal_admission},
 };
 use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
@@ -44,7 +49,8 @@ enum InstanceMember {
     Value,
     /// The member holding the family's previous value.
     Previous,
-    /// `unitCode`, a Property's own.
+    /// `unitCode`, the own member of a Property, a `GeoProperty` (clause
+    /// 4.7.3) and a `ListProperty` (clause 4.5.21.2).
     UnitCode,
     /// `valueType`, the property families' own.
     ValueType,
@@ -80,23 +86,30 @@ impl InstanceMember {
     ///
     /// # Errors
     ///
-    /// Returns the seal `name` spells when it stands where clause 4.5.2.2 does
-    /// not admit it: the seals are "non-reified subproperties" of the
-    /// `ngsildproof` Property alone, so elsewhere one is neither a member of
-    /// the instance nor a sub-attribute it could be read as.
-    fn of(attribute: &str, family: AttributeType, name: &str) -> Result<InstanceMember, ProofSealMember> {
+    /// Returns [`AttributeNodeFault::ProofSealOutsideNgsildproof`] when `name`
+    /// spells a seal standing where clause 4.5.2.2 does not admit it: the seals
+    /// are "non-reified subproperties" of the `ngsildproof` Property alone, so
+    /// elsewhere one is neither a member of the instance nor a sub-attribute it
+    /// could be read as. Returns
+    /// [`AttributeNodeFault::ValueMemberOfAnotherFamily`] when `name` is the
+    /// value member of another family, which the "Prohibited" list of the
+    /// family's clause forbids, so it is no sub-attribute either.
+    fn of(attribute: &str, family: AttributeType, name: &str) -> Result<InstanceMember, AttributeNodeFault> {
         if let Some(seal) = ProofSealMember::of(name) {
             return match (proof_seal_admission(attribute, family, name), seal) {
                 (MemberAdmission::Admitted, ProofSealMember::EntityIdSealed) => Ok(InstanceMember::EntityIdSealed),
                 (MemberAdmission::Admitted, ProofSealMember::EntityTypeSealed) => Ok(InstanceMember::EntityTypeSealed),
-                (MemberAdmission::Forbidden, refused) => Err(refused),
+                (MemberAdmission::Forbidden, refused) => Err(AttributeNodeFault::ProofSealOutsideNgsildproof(refused)),
             };
+        }
+        if let Some(member) = prohibited_member(family, name) {
+            return Err(AttributeNodeFault::ValueMemberOfAnotherFamily { family, member });
         }
         Ok(match (name, family) {
             (TYPE_MEMBER, _) => InstanceMember::Family,
             (own, family) if own == family.compact_value_key() => InstanceMember::Value,
             (own, family) if own == family.previous_key() => InstanceMember::Previous,
-            (compact_properties::UNIT_CODE, AttributeType::Property) => InstanceMember::UnitCode,
+            (compact_properties::UNIT_CODE, AttributeType::Property | AttributeType::GeoProperty | AttributeType::ListProperty) => InstanceMember::UnitCode,
             (
                 compact_properties::VALUE_TYPE,
                 AttributeType::Property
@@ -174,7 +187,9 @@ impl<'n, N: CompactNode<'n>> InstanceMembers<'n, N> {
     /// # Errors
     ///
     /// Returns [`AttributeNodeFault::ProofSealOutsideNgsildproof`], located at
-    /// the instance, for a seal clause 4.5.2.2 does not admit on it.
+    /// the instance, for a seal clause 4.5.2.2 does not admit on it, and
+    /// [`AttributeNodeFault::ValueMemberOfAnotherFamily`] for a value member
+    /// the family's clause prohibits.
     pub(crate) fn sorted(attribute: &str, family: AttributeType, members: NodeMembers<'n, N>) -> Result<InstanceMembers<'n, N>, ReadError<'n, N>> {
         let mut sorted = InstanceMembers {
             value: None,
@@ -197,8 +212,14 @@ impl<'n, N: CompactNode<'n>> InstanceMembers<'n, N> {
             sub_attributes: Vec::new(),
         };
         for (name, member) in members {
-            let member_kind = InstanceMember::of(attribute, family, &name)
-                .map_err(|seal| ReadError::<N>::from(NodeRefusal::Shape(AttributeNodeFault::ProofSealOutsideNgsildproof(seal))))?;
+            if name == compact_properties::UNIT_CODE && unit_code_admission(family) == UnitCodeAdmission::Forbidden {
+                return Err(NodeRefusal::UnitCodeForbidden {
+                    attribute: attribute_name(attribute)?,
+                    family,
+                }
+                .into());
+            }
+            let member_kind = InstanceMember::of(attribute, family, &name).map_err(|fault| ReadError::<N>::from(NodeRefusal::Shape(fault)))?;
             let slot = match member_kind {
                 InstanceMember::Family => continue,
                 InstanceMember::Value => &mut sorted.value,
@@ -255,6 +276,39 @@ impl<'n, N: CompactNode<'n>> InstanceMembers<'n, N> {
             observed_at: optional_member(system.observed_at, RefusedMember::ObservedAt)?,
             sub_attributes,
         })
+    }
+}
+
+/// The attribute name an instance is written under.
+///
+/// # Errors
+///
+/// Returns [`NodeRefusal::AttributeName`] for a name that is no attribute name.
+fn attribute_name(attribute: &str) -> Result<AttributeName, NodeRefusal> {
+    AttributeName::from_str(attribute).map_err(NodeRefusal::AttributeName)
+}
+
+/// Decode the `unitCode` of an instance of the attribute named `attribute`:
+/// absent and `null` are no unit, and one that is no UN/CEFACT common code
+/// refuses the instance (Table 5.2.5-1).
+///
+/// # Errors
+///
+/// Returns [`NodeRefusal::UnitCodeUnusable`] for a member that does not decode
+/// as a common code, and the node's [`CompactNode::Unreadable`].
+pub(crate) fn unit_code_member<'n, N: CompactNode<'n>>(attribute: &str, member: Option<N>) -> Result<Option<UnitCodeRef>, ReadError<'n, N>> {
+    let Some(member) = member else {
+        return Ok(None);
+    };
+    match decoded_optional::<UnitCodeRef, N>(member).map_err(NodeReadError::Unreadable)? {
+        Ok(unit_code) => Ok(unit_code),
+        Err(source) => Err(refused_member::<N>(
+            RefusedMember::UnitCode,
+            NodeRefusal::UnitCodeUnusable {
+                attribute: attribute_name(attribute)?,
+                source,
+            },
+        )),
     }
 }
 

@@ -1,7 +1,7 @@
-//! Reading a compact `GeoJSON` geometry object already parsed into a JSON
-//! tree into a [`GeometryForm`].
+//! Reading the text of a compact `GeoJSON` geometry object into a
+//! [`GeometryForm`].
 //!
-//! The tree's members are read into what they say, exactly as a geometry read
+//! The text's members are read into what they say, exactly as a geometry read
 //! straight from a deserializer (see [`crate::written_geometry`]) reads them,
 //! and the geometry is built from them by the one reading both share: the
 //! `type` member selects how `coordinates` nests (IETF RFC 7946 sections 3.1.2
@@ -15,21 +15,17 @@
 //! [`GeometryError`] naming what is missing or misplaced, and never with any
 //! part of the value itself. The form is the positions alone: the members RFC
 //! 7946 section 6.1 calls foreign are passed over, and a `bbox` is checked but
-//! not kept; [`crate::geometry::Geometry::from_geojson_value`] keeps both.
+//! not kept; [`crate::geometry::Geometry::from_geojson_text`] keeps both.
 
-use crate::{
-    form::GeometryForm,
-    geojson::GeometryError,
-    geometry_members::{ForeignMemberReading, GeometryMembers},
-};
-use serde_json::Value;
+use crate::{form::GeometryForm, geojson::GeometryError, written_geometry::WrittenGeometry};
 
 impl GeometryForm {
-    /// Read a compact `GeoJSON` geometry object.
+    /// Read the text of a compact `GeoJSON` geometry object.
     ///
     /// # Errors
     ///
-    /// Returns [`GeometryError::NotAnObject`], [`GeometryError::MissingType`],
+    /// Returns [`GeometryError::EncodedNotJson`] for text that is no single
+    /// JSON value, [`GeometryError::NotAnObject`], [`GeometryError::MissingType`],
     /// [`GeometryError::UnknownType`], [`GeometryError::MissingCoordinates`],
     /// [`GeometryError::MissingGeometries`], [`GeometryError::InvalidBbox`],
     /// [`GeometryError::NotAnArray`] or [`GeometryError::NonNumericOrdinate`]
@@ -40,8 +36,11 @@ impl GeometryForm {
     /// [`GeometryError::LineString`] for a `LineString` of fewer than two
     /// positions, and [`GeometryError::LinearRing`] for a Polygon ring that is
     /// open or holds fewer than four.
-    pub fn from_compact_value(value: &Value) -> Result<GeometryForm, GeometryError> {
-        GeometryMembers::of_object(value.as_object().ok_or(GeometryError::NotAnObject)?, ForeignMemberReading::Skipped)?.read()
+    pub fn from_compact_text(text: &str) -> Result<GeometryForm, GeometryError> {
+        let mut reader = serde_json::Deserializer::from_str(text);
+        let written = WrittenGeometry::deserialize_without_foreign_members(&mut reader).map_err(GeometryError::EncodedNotJson)?;
+        reader.end().map_err(GeometryError::EncodedNotJson)?;
+        written.into_geometry().map(|geometry| geometry.into_parts().0)
     }
 }
 
@@ -55,6 +54,11 @@ mod tests {
         position::PositionError,
     };
     use serde_json::{Value, json};
+
+    /// Read `value` as the compact `GeoJSON` text it is written as.
+    fn read(value: &Value) -> Result<GeometryForm, GeometryError> {
+        GeometryForm::from_compact_text(&value.to_string())
+    }
 
     /// Whether `refusal` says the value is no `GeoJSON` geometry object, as
     /// opposed to a geometry the domain model refuses.
@@ -102,7 +106,7 @@ mod tests {
     #[test]
     fn the_direct_reading_agrees_with_the_geojson_crate() {
         for case in cases() {
-            match (GeometryForm::from_compact_value(&case), through_geojson(&case)) {
+            match (read(&case), through_geojson(&case)) {
                 (Ok(direct), Ok(oracle)) => pretty_assertions::assert_eq!(direct, oracle, "{case}"),
                 // The geojson crate refuses a lone Point position of fewer than
                 // two members before reading it; the direct reading names the
@@ -134,7 +138,7 @@ mod tests {
             json!({"type": "Point", "coordinates": [1.0, 2.0], "bbox": "box"}),
             json!({"type": "GeometryCollection"}),
         ] {
-            let refused = GeometryForm::from_compact_value(&value).expect_err("not a geometry");
+            let refused = read(&value).expect_err("not a geometry");
             assert!(refuses_the_shape(&refused), "{value}: {refused:?}");
             assert!(through_geojson(&value).is_err(), "the geojson crate refuses {value} as well");
         }
@@ -144,17 +148,15 @@ mod tests {
     #[test]
     fn a_geometry_collection_is_refused_as_a_geoproperty_geometry() {
         let collection = json!({"type": "GeometryCollection", "geometries": [{"type": "Point", "coordinates": [1.0, 2.0]}]});
-        assert!(matches!(
-            GeometryForm::from_compact_value(&collection),
-            Err(GeometryError::GeometryCollectionUnsupported)
-        ));
+        assert!(matches!(read(&collection), Err(GeometryError::GeometryCollectionUnsupported)));
     }
 
     /// An arbitrary-precision decimal reads as the double nearest to it.
     #[test]
     fn an_arbitrary_precision_ordinate_reads_as_its_nearest_double() {
-        let value: Value = serde_json::from_str(r#"{"type": "Point", "coordinates": [14.550000000000000001, 46.05]}"#).expect("valid JSON");
-        let GeometryForm::Point(point) = GeometryForm::from_compact_value(&value).expect("a point") else {
+        let GeometryForm::Point(point) =
+            GeometryForm::from_compact_text(r#"{"type": "Point", "coordinates": [14.550000000000000001, 46.05]}"#).expect("a point")
+        else {
             panic!("a point reads as a point");
         };
         pretty_assertions::assert_eq!(point.longitude().to_bits(), 14.55_f64.to_bits());
@@ -162,7 +164,7 @@ mod tests {
 
     #[test]
     fn a_position_off_the_axes_names_its_place() {
-        let refused = GeometryForm::from_compact_value(&json!({"type": "MultiPoint", "coordinates": [[0.0, 0.0], [0.0, 95.0]]})).expect_err("latitude 95");
+        let refused = read(&json!({"type": "MultiPoint", "coordinates": [[0.0, 0.0], [0.0, 95.0]]})).expect_err("latitude 95");
         assert!(
             matches!(
                 refused,
@@ -183,8 +185,7 @@ mod tests {
     /// there, and with no part of the value.
     #[test]
     fn a_misnested_member_names_its_place_and_the_shape_it_breaks() {
-        let refused =
-            GeometryForm::from_compact_value(&json!({"type": "MultiPoint", "coordinates": [[0.0, 0.0], "secret"]})).expect_err("a string is no position");
+        let refused = read(&json!({"type": "MultiPoint", "coordinates": [[0.0, 0.0], "secret"]})).expect_err("a string is no position");
         assert!(
             matches!(refused, GeometryError::NotAnArray { expected: CoordinateShape::Position, ref at } if *at == CoordinatePath::new(vec![1])),
             "{refused:?}"
@@ -193,7 +194,19 @@ mod tests {
             refused.to_string(),
             "GeoJSON coordinates hold a non-array where a position belongs (at coordinates[1])"
         );
-        let refused = GeometryForm::from_compact_value(&json!({"type": "Point", "coordinates": [0.0, "secret"]})).expect_err("a string is no ordinate");
+        let refused = read(&json!({"type": "Point", "coordinates": [0.0, "secret"]})).expect_err("a string is no ordinate");
         pretty_assertions::assert_eq!(refused.to_string(), "a GeoJSON position holds a member that is not a number (at coordinates)");
+    }
+
+    /// The form is the positions alone: a foreign member the geometry itself
+    /// would refuse is passed over, and text that is no JSON is no geometry.
+    #[test]
+    fn the_foreign_members_are_passed_over_and_text_that_is_no_json_is_refused() {
+        let form = GeometryForm::from_compact_text(r#"{"type": "Point", "coordinates": [1, 2], "foreign": {"a": 1, "a": 2}}"#).expect("a point");
+        pretty_assertions::assert_eq!(form.position_count().get(), 1);
+        let refused = GeometryForm::from_compact_text(r#"{"type": "Point", "#).expect_err("not JSON");
+        assert!(matches!(refused, GeometryError::EncodedNotJson(_)), "{refused:?}");
+        let refused = GeometryForm::from_compact_text(r#"{"type": "Point", "coordinates": [1, 2]} x"#).expect_err("trailing characters");
+        assert!(matches!(refused, GeometryError::EncodedNotJson(_)), "{refused:?}");
     }
 }

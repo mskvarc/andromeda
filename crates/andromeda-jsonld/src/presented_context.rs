@@ -38,14 +38,15 @@ use crate::{
     context_graph::MAX_CONTEXT_REFERENCE_DEPTH,
     context_spec::ContextSpec,
     context_tail::ContextTail,
-    core_context_precedence::{CoreImport, drop_core_import, is_core_context_json_string},
+    context_value::{ContextEntry, EntriesShape, NamedCore, WithoutCore, without_core, written_entries},
+    core_context_precedence::is_core_context_json_string,
     error::JsonLdError,
     hosted_context_recognizer::{HostedContextRecognizer, NoHostedContexts},
     loader::http::HttpContextLoader,
 };
+use andromeda_json_literal::{JsonLiteral, piece::JsonKind};
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, IriBuf};
-use serde_json::Value;
 use std::{
     collections::HashSet,
     future::{Future, ready},
@@ -99,7 +100,7 @@ impl ContextTailLookup for NoLoadedContexts {
 pub struct PresentedContext {
     /// The value an `application/ld+json` body carries as its `@context`,
     /// and the one an `application/json` response's `Link` header names.
-    value: Value,
+    value: JsonLiteral,
 }
 
 /// What the one JSON-LD context `Link` header of a response names.
@@ -111,7 +112,7 @@ pub enum ContextLinkTarget {
     /// no single URL names: the link names a hosted wrapper whose stored
     /// document is exactly `{"@context": <value>}` (clause 5.13.1
     /// `ImplicitlyCreated`, Annex C.8).
-    Hosted(Value),
+    Hosted(JsonLiteral),
 }
 
 impl PresentedContext {
@@ -122,28 +123,32 @@ impl PresentedContext {
     /// Returns the [`JsonLdError`] a document the request named cannot be
     /// loaded with (`LdContextNotAvailable`, clause 5.5.6).
     pub async fn resolve(spec: &ContextSpec, documents: &impl ContextTailLookup) -> Result<PresentedContext, JsonLdError> {
-        let request_contexts = spec.request_context().entries();
+        let retained = without_core(spec.request_context().entries());
         Ok(PresentedContext {
-            value: RetainedContexts::of(request_contexts).into_value(documents).await?,
+            value: presented_value(retained, documents).await?,
         })
     }
 
     /// The `@context` of a resource that always answers under the core context
     /// alone.
-    #[must_use]
-    pub fn core() -> PresentedContext {
-        PresentedContext { value: core_context_value() }
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JsonLdError::ContextText`] when the core context URL is not
+    /// written as a JSON string, which a URL never fails to be.
+    pub fn core() -> Result<PresentedContext, JsonLdError> {
+        Ok(PresentedContext { value: core_context_value()? })
     }
 
     /// The value an `application/ld+json` body carries as its `@context`.
     #[must_use]
-    pub const fn body(&self) -> &Value {
+    pub const fn body(&self) -> &JsonLiteral {
         &self.value
     }
 
     /// Consume the presented context and take its value.
     #[must_use]
-    pub fn into_value(self) -> Value {
+    pub fn into_literal(self) -> JsonLiteral {
         self.value
     }
 
@@ -159,13 +164,16 @@ impl PresentedContext {
     /// included by the wrapper @context".
     #[must_use]
     pub fn link_target(&self) -> ContextLinkTarget {
-        match &self.value {
-            Value::String(reference) => match Iri::parse(reference.as_str()) {
-                Ok(absolute) => ContextLinkTarget::Reference(IriBuf::from(absolute)),
-                Err(_) => ContextLinkTarget::Hosted(self.value.clone()), // clone: the wrapper document owns its copy of the value
-            },
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => ContextLinkTarget::Hosted(self.value.clone()), // clone: same
-        }
+        let reference = match self.value.piece().kind() {
+            JsonKind::String => self
+                .value
+                .piece()
+                .as_str()
+                .and_then(|reference| Iri::parse(reference.as_ref()).ok().map(IriBuf::from)),
+            JsonKind::Null | JsonKind::Boolean | JsonKind::Number | JsonKind::Array | JsonKind::Object => None,
+        };
+        // clone: the wrapper document owns its copy of the value
+        reference.map_or_else(|| ContextLinkTarget::Hosted(self.value.clone()), ContextLinkTarget::Reference)
     }
 }
 
@@ -186,83 +194,28 @@ impl PresentedContext {
 ///
 /// Returns the [`JsonLdError`] the `jsonldContext` document cannot be loaded
 /// with.
-pub async fn notification_body_context(jsonld_context: Option<&IriBuf>, documents: &impl ContextTailLookup) -> Result<Value, JsonLdError> {
+pub async fn notification_body_context(jsonld_context: Option<&IriBuf>, documents: &impl ContextTailLookup) -> Result<JsonLiteral, JsonLdError> {
     match jsonld_context {
-        Some(context) if is_core_context_json_string(context.as_str()) => Ok(Value::String(context.as_str().to_owned())),
-        Some(context) => {
-            RetainedContexts::of(vec![Value::String(context.as_str().to_owned())])
-                .into_value(documents)
-                .await
-        }
-        None => Ok(core_context_value()),
+        Some(context) if is_core_context_json_string(context.as_str()) => Ok(JsonLiteral::string(context.as_str())?),
+        Some(context) => presented_value(without_core(vec![ContextEntry::reference(context.as_str())]), documents).await,
+        None => core_context_value(),
     }
 }
 
-/// The contexts a request named, in the order it named them, once every core
-/// reference among them is taken out.
-struct RetainedContexts {
-    /// The request's own contexts in order, repeats included, core references
-    /// removed.
-    kept: Vec<Value>,
-    /// Whether the request named a core context itself.
-    named_core: NamedCore,
-}
-
-impl RetainedContexts {
-    /// Take every core reference out of the contexts a request named, directly
-    /// or through an `@import`.
-    ///
-    /// Repeats are kept: JSON-LD processes an `@context` array in order, so
-    /// `[A, B, A]` leaves A's definitions in force where `[A, B]` leaves B's,
-    /// and the response names the context the call provided (clause 5.5.7).
-    fn of(request_contexts: Vec<Value>) -> RetainedContexts {
-        let mut named_core = NamedCore::No;
-        let mut kept = Vec::with_capacity(request_contexts.len() + 1);
-        for context in request_contexts {
-            match context {
-                Value::String(reference) if is_core_context_json_string(&reference) => named_core = NamedCore::Yes,
-                Value::String(reference) => kept.push(Value::String(reference)),
-                Value::Object(mut definition) => {
-                    if drop_core_import(&mut definition) == CoreImport::Dropped {
-                        named_core = NamedCore::Yes;
-                    }
-                    if !definition.is_empty() {
-                        kept.push(Value::Object(definition));
-                    }
-                }
-                other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_)) => kept.push(other),
-            }
-        }
-        RetainedContexts { kept, named_core }
+/// The presented value for the contexts a request named, core references taken
+/// out: the v1.9 core context appended last unless what remains provably
+/// leaves it in force last already, and a single context written as the one
+/// value it is.
+async fn presented_value(retained: WithoutCore<'_>, documents: &impl ContextTailLookup) -> Result<JsonLiteral, JsonLdError> {
+    let WithoutCore { mut kept, named_core } = retained;
+    let ends_with_core = match (named_core, kept.last()) {
+        (NamedCore::Yes, _) | (NamedCore::No, None) => CoreInForce::NotLast,
+        (NamedCore::No, Some(last)) => core_in_force_after(last, documents).await?,
+    };
+    if ends_with_core == CoreInForce::NotLast {
+        kept.push(ContextEntry::reference(NGSI_LD_CORE_CONTEXT_URL.as_str()));
     }
-
-    /// The presented value for these contexts: the v1.9 core context appended
-    /// last unless what remains provably leaves it in force last already, and
-    /// a single context written as the one string it is.
-    async fn into_value(self, documents: &impl ContextTailLookup) -> Result<Value, JsonLdError> {
-        let RetainedContexts { mut kept, named_core } = self;
-        let ends_with_core = match (named_core, kept.last()) {
-            (NamedCore::Yes, _) | (NamedCore::No, None) => CoreInForce::NotLast,
-            (NamedCore::No, Some(last)) => core_in_force_after(last, documents).await?,
-        };
-        if ends_with_core == CoreInForce::NotLast {
-            kept.push(core_context_value());
-        }
-        Ok(match <[Value; 1]>::try_from(kept) {
-            Ok([single]) => single,
-            Err(several) => Value::Array(several),
-        })
-    }
-}
-
-/// Whether the request itself named a core context, which the response
-/// replaces by the v1.9 one, last.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NamedCore {
-    /// It named one, directly or through an `@import`.
-    Yes,
-    /// It named none.
-    No,
+    Ok(JsonLiteral::admit(&written_entries(&kept, EntriesShape::Flattened))?)
 }
 
 /// Whether a context leaves the v1.9 core context in force last.
@@ -276,7 +229,7 @@ enum CoreInForce {
 
 /// Whether `context`, the last context a request named, leaves the v1.9 core
 /// context in force last, following the documents it references.
-async fn core_in_force_after(context: &Value, documents: &impl ContextTailLookup) -> Result<CoreInForce, JsonLdError> {
+async fn core_in_force_after(context: &ContextEntry<'_>, documents: &impl ContextTailLookup) -> Result<CoreInForce, JsonLdError> {
     let mut tail = ContextTail::of_request_context(context, documents.hosted_contexts());
     let mut followed = HashSet::new();
     loop {
@@ -300,8 +253,8 @@ async fn core_in_force_after(context: &Value, documents: &impl ContextTailLookup
 }
 
 /// The v1.9 core context, as a `@context` value names it.
-fn core_context_value() -> Value {
-    Value::String(NGSI_LD_CORE_CONTEXT_URL.as_str().to_owned())
+fn core_context_value() -> Result<JsonLiteral, JsonLdError> {
+    Ok(JsonLiteral::string(NGSI_LD_CORE_CONTEXT_URL.as_str())?)
 }
 
 #[cfg(test)]
@@ -313,6 +266,7 @@ mod tests {
         error::JsonLdError,
         hosted_context_recognizer::{HostedContextRecognizer, HostedReference},
         presented_context::{ContextLinkTarget, ContextTailLookup, NoLoadedContexts, PresentedContext, notification_body_context},
+        test_documents::{as_value, literal},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::{IriBuf, IriRefBuf};
@@ -413,11 +367,11 @@ mod tests {
 
         pretty_assertions::assert_eq!(body_for(json!(relative)).await, json!(relative));
         pretty_assertions::assert_eq!(
-            PresentedContext::resolve(&ContextSpec::from_body(json!(relative)), &NoLoadedContexts)
+            PresentedContext::resolve(&ContextSpec::from_body(literal(&json!(relative))), &NoLoadedContexts)
                 .await
                 .expect("no document is loaded")
-                .into_value(),
-            json!([relative, core()]),
+                .into_literal(),
+            literal(&json!([relative, core()])),
             "without the tenant's recogniser the reference cannot be followed, so the core context is appended"
         );
     }
@@ -427,15 +381,15 @@ mod tests {
     }
 
     async fn body_for(body_context: Value) -> Value {
-        presented(&ContextSpec::from_body(body_context)).await.into_value()
+        as_value(&presented(&ContextSpec::from_body(literal(&body_context))).await.into_literal())
     }
 
     async fn body_for_link(url: &str) -> Value {
-        presented(&ContextSpec::from_link(iri(url))).await.into_value()
+        as_value(&presented(&ContextSpec::from_link(iri(url))).await.into_literal())
     }
 
     async fn target_for(body_context: Value) -> ContextLinkTarget {
-        presented(&ContextSpec::from_body(body_context)).await.link_target()
+        presented(&ContextSpec::from_body(literal(&body_context))).await.link_target()
     }
 
     fn core() -> Value {
@@ -452,7 +406,7 @@ mod tests {
     async fn a_request_naming_no_context_is_answered_under_the_core_context_alone() {
         let presented = presented(&ContextSpec::none()).await;
 
-        pretty_assertions::assert_eq!(presented.body(), &core());
+        pretty_assertions::assert_eq!(presented.body(), &literal(&core()));
         pretty_assertions::assert_eq!(presented.link_target(), reference(NGSI_LD_CORE_CONTEXT_URL.as_str()));
     }
 
@@ -533,7 +487,7 @@ mod tests {
 
         let presented = PresentedContext::resolve(&spec, &lookup).await.expect("the document loads");
 
-        pretty_assertions::assert_eq!(presented.body(), &json!(COMPOUND));
+        pretty_assertions::assert_eq!(presented.body(), &literal(&json!(COMPOUND)));
         pretty_assertions::assert_eq!(lookup.loads(), 1);
     }
 
@@ -546,7 +500,7 @@ mod tests {
 
         let presented = PresentedContext::resolve(&spec, &chained).await.expect("every document loads");
 
-        pretty_assertions::assert_eq!(presented.body(), &json!("https://example.com/outer.jsonld"));
+        pretty_assertions::assert_eq!(presented.body(), &literal(&json!("https://example.com/outer.jsonld")));
         pretty_assertions::assert_eq!(chained.loads(), 2);
     }
 
@@ -560,7 +514,7 @@ mod tests {
 
         let presented = PresentedContext::resolve(&spec, &cyclic).await.expect("every document loads");
 
-        pretty_assertions::assert_eq!(presented.body(), &json!(["https://example.com/a.jsonld", core()]));
+        pretty_assertions::assert_eq!(presented.body(), &literal(&json!(["https://example.com/a.jsonld", core()])));
     }
 
     /// The test double that holds no document appends the core context.
@@ -570,7 +524,7 @@ mod tests {
 
         let presented = PresentedContext::resolve(&spec, &NoLoadedContexts).await.expect("nothing is loaded");
 
-        pretty_assertions::assert_eq!(presented.body(), &json!([COMPOUND, core()]));
+        pretty_assertions::assert_eq!(presented.body(), &literal(&json!([COMPOUND, core()])));
     }
 
     /// Clause 6.3.6 and Annex C.8: a presented value that is one string is
@@ -601,7 +555,7 @@ mod tests {
     async fn a_core_context_named_beside_the_clients_own_is_linked_through_a_wrapper() {
         pretty_assertions::assert_eq!(
             target_for(json!([COMPOUND, NGSI_LD_CORE_CONTEXT_V18_URL.as_str()])).await,
-            ContextLinkTarget::Hosted(json!([COMPOUND, core()]))
+            ContextLinkTarget::Hosted(literal(&json!([COMPOUND, core()])))
         );
     }
 
@@ -612,9 +566,9 @@ mod tests {
     async fn a_single_context_not_ending_with_the_core_is_linked_through_a_wrapper_of_the_body_value() {
         pretty_assertions::assert_eq!(
             presented(&ContextSpec::from_link(iri(USER))).await.link_target(),
-            ContextLinkTarget::Hosted(json!([USER, core()]))
+            ContextLinkTarget::Hosted(literal(&json!([USER, core()])))
         );
-        pretty_assertions::assert_eq!(target_for(json!([USER])).await, ContextLinkTarget::Hosted(json!([USER, core()])));
+        pretty_assertions::assert_eq!(target_for(json!([USER])).await, ContextLinkTarget::Hosted(literal(&json!([USER, core()]))));
     }
 
     /// JSON-LD 1.1 section 6.1 admits one context link, so several contexts or
@@ -622,12 +576,15 @@ mod tests {
     /// body value.
     #[tokio::test]
     async fn several_contexts_or_an_inline_one_are_linked_through_a_wrapper_of_the_body_value() {
-        pretty_assertions::assert_eq!(target_for(json!([USER, COMPOUND])).await, ContextLinkTarget::Hosted(json!([USER, COMPOUND])));
+        pretty_assertions::assert_eq!(
+            target_for(json!([USER, COMPOUND])).await,
+            ContextLinkTarget::Hosted(literal(&json!([USER, COMPOUND])))
+        );
         pretty_assertions::assert_eq!(
             target_for(json!({ "speed": "https://example.com/speed" })).await,
-            ContextLinkTarget::Hosted(json!([{ "speed": "https://example.com/speed" }, core()]))
+            ContextLinkTarget::Hosted(literal(&json!([{ "speed": "https://example.com/speed" }, core()])))
         );
-        let inline_beside_user = presented(&ContextSpec::from_body(json!([USER, { "speed": "https://example.com/speed" }]))).await;
+        let inline_beside_user = presented(&ContextSpec::from_body(literal(&json!([USER, { "speed": "https://example.com/speed" }])))).await;
         pretty_assertions::assert_eq!(inline_beside_user.link_target(), ContextLinkTarget::Hosted(inline_beside_user.body().clone()));
     }
 
@@ -643,8 +600,8 @@ mod tests {
             .await
             .expect("the document loads");
 
-        pretty_assertions::assert_eq!(presented.body(), &json!([CORE_THEN_VOCAB, core()]));
-        pretty_assertions::assert_eq!(presented.link_target(), ContextLinkTarget::Hosted(json!([CORE_THEN_VOCAB, core()])));
+        pretty_assertions::assert_eq!(presented.body(), &literal(&json!([CORE_THEN_VOCAB, core()])));
+        pretty_assertions::assert_eq!(presented.link_target(), ContextLinkTarget::Hosted(literal(&json!([CORE_THEN_VOCAB, core()]))));
     }
 
     /// A user context document that imports v1.8 is processed with v1.9, and
@@ -657,7 +614,7 @@ mod tests {
             .await
             .expect("the document loads");
 
-        pretty_assertions::assert_eq!(presented.body(), &json!([IMPORTS_V18, core()]));
+        pretty_assertions::assert_eq!(presented.body(), &literal(&json!([IMPORTS_V18, core()])));
     }
 
     /// A user document ending with v1.8 leaves another release of the core in
@@ -669,8 +626,8 @@ mod tests {
             .await
             .expect("the document loads");
 
-        pretty_assertions::assert_eq!(presented.body(), &json!([ENDS_WITH_V18, core()]));
-        pretty_assertions::assert_eq!(presented.link_target(), ContextLinkTarget::Hosted(json!([ENDS_WITH_V18, core()])));
+        pretty_assertions::assert_eq!(presented.body(), &literal(&json!([ENDS_WITH_V18, core()])));
+        pretty_assertions::assert_eq!(presented.link_target(), ContextLinkTarget::Hosted(literal(&json!([ENDS_WITH_V18, core()]))));
     }
 
     /// A user document whose last entry is a relative reference to a document
@@ -685,7 +642,7 @@ mod tests {
             .await
             .expect("every document loads");
 
-        pretty_assertions::assert_eq!(presented.body(), &json!(RELATIVE_TAIL));
+        pretty_assertions::assert_eq!(presented.body(), &literal(&json!(RELATIVE_TAIL)));
         pretty_assertions::assert_eq!(presented.link_target(), reference(RELATIVE_TAIL));
     }
 
@@ -703,7 +660,7 @@ mod tests {
 
         pretty_assertions::assert_eq!(
             presented.link_target(),
-            ContextLinkTarget::Hosted(json!(["https://example.com/a.jsonld", core()]))
+            ContextLinkTarget::Hosted(literal(&json!(["https://example.com/a.jsonld", core()])))
         );
     }
 
@@ -713,7 +670,7 @@ mod tests {
     async fn a_single_inline_definition_is_linked_through_a_wrapper() {
         pretty_assertions::assert_eq!(
             target_for(json!({ "speed": "https://example.com/speed" })).await,
-            ContextLinkTarget::Hosted(json!([{ "speed": "https://example.com/speed" }, core()]))
+            ContextLinkTarget::Hosted(literal(&json!([{ "speed": "https://example.com/speed" }, core()])))
         );
     }
 
@@ -722,19 +679,22 @@ mod tests {
     /// alone, as one string (review test A11).
     #[tokio::test]
     async fn a_definition_holding_only_a_core_import_and_version_is_answered_under_the_core_alone() {
-        let presented = presented(&ContextSpec::from_body(
-            json!({ "@import": NGSI_LD_CORE_CONTEXT_V18_URL.as_str(), "@version": 1.1 }),
-        ))
+        let presented = presented(&ContextSpec::from_body(literal(
+            &json!({ "@import": NGSI_LD_CORE_CONTEXT_V18_URL.as_str(), "@version": 1.1 }),
+        )))
         .await;
 
-        pretty_assertions::assert_eq!(presented.body(), &core());
+        pretty_assertions::assert_eq!(presented.body(), &literal(&core()));
         pretty_assertions::assert_eq!(presented.link_target(), reference(NGSI_LD_CORE_CONTEXT_URL.as_str()));
     }
 
     #[test]
     fn a_core_resource_names_the_core_context_alone() {
-        pretty_assertions::assert_eq!(PresentedContext::core().body(), &core());
-        pretty_assertions::assert_eq!(PresentedContext::core().link_target(), reference(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        pretty_assertions::assert_eq!(PresentedContext::core().expect("the core context").body(), &literal(&core()));
+        pretty_assertions::assert_eq!(
+            PresentedContext::core().expect("the core context").link_target(),
+            reference(NGSI_LD_CORE_CONTEXT_URL.as_str())
+        );
     }
 
     /// Clauses 5.8.1.4 and 5.2.3: the notification context is the
@@ -744,16 +704,21 @@ mod tests {
     async fn a_notification_names_its_jsonld_context_and_the_core_context_after_it_when_owed() {
         let lookup = documents();
 
-        pretty_assertions::assert_eq!(notification_body_context(None, &lookup).await.expect("no load"), core());
-        pretty_assertions::assert_eq!(notification_body_context(Some(&iri(COMPOUND)), &lookup).await.expect("loads"), json!(COMPOUND));
+        pretty_assertions::assert_eq!(as_value(&notification_body_context(None, &lookup).await.expect("no load")), core());
         pretty_assertions::assert_eq!(
-            notification_body_context(Some(&iri(USER)), &lookup).await.expect("loads"),
+            as_value(&notification_body_context(Some(&iri(COMPOUND)), &lookup).await.expect("loads")),
+            json!(COMPOUND)
+        );
+        pretty_assertions::assert_eq!(
+            as_value(&notification_body_context(Some(&iri(USER)), &lookup).await.expect("loads")),
             json!([USER, core()])
         );
         pretty_assertions::assert_eq!(
-            notification_body_context(Some(&iri(NGSI_LD_CORE_CONTEXT_V18_URL.as_str())), &lookup)
-                .await
-                .expect("no load"),
+            as_value(
+                &notification_body_context(Some(&iri(NGSI_LD_CORE_CONTEXT_V18_URL.as_str())), &lookup)
+                    .await
+                    .expect("no load")
+            ),
             json!(NGSI_LD_CORE_CONTEXT_V18_URL.as_str())
         );
     }

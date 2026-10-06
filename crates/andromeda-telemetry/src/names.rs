@@ -16,10 +16,6 @@ pub const HTTP_REQUESTS_TOTAL: &str = "andromeda_http_requests_total";
 ///
 /// See [`HTTP_REQUESTS_TOTAL`] for the prefix-coupling note.
 pub const HTTP_REQUEST_DURATION_SECONDS: &str = "andromeda_http_requests_duration_seconds";
-/// Gauge of in-flight HTTP requests, labelled by endpoint and method.
-///
-/// See [`HTTP_REQUESTS_TOTAL`] for the prefix-coupling note.
-pub const HTTP_REQUESTS_PENDING: &str = "andromeda_http_requests_pending";
 /// Histogram of wall-clock seconds spent awaiting one database statement.
 pub const DB_STATEMENT_SECONDS: &str = "andromeda_db_statement_seconds";
 /// Counter of database statements that returned an error.

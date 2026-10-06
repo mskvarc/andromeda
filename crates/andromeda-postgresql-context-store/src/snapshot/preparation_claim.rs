@@ -7,7 +7,7 @@ use crate::{
     snapshot::{
         branch_schema::truncate_branch_schema,
         branch_version::{branch_is_current, current_version},
-        mapper::row_to_snapshot,
+        mapper::{row_query_context, row_to_snapshot},
         persistence_error,
         record::{snapshot_select, status_is_preparing},
     },
@@ -129,7 +129,7 @@ pub(crate) async fn next_preparing_snapshot(
         .map(|source| source.parse::<Identifier>())
         .transpose()
         .map_err(|error| SnapshotError::from(undecodable(&error)))?;
-    let query_context = row.try_get::<serde_json::Value, _>("query_context").map_err(|error| persistence_error(error))?;
+    let query_context = row_query_context(&row).map_err(|error| persistence_error(error))?;
     let (sql, values) = claim_statement(snapshot_key, claimed_by, lease_until).build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(&mut *transaction)

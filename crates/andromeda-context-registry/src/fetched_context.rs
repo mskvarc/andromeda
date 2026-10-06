@@ -1,7 +1,7 @@
 //! Context values returned by a single registry persistence read.
 
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
-use serde_json::Value;
 
 /// A single Context projected according to the requested detail level.
 #[derive(Debug)]
@@ -9,16 +9,17 @@ pub enum FetchedContext {
     /// Full lifecycle metadata.
     Detailed(Box<ContextMetadata>),
     /// The raw stored JSON-LD Context document.
-    Payload(Value),
+    Payload(JsonLiteral),
 }
 
 #[cfg(test)]
 mod tests {
     use crate::fetched_context::FetchedContext;
+    use andromeda_json_literal::JsonLiteral;
 
     #[test]
     fn payload_projection_keeps_the_context_document() {
-        let fetched = FetchedContext::Payload(serde_json::json!({ "@context": {} }));
+        let fetched = FetchedContext::Payload(JsonLiteral::admit(r#"{"@context": {}}"#).expect("admissible"));
         assert!(matches!(fetched, FetchedContext::Payload(_)));
     }
 }

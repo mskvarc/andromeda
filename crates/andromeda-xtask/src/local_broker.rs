@@ -4,6 +4,7 @@
 use crate::{
     error::XtaskError,
     readiness::{self, Readiness},
+    suite_context_preload,
 };
 use reqwest::blocking::Client;
 use std::{
@@ -36,6 +37,10 @@ const TIER_SETTINGS: [(&str, &str); 8] = [
     ("ANDROMEDA__TENANCY__JANITOR_INTERVAL", "1s"),
     ("ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT", "enabled"),
 ];
+/// The repository-relative directory holding the copies of the ETSI suite
+/// `@context` documents the suites write with, preloaded so a run never depends
+/// on forge.etsi.org answering.
+const SUITE_CONTEXT_DIR: &str = "tests/contexts";
 /// Health-poll budget: 120 attempts one second apart.
 const READINESS_ATTEMPTS: u16 = 120;
 
@@ -107,12 +112,16 @@ pub(crate) fn build(repository_root: &Path) -> Result<(), XtaskError> {
 ///
 /// # Errors
 ///
-/// Returns [`XtaskError::Io`] when the broker process cannot be spawned.
+/// Returns [`XtaskError::ContextPreloadSerialize`] when the context preload map
+/// cannot be rendered, and [`XtaskError::Io`] when the broker process cannot be
+/// spawned.
 pub(crate) fn spawn_broker(repository_root: &Path, broker: HostBroker) -> Result<Child, XtaskError> {
     let binary = repository_root.join("target/release/andromeda");
+    let preload = suite_context_preload::preload_map(&repository_root.join(SUITE_CONTEXT_DIR))?;
     let mut command = Command::new(binary);
     command
         .current_dir(repository_root)
+        .env("ANDROMEDA__JSONLD__PRELOAD_CONTEXTS", preload)
         .env("ANDROMEDA__SERVER__HOST", "127.0.0.1")
         .env("ANDROMEDA__SERVER__PORT", broker.port().to_string())
         .env("ANDROMEDA__MANAGEMENT__PORT", broker.management_port().to_string())

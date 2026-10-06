@@ -13,10 +13,14 @@ use crate::receiver::ReceiverEndpoint;
 use andromeda_federation::config::SplitEntities;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
+    clearable::Clearable,
+    notification_request::NotificationRequest,
     registration::{ContextSourceRegistration, info::RegistrationInfo},
-    subscription::{EntitySelector, Subscription},
+    subscription::{EntitySelector, Subscription, SubscriptionType},
+    subscription_request::SubscriptionRequest,
 };
-use serde_json::{Map, Value, json};
+use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
+use andromeda_subscription::deleted_members::{DeletableMember, DeletedMembers};
 
 /// Whether the copy keeps the filters of the original.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,10 +88,11 @@ fn narrow_names(names: Option<&[AttributeName]>, declared: Option<&[&AttributeNa
 }
 
 /// The reduced subscription placed at a context source.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ReducedSubscription {
-    /// The JSON document, with expanded IRIs and without an inline `@context`.
-    pub document: Value,
+    /// The create body placed at the source, with expanded IRIs; the
+    /// transport writes it, and an `application/json` body names no `@context`.
+    pub request: SubscriptionRequest,
 }
 
 impl ReducedSubscription {
@@ -101,86 +106,100 @@ impl ReducedSubscription {
         minted: &Identifier,
         carriage: FilterCarriage,
     ) -> ReducedSubscription {
-        let mut document = Map::new();
-        document.insert("id".to_string(), json!(minted));
-        document.insert("type".to_string(), json!("Subscription"));
-        if let Some(name) = &subscription.subscription_name {
-            document.insert("subscriptionName".to_string(), json!(name));
-        }
-        if let Some(description) = &subscription.description {
-            document.insert("description".to_string(), json!(description));
-        }
-
-        let selectors: Vec<&EntitySelector> = subscription
+        let selectors: Vec<EntitySelector> = subscription
             .selection
             .entities
             .as_deref()
             .unwrap_or_default()
             .iter()
             .filter(|selector| registration.coverage.information.iter().any(|block| block_covers_selector(block, selector)))
+            .cloned() // clone: the copy owns the selectors it places at the source
             .collect();
-        if !selectors.is_empty() {
-            document.insert("entities".to_string(), json!(selectors));
-        }
-
         let declared = declared_attributes(registration);
-        if let Some(watched) = narrow_names(subscription.selection.watched_attributes.as_deref(), declared.as_deref()) {
-            document.insert("watchedAttributes".to_string(), json!(watched));
-        }
-        if let Some(triggers) = &subscription.selection.notification_trigger {
-            document.insert("notificationTrigger".to_string(), json!(triggers));
-        }
-
-        if carriage == FilterCarriage::Keep {
-            if let Some(q) = &subscription.filters.q {
-                document.insert("q".to_string(), json!(q.to_string()));
-            }
-            if let Some(geo_q) = &subscription.filters.geo_q {
-                document.insert("geoQ".to_string(), geo_q.clone()); // clone: the copy owns its filter
-            }
-            if let Some(scope_q) = &subscription.filters.scope_q {
-                document.insert("scopeQ".to_string(), json!(scope_q.to_string()));
-            }
-        }
-        if let Some(dataset_id) = &subscription.filters.dataset_id {
-            document.insert("datasetId".to_string(), json!(dataset_id));
-        }
-        if let Some(time_interval) = subscription.delivery.time_interval {
-            document.insert("timeInterval".to_string(), json!(time_interval));
-        }
-        if let Some(throttling) = subscription.delivery.throttling {
-            document.insert("throttling".to_string(), json!(throttling));
-        }
-        if let Some(expires_at) = subscription.lifecycle.expires_at {
-            document.insert("expiresAt".to_string(), json!(expires_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)));
-        }
+        let keeps_filters = carriage == FilterCarriage::Keep;
 
         // Clause 5.8.1.4: the notification member carries no `attributes`,
         // `pick` or `omit` whatever the carriage -- the source sends its whole
         // part and this broker narrows the re-assembled entity.
-        let mut notification = Map::new();
-        notification.insert("format".to_string(), json!("normalized"));
-        notification.insert("endpoint".to_string(), json!({"uri": receiver.url(), "accept": "application/json"}));
-        if let Some(sys_attrs) = subscription.notification.sys_attrs {
-            notification.insert("sysAttrs".to_string(), json!(sys_attrs));
-        }
-        document.insert("notification".to_string(), Value::Object(notification));
+        let notification = NotificationRequest {
+            format: Some(ResponseFormat::Normalized),
+            endpoint: Some(receiver.notification_endpoint()),
+            sys_attrs: subscription.notification.sys_attrs,
+            ..NotificationRequest::default()
+        };
 
         ReducedSubscription {
-            document: Value::Object(document),
+            request: SubscriptionRequest {
+                id: Some(minted.clone()), // clone: the copy owns the identifier it is placed under
+                type_: Some(SubscriptionType),
+                subscription_name: Clearable::from_option(subscription.subscription_name.clone()), // clone: the copy owns its name
+                description: Clearable::from_option(subscription.description.clone()),             // clone: the copy owns its description
+                entities: Clearable::from_option((!selectors.is_empty()).then_some(selectors)),
+                watched_attributes: Clearable::from_option(narrow_names(subscription.selection.watched_attributes.as_deref(), declared.as_deref())),
+                notification_trigger: Clearable::from_option(subscription.selection.notification_trigger.clone()), // clone: the copy owns its triggers
+                time_interval: Clearable::from_option(subscription.delivery.time_interval),
+                q: Clearable::from_option(subscription.filters.q.as_ref().filter(|_| keeps_filters).cloned()), // clone: the copy owns its filter
+                geo_q: Clearable::from_option(subscription.filters.geo_q.as_ref().filter(|_| keeps_filters).cloned()), // clone: the copy owns its filter
+                scope_q: Clearable::from_option(subscription.filters.scope_q.as_ref().filter(|_| keeps_filters).cloned()), // clone: the copy owns its filter
+                dataset_id: Clearable::from_option(subscription.filters.dataset_id.clone()),                   // clone: the copy owns its selectors
+                notification: Some(notification),
+                throttling: Clearable::from_option(subscription.delivery.throttling),
+                expires_at: Clearable::from_option(subscription.lifecycle.expires_at),
+                ..SubscriptionRequest::default()
+            },
         }
     }
 
-    /// The same document as an update fragment: everything but the identifier
-    /// and type (clause 5.8.2.4).
+    /// The same request as an update fragment: everything but the identifier
+    /// and type (clause 5.8.2.4), and an NGSI-LD Null for each member the
+    /// local update deleted that the copy at the source still holds
+    /// (clauses 5.5.8 and 5.8.1.4, the copy being an update of the original
+    /// reduced to what the registration matches).
+    ///
+    /// A member the copy never carries is not sent as a Null: the notification
+    /// members always, and `q`, `geoQ` and `scopeQ` when `carriage` strips
+    /// them. The selectors are deleted only while the fragment still sets the
+    /// other one, since a source left with neither would refuse the update
+    /// (clause 5.2.12).
     #[must_use]
-    pub fn as_fragment(&self) -> Value {
-        let mut fragment = self.document.clone(); // clone: the fragment is a second document
-        if let Some(object) = fragment.as_object_mut() {
-            object.remove("id");
-            object.remove("type");
+    pub fn as_fragment(&self, deleted: &DeletedMembers, carriage: FilterCarriage) -> SubscriptionRequest {
+        let mut fragment = SubscriptionRequest {
+            id: None,
+            type_: None,
+            ..self.request.clone() // clone: the fragment is a second request
+        };
+        fragment.subscription_name = deleting(fragment.subscription_name, DeletableMember::SubscriptionName, deleted);
+        fragment.description = deleting(fragment.description, DeletableMember::Description, deleted);
+        fragment.notification_trigger = deleting(fragment.notification_trigger, DeletableMember::NotificationTrigger, deleted);
+        fragment.time_interval = deleting(fragment.time_interval, DeletableMember::TimeInterval, deleted);
+        fragment.dataset_id = deleting(fragment.dataset_id, DeletableMember::DatasetId, deleted);
+        fragment.throttling = deleting(fragment.throttling, DeletableMember::Throttling, deleted);
+        fragment.expires_at = deleting(fragment.expires_at, DeletableMember::ExpiresAt, deleted);
+        match carriage {
+            FilterCarriage::Keep => {
+                fragment.q = deleting(fragment.q, DeletableMember::Q, deleted);
+                fragment.geo_q = deleting(fragment.geo_q, DeletableMember::GeoQ, deleted);
+                fragment.scope_q = deleting(fragment.scope_q, DeletableMember::ScopeQ, deleted);
+            }
+            FilterCarriage::Strip => {}
+        }
+        match (&fragment.entities, &fragment.watched_attributes) {
+            (Clearable::Set(_), _) | (_, Clearable::Set(_)) => {
+                fragment.entities = deleting(fragment.entities, DeletableMember::Entities, deleted);
+                fragment.watched_attributes = deleting(fragment.watched_attributes, DeletableMember::WatchedAttributes, deleted);
+            }
+            (Clearable::Absent | Clearable::Cleared | Clearable::NgsiLdNull, Clearable::Absent | Clearable::Cleared | Clearable::NgsiLdNull) => {}
         }
         fragment
+    }
+}
+
+/// `member` as the fragment sends it: an absent member the update deleted
+/// becomes a deletion, anything else is as the reduction left it.
+fn deleting<T>(member: Clearable<T>, kind: DeletableMember, deleted: &DeletedMembers) -> Clearable<T> {
+    match member {
+        Clearable::Absent if deleted.contains(kind) => Clearable::Cleared,
+        other @ (Clearable::Absent | Clearable::Cleared | Clearable::NgsiLdNull | Clearable::Set(_)) => other,
     }
 }
 
@@ -192,9 +211,15 @@ mod tests {
     };
     use andromeda_federation::config::SplitEntities;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::Subscription};
-    use serde_json::json;
+    use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::Subscription, subscription_request::SubscriptionRequest};
+    use andromeda_subscription::deleted_members::DeletedMembers;
+    use serde_json::{Value, json};
     use url::Url;
+
+    /// The request as the document the source reads.
+    fn written(request: &SubscriptionRequest) -> Value {
+        serde_json::to_value(request).expect("the request writes")
+    }
 
     const VEHICLE: &str = "https://example.org/Vehicle";
     const SPEED: &str = "https://example.org/speed";
@@ -250,7 +275,7 @@ mod tests {
     fn the_copy_is_narrowed_to_the_registration_and_notifies_this_broker() {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]));
         let copy = ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep);
-        let document = copy.document;
+        let document = written(&copy.request);
         pretty_assertions::assert_eq!(document["id"], json!("urn:ngsi-ld:Subscription:forwarded-1"));
         pretty_assertions::assert_eq!(document["entities"], json!([{"type": VEHICLE}]));
         pretty_assertions::assert_eq!(document["watchedAttributes"], json!([SPEED]));
@@ -267,7 +292,7 @@ mod tests {
     fn split_entities_strip_the_filters() {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let copy = ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Strip);
-        let document = copy.document;
+        let document = written(&copy.request);
         assert!(document.get("q").is_none());
         // A registration declaring no attribute covers every watched one.
         pretty_assertions::assert_eq!(document["watchedAttributes"], json!([SPEED, COLOUR]));
@@ -306,7 +331,7 @@ mod tests {
                 }))
                 .expect("valid subscription");
 
-                let document = ReducedSubscription::reduce(&subscription, &registration, &receiver(), &minted(), carriage).document;
+                let document = written(&ReducedSubscription::reduce(&subscription, &registration, &receiver(), &minted(), carriage).request);
 
                 for member in ["attributes", "pick", "omit"] {
                     assert!(
@@ -324,16 +349,72 @@ mod tests {
     #[test]
     fn the_update_fragment_drops_the_identifier_and_type() {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
-        let fragment = ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep).as_fragment();
+        let fragment = written(
+            &ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep)
+                .as_fragment(&DeletedMembers::default(), FilterCarriage::Keep),
+        );
         assert!(fragment.get("id").is_none());
         assert!(fragment.get("type").is_none());
         assert!(fragment.get("entities").is_some());
     }
 
+    /// The fragment a local update of `local` produces for `registration`, with
+    /// the members `update` deleted.
+    fn fragment_after(local: &Subscription, update: &serde_json::Value, carriage: FilterCarriage) -> Value {
+        let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
+        let deleted = DeletedMembers::of(&serde_json::from_value(update.clone()).expect("a readable fragment")); // clone: the fixture is borrowed
+        written(&ReducedSubscription::reduce(local, &registration, &receiver(), &minted(), carriage).as_fragment(&deleted, carriage))
+    }
+
+    /// Clauses 5.5.8 and 5.8.1.4: a member the local update deleted is sent to
+    /// the source as an NGSI-LD Null, and one the update set or left alone is not.
+    #[test]
+    fn a_locally_deleted_member_is_forwarded_as_a_null() {
+        let mut local = subscription();
+        local.lifecycle.expires_at = None;
+        local.description = None;
+        let fragment = fragment_after(&local, &json!({"expiresAt": null, "description": null, "throttling": 5}), FilterCarriage::Keep);
+        pretty_assertions::assert_eq!(fragment["expiresAt"], json!(null));
+        pretty_assertions::assert_eq!(fragment["description"], json!(null));
+        assert!(fragment.get("subscriptionName").is_none());
+        assert!(fragment.get("throttling").is_none());
+        assert!(fragment.get("notification").is_some());
+    }
+
+    /// Clause 5.8.1.4: a copy under split entities never carries `q`, so its
+    /// deletion is not sent; the notification members are never sent either.
+    #[test]
+    fn a_deleted_member_the_copy_never_carries_is_not_sent() {
+        let mut local = subscription();
+        local.filters.q = None;
+        let update = json!({"q": null, "notification": {"attributes": [SPEED]}});
+        let stripped = fragment_after(&local, &update, FilterCarriage::Strip);
+        assert!(stripped.get("q").is_none());
+        pretty_assertions::assert_eq!(stripped["notification"].get("attributes"), None);
+        let kept = fragment_after(&local, &json!({"q": null}), FilterCarriage::Keep);
+        pretty_assertions::assert_eq!(kept["q"], json!(null));
+    }
+
+    /// Clause 5.2.12: deleting `entities` is forwarded while the copy still
+    /// watches attributes, and a selector is never deleted when the fragment
+    /// would leave the source with neither.
+    #[test]
+    fn a_selector_is_deleted_only_while_the_other_remains() {
+        let mut local = subscription();
+        local.selection.entities = None;
+        let with_watched = fragment_after(&local, &json!({"entities": null}), FilterCarriage::Keep);
+        pretty_assertions::assert_eq!(with_watched["entities"], json!(null));
+        pretty_assertions::assert_eq!(with_watched["watchedAttributes"], json!([SPEED, COLOUR]));
+
+        local.selection.watched_attributes = None;
+        let neither = fragment_after(&local, &json!({"entities": null}), FilterCarriage::Keep);
+        assert!(neither.get("entities").is_none());
+    }
+
     #[test]
     fn a_registration_that_covers_none_of_the_selectors_yields_no_entities_member() {
         let registration = registration(&json!([{"entities": [{"type": "https://example.org/Sensor"}]}]));
-        let document = ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep).document;
+        let document = written(&ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep).request);
         assert!(document.get("entities").is_none());
         pretty_assertions::assert_eq!(FilterCarriage::for_split(SplitEntities::Split), FilterCarriage::Strip);
         pretty_assertions::assert_eq!(FilterCarriage::for_split(SplitEntities::Complete), FilterCarriage::Keep);

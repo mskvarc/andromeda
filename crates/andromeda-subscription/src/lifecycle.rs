@@ -9,33 +9,35 @@
 
 use crate::{
     change::{SubscriptionChangeSink, UpsertKind},
+    deleted_members::DeletedMembers,
     endpoint_admission::{SubscriptionEndpointValidator, validate_endpoint},
     error::SubscriptionError,
-    fields,
+    fields::SubscriptionWriteValues,
     forwarding_hook::SubscriptionForwardingHook,
     merged_validation::validate_merged_subscription,
     notification_context,
-    status::compute_updated_status,
-    store::{StatusUpdateFields, SubscriptionStore},
+    request_validation,
+    status::{compute_updated_status, requested_status_change},
+    store::SubscriptionStore,
     subscription_context::SubscriptionContext,
     subscription_invariant::SubscriptionInvariant,
-    subscription_validation_reason::SubscriptionValidationReason,
-    validation,
     variant::SubscriptionVariant,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{
     context_validation::{validate_context_spec, validate_jsonld_context_value},
     engine::processor::JsonLdEngine,
+    error::JsonLdError,
     user_context_admission::AdmittedContext,
 };
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, ngsi_ld_urn::SubscriptionId};
-use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
+use andromeda_ngsi_ld_model::{subscription::SubscriptionStatus, subscription_request::SubscriptionRequest};
 use andromeda_telemetry::subscription_ops::{self, SubscriptionOperation};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
-use serde_json::Value;
+use iri_rs::IriBuf;
 use std::sync::Arc;
 
 /// Mint the identifier of a subscription whose client named none (clause
@@ -113,7 +115,17 @@ where
         }
     }
 
-    /// Create a new subscription from the given JSON payload.
+    /// Check that the `jsonldContext` a request names is a context the engine
+    /// can resolve (clause 5.8.1.4).
+    async fn validate_jsonld_context(&self, jsonld_context: Option<&IriBuf>) -> Result<(), SubscriptionError> {
+        if let Some(context) = jsonld_context {
+            let literal = JsonLiteral::string(context.as_str()).map_err(JsonLdError::from)?;
+            validate_jsonld_context_value(&self.engine, &literal).await?;
+        }
+        Ok(())
+    }
+
+    /// Create a new subscription from the given request body.
     ///
     /// `encountered_sources` carries the pseudonyms named in the request's
     /// `Via` chain (Table 6.3.18-2): a forwarded subscription must not spawn a
@@ -123,35 +135,34 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`SubscriptionError::Validation`] when the payload does not
-    /// satisfy clause 5.8.1, when its `id` is not a URI, or when the endpoint
-    /// names a transport this broker cannot deliver over;
-    /// [`SubscriptionError::AlreadyExists`] when the requested `id` is taken;
-    /// [`SubscriptionError::JsonLd`] when the request `@context` or the
-    /// subscription's own `jsonldContext` cannot be resolved or the terms
-    /// cannot be expanded; [`SubscriptionError::ContextHosting`] when the
-    /// `@context` applicable to the request needs a hosted wrapper that cannot
-    /// be stored (clause 5.8.1.4); [`SubscriptionError::Persistence`] when the
-    /// store rejects the write. A failing forwarding hook is logged rather than
-    /// returned: the local subscription is created either way.
+    /// Returns [`SubscriptionError::Validation`] when the body does not
+    /// satisfy clause 5.8.1 or when the endpoint names a transport this broker
+    /// cannot deliver over; [`SubscriptionError::AlreadyExists`] when the
+    /// requested `id` is taken; [`SubscriptionError::JsonLd`] when the request
+    /// `@context` or the subscription's own `jsonldContext` cannot be resolved
+    /// or the terms cannot be expanded; [`SubscriptionError::ContextHosting`]
+    /// when the `@context` applicable to the request needs a hosted wrapper
+    /// that cannot be stored (clause 5.8.1.4); [`SubscriptionError::Persistence`]
+    /// when the store rejects the write. A failing forwarding hook is logged
+    /// rather than returned: the local subscription is created either way.
     pub async fn create(
         &self,
         target: &ContextTarget,
-        mut payload: Value,
+        mut request: SubscriptionRequest,
         subscription_context: SubscriptionContext<'_>,
         encountered_sources: &[ContextSourcePseudonym],
     ) -> Result<Identifier, SubscriptionError> {
         let context = subscription_context.spec();
         let result: Result<Identifier, SubscriptionError> = async {
-            validation::validate_create_payload(&payload, self.geometry_limits)?;
+            request_validation::validate_create_request(&request, self.geometry_limits)?;
 
-            validate_endpoint(&payload, self.endpoint_validator.as_ref())?;
+            validate_endpoint(
+                request.notification.as_ref().and_then(|notification| notification.endpoint.as_ref()),
+                self.endpoint_validator.as_ref(),
+            )?;
 
-            let id = match payload.get("id").and_then(|v| v.as_str()) {
+            let id = match request.id.take() {
                 Some(provided_id) => {
-                    let provided_id = provided_id
-                        .parse::<Identifier>()
-                        .map_err(|source| SubscriptionError::Validation(SubscriptionValidationReason::SubscriptionId { source }))?;
                     if self.repo.exists(target, &provided_id).await? {
                         return Err(SubscriptionError::already_exists(&provided_id));
                     }
@@ -160,28 +171,19 @@ where
                 None => generate_id()?,
             };
 
-            if let Some(ctx_value) = payload.get("jsonldContext") {
-                validate_jsonld_context_value(&self.engine, ctx_value).await?;
-            }
+            self.validate_jsonld_context(request.jsonld_context.as_set()).await?;
             validate_context_spec(&self.engine, context).await?;
 
             // Clause 5.8.1.4 (and clause 5.11.2.4 "as described in clause
             // 5.8.1.4"): a subscription created without `jsonldContext` has the
             // member initialised from the `@context` applicable to it, so by the
-            // time the payload is parsed the member reflects that initialisation.
-            notification_context::initialize_notification_context(&mut payload, subscription_context, &self.engine).await?;
-            let expanded_q = self.variant.expand_terms(&mut payload, context).await?;
+            // time the request is read the member reflects that initialisation.
+            notification_context::initialize_notification_context(&mut request.jsonld_context, subscription_context, &self.engine).await?;
+            self.variant.expand_terms(&mut request, context).await?;
 
-            let values = fields::extract_create_fields(&payload, self.variant.dataset_id_policy())?.with_expanded_q(expanded_q);
+            let status = compute_updated_status(SubscriptionStatus::Active, &requested_status_change(&request));
+            let values = SubscriptionWriteValues::from_create(request, self.variant.dataset_id_policy())?;
             let fields = values.to_fields();
-
-            let status = compute_updated_status(
-                SubscriptionStatus::Active,
-                &StatusUpdateFields {
-                    is_active: if payload.get("isActive").is_some() { Some(fields.is_active) } else { None },
-                    expires_at: if fields.expires_at.is_some() { Some(fields.expires_at) } else { None },
-                },
-            );
 
             self.repo.create_subscription(target, &id, &fields, status).await?;
             self.emit_change(self.variant.make_upserted(target.clone(), id.clone(), UpsertKind::Created))
@@ -197,8 +199,8 @@ where
         result
     }
 
-    /// Update an existing subscription with the given fragment payload, whose
-    /// terms are expanded under `context`.
+    /// Update an existing subscription with the given fragment, whose terms
+    /// are expanded under `context`.
     ///
     /// The stored `jsonldContext` changes only when the fragment names one
     /// (clauses 5.8.2.4 and 5.5.8): initialising it from the applicable
@@ -216,34 +218,35 @@ where
     /// or the terms cannot be expanded; [`SubscriptionError::Persistence`]
     /// when the store rejects the write. A failing forwarding hook is logged
     /// rather than returned: the local subscription is updated either way.
-    pub async fn update(&self, target: &ContextTarget, id: &Identifier, mut payload: Value, context: &AdmittedContext) -> Result<(), SubscriptionError> {
+    pub async fn update(
+        &self,
+        target: &ContextTarget,
+        id: &Identifier,
+        mut request: SubscriptionRequest,
+        context: &AdmittedContext,
+    ) -> Result<(), SubscriptionError> {
         let result: Result<(), SubscriptionError> = async {
-            validate_endpoint(&payload, self.endpoint_validator.as_ref())?;
+            validate_endpoint(
+                request.notification.as_ref().and_then(|notification| notification.endpoint.as_ref()),
+                self.endpoint_validator.as_ref(),
+            )?;
 
-            validation::validate_common_fields(&payload, self.geometry_limits)?;
-            self.variant.validate_update_extra(&payload)?;
-            validation::validate_notification_fragment(&payload)?;
+            request_validation::validate_common_members(&request, self.geometry_limits)?;
+            self.variant.validate_update_extra(&request)?;
+            request_validation::validate_notification_fragment(&request)?;
 
-            if let Some(ctx_value) = payload.get("jsonldContext") {
-                validate_jsonld_context_value(&self.engine, ctx_value).await?;
-            }
+            self.validate_jsonld_context(request.jsonld_context.as_set()).await?;
             validate_context_spec(&self.engine, context).await?;
 
-            let expanded_q = self.variant.expand_terms(&mut payload, context).await?;
+            self.variant.expand_terms(&mut request, context).await?;
 
+            let deleted = DeletedMembers::of(&request);
             let existing = self.get(target, id).await?;
             let existing_status = existing.lifecycle.status;
-            let merged = fields::merge_update_fields(&payload, existing, self.variant.dataset_id_policy())?.with_expanded_q(expanded_q);
+            let status = compute_updated_status(existing_status, &requested_status_change(&request));
+            let merged = SubscriptionWriteValues::merged(request, existing, self.variant.dataset_id_policy())?;
             validate_merged_subscription(&merged)?;
             let fields = merged.to_fields();
-
-            let status = compute_updated_status(
-                existing_status,
-                &StatusUpdateFields {
-                    is_active: if payload.get("isActive").is_some() { Some(fields.is_active) } else { None },
-                    expires_at: if payload.get("expiresAt").is_some() { Some(fields.expires_at) } else { None },
-                },
-            );
 
             let updated = self.repo.update_subscription(target, id, &fields, status).await?;
             if updated == 0 {
@@ -254,7 +257,7 @@ where
                 .await; // clone: the change event owns the branch and identifier.
             if self.forwarding_hook.is_some() && target.permits_federation() {
                 let merged = self.get(target, id).await?;
-                self.run_hook(id, |hook| hook.updated(&merged, context)).await;
+                self.run_hook(id, |hook| hook.updated(&merged, &deleted, context)).await;
             }
             Ok(())
         }

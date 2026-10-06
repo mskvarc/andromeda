@@ -37,8 +37,7 @@ use andromeda_postgresql_seaquery::{
 use andromeda_temporal::{temporal_not_found_reason::TemporalNotFoundReason, write_purpose::TemporalWritePurpose};
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Iden, OnConflict, PostgresQueryBuilder, Query};
-use serde_json::Value;
-use sqlx::{AssertSqlSafe, Postgres, Transaction};
+use sqlx::{AssertSqlSafe, Postgres, Transaction, types::Json};
 use std::collections::HashMap;
 
 /// The `UNNEST` staging alias, `d`.
@@ -221,7 +220,7 @@ struct EntityUpsertBinds<'a> {
     /// Write clock of each creating entity, one per entity so the array stays square.
     recorded_ats: Vec<DateTime<Utc>>,
     /// Type dictionary keys of each creating entity, as a JSON array of integers.
-    entity_type_name_keys_json: Vec<Value>,
+    entity_type_name_keys_json: Vec<Json<Vec<i32>>>,
 }
 
 /// Spread every creating entity into column-major binds, one row per entity.
@@ -249,7 +248,7 @@ fn entity_upsert_binds<'a>(
             .collect::<Result<Vec<i32>, TemporalStoreError>>()?;
         binds.ids.push(upsert.entity_id.as_str());
         binds.recorded_ats.push(recorded_at);
-        binds.entity_type_name_keys_json.push(Value::from(entity_type_name_keys));
+        binds.entity_type_name_keys_json.push(Json(entity_type_name_keys));
     }
     Ok(binds)
 }
@@ -494,7 +493,7 @@ mod tests {
         pretty_assertions::assert_eq!(binds.ids, vec!["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]);
         pretty_assertions::assert_eq!(binds.recorded_ats, vec![recorded_at, recorded_at]);
         pretty_assertions::assert_eq!(binds.entity_type_name_keys_json.len(), 2);
-        pretty_assertions::assert_eq!(binds.entity_type_name_keys_json[0], serde_json::json!([4]));
+        pretty_assertions::assert_eq!(binds.entity_type_name_keys_json[0].0, vec![4]);
     }
 
     /// Clause 4.5.1 makes at least one type part of what an Entity is, so an

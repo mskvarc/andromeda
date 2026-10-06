@@ -17,7 +17,7 @@ use andromeda_http_response::{
 };
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_query::error::QueryError;
-use andromeda_ngsi_ld_render::{error::RenderError, temporal::simplify::TemporalSimplifyError};
+use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_temporal::error::TemporalError;
 use andromeda_tenancy::error::TenancyError;
@@ -77,12 +77,6 @@ impl TemporalHttpClassify for ResponseContextError {
 }
 
 impl TemporalHttpClassify for RenderError {
-    fn classify_for_temporal_http(&self) -> ClassifiedReport {
-        ClassifiedReport::internal(self, InternalFailureSummary::new("failed to render the temporal representation"))
-    }
-}
-
-impl TemporalHttpClassify for TemporalSimplifyError {
     fn classify_for_temporal_http(&self) -> ClassifiedReport {
         ClassifiedReport::internal(self, InternalFailureSummary::new("failed to render the temporal representation"))
     }

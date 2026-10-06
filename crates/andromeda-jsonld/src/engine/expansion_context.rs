@@ -1,15 +1,15 @@
 //! A request `@context`, processed once into the active context expansion
 //! reads.
 //!
-//! [`JsonLdEngine::expand`] hands the JSON-LD processor a document carrying the
-//! `@context` a [`ContextSpec`] resolves to (clause 5.5.7: the request's own
-//! context first, the core context appended last) and the processor turns it
-//! into an active context before it reads a single member. Nothing of that
-//! depends on the document, so [`ExpansionContext`] does it once and keeps the
-//! result: a typed expansion of the request decides every term against
-//! [`ExpansionContext::active`], and the processor, when a document needs it,
-//! starts from the same active context instead of processing the `@context`
-//! again ([`ExpansionContext::expand`]).
+//! The JSON-LD processor turns the `@context` a [`ContextSpec`] resolves to
+//! (clause 5.5.7: the request's own context first, the core context appended
+//! last) into an active context before it reads a single member of a document.
+//! Nothing of that depends on the document, so [`ExpansionContext`] does it
+//! once and keeps the result: a typed expansion of the request decides every
+//! term against [`ExpansionContext::active`], a single term is expanded
+//! against it (`engine::term_lookup`), and the processor, when a document
+//! needs it, starts from the same active context instead of processing the
+//! `@context` again ([`ExpansionContext::expand_text`]).
 //!
 //! JSON-LD 1.1 applies a term's property-scoped context to the object written
 //! under that term. The one the core context declares (`ngsildproof`, clause
@@ -17,10 +17,13 @@
 //! top of the root active context, so a synchronous walker can descend into
 //! them without a loader.
 
+#[cfg(test)]
+use crate::engine::processor::count_document_expansion;
 use crate::{
     context_graph::check_context_graph,
     context_spec::ContextSpec,
-    engine::{context_url::resolve_relative_context_urls, processor::JsonLdEngine},
+    document_context::{ReferenceReading, resolved_context},
+    engine::{context_syntax::context_syntax, processor::JsonLdEngine, processor_text::ProcessorTextError},
     error::JsonLdError,
     loader::{error::LoaderError, http::HttpContextLoader},
 };
@@ -31,12 +34,10 @@ use jsonld::{
     ExpandedDocument,
     context::BindingRef,
     context_processing::{Error as ProcessingError, Options as ProcessingOptions, Process},
-    expansion::{Error as ExpansionAlgorithmError, Expand, Options as ExpansionOptions},
-    syntax::{Context as JsonLdContext, TryFromJson, Value as JsonLdValue},
+    expansion::{Error as ExpansionAlgorithmError, Options as ExpansionOptions, SliceExpansionError, expand_slice},
 };
 use moka::future::Cache;
 use rdfx::{BlankIdBuf, vocabulary::no_vocabulary_mut};
-use serde_json::{Map, Value};
 use std::{
     collections::HashMap,
     sync::{Arc, LazyLock},
@@ -97,43 +98,52 @@ impl ExpansionContext {
         self.property_scoped.get(term)
     }
 
-    /// Expand a compact document with the JSON-LD processor, starting from
-    /// this active context.
+    /// Expand the JSON text of a compact document with the JSON-LD processor,
+    /// starting from this active context.
     ///
     /// The document is expected to carry no `@context` of its own: the
     /// request's context is the one this was processed from. One it does carry
-    /// is processed on top, as the processor always does.
+    /// is processed on top, as the processor always does. The text is parsed by
+    /// the processor's own non-recursive reader and dropped before this
+    /// returns.
     ///
     /// # Errors
     ///
-    /// Returns the [`JsonLdError`] [`JsonLdEngine::expand`] reports for the
-    /// same failure.
-    pub async fn expand(&self, engine: &JsonLdEngine, document: &JsonLdValue) -> Result<ExpandedDocument<IriBuf, BlankIdBuf>, JsonLdError> {
-        document
-            .expand_full(
-                no_vocabulary_mut(),
-                self.active.clone(), // clone: cheap, every definition and cache is shared through an `Arc`
-                None,
-                engine.loader(),
-                ExpansionOptions::default(),
-                (),
-            )
-            .await
-            .map_err(|error| JsonLdError::from(ExpandError::Expansion(error)))
+    /// Returns [`JsonLdError::ProcessorText`] for text that is not JSON, and
+    /// the expansion failure, typed as the processor types it, otherwise.
+    pub async fn expand_text(&self, engine: &JsonLdEngine, text: &[u8]) -> Result<ExpandedDocument<IriBuf, BlankIdBuf>, JsonLdError> {
+        #[cfg(test)]
+        count_document_expansion();
+        expand_slice(
+            text,
+            no_vocabulary_mut(),
+            self.active.clone(), // clone: cheap, every definition and cache is shared through an `Arc`
+            None,
+            engine.loader(),
+            ExpansionOptions::default(),
+            (),
+        )
+        .await
+        .map_err(|error| match error {
+            SliceExpansionError::Syntax(error) => JsonLdError::from(ProcessorTextError::from(error)),
+            SliceExpansionError::Expansion(error) => JsonLdError::from(ExpandError::Expansion(error)),
+        })
     }
 
-    /// Resolve and process the `@context` a spec selects, as
-    /// [`JsonLdEngine::expand`] does before reading a document.
+    /// Resolve and process the `@context` a spec selects, as a document
+    /// written under it is processed.
     async fn prepare(spec: &ContextSpec, loader: &HttpContextLoader) -> Result<ExpansionContext, JsonLdError> {
-        let Some(context) = resolved_context(spec, loader) else {
-            return Ok(ExpansionContext {
-                active: ActiveContext::new(None),
-                property_scoped: HashMap::new(),
-            });
-        };
-        check_context_graph(loader, &context).await?;
-        let unprocessed = JsonLdContext::try_from_json(&JsonLdValue::from_serde_json(context))
-            .map_err(|error| JsonLdError::from(ExpandError::Expansion(ExpansionAlgorithmError::ContextSyntax(error))))?;
+        let resolved = resolved_context(spec, ReferenceReading::Hosted(loader.hosted_contexts()));
+        check_context_graph(loader, &resolved).await?;
+        let unprocessed = context_syntax(&resolved).map_err(|error| {
+            // A context that is no JSON-LD context is reported as the
+            // processor's expansion reports it.
+            if let JsonLdError::InlineContextInvalid(invalid) = error {
+                JsonLdError::from(ExpandError::Expansion(ExpansionAlgorithmError::ContextSyntax(invalid)))
+            } else {
+                error
+            }
+        })?;
         let active = unprocessed
             .process_full(no_vocabulary_mut(), &ActiveContext::new(None), loader, None, processing_options(), ())
             .await
@@ -156,8 +166,7 @@ impl JsonLdEngine {
     ///
     /// Returns [`JsonLdError::ContextGraph`] for references that cycle or nest
     /// too deep, the context-loading variant of a context that does not
-    /// resolve, and the processing failure of one that does not process, each
-    /// as [`JsonLdEngine::expand`] reports it.
+    /// resolve, and the processing failure of one that does not process.
     pub async fn expansion_context(&self, spec: &ContextSpec) -> Result<Arc<ExpansionContext>, JsonLdError> {
         let Some(key) = spec.embedded_context_key() else {
             let loader = self.loader();
@@ -172,18 +181,6 @@ impl JsonLdEngine {
         let prepared = Arc::new(ExpansionContext::prepare(spec, self.loader()).await?);
         EMBEDDED_CONTEXTS.insert(key, Arc::clone(&prepared)).await; // clone: Arc ref-count bump
         Ok(prepared)
-    }
-}
-
-/// The `@context` a spec resolves to, with the root-relative references to the
-/// tenant's own stored contexts rewritten exactly as a document's are.
-fn resolved_context(spec: &ContextSpec, loader: &HttpContextLoader) -> Option<Value> {
-    let context = spec.to_context_value()?;
-    let mut carrier = Value::Object(Map::from_iter([("@context".to_owned(), context)]));
-    resolve_relative_context_urls(&mut carrier, loader.hosted_contexts());
-    match carrier {
-        Value::Object(mut members) => members.remove("@context"),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => None,
     }
 }
 
@@ -236,6 +233,7 @@ mod tests {
         engine::{preloaded_engine::engine_preloading, processor::JsonLdEngine},
         loader::replaceable_row::ReplaceableRow,
         operation_hit_scope::run_in_operation_scope,
+        test_documents::literal,
     };
     use iri_rs::IriBuf;
     use jsonld::{
@@ -248,11 +246,15 @@ mod tests {
             Warning,
             algorithm::{Action, expand_iri_simple},
         },
-        syntax::{ExpandableRef, Nullable, Value as JsonLdValue},
+        syntax::{ExpandableRef, IntoJsonWithContext, Nullable},
     };
-    use rdfx::{BlankIdBuf, vocabulary::no_vocabulary_mut};
+    use jstrict::Print;
+    use rdfx::{
+        BlankIdBuf,
+        vocabulary::{no_vocabulary, no_vocabulary_mut},
+    };
     use serde_json::json;
-    use std::sync::Arc;
+    use std::{sync::Arc, thread};
 
     /// An engine that resolves only what is embedded, never the network.
     fn offline_engine() -> JsonLdEngine {
@@ -296,7 +298,9 @@ mod tests {
     #[tokio::test]
     async fn a_user_context_cannot_redefine_a_core_term() {
         let engine = offline_engine();
-        let spec = ContextSpec::from_body(json!({ "location": "https://example.org/location", "speed": "https://example.org/speed" }));
+        let spec = ContextSpec::from_body(literal(
+            &json!({ "location": "https://example.org/location", "speed": "https://example.org/speed" }),
+        ));
         let context = engine.expansion_context(&spec).await.expect("the context processes");
 
         pretty_assertions::assert_eq!(key_iri(context.active(), "location"), "https://uri.etsi.org/ngsi-ld/location");
@@ -339,7 +343,7 @@ mod tests {
     /// document again (clause 6.3.16 lets the stored copy lapse).
     #[tokio::test]
     async fn a_context_named_by_url_is_processed_again_only_once_its_document_is_read_again() {
-        let row = Arc::new(ReplaceableRow::new(json!({ "@context": { "speed": "https://example.org/speed" } })));
+        let row = Arc::new(ReplaceableRow::new(&json!({ "@context": { "speed": "https://example.org/speed" } })));
         let engine = engine_over(&row);
         let url = IriBuf::new("https://example.org/stored.jsonld".to_owned()).expect("an IRI");
         let spec = ContextSpec::from_link(url.clone()); // clone: the invalidation below names the same URL
@@ -348,7 +352,7 @@ mod tests {
         let kept = engine.expansion_context(&spec).await.expect("the context processes");
         assert!(Arc::ptr_eq(&first, &kept), "an unchanged document keeps its processed context");
 
-        row.replace(json!({ "@context": { "speed": "https://example.org/velocity" } }));
+        row.replace(&json!({ "@context": { "speed": "https://example.org/velocity" } }));
         engine.invalidate_context(&url).await;
         let reprocessed = engine.expansion_context(&spec).await.expect("the context processes");
 
@@ -360,7 +364,7 @@ mod tests {
     /// one hit.
     #[tokio::test]
     async fn every_operation_reusing_a_kept_context_counts_one_hit() {
-        let row = Arc::new(ReplaceableRow::new(json!({ "@context": { "speed": "https://example.org/speed" } })));
+        let row = Arc::new(ReplaceableRow::new(&json!({ "@context": { "speed": "https://example.org/speed" } })));
         let engine = engine_over(&row);
         let url = IriBuf::new("https://example.org/stored.jsonld".to_owned()).expect("an IRI");
         let spec = ContextSpec::from_link(url.clone()); // clone: the counter is read under the same URL
@@ -375,21 +379,46 @@ mod tests {
         pretty_assertions::assert_eq!(counter.pending(&url), 3);
     }
 
+    /// The processor reads the document text with its own reader, from the
+    /// processed context, and keeps each number's exact text.
     #[tokio::test]
-    async fn the_processor_expands_from_the_processed_context_as_from_the_document_context() {
+    async fn the_processor_expands_document_text_from_the_processed_context() {
         let engine = offline_engine();
-        let document: serde_json::Value =
-            serde_json::from_str(r#"{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 0.100000000000000005}}"#)
-                .expect("exact JSON");
-        let spec = ContextSpec::none();
-        let context = engine.expansion_context(&spec).await.expect("the core context processes");
+        let text = r#"{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 0.100000000000000005}}"#;
+        let context = engine.expansion_context(&ContextSpec::none()).await.expect("the core context processes");
 
-        let typed = context
-            .expand(&engine, &JsonLdValue::from_serde_json(document.clone())) // clone: the reference expansion below consumes the document
+        let expanded = context.expand_text(&engine, text.as_bytes()).await.expect("the processor expands");
+        let written = expanded.into_json_with(no_vocabulary()).compact_print().to_string();
+
+        assert!(written.contains("0.100000000000000005"), "{written}");
+        assert!(written.contains("https://uri.etsi.org/ngsi-ld/default-context/speed"), "{written}");
+    }
+
+    /// The expanded tree of a deeply nested document drops level by level: a
+    /// recursive drop of its 2,000 nested node objects overflows the 256 KiB
+    /// stack of the thread it is dropped on.
+    #[tokio::test]
+    async fn a_deep_processor_document_drops_on_a_small_stack() {
+        const LEVELS: usize = 2_000;
+        let engine = offline_engine();
+        let context = engine.expansion_context(&ContextSpec::none()).await.expect("the core context processes");
+        let text = format!("{}{{}}{}", r#"{"https://e.org/p": "#.repeat(LEVELS), "}".repeat(LEVELS));
+
+        let printed = context
+            .expand_text(&engine, text.as_bytes())
             .await
-            .expect("the processor expands");
-        let reference = engine.expand(document, &spec).await.expect("the processor expands");
+            .expect("the deep document expands")
+            .into_json_with(no_vocabulary())
+            .compact_print()
+            .to_string();
+        pretty_assertions::assert_eq!(printed.matches("https://e.org/p").count(), LEVELS);
+        let expanded = context.expand_text(&engine, text.as_bytes()).await.expect("the deep document expands");
 
-        pretty_assertions::assert_eq!(typed.into_serde_json(), reference);
+        let dropped = thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || drop(expanded))
+            .expect("the thread starts")
+            .join();
+        assert!(dropped.is_ok(), "the expanded tree dropped without overflowing");
     }
 }

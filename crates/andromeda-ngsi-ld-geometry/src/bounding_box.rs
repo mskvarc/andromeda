@@ -233,13 +233,13 @@ mod tests {
     fn a_tape_holding_anything_but_numbers_is_no_box() {
         for value in [json!("box"), json!(7), json!([0, "x", 1, 1]), json!([[0, 0], [1, 1]]), json!({"a": 1})] {
             pretty_assertions::assert_eq!(
-                BoundingBox::of_tape(&CoordinateTape::of_value(&value)),
+                BoundingBox::of_tape(&CoordinateTape::of_text(&value.to_string()).expect("valid JSON")),
                 Err(BoundingBoxError::NotNumbers),
                 "{value}"
             );
         }
         pretty_assertions::assert_eq!(
-            BoundingBox::of_tape(&CoordinateTape::of_value(&json!([0, 1, 4, 5]))),
+            BoundingBox::of_tape(&CoordinateTape::of_text("[0, 1, 4, 5]").expect("valid JSON")),
             BoundingBox::try_from_ordinates(&[0.0, 1.0, 4.0, 5.0])
         );
     }

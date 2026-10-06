@@ -7,64 +7,16 @@
 //! other attribute type is unaffected, which is why the dispatch below
 //! enumerates the eight types rather than testing for a language map.
 
-use crate::{entity::serialize_value, error::RenderError};
 use andromeda_http_headers::language::{LanguageFilter, LanguageRange};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, rfc3339};
 use andromeda_ngsi_ld_model::attribute::{
-    instance::{Attribute, AttributeValue},
+    instance::AttributeValue,
     language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
 };
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use langtag::LangTagBuf;
 use serde::Serialize;
-use serde_json::Value;
-
-/// Render one attribute value, negotiating any language map inside it.
-pub(crate) fn render_attribute_value(attr: &AttributeValue, language_filter: Option<&LanguageFilter>) -> Result<Value, RenderError> {
-    match attr {
-        AttributeValue::Single(attribute) => render_attribute(attribute, language_filter),
-        AttributeValue::Multiple(attributes) => attributes
-            .iter()
-            .map(|attribute| render_attribute(attribute, language_filter))
-            .collect::<Result<Vec<_>, _>>()
-            .map(Value::Array),
-        AttributeValue::NgsiLdNull => serialize_value(attr),
-    }
-}
-
-/// Render one attribute instance, negotiating a language map if it is one.
-fn render_attribute(attribute: &Attribute, language_filter: Option<&LanguageFilter>) -> Result<Value, RenderError> {
-    match attribute {
-        Attribute::LanguageProperty(language_property) => render_language_property(language_property, language_filter),
-        Attribute::Property(_)
-        | Attribute::Relationship(_)
-        | Attribute::VocabProperty(_)
-        | Attribute::GeoProperty(_)
-        | Attribute::JsonProperty(_)
-        | Attribute::ListProperty(_)
-        | Attribute::ListRelationship(_) => serialize_value(attribute),
-    }
-}
-
-/// Render a `LanguageProperty` as the `Property` clause 4.15 asks for.
-///
-/// With a `lang` filter present the answer is always a `Property`: the entry the
-/// filter selects, or — when nothing matches — any supported language, because
-/// clause 4.15 states the broker *shall* default to a supported language rather
-/// than return the raw language map. Only the empty language map, or the absence
-/// of a filter, leaves the property as itself.
-fn render_language_property(language_property: &LanguageProperty, language_filter: Option<&LanguageFilter>) -> Result<Value, RenderError> {
-    if let Some(filter) = language_filter
-        && let Some(entry) = negotiated_entry(language_property, filter)
-    {
-        return serialize_value(&NegotiatedProperty::from_language_property(language_property, entry));
-    }
-
-    // Clone required: Attribute's #[serde(tag = "type")] adds the "type" discriminant during serialization.
-    // Serializing LanguageProperty directly would omit the type tag.
-    serialize_value(&Attribute::LanguageProperty(language_property.clone()))
-}
 
 /// The language-map entry clause 4.15 answers a `LanguageProperty` with under
 /// a `lang` filter: the entry the filter selects by RFC 4647 basic filtering,
@@ -194,7 +146,11 @@ enum AvailableLanguageRange {
 ///
 /// Clause 4.15: the selected entry becomes the value, the tag it came from
 /// becomes a `lang` member, and everything else about the attribute survives.
-struct NegotiatedProperty<'a> {
+/// With a `lang` filter present the answer is always a `Property`: the entry the
+/// filter selects, or -- when nothing matches -- any supported language, because
+/// clause 4.15 states the broker *shall* default to a supported language rather
+/// than return the raw language map.
+pub(crate) struct NegotiatedProperty<'a> {
     #[serde(rename = "type")]
     /// Always `Property`: negotiation replaces the language map with one value.
     type_: AttributeType,
@@ -215,7 +171,7 @@ struct NegotiatedProperty<'a> {
 
 impl<'a> NegotiatedProperty<'a> {
     /// Build the answer from a language property and the entry chosen from it.
-    fn from_language_property(language_property: &'a LanguageProperty, entry: NegotiatedEntry<'a>) -> NegotiatedProperty<'a> {
+    pub(crate) fn from_language_property(language_property: &'a LanguageProperty, entry: NegotiatedEntry<'a>) -> NegotiatedProperty<'a> {
         NegotiatedProperty {
             type_: AttributeType::Property,
             value: entry.value,
@@ -229,14 +185,18 @@ impl<'a> NegotiatedProperty<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::language_negotiation::render_attribute_value;
+    use crate::language_negotiation::{NegotiatedProperty, negotiated_entry};
     use andromeda_http_headers::language::LanguageFilter;
-    use andromeda_ngsi_ld_model::attribute::instance::AttributeValue;
+    use andromeda_ngsi_ld_model::attribute::{instance::Attribute, language_property::LanguageProperty};
     use serde_json::{Value, json};
 
-    /// A `LanguageProperty` attribute value carrying `map` as its language map.
-    fn language_attr(map: &Value) -> AttributeValue {
-        serde_json::from_value(json!({"type": "LanguageProperty", "languageMap": map})).expect("a language property")
+    /// A `LanguageProperty` carrying `map` as its language map.
+    fn language_property(map: &Value) -> LanguageProperty {
+        let attribute: Attribute = serde_json::from_value(json!({"type": "LanguageProperty", "languageMap": map})).expect("a language property");
+        let Attribute::LanguageProperty(language_property) = attribute else {
+            panic!("a LanguageProperty reads as a LanguageProperty");
+        };
+        language_property
     }
 
     /// A language filter parsed from a `lang` value.
@@ -244,10 +204,16 @@ mod tests {
         LanguageFilter::parse(raw).expect("a valid language filter")
     }
 
+    /// The `Property` the property is answered as under `lang`.
+    fn negotiated(map: &Value, lang: &str) -> Value {
+        let language_property = language_property(map);
+        let entry = negotiated_entry(&language_property, &filter(lang)).expect("an entry is served");
+        serde_json::to_value(NegotiatedProperty::from_language_property(&language_property, entry)).expect("the property writes")
+    }
+
     #[test]
     fn a_matching_language_is_served_directly() {
-        let attr = language_attr(&json!({"fr": "Grand Place", "en": "Great Square"}));
-        let rendered = render_attribute_value(&attr, Some(&filter("en"))).expect("render");
+        let rendered = negotiated(&json!({"fr": "Grand Place", "en": "Great Square"}), "en");
         pretty_assertions::assert_eq!(rendered["type"], "Property");
         pretty_assertions::assert_eq!(rendered["value"], "Great Square");
         pretty_assertions::assert_eq!(rendered["lang"], "en");
@@ -257,8 +223,7 @@ mod tests {
     fn no_matching_language_defaults_to_a_supported_one() {
         // Clause 4.15: the broker shall default to any supported language rather
         // than return the raw language map. The first tagged entry is served.
-        let attr = language_attr(&json!({"fr": "Grand Place", "nl": "Grote Markt"}));
-        let rendered = render_attribute_value(&attr, Some(&filter("de"))).expect("render");
+        let rendered = negotiated(&json!({"fr": "Grand Place", "nl": "Grote Markt"}), "de");
         pretty_assertions::assert_eq!(rendered["type"], "Property");
         pretty_assertions::assert_eq!(rendered["value"], "Grand Place");
         pretty_assertions::assert_eq!(rendered["lang"], "fr");
@@ -268,8 +233,7 @@ mod tests {
     fn an_extended_range_prefix_matches_a_longer_tag() {
         // RFC 4647 basic filtering places no basic-range restriction, so `fr-CA`
         // matches the longer tag `fr-CA-1994`.
-        let attr = language_attr(&json!({"fr-CA-1994": "quebecois"}));
-        let rendered = render_attribute_value(&attr, Some(&filter("fr-CA"))).expect("render");
+        let rendered = negotiated(&json!({"fr-CA-1994": "quebecois"}), "fr-CA");
         pretty_assertions::assert_eq!(rendered["value"], "quebecois");
         pretty_assertions::assert_eq!(rendered["lang"], "fr-CA-1994");
     }
@@ -277,8 +241,7 @@ mod tests {
     #[test]
     fn no_match_defaults_to_the_none_entry_when_only_it_is_present() {
         // With no tagged entry, the `@none` default is the supported fallback.
-        let attr = language_attr(&json!({"@none": "untagged"}));
-        let rendered = render_attribute_value(&attr, Some(&filter("de"))).expect("render");
+        let rendered = negotiated(&json!({"@none": "untagged"}), "de");
         pretty_assertions::assert_eq!(rendered["value"], "untagged");
         pretty_assertions::assert_eq!(rendered["lang"], "@none");
     }

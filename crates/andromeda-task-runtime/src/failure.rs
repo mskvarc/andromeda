@@ -84,9 +84,9 @@ mod tests {
 
     #[test]
     fn a_failure_renders_and_chains_its_typed_cause() {
-        let failure = TaskFailure::permanent(RuntimeFailure::DuplicateStartupRegistration);
+        let failure = TaskFailure::permanent(RuntimeFailure::RunNowChannelClosed);
         assert_eq!(failure.class(), FailureClass::Permanent);
-        assert_eq!(failure.to_string(), "duplicate startup task registration");
+        assert_eq!(failure.to_string(), "scheduled run-now channel closed while task was active");
         assert!(failure.source().is_some(), "the typed cause is the source");
     }
 

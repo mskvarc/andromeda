@@ -1,7 +1,6 @@
 //! The invariants the distributed subscription side relies on.
 
 use andromeda_delivery::{endpoint::error::EndpointParseError, notification_body::NotificationWriteError};
-use andromeda_ngsi_ld_expansion::error::ExpansionError;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SubscriptionIdParseError;
 use andromeda_ngsi_ld_render::error::RenderError;
 use thiserror::Error;
@@ -22,11 +21,6 @@ pub enum ForwardingInvariant {
     /// Merging a present entity with its other parts produced nothing.
     #[error("merging a present entity with its other parts produced nothing")]
     MergeProducedNothing,
-    /// A re-assembled entity, every part of it already read under the local
-    /// subscription's context, could not be expanded under it again for the
-    /// local filters.
-    #[error("a re-assembled entity could not be expanded under the local context: {0}")]
-    LocalExpansion(#[source] ExpansionError),
     /// A re-assembled entity could not be rendered in the notification format.
     #[error("a re-assembled entity could not be rendered: {0}")]
     Rendering(#[source] RenderError),

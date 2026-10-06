@@ -303,13 +303,6 @@ pub enum QueryError {
     // -----------------------------------------------------------------------
     // Parameter values the query and projection languages above parse themselves (clauses 4.9 and 4.21)
     // -----------------------------------------------------------------------
-    /// An `id` value could not be parsed as a URI, or is one too long to be
-    /// an identifier.
-    #[error("invalid id value: {0}")]
-    ParamIdInvalid(#[source] IdentifierParseError),
-    /// An empty value appeared in a comma-separated id list.
-    #[error("invalid id: empty value in comma-separated list")]
-    ParamIdListEmpty,
     /// `timerel` and `timeAt` must both be present or both absent.
     #[error("timerel and timeAt must both be present or both absent")]
     ParamTimerelTimeatPair,

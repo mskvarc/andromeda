@@ -60,6 +60,7 @@ fn polygon_entity() -> Option<Entity> {
     let form = GeometryForm::Polygon(PolygonRings::new(vec![LinearRing::try_new(ring).ok()?]));
     let location = GeoProperty {
         value: GeoPropertyValue::Geometry(Geometry::new(form)),
+        unit_code: None,
         value_type: None,
         previous_value: None,
         common: CommonAttributeFields::default(),

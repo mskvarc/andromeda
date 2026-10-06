@@ -84,6 +84,27 @@ fn temporal_evolution() -> Value {
     }])
 }
 
+/// The instances of a reified Scope history (clause 4.5.6): one dated by
+/// `createdAt` and `modifiedAt`, then one ending the Scope with the NGSI-LD
+/// Null beside its `deletedAt`.
+pub(crate) fn scope_history_instances() -> Vec<Value> {
+    vec![
+        json!({
+            "@type": [core("Property")],
+            (core("hasValue")): [{"@value": "/Madrid/Gardens"}],
+            (core("observedAt")): date_time("2025-01-01T00:00:00Z"),
+            (core("createdAt")): date_time("2025-01-01T00:00:01Z"),
+            (core("modifiedAt")): date_time("2025-01-01T00:00:02Z")
+        }),
+        json!({
+            "@type": [core("Property")],
+            (core("hasValue")): [{"@value": "urn:ngsi-ld:null"}],
+            (core("observedAt")): date_time("2025-01-02T00:00:00Z"),
+            (core("deletedAt")): date_time("2025-01-02T00:00:00Z")
+        }),
+    ]
+}
+
 /// The deletions a merge fragment writes (clause 5.5.12).
 fn merge_deletions() -> Value {
     json!([{

@@ -4,7 +4,9 @@
 use crate::{
     context_cache::{CachedContext, ContextCache, ContextCacheError, StoredDocumentSource},
     loader::cache_lifetime::{CacheLifetime, ResidualLifetime},
+    test_documents::literal,
 };
+use andromeda_json_literal::JsonLiteral;
 use iri_rs::IriBuf;
 use serde_json::Value;
 use std::sync::RwLock;
@@ -13,18 +15,20 @@ use std::sync::RwLock;
 #[derive(Debug)]
 pub(crate) struct ReplaceableRow {
     /// The document the row holds now.
-    payload: RwLock<Value>,
+    payload: RwLock<JsonLiteral>,
 }
 
 impl ReplaceableRow {
     /// A row holding `payload`.
-    pub(crate) const fn new(payload: Value) -> ReplaceableRow {
-        ReplaceableRow { payload: RwLock::new(payload) }
+    pub(crate) fn new(payload: &Value) -> ReplaceableRow {
+        ReplaceableRow {
+            payload: RwLock::new(literal(payload)),
+        }
     }
 
     /// Replace the document the row holds.
-    pub(crate) fn replace(&self, payload: Value) {
-        *self.payload.write().expect("the row lock") = payload;
+    pub(crate) fn replace(&self, payload: &Value) {
+        *self.payload.write().expect("the row lock") = literal(payload);
     }
 }
 
@@ -39,7 +43,7 @@ impl ContextCache for ReplaceableRow {
         }))
     }
 
-    async fn put(&self, _url: &IriBuf, _document_url: &IriBuf, _payload: &Value, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
+    async fn put(&self, _url: &IriBuf, _document_url: &IriBuf, _payload: &JsonLiteral, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
         Ok(())
     }
 }

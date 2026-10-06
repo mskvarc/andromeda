@@ -18,11 +18,14 @@
 //! [`chain`]: `crate::topology::{self`, `BrokerRole}::chain`
 //! [`ContextSourceAdapter`]: `crate::context_source_adapter::ContextSourceAdapter`
 
+mod aggregated_temporal_sources;
 mod available_types_attrs;
 mod entity_map_query;
 mod entity_map_reuse;
 mod entity_map_temporal;
+mod federated_last_n_order;
 mod forward_binding;
+mod merge_temporal_values;
 mod query_entities;
 mod query_entities_filters;
 mod query_temporal;

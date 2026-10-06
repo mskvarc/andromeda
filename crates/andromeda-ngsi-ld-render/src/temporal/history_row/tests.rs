@@ -264,7 +264,7 @@ fn a_structured_property_renders_the_values_it_was_stored_as() {
 #[test]
 fn a_history_geometry_renders_the_expanded_geojson_node() {
     let polygon = json!({"type": "Polygon", "coordinates": [[[0.0, 0.0], [4.0, 0.0], [4.0, 4.0, 12.5], [0.0, 0.0]]]});
-    let geometry = Geometry::from_geojson_value(&polygon).expect("a polygon");
+    let geometry = serde_json::from_value::<Geometry>(polygon).expect("a polygon");
     let rendered = rendered(
         row_of(AttributeType::GeoProperty, TemporalValue::Geometry(GeometryValue::new(geometry.into_parts().0))),
         SysAttrsInclusion::Strip,
@@ -281,8 +281,8 @@ fn a_history_geometry_renders_the_expanded_geojson_node() {
     }]);
     let rendered_geometry = member(&rendered, AttributeType::GeoProperty.value_key_str()).expect("the geometry is rendered");
     pretty_assertions::assert_eq!(
-        Geometry::from_geojson_value(&compacted_geojson(rendered_geometry)).expect("the rendering reads back"),
-        Geometry::from_geojson_value(&compacted_geojson(&expected)).expect("the expected node reads back"),
+        serde_json::from_value::<Geometry>(compacted_geojson(rendered_geometry)).expect("the rendering reads back"),
+        serde_json::from_value::<Geometry>(compacted_geojson(&expected)).expect("the expected node reads back"),
     );
 }
 

@@ -30,7 +30,6 @@ use andromeda_postgresql_encoding::copy::{
     write_bytea_opt,
     write_field_count,
     write_header,
-    write_jsonb,
     write_jsonb_text,
     write_text,
     write_timestamptz_opt,
@@ -192,7 +191,8 @@ fn encode_entities_copy_stream(columns: &PreparedEntityColumns) -> Result<Vec<u8
         write_text(&mut buf, columns.attribute_name_keys[index].as_str())?;
         write_text(&mut buf, columns.attribute_instance_name_keys[index].as_str())?;
         write_text(&mut buf, columns.attribute_instance_kinds[index].as_str())?;
-        write_jsonb(&mut buf, &columns.scope_paths_json[index])?;
+        let scope_paths = serde_json::to_string(&columns.scope_paths_json[index]).map_err(ContextStoreError::PayloadEncoding)?;
+        write_jsonb_text(&mut buf, &scope_paths)?;
         write_jsonb_text(&mut buf, &columns.payload_json[index])?;
         write_bytea_opt(&mut buf, columns.locations[index].written()?)?;
         write_bytea_opt(&mut buf, columns.obs_spaces[index].written()?)?;
@@ -217,6 +217,7 @@ mod tests {
         census::delta::{CensusChange, CensusStatements},
         copy::{COPY_INTO_STAGE_SQL, CREATE_STAGE_ENTITIES_SQL, STAGE_ENTITIES_FIELD_COUNT, encode_entities_copy_stream, insert_from_stage_sql},
         params::PreparedEntityColumns,
+        scope_label_paths::ScopeLabelPaths,
         staged_geometry::StagedGeometry,
         write::staging::Srch,
     };
@@ -266,11 +267,11 @@ mod tests {
             (AttributeNameKey::from(3), AttributeKind::Property),
         ]);
         columns.push_attribute_instances(Vec::new());
-        columns.scope_paths_json.push(serde_json::json!(["root.a"]));
-        columns.scope_paths_json.push(serde_json::json!([]));
+        columns.scope_paths_json.push(ScopeLabelPaths::new(vec!["root.a".to_owned()]));
+        columns.scope_paths_json.push(ScopeLabelPaths::new(Vec::new()));
         columns.push_payload(&building("urn:ngsi-ld:Building:1")).expect("the state encodes");
         columns.push_payload(&building("urn:ngsi-ld:Building:2")).expect("the state encodes");
-        let point = Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses");
+        let point = serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses");
         columns
             .push_geometries(
                 StagedGeometry::Written(Some(point.form())),

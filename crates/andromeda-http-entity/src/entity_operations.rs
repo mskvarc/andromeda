@@ -33,11 +33,11 @@ use andromeda_http_response::{
     entity_failure::classify_entity_error,
     problem_response::ProblemResponse,
     render::start_rendering_partial_success,
+    rendered_response::RenderedResponse,
 };
 use andromeda_ngsi_ld_entity::operation::selection::OverwritePolicy;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
-use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{
     entity_operations::{UpdateParams, UpsertParams},
     options::{OverwritePolicy as RequestOverwritePolicy, UpsertMode},
@@ -70,11 +70,7 @@ const fn async_preference(prefer: PreferHeader) -> AsyncPreference {
 /// context present", so it carries no JSON-LD context, in the body or in a
 /// `Link` header.
 fn multi_status_response(result: &BatchOperationResult, uri: &HttpUri, placement: SideEffectPlacement<'_>) -> Result<Response, ProblemResponse> {
-    let value = serde_json::to_value(result).with_entity_instance(uri)?;
-    let rendered = start_rendering_partial_success()
-        .with_payload(ResponsePayload::Batch(value))
-        .render()
-        .with_entity_instance(uri)?;
+    let rendered = RenderedResponse::resource(start_rendering_partial_success().with_body(result)).with_entity_instance(uri)?;
     Ok(apply_preference_applied(
         NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response(),
         placement,
@@ -91,14 +87,11 @@ async fn created_response(
     uri: &HttpUri,
     placement: SideEffectPlacement<'_>,
 ) -> Result<Response, ProblemResponse> {
-    let value = serde_json::to_value(created).with_entity_instance(uri)?;
-    let rendered = response_context
+    let configured = response_context
         .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
         .await
-        .with_entity_instance(uri)?
-        .with_payload(ResponsePayload::Batch(value))
-        .render()
         .with_entity_instance(uri)?;
+    let rendered = RenderedResponse::resource(configured.with_context_free_body(&created)).with_entity_instance(uri)?;
     Ok(apply_preference_applied(
         NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response(),
         placement,

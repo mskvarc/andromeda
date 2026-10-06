@@ -21,7 +21,7 @@ use crate::{
     expanded_item::ExpandedItem,
     reserved_terms::reserved,
     undecidable::Undecidable,
-    walk::{GeometryOutput, Walk, member_term},
+    walk::{Walk, member_term},
 };
 use andromeda_ngsi_ld_entity::{geometry_value::GeometryValue, value_mode::Stored};
 use andromeda_ngsi_ld_geometry::{
@@ -54,7 +54,7 @@ impl Walk<'_> {
         let mut result = CompactedObject::new();
         self.write_identity(&mut result, None, from_ref(reserved().geometry_type(form.geometry_type())))?;
         let Some(members) = value.members() else {
-            if self.geometries == GeometryOutput::Typed && reads_as_geometry(&result, form) {
+            if reads_as_geometry(&result, form) {
                 return Ok(Compacted::Geometry(form));
             }
             result.insert(compact_properties::COORDINATES, self.coordinates(form)?);
@@ -160,7 +160,7 @@ impl Walk<'_> {
     /// compacted under `key` as the number value object it is stored as.
     fn ordinate<'a>(&self, ordinate: f64, key: &str) -> Result<Compacted<'a>, Undecidable> {
         let text = canonical_float_text(ordinate).map_err(|_| Undecidable::UnrepresentableValue)?;
-        let number = NumberBuf::from(serde_json::Number::from_string_unchecked(text));
+        let number: NumberBuf = text.parse().map_err(|_| Undecidable::UnrepresentableValue)?;
         self.terms.value(&Value::Literal(Literal::Number(number), None::<IriBuf>), key)
     }
 }

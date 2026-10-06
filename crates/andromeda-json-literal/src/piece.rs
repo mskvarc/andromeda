@@ -7,7 +7,11 @@
 
 use crate::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_number::JsonNumber;
-use serde::de::{Deserialize, Deserializer, Error as DeserializeError, MapAccess, Visitor};
+use serde::{
+    Serialize,
+    Serializer,
+    de::{Deserialize, Deserializer, Error as DeserializeError, MapAccess, Visitor},
+};
 use serde_json::value::RawValue;
 use std::{borrow::Cow, fmt, str::FromStr};
 
@@ -44,6 +48,12 @@ impl<'a> JsonPiece<'a> {
     #[must_use]
     pub fn text(self) -> &'a str {
         self.0.get()
+    }
+
+    /// The raw JSON value the piece reads.
+    #[must_use]
+    pub const fn raw(self) -> &'a RawValue {
+        self.0
     }
 
     /// What kind of value the piece is, told by its first character.
@@ -158,6 +168,14 @@ impl<'a> JsonPiece<'a> {
     /// range, or nesting deeper than the reader accepts.
     pub fn to_literal(self) -> Result<JsonLiteral, JsonLiteralError> {
         JsonLiteral::admit_raw(self.0)
+    }
+}
+
+// Hand-written: a piece is written as the JSON text it is, which no derive
+// over a borrowed slice expresses.
+impl Serialize for JsonPiece<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
     }
 }
 

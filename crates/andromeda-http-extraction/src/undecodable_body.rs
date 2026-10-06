@@ -6,13 +6,17 @@
 //! identifier may occupy", leaving the client to find the member itself. A
 //! body that failed to decode is therefore decoded once more, on that failure
 //! path alone, by a deserializer that tracks the member it is in, so the
-//! refusal names it.
+//! refusal names it. The second decoding reads the text itself, never a JSON
+//! tree built from it.
 
-use crate::admitted_document::admitted_document;
 use serde::de::DeserializeOwned;
-use serde_json::Value;
+use serde_json::{Deserializer as JsonReader, value::RawValue};
 use serde_path_to_error::Path;
+use std::collections::BTreeMap;
 use thiserror::Error;
+
+/// The member a JSON-LD document names its context in.
+const CONTEXT_MEMBER: &str = "@context";
 
 /// Why a request body does not decode, and where in it the decoding failed.
 #[derive(Debug, Error)]
@@ -36,14 +40,17 @@ pub enum UndecodableBody {
 }
 
 impl UndecodableBody {
-    /// The failure decoding `document` as a `T` ended in with `source`,
-    /// naming the member it failed at.
+    /// The failure decoding the admitted body `text` as a `T` ended in with
+    /// `source`, naming the member it failed at.
     ///
     /// Called only once a decoding has failed. The retracing decode reads the
-    /// same `Value` the failed one read, so it fails at the same member.
+    /// text the failed one read, without its top-level `@context` member, which
+    /// no decoding reads, so it fails at the same member.
     #[must_use]
-    pub fn of<T: DeserializeOwned>(document: &Value, source: serde_json::Error) -> UndecodableBody {
-        match serde_path_to_error::deserialize::<&Value, T>(document) {
+    pub fn of_text<T: DeserializeOwned>(text: &[u8], source: serde_json::Error) -> UndecodableBody {
+        let context_free = without_context(text);
+        let mut reader = JsonReader::from_slice(context_free.as_deref().unwrap_or(text));
+        match serde_path_to_error::deserialize::<_, T>(&mut reader) {
             Err(retraced) if retraced.path().iter().next().is_some() => UndecodableBody::Member {
                 member: retraced.path().clone(),
                 source,
@@ -51,38 +58,34 @@ impl UndecodableBody {
             Err(_) | Ok(_) => UndecodableBody::Document { source },
         }
     }
+}
 
-    /// The failure decoding the admitted body `text` as a `T` ended in with
-    /// `source`, naming the member it failed at.
-    ///
-    /// Called only once a decoding has failed: the body is parsed into the
-    /// tree an admitted body stands for, whose members the retracing decode
-    /// reads as the failed decoding read them.
-    #[must_use]
-    pub fn of_text<T: DeserializeOwned>(text: &[u8], source: serde_json::Error) -> UndecodableBody {
-        match admitted_document(text) {
-            Ok(document) => UndecodableBody::of::<T>(&document, source),
-            Err(_unreadable) => UndecodableBody::Document { source },
-        }
-    }
+/// The object `text` is, written again without its top-level `@context`
+/// member, when it has one.
+///
+/// Its other members are carried as the slices of text they are, so nothing of
+/// the body is built; their order is not kept, which no failing path depends on.
+fn without_context(text: &[u8]) -> Option<Vec<u8>> {
+    let mut members: BTreeMap<String, &RawValue> = serde_json::from_slice(text).ok()?;
+    members.remove(CONTEXT_MEMBER)?;
+    serde_json::to_vec(&members).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use crate::undecodable_body::UndecodableBody;
     use serde::de::DeserializeOwned;
-    use serde_json::{Value, json};
     use std::{collections::HashMap, fmt::Debug};
 
-    /// Decode `document` as a `T` and classify the failure.
-    fn undecodable<T: DeserializeOwned + Debug>(document: &Value) -> UndecodableBody {
-        let source = T::deserialize(document).expect_err("the fixture must not decode");
-        UndecodableBody::of::<T>(document, source)
+    /// Decode `text` as a `T` and classify the failure.
+    fn undecodable<T: DeserializeOwned + Debug>(text: &str) -> UndecodableBody {
+        let source = serde_json::from_str::<T>(text).expect_err("the fixture must not decode");
+        UndecodableBody::of_text::<T>(text.as_bytes(), source)
     }
 
     #[test]
     fn a_failing_top_level_member_is_named() {
-        let error = undecodable::<HashMap<String, u16>>(&json!({"id": "not a number"}));
+        let error = undecodable::<HashMap<String, u16>>(r#"{"id": "not a number"}"#);
         assert!(
             matches!(&error, UndecodableBody::Member { member, .. } if member.to_string() == "id"),
             "{error:?}"
@@ -92,7 +95,7 @@ mod tests {
 
     #[test]
     fn a_failing_nested_member_is_named_by_its_path() {
-        let error = undecodable::<HashMap<String, HashMap<String, u16>>>(&json!({"endpoint": {"port": "x"}}));
+        let error = undecodable::<HashMap<String, HashMap<String, u16>>>(r#"{"endpoint": {"port": "x"}}"#);
         assert!(
             matches!(&error, UndecodableBody::Member { member, .. } if member.to_string() == "endpoint.port"),
             "{error:?}"
@@ -101,8 +104,28 @@ mod tests {
 
     #[test]
     fn a_document_of_the_wrong_shape_names_no_member() {
-        let error = undecodable::<HashMap<String, u16>>(&json!([1, 2]));
+        let error = undecodable::<HashMap<String, u16>>("[1, 2]");
         assert!(matches!(error, UndecodableBody::Document { .. }), "{error:?}");
         assert!(error.to_string().starts_with("the request body does not decode: "), "{error}");
+    }
+
+    /// The `@context` a body names is no member of the resource, so a failure
+    /// elsewhere is named even when the type refuses unknown members.
+    #[test]
+    fn a_failing_member_is_named_beside_the_context_the_body_carries() {
+        #[derive(Debug, serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Strict {
+            #[serde(rename = "id")]
+            _id: u16,
+        }
+
+        let text = r#"{"@context": "https://example.org/a", "id": "x"}"#;
+        let source = serde_json::from_str::<u16>("\"x\"").expect_err("a string is no number");
+        let error = UndecodableBody::of_text::<Strict>(text.as_bytes(), source);
+        assert!(
+            matches!(&error, UndecodableBody::Member { member, .. } if member.to_string() == "id"),
+            "{error:?}"
+        );
     }
 }

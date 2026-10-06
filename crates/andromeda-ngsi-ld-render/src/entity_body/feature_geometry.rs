@@ -21,6 +21,7 @@ use crate::{
     geometry_selection::{GeometrySelection, selects},
     version::fallback::InstanceMember,
 };
+use andromeda_json_literal::piece::JsonPiece;
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry};
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
 use andromeda_ngsi_ld_model::attribute::{
@@ -33,7 +34,7 @@ use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, compact_to_expanded};
 use geojson::Geometry as GeoJsonGeometry;
 use serde::{Serialize, Serializer};
-use serde_json::Map;
+use serde_json::value::to_raw_value;
 
 /// The geometry a Feature carries.
 #[derive(Debug)]
@@ -98,7 +99,7 @@ pub(crate) fn feature_geometry<'a>(entity: &TypedEntity<'a>, selection: Geometry
             Ok(kept_instance(&instances, |instance| instance.common.dataset_id.as_ref()).map_or(FeatureGeometry::Undefined, |instance| typed(&instance.value)))
         }
         Some(PlainGeoProperties::Several(instances)) => Ok(selected_instance(&instances, layout, selection.dataset_ids())),
-        None => rendered_member_geometry(entity, member, named, selection),
+        None => rendered_member_geometry(entity, member, selection),
     }
 }
 
@@ -204,14 +205,11 @@ const fn typed(value: &GeoPropertyValue) -> FeatureGeometry<'_> {
 fn rendered_member_geometry<'a>(
     entity: &TypedEntity<'a>,
     member: &'a AttributeValue,
-    named: &str,
     selection: GeometrySelection<'_>,
 ) -> Result<FeatureGeometry<'a>, serde_json::Error> {
-    let rendered = serde_json::to_value(entity.attribute_member(member))?;
-    let mut alone = Map::with_capacity(1);
-    alone.insert(named.to_owned(), rendered);
+    let rendered = to_raw_value(&entity.attribute_member(member))?;
     Ok(selection
-        .geometry(&alone)
-        .and_then(|geometry| serde_json::from_value(geometry).ok())
+        .geometry(JsonPiece::new(&rendered))
+        .and_then(|geometry| serde_json::from_str::<GeoJsonGeometry>(geometry.text()).ok())
         .map_or(FeatureGeometry::Undefined, FeatureGeometry::Written))
 }

@@ -7,15 +7,15 @@
 //! and the hits that accrued meanwhile — is held here until it lands.
 
 use crate::loader::cache_lifetime::CacheLifetime;
+use andromeda_json_literal::JsonLiteral;
 use iri_rs::IriBuf;
-use serde_json::Value;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// State retained while an in-process context awaits durable persistence.
 #[derive(Debug)]
 pub(crate) struct PendingPersistence {
     /// Valid remote payload served while persistence is pending.
-    pub(crate) payload: Value,
+    pub(crate) payload: JsonLiteral,
     /// The URL the payload was finally read from, replayed on the retried
     /// write so the stored row resolves its references as the download did.
     pub(crate) document_url: IriBuf,
@@ -32,7 +32,7 @@ pub(crate) struct PendingPersistence {
 
 impl PendingPersistence {
     /// The state a failed durable write leaves behind.
-    pub(crate) const fn owed(payload: Value, document_url: IriBuf, lifetime: CacheLifetime) -> PendingPersistence {
+    pub(crate) const fn owed(payload: JsonLiteral, document_url: IriBuf, lifetime: CacheLifetime) -> PendingPersistence {
         PendingPersistence {
             payload,
             document_url,
@@ -62,8 +62,8 @@ mod tests {
         cache_lifetime::CacheLifetime,
         pending_persistence::{PendingPersistence, PersistenceRetryLease},
     };
+    use andromeda_json_literal::JsonLiteral;
     use iri_rs::IriBuf;
-    use serde_json::Value;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
@@ -78,7 +78,7 @@ mod tests {
     fn owed_persistence_starts_with_no_hits_and_no_durability() {
         let lifetime = CacheLifetime::from_seconds(30).expect("thirty seconds is a positive lifetime");
         let document_url = IriBuf::new("https://example.com/final.jsonld".to_owned()).expect("a valid IRI");
-        let pending = PendingPersistence::owed(Value::Null, document_url.clone(), lifetime); // clone: the expectation compares against it
+        let pending = PendingPersistence::owed(JsonLiteral::null(), document_url.clone(), lifetime); // clone: the expectation compares against it
 
         pretty_assertions::assert_eq!(pending.hits.load(Ordering::Relaxed), 0);
         assert!(!pending.durable.load(Ordering::Acquire));

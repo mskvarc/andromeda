@@ -41,6 +41,7 @@ pub mod bounding_box;
 pub mod compact_geojson;
 pub mod coordinate_path;
 mod coordinate_tape;
+pub mod coordinates_member;
 pub mod dimension;
 pub mod foreign_members;
 pub mod form;
@@ -63,6 +64,7 @@ pub mod planar;
 pub mod position;
 pub mod positive_distance;
 pub mod proximity;
+pub mod query_coordinates;
 pub mod relation;
 pub mod written_geometry;
 

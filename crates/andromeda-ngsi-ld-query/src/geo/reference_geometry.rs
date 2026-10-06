@@ -12,11 +12,14 @@
 
 use crate::{error::QueryError, geo::reference_budget::admit_reference_geometry};
 use andromeda_ngsi_ld_geometry::{
+    coordinates_member::CoordinatesMember,
     geometry::Geometry,
     geometry_census::{GeometryCensusError, GeometryCensusLimits, text_coordinates_census},
     geometry_type::GeometryType,
+    query_coordinates::WrittenCoordinates,
 };
-use serde_json::Value;
+use serde::Serialize;
+use std::borrow::Cow;
 
 /// A geo-query's reference geometry, read or still encoded.
 #[derive(Debug, Clone, PartialEq)]
@@ -57,42 +60,64 @@ impl ReferenceGeometry {
                     GeometryCensusError::OverLimit(over) => QueryError::ReferenceGeometryTooComplex { over },
                     GeometryCensusError::Syntax(source) => QueryError::GeoCoordinatesInvalid(source),
                 })?;
-                let parsed = serde_json::from_str::<Value>(coordinates).map_err(QueryError::GeoCoordinatesInvalid)?;
-                Ok(Geometry::from_type_and_coordinates(*geometry_type, parsed)?)
+                let written = WrittenCoordinates::from_text(coordinates).map_err(QueryError::GeoCoordinatesInvalid)?;
+                Ok(written.read_as(*geometry_type)?)
             }
         }
     }
 
-    /// The geometry type and the coordinates as Table 5.2.13-1 writes them:
-    /// a read geometry's coordinates as JSON, an encoded one's as the string
-    /// it arrived as.
+    /// The `GeoJSON` geometry type of the reference geometry.
+    #[must_use]
+    pub const fn geometry_type(&self) -> GeometryType {
+        match self {
+            ReferenceGeometry::Read(geometry) => geometry.form().geometry_type(),
+            ReferenceGeometry::Encoded { geometry_type, .. } => *geometry_type,
+        }
+    }
+
+    /// The coordinates member as Table 5.2.13-1 writes it: a read geometry's
+    /// coordinates as JSON, an encoded one's as the string it arrived as.
+    #[must_use]
+    pub const fn coordinates_member(&self) -> ReferenceCoordinates<'_> {
+        match self {
+            ReferenceGeometry::Read(geometry) => ReferenceCoordinates::Read(CoordinatesMember::new(geometry)),
+            ReferenceGeometry::Encoded { coordinates, .. } => ReferenceCoordinates::Encoded(coordinates.as_str()),
+        }
+    }
+
+    /// The coordinates as the JSON text a query parameter carries: the text an
+    /// encoded geometry arrived as, or a read geometry's coordinates written
+    /// out.
     ///
     /// # Errors
     ///
-    /// Returns the `serde_json` failure of rendering a read geometry, which
-    /// is a broken invariant of its own serialisation.
-    pub fn wire_members(&self) -> Result<(GeometryType, Value), serde_json::Error> {
+    /// Returns the `serde_json` failure of writing a read geometry, which is a
+    /// broken invariant of its own serialisation.
+    pub fn coordinates_text(&self) -> Result<Cow<'_, str>, serde_json::Error> {
         match self {
-            ReferenceGeometry::Read(geometry) => {
-                let geometry_type = geometry.form().geometry_type();
-                let Value::Object(mut members) = geometry.to_geojson_value()? else {
-                    return Ok((geometry_type, Value::Null));
-                };
-                Ok((geometry_type, members.remove("coordinates").unwrap_or(Value::Null)))
-            }
-            // clone: the wire member owns its text apart from the held request
-            ReferenceGeometry::Encoded { geometry_type, coordinates } => Ok((*geometry_type, Value::String(coordinates.clone()))),
+            ReferenceGeometry::Read(geometry) => serde_json::to_string(&CoordinatesMember::new(geometry)).map(Cow::Owned),
+            ReferenceGeometry::Encoded { coordinates, .. } => Ok(Cow::Borrowed(coordinates.as_str())),
         }
     }
+}
+
+/// The coordinates member of a geo-query as it serializes (Table 5.2.13-1).
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(untagged)]
+pub enum ReferenceCoordinates<'a> {
+    /// Coordinates encoded as a string, written as the string they arrived as.
+    Encoded(&'a str),
+    /// Coordinates read from JSON, written as nested position arrays.
+    Read(CoordinatesMember<'a>),
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{error::QueryError, geo::reference_geometry::ReferenceGeometry};
     use andromeda_ngsi_ld_geometry::{
-        geometry::Geometry,
         geometry_census::{GeometryCensusLimits, GeometryOverLimit, GeometryPositionLimit},
         geometry_type::GeometryType,
+        query_coordinates::WrittenCoordinates,
     };
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use serde_json::{Value, json};
@@ -124,7 +149,10 @@ mod tests {
     #[test]
     fn encoded_coordinates_within_the_limits_read_as_the_geometry_they_encode() {
         let admitted = encoded(&line(4).to_string()).admit(limits(4)).expect("four positions are within four");
-        let read = Geometry::from_type_and_coordinates(GeometryType::LineString, line(4)).expect("a line");
+        let read = WrittenCoordinates::from_text(&line(4).to_string())
+            .expect("valid JSON")
+            .read_as(GeometryType::LineString)
+            .expect("a line");
         pretty_assertions::assert_eq!(admitted, read);
     }
 
@@ -165,7 +193,12 @@ mod tests {
 
     #[test]
     fn a_read_geometry_is_admitted_by_its_positions() {
-        let read = ReferenceGeometry::Read(Geometry::from_type_and_coordinates(GeometryType::LineString, line(5)).expect("a line"));
+        let read = ReferenceGeometry::Read(
+            WrittenCoordinates::from_text(&line(5).to_string())
+                .expect("valid JSON")
+                .read_as(GeometryType::LineString)
+                .expect("a line"),
+        );
         assert!(read.admit(limits(5)).is_ok());
         assert!(matches!(read.admit(limits(4)), Err(QueryError::ReferenceGeometryTooComplex { .. })));
     }
@@ -174,8 +207,21 @@ mod tests {
     #[test]
     fn the_wire_members_keep_the_form_the_coordinates_arrived_in() {
         let text = line(2).to_string();
-        pretty_assertions::assert_eq!(encoded(&text).wire_members().expect("renders"), (GeometryType::LineString, Value::String(text)));
-        let read = ReferenceGeometry::Read(Geometry::from_type_and_coordinates(GeometryType::Point, json!([1.0, 2.0])).expect("a point"));
-        pretty_assertions::assert_eq!(read.wire_members().expect("renders"), (GeometryType::Point, json!([1.0, 2.0])));
+        let encoded = encoded(&text);
+        pretty_assertions::assert_eq!(encoded.geometry_type(), GeometryType::LineString);
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(encoded.coordinates_member()).expect("renders"),
+            Value::String(text.clone())
+        );
+        pretty_assertions::assert_eq!(encoded.coordinates_text().expect("renders"), text);
+        let read = ReferenceGeometry::Read(
+            WrittenCoordinates::from_text("[1.0, 2.0]")
+                .expect("valid JSON")
+                .read_as(GeometryType::Point)
+                .expect("a point"),
+        );
+        pretty_assertions::assert_eq!(read.geometry_type(), GeometryType::Point);
+        pretty_assertions::assert_eq!(serde_json::to_value(read.coordinates_member()).expect("renders"), json!([1.0, 2.0]));
+        pretty_assertions::assert_eq!(read.coordinates_text().expect("renders"), "[1.0,2.0]");
     }
 }

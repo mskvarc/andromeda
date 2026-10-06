@@ -16,45 +16,50 @@ use crate::{
     error::SubscriptionForwardingError,
     forwarder::{ForwardDecision, decide},
     minted_subscription_id::mint_subscription_id,
+    receiver::ReceiverEndpoint,
     service::SubscriptionForwardingService,
 };
 use andromeda_federation::subscription::SubscriptionForward;
 use andromeda_jsonld::{context_spec::ContextSpec, user_context_admission::AdmittedContext};
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
-use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::ContextSourceRegistration, subscription::Subscription};
+use andromeda_ngsi_ld_model::{
+    clearable::Clearable,
+    notification::CsrTriggerReason,
+    notification_request::NotificationRequest,
+    registration::ContextSourceRegistration,
+    subscription::{Subscription, SubscriptionType},
+    subscription_request::SubscriptionRequest,
+};
 use andromeda_subscription::{
     compilation::compile_csource_subscription,
     compiled::CompiledCsrSubscription,
     csource_matching::csource_subscription_selects_registration,
+    deleted_members::DeletedMembers,
     error::SubscriptionError,
     forwarding_hook::{ForwardedCopy, SubscriptionForwardingHook, SubscriptionTeardown},
     subscription_context::SubscriptionContext,
     subscription_invariant::SubscriptionInvariant,
 };
 use futures::{TryFutureExt, future::BoxFuture};
-use serde_json::{Map, Value, json};
 use tracing::{debug, warn};
 
-/// The companion document mirroring `subscription` (clause 5.11.2): the same
+/// The companion request mirroring `subscription` (clause 5.11.2): the same
 /// entity selectors, watched attributes and notified attributes, matched
 /// against registrations rather than entities, notifying this broker.
-fn companion_document(subscription: &Subscription, minted: &Identifier, receiver: &url::Url) -> Value {
-    let mut document = Map::new();
-    document.insert("id".to_string(), json!(minted));
-    document.insert("type".to_string(), json!("Subscription"));
-    if let Some(entities) = &subscription.selection.entities {
-        document.insert("entities".to_string(), json!(entities));
+///
+/// It names neither an identifier nor a type, so it is an update fragment as
+/// it stands; a create adds both.
+fn companion_request(subscription: &Subscription, receiver: &ReceiverEndpoint) -> SubscriptionRequest {
+    SubscriptionRequest {
+        entities: Clearable::from_option(subscription.selection.entities.clone()), // clone: the companion owns the selectors it mirrors
+        watched_attributes: Clearable::from_option(subscription.selection.watched_attributes.clone()), // clone: the companion owns the names it mirrors
+        notification: Some(NotificationRequest {
+            attributes: subscription.notification.attributes.clone(), // clone: the companion owns the names it mirrors
+            endpoint: Some(receiver.notification_endpoint()),
+            ..NotificationRequest::default()
+        }),
+        ..SubscriptionRequest::default()
     }
-    if let Some(watched) = &subscription.selection.watched_attributes {
-        document.insert("watchedAttributes".to_string(), json!(watched));
-    }
-    let mut notification = Map::new();
-    if let Some(attributes) = &subscription.notification.attributes {
-        notification.insert("attributes".to_string(), json!(attributes));
-    }
-    notification.insert("endpoint".to_string(), json!({"uri": receiver, "accept": "application/json"}));
-    document.insert("notification".to_string(), Value::Object(notification));
-    Value::Object(document)
 }
 
 /// Registrations read per round trip while the copies of a new subscription
@@ -92,13 +97,16 @@ impl SubscriptionForwardingService {
         context: &ContextSpec,
         encountered_sources: &[ContextSourcePseudonym],
     ) -> Result<Identifier, SubscriptionForwardingError> {
-        let minted = mint_subscription_id()?;
-        let document = companion_document(subscription, &minted, self.receiver.url());
+        let request = SubscriptionRequest {
+            id: Some(mint_subscription_id()?),
+            type_: Some(SubscriptionType),
+            ..companion_request(subscription, &self.receiver)
+        };
         // The companion is a local resource; its own creation passes through no
         // context source, so it carries no `Via` chain of its own.
         let companion = self
             .csource_subscriptions
-            .create(&self.live_target, document, SubscriptionContext::CoreOnly, &[])
+            .create(&self.live_target, request, SubscriptionContext::CoreOnly, &[])
             .await?;
         self.place_initial_copies(subscription, &companion, context, encountered_sources).await?;
         self.mappings.link_companion(&subscription.id, &companion).await?;
@@ -153,7 +161,8 @@ impl SubscriptionForwardingService {
                     continue;
                 }
                 let decision = decide(CsrTriggerReason::NewlyMatching, registration.access.mode.unwrap_or_default(), None);
-                self.apply_forward_decision(subscription, &registration, decision, context).await?;
+                self.apply_forward_decision(subscription, &registration, decision, &DeletedMembers::default(), context)
+                    .await?;
             }
             if exhausted {
                 return Ok(());
@@ -250,20 +259,20 @@ impl SubscriptionForwardingService {
 
     /// Follow an update of `subscription` on its companion and on every
     /// forwarded copy (clause 5.8.2.4).
-    async fn follow_update(&self, subscription: &Subscription, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
+    async fn follow_update(&self, subscription: &Subscription, deleted: &DeletedMembers, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
         if is_local_only(subscription) {
             let teardown = self.teardown_of(&subscription.id).await?;
             self.tear_down(&subscription.id, &teardown, CopyMappings::StillRecorded).await;
             return Ok(());
         }
         let companion = if let Some(companion) = self.mappings.companion_of(&subscription.id).await? {
-            let mut fragment = companion_document(subscription, &companion, self.receiver.url());
-            if let Some(object) = fragment.as_object_mut() {
-                object.remove("id");
-                object.remove("type");
-            }
             self.csource_subscriptions
-                .update(&self.live_target, &companion, fragment, &AdmittedContext::core_only())
+                .update(
+                    &self.live_target,
+                    &companion,
+                    companion_request(subscription, &self.receiver),
+                    &AdmittedContext::core_only(),
+                )
                 .await?;
             companion
         } else {
@@ -277,7 +286,7 @@ impl SubscriptionForwardingService {
         for copy in self.mappings.forwarded_of(&subscription.id).await? {
             if let Some(registration) = self.federation_registration(&copy.registration).await? {
                 let decision = Self::decision_after_update(&compiled, &registration, &copy);
-                self.apply_forward_decision(subscription, &registration, decision, context).await?;
+                self.apply_forward_decision(subscription, &registration, decision, deleted, context).await?;
             }
         }
         Ok(())
@@ -309,20 +318,22 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
         })
     }
 
-    fn updated<'life0, 'life1, 'life2, 'async_trait>(
+    fn updated<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
         subscription: &'life1 Subscription,
-        context: &'life2 ContextSpec,
+        deleted: &'life2 DeletedMembers,
+        context: &'life3 ContextSpec,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
+        'life3: 'async_trait,
         Self: 'async_trait,
     {
         // The update future is large, so it is boxed as it stands rather than
         // moved into a wrapping async block.
-        Box::pin(self.follow_update(subscription, context).map_err(into_subscription_error))
+        Box::pin(self.follow_update(subscription, deleted, context).map_err(into_subscription_error))
     }
 
     fn teardown_of<'life0, 'life1, 'async_trait>(
@@ -379,8 +390,12 @@ fn into_subscription_error(error: SubscriptionForwardingError) -> SubscriptionEr
 
 #[cfg(test)]
 mod tests {
-    use crate::{companion::companion_document, forwarder::ForwardDecision, service::SubscriptionForwardingService};
-    use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::Subscription};
+    use crate::{companion::companion_request, forwarder::ForwardDecision, receiver::ReceiverEndpoint, service::SubscriptionForwardingService};
+    use andromeda_ngsi_ld_model::{
+        registration::ContextSourceRegistration,
+        subscription::{Subscription, SubscriptionType},
+        subscription_request::SubscriptionRequest,
+    };
     use andromeda_subscription::{compilation::compile_csource_subscription, forwarding_hook::ForwardedCopy};
     use serde_json::json;
     use url::Url;
@@ -456,11 +471,15 @@ mod tests {
             "modifiedAt": "2024-01-01T00:00:00Z"
         }))
         .expect("valid subscription");
-        let minted = "urn:ngsi-ld:Subscription:forwarded-1".parse().expect("valid URI");
-        let receiver = Url::parse("http://broker-a:1056/ngsi-ld/v1/notifications").expect("valid URL");
-        let document = companion_document(&subscription, &minted, &receiver);
+        let receiver = ReceiverEndpoint::from_advertised(&Url::parse("http://broker-a:1056").expect("valid URL")).expect("receiver");
+        // A create adds the identifier and the type to the companion request.
+        let request = SubscriptionRequest {
+            id: Some("urn:ngsi-ld:Subscription:forwarded-1".parse().expect("valid URI")),
+            type_: Some(SubscriptionType),
+            ..companion_request(&subscription, &receiver)
+        };
         pretty_assertions::assert_eq!(
-            document,
+            serde_json::to_value(&request).expect("the request writes"),
             json!({
                 "id": "urn:ngsi-ld:Subscription:forwarded-1",
                 "type": "Subscription",

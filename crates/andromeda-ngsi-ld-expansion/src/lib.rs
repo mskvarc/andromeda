@@ -29,6 +29,8 @@ pub mod error;
 mod expanded_tree;
 pub mod normalization;
 pub mod processor_decoding;
+mod processor_request;
+pub mod received_state;
 mod term_scope;
 pub mod typed_expander;
 pub mod typed_expansion;
@@ -55,6 +57,8 @@ mod null_sentinel_tests;
 mod reserved_name_tests;
 #[cfg(test)]
 mod structured_value_name_tests;
+#[cfg(test)]
+mod temporal_tests;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

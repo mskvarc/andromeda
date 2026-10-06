@@ -4,7 +4,7 @@
 //! which carries one of its own (clauses 4.5.16.3 and 4.5.17.2: "separate
 //! @context elements for each Feature will not be present").
 
-use crate::entity_body::feature_body::FeatureBody;
+use crate::{contextual_body::open_object, entity_body::feature_body::FeatureBody};
 use andromeda_json_literal::JsonLiteral;
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
@@ -23,12 +23,9 @@ pub(crate) struct FeatureCollection<'a> {
 
 impl Serialize for FeatureCollection<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut collection = serializer.serialize_map(None)?;
+        let mut collection = open_object(serializer, self.context, None)?;
         collection.serialize_entry("type", FEATURE_COLLECTION)?;
         collection.serialize_entry("features", &self.features)?;
-        if let Some(context) = self.context {
-            collection.serialize_entry("@context", context)?;
-        }
         collection.end()
     }
 }

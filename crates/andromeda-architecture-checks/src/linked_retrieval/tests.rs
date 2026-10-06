@@ -85,7 +85,7 @@ fn reading_an_inline_member_outside_the_writers_passes() {
 fn writing_an_inline_entity_member_in_a_writer_passes() {
     let source = "fn f(fields: &mut Map, v: Value) { fields.insert(compact_properties::ENTITY.to_owned(), v); }";
     assert_eq!(
-        violations("crates/andromeda-ngsi-ld-render/src/temporal/inline_join.rs", source),
+        violations("crates/andromeda-ngsi-ld-render/src/entity_body/linked_entities.rs", source),
         Vec::<String>::new()
     );
 }
@@ -154,7 +154,7 @@ fn a_registered_adapter_passes() {
 fn a_private_walk_outside_the_engine_is_flagged() {
     assert_eq!(
         violations(
-            "crates/andromeda-ngsi-ld-render/src/temporal/inline_join.rs",
+            "crates/andromeda-ngsi-ld-render/src/temporal/temporal_response.rs",
             "struct JoinPath<'a> { at: &'a str }"
         )
         .len(),

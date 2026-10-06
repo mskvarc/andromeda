@@ -10,7 +10,6 @@ use crate::{
     restart_policy::RestartPolicy,
     scheduled_task::ScheduledTask,
     shutdown_policy::ShutdownPolicy,
-    startup_task::{StartupTask, StartupTaskError},
     supervisor::TaskSupervisor,
     task_health::TaskHealthState,
     task_name::{TaskName, TaskNameError},
@@ -37,8 +36,6 @@ use tokio::{
 /// The typed failure a scripted test operation reports.
 #[derive(Debug, Error)]
 enum ScriptedFailure {
-    #[error("configuration unavailable")]
-    ConfigurationUnavailable,
     #[error("retry")]
     Retry,
     #[error("failed after reaching running state")]
@@ -66,8 +63,6 @@ enum TestError {
     Schedule(#[from] PeriodicScheduleError),
     #[error(transparent)]
     Registration(#[from] TaskRegistrationError),
-    #[error(transparent)]
-    Startup(#[from] StartupTaskError<ScriptedFailure>),
     #[error(transparent)]
     Receive(#[from] RecvError),
     #[error(transparent)]
@@ -298,35 +293,6 @@ async fn unexpected_resident_completion_consults_restart_policy() -> Result<(), 
     let health = supervisor.health(&name).await;
     assert!(health.is_some_and(|health| health.state == TaskHealthState::Failed));
     supervisor.shutdown().await;
-    Ok(())
-}
-
-#[tokio::test(start_paused = true)]
-async fn successful_startup_completion_allows_composition_to_continue() -> Result<(), TestError> {
-    let supervisor = TaskSupervisor::process(Handle::current());
-    let task = StartupTask::new(registration("startup-success", RestartPolicy::Never, Duration::from_secs(1))?, |_| async {
-        Ok(())
-    });
-    supervisor.run_startup(task).await?;
-    let name = TaskName::try_from("startup-success")?;
-    let health = supervisor.health(&name).await;
-    assert!(health.is_some_and(|health| health.state == TaskHealthState::Completed));
-    Ok(())
-}
-
-#[tokio::test(start_paused = true)]
-async fn failed_startup_is_returned_before_dependent_tasks_start() -> Result<(), TestError> {
-    let supervisor = TaskSupervisor::process(Handle::current());
-    let dependent_started = Arc::new(AtomicBool::new(false));
-    let task = StartupTask::new(registration("startup-failure", RestartPolicy::Never, Duration::from_secs(1))?, |_| async {
-        Err(TaskFailure::permanent(ScriptedFailure::ConfigurationUnavailable))
-    });
-    let result = supervisor.run_startup(task).await;
-    if result.is_ok() {
-        dependent_started.store(true, Ordering::SeqCst);
-    }
-    assert!(result.is_err());
-    assert!(!dependent_started.load(Ordering::SeqCst));
     Ok(())
 }
 
@@ -761,7 +727,6 @@ async fn terminal_events_are_observed_in_completion_order_with_task_names() -> R
                 criticality: _,
             }
             | LifecycleEventKind::Cancelled
-            | LifecycleEventKind::Completed
             | LifecycleEventKind::ForcedTermination => terminal_names.push(event.name),
             LifecycleEventKind::Started
             | LifecycleEventKind::ExecutionSucceeded { duration: _ }
@@ -829,18 +794,27 @@ async fn managed_tasks_run_on_the_supplied_primary_execution_host() -> Result<()
     let supervisor = TaskSupervisor::process(host);
     let observed = Arc::new(Mutex::new(None));
     let captured = Arc::clone(&observed);
-    let task = StartupTask::new(registration("shared-host", RestartPolicy::Never, Duration::from_secs(1))?, move |_| {
-        let captured = Arc::clone(&captured);
-        async move {
-            let lock = captured.lock();
-            match lock {
-                Ok(mut value) => *value = Some(Handle::current().id()),
-                Err(_) => return Err(TaskFailure::invariant_violation(ScriptedFailure::IdentityLockPoisoned)),
+    let ran = Arc::new(Notify::new());
+    let announce = Arc::clone(&ran);
+    let task = ScheduledTask::new(
+        registration("shared-host", RestartPolicy::Never, Duration::from_secs(1))?,
+        schedule(Duration::from_secs(3_600), InitialExecution::Immediate)?,
+        move |_| {
+            let captured = Arc::clone(&captured);
+            let announce = Arc::clone(&announce);
+            async move {
+                let lock = captured.lock();
+                match lock {
+                    Ok(mut value) => *value = Some(Handle::current().id()),
+                    Err(_) => return Err(TaskFailure::invariant_violation(ScriptedFailure::IdentityLockPoisoned)),
+                }
+                announce.notify_one();
+                Ok(())
             }
-            Ok(())
-        }
-    });
-    supervisor.run_startup(task).await?;
+        },
+    );
+    drop(supervisor.register_scheduled(task)?);
+    ran.notified().await;
     let lock = observed.lock();
     match lock {
         Ok(value) => assert_eq!(*value, Some(expected)),

@@ -27,6 +27,8 @@ pub mod csource_cache;
 pub mod csource_matching;
 /// When a context source registration subscription is owed a notification.
 pub mod csource_notification_cadence;
+/// The members an update fragment deletes.
+pub mod deleted_members;
 /// Admitting a subscription's notification endpoint.
 pub mod endpoint_admission;
 /// Why the delivery bindings refused a notification endpoint.
@@ -37,6 +39,8 @@ pub mod entity;
 pub mod error;
 pub mod expiry;
 mod fields;
+/// The opt-in lists a subscription's `q` filter reads.
+mod filter_opt_ins;
 /// The distributed side of the subscription lifecycle, as a port.
 pub mod forwarding_hook;
 /// A subscription's `geoQ`, read once for admission and matching.
@@ -53,13 +57,18 @@ pub mod matching;
 pub mod membership;
 /// The clause 5.2.12 rules a merged update is checked against.
 mod merged_validation;
-mod normalization;
 /// Initialising a subscription's notification `@context` from its creation context.
 mod notification_context;
-/// The clause 5.2.14 `pick` and `omit` members as a payload writes them.
-pub mod notification_projection;
 /// What a subscription's stored delivery instants must satisfy to notify again.
 pub mod notification_slot;
+/// The rules a subscription request's notification is checked against.
+mod notification_validation;
+/// Expansion of the projection lists of a subscription's notification.
+mod projection_expansion;
+/// Subscription request validation.
+mod request_validation;
+/// Spelling a stored subscription in the terms of the reader's `@context`.
+mod response_compaction;
 /// How selectors are placed into the candidate index.
 pub mod selector_routing;
 /// Spatial-index narrowing of matched subscriptions.
@@ -74,18 +83,16 @@ pub mod stored_subscription;
 pub mod subscription_context;
 /// The invariants subscription policy relies on.
 pub mod subscription_invariant;
-/// The typed members of a `Subscription` payload.
+/// One page of a subscription collection, ready for a response.
 pub mod subscription_listing;
-pub mod subscription_member;
 /// The typed reasons a subscription request is rejected as `BadRequestData`.
 pub mod subscription_validation_reason;
 /// Counting a suppression window back from an instant.
 mod suppression_window;
-/// Expansion of a subscription payload against the request `@context`.
+/// Expansion of a subscription request against the request `@context`.
 mod term_expansion;
 /// Throttling-window arithmetic.
 pub mod throttle;
-mod validation;
 /// What one kind of subscription does differently from the other.
 pub mod variant;
 

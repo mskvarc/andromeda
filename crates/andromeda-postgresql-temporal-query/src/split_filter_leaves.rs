@@ -141,7 +141,7 @@ mod tests {
     fn one_column_per_leaf_in_leaf_order() {
         let geo = GeoQuery {
             georel: GeoRel::Within,
-            geometry: Geometry::from_geojson_value(&serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         };
         let compiled = compiled("\"https://example.com/speed\">50", Some(geo), Some("/Madrid"));

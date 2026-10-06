@@ -196,6 +196,31 @@ async fn csr_subscription_create_with_empty_watched_attributes_returns_400_bad_r
     scope.finish().await.expect("cleanup failed");
 }
 
+/// Clause 5.2.1, which clause 5.11.2 applies to a Context Source Registration
+/// Subscription as to an entity one: the NGSI-LD Null `urn:ngsi-ld:null` (an
+/// array of one where an array is required) in a URI member of a create is
+/// `BadRequestData`.
+#[tokio::test]
+async fn csr_subscription_create_with_ngsi_ld_null_uri_member_returns_400_bad_request_data() {
+    let scope = TestEnvironment::from_suite("csr_subscription").await.expect("isolated test environment");
+    let http_client = client();
+
+    for (member, null) in [
+        ("jsonldContext", serde_json::json!("urn:ngsi-ld:null")),
+        ("watchedAttributes", serde_json::json!(["urn:ngsi-ld:null"])),
+    ] {
+        let subscription_id = scope.id(&format!("Subscription:create-null-{member}"));
+        let mut payload = csource_subscription_payload(&subscription_id);
+        payload[member] = null;
+
+        let (status, _, body) = create_csource_subscription(&http_client, &payload).await;
+
+        pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST, "{member}: {body}");
+        assert_problem_detail_type(&body, BAD_REQUEST_DATA_TYPE);
+    }
+    scope.finish().await.expect("cleanup failed");
+}
+
 #[tokio::test]
 async fn csr_subscription_create_with_past_expires_at_returns_400_bad_request_data() {
     let scope = TestEnvironment::from_suite("csr_subscription").await.expect("isolated test environment");

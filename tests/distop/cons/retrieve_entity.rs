@@ -8,7 +8,7 @@
 use crate::{
     context_source_adapter::ContextSourceAdapter,
     entity::{entity, property, vehicle},
-    oracle::{assert_problem_details, assert_status, json_body},
+    oracle::{assert_problem_details, assert_status, has_warning, json_body},
     registration::CsrBuilder,
     topology::{self, BrokerRole},
 };
@@ -267,6 +267,50 @@ async fn distop_retrieve_entity_discards_expired_remote_attribute() {
     let body = json_body(&retrieved);
     assert!(body.get("fuelLevel").is_some(), "non-expired fuelLevel is retained: {body}");
     assert!(body.get("speed").is_none(), "expired speed is discarded before the merge: {body}");
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A source whose answer is an Entity the broker cannot read (a Property member
+/// without its `value`) contributes nothing: the retrieval answers `200` with
+/// the local data and reports the refusal as a clause 6.3.17
+/// `RevalidationFailed` warning (code 111), never failing the answer.
+#[tokio::test]
+async fn distop_retrieve_entity_an_invalid_remote_entity_is_refused_with_a_warning() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let entity_id = topology.id("Vehicle:invalid-remote");
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let mock = ContextSourceAdapter::start().await;
+
+    assert_status(
+        &front
+            .client()
+            .post_entity(&entity(&entity_id, "Vehicle", &[("fuelLevel", property(json!(70)))]))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("local"),
+        201,
+    );
+    let registration_id = topology.id("registration:invalid-remote");
+    let registration = CsrBuilder::new(&registration_id, &mock.url(""))
+        .mode("inclusive")
+        .entity_id(&entity_id)
+        .operations(&["retrieveEntity"])
+        .build();
+    assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
+
+    let remote = entity(&entity_id, "Vehicle", &[("speed", json!({ "type": "Property" }))]);
+    mock.set_stub_with_body(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 200, &remote)
+        .await;
+
+    let retrieved = front.client().get_entity(&entity_id, "", "application/ld+json", None).await.expect("retrieve");
+    assert_status(&retrieved, 200);
+    let body = json_body(&retrieved);
+    assert_eq!(body["fuelLevel"]["value"], json!(70), "the local data is answered: {body}");
+    assert!(body.get("speed").is_none(), "the unreadable remote member is not answered: {body}");
+    assert!(has_warning(&retrieved, 111), "the refusal is reported as a 6.3.17 warning");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

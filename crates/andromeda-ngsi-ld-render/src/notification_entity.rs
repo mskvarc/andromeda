@@ -28,6 +28,7 @@ use crate::{
         member_walk::MemberWalk,
         typed_entity::{IdentifierMember, TypedEntity},
     },
+    notification_language::NotificationLanguage,
     notified_changes::NotifiedChanges,
     structural_projection::StructuralProjection,
     uri_decoding::UriDecoding,
@@ -95,6 +96,10 @@ pub struct NotificationEntity<'a> {
     /// The clause 4.3.6.8 fallback of the subscription's
     /// `ngsildConformance`, if it names an older version.
     fallback: Option<VersionFallback>,
+    /// The clause 4.15 `lang` filter of the subscription (Table 5.2.12-1)
+    /// every top-level `LanguageProperty` is negotiated against, if it names
+    /// one.
+    language: Option<&'a NotificationLanguage>,
 }
 
 impl<'a> NotificationEntity<'a> {
@@ -113,6 +118,7 @@ impl<'a> NotificationEntity<'a> {
             identifier: IdentifierMember::Mandatory,
             narrowing: None,
             fallback: None,
+            language: None,
         }
     }
 
@@ -136,28 +142,38 @@ impl<'a> NotificationEntity<'a> {
             identifier: IdentifierMember::Written,
             narrowing: linked.rule.restricting(),
             fallback: None,
+            language: None,
         }
     }
 
-    /// One entity a notification relays as its source sent it, re-assembled
-    /// for the local subscription (clause 5.8.6), in `format`, its
-    /// Relationship targets as the store holds them.
+    /// One entity a notification relays from its source, re-assembled for
+    /// the local subscription (clause 5.8.6), written as a notification of
+    /// that subscription writes a local entity: in `format`, its Relationship
+    /// targets decoded, `type` and `scope` under the subscription's
+    /// `projection`, and `id` written whatever that rule says; its top-level
+    /// `LanguageProperty` attributes are reduced under the subscription's
+    /// `lang` when it names one (Table 5.2.12-1, clause 4.15).
     ///
-    /// The relayed entity carries the times its source wrote on it, and its
-    /// `id` is written as a query response writes it.
+    /// The relayed entity carries the times its source wrote on it.
     #[must_use]
-    pub const fn relayed(entity: &'a Entity, format: ResponseFormat) -> NotificationEntity<'a> {
+    pub const fn relayed(
+        entity: &'a Entity,
+        format: ResponseFormat,
+        projection: StructuralProjection<'a>,
+        language: Option<&'a NotificationLanguage>,
+    ) -> NotificationEntity<'a> {
         NotificationEntity {
             entity,
             stamped: None,
             format,
-            targets: TargetSpelling::AsStored,
+            targets: TargetSpelling::Decoded,
             join: None,
             changes: None,
-            projection: None,
-            identifier: IdentifierMember::Written,
+            projection: Some(projection),
+            identifier: IdentifierMember::Mandatory,
             narrowing: None,
             fallback: None,
+            language,
         }
     }
 
@@ -188,6 +204,14 @@ impl<'a> NotificationEntity<'a> {
         }
     }
 
+    /// The entity, its top-level `LanguageProperty` attributes reduced under
+    /// the subscription's `lang` when it names one (Table 5.2.12-1, clause
+    /// 4.15).
+    #[must_use]
+    pub const fn with_language(self, language: Option<&'a NotificationLanguage>) -> NotificationEntity<'a> {
+        NotificationEntity { language, ..self }
+    }
+
     /// The entity, amended to the version its subscription's
     /// `ngsildConformance` names (clause 5.8.6), when `fallback` is one.
     #[must_use]
@@ -197,7 +221,7 @@ impl<'a> NotificationEntity<'a> {
 
     /// The entity as the typed walk writes it, carrying `context` beside its
     /// own members when the body carries one.
-    pub(crate) const fn typed(&self, context: Option<&'a JsonLiteral>) -> TypedEntity<'a> {
+    pub(crate) fn typed(&self, context: Option<&'a JsonLiteral>) -> TypedEntity<'a> {
         let decoding = match self.targets {
             TargetSpelling::Decoded => UriDecoding::Decode,
             TargetSpelling::AsStored => UriDecoding::Keep,
@@ -205,7 +229,7 @@ impl<'a> NotificationEntity<'a> {
         TypedEntity {
             entity: self.entity,
             format: self.format,
-            walk: MemberWalk::new(decoding, None, self.fallback),
+            walk: MemberWalk::new(decoding, self.language.map(NotificationLanguage::filter), self.fallback),
             projection: self.projection,
             identifier: self.identifier,
             context,

@@ -49,8 +49,6 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::IcuCollation(_)
         | QueryError::TemporalOrderingMember(_)
         | QueryError::TemporalOrderingDirection(_)
-        | QueryError::ParamIdInvalid { .. }
-        | QueryError::ParamIdListEmpty
         | QueryError::ParamTimerelTimeatPair
         | QueryError::ParamAggrPeriodDurationInvalid { .. }
         | QueryError::ParamDatasetIdInvalid { .. }

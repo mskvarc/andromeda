@@ -54,7 +54,7 @@ pub fn single_source_failure(results: &[ForwardedWriteResult]) -> Option<Federat
         ForwardedWriteOutcome::RemoteHttpFailure { status, body } => {
             let answer = Box::new(RemoteAnswer {
                 status: *status,
-                body: body.clone(), // clone: the error owns the answer the result keeps reporting
+                problem: body.problem(),
             });
             Some(match status {
                 409 => FederationError::Conflict(FederationConflictReason::RemoteRejected(answer)),
@@ -71,6 +71,7 @@ pub fn single_source_failure(results: &[ForwardedWriteResult]) -> Option<Federat
 #[cfg(test)]
 mod tests {
     use crate::{
+        answer_body::AnswerBody,
         error::FederationError,
         federation_invariant::FederationInvariant,
         gateway_failure::GatewayFailure,
@@ -78,8 +79,7 @@ mod tests {
         single_source_failure::single_source_failure,
     };
     use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
-    use serde_json::json;
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
 
     fn result(mode: ForwardingMode, outcome: ForwardedWriteOutcome) -> ForwardedWriteResult {
         ForwardedWriteResult {
@@ -109,21 +109,33 @@ mod tests {
                 )),
                 "unreachable",
             ),
-            (ForwardedWriteOutcome::RemoteHttpFailure { status: 404, body: None }, "not found"),
+            (
+                ForwardedWriteOutcome::RemoteHttpFailure {
+                    status: 404,
+                    body: AnswerBody::Absent,
+                },
+                "not found",
+            ),
             (ForwardedWriteOutcome::NotAdvertised, "not advertised"),
             (ForwardedWriteOutcome::UpsertFollowUpNotAdvertised, "no follow-up"),
             (
                 ForwardedWriteOutcome::RemoteHttpFailure {
                     status: 409,
-                    body: Some(json!({"detail": "exists"})),
+                    body: AnswerBody::Text(Arc::from(br#"{"type":"https://example.org/exists","detail":"exists"}"#.as_slice())),
                 },
                 "remote conflict",
             ),
-            (ForwardedWriteOutcome::RemoteHttpFailure { status: 422, body: None }, "remote unsupported"),
+            (
+                ForwardedWriteOutcome::RemoteHttpFailure {
+                    status: 422,
+                    body: AnswerBody::Absent,
+                },
+                "remote unsupported",
+            ),
             (
                 ForwardedWriteOutcome::RemoteHttpFailure {
                     status: 403,
-                    body: Some(json!({"detail": "no access"})),
+                    body: AnswerBody::Text(Arc::from(br#"{"type":"https://example.org/denied","detail":"no access"}"#.as_slice())),
                 },
                 "forbidden",
             ),
@@ -161,11 +173,20 @@ mod tests {
 
     #[test]
     fn a_completed_single_source_and_an_inclusive_failure_pass_through() {
-        let completed = single_source_failure(&[result(ForwardingMode::Exclusive, ForwardedWriteOutcome::Completed { status: 204, body: None })]);
+        let completed = single_source_failure(&[result(
+            ForwardingMode::Exclusive,
+            ForwardedWriteOutcome::Completed {
+                status: 204,
+                body: AnswerBody::Absent,
+            },
+        )]);
         assert!(completed.is_none());
         let inclusive = single_source_failure(&[result(
             ForwardingMode::Inclusive,
-            ForwardedWriteOutcome::RemoteHttpFailure { status: 500, body: None },
+            ForwardedWriteOutcome::RemoteHttpFailure {
+                status: 500,
+                body: AnswerBody::Absent,
+            },
         )]);
         assert!(inclusive.is_none());
     }
@@ -173,8 +194,20 @@ mod tests {
     #[test]
     fn several_sources_stay_results_for_the_207_path() {
         let results = vec![
-            result(ForwardingMode::Redirect, ForwardedWriteOutcome::RemoteHttpFailure { status: 500, body: None }),
-            result(ForwardingMode::Redirect, ForwardedWriteOutcome::Completed { status: 204, body: None }),
+            result(
+                ForwardingMode::Redirect,
+                ForwardedWriteOutcome::RemoteHttpFailure {
+                    status: 500,
+                    body: AnswerBody::Absent,
+                },
+            ),
+            result(
+                ForwardingMode::Redirect,
+                ForwardedWriteOutcome::Completed {
+                    status: 204,
+                    body: AnswerBody::Absent,
+                },
+            ),
         ];
         assert!(single_source_failure(&results).is_none());
     }

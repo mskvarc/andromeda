@@ -17,6 +17,7 @@ workspace = true
 [dependencies]
 andromeda-configuration-scalars.workspace = true
 andromeda-http-headers.workspace = true
+andromeda-json-literal.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
@@ -24,20 +25,20 @@ andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-persistence-failure.workspace = true
 async-trait = "0.1.92"
 backon = { version = "1.6.0", features = ["tokio-sleep"] }
-contextual = "0.1.6"
 dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["debug", "deref", "display", "from"] }
 headers = "0.4.2"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
-jsonld = { version = "0.23.6", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }
-jsonld-core = "0.23.6"
-jsonld-syntax = { version = "0.23.6", features = ["serde-json"] }
+jsonld = { version = "0.24.0", features = ["expandable-chrono", "reqwest", "serde", "vocab"] }
+jsonld-core = "0.24.0"
+jsonld-syntax = "0.24.0"
+jstrict = "0.16.0"
 mediatype = "0.23.0"
 moka = { version = "0.12.16", features = ["future"] }
 rdfx = "0.24.0"
 reqwest = { version = "0.13.5", features = ["json"] }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
+serde_json = { version = "1.0.151", features = ["arbitrary_precision", "raw_value"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["rt", "sync"] }

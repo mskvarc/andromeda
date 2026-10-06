@@ -139,17 +139,6 @@ impl<'a, R: LinkedRepresentation> InlineCursor<'a, R> {
             path: Some(OpenPath { id, parent: self.path }),
         }
     }
-
-    /// A root being written whose spelling no longer carries its identifier,
-    /// because its list removed `id` (clause 4.21).
-    ///
-    /// No Linked Entity is ever a root -- the traversal never resolves one --
-    /// so a target naming the root stays a plain URI whether or not the root
-    /// is on the path.
-    #[must_use]
-    pub const fn open_unnamed_root(self) -> OpenEntity<'a, R> {
-        OpenEntity { cursor: self, path: None }
-    }
 }
 
 // The derives would demand `R::Node: Clone` and `R::Node: Copy`, although the

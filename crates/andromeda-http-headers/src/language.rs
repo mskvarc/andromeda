@@ -105,19 +105,6 @@ impl LanguageRange {
             }
         }
     }
-
-    /// Whether this range names a primary language only, with no script,
-    /// region or variant subtags.
-    ///
-    /// Guards prefix matching: RFC 4647 basic filtering has `fr` prefix-match
-    /// `fr-CA`, but not `fr-CA` prefix-match `fr-CA-variant`.
-    #[must_use]
-    pub fn is_basic_range(&self) -> bool {
-        match self {
-            LanguageRange::Wildcard => true,
-            LanguageRange::Tag(tag) => !tag.as_str().contains('-'),
-        }
-    }
 }
 
 impl fmt::Display for LanguageRange {
@@ -242,7 +229,6 @@ mod tests {
         assert!(LanguageRange::Wildcard.exact_matches(tag("fr")));
         assert!(LanguageRange::Wildcard.exact_matches(tag("en-US")));
         assert!(!LanguageRange::Wildcard.prefix_matches(tag("fr")));
-        assert!(LanguageRange::Wildcard.is_basic_range());
     }
 
     #[test]
@@ -257,14 +243,6 @@ mod tests {
         assert!(range("fr").prefix_matches(tag("fr-CA")));
         assert!(!range("fr").prefix_matches(tag("fra")));
         assert!(!range("fr").prefix_matches(tag("de")));
-    }
-
-    #[test]
-    fn only_a_primary_language_subtag_is_a_basic_range() {
-        assert!(range("fr").is_basic_range());
-        assert!(range("en").is_basic_range());
-        assert!(!range("fr-CA").is_basic_range());
-        assert!(!range("en-US").is_basic_range());
     }
 
     #[test]

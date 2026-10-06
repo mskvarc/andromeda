@@ -5,9 +5,8 @@
 //! read. The object is read member by member instead: `coordinates` and `bbox`
 //! onto a [`CoordinateTape`] each, a foreign member (IETF RFC 7946 section 6.1)
 //! into the JSON value it holds, every other member into what it says, and the
-//! geometry is built from them once the object ends, with exactly the
-//! validation and refusals [`Geometry::from_geojson_value`] applies to a parsed
-//! tree.
+//! geometry is built from them once the object ends, with the one validation
+//! and the one set of refusals every geometry path shares.
 //!
 //! A value that is no geometry is still read to its end, so the refusal is the
 //! [`GeometryError`] naming what is wrong rather than a decoding failure, and a
@@ -18,7 +17,7 @@ use crate::{
     foreign_members::ForeignMemberName,
     geojson::GeometryError,
     geometry::Geometry,
-    geometry_members::{GeometriesMember, GeometryMembers, JsonLdKeywords, TypeMember},
+    geometry_members::{ForeignMemberReading, GeometriesMember, GeometryMembers, JsonLdKeywords, TypeMember},
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_number::json_value::value_census::{MemberName, MemberNameSeed};
@@ -41,10 +40,18 @@ impl WrittenGeometry {
     ///
     /// # Errors
     ///
-    /// Returns the [`GeometryError`] [`Geometry::from_geojson_value`] gives for
-    /// the same object.
+    /// Returns the [`GeometryError`] naming what the object lacks or misplaces,
+    /// as [`Geometry::from_geojson_text`] gives for the same text.
     pub fn into_geometry(self) -> Result<Geometry, GeometryError> {
         self.geometry
+    }
+
+    /// Read a written geometry from `deserializer`, passing its foreign
+    /// members over for a reader that wants the form alone.
+    pub(crate) fn deserialize_without_foreign_members<'de, D: Deserializer<'de>>(deserializer: D) -> Result<WrittenGeometry, D::Error> {
+        deserializer.deserialize_any(WrittenGeometryVisitor {
+            foreign: ForeignMemberReading::Skipped,
+        })
     }
 
     /// Whether a member of the object is named by a JSON-LD keyword.
@@ -76,7 +83,9 @@ impl WrittenGeometry {
 // geometry, neither of which a derive expresses.
 impl<'de> Deserialize<'de> for WrittenGeometry {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<WrittenGeometry, D::Error> {
-        deserializer.deserialize_any(WrittenGeometryVisitor)
+        deserializer.deserialize_any(WrittenGeometryVisitor {
+            foreign: ForeignMemberReading::Kept,
+        })
     }
 }
 
@@ -90,7 +99,10 @@ impl<'de> Deserialize<'de> for Geometry {
 
 /// Reads one written geometry.
 #[derive(Clone, Copy, Debug)]
-struct WrittenGeometryVisitor;
+struct WrittenGeometryVisitor {
+    /// Whether the foreign members the object carries are kept.
+    foreign: ForeignMemberReading,
+}
 
 impl<'de> Visitor<'de> for WrittenGeometryVisitor {
     type Value = WrittenGeometry;
@@ -154,7 +166,7 @@ impl<'de> Visitor<'de> for WrittenGeometryVisitor {
         }
         let mut key = first;
         loop {
-            read_member(&mut map, key, &mut members)?;
+            read_member(&mut map, key, self.foreign, &mut members)?;
             match map.next_key_seed(GeometryKeySeed)? {
                 Some(next) => key = next,
                 None => return Ok(WrittenGeometry::of_members(members)),
@@ -163,8 +175,9 @@ impl<'de> Visitor<'de> for WrittenGeometryVisitor {
     }
 }
 
-/// Read the value of the member `key` into `members`.
-fn read_member<'de, A: MapAccess<'de>>(map: &mut A, key: GeometryKey, members: &mut GeometryMembers) -> Result<(), A::Error> {
+/// Read the value of the member `key` into `members`, keeping a foreign member
+/// only when `foreign` says so.
+fn read_member<'de, A: MapAccess<'de>>(map: &mut A, key: GeometryKey, foreign: ForeignMemberReading, members: &mut GeometryMembers) -> Result<(), A::Error> {
     match key {
         GeometryKey::Type => {
             members.geometry_type = match map.next_value_seed(MemberShapeSeed)? {
@@ -180,14 +193,18 @@ fn read_member<'de, A: MapAccess<'de>>(map: &mut A, key: GeometryKey, members: &
                 MemberShape::Text(_) | MemberShape::Number | MemberShape::Other => GeometriesMember::Absent,
             };
         }
-        GeometryKey::Other(name) => {
-            if let Ok(foreign) = ForeignMemberName::try_from(&*name) {
-                members.foreign.insert(foreign, map.next_value::<JsonLiteral>()?);
-            } else {
+        GeometryKey::Other(name) => match (ForeignMemberName::try_from(&*name), foreign) {
+            (Ok(foreign_name), ForeignMemberReading::Kept) => {
+                members.foreign.insert(foreign_name, map.next_value::<JsonLiteral>()?);
+            }
+            (Ok(_), ForeignMemberReading::Skipped) => {
+                map.next_value::<IgnoredAny>()?;
+            }
+            (Err(_), ForeignMemberReading::Kept | ForeignMemberReading::Skipped) => {
                 members.json_ld_keywords = members.json_ld_keywords.and(JsonLdKeywords::of(&name));
                 map.next_value::<IgnoredAny>()?;
             }
-        }
+        },
     }
     Ok(())
 }
@@ -383,19 +400,9 @@ mod tests {
         geometry.map_err(|refusal| refusal.to_string())
     }
 
-    /// The streamed reading of a text agrees with the reading of its tree,
-    /// in what it accepts, its box and foreign members included, in what it
+    /// The reading over a parsed tree agrees with the reading of its text, in
+    /// what it accepts, its box and foreign members included, in what it
     /// refuses and why.
-    #[test]
-    fn a_streamed_geometry_reads_as_its_parsed_tree_does() {
-        for text in TEXTS {
-            let tree: Value = serde_json::from_str(text).expect("valid JSON");
-            let streamed = serde_json::from_str::<WrittenGeometry>(text).expect("every value is read to its end");
-            pretty_assertions::assert_eq!(outcome(streamed.into_geometry()), outcome(Geometry::from_geojson_value(&tree)), "{text}");
-        }
-    }
-
-    /// The reading over a parsed tree agrees with the reading of its text.
     #[test]
     fn a_geometry_read_from_a_tree_reads_as_its_text_does() {
         for text in TEXTS {

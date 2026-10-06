@@ -58,6 +58,10 @@ pub(crate) enum XtaskError {
     /// The prebuilt-test manifest could not be serialized for writing.
     #[error("failed to serialize the prebuilt test manifest: {0}")]
     TestManifestSerialize(#[source] serde_json::Error),
+    /// The `url -> file` map pinning the suite's `@context` documents could not
+    /// be serialized.
+    #[error("failed to serialize the suite context preload map: {0}")]
+    ContextPreloadSerialize(#[source] serde_json::Error),
     /// A registered suite has no compiled binary, either in the manifest or in
     /// the build that was meant to produce one.
     #[error("no compiled binary for suite '{}'", .0.name)]

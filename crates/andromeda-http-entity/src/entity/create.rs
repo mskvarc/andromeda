@@ -26,7 +26,7 @@ use crate::{
     written_payload_admission::admit_written_entity,
 };
 use andromeda_entity::write_kind::CreateEntity;
-use andromeda_federation::request::TriggeringRequest;
+use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_http_response::headers::with_location;
 use andromeda_jsonld::user_context_admission::admit_user_context;
@@ -93,7 +93,7 @@ pub(crate) async fn create(
                     headers: Some(&headers),
                 },
             },
-            Some(&entity),
+            Some(ForwardedContent::Entity(admitted.document())),
         )
         .await
         .with_entity_instance(&uri)?;
@@ -105,11 +105,8 @@ pub(crate) async fn create(
 
     // Clause 5.6.1.4: the attributes proxied registrations cover leave the
     // fragment; whatever remains creates the entity here.
-    let proxied = collect_proxied_attrs(&forwarded);
-    let mut entity = entity;
-    let strip = entity.strip_attributes(&proxied);
-    let local = match service.admit_local_remainder(admitted, strip, &entity, &context).await {
-        Some(remainder) => LocalOutcome::processed(async { service.create(&target, &entity_id, remainder?).await }.await, classify_entity_error),
+    let local = match admitted.local_remainder(&collect_proxied_attrs(&forwarded)) {
+        Some(remainder) => LocalOutcome::processed(service.create(&target, &entity_id, remainder).await, classify_entity_error),
         None => LocalOutcome::NothingRemained,
     };
     let created = with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{entity_id}"));

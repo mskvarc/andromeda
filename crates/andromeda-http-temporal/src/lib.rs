@@ -4,6 +4,7 @@
 
 pub mod error;
 mod extension_gate;
+mod forwarded_evolution_content;
 mod history_read;
 mod join;
 mod operation_query;
@@ -11,6 +12,10 @@ mod request_context_admission;
 pub mod routes;
 pub mod state;
 mod temporal;
+mod temporal_answer;
+/// The expanded history of an entity, for tests.
+#[cfg(test)]
+mod test_history;
 mod written_evolution_admission;
 
 #[cfg(test)]

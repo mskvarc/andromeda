@@ -5,13 +5,17 @@
 //! source error where one exists, so
 //! [`SubscriptionError::Validation`](crate::error::SubscriptionError::Validation)
 //! never holds an ad-hoc string. Each `#[error]` renders lowercase client prose;
-//! spec member and value tokens (`Subscription`, `notification.endpoint.uri`,
+//! spec member and value tokens (`Subscription`, `notification.endpoint`,
 //! `timeInterval`, `expiresAt`, `geoQ`, ...) keep their fixed casing, and clause
 //! numbers stay in doc comments.
+//!
+//! A member whose JSON is not the data type Table 5.2.12-1 gives it never
+//! reaches here: the request model refuses the body when it is read, and what
+//! is judged here is what a data type cannot say.
 
-use crate::{endpoint_refusal::EndpointRefusal, geo_filter::GeoQError, notification_projection::ProjectionMember, subscription_member::SubscriptionMember};
+use crate::{endpoint_refusal::EndpointRefusal, geo_filter::GeoQError};
 use andromeda_linked_retrieval::admission::AdmissionError;
-use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, spec_version::SpecVersionParseError};
+use andromeda_ngsi_ld_model::subscription_uri_member::SubscriptionUriMember;
 use andromeda_ngsi_ld_query::{error::QueryError, projection::exclusivity::ProjectionConflict};
 use thiserror::Error;
 
@@ -21,34 +25,9 @@ pub enum SubscriptionValidationReason {
     /// The `notification` member was absent.
     #[error("notification is required")]
     NotificationRequired,
-    /// The `notification` member was explicitly null in an update.
-    #[error("notification cannot be set to null")]
-    NotificationNull,
-    /// The `notification` member was not a JSON object.
-    #[error("notification must be an object")]
-    NotificationNotObject,
     /// The `notification.endpoint` member was absent.
     #[error("notification.endpoint is required")]
     EndpointRequired,
-    /// The `notification.endpoint` member was explicitly null in an update.
-    #[error("notification.endpoint cannot be set to null")]
-    EndpointNull,
-    /// The `notification.endpoint.uri` member was absent.
-    #[error("notification.endpoint.uri is required")]
-    EndpointUriRequired,
-    /// The `notification.endpoint.uri` member was explicitly null in an update.
-    #[error("notification.endpoint.uri cannot be set to null")]
-    EndpointUriNull,
-    /// The `notification.endpoint.uri` member was not a non-empty string.
-    #[error("notification.endpoint.uri must be a non-empty string")]
-    EndpointUriEmpty,
-    /// The `notification.endpoint.uri` was not a valid URL.
-    #[error("notification.endpoint.uri is not a valid URL: {source}")]
-    EndpointUri {
-        /// The URL grammar violation.
-        #[source]
-        source: url::ParseError,
-    },
     /// The endpoint could not be served by any delivery binding the broker was
     /// built with.
     ///
@@ -56,29 +35,15 @@ pub enum SubscriptionValidationReason {
     /// on without inverting the layering, so its refusal arrives classified.
     #[error(transparent)]
     EndpointRejected(EndpointRefusal),
-    /// `notifierInfo` was not an array of key-value pairs.
-    #[error("notifierInfo must be an array of key-value pairs: {source}")]
-    NotifierInfo {
-        /// The JSON shape violation.
-        #[source]
-        source: serde_json::Error,
-    },
+    /// A create body wrote the NGSI-LD Null `urn:ngsi-ld:null` into a member
+    /// that takes a URI. Clause 5.2.1 makes an NGSI-LD Null outside the update
+    /// clauses 5.5.8 and 5.5.12 `BadRequestData`, and a create has no member to
+    /// delete.
+    #[error("{0} must not be the NGSI-LD Null urn:ngsi-ld:null in a creation request, which has no member to delete")]
+    NgsiLdNullOnCreate(SubscriptionUriMember),
     /// `expiresAt` was in the past (clauses 5.8.1.4, 5.8.2.4).
     #[error("expiresAt must be in the future")]
     ExpiresAtInPast,
-    /// `expiresAt` was not a clause 4.6.3 `DateTime`.
-    #[error("expiresAt must be a valid ISO 8601 date-time")]
-    ExpiresAtNotDateTime,
-    /// `expiresAt` was a string that did not parse as an RFC 3339 timestamp.
-    #[error("invalid 'expiresAt' value: {source}")]
-    ExpiresAt {
-        /// The timestamp grammar violation.
-        #[source]
-        source: chrono::ParseError,
-    },
-    /// The subscription `type` member was not `Subscription` (clause 5.2.12).
-    #[error("type must be 'Subscription'")]
-    TypeNotSubscription,
     /// `timeInterval` and `watchedAttributes` were both present (clause 5.8.1.4).
     #[error("timeInterval and watchedAttributes are mutually exclusive")]
     TimeIntervalWithWatchedAttributes,
@@ -107,38 +72,6 @@ pub enum SubscriptionValidationReason {
     /// `timeInterval` was given without `entities` on a non-local subscription.
     #[error("'entities' is required when 'timeInterval' is present, unless the request is limited to local scope")]
     EntitiesRequiredForTimeInterval,
-    /// One typed member of the payload was not the JSON shape its data type
-    /// requires (clause 5.2.12).
-    #[error("invalid '{member}' value: {source}")]
-    MemberValue {
-        /// The member whose value was rejected.
-        member: SubscriptionMember,
-        /// The JSON shape violation.
-        #[source]
-        source: serde_json::Error,
-    },
-    /// `ngsildConformance` was present but not a string.
-    #[error("'ngsildConformance' must be a string of the form major.minor")]
-    NgsildConformanceNotString,
-    /// `ngsildConformance` was a string outside the `major.minor` grammar.
-    #[error("invalid 'ngsildConformance' value: {source}")]
-    NgsildConformance {
-        /// The version grammar violation.
-        #[source]
-        source: SpecVersionParseError,
-    },
-    /// A subscription `q` filter was not syntactically valid.
-    ///
-    /// Clause 5.5.4: the request body is valid JSON but the `q` data is not
-    /// syntactically correct according to the API data type definitions, so it
-    /// is `BadRequestData`, not the `InvalidRequest` reserved for a body that is
-    /// not a valid JSON document.
-    #[error("q expression: {source}")]
-    QExpressionInvalid {
-        /// The clause 4.9 `q` grammar violation.
-        #[source]
-        source: QueryError,
-    },
     /// A `q` filter for a subscription named no comparison operator.
     ///
     /// A subscription's `q` is matched against one notified entity, so a filter
@@ -153,36 +86,14 @@ pub enum SubscriptionValidationReason {
     /// Table 5.2.13-1, clause 4.10).
     #[error(transparent)]
     GeoQ(GeoQError),
-    /// The subscription `id` was not a `URI`.
-    #[error("subscription id must be a valid URI: {source}")]
-    SubscriptionId {
-        /// Why it is not an identifier, a length past the identifier bound
-        /// included.
-        #[source]
-        source: IdentifierParseError,
-    },
+    /// The `temporalQ` names no time window (Table 5.2.21-1: `endTimeAt` has
+    /// cardinality 1 when `timerel` is `between`).
+    #[error("temporalQ is invalid: {0}")]
+    TemporalQ(QueryError),
     /// The notification projection combined mutually exclusive selectors
     /// (clause 4.21).
     #[error(transparent)]
     Projection(#[from] ProjectionConflict),
-    /// A `notification.pick` or `notification.omit` member was not an array
-    /// of strings (Table 5.2.14.1-1).
-    #[error("notification.{member} must be an array of projection strings")]
-    ProjectionNotStrings {
-        /// The member that was not.
-        member: ProjectionMember,
-    },
-    /// A `notification.pick` or `notification.omit` string was not "a valid
-    /// attribute projection language string as per clause 4.21" (Table
-    /// 5.2.14.1-1).
-    #[error("notification.{member}: {source}")]
-    ProjectionInvalid {
-        /// The member holding the string.
-        member: ProjectionMember,
-        /// The clause 4.21 grammar violation.
-        #[source]
-        source: QueryError,
-    },
     /// A Linked Entity reference the subscription operation does not admit.
     #[error(transparent)]
     LinkedRetrieval(#[from] AdmissionError),

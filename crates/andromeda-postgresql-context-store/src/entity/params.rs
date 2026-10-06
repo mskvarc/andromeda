@@ -6,7 +6,10 @@
 //! one encoding of an entity state into its stored document, the EWKB encoding
 //! of a geometry — happens on the way in here.
 
-use crate::{entity::staged_geometry::StagedGeometry, error::ContextStoreError};
+use crate::{
+    entity::{scope_label_paths::ScopeLabelPaths, staged_geometry::StagedGeometry},
+    error::ContextStoreError,
+};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -14,7 +17,7 @@ use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_encoding::array_literal::IntegerArrayLiteral;
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use chrono::{DateTime, Utc};
-use serde_json::Value;
+use sqlx::types::Json;
 
 /// Parallel column vectors for one fused entity statement.
 ///
@@ -39,8 +42,8 @@ pub struct PreparedEntityColumns {
     /// The stored family code of every attribute instance, aligned with
     /// `attribute_instance_name_keys`.
     pub attribute_instance_kinds: Vec<IntegerArrayLiteral>,
-    /// Scope arrays as JSON, already in `ltree` dot notation.
-    pub scope_paths_json: Vec<Value>,
+    /// Scope arrays, already in `ltree` dot notation, bound as JSON.
+    pub scope_paths_json: Vec<ScopeLabelPaths>,
     /// Pre-serialised JSON text for each payload.
     pub payload_json: Vec<String>,
     /// Location geometries, as EWKB or kept.
@@ -94,6 +97,11 @@ impl PreparedEntityColumns {
         let json = serde_json::to_string(state).map_err(ContextStoreError::PayloadEncoding)?;
         self.payload_json.push(json);
         Ok(())
+    }
+
+    /// The scope arrays as the `jsonb[]` parameter the entity statements bind.
+    pub(crate) fn scope_paths_bind(&self) -> Vec<Json<&ScopeLabelPaths>> {
+        self.scope_paths_json.iter().map(Json).collect()
     }
 
     /// Append one row's type keys, in declaration order.

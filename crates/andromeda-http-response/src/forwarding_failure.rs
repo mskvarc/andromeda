@@ -37,9 +37,11 @@ pub fn classify_forwarding_error(error: &FederationError) -> ClassifiedReport {
         FederationError::RemoteNotFound { .. } => ClassifiedReport::public_binding(ProblemClassification::DistributedResourceNotFound, error.to_string()),
         FederationError::BadGateway { .. } => ClassifiedReport::public_binding(ProblemClassification::BadGateway, error.to_string()),
         FederationError::Registration(source) => registration_store_failure(source),
-        FederationError::JsonLd(_) | FederationError::Query(_) | FederationError::Representation(_) | FederationError::Internal(_) => {
-            ClassifiedReport::internal(error, InternalFailureSummary::CONTEXT_FEDERATION)
-        }
+        FederationError::JsonLd(_)
+        | FederationError::Query(_)
+        | FederationError::Compaction(_)
+        | FederationError::Representation(_)
+        | FederationError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::CONTEXT_FEDERATION),
         FederationError::ForwardedBody(_) => ClassifiedReport::internal(error, InternalFailureSummary::RESPONSE_ENCODING),
     }
 }
@@ -62,6 +64,7 @@ pub fn classify_federation_error(error: &FederationError) -> ClassifiedReport {
         | FederationError::RemoteNotFound { .. }
         | FederationError::BadGateway { .. }
         | FederationError::Registration(_)
+        | FederationError::Compaction(_)
         | FederationError::Representation(_)
         | FederationError::ForwardedBody(_)
         | FederationError::Internal(_) => classify_forwarding_error(error),
@@ -89,10 +92,7 @@ pub fn registration_store_failure(error: &RegistrationError) -> ClassifiedReport
         | RegistrationError::Conflict(_)
         | RegistrationError::JsonLd(_)
         | RegistrationError::GeometryTooLarge { .. }
-        | RegistrationError::Query(_)
-        | RegistrationError::Representation(_) => {
-            ClassifiedReport::internal(error, InternalFailureSummary::new("failed to select the registrations to forward to"))
-        }
+        | RegistrationError::Query(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("failed to select the registrations to forward to")),
     }
 }
 
@@ -118,7 +118,6 @@ pub fn local_federation_failure(error: &FederationError) -> Option<ClassifiedRep
             | RegistrationError::JsonLd(_)
             | RegistrationError::GeometryTooLarge { .. }
             | RegistrationError::Query(_)
-            | RegistrationError::Representation(_)
             | RegistrationError::Persistence(_)
             | RegistrationError::Internal(_),
         )
@@ -130,6 +129,7 @@ pub fn local_federation_failure(error: &FederationError) -> Option<ClassifiedRep
         | FederationError::BadGateway { .. }
         | FederationError::JsonLd(_)
         | FederationError::Query(_)
+        | FederationError::Compaction(_)
         | FederationError::Representation(_)
         | FederationError::ForwardedBody(_)
         | FederationError::Internal(_) => None,
@@ -213,7 +213,7 @@ mod tests {
             },
             FederationError::BadGateway {
                 registration,
-                cause: Box::new(GatewayFailure::Answered(RemoteAnswer { status: 500, body: None })),
+                cause: Box::new(GatewayFailure::Answered(RemoteAnswer { status: 500, problem: None })),
             },
             FederationError::Registration(RegistrationError::Persistence(PersistenceFailure::StatementRejected)),
         ] {
@@ -226,13 +226,13 @@ mod tests {
         let registration = uri("urn:ngsi-ld:ContextSourceRegistration:test");
         for (error, expected) in [
             (
-                FederationError::Conflict(FederationConflictReason::RemoteRejected(Box::new(RemoteAnswer { status: 409, body: None }))),
+                FederationError::Conflict(FederationConflictReason::RemoteRejected(Box::new(RemoteAnswer { status: 409, problem: None }))),
                 ProblemClassification::Category(NgsiLdErrorType::Conflict),
             ),
             (
                 FederationError::OperationNotSupported(FederationOperationUnsupported::RemoteUnsupported(Box::new(RemoteAnswer {
                     status: 422,
-                    body: None,
+                    problem: None,
                 }))),
                 ProblemClassification::Category(NgsiLdErrorType::OperationNotSupported),
             ),
@@ -258,10 +258,7 @@ mod tests {
             (
                 FederationError::BadGateway {
                     registration,
-                    cause: Box::new(GatewayFailure::Answered(RemoteAnswer {
-                        status: 403,
-                        body: Some(serde_json::json!({"detail": "denied"})),
-                    })),
+                    cause: Box::new(GatewayFailure::Answered(RemoteAnswer { status: 403, problem: None })),
                 },
                 ProblemClassification::BadGateway,
             ),

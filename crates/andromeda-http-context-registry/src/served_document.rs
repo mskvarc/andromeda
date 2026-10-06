@@ -21,6 +21,7 @@
 
 use andromeda_context_registry::served_context::ServedContext;
 use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::loader::cache_lifetime::CacheLifetime;
 use axum::{
     Json,
@@ -28,7 +29,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use headers::{CacheControl, ContentType, ETag, HeaderMapExt, IfNoneMatch};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 /// The request header a Serve answer is selected by besides its URL.
@@ -44,11 +44,12 @@ static VARY_ON_TENANT: HeaderValue = HeaderValue::from_static("NGSILD-Tenant");
 ///
 /// # Errors
 ///
-/// Returns an internal-error report when a stored document cannot be encoded,
-/// which a JSON value read back from the store never is in practice.
+/// Returns an internal-error report when the entity tag of a stored document
+/// cannot be written, which a hexadecimal digest never fails to be.
 pub(crate) fn served_response(served: ServedContext, if_none_match: Option<&IfNoneMatch>) -> Result<Response, ClassifiedReport> {
     match served {
-        ServedContext::Metadata(value) | ServedContext::Embedded(value) => Ok(unvalidated_response(value, if_none_match)),
+        ServedContext::Metadata(metadata) => Ok(unvalidated_response(if_none_match, || (StatusCode::OK, Json(metadata)).into_response())),
+        ServedContext::Embedded(document) => Ok(unvalidated_response(if_none_match, || json_document(&document))),
         ServedContext::Stored { document, revalidation } => stored_document_response(&document, revalidation, if_none_match),
     }
 }
@@ -57,28 +58,33 @@ pub(crate) fn served_response(served: ServedContext, if_none_match: Option<&IfNo
 /// `If-None-Match` is `*`: RFC 7232 section 3.2 makes `*` false whenever a
 /// current representation exists, and no entity tag can match one that has
 /// none.
-fn unvalidated_response(value: Value, if_none_match: Option<&IfNoneMatch>) -> Response {
+fn unvalidated_response(if_none_match: Option<&IfNoneMatch>, full: impl FnOnce() -> Response) -> Response {
     if if_none_match == Some(&IfNoneMatch::any()) {
         StatusCode::NOT_MODIFIED.into_response()
     } else {
-        (StatusCode::OK, Json(value)).into_response()
+        full()
     }
+}
+
+/// The 200 carrying `document` as an `application/json` body, written exactly
+/// as it is held.
+fn json_document(document: &JsonLiteral) -> Response {
+    let mut full = (StatusCode::OK, document.text().to_owned()).into_response();
+    full.headers_mut().typed_insert(ContentType::json());
+    full
 }
 
 /// A stored document with the validators a remote cache holds it by, or 304
 /// when the request already holds the current one.
-fn stored_document_response(document: &Value, revalidation: CacheLifetime, if_none_match: Option<&IfNoneMatch>) -> Result<Response, ClassifiedReport> {
-    let body = serde_json::to_vec(document).map_err(|error| ClassifiedReport::internal(&error, InternalFailureSummary::RESPONSE_ENCODING))?;
-    let tag = entity_tag(&body).map_err(|error| ClassifiedReport::internal(&error, InternalFailureSummary::RESPONSE_ENCODING))?;
+fn stored_document_response(document: &JsonLiteral, revalidation: CacheLifetime, if_none_match: Option<&IfNoneMatch>) -> Result<Response, ClassifiedReport> {
+    let tag = entity_tag(document.text().as_bytes()).map_err(|error| ClassifiedReport::internal(&error, InternalFailureSummary::RESPONSE_ENCODING))?;
     // RFC 7232 section 3.2: If-None-Match compares weakly, and `*` matches any
     // current representation; a false condition on a GET or HEAD is 304.
     let not_modified = if_none_match.is_some_and(|condition| !condition.precondition_passes(&tag));
     let mut response = if not_modified {
         StatusCode::NOT_MODIFIED.into_response()
     } else {
-        let mut full = (StatusCode::OK, body).into_response();
-        full.headers_mut().typed_insert(ContentType::json());
-        full
+        json_document(document)
     };
     // RFC 7232 section 4.1: a 304 carries the Cache-Control, ETag and Vary the
     // 200 would have carried.
@@ -116,7 +122,10 @@ fn entity_tag(representation: &[u8]) -> Result<ETag, headers::Error> {
 mod tests {
     use crate::served_document::{served_response, vary_on_tenant};
     use andromeda_context_registry::served_context::ServedContext;
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::loader::cache_lifetime::CacheLifetime;
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
     use axum::{
         body::to_bytes,
         http::{
@@ -127,6 +136,7 @@ mod tests {
         },
         response::{IntoResponse, Response},
     };
+    use chrono::Utc;
     use headers::{ETag, IfNoneMatch};
     use serde_json::{Value, json};
 
@@ -135,13 +145,38 @@ mod tests {
         CacheLifetime::from_seconds(90).expect("ninety seconds is a positive lifetime")
     }
 
+    /// The literal `value` spells.
+    fn literal(value: &Value) -> JsonLiteral {
+        JsonLiteral::admit(&value.to_string()).expect("an admissible literal")
+    }
+
     /// The stored document the tests serve.
-    fn spot() -> Value {
-        json!({ "@context": { "Spot": "https://e.org/Spot" } })
+    fn spot() -> JsonLiteral {
+        literal(&json!({ "@context": { "Spot": "https://e.org/Spot" } }))
+    }
+
+    /// The lifecycle metadata of one hosted entry.
+    fn metadata() -> ServedContext {
+        let now = Utc::now();
+        ServedContext::Metadata(Box::new(
+            ContextMetadata::builder()
+                .serving_iri(None)
+                .local_id("urn:ngsi-ld:JsonLdContext:x".parse::<Identifier>().expect("a URN is a valid URI"))
+                .kind(ContextKind::Hosted)
+                .created_at(now)
+                .last_usage(now)
+                .number_of_hits(0)
+                .build(),
+        ))
+    }
+
+    /// An embedded core context.
+    fn embedded() -> ServedContext {
+        ServedContext::Embedded(literal(&json!({ "@context": {} })))
     }
 
     /// The response a stored document is served with under `if_none_match`.
-    fn served_under(document: Value, if_none_match: Option<&IfNoneMatch>) -> Response {
+    fn served_under(document: JsonLiteral, if_none_match: Option<&IfNoneMatch>) -> Response {
         served_response(
             ServedContext::Stored {
                 document,
@@ -153,7 +188,7 @@ mod tests {
     }
 
     /// The response a stored document is served with.
-    fn served(document: Value) -> Response {
+    fn served(document: JsonLiteral) -> Response {
         served_under(document, None)
     }
 
@@ -199,7 +234,7 @@ mod tests {
     async fn the_entity_tag_follows_the_document_content() {
         let first = served(spot());
         let same = served(spot());
-        let changed = served(json!({ "@context": { "Spot": "https://e.org/Spot2" } }));
+        let changed = served(literal(&json!({ "@context": { "Spot": "https://e.org/Spot2" } })));
 
         let tag = header(&first, ETAG).expect("an entity tag");
         assert!(tag.starts_with('"') && !tag.starts_with("W/"), "a strong tag: {tag}");
@@ -212,7 +247,7 @@ mod tests {
     #[tokio::test]
     async fn the_body_is_the_stored_document() {
         let document = json!({ "@context": ["https://e.org/a.jsonld", { "b": "https://e.org/b" }] });
-        let response = served(document.clone()); // clone: the expectation compares against the input
+        let response = served(literal(&document));
 
         let body = to_bytes(response.into_body(), usize::MAX).await.expect("a readable body");
         pretty_assertions::assert_eq!(serde_json::from_slice::<Value>(&body).expect("a JSON body"), document);
@@ -257,8 +292,8 @@ mod tests {
     /// fixed; neither carries validators.
     #[tokio::test]
     async fn metadata_and_an_embedded_context_carry_no_cache_validators() {
-        let metadata = served_response(ServedContext::Metadata(json!({ "localId": "x" })), None).expect("served");
-        let embedded = served_response(ServedContext::Embedded(json!({ "@context": {} })), None).expect("served");
+        let metadata = served_response(metadata(), None).expect("served");
+        let embedded = served_response(embedded(), None).expect("served");
 
         for response in [&metadata, &embedded] {
             pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
@@ -275,19 +310,13 @@ mod tests {
     async fn a_star_revalidates_metadata_and_an_embedded_context_and_a_tag_does_not() {
         let star = IfNoneMatch::any();
         let tag = condition("\"stale\"");
-        for served in [
-            ServedContext::Metadata(json!({ "localId": "x" })),
-            ServedContext::Embedded(json!({ "@context": {} })),
-        ] {
+        for served in [metadata(), embedded()] {
             let response = served_response(served, Some(&star)).expect("served");
             pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
             let body = to_bytes(response.into_body(), usize::MAX).await.expect("a readable body");
             assert!(body.is_empty(), "a 304 carries no body: {body:?}");
         }
-        for served in [
-            ServedContext::Metadata(json!({ "localId": "x" })),
-            ServedContext::Embedded(json!({ "@context": {} })),
-        ] {
+        for served in [metadata(), embedded()] {
             pretty_assertions::assert_eq!(served_response(served, Some(&tag)).expect("served").status(), StatusCode::OK);
         }
     }

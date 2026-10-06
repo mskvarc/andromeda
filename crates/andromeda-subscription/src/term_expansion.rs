@@ -1,276 +1,168 @@
-//! Expansion of a subscription payload's terms against the request `@context`
+//! Expansion of a subscription request's terms against the request `@context`
 //! (ETSI GS CIM 009 clause 5.5.7).
 //!
 //! Everything a subscription is later matched by is stored in expanded form —
 //! entity types, watched attributes, the notification's attribute lists, the
 //! `q` and `csf` filters, the `geoQ` geoproperty — because matching runs
 //! against expanded entity data and never has the creator's `@context` at hand.
-//! Context hosting is not handled here; the entity-subscription variant adds
-//! that on top.
+//! Context hosting is not handled here; the lifecycle adds that on top.
 
-use crate::{
-    error::SubscriptionError,
-    fields::attribute_name_csv_member,
-    notification_projection::{ProjectionMember, written_projection},
-    subscription_member::SubscriptionMember,
-    subscription_validation_reason::SubscriptionValidationReason,
-};
+use crate::{error::SubscriptionError, filter_opt_ins::FilterOptIns, projection_expansion::expand_projection_lists};
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
     term_expansion::ContextualExpander,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::{
-    filter::{
-        expansion::{apply_expand_values, expand_attribute_names, expand_csf_expr, expand_q_expr},
-        expression::Expr,
-        json_key_attributes::JsonKeyAttributes,
-        parser,
-        serialize,
-    },
-    projection::{
-        expansion::expand_projection_terms,
-        grammar::{ProjectionList, RawProjectionTerm},
-    },
-    term_expander::TermExpander,
-    type_selection::{
-        expansion::expand_type_expression,
-        grammar::{TypeExpr, TypeExprRaw},
-    },
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
+use andromeda_ngsi_ld_model::{
+    clearable::Clearable,
+    notification_request::NotificationRequest,
+    subscription::EntitySelector,
+    subscription_request::SubscriptionRequest,
 };
-use serde_json::Value;
-use std::collections::HashSet;
-use strum::IntoEnumIterator;
+use andromeda_ngsi_ld_query::{
+    filter::expansion::expand_csf_expr,
+    term_expander::TermExpander,
+    type_selection::{expansion::expand_type_expression, grammar::TypeExpr},
+};
+use std::mem;
 use tracing::warn;
 
-/// Expand every string of one attribute-name list in place (clause 5.5.7).
+/// Expand every name of one attribute-name list in place (clause 5.5.7).
 ///
 /// An unavailable `@context` fails the request; a single name the context
 /// cannot expand is left as written and reported, the same lenience the
 /// attribute lists always had.
-async fn expand_name_list(engine: &JsonLdEngine, prepared_context: &PreparedTermContext, names: &mut [Value], member: &str) -> Result<(), SubscriptionError> {
-    for name in names.iter_mut() {
-        let Some(term) = name.as_str() else {
-            continue;
-        };
-        match engine.expand_term(term, prepared_context).await {
-            Ok(expanded) => *name = Value::String(expanded.to_string()),
+async fn expand_name_list(
+    engine: &JsonLdEngine,
+    prepared_context: &PreparedTermContext,
+    names: &mut [AttributeName],
+    member: &str,
+) -> Result<(), SubscriptionError> {
+    for name in names {
+        match engine.expand_term(name.as_str(), prepared_context).await {
+            Ok(expanded) => match expanded.as_str().parse() {
+                Ok(expanded_name) => *name = expanded_name,
+                Err(error) => warn!(member, term = name.as_str(), %error, "Expanded subscription attribute name is not an attribute name"),
+            },
             Err(error) => {
                 if error.is_context_not_available() {
                     return Err(SubscriptionError::from(error));
                 }
-                warn!(member, term, %error, "Failed to expand subscription attribute name");
+                warn!(member, term = name.as_str(), %error, "Failed to expand subscription attribute name");
             }
         }
     }
     Ok(())
 }
 
-/// The two clause 6.4.3.2 opt-in lists a subscription carries, already expanded
-/// through the request `@context` (Table 5.2.12-1 `expandValues` / `jsonKeys`).
-///
-/// They travel together because both are read from the same payload, both key
-/// the same `q` filter, and neither means anything without it.
-#[derive(Debug, Default)]
-struct FilterOptIns {
-    /// Attributes whose `q` values are expanded by JSON-LD type coercion.
-    expand_values: HashSet<AttributeName>,
-    /// Attributes whose values are uninterpretable as JSON-LD, so the object
-    /// keys the filter addresses under them stay literal.
-    json_keys: JsonKeyAttributes,
-}
-
-/// Write one opt-in member back in the comma-separated form Table 5.2.12-1
-/// defines, leaving an empty list absent.
-fn rewrite_opt_in_member(payload: &mut Value, member: &str, names: &[AttributeName]) {
-    if names.is_empty() {
-        return;
+/// Expand the type selection of every entity selector in place.
+async fn expand_selector_types(selectors: &mut [EntitySelector], expander: &impl TermExpander) -> Result<(), SubscriptionError> {
+    for selector in selectors {
+        selector.type_ = expand_type_expression(&selector.type_, expander).await.and_then(TypeExpr::into_raw)?;
     }
-    let rendered = names.iter().map(AttributeName::as_str).collect::<Vec<_>>().join(",");
-    if let Some(object) = payload.as_object_mut() {
-        object.insert(member.to_owned(), Value::String(rendered));
+    Ok(())
+}
+
+/// Expand the attribute list and the projection lists of a notification.
+async fn expand_notification(
+    engine: &JsonLdEngine,
+    prepared_context: &PreparedTermContext,
+    notification: &mut NotificationRequest,
+    expander: &impl TermExpander,
+) -> Result<(), SubscriptionError> {
+    if let Some(names) = notification.attributes.as_deref_mut() {
+        expand_name_list(engine, prepared_context, names, "attributes").await?;
     }
-}
-
-/// Expand both opt-in lists and store them expanded, so the persisted member
-/// names the same IRIs the persisted `q` was expanded into.
-async fn expand_filter_opt_ins(payload: &mut Value, expander: &impl TermExpander) -> Result<FilterOptIns, SubscriptionError> {
-    let expand_values = expand_attribute_names(
-        &attribute_name_csv_member(payload, SubscriptionMember::ExpandValues)?.unwrap_or_default(),
-        expander,
-    )
-    .await?;
-    let json_keys = expand_attribute_names(&attribute_name_csv_member(payload, SubscriptionMember::JsonKeys)?.unwrap_or_default(), expander).await?;
-    rewrite_opt_in_member(payload, "expandValues", &expand_values);
-    rewrite_opt_in_member(payload, "jsonKeys", &json_keys);
-    Ok(FilterOptIns {
-        expand_values: expand_values.into_iter().collect(),
-        json_keys: json_keys.into_iter().collect(),
-    })
-}
-
-/// Apply the `expandValues` coercion to an already term-expanded `q` filter.
-///
-/// The subscription's filter is evaluated against notified entity data by a
-/// synchronous matcher that has no `@context` and no expander, so the coercion
-/// Table 5.2.12-1 asks for happens once, here, at create and update time; what
-/// is stored is the filter matching consumes. `jsonKeys` is not applied here at
-/// all — it decides how the filter's own terms expand, so it is handed to the
-/// expansion instead.
-async fn apply_expand_values_opt_in(expr: Expr, opt_ins: &FilterOptIns, expander: &impl TermExpander) -> Result<Expr, SubscriptionError> {
-    if opt_ins.expand_values.is_empty() {
-        return Ok(expr);
+    for lists in [notification.pick.as_deref_mut(), notification.omit.as_deref_mut()].into_iter().flatten() {
+        expand_projection_lists(lists, expander).await?;
     }
-    Ok(apply_expand_values(expr, &opt_ins.expand_values, expander).await?)
+    Ok(())
 }
 
-/// Replace each clause 4.21 string of `notification.pick` and
-/// `notification.omit` with the term tree it expands to (clause 5.5.7).
-///
-/// Every attribute name expands, at every nesting level, and the clause 4.21
-/// keywords stay as written; the tree is what the subscription stores, since
-/// an expanded name may hold the separators of the clause 4.21 text.
-async fn expand_projection_members(notification: &mut Value, expander: &impl TermExpander) -> Result<(), SubscriptionError> {
-    for member in ProjectionMember::iter() {
-        let Some(lists) = written_projection(notification, member)? else {
-            continue;
-        };
-        let mut trees = Vec::with_capacity(lists.len());
-        for list in &lists {
-            trees.push(expanded_projection_list(list, expander).await?);
-        }
-        let stored = serde_json::to_value(trees).map_err(|source| SubscriptionValidationReason::MemberValue {
-            member: SubscriptionMember::Notification,
-            source,
-        })?;
-        if let Some(object) = notification.as_object_mut() {
-            object.insert(member.key().to_owned(), stored);
+/// Expand the geoproperty a `geoQ` names, leaving it as written when the
+/// context cannot expand it.
+async fn expand_geoproperty(engine: &JsonLdEngine, prepared_context: &PreparedTermContext, geoproperty: &mut NgsiLdReference) -> Result<(), SubscriptionError> {
+    match engine.expand_term(geoproperty.as_ref(), prepared_context).await {
+        Ok(expanded) => match NgsiLdReference::try_from(expanded.to_string()) {
+            Ok(expanded) => *geoproperty = expanded,
+            Err(error) => warn!(%error, "Expanded geoQ.geoproperty '{geoproperty}' is not a reference"),
+        },
+        Err(error) => {
+            if error.is_context_not_available() {
+                return Err(SubscriptionError::from(error));
+            }
+            warn!("Failed to expand geoQ.geoproperty '{}': {}", geoproperty, error);
         }
     }
     Ok(())
 }
 
-/// One projection list with its attribute names expanded.
-async fn expanded_projection_list(list: &ProjectionList, expander: &impl TermExpander) -> Result<ProjectionList, SubscriptionError> {
-    let terms = expand_projection_terms(list, expander).await?;
-    Ok(terms.iter().map(RawProjectionTerm::try_from).collect::<Result<Vec<_>, _>>()?.into())
-}
-
-/// Expand entities, watchedAttributes, the notification's attributes, pick
-/// and omit, q, and geoQ in a subscription payload. Context hosting is NOT
-/// handled here — the entity-subscription service adds that on top.
+/// Expand entities, watchedAttributes, the notification's attributes, pick and
+/// omit, the filters, the opt-in lists and geoQ of a subscription request in
+/// place. Context hosting is NOT handled here — the lifecycle adds that on top.
 ///
-/// Returns the expanded `q`. The clause 4.9 text written back into the payload
-/// spells every trailing `[…]` member expanded, while the returned filter also
-/// keeps the spelling the subscriber wrote, which clause 4.9 reads a
-/// `LanguageProperty`'s target language and a raw JSON key in.
+/// The `q` the request holds afterwards is the expanded filter itself, which
+/// also keeps the spelling the subscriber wrote of its trailing `[…]` members,
+/// where clause 4.9 reads a `LanguageProperty`'s target language and a raw JSON
+/// key.
 ///
 /// # Errors
 ///
 /// Returns [`SubscriptionError::JsonLd`] when the `@context` cannot be
-/// resolved, [`SubscriptionError::Query`] when a type selection or an opt-in
-/// term does not expand to a usable name, and
-/// [`SubscriptionError::Validation`] when `expandValues` or `jsonKeys` is not
-/// the comma-separated attribute-name list Table 5.2.12-1 defines.
-pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &mut Value, context: &ContextSpec) -> Result<Option<Expr>, SubscriptionError> {
+/// resolved, and [`SubscriptionError::Query`] when a type selection, an
+/// opt-in term or a filter term does not expand to a usable name.
+pub async fn expand_common_subscription_terms(
+    engine: &JsonLdEngine,
+    request: &mut SubscriptionRequest,
+    context: &ContextSpec,
+) -> Result<(), SubscriptionError> {
     let prepared_context = engine.prepare_term_context(context);
     let term_expander = ContextualExpander::new(engine, &prepared_context);
-    // Expand entities[].type
-    if let Some(entities) = payload.get_mut("entities")
-        && let Some(arr) = entities.as_array_mut()
-    {
-        for entity_sel in arr.iter_mut() {
-            if let Some(type_val) = entity_sel.get("type").and_then(|v| v.as_str()) {
-                let raw = type_val.parse::<TypeExprRaw>()?;
-                match expand_type_expression(&raw, &term_expander).await.and_then(TypeExpr::into_raw) {
-                    Ok(expanded) => {
-                        if let Some(obj) = entity_sel.as_object_mut() {
-                            obj.insert("type".to_string(), Value::String(expanded.to_string()));
-                        }
-                    }
-                    Err(error) => return Err(SubscriptionError::from(error)),
-                }
-            }
-        }
-    }
 
-    if let Some(watched) = payload.get_mut("watchedAttributes").and_then(Value::as_array_mut) {
+    if let Some(entities) = request.entities.as_set_mut() {
+        expand_selector_types(entities, &term_expander).await?;
+    }
+    if let Some(watched) = request.watched_attributes.as_set_mut() {
         expand_name_list(engine, &prepared_context, watched, "watchedAttributes").await?;
     }
-
-    if let Some(notification) = payload.get_mut("notification") {
-        if let Some(names) = notification.get_mut("attributes").and_then(Value::as_array_mut) {
-            expand_name_list(engine, &prepared_context, names, "attributes").await?;
-        }
-        expand_projection_members(notification, &term_expander).await?;
+    if let Some(notification) = request.notification.as_mut() {
+        expand_notification(engine, &prepared_context, notification, &term_expander).await?;
     }
 
-    let opt_ins = expand_filter_opt_ins(payload, &term_expander).await?;
-
-    // Expand the `q` filter's attribute terms under the `jsonKeys` declaration,
-    // then let `expandValues` rewrite the operands it opted in.
-    let mut expanded_q = None;
-    if let Some(q_str) = payload.get("q").and_then(|v| v.as_str()).map(String::from)
-        && let Ok(expr) = parser::parse(&q_str)
-        && let Ok(expanded) = expand_q_expr(expr, &opt_ins.json_keys, &term_expander).await
-    {
-        let expanded = apply_expand_values_opt_in(expanded, &opt_ins, &term_expander).await?;
-        let expanded_str = serialize::serialize(&expanded);
-        if let Some(obj) = payload.as_object_mut() {
-            obj.insert("q".to_string(), Value::String(expanded_str));
-        }
-        expanded_q = Some(expanded);
-    }
+    let opt_ins = FilterOptIns::expanded(&mut request.expand_values, &mut request.json_keys, &term_expander).await?;
+    request.q = match mem::take(&mut request.q) {
+        Clearable::Set(q) => Clearable::Set(opt_ins.expand_q(q, &term_expander).await?),
+        unchanged @ (Clearable::Absent | Clearable::Cleared | Clearable::NgsiLdNull) => unchanged,
+    };
 
     // Expand the context source filter's property terms: a registration's
     // Context Source Properties are stored under their expanded names (clause
     // 5.5.7), so the filter matched against them (clauses 5.8.1.4 and
     // 5.11.2.4) has to name them by IRI too. Their values are raw JSON, so the
     // compound-value members stay as written (clause 4.9).
-    if let Some(csf_str) = payload.get("csf").and_then(|v| v.as_str()).map(String::from)
-        && let Ok(expr) = parser::parse(&csf_str)
-        && let Ok(expanded) = expand_csf_expr(expr, &term_expander).await
+    request.csf = match mem::take(&mut request.csf) {
+        Clearable::Set(csf) => Clearable::Set(expand_csf_expr(csf, &term_expander).await?),
+        unchanged @ (Clearable::Absent | Clearable::Cleared | Clearable::NgsiLdNull) => unchanged,
+    };
+
+    if let Some(geo_q) = request.geo_q.as_set_mut()
+        && let Some(geoproperty) = geo_q.geoproperty.as_mut()
     {
-        let expanded_str = serialize::serialize(&expanded);
-        if let Some(obj) = payload.as_object_mut() {
-            obj.insert("csf".to_string(), Value::String(expanded_str));
-        }
+        expand_geoproperty(engine, &prepared_context, geoproperty).await?;
     }
 
-    // Expand geoQ.geoproperty
-    if let Some(geo_q) = payload.get_mut("geoQ")
-        && let Some(geoprop) = geo_q.get("geoproperty").and_then(|v| v.as_str()).map(String::from)
-    {
-        match engine.expand_term(&geoprop, &prepared_context).await {
-            Ok(expanded) => {
-                if let Some(obj) = geo_q.as_object_mut() {
-                    obj.insert("geoproperty".to_string(), Value::String(expanded.to_string()));
-                }
-            }
-            Err(e) => {
-                if e.is_context_not_available() {
-                    return Err(SubscriptionError::from(e));
-                }
-                warn!("Failed to expand geoQ.geoproperty '{}': {}", geoprop, e);
-            }
-        }
-    }
-
-    // Strip @context — it's been used for expansion
-    if let Some(obj) = payload.as_object_mut() {
-        obj.remove("@context");
-    }
-
-    Ok(expanded_q)
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason, term_expansion::expand_common_subscription_terms};
+    use crate::{error::SubscriptionError, term_expansion::expand_common_subscription_terms};
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
     use andromeda_ngsi_ld_query::filter::serialize::serialize_written_members;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     /// The core context's default vocabulary.
     const DEFAULT: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
@@ -280,55 +172,58 @@ mod tests {
         JsonLdEngine::builder().allow_remote(false).build().expect("engine builds")
     }
 
+    /// The request body `wire` writes, read as the request model reads it.
+    fn request(wire: &Value) -> SubscriptionRequest {
+        SubscriptionRequest::from_request_text(wire.to_string().as_bytes()).expect("a readable request")
+    }
+
+    /// `wire` expanded under the core context, written back as a body.
+    async fn expanded(wire: Value) -> Result<SubscriptionRequest, SubscriptionError> {
+        let mut request = request(&wire);
+        expand_common_subscription_terms(&offline_engine(), &mut request, &ContextSpec::none()).await?;
+        Ok(request)
+    }
+
+    /// The expanded request as the wire form a client would read it in.
+    fn written(request: &SubscriptionRequest) -> Value {
+        serde_json::to_value(request).expect("the request writes")
+    }
+
     /// Clause 5.5.7 for the clause 5.2.14 lists: `attributes` expands its
     /// names; `pick` and `omit` expand every attribute name at every nesting
     /// level into the stored term tree, and the clause 4.21 keywords stay as
     /// written.
     #[tokio::test]
     async fn nested_projection_terms_expand_every_name_and_keep_keywords() {
-        let engine = offline_engine();
-        let mut payload = json!({
+        let request = expanded(json!({
             "notification": {
+                "endpoint": {"uri": "https://receiver.example.com/notify"},
                 "attributes": ["speed"],
                 "pick": ["id", "owner{id,name}"],
                 "omit": ["scope,colour"]
             }
-        });
+        }))
+        .await
+        .expect("expands");
 
-        expand_common_subscription_terms(&engine, &mut payload, &ContextSpec::none())
-            .await
-            .expect("expands");
-
-        let notification = &payload["notification"];
-        pretty_assertions::assert_eq!(notification["attributes"], json!([format!("{DEFAULT}speed")]));
+        let notification = request.notification.expect("the notification is kept");
+        pretty_assertions::assert_eq!(written_names(notification.attributes.as_deref()), vec![format!("{DEFAULT}speed")]);
         pretty_assertions::assert_eq!(
-            notification["pick"],
+            serde_json::to_value(notification.pick).expect("the tree writes"),
             json!([
                 [{"name": "id", "linked": []}],
                 [{"name": format!("{DEFAULT}owner"), "linked": [{"name": "id", "linked": []}, {"name": format!("{DEFAULT}name"), "linked": []}]}]
             ])
         );
         pretty_assertions::assert_eq!(
-            notification["omit"],
+            serde_json::to_value(notification.omit).expect("the tree writes"),
             json!([[{"name": "scope", "linked": []}, {"name": format!("{DEFAULT}colour"), "linked": []}]])
         );
     }
 
-    /// Table 5.2.14.1-1: a string outside the clause 4.21 grammar is
-    /// `BadRequestData`, never stored.
-    #[tokio::test]
-    async fn a_malformed_projection_string_is_bad_request_data() {
-        let engine = offline_engine();
-        let mut payload = json!({"notification": {"pick": ["owner{"]}});
-
-        let refused = expand_common_subscription_terms(&engine, &mut payload, &ContextSpec::none())
-            .await
-            .expect_err("an unbalanced brace is refused");
-
-        assert!(
-            matches!(refused, SubscriptionError::Validation(SubscriptionValidationReason::ProjectionInvalid { .. })),
-            "got {refused:?}"
-        );
+    /// The names of an expanded list, as text.
+    fn written_names(names: Option<&[AttributeName]>) -> Vec<String> {
+        names.unwrap_or_default().iter().map(|name| name.as_str().to_owned()).collect()
     }
 
     /// Table 5.2.12-1: `expandValues` is stored as the same comma-separated
@@ -336,18 +231,25 @@ mod tests {
     /// `q` the store holds.
     #[tokio::test]
     async fn the_opt_in_lists_are_stored_expanded_in_their_comma_separated_form() {
-        let engine = offline_engine();
-        let mut payload = json!({"q": "speed>10", "expandValues": "speed,colour", "jsonKeys": "payload"});
-
-        expand_common_subscription_terms(&engine, &mut payload, &ContextSpec::none())
+        let request = expanded(json!({"q": "speed>10", "expandValues": "speed,colour", "jsonKeys": "payload"}))
             .await
             .expect("expands");
 
+        let written = written(&request);
         pretty_assertions::assert_eq!(
-            payload["expandValues"],
+            written["expandValues"],
             json!("https://uri.etsi.org/ngsi-ld/default-context/speed,https://uri.etsi.org/ngsi-ld/default-context/colour")
         );
-        pretty_assertions::assert_eq!(payload["jsonKeys"], json!("https://uri.etsi.org/ngsi-ld/default-context/payload"));
+        pretty_assertions::assert_eq!(written["jsonKeys"], json!("https://uri.etsi.org/ngsi-ld/default-context/payload"));
+    }
+
+    /// Clause 5.8.3: an opt-in list the fragment clears stays cleared through
+    /// the expansion.
+    #[tokio::test]
+    async fn a_cleared_opt_in_list_stays_cleared() {
+        let request = expanded(json!({"expandValues": null})).await.expect("expands");
+
+        pretty_assertions::assert_eq!(written(&request), json!({"expandValues": null}));
     }
 
     /// Table 5.2.12-1: the identified attributes' values "should be expanded
@@ -355,15 +257,10 @@ mod tests {
     /// executing the query", so the stored filter is the coerced one.
     #[tokio::test]
     async fn expand_values_rewrites_the_stored_filter_operand() {
-        let engine = offline_engine();
-        let mut payload = json!({"q": "colour==\"active\"", "expandValues": "colour"});
-
-        expand_common_subscription_terms(&engine, &mut payload, &ContextSpec::none())
-            .await
-            .expect("expands");
+        let request = expanded(json!({"q": "colour==\"active\"", "expandValues": "colour"})).await.expect("expands");
 
         pretty_assertions::assert_eq!(
-            payload["q"],
+            written(&request)["q"],
             json!("\"https://uri.etsi.org/ngsi-ld/default-context/colour\"==\"https://uri.etsi.org/ngsi-ld/default-context/active\"")
         );
     }
@@ -372,14 +269,12 @@ mod tests {
     /// what makes the member observable at all.
     #[tokio::test]
     async fn a_filter_without_the_opt_in_keeps_its_literal_operand() {
-        let engine = offline_engine();
-        let mut payload = json!({"q": "colour==\"active\""});
+        let request = expanded(json!({"q": "colour==\"active\""})).await.expect("expands");
 
-        expand_common_subscription_terms(&engine, &mut payload, &ContextSpec::none())
-            .await
-            .expect("expands");
-
-        pretty_assertions::assert_eq!(payload["q"], json!("\"https://uri.etsi.org/ngsi-ld/default-context/colour\"==\"active\""));
+        pretty_assertions::assert_eq!(
+            written(&request)["q"],
+            json!("\"https://uri.etsi.org/ngsi-ld/default-context/colour\"==\"active\"")
+        );
     }
 
     /// Table 5.2.12-1: the values of a `jsonKeys` attribute are
@@ -393,14 +288,12 @@ mod tests {
     /// not expanded to ngsi-ld:hasValue using the core @context".
     #[tokio::test]
     async fn json_keys_leaves_the_addressed_object_keys_literal() {
-        let engine = offline_engine();
-        let mut declared = json!({"q": "payload[city]==\"Berlin\"", "jsonKeys": "payload"});
-
-        expand_common_subscription_terms(&engine, &mut declared, &ContextSpec::none())
+        let declared = expanded(json!({"q": "payload[city]==\"Berlin\"", "jsonKeys": "payload"}))
             .await
             .expect("expands");
 
-        let rendered = declared["q"].as_str().expect("the filter is a string");
+        let written = written(&declared);
+        let rendered = written["q"].as_str().expect("the filter is a string");
         assert!(
             rendered.contains("https://uri.etsi.org/ngsi-ld/default-context/payload"),
             "the addressed attribute still expands: {rendered}"
@@ -417,39 +310,40 @@ mod tests {
     /// declaration observable at all.
     #[tokio::test]
     async fn the_same_bracketed_key_expands_without_the_json_keys_declaration() {
-        let engine = offline_engine();
-        let mut undeclared = json!({"q": "payload[city]==\"Berlin\""});
+        let undeclared = expanded(json!({"q": "payload[city]==\"Berlin\""})).await.expect("expands");
 
-        expand_common_subscription_terms(&engine, &mut undeclared, &ContextSpec::none())
-            .await
-            .expect("expands");
-
-        let rendered = undeclared["q"].as_str().expect("the filter is a string");
+        let written = written(&undeclared);
+        let rendered = written["q"].as_str().expect("the filter is a string");
         assert!(
             rendered.contains("https://uri.etsi.org/ngsi-ld/default-context/city"),
             "an undeclared attribute's member name expands: {rendered}"
         );
     }
 
+    /// Clause 5.5.8: a member the fragment deletes has no terms to expand, and
+    /// is still a deletion once the others are.
+    #[tokio::test]
+    async fn a_deleted_member_has_nothing_to_expand_and_stays_deleted() {
+        let wire = json!({"entities": null, "watchedAttributes": null, "q": null, "csf": null, "geoQ": null});
+        let request = expanded(wire.clone()).await.expect("expands");
+
+        pretty_assertions::assert_eq!(written(&request), wire);
+    }
+
     /// Clause 4.9 reads `name[en]` on a `LanguageProperty` as the target
-    /// language `en`: the filter expansion returns keeps that spelling beside
-    /// the expanded member the payload text carries.
+    /// language `en`: the filter the request holds keeps that spelling beside
+    /// the expanded member the text form carries.
     #[tokio::test]
     async fn the_expanded_q_keeps_the_written_trailing_members() {
-        let engine = offline_engine();
-        let mut payload = json!({"q": "name[en]==\"Door\""});
-
-        let expanded = expand_common_subscription_terms(&engine, &mut payload, &ContextSpec::none())
-            .await
-            .expect("expands")
-            .expect("the payload names a q");
+        let request = expanded(json!({"q": "name[en]==\"Door\""})).await.expect("expands");
+        let q = request.q.as_set().expect("the request names a q");
 
         pretty_assertions::assert_eq!(
-            payload["q"],
+            written(&request)["q"],
             json!("\"https://uri.etsi.org/ngsi-ld/default-context/name\"[\"https://uri.etsi.org/ngsi-ld/default-context/en\"]==\"Door\"")
         );
         pretty_assertions::assert_eq!(
-            serialize_written_members(&expanded),
+            serialize_written_members(q),
             "\"https://uri.etsi.org/ngsi-ld/default-context/name\"[en]==\"Door\""
         );
     }
@@ -459,28 +353,36 @@ mod tests {
     /// by IRI and keeps the member as the literal key it addresses.
     #[tokio::test]
     async fn the_expanded_csf_keeps_its_trailing_members_verbatim() {
-        let engine = offline_engine();
-        let mut payload = json!({"csf": "coverage[region]==\"north\""});
-
-        expand_common_subscription_terms(&engine, &mut payload, &ContextSpec::none())
-            .await
-            .expect("expands");
+        let request = expanded(json!({"csf": "coverage[region]==\"north\""})).await.expect("expands");
 
         pretty_assertions::assert_eq!(
-            payload["csf"],
+            written(&request)["csf"],
             json!("\"https://uri.etsi.org/ngsi-ld/default-context/coverage\"[region]==\"north\"")
         );
     }
 
+    /// Clause 5.5.7: the `geoproperty` a `geoQ` names expands like every other
+    /// term.
     #[tokio::test]
-    async fn a_malformed_opt_in_member_is_refused_rather_than_stored() {
-        let engine = offline_engine();
-        for member in [json!({"expandValues": ["speed"]}), json!({"jsonKeys": "payload,"})] {
-            let mut payload = member;
-            assert!(
-                expand_common_subscription_terms(&engine, &mut payload, &ContextSpec::none()).await.is_err(),
-                "{payload} must be refused"
-            );
-        }
+    async fn the_geoproperty_of_a_geo_q_is_expanded() {
+        let request = expanded(json!({"geoQ": {"georel": "within", "geometry": "Point", "coordinates": [1, 2], "geoproperty": "observationSpace"}}))
+            .await
+            .expect("expands");
+
+        // `observationSpace` is a term of the core context, so it expands to the
+        // NGSI-LD vocabulary rather than the default one.
+        pretty_assertions::assert_eq!(written(&request)["geoQ"]["geoproperty"], json!("https://uri.etsi.org/ngsi-ld/observationSpace"));
+    }
+
+    /// Clause 5.5.7: the type selection of an entity selector expands.
+    #[tokio::test]
+    async fn an_entity_selector_type_expands_through_the_context() {
+        let request = expanded(json!({"entities": [{"type": "Vehicle"}], "watchedAttributes": ["speed"]}))
+            .await
+            .expect("expands");
+
+        let written = written(&request);
+        pretty_assertions::assert_eq!(written["entities"], json!([{"type": format!("{DEFAULT}Vehicle")}]));
+        pretty_assertions::assert_eq!(written["watchedAttributes"], json!([format!("{DEFAULT}speed")]));
     }
 }

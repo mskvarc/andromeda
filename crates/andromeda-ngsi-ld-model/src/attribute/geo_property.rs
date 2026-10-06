@@ -1,8 +1,8 @@
 //! The `GeoProperty` attribute family (ETSI GS CIM 009 clause 5.2.7).
 
-use crate::attribute::{common_fields::CommonAttributeFields, geo_property_value::GeoPropertyValue};
+use crate::attribute::{common_fields::CommonAttributeFields, geo_property_value::GeoPropertyValue, property::UnitCodeRef};
 use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry, geometry_members::JsonLdKeywords, written_geometry::WrittenGeometry};
-use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
+use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;
 use serde::Serialize;
 use serde_with::skip_serializing_none;
 use thiserror::Error;
@@ -15,8 +15,12 @@ pub struct GeoProperty {
     /// The geometry, held and serialised as `GeoJSON` per RFC 7946, as the
     /// clause 4.7.2 string, or the NGSI-LD Null of a deleted geometry.
     pub value: GeoPropertyValue,
+    /// Measurement unit code: clause 4.7.3 treats a `GeoProperty` carrying
+    /// further members as an ordinary Property, which has the `unitCode` of
+    /// clause 4.5.2.2.
+    pub unit_code: Option<UnitCodeRef>,
     /// Optional JSON-LD datatype for `value`.
-    pub value_type: Option<NgsiLdReference>,
+    pub value_type: Option<CoercedTerm>,
     /// Previous geometry value emitted in notifications when `showChanges` is active.
     pub previous_value: Option<GeoPropertyValue>,
     /// Members shared with every other attribute family.

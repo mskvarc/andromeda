@@ -1,16 +1,16 @@
 //! HTTP handling for temporal create or update (clause 5.6.11).
 
 use crate::{
+    forwarded_evolution_content::forwarded_content,
     request_context_admission::admit_request_context,
     temporal::{
         CreateOrUpdateResult,
         ForwardProvisionRequest,
         ForwardingOperation,
         HeaderMap,
-        Identifier,
         IncomingVia,
         IntoResponse,
-        JsonLdDocument,
+        JsonLd,
         LocalOnlyParams,
         LocalOutcome,
         Method,
@@ -24,18 +24,15 @@ use crate::{
         TenantStateOrCreate,
         TriggeringRequest,
         ValidatedQuery,
-        Value,
         classify_temporal_error,
         collect_proxied_attrs,
-        has_attributes,
-        payload_entity_type,
         provision_response,
-        strip_attributes_from_value,
     },
     written_evolution_admission::admit_written_evolution,
 };
 use andromeda_http_extraction::context_target;
 use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location};
+use andromeda_ngsi_ld_model::temporal::written_temporal_entity::WrittenTemporalEntity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 
 /// The response a local create-or-update answers with: 201 with the new
@@ -59,11 +56,12 @@ pub async fn create_or_update(
     OriginalUri(uri): OriginalUri,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
-    JsonLdDocument { document: payload, context }: JsonLdDocument,
+    JsonLd { body, context }: JsonLd<WrittenTemporalEntity>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_request_context(state.temporal.engine(), context, &uri).await?;
+    let payload = body.admitted(&context)?;
     let service = &state.temporal;
     // Clause 5.6.11.4 opens with the clause 5.5.4 validation and forwards only
     // afterwards.
@@ -78,43 +76,46 @@ pub async fn create_or_update(
 
     // Clause 5.6.11.4 matches registrations by the evolution's id and type.
     let entity_id = payload
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ClassifiedReport::public(NgsiLdErrorType::BadRequestData, "entity id must be a valid URI").with_instance(uri.clone()))?
-        .parse::<Identifier>()
-        .map_err(|error| {
-            ClassifiedReport::public(NgsiLdErrorType::BadRequestData, format!("entity id must be a valid URI: {error}")).with_instance(uri.clone())
-        })?;
-    let entity_type = payload_entity_type(&payload);
+        .id
+        .clone() // clone: the forwarding names the evolution beside the payload it narrows
+        .ok_or_else(|| ClassifiedReport::public(NgsiLdErrorType::BadRequestData, "entity id must be a valid URI").with_instance(uri.clone()))?;
+    let entity_type = payload.type_.as_ref().and_then(|types| types.iter().next());
+    let request = ForwardProvisionRequest {
+        resource: ProvisionResource::TemporalEntities,
+        entity_id: &entity_id,
+        entity_type_compact: entity_type,
+        attribute_name: None,
+        method: Method::POST,
+        context: &context,
+        operation: ForwardingOperation::UpsertTemporalEntity,
+        path_suffix: None,
+        query_string: None,
+        triggering: TriggeringRequest {
+            via: incoming_via.as_ref(),
+            headers: Some(&headers),
+        },
+    };
+    let plan = state.forwarding.plan_provision(&target, &request).await.with_instance(&uri)?;
+    // The registrations the plan sends the evolution to read the document it
+    // expands to; a write no registration covers expands nothing.
+    let document = if plan.reads_payload() {
+        Some(service.forwardable_document(&payload, &context).await.with_instance(&uri)?)
+    } else {
+        None
+    };
     let forwarded = state
         .forwarding
-        .forward_provision(
-            &target,
-            ForwardProvisionRequest {
-                resource: ProvisionResource::TemporalEntities,
-                entity_id: &entity_id,
-                entity_type_compact: entity_type.as_ref(),
-                attribute_name: None,
-                method: Method::POST,
-                context: &context,
-                operation: ForwardingOperation::UpsertTemporalEntity,
-                path_suffix: None,
-                query_string: None,
-                triggering: TriggeringRequest {
-                    via: incoming_via.as_ref(),
-                    headers: Some(&headers),
-                },
-            },
-            Some(&payload),
-        )
+        .execute_provision(plan, &request, document.as_ref().map(forwarded_content))
         .await
         .with_instance(&uri)?;
 
     // Clause 5.6.11.4: the attributes proxied registrations cover leave the
     // fragment; whatever remains creates or updates the evolution here.
-    let mut payload = payload;
-    strip_attributes_from_value(&mut payload, &collect_proxied_attrs(&forwarded));
-    let (local, success) = if forwarded.is_empty() || has_attributes(&payload) {
+    let payload = service
+        .without_claimed(payload, &collect_proxied_attrs(&forwarded), &context)
+        .await
+        .with_instance(&uri)?;
+    let (local, success) = if forwarded.is_empty() || payload.has_attributes() {
         let result = service.create_or_update(&target, payload, &context).await;
         let success = success_response(&result);
         (LocalOutcome::processed(result, classify_temporal_error), success)

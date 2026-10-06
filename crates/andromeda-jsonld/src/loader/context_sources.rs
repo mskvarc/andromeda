@@ -19,7 +19,7 @@
 //! [`crate::operation_hit_scope`], because the resolutions happen deep inside
 //! the JSON-LD processor, which knows nothing about the cache it is feeding.
 
-use crate::loader::http::HttpContextLoader;
+use crate::{engine::context_document::ContextDocument, loader::http::HttpContextLoader};
 use iri_rs::IriBuf;
 use std::{cell::RefCell, future::Future, sync::Arc};
 
@@ -34,7 +34,7 @@ struct ContextSource {
     /// The reference the document was resolved under.
     url: IriBuf,
     /// The document the loader handed out, compared by identity.
-    document: Arc<jsonld_syntax::Value>,
+    document: Arc<ContextDocument>,
 }
 
 /// Every document one preparation resolved, each reference once.
@@ -49,7 +49,7 @@ impl ContextSources {
     /// preparing it again reports the failure where it now occurs.
     pub(crate) async fn still_resolve_through(&self, loader: &HttpContextLoader) -> bool {
         for source in &self.0 {
-            match loader.load_value_raw(&source.url).await {
+            match loader.load_document_raw(&source.url).await {
                 Ok(document) if Arc::ptr_eq(&document, &source.document) => {}
                 Ok(_) | Err(_) => return false,
             }
@@ -80,7 +80,7 @@ where
 
 /// Note that the loader resolved `url` to `document`, when a preparation on
 /// this task is recording; a no-op otherwise.
-pub(crate) fn note_source(url: &IriBuf, document: &Arc<jsonld_syntax::Value>) {
+pub(crate) fn note_source(url: &IriBuf, document: &Arc<ContextDocument>) {
     let noted = RECORDED_SOURCES.try_with(|recorded| {
         let mut recorded = recorded.borrow_mut();
         if recorded.iter().any(|source| source.url == *url) {
@@ -105,6 +105,7 @@ mod tests {
         context_registry::ContextRegistry,
         hosted_context_recognizer::NoHostedContexts,
         loader::{context_sources::recording_sources, http::HttpContextLoader, loader_settings::LoaderSettings, replaceable_row::ReplaceableRow},
+        test_documents::document_value,
     };
     use iri_rs::IriBuf;
     use serde_json::json;
@@ -122,25 +123,25 @@ mod tests {
 
     #[tokio::test]
     async fn every_resolution_of_a_preparation_is_recorded_once_per_reference() {
-        let row = Arc::new(ReplaceableRow::new(json!({ "@context": { "speed": "https://example.org/speed" } })));
+        let row = Arc::new(ReplaceableRow::new(&json!({ "@context": { "speed": "https://example.org/speed" } })));
         let loader = loader_over(&row);
 
         let (resolved, sources) = Box::pin(recording_sources(async {
-            loader.load_value(&url()).await.expect("the first resolution");
-            loader.load_value(&url()).await.expect("the second resolution")
+            loader.load_document(&url()).await.expect("the first resolution");
+            loader.load_document(&url()).await.expect("the second resolution")
         }))
         .await;
 
-        assert!(resolved.is_object());
+        assert!(document_value(&resolved).is_object());
         pretty_assertions::assert_eq!(sources.len(), 1);
         assert!(sources.still_resolve_through(&loader).await, "the loader still holds the recorded document");
     }
 
     #[tokio::test]
     async fn a_resolution_outside_a_recording_records_nothing() {
-        let row = Arc::new(ReplaceableRow::new(json!({ "@context": { "speed": "https://example.org/speed" } })));
+        let row = Arc::new(ReplaceableRow::new(&json!({ "@context": { "speed": "https://example.org/speed" } })));
         let loader = loader_over(&row);
-        loader.load_value(&url()).await.expect("a resolution outside any recording");
+        loader.load_document(&url()).await.expect("a resolution outside any recording");
 
         let ((), sources) = recording_sources(async {}).await;
 
@@ -151,14 +152,14 @@ mod tests {
     /// recorded document is no longer the one the reference resolves to.
     #[tokio::test]
     async fn a_document_read_again_no_longer_resolves_through_the_recorded_sources() {
-        let row = Arc::new(ReplaceableRow::new(json!({ "@context": { "speed": "https://example.org/speed" } })));
+        let row = Arc::new(ReplaceableRow::new(&json!({ "@context": { "speed": "https://example.org/speed" } })));
         let loader = loader_over(&row);
         let ((), sources) = Box::pin(recording_sources(async {
-            loader.load_value(&url()).await.expect("the recorded resolution");
+            loader.load_document(&url()).await.expect("the recorded resolution");
         }))
         .await;
 
-        row.replace(json!({ "@context": { "speed": "https://example.org/velocity" } }));
+        row.replace(&json!({ "@context": { "speed": "https://example.org/velocity" } }));
         loader.invalidate(&url()).await;
 
         assert!(!sources.still_resolve_through(&loader).await, "the document was read again");

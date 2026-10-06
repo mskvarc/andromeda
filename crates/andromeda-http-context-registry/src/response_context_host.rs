@@ -7,10 +7,13 @@
 
 use crate::hosted_context_url::HostedContextUrls;
 use andromeda_context_registry::{error::ContextRegistryError, hosted_context_locator::HostedContextLocator, service::ContextRegistryService};
-use andromeda_jsonld::compound_context_host::{CompoundContextHost, CompoundContextHostFuture, ContextHostingError, WrapperUse};
+use andromeda_json_literal::JsonLiteral;
+use andromeda_jsonld::{
+    compound_context_host::{CompoundContextHost, CompoundContextHostFuture, ContextHostingError, WrapperUse},
+    context_subtree::local_context_document,
+};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use iri_rs::IriBuf;
-use serde_json::{Map, Value};
 
 /// Hosts wrappers among one tenant's stored `@context`s for one request.
 #[derive(derive_more::Debug)]
@@ -32,18 +35,17 @@ impl<'a> ResponseContextHost<'a> {
 }
 
 impl CompoundContextHost for ResponseContextHost<'_> {
-    fn host<'b>(&'b self, context: &'b Value, usage: WrapperUse) -> CompoundContextHostFuture<'b> {
+    fn host<'b>(&'b self, context: &'b JsonLiteral, usage: WrapperUse) -> CompoundContextHostFuture<'b> {
         Box::pin(async move {
             // Refused before anything is stored: a wrapper stored without a URL
             // could be named by nothing.
             let Some(urls) = self.urls else {
                 return Err(ContextHostingError::NoRequestAuthority);
             };
-            let mut document = Map::new();
-            document.insert("@context".to_owned(), context.clone()); // clone: the stored document owns the context the caller keeps rendering
+            let document = local_context_document(context.piece()).map_err(ContextHostingError::Unwritable)?;
             let identifier = self
                 .contexts
-                .create_implicitly(Value::Object(document), &urls, usage)
+                .create_implicitly(&document, &urls, usage)
                 .await
                 .map_err(|error| hosting_failure(&error))?;
             IriBuf::new(String::from(urls.serving_url(&identifier))).map_err(ContextHostingError::MintedUrlNotIri)
@@ -69,7 +71,6 @@ fn hosting_failure(error: &ContextRegistryError) -> ContextHostingError {
         | ContextRegistryError::ReloadRequiresCached { .. }
         | ContextRegistryError::MissingSourceUrl { .. }
         | ContextRegistryError::ContextUnavailable { .. }
-        | ContextRegistryError::Representation(_)
         | ContextRegistryError::Invariant(_) => ContextHostingError::Persistence(PersistenceFailure::ContractBroken.record(error)),
     }
 }

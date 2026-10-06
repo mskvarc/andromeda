@@ -1025,3 +1025,49 @@ async fn distop_entity_replace_not_found_returns_404() {
     let (status, _) = replace_entity(&c, &entity_id, &replacement, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// A write is forwarded only to a registration declaring the written attribute's
+/// expanded IRI (clause 5.12): `http://a.example/v#speed` is not covered by a
+/// registration declaring `http://b.example/ns/speed`, though both end in `speed`.
+#[tokio::test]
+#[serial]
+async fn distop_entity_create_is_not_forwarded_to_a_registration_declaring_another_iri_with_the_same_last_segment() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+    let mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-iri");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:create-iri");
+
+    let reg = serde_json::json!({
+        "id": reg_id,
+        "type": "ContextSourceRegistration",
+        "information": [{
+            "entities": [{"type": "https://example.org/Vehicle"}],
+            "propertyNames": ["http://b.example/ns/speed"]
+        }],
+        "endpoint": mock.url("/broker1"),
+        "operations": ["createEntity"],
+        "mode": "inclusive",
+        "@context": "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+    });
+    let (status, _) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entities", 201).await;
+
+    let entity = serde_json::json!({
+        "id": entity_id,
+        "type": "https://example.org/Vehicle",
+        "speed": {"type": "Property", "value": 80},
+        "@context": [{"speed": "http://a.example/v#speed"}]
+    });
+    let (status, _) = create_entity(&c, &entity).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    pretty_assertions::assert_eq!(mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entities"), 0);
+
+    delete_entity(&c, &entity_id).await;
+    delete_registration(&c, &reg_id).await;
+    mock.shutdown().await;
+}

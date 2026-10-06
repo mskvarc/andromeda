@@ -28,7 +28,7 @@ use crate::{
     written_payload_admission::admit_written_entity,
 };
 use andromeda_entity::write_kind::MergeEntity;
-use andromeda_federation::request::TriggeringRequest;
+use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_model::attribute::merge_member::MergeMember;
@@ -57,6 +57,7 @@ pub(crate) async fn merge(
         lang: params.lang.as_ref(),
         observed_at: params.observed_at,
         type_selector: params.entity_type.as_ref(),
+        claimed: &[],
     };
     // Clause 5.6.17.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and a
@@ -92,7 +93,7 @@ pub(crate) async fn merge(
                     headers: Some(&headers),
                 },
             },
-            Some(&patch),
+            Some(ForwardedContent::Entity(admitted.document())),
         )
         .await
         .with_entity_instance(&uri)?;
@@ -108,11 +109,11 @@ pub(crate) async fn merge(
     // Clause 5.6.17.4: the attributes proxied registrations cover leave the
     // fragment; whatever remains is merged here.
     let proxied = collect_proxied_attrs(&forwarded);
-    let mut patch = patch;
-    let strip = patch.strip_attributes(&proxied);
-    let local = match service.admit_local_remainder(admitted, strip, &patch, &context).await {
+    let local = match admitted.local_remainder(&proxied) {
         Some(remainder) => LocalOutcome::processed(
-            async { service.merge(&target, &id, &patch, remainder?, &context, options).await }.await,
+            service
+                .merge(&target, &id, &patch, remainder, &context, MergeOptions { claimed: &proxied, ..options })
+                .await,
             classify_entity_error,
         ),
         None => LocalOutcome::NothingRemained,

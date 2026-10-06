@@ -53,17 +53,18 @@
 use crate::{
     context_graph::check_context_graph,
     context_spec::ContextSpec,
+    context_value::{ContextEntry, context_entries},
     core_context::is_ngsi_ld_core_context_url,
     engine::{
         processor::JsonLdEngine,
-        user_context_scan::{UserContextScan, collect_context_items, scan_user_context},
+        user_context_scan::{UserContextScan, scan_written_context},
     },
     error::JsonLdError,
 };
+use andromeda_json_literal::piece::JsonKind;
 use andromeda_ngsi_ld_representation::embedded_context_admission::EmbeddedContext;
 use derive_more::Deref;
 use iri_rs::IriBuf;
-use serde_json::Value;
 use std::collections::HashSet;
 
 /// The `@context` a client request named, not yet admitted, and the first
@@ -163,29 +164,31 @@ pub async fn admit_user_context(engine: &JsonLdEngine, submitted: SubmittedConte
 pub(crate) async fn screen_user_context(engine: &JsonLdEngine, context: &ContextSpec) -> Result<(), JsonLdError> {
     // A context whose references cycle or nest too deep is refused before any
     // of its documents is inspected, so no document past the limit is fetched.
-    if let Some(value) = context.to_context_value() {
-        check_context_graph(engine.loader(), &value).await?;
-    }
+    check_context_graph(engine.loader(), &context.resolved_context()).await?;
     let mut pending: Vec<IriBuf> = context.link_context().into_iter().cloned().collect(); // clone: the worklist outlives the borrowed spec
     if let Some(body) = context.body_context() {
-        let mut items = Vec::new();
-        collect_context_items(body, &mut items);
-        for item in items {
-            match item {
-                Value::String(url) => {
+        for entry in context_entries(body.piece()) {
+            match entry {
+                ContextEntry::Reference(url) => {
                     // owned: the worklist outlives the borrowed context value
-                    if let Ok(url) = IriBuf::new(url.to_owned()) {
+                    if let Ok(url) = IriBuf::new(url.into_owned()) {
                         pending.push(url);
                     }
                 }
-                Value::Object(_) => {
-                    let scan = scan_user_context(item);
+                ContextEntry::Definition(definition) => {
+                    let scan = scan_written_context(definition.written())?;
                     refuse_scoped_term(&scan)?;
                     pending.extend(scan.nested_references);
                 }
-                // `collect_context_items` flattens arrays away; a scalar names
-                // no context, and `null` resets one rather than declaring terms.
-                Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => {}
+                // An array nested in the array is searched all the same; a
+                // scalar names no context, and `null` resets one rather than
+                // declaring terms.
+                ContextEntry::Malformed(nested) if nested.kind() == JsonKind::Array => {
+                    let scan = scan_written_context(nested)?;
+                    refuse_scoped_term(&scan)?;
+                    pending.extend(scan.nested_references);
+                }
+                ContextEntry::Null | ContextEntry::Malformed(_) => {}
             }
         }
     }
@@ -221,6 +224,7 @@ mod tests {
         context_spec::ContextSpec,
         engine::processor::JsonLdEngine,
         error::JsonLdError,
+        test_documents::literal,
         user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
     };
     use andromeda_ngsi_ld_representation::embedded_context_admission::{EmbeddedContext, find_embedded_context};
@@ -297,16 +301,16 @@ mod tests {
     #[tokio::test]
     async fn a_context_declaring_no_scoped_context_is_admitted() {
         let engine = engine_serving(&[]);
-        let context = ContextSpec::from_body(json!({"speed": "https://example.org/speed"}));
+        let context = ContextSpec::from_body(literal(&json!({"speed": "https://example.org/speed"})));
         assert!(admitted(&engine, &context).await.is_ok());
     }
 
     #[tokio::test]
     async fn an_inline_body_context_declaring_a_scoped_context_is_refused() {
         let engine = engine_serving(&[]);
-        let context = ContextSpec::from_body(json!({
+        let context = ContextSpec::from_body(literal(&json!({
             "speed": {"@id": "https://example.org/speed", "@context": {"unitCode": "https://example.org/rewritten"}}
-        }));
+        })));
         let error = admitted(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "speed");
     }
@@ -334,7 +338,7 @@ mod tests {
                 json!({"@context": {"gear": {"@id": "https://example.org/gear", "@context": {"observedAt": "https://example.org/rewritten"}}}}),
             ),
         ]);
-        let context = ContextSpec::from_body(json!(["https://example.org/plain.jsonld", "https://example.org/scoped.jsonld"]));
+        let context = ContextSpec::from_body(literal(&json!(["https://example.org/plain.jsonld", "https://example.org/scoped.jsonld"])));
         let error = admitted(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "gear");
     }
@@ -347,7 +351,7 @@ mod tests {
             "https://example.org/scoped.jsonld",
             json!({"@context": {"gear": {"@id": "https://example.org/gear", "@context": {}}}}),
         )]);
-        let context = ContextSpec::from_body(json!(["https://example.org/absent.jsonld", "https://example.org/scoped.jsonld"]));
+        let context = ContextSpec::from_body(literal(&json!(["https://example.org/absent.jsonld", "https://example.org/scoped.jsonld"])));
         let error = admitted(&engine, &context).await.expect_err("one of the two is refused");
         assert!(
             matches!(error, JsonLdError::ScopedUserContext { .. }) || error.is_context_not_available(),
@@ -384,7 +388,9 @@ mod tests {
             "https://example.org/scoped.jsonld",
             json!({"@context": {"gear": {"@id": "https://example.org/gear", "@context": {}}}}),
         )]);
-        let context = ContextSpec::from_body(json!({"@import": "https://example.org/scoped.jsonld", "speed": "https://example.org/speed"}));
+        let context = ContextSpec::from_body(literal(
+            &json!({"@import": "https://example.org/scoped.jsonld", "speed": "https://example.org/speed"}),
+        ));
         let error = admitted(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "gear");
     }
@@ -413,7 +419,9 @@ mod tests {
     #[tokio::test]
     async fn an_import_of_the_core_context_is_admitted() {
         let engine = engine_serving(&[]);
-        let context = ContextSpec::from_body(json!({"@import": NGSI_LD_CORE_CONTEXT_URL.as_str(), "speed": "https://example.org/speed"}));
+        let context = ContextSpec::from_body(literal(
+            &json!({"@import": NGSI_LD_CORE_CONTEXT_URL.as_str(), "speed": "https://example.org/speed"}),
+        ));
         assert!(admitted(&engine, &context).await.is_ok());
     }
 
@@ -440,7 +448,7 @@ mod tests {
         let engine = engine_serving(&[]);
         for url in ["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld", NGSI_LD_CORE_CONTEXT_URL.as_str()] {
             assert!(admitted(&engine, &link_spec(url)).await.is_ok(), "{url}");
-            let body = ContextSpec::from_body(json!(url));
+            let body = ContextSpec::from_body(literal(&json!(url)));
             assert!(admitted(&engine, &body).await.is_ok(), "{url}");
         }
     }
@@ -453,11 +461,11 @@ mod tests {
             "https://example.org/scoped.jsonld",
             json!({"@context": {"gear": {"@id": "https://example.org/gear", "@context": {}}}}),
         )]);
-        let context = ContextSpec::from_body(json!([
+        let context = ContextSpec::from_body(literal(&json!([
             "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld",
             {"speed": "https://example.org/speed"},
             "https://example.org/scoped.jsonld"
-        ]));
+        ])));
         let error = admitted(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "gear");
     }
@@ -467,9 +475,9 @@ mod tests {
     #[tokio::test]
     async fn a_scoped_context_inside_an_array_term_declaration_is_refused() {
         let engine = engine_serving(&[]);
-        let context = ContextSpec::from_body(json!({
+        let context = ContextSpec::from_body(literal(&json!({
             "speed": [{"@id": "https://example.org/speed", "@context": {}}]
-        }));
+        })));
         let error = admitted(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "speed");
     }
@@ -487,7 +495,7 @@ mod tests {
     #[tokio::test]
     async fn an_admitted_context_is_the_one_submitted() {
         let engine = engine_serving(&[]);
-        let context = ContextSpec::from_body(json!({"speed": "https://example.org/speed"}));
+        let context = ContextSpec::from_body(literal(&json!({"speed": "https://example.org/speed"})));
         let admitted = admitted(&engine, &context).await.expect("admitted");
         pretty_assertions::assert_eq!(&*admitted, &context);
     }
@@ -498,10 +506,10 @@ mod tests {
     #[tokio::test]
     async fn an_unloadable_context_is_refused_before_a_scoped_neighbour() {
         let engine = engine_serving(&[]);
-        let context = ContextSpec::from_body(json!([
+        let context = ContextSpec::from_body(literal(&json!([
             "https://example.org/absent.jsonld",
             {"speed": {"@id": "https://example.org/speed", "@context": {}}}
-        ]));
+        ])));
         let error = admitted(&engine, &context).await.expect_err("the absent context is refused");
         assert!(error.is_context_not_available(), "expected a loading error, got {error}");
     }
@@ -524,7 +532,7 @@ mod tests {
     #[tokio::test]
     async fn an_embedded_context_is_refused_once_the_context_loaded() {
         let engine = engine_serving(&[]);
-        let error = admitted_with_finding(&engine, &ContextSpec::from_body(json!({"speed": "https://example.org/speed"})))
+        let error = admitted_with_finding(&engine, &ContextSpec::from_body(literal(&json!({"speed": "https://example.org/speed"}))))
             .await
             .expect_err("clause 5.5.7 refuses it");
         let JsonLdError::EmbeddedUserContext(found) = error else {
@@ -547,7 +555,7 @@ mod tests {
     #[tokio::test]
     async fn a_scoped_context_is_refused_before_an_embedded_one() {
         let engine = engine_serving(&[]);
-        let context = ContextSpec::from_body(json!({"speed": {"@id": "https://example.org/speed", "@context": {}}}));
+        let context = ContextSpec::from_body(literal(&json!({"speed": {"@id": "https://example.org/speed", "@context": {}}})));
         let error = admitted_with_finding(&engine, &context).await.expect_err("clause 5.5.7 refuses it");
         pretty_assertions::assert_eq!(refused_term(&error), "speed");
     }

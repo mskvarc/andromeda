@@ -152,6 +152,52 @@ async fn sub_updated_forward_strips_notification_attributes_pick_omit() {
     topology.finish().await.expect("topology cleanup");
 }
 
+/// A member the local update deletes with an NGSI-LD Null is forwarded to the
+/// source's copy as a Null, so the source does not keep the stale value
+/// (clause 5.8.2.4 has the update followed by the copy, clause 5.5.8 makes the
+/// Null a deletion). This is the regression test for the forwarded deletion: the
+/// mock source stands in for a context source holding the reduced copy.
+#[tokio::test]
+async fn sub_updated_forward_carries_a_deleted_member_as_null() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let vtype = topology.id("Vehicle");
+    let id = topology.id("Subscription:updated-deleted-member");
+    let mock = subscription_over_source(&topology, &vtype, "registration:updated-deleted-member", &id).await;
+    let client = topology.broker(BrokerRole::A).expect("topology broker A").client();
+    assert_status(
+        &client
+            .update_subscription(&id, &json!({ "expiresAt": "2099-01-01T00:00:00Z" }), None)
+            .await
+            .expect("update subscription"),
+        204,
+    );
+    let set = forwarded_subscription(&mock.next_request(FORWARD_TIMEOUT).await);
+    assert_eq!(
+        set["expiresAt"],
+        json!("2099-01-01T00:00:00Z"),
+        "the expiry is forwarded while it is set: {set}"
+    );
+
+    assert_status(
+        &client
+            .update_subscription(&id, &json!({ "expiresAt": null }), None)
+            .await
+            .expect("update subscription"),
+        204,
+    );
+    let captured = mock.next_request(FORWARD_TIMEOUT).await;
+    assert_eq!(captured.method, Method::PATCH, "the deletion reaches the source as an update");
+    let forwarded = forwarded_subscription(&captured);
+    assert_eq!(
+        forwarded.get("expiresAt"),
+        Some(&Value::Null),
+        "the deleted expiry is forwarded as a Null: {forwarded}"
+    );
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
 /// An updated forward targets the mapped CSR subscription id (clause 5.8.5).
 /// Confirms REQ-MAP-32.
 #[tokio::test]

@@ -80,7 +80,13 @@ mod tests {
 
     #[tokio::test]
     async fn expansion_consumes_a_decoded_geo_query_without_reparsing_components() {
-        let input = GeoQueryInput::from_wire("within", "Point", serde_json::json!([1.0, 2.0]), None).expect("valid decoded geo query");
+        let input = GeoQueryInput::from_wire(
+            "within",
+            "Point",
+            serde_json::from_value(serde_json::json!([1.0, 2.0])).expect("coordinates"),
+            None,
+        )
+        .expect("valid decoded geo query");
         let compiled = compile_geo_query(Some(&input), &PrefixExpander, unbounded())
             .await
             .expect("expansion succeeds")
@@ -90,6 +96,6 @@ mod tests {
 
     #[test]
     fn malformed_geo_wire_values_fail_before_compilation() {
-        assert!(GeoQueryInput::from_wire("within", "Point", serde_json::json!([1.0]), None).is_err());
+        assert!(GeoQueryInput::from_wire("within", "Point", serde_json::from_value(serde_json::json!([1.0])).expect("coordinates"), None).is_err());
     }
 }

@@ -72,16 +72,23 @@ impl EntityQueryService {
 #[cfg(test)]
 mod tests {
     use crate::query::service_test_double::service;
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_query::projection::{grammar::RawProjectionTerm, term::ProjectionTerm};
     use iri_rs::IriBuf;
     use serde_json::json;
 
     fn context() -> ContextSpec {
-        ContextSpec::from_body(json!({
-            "hasA": "https://example.com/hasA",
-            "temperature": "https://example.com/temperature",
-        }))
+        ContextSpec::from_body(
+            JsonLiteral::admit(
+                &json!({
+                    "hasA": "https://example.com/hasA",
+                    "temperature": "https://example.com/temperature",
+                })
+                .to_string(),
+            )
+            .expect("an admissible literal"),
+        )
     }
 
     fn raw(name: &str, linked: Vec<RawProjectionTerm>) -> RawProjectionTerm {

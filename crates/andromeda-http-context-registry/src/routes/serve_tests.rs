@@ -20,6 +20,7 @@ use andromeda_context_registry::{
     stored_context::StoredContext,
 };
 use andromeda_http_extraction::request_json_value_limit::RequestJsonValueLimit;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_cache::DownloadedContext, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId, tenant::TenantName};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
@@ -51,8 +52,8 @@ const ACME_HOSTED: &str = "urn:ngsi-ld:JsonLdContext:3e916e81-9d86-4e05-a08f-4ca
 const UNKNOWN: &str = "urn:ngsi-ld:JsonLdContext:2d805d70-8c75-4df4-9f7e-3b9fa05c4c32";
 
 /// The document the Hosted entry holds.
-fn hosted_document() -> Value {
-    json!({ "@context": { "Spot": "https://e.org/Spot" } })
+fn hosted_document() -> JsonLiteral {
+    JsonLiteral::admit(&json!({ "@context": { "Spot": "https://e.org/Spot" } }).to_string()).expect("an admissible literal")
 }
 
 /// One tenant's store, holding one Hosted and one Cached entry.
@@ -76,7 +77,7 @@ impl ContextRegistryStore for TwoEntryStore {
     fn insert<'a>(
         &'a self,
         _identifier: &'a JsonLdContextId,
-        _payload: &'a Value,
+        _payload: &'a JsonLiteral,
         _serving_url: &'a Url,
         _kind: ContextCreationKind,
     ) -> ContextRegistryFuture<'a, ContextInsertion> {
@@ -298,8 +299,8 @@ async fn the_former_tenant_parameter_is_invalid_request_on_every_operation() {
 
 /// The answer to creating `document` under the published JSON value limit of
 /// `values`.
-async fn create_under_value_limit(document: &Value, values: NonZeroUsize) -> Response {
-    let body = serde_json::to_vec(document).expect("a serializable document");
+async fn create_under_value_limit(document: &JsonLiteral, values: NonZeroUsize) -> Response {
+    let body = document.text().to_owned();
     let mut request = Request::builder()
         .method(Method::POST)
         .uri("/jsonldContexts")

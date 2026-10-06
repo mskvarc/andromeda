@@ -56,7 +56,6 @@ use axum::{
     http::{StatusCode, Uri as HttpUri},
     response::{IntoResponse, Response},
 };
-use serde_json::Value;
 
 const fn selected_dataset_uri(selector: Option<&DatasetSelector>) -> Option<&Identifier> {
     match selector {

@@ -11,9 +11,9 @@ use crate::{
     mutation::ContextMutation,
     stored_context::StoredContext,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_cache::DownloadedContext;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
-use serde_json::Value;
 use std::{future::Future, pin::Pin};
 use url::Url;
 
@@ -33,7 +33,7 @@ pub trait ContextRegistryStore: Send + Sync + 'static {
     fn insert<'a>(
         &'a self,
         identifier: &'a JsonLdContextId,
-        payload: &'a Value,
+        payload: &'a JsonLiteral,
         serving_url: &'a Url,
         kind: ContextCreationKind,
     ) -> ContextRegistryFuture<'a, ContextInsertion>;

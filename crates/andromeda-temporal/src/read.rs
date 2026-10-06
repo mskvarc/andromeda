@@ -4,26 +4,20 @@ use crate::{
     aggregation_eligibility::ensure_aggregation_eligible,
     error::TemporalError,
     port::history_reader::TemporalHistoryReader,
-    read::{dataset_step::DatasetStep, rendered_entity::HistoryPresence},
+    read::{dataset_step::DatasetStep, entity_members::carries_members, rendered_entity::HistoryPresence},
     requested_identifiers::RequestedIdentifiers,
     service::{TemporalRange, TemporalReadResult, TemporalService},
-    temporal_compaction::TemporalCompaction,
     temporal_invariant::TemporalInvariant,
     temporal_not_found_reason::TemporalNotFoundReason,
     temporal_operation_unsupported::TemporalOperationUnsupported,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
+use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, temporal::compiled::CompiledTemporalQuery};
-use andromeda_ngsi_ld_render::{
-    structural_projection::{RenderedEntityMembers, rendered_entity_members},
-    temporal::aggregation::TemporalAggregationRenderer,
-};
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
 use andromeda_telemetry::temporal::{self, TemporalOperation};
-use serde_json::{Map, Value, json};
 use std::slice::from_ref;
 
 impl TemporalService {
@@ -72,7 +66,7 @@ impl TemporalService {
 
             let compactor = self.engine.compactor(context);
             let rendered = self
-                .render_one_temporal_entity(target, entity_id, &entity_types, &compiled, &TemporalCompaction::new(&compactor))
+                .render_one_temporal_entity(target, entity_id, &entity_types, &compiled, &EntityCompactor::new(&compactor))
                 .await?;
 
             // Clause 5.7.3.4, step S1: "if the time series, for all the
@@ -98,7 +92,7 @@ impl TemporalService {
             // all is the same `ResourceNotFound` the `attrs` rule above raises,
             // which clause 5.7.1.4 states in full for the non-temporal twin.
             let projected = !compiled.projection.pick.is_empty() || !compiled.projection.omit.is_empty();
-            if projected && rendered_entity_members(&rendered.value) == RenderedEntityMembers::None {
+            if projected && !carries_members(&rendered.history, &compiled.projection) {
                 return Err(TemporalError::NotFound(TemporalNotFoundReason::ProjectionLeftNothing {
                     entity: entity_id.clone(),
                 }));
@@ -113,9 +107,9 @@ impl TemporalService {
             });
 
             Ok(TemporalReadResult {
-                value: rendered.value,
+                history: rendered.history,
                 range,
-                linked_edges: rendered.edges,
+                projection: compiled.projection,
             })
         }
         .await;
@@ -150,42 +144,6 @@ impl TemporalService {
         window_only.instances.dataset_id_filter.clear();
         let window_only = window_only;
         Ok(self.read_history_page(target, entity_id, &window_only).await?.presence())
-    }
-
-    /// Build the clause 4.5.19 aggregated representation of one entity.
-    ///
-    /// The aggregation keys (`avg`, `min`, ...) are not IRIs, so the
-    /// representation is not a document compaction could read; it is built in
-    /// compact form directly, each attribute and type named by the term the
-    /// request context gives it (clause 5.7.3). A name the resolved context
-    /// does not declare stays a full IRI rather than being truncated to a bare
-    /// fragment the client could not expand back.
-    async fn build_aggregated_compacted(
-        &self,
-        entity_id: &Identifier,
-        entity_types: &[EntityTypeName],
-        rows: &[TemporalAggregationRow],
-        compiled: &CompiledTemporalQuery,
-        compaction: &TemporalCompaction<'_>,
-    ) -> Result<Value, TemporalError> {
-        let aggr_data = TemporalAggregationRenderer::new(rows, compiled).render();
-        let names = compaction.names().await?;
-        let compacted_types: Vec<Value> = entity_types
-            .iter()
-            .map(|entity_type| Value::String(names.compact_type_iri(entity_type.as_str()).to_string()))
-            .collect();
-        let compacted_type = match <[Value; 1]>::try_from(compacted_types) {
-            Ok([single]) => single,
-            Err(several) => Value::Array(several),
-        };
-
-        let mut result = Map::new();
-        result.insert("id".to_owned(), json!(entity_id));
-        result.insert("type".to_owned(), compacted_type);
-        for (attr_iri, attr_obj) in aggr_data {
-            result.insert(names.compact_attr_iri(attr_iri.as_str()).to_string(), attr_obj);
-        }
-        Ok(Value::Object(result))
     }
 
     /// Execute stage 1 entity ID resolution over the page `window` selects,
@@ -271,8 +229,12 @@ fn ensure_aggregation_supported(reader: &dyn TemporalHistoryReader, requested: &
     }
 }
 
+/// Compacting the histories one read gathered under its request context.
+pub(crate) mod compacted_history;
 /// Whether a temporal read carries the `datasetId` step.
 mod dataset_step;
+/// Whether a projection leaves a history an Entity member.
+mod entity_members;
 /// Rendering the contributed entities of a split query over their merged instances.
 pub mod merged_rendering;
 /// Query Temporal Evolution of Entities (clause 5.7.4).

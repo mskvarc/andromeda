@@ -140,7 +140,6 @@ pub(crate) fn temporal(error: TemporalError) -> CommitError {
         | TemporalError::Query(_)
         | TemporalError::Request(_)
         | TemporalError::Commit(_)
-        | TemporalError::Rendering(_)
         | TemporalError::Internal(_)) => CommitError::Persistence(PersistenceFailure::ContractBroken.record(&other)),
     }
 }

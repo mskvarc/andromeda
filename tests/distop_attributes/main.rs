@@ -285,7 +285,8 @@ async fn distop_attributes_details_merges_remote_attribute_objects() {
     // Remote returns a detailed attribute not present locally
     let mock_details = json!([
         {
-            "id": "altitude",
+            // Table 5.2.28-1: `id` is the Valid URI that is the attribute's FQN.
+            "id": "https://ngsi-ld-test-suite/context#altitude",
             "type": "Attribute",
             "attributeName": "altitude",
             "typeNames": ["Drone"]
@@ -297,7 +298,9 @@ async fn distop_attributes_details_merges_remote_attribute_objects() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("details=true response should be a JSON array");
-    let altitude = arr.iter().find(|v| v.get("id").and_then(|id| id.as_str()) == Some("altitude"));
+    let altitude = arr
+        .iter()
+        .find(|v| v.get("id").and_then(|id| id.as_str()) == Some("https://ngsi-ld-test-suite/context#altitude"));
     assert!(altitude.is_some(), "merged details should include altitude from remote; got: {arr:?}");
 
     delete_entity(&c, &entity_id).await;
@@ -371,6 +374,73 @@ async fn distop_attributes_attribute_info_merges_remote_type_names() {
 
     let (status, _, _) = get_attribute(&c, "brandName", "", Some(COMPOUND_CONTEXT)).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    delete_entity(&c, &entity_id).await;
+    delete_registration(&c, &reg_id).await;
+    mock.shutdown().await;
+    env.finish().await.expect("cleanup failed");
+}
+
+/// `get_attribute` merges a spec-shaped remote `Attribute` (clause 5.2.28): the remote
+/// `attributeTypes` and `typeNames` are united with the local ones and the remote
+/// `attributeCount` is added to the local count (clauses 5.7.9, 5.7.10).
+#[tokio::test]
+async fn distop_attributes_attribute_info_merges_remote_types_and_counts() {
+    let env = TenantScopedEnvironment::from_suite("distop_attributes")
+        .await
+        .expect("private tenant environment");
+    let c = tenant_client(env.tenant());
+    let mock = MockServer::start().await;
+
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:attrs-info-counts");
+    let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-info-counts");
+
+    let entity = vehicle_entity(&entity_id);
+    pretty_assertions::assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
+
+    let reg = vehicle_registration(&reg_id, &mock.url(""));
+    pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
+
+    // The remote source holds `brandName` as a Relationship of Drones. Clause
+    // 5.2.28 makes `id` the Fully Qualified Name, and the merge is by that
+    // name: the record names the attribute the test suite `@context` defines.
+    let mock_attr_info = json!({
+        "id": "https://ngsi-ld-test-suite/context#brandName",
+        "type": "Attribute",
+        "attributeName": "brandName",
+        "attributeTypes": ["Relationship"],
+        "typeNames": ["Drone"],
+        "attributeCount": 4
+    });
+    mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/attributes/brandName", 200, &mock_attr_info)
+        .await;
+
+    let (status, _, body) = get_attribute(&c, "brandName", "", Some(COMPOUND_CONTEXT)).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let strings = |member: &str| -> HashSet<String> {
+        body[member]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|value| value.as_str().map(str::to_owned))
+            .collect()
+    };
+    let types = strings("attributeTypes");
+    assert!(
+        types.contains("Property") && types.contains("Relationship"),
+        "the local and the remote attribute types are united; got: {body}"
+    );
+    let type_names = strings("typeNames");
+    assert!(
+        type_names.contains("Vehicle") && type_names.contains("Drone"),
+        "the local and the remote type names are united; got: {body}"
+    );
+    pretty_assertions::assert_eq!(
+        body["attributeCount"],
+        json!(5),
+        "the remote attributeCount is added to the local one; got: {body}"
+    );
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;

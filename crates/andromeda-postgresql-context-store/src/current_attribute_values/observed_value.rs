@@ -86,7 +86,7 @@ mod tests {
             TemporalValue::String("text".to_owned()),
             TemporalValue::Boolean(true),
             TemporalValue::Geometry(GeometryValue::new(
-                Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [1.0, 2.0]}))
+                serde_json::from_value::<Geometry>(json!({"type": "Point", "coordinates": [1.0, 2.0]}))
                     .expect("a point")
                     .into_parts()
                     .0,
@@ -124,7 +124,7 @@ mod tests {
     /// ordinate count each position arrived with all reach the column.
     #[test]
     fn a_geometry_observation_projects_to_the_same_geometry() {
-        let geometry = Geometry::from_geojson_value(&json!({
+        let geometry = serde_json::from_value::<Geometry>(json!({
             "type": "Polygon",
             "coordinates": [
                 [[0.0, 0.0, 12.5], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0], [0.0, 0.0, 12.5]],

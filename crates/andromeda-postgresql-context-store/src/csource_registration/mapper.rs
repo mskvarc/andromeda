@@ -3,7 +3,9 @@
 use crate::{
     csource_registration::{mode_code::mode_of, operation_code::operation_of, status_code::status_of, stored_registration_error::StoredRegistrationError},
     error::ContextStoreError,
+    jsonb_text::JsonbText,
 };
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
@@ -31,8 +33,20 @@ use andromeda_postgresql_codes::{csr_mode::CsrModeCode, csr_operation::CsrOperat
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
-use serde_json::Value;
+use serde::de::DeserializeOwned;
 use sqlx::{Row, postgres::PgRow};
+
+/// Read a nullable `jsonb` column into the typed value it was written from,
+/// from the column's text, with `unreadable` naming the column when its text
+/// does not decode.
+fn read_json<T: DeserializeOwned>(
+    row: &PgRow,
+    column: &str,
+    unreadable: fn(serde_json::Error) -> StoredRegistrationError,
+) -> Result<Option<T>, ContextStoreError> {
+    let text: Option<JsonbText<'_>> = row.try_get(column)?;
+    Ok(text.map(|text| serde_json::from_slice(text.as_bytes()).map_err(unreadable)).transpose()?)
+}
 
 /// Convert a `context_source_registrations` row into the domain type.
 ///
@@ -65,7 +79,7 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
         .map(TenantName::try_from)
         .transpose()
         .map_err(StoredRegistrationError::Tenant)?;
-    let additional_properties: Option<Value> = row.try_get("additional_properties")?;
+    let additional_properties = read_json(row, "additional_properties", StoredRegistrationError::AdditionalProperties)?.unwrap_or_default();
 
     Ok(ContextSourceRegistration::builder()
         .id(id)
@@ -82,8 +96,8 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
 
 /// Rebuild the coverage members: what context the registration claims to serve.
 fn row_to_coverage(row: &PgRow) -> Result<RegistrationCoverage, ContextStoreError> {
-    let information_json: Value = row.try_get("information")?;
-    let information = serde_json::from_value(information_json).map_err(StoredRegistrationError::Information)?;
+    let information_text: JsonbText<'_> = row.try_get("information")?;
+    let information = serde_json::from_slice(information_text.as_bytes()).map_err(StoredRegistrationError::Information)?;
     let dataset_id = row
         .try_get::<Option<Vec<String>>, _>("dataset_id")?
         .map(|values| values.iter().map(|raw| DatasetSelector::parse(raw)).collect::<Result<Vec<_>, _>>())
@@ -100,19 +114,11 @@ fn row_to_coverage(row: &PgRow) -> Result<RegistrationCoverage, ContextStoreErro
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
-    let observation_interval = row
-        .try_get::<Option<Value>, _>("observation_interval")?
-        .map(serde_json::from_value::<TimeInterval>)
-        .transpose()
-        .map_err(StoredRegistrationError::ObservationInterval)?;
-    let management_interval = row
-        .try_get::<Option<Value>, _>("management_interval")?
-        .map(serde_json::from_value::<TimeInterval>)
-        .transpose()
-        .map_err(StoredRegistrationError::ManagementInterval)?;
-    let location: Option<Value> = row.try_get("location")?;
-    let observation_space: Option<Value> = row.try_get("observation_space")?;
-    let operation_space: Option<Value> = row.try_get("operation_space")?;
+    let observation_interval = read_json::<TimeInterval>(row, "observation_interval", StoredRegistrationError::ObservationInterval)?;
+    let management_interval = read_json::<TimeInterval>(row, "management_interval", StoredRegistrationError::ManagementInterval)?;
+    let location = read_json::<Geometry>(row, "location", StoredRegistrationError::Location)?;
+    let observation_space = read_json::<Geometry>(row, "observation_space", StoredRegistrationError::ObservationSpace)?;
+    let operation_space = read_json::<Geometry>(row, "operation_space", StoredRegistrationError::OperationSpace)?;
 
     Ok(RegistrationCoverage::builder()
         .information(information)
@@ -152,16 +158,8 @@ fn row_to_access(row: &PgRow) -> Result<ContextSourceAccess, ContextStoreError> 
         .map(|raw| raw.parse::<Iso8601Duration>())
         .transpose()
         .map_err(|error| StoredRegistrationError::RefreshRate { position: error.position })?;
-    let management = row
-        .try_get::<Option<Value>, _>("management")?
-        .map(serde_json::from_value::<RegistrationManagementInfo>)
-        .transpose()
-        .map_err(StoredRegistrationError::Management)?;
-    let context_source_info = row
-        .try_get::<Option<Value>, _>("context_source_info")?
-        .map(serde_json::from_value::<Vec<KeyValuePair>>)
-        .transpose()
-        .map_err(StoredRegistrationError::ContextSourceInfo)?;
+    let management = read_json::<RegistrationManagementInfo>(row, "management", StoredRegistrationError::Management)?;
+    let context_source_info = read_json::<Vec<KeyValuePair>>(row, "context_source_info", StoredRegistrationError::ContextSourceInfo)?;
     let jsonld_context: Option<DereferenceableUri> = row
         .try_get::<Option<String>, _>("jsonld_context")?
         .as_deref()

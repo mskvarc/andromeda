@@ -215,6 +215,44 @@ async fn batch_create_invalid_json_returns_400() {
     assert!(body["type"].as_str().is_some(), "should contain error type");
 }
 
+/// Clause 5.6.7.4 reports an item that fails per entity, and clause 5.5.4 with
+/// IETF RFC 8259 section 4 makes an object naming one member twice `BadRequestData`:
+/// only the item repeating a member is refused, naming it, against its own id.
+#[tokio::test]
+async fn batch_create_item_with_a_repeated_member_is_refused_alone_in_the_207() {
+    let scope = TestEnvironment::from_suite("batch").await.expect("isolated test environment");
+    let c = client();
+    let kept_id = scope.id("Building:batch_repeated_member_kept");
+    let refused_id = scope.id("Building:batch_repeated_member_refused");
+    let core = CORE_CONTEXT.as_str();
+    let body = format!(
+        r#"[{{"id":"{kept_id}","type":"Building","reading":{{"type":"Property","value":1}},"@context":["{core}"]}},{{"id":"{refused_id}","type":"Building","reading":{{"type":"Property","value":1}},"reading":{{"type":"Property","value":2}},"@context":["{core}"]}}]"#
+    );
+
+    let (status, answer) = request_raw(
+        &c,
+        Method::POST,
+        "/entityOperations/create",
+        body.as_bytes(),
+        Some("application/ld+json"),
+        false,
+    )
+    .await;
+
+    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS, "batch result: {answer}");
+    pretty_assertions::assert_eq!(answer["success"].as_array().map(Vec::len), Some(1));
+    let errors = answer["errors"].as_array().expect("per-entity errors");
+    pretty_assertions::assert_eq!(errors.len(), 1, "{answer}");
+    pretty_assertions::assert_eq!(errors[0]["entityId"], json!(refused_id));
+    assert!(
+        errors[0]["error"]["detail"].as_str().is_some_and(|detail| detail.contains("/reading")),
+        "{answer}"
+    );
+    let (status, _, _) = get_entity(&c, &refused_id, "", true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    scope.finish().await.expect("cleanup failed");
+}
+
 #[tokio::test]
 async fn batch_create_empty_json_returns_400() {
     let c = client();

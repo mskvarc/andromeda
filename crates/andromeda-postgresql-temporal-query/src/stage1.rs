@@ -317,7 +317,7 @@ mod tests {
     /// A `GeoJSON` point reference geometry, for tests that vary the relation
     /// rather than the geometry.
     fn point(coordinates: &serde_json::Value) -> Geometry {
-        Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses")
+        serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses")
     }
 
     /// A query with every filter absent, for tests that vary one part at a time.
@@ -756,7 +756,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.entities.geo = Some(GeoQuery {
             georel: GeoRel::Within,
-            geometry: Geometry::from_geojson_value(&serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
         let (sql, _) = built(&compiled, &QueryNames::default());

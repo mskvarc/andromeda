@@ -73,9 +73,6 @@ pub enum ContextRegistryError {
     /// answered 503 with `Retry-After`, never the 500 a broker malfunction earns.
     #[error("the datastore is temporarily unavailable; retry shortly")]
     StoreUnavailable,
-    /// A response could not be represented as JSON.
-    #[error("context registry representation failed: {0}")]
-    Representation(#[source] serde_json::Error),
     /// Policy produced an invalid domain value.
     #[error("context registry invariant failed: {0}")]
     Invariant(#[from] RegistryInvariant),

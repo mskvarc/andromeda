@@ -769,3 +769,65 @@ async fn regression_ngsild_conformance_round_trips_through_a_context_source_subs
 
     scope.finish().await.expect("cleanup failed");
 }
+
+/// Clause 5.8.6 writes `previousLanguageMap` beside a `LanguageProperty`'s
+/// `languageMap` when `showChanges` is set, and Table 4.3.6.8-1 reformats a
+/// `LanguageProperty` as a Property for a target below 1.4. The amended
+/// attribute is then a Property, so its previous state is the Property's
+/// `previousValue` (clause 4.5.2) and no `previousLanguageMap` -- a member no
+/// Property of that version has -- may remain beside `value`.
+#[tokio::test]
+async fn regression_ngsild_conformance_show_changes_previous_member_follows_the_property_fallback() {
+    let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
+    let client = scope.client();
+    let receiver = notification_receiver().await;
+    let endpoint = receiver.endpoint_url().expect("notification endpoint URL");
+    let context = json!([TEST_SUITE_CONTEXT]);
+
+    let entity_id = scope.id("Vehicle:conformance-show-changes");
+    create_entity(
+        client,
+        &conformance_entity(
+            &entity_id,
+            &scope.id("Room:conformance-show-changes"),
+            &scope.id("Building:conformance-show-changes"),
+            &context,
+        ),
+    )
+    .await;
+
+    let amended_id = scope.id("Subscription:conformance-show-changes-amended");
+    let mut amended_body = subscription_for(&amended_id, &entity_id, "Vehicle", &endpoint, &context);
+    amended_body["notification"]["showChanges"] = json!(true);
+    amended_body["ngsildConformance"] = json!("1.3");
+    create_subscription(client, &amended_body).await;
+
+    let control_id = scope.id("Subscription:conformance-show-changes-control");
+    let mut control_body = subscription_for(&control_id, &entity_id, "Vehicle", &endpoint, &context);
+    control_body["notification"]["showChanges"] = json!(true);
+    create_subscription(client, &control_body).await;
+    sleep(CACHE_SETTLE).await;
+
+    receiver.drain_requests().await;
+    let fragment = json!({"name": {"type": "LanguageProperty", "languageMap": {"en": "Spire", "de": "Turmspitze"}}, "@context": context});
+    let updated = client.update_entity_attrs(&entity_id, &fragment).await.expect("update attributes request");
+    assert_eq!(updated.status, StatusCode::NO_CONTENT, "{:?}", updated.body);
+    let notified = notified_entities_by_subscription(&receiver, 2).await;
+
+    delete_subscriptions(client, &[&amended_id, &control_id]).await;
+    receiver.shutdown().await.expect("notification receiver shutdown failed");
+
+    let control = notified.get(&control_id).expect("the control subscription is notified");
+    let amended = notified.get(&amended_id).expect("the amended subscription is notified");
+
+    assert_eq!(control["name"]["type"], json!("LanguageProperty"), "{control}");
+    assert_eq!(control["name"]["previousLanguageMap"], json!({"en": "Tower", "de": "Turm"}), "{control}");
+
+    assert_eq!(amended["name"]["type"], json!("Property"), "{amended}");
+    assert_eq!(amended["name"]["value"], json!({"en": "Spire", "de": "Turmspitze"}), "{amended}");
+    assert_eq!(amended["name"]["previousValue"], json!({"en": "Tower", "de": "Turm"}), "{amended}");
+    assert!(amended["name"].get("previousLanguageMap").is_none(), "{amended}");
+    assert!(amended["name"].get("languageMap").is_none(), "{amended}");
+
+    scope.finish().await.expect("cleanup failed");
+}

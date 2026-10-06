@@ -86,7 +86,7 @@ mod tests {
     fn within_berlin(geoproperty: &str) -> GeoQuery {
         GeoQuery {
             georel: GeoRel::Within,
-            geometry: Geometry::from_geojson_value(&json!({
+            geometry: serde_json::from_value::<Geometry>(json!({
                 "type": "Polygon",
                 "coordinates": [[[13.0, 52.0], [14.0, 52.0], [14.0, 53.0], [13.0, 53.0], [13.0, 52.0]]]
             }))

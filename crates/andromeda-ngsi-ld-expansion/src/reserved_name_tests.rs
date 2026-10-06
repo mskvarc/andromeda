@@ -2,7 +2,7 @@
 //! an attribute (clause 4.5.1), whichever expansion path reads the write.
 
 use crate::{
-    expansion_fixture::{engine, entity, fragment, patch},
+    expansion_fixture::{engine, entity, patch},
     normalization::Normalization,
 };
 use serde_json::json;
@@ -28,7 +28,7 @@ async fn an_entity_attribute_named_value_is_refused_on_both_paths() {
 
 #[tokio::test]
 async fn an_append_fragment_attribute_named_value_is_refused_on_both_paths() {
-    let refusal = fragment(&engine(), json!({"value": {"type": "Property", "value": 1}}), Normalization::Entity)
+    let refusal = patch(&engine(), json!({"value": {"type": "Property", "value": 1}}), Normalization::Entity)
         .await
         .expect("the fixture expands")
         .refused();

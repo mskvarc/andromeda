@@ -4,9 +4,10 @@
 //! two ports built on the table — the registry and the resolver cache — name its
 //! columns and its kind codes in one place.
 
+use andromeda_json_literal::JsonLiteral;
 use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use andromeda_postgresql_schema::jsonld::JsonldContexts;
-use andromeda_postgresql_seaquery::interval::make_interval_secs;
+use andromeda_postgresql_seaquery::{cast::cast, interval::make_interval_secs, pg_type::PostgresType};
 use sea_query::{
     Alias,
     Condition,
@@ -22,7 +23,12 @@ use sea_query::{
     UpdateStatement,
     error::Error as SeaQueryError,
 };
-use serde_json::Value;
+
+/// A stored `@context` document bound as the `jsonb` its column holds, from
+/// the text it was admitted as.
+fn jsonb(payload: &JsonLiteral) -> SimpleExpr {
+    cast(Expr::val(payload.text()), PostgresType::Jsonb)
+}
 
 /// Match a row by either of its identities: local id or source URL.
 ///
@@ -112,7 +118,7 @@ pub fn fresh_cached_context_query(identifier: &str) -> SelectStatement {
 ///
 /// Returns [`SeaQueryError`] when the bound value list stops matching the
 /// nine-wide column list, which the fixed shape here makes unreachable.
-pub fn cached_upsert(local_id: &str, url: &str, document_url: &str, payload: Value, lifetime_seconds: f64) -> Result<InsertStatement, SeaQueryError> {
+pub fn cached_upsert(local_id: &str, url: &str, document_url: &str, payload: &JsonLiteral, lifetime_seconds: f64) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(JsonldContexts::Table)
@@ -132,7 +138,7 @@ pub fn cached_upsert(local_id: &str, url: &str, document_url: &str, payload: Val
             url.into(),
             document_url.into(),
             cached_kind(),
-            payload.into(),
+            jsonb(payload),
             Expr::current_timestamp(),
             Expr::current_timestamp(),
             0_i64.into(),
@@ -289,11 +295,11 @@ pub fn delete_by_identifier(identifier: &str) -> DeleteStatement {
 /// first downloaded, and a reload (clause 5.13.5) fetches the same resource from
 /// the same server without observing a new one.
 #[must_use]
-pub fn replace_download_update(local_id: &str, document_url: &str, payload: Value) -> UpdateStatement {
+pub fn replace_download_update(local_id: &str, document_url: &str, payload: &JsonLiteral) -> UpdateStatement {
     let granted_lifetime = Expr::col(JsonldContexts::ExpiresAt).sub(Expr::col(JsonldContexts::CreatedAt));
     Query::update()
         .table(JsonldContexts::Table)
-        .value(JsonldContexts::Payload, payload)
+        .value(JsonldContexts::Payload, jsonb(payload))
         .value(JsonldContexts::DocumentUrl, document_url)
         .value(JsonldContexts::CreatedAt, Expr::current_timestamp())
         .value(JsonldContexts::LastUsage, Expr::current_timestamp())
@@ -317,7 +323,7 @@ pub fn replace_download_update(local_id: &str, document_url: &str, payload: Valu
 ///
 /// Returns [`SeaQueryError`] when the bound value list stops matching the
 /// seven-wide column list, which the fixed shapes here make unreachable.
-pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind: JsonldContextKindCode, payload: Value) -> Result<InsertStatement, SeaQueryError> {
+pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind: JsonldContextKindCode, payload: &JsonLiteral) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(JsonldContexts::Table)
@@ -334,7 +340,7 @@ pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind: JsonldCont
             local_id.into(),
             Expr::val(serving_url),
             kind.code().into(),
-            payload.into(),
+            jsonb(payload),
             Expr::current_timestamp(),
             Expr::current_timestamp(),
             0_i64.into(),
@@ -356,9 +362,9 @@ mod tests {
         stored_context_query,
         summary_page_query,
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
     use sea_query::{PostgresQueryBuilder, error::Error as SeaQueryError};
-    use serde_json::json;
 
     #[test]
     fn a_payload_lookup_matches_either_identity() {
@@ -429,7 +435,7 @@ mod tests {
             "urn:ngsi-ld:JsonLdContext:1",
             "https://example.com/c.jsonld",
             "https://example.com/c.jsonld",
-            json!({"@context": {}}),
+            &JsonLiteral::admit(r#"{"@context": {}}"#).expect("admissible"),
             60.0,
         )?
         .build(PostgresQueryBuilder);
@@ -451,7 +457,7 @@ mod tests {
             "urn:ngsi-ld:JsonLdContext:1",
             "https://example.com/c.jsonld",
             "https://example.com/c.jsonld",
-            json!({"@context": {}}),
+            &JsonLiteral::admit(r#"{"@context": {}}"#).expect("admissible"),
             60.0,
         )?
         .to_string(PostgresQueryBuilder);
@@ -475,8 +481,12 @@ mod tests {
     /// that has already passed.
     #[test]
     fn a_reload_carries_the_granted_lifetime_forward() {
-        let sql =
-            replace_download_update("urn:ngsi-ld:JsonLdContext:1", "https://example.com/c.jsonld", json!({"@context": {}})).to_string(PostgresQueryBuilder);
+        let sql = replace_download_update(
+            "urn:ngsi-ld:JsonLdContext:1",
+            "https://example.com/c.jsonld",
+            &JsonLiteral::admit(r#"{"@context": {}}"#).expect("admissible"),
+        )
+        .to_string(PostgresQueryBuilder);
 
         assert!(sql.contains("\"created_at\" = CURRENT_TIMESTAMP"), "{sql}");
         assert!(
@@ -494,7 +504,7 @@ mod tests {
             "urn:ngsi-ld:JsonLdContext:1",
             None,
             JsonldContextKindCode::ImplicitlyCreated,
-            json!({"@context": []}),
+            &JsonLiteral::admit(r#"{"@context": []}"#).expect("admissible"),
         )?
         .to_string(PostgresQueryBuilder);
 
@@ -512,7 +522,7 @@ mod tests {
             "urn:ngsi-ld:JsonLdContext:1",
             "https://example.com/c.jsonld",
             "https://mirror.example.com/v2/c.jsonld",
-            json!({"@context": {}}),
+            &JsonLiteral::admit(r#"{"@context": {}}"#).expect("admissible"),
             60.0,
         )?
         .build(PostgresQueryBuilder);
@@ -543,8 +553,12 @@ mod tests {
     /// from, and only for a `"Cached"` entry.
     #[test]
     fn a_reload_replaces_the_document_url_of_a_cached_entry_only() {
-        let (sql, values) = replace_download_update("urn:ngsi-ld:JsonLdContext:1", "https://mirror.example.com/v3/c.jsonld", json!({"@context": {}}))
-            .build(PostgresQueryBuilder);
+        let (sql, values) = replace_download_update(
+            "urn:ngsi-ld:JsonLdContext:1",
+            "https://mirror.example.com/v3/c.jsonld",
+            &JsonLiteral::admit(r#"{"@context": {}}"#).expect("admissible"),
+        )
+        .build(PostgresQueryBuilder);
 
         assert!(sql.contains("\"document_url\" = "), "{sql}");
         assert!(sql.contains("\"kind\" = "), "a reload is confined to a Cached row: {sql}");

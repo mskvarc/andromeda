@@ -1,6 +1,7 @@
 //! Snapshot execution result aggregation and status selection.
 
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, ExecutionResultStatus, SnapshotStatus};
+use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
 
 #[derive(Default)]
 pub(crate) struct ExecutionAggregate {
@@ -66,12 +67,7 @@ pub(crate) const fn success_detail(count: usize) -> ExecutionResultDetails {
 pub(crate) fn failure_detail(message: impl Into<String>) -> ExecutionResultDetails {
     ExecutionResultDetails {
         result_status: ExecutionResultStatus::Failure,
-        problem_details: Some(serde_json::json!({
-            "type": "https://uri.etsi.org/ngsi-ld/errors/InternalError",
-            "title": "Internal Error",
-            "detail": message.into(),
-            "status": 500
-        })),
+        problem_details: Some(ProblemDetail::new(NgsiLdErrorType::InternalError, message)),
     }
 }
 

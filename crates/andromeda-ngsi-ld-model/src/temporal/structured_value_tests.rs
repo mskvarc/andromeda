@@ -235,7 +235,7 @@ fn a_durable_row_reads_back_typed_and_writes_out_unchanged() {
 fn scalar_values_keep_their_durable_wire_shape() {
     let number = TemporalValue::Number(JsonNumber::from_str("0.100000000000000005").expect("supported exact number"));
     pretty_assertions::assert_eq!(serde_json::to_string(&number).expect("durable JSON"), r#"{"number":0.100000000000000005}"#);
-    let point = Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("a point");
+    let point = serde_json::from_value::<Geometry>(json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("a point");
     pretty_assertions::assert_eq!(
         serde_json::to_value(TemporalValue::Geometry(GeometryValue::new(point.into_parts().0))).expect("durable JSON"),
         json!({"geometry": {"form": {"type": "Point", "coordinates": [1.0, 2.0]}}})

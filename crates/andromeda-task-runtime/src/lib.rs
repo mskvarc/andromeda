@@ -40,8 +40,6 @@ mod scheduled_registration;
 pub mod scheduled_task;
 /// Grace periods for cooperative task shutdown.
 pub mod shutdown_policy;
-/// One-time task execution required during construction.
-pub mod startup_task;
 /// Named task supervision on a supplied Tokio execution host.
 pub mod supervisor;
 /// Observable task health.

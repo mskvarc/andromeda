@@ -12,11 +12,16 @@ pub mod compilation;
 pub mod core_linked_source;
 /// Narrowing an entity's attribute instances by `datasetId`.
 pub mod dataset_filter;
+/// Locally held entities as versions to merge, and merged versions compacted.
+pub mod entity_versions;
 /// Merging locally held entities with those a context source returned.
 pub mod forwarded_merge;
 /// Gathering the entity states the hops of an in-memory filter cross into
 /// (clause 4.9).
 pub mod linked_filter_states;
+/// The Linked Entities a subscription's `join` reaches from the entities of
+/// one notification (clause 4.5.23).
+pub mod notification_join;
 /// Compiling raw `pick`/`omit` terms into the clause 4.21 projection.
 pub mod projection_compilation;
 /// What a clause 4.21 projection leaves of an entity.

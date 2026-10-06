@@ -11,7 +11,8 @@ use andromeda_jsonld::engine::processor::JsonLdEngine;
 use std::sync::Arc;
 
 mod attribute_info;
-mod attribute_list;
+/// Retrieve Available Attributes and their details (clauses 5.7.8 and 5.7.9).
+pub mod attribute_list;
 mod registry_union;
 mod rendered_names;
 mod stored_names;

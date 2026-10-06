@@ -1,5 +1,6 @@
 //! Deserializers for structured query-string values.
 
+use andromeda_ngsi_ld_geometry::query_coordinates::QueryCoordinates;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
@@ -23,7 +24,7 @@ struct GeoQueryParameters {
     /// `GeoJSON` geometry type.
     geometry: Option<String>,
     /// `GeoJSON` coordinates.
-    coordinates: Option<serde_json::Value>,
+    coordinates: Option<QueryCoordinates>,
     /// Optional `GeoProperty` reference.
     geoproperty: Option<NgsiLdReference>,
 }
@@ -73,7 +74,7 @@ impl<'de> Deserialize<'de> for OptionalGeoQuery {
 pub fn decode_geo_query(
     georel: &str,
     geometry_type: &str,
-    coordinates: serde_json::Value,
+    coordinates: QueryCoordinates,
     geoproperty: Option<NgsiLdReference>,
 ) -> Result<GeoQueryInput, GeoQueryDecodeError> {
     GeoQueryInput::from_wire(georel, geometry_type, coordinates, geoproperty).map_err(GeoQueryDecodeError::from)

@@ -1,8 +1,10 @@
 //! The typed fragment one Update Context Source Registration carries (ETSI GS CIM 009 clauses 5.9.3 and 5.5.8).
 
 use crate::nullable_member::NullableMember;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
     non_empty_text::NonEmptyText,
@@ -17,9 +19,9 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
-use serde_json::Value;
 use typed_builder::TypedBuilder;
 
 /// Typed fragment for CSR updates.
@@ -93,7 +95,8 @@ pub struct CsrUpdateFragment {
     /// Updated context source alias pseudonym.
     #[builder(default = Default::default())]
     pub context_source_alias: NullableMember<ContextSourcePseudonym>,
-    /// Updated non-standard properties.
+    /// The Context Source Properties the fragment sets, by the expanded name
+    /// they are stored under; each replaces the stored property of that name.
     #[builder(default = Default::default())]
-    pub additional_properties: Option<Value>,
+    pub additional_properties: IndexMap<AttributeName, JsonLiteral>,
 }

@@ -6,17 +6,11 @@ use andromeda_ngsi_ld_geometry::{
     geojson::GeometryError,
     geometry::Geometry,
     geometry_type::GeometryType,
+    query_coordinates::QueryCoordinates,
 };
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
-use serde::{
-    Deserialize,
-    Deserializer,
-    Serialize,
-    Serializer,
-    de::Error as DeserializeError,
-    ser::{Error as SerializeError, SerializeStruct},
-};
-use serde_json::Value;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError, ser::SerializeStruct};
+use strum::Display;
 use thiserror::Error;
 
 /// A complete clause-4.10 geo-query whose reference geometry is read, or
@@ -36,13 +30,25 @@ pub struct GeoQueryInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GeoQueryInputWire {
     /// Spatial relationship.
-    georel: GeoRel,
+    georel: Option<GeoRel>,
     /// `GeoJSON` geometry type.
-    geometry: String,
+    geometry: Option<String>,
     /// `GeoJSON` coordinates.
-    coordinates: Value,
+    coordinates: Option<QueryCoordinates>,
     /// Optional `GeoProperty` reference.
     geoproperty: Option<NgsiLdReference>,
+}
+
+/// The members Table 5.2.13-1 gives cardinality 1.
+#[derive(Clone, Copy, Debug, Display, PartialEq, Eq)]
+#[strum(serialize_all = "lowercase")]
+pub enum RequiredMember {
+    /// `georel`.
+    Georel,
+    /// `geometry`.
+    Geometry,
+    /// `coordinates`.
+    Coordinates,
 }
 
 impl GeoQueryInput {
@@ -69,14 +75,17 @@ impl GeoQueryInput {
     /// not an RFC 7946 type NGSI-LD supports, and
     /// [`GeoQueryInputError::Geometry`] when JSON coordinates do not form a
     /// valid reference geometry.
-    pub fn from_wire(georel: &str, geometry_type: &str, coordinates: Value, geoproperty: Option<NgsiLdReference>) -> Result<GeoQueryInput, GeoQueryInputError> {
+    pub fn from_wire(
+        georel: &str,
+        geometry_type: &str,
+        coordinates: QueryCoordinates,
+        geoproperty: Option<NgsiLdReference>,
+    ) -> Result<GeoQueryInput, GeoQueryInputError> {
         let georel = georel.parse().map_err(GeoQueryInputError::GeoRel)?;
         let geometry_type = geometry_type.parse::<GeometryType>().map_err(GeoQueryInputError::GeometryType)?;
         let reference = match coordinates {
-            Value::String(coordinates) => ReferenceGeometry::Encoded { geometry_type, coordinates },
-            read @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => {
-                ReferenceGeometry::Read(Geometry::from_type_and_coordinates(geometry_type, read).map_err(GeoQueryInputError::Geometry)?)
-            }
+            QueryCoordinates::Text(coordinates) => ReferenceGeometry::Encoded { geometry_type, coordinates },
+            QueryCoordinates::Written(written) => ReferenceGeometry::Read(written.read_as(geometry_type).map_err(GeoQueryInputError::Geometry)?),
         };
         Ok(GeoQueryInput {
             georel,
@@ -93,8 +102,18 @@ impl<'de> Deserialize<'de> for GeoQueryInput {
     where
         D: Deserializer<'de>,
     {
-        let wire = GeoQueryInputWire::deserialize(deserializer)?;
-        GeoQueryInput::from_wire(&wire.georel.to_string(), &wire.geometry, wire.coordinates, wire.geoproperty).map_err(DeserializeError::custom)
+        GeoQueryInputWire::deserialize(deserializer)?.into_input().map_err(DeserializeError::custom)
+    }
+}
+
+impl GeoQueryInputWire {
+    /// The geo-query the members make, once every member Table 5.2.13-1 gives
+    /// cardinality 1 is present.
+    fn into_input(self) -> Result<GeoQueryInput, GeoQueryInputError> {
+        let georel = self.georel.ok_or(GeoQueryInputError::MissingMember(RequiredMember::Georel))?;
+        let geometry = self.geometry.ok_or(GeoQueryInputError::MissingMember(RequiredMember::Geometry))?;
+        let coordinates = self.coordinates.ok_or(GeoQueryInputError::MissingMember(RequiredMember::Coordinates))?;
+        GeoQueryInput::from_wire(&georel.to_string(), &geometry, coordinates, self.geoproperty)
     }
 }
 
@@ -105,11 +124,10 @@ impl Serialize for GeoQueryInput {
     where
         S: Serializer,
     {
-        let (geometry_type, coordinates) = self.reference.wire_members().map_err(S::Error::custom)?;
         let mut state = serializer.serialize_struct("GeoQuery", if self.geoproperty.is_some() { 4 } else { 3 })?;
         state.serialize_field("georel", &self.georel)?;
-        state.serialize_field("geometry", &geometry_type)?;
-        state.serialize_field("coordinates", &coordinates)?;
+        state.serialize_field("geometry", &self.reference.geometry_type())?;
+        state.serialize_field("coordinates", &self.reference.coordinates_member())?;
         if let Some(geoproperty) = &self.geoproperty {
             state.serialize_field("geoproperty", geoproperty)?;
         }
@@ -120,6 +138,9 @@ impl Serialize for GeoQueryInput {
 /// Geo-query wire decoding failure.
 #[derive(Debug, Error)]
 pub enum GeoQueryInputError {
+    /// A member Table 5.2.13-1 gives cardinality 1 is absent or `null`.
+    #[error("a geo-query requires its '{0}' member (Table 5.2.13-1)")]
+    MissingMember(RequiredMember),
     /// The relation is not defined by clause 4.10.
     #[error("invalid georel: {0}")]
     GeoRel(GeoRelParseError),
@@ -139,8 +160,13 @@ pub enum GeoQueryInputError {
 #[cfg(test)]
 mod tests {
     use crate::geo::{input::GeoQueryInput, reference_geometry::ReferenceGeometry};
-    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, geometry_type::GeometryType};
-    use serde_json::json;
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, geometry_type::GeometryType, query_coordinates::QueryCoordinates};
+    use serde_json::{Value, json};
+
+    /// The coordinates a request spells as `value`.
+    fn coordinates(value: Value) -> QueryCoordinates {
+        serde_json::from_value(value).expect("coordinates read from JSON")
+    }
 
     #[test]
     fn a_geo_query_serializes_its_geometry_as_type_and_coordinates_members() {
@@ -155,7 +181,7 @@ mod tests {
     /// unread, and written back the way they arrived.
     #[test]
     fn string_coordinates_are_held_encoded_and_written_back_as_a_string() {
-        let input = GeoQueryInput::from_wire("within", "Polygon", json!("[[[0,0],[1,0],[1,1],[0,0]]]"), None).expect("a decoded geo-query");
+        let input = GeoQueryInput::from_wire("within", "Polygon", coordinates(json!("[[[0,0],[1,0],[1,1],[0,0]]]")), None).expect("a decoded geo-query");
         pretty_assertions::assert_eq!(
             input.reference,
             ReferenceGeometry::Encoded {
@@ -171,7 +197,34 @@ mod tests {
     /// the compilation refuses them.
     #[test]
     fn string_coordinates_are_not_parsed_at_extraction() {
-        assert!(GeoQueryInput::from_wire("within", "Point", json!("[1.0, "), None).is_ok());
-        assert!(GeoQueryInput::from_wire("within", "Point", json!([1.0]), None).is_err());
+        assert!(GeoQueryInput::from_wire("within", "Point", coordinates(json!("[1.0, ")), None).is_ok());
+        assert!(GeoQueryInput::from_wire("within", "Point", coordinates(json!([1.0])), None).is_err());
+    }
+
+    /// Table 5.2.13-1 gives `georel`, `geometry` and `coordinates` cardinality
+    /// 1: a geo-query missing one is refused, and the refusal names the member
+    /// in single quotes and the table.
+    #[test]
+    fn a_geo_query_missing_a_required_member_is_refused_by_name() {
+        for (body, member) in [
+            (json!({"georel": "near;maxDistance==2000"}), "geometry"),
+            (json!({"georel": "within", "geometry": "Point"}), "coordinates"),
+            (json!({"geometry": "Point", "coordinates": [1.0, 2.0]}), "georel"),
+        ] {
+            let error = serde_json::from_value::<GeoQueryInput>(body).expect_err("an incomplete geo-query is refused");
+            let message = error.to_string();
+            assert!(
+                message.contains(&format!("'{member}'")) && message.contains("Table 5.2.13-1"),
+                "{member}: {message}"
+            );
+        }
+    }
+
+    /// Coordinates given as a JSON array are read into the reference geometry
+    /// at extraction, never held as text.
+    #[test]
+    fn array_coordinates_are_read_into_the_reference_geometry() {
+        let input = GeoQueryInput::from_wire("within", "Point", coordinates(json!([1.0, 2.0])), None).expect("a decoded geo-query");
+        assert!(matches!(input.reference, ReferenceGeometry::Read(_)));
     }
 }

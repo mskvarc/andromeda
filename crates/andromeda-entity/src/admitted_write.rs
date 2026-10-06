@@ -3,10 +3,10 @@
 //! The admission expands a payload exactly the way its write path stores it
 //! and screens the written document. What it expanded is kept rather than
 //! thrown away, so the local write consumes it directly and a payload is
-//! expanded once per request. Only a payload the forwarding phase narrowed --
-//! some of its attributes claimed by an exclusive or redirect registration
-//! (clause 4.3.6.3) -- is admitted again, because what remains of it is a
-//! different document.
+//! expanded once per request. The forwarding phase reads the same document, and
+//! what it leaves to the local phase -- the document without the attributes an
+//! exclusive or redirect registration claimed (clause 4.3.6.3) -- is a part of
+//! what was admitted, so it is never admitted again.
 
 use crate::compact_geometry_admission::admit_compact_geometries;
 use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::InstanceDocument};
@@ -19,7 +19,10 @@ use andromeda_ngsi_ld_expansion::{
 };
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
+use andromeda_ngsi_ld_model::{
+    attribute_strip::AttributeStrip,
+    entity::{Entity, EntityPatch},
+};
 use andromeda_ngsi_ld_representation::payload_budget::PayloadBudgetExceeded;
 use std::marker::PhantomData;
 
@@ -27,8 +30,7 @@ use std::marker::PhantomData;
 /// write stores it.
 ///
 /// Only [`EntityService::admit_entity_write`](crate::EntityService::admit_entity_write)
-/// and [`EntityService::admit_remaining_entity`](crate::EntityService::admit_remaining_entity)
-/// construct one, so holding one proves the payload passed clause 5.5.4.
+/// constructs one, so holding one proves the payload passed clause 5.5.4.
 #[derive(Debug)]
 pub struct AdmittedEntity<W> {
     /// The expanded, screened document.
@@ -41,6 +43,32 @@ impl<W> AdmittedEntity<W> {
     /// Wrap a document the admission of `W` expanded and screened.
     pub(crate) const fn new(document: EntityDocument) -> AdmittedEntity<W> {
         AdmittedEntity { document, write: PhantomData }
+    }
+
+    /// The admitted document, which the forwarding phase hands to the
+    /// registrations the write matches (clauses 5.6.1.4 and following).
+    #[must_use]
+    pub const fn document(&self) -> &EntityDocument {
+        &self.document
+    }
+
+    /// What the local phase of a distributed write writes once the attributes
+    /// proxied registrations own (clause 4.3.6.3) are taken out of the
+    /// admitted document: "any remaining input data" of clauses 5.6.1.4 and
+    /// following.
+    ///
+    /// The proxied attributes are named by the expanded names the forwarding
+    /// phase reported. What remains of an admitted document is part of it, so
+    /// it needs no admission of its own: a document left with no attribute
+    /// leaves the local phase nothing to write, which is `None`.
+    #[must_use]
+    pub fn local_remainder(mut self, proxied: &[AttributeName]) -> Option<AdmittedEntity<W>> {
+        let before = self.document.attributes().len();
+        self.document.attributes_mut().retain(|name, _| !proxied.contains(name));
+        match AttributeStrip::from_counts(before, self.document.attributes().len()) {
+            AttributeStrip::Emptied => None,
+            AttributeStrip::Untouched | AttributeStrip::Narrowed => Some(self),
+        }
     }
 
     /// Give up the written document the write applies.
@@ -84,8 +112,16 @@ impl<'a, W> AdmittedAttribute<'a, W> {
     }
 
     /// The expanded name of the attribute the fragment writes.
-    pub(crate) const fn expanded_name(&self) -> &AttributeName {
+    #[must_use]
+    pub const fn expanded_name(&self) -> &AttributeName {
         &self.expanded_name
+    }
+
+    /// The admitted instance, which the forwarding phase hands to the
+    /// registrations the write matches.
+    #[must_use]
+    pub const fn instance(&self) -> &InstanceDocument {
+        &self.document
     }
 
     /// Give up the expanded attribute name and the written instance.

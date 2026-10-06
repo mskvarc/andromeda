@@ -130,12 +130,12 @@ impl EntityService {
     /// round: a round holds each identifier at most once, so no two chunks can
     /// carry two instances of the same entity and land them out of array order
     /// (clause 5.5.11.0).
-    fn round_chunks<M>(&self, round: Vec<AdmittedBatchEntity<M>>) -> Vec<Vec<AdmittedBatchEntity<M>>> {
+    fn round_chunks(&self, round: Vec<AdmittedBatchEntity>) -> Vec<Vec<AdmittedBatchEntity>> {
         let chunk_len = self.batch_chunk_len(round.len());
         let mut entries = round.into_iter();
         let mut chunks = Vec::new();
         loop {
-            let chunk: Vec<AdmittedBatchEntity<M>> = entries.by_ref().take(chunk_len).collect();
+            let chunk: Vec<AdmittedBatchEntity> = entries.by_ref().take(chunk_len).collect();
             if chunk.is_empty() {
                 return chunks;
             }

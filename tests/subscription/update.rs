@@ -12,6 +12,7 @@ use crate::helpers::{
     activate_with_expires_fragment,
     client,
     create_subscription,
+    dataset_id_subscription,
     default_subscription,
     inactive_subscription,
     invalid_update_fragment,
@@ -347,6 +348,94 @@ async fn subscription_an_empty_notification_trigger_is_bad_request_data() {
     kept.sort_unstable();
     let kept = kept;
     pretty_assertions::assert_eq!(kept, ["entityCreated", "entityUpdated"], "the refused update changed nothing: {stored}");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clauses 5.8.2.4 and 5.5.8: "for each member of the Fragment, whose value is
+/// an NGSI-LD Null, contained by the target, the target member is deleted".
+/// Every member Table 5.2.12-1 gives cardinality `0..1` is deleted by a `null`
+/// and a deleted `isActive` is its default `true`, which makes a paused
+/// subscription active (clause 5.8.2.4).
+#[tokio::test]
+async fn subscription_update_null_deletes_optional_members_and_restores_defaults() {
+    let http_client = client();
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-null-optional-members");
+    let mut payload = inactive_subscription(&subscription_id);
+    payload["subscriptionName"] = json!("named");
+    payload["description"] = json!("described");
+    payload["throttling"] = json!(30);
+    payload["expiresAt"] = json!("2099-01-01T00:00:00Z");
+
+    let (status, _, _) = create_subscription(&http_client, &payload).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    let (_, paused) = retrieve_subscription(&http_client, &subscription_id, false).await;
+    pretty_assertions::assert_eq!(paused["status"], "paused");
+
+    let fragment = json!({"subscriptionName": null, "description": null, "throttling": null, "expiresAt": null, "isActive": null});
+    let (status, body) = update_subscription(&http_client, &subscription_id, &fragment, false).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+
+    let (status, stored) = retrieve_subscription(&http_client, &subscription_id, false).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    for member in ["subscriptionName", "description", "throttling", "expiresAt"] {
+        assert!(stored.get(member).is_none(), "{member} was deleted: {stored}");
+    }
+    pretty_assertions::assert_eq!(stored["status"], "active", "a deleted isActive is the default true: {stored}");
+    pretty_assertions::assert_eq!(stored["entities"][0]["type"], "Building", "members the fragment does not name are kept");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Clause 4.5.0: `urn:ngsi-ld:null` is the NGSI-LD Null where a URI is valid,
+/// so it deletes `jsonldContext`, and an array of one deletes `datasetId`.
+#[tokio::test]
+async fn subscription_update_ngsi_ld_null_deletes_uri_members() {
+    let http_client = client();
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-ngsi-ld-null-uri-members");
+    let mut payload = dataset_id_subscription(&subscription_id);
+    payload["jsonldContext"] = json!(CORE_CONTEXT.as_str());
+
+    let (status, _, _) = create_subscription(&http_client, &payload).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let fragment = json!({"jsonldContext": "urn:ngsi-ld:null", "datasetId": ["urn:ngsi-ld:null"]});
+    let (status, body) = update_subscription(&http_client, &subscription_id, &fragment, false).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+
+    let (status, stored) = retrieve_subscription(&http_client, &subscription_id, false).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    assert!(stored.get("jsonldContext").is_none(), "jsonldContext was deleted: {stored}");
+    assert!(stored.get("datasetId").is_none(), "datasetId was deleted: {stored}");
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// Table 5.2.12-1 gives `notification` cardinality `1`, so a `null` for it is
+/// `BadRequestData`; the closing sentence of clause 5.2.12 requires `entities`
+/// or `watchedAttributes` unless the subscription is `localOnly`, so a `null`
+/// that would delete the only selector is refused too. Neither changes the
+/// stored subscription.
+#[tokio::test]
+async fn subscription_update_null_for_a_mandatory_member_returns_bad_request_data() {
+    let http_client = client();
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+    let subscription_id = scope.id("Subscription:update-null-mandatory-members");
+    let mut payload = default_subscription(&subscription_id);
+    payload.as_object_mut().expect("subscription object").remove("timeInterval");
+
+    let (status, _, _) = create_subscription(&http_client, &payload).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    for (member, fragment) in [("notification", json!({"notification": null})), ("entities", json!({"entities": null}))] {
+        let (status, body) = update_subscription(&http_client, &subscription_id, &fragment, false).await;
+        pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST, "{member}: {body}");
+        pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str(), "{member}: {body}");
+    }
+
+    let (status, stored) = retrieve_subscription(&http_client, &subscription_id, false).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(stored["entities"][0]["type"], "Building", "the refused updates changed nothing: {stored}");
+    pretty_assertions::assert_eq!(stored["notification"]["endpoint"]["uri"], "http://127.0.0.1:8085/notify");
     scope.finish().await.expect("cleanup failed");
 }
 

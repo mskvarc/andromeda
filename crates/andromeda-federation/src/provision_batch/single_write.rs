@@ -6,19 +6,27 @@ use crate::{
     forwarding_url::forwarding_url,
     provision_batch::{fallback_plan::SingleWrite, narrowing::NarrowedEntity},
 };
-use serde_json::Value;
+use andromeda_ngsi_ld_entity::document::EntityDocument;
+use std::borrow::Cow;
 use url::Url;
 
+/// The request one single-entity fallback write sends for `entity`: where, by
+/// which method, and with which admitted document, if any.
+pub(super) struct SingleWriteRequest<'e> {
+    /// The forwarded URL, or the failure that stops it being built.
+    pub(super) url: Result<Url, FederationError>,
+    /// The HTTP method.
+    pub(super) method: reqwest::Method,
+    /// The document the request carries; a deletion carries none.
+    pub(super) body: Option<Cow<'e, EntityDocument>>,
+}
+
 /// The request one single-entity fallback write sends for `entity`.
-pub(super) fn single_write_request(
-    write: SingleWrite,
-    endpoint: &Url,
-    entity: &NarrowedEntity,
-) -> (Result<Url, FederationError>, reqwest::Method, Option<Vec<u8>>) {
+pub(super) fn single_write_request<'e>(write: SingleWrite, endpoint: &Url, entity: &'e NarrowedEntity<'_>) -> SingleWriteRequest<'e> {
     let id = entity.id.as_str();
-    let fragment = || entity.body.as_ref().map(without_identifier).and_then(|body| serde_json::to_vec(&body).ok());
-    let whole = || entity.body.as_ref().and_then(|body| serde_json::to_vec(body).ok());
-    match write {
+    let whole = || entity.body.as_deref().map(Cow::Borrowed);
+    let fragment = || entity.body.as_deref().map(without_identifier).map(Cow::Owned);
+    let (url, method, body) = match write {
         SingleWrite::Create | SingleWrite::CreateThenOnConflict(_) => (forwarding_url(endpoint, &["entities"], None), reqwest::Method::POST, whole()),
         SingleWrite::Replace => (forwarding_url(endpoint, &["entities", id], None), reqwest::Method::PUT, whole()),
         SingleWrite::UpdateAttributes => (forwarding_url(endpoint, &["entities", id, "attrs"], None), reqwest::Method::PATCH, fragment()),
@@ -29,22 +37,16 @@ pub(super) fn single_write_request(
         ),
         SingleWrite::Delete => (forwarding_url(endpoint, &["entities", id], None), reqwest::Method::DELETE, None),
         SingleWrite::Merge => (forwarding_url(endpoint, &["entities", id], None), reqwest::Method::PATCH, fragment()),
-    }
+    };
+    SingleWriteRequest { url, method, body }
 }
 
-/// An entity fragment for the attribute-level operations: the entity without
-/// its `id`, which the request path already names.
-fn without_identifier(body: &Value) -> Value {
-    match body.as_object() {
-        Some(object) => Value::Object(
-            object
-                .iter()
-                .filter(|(name, _)| name.as_str() != "id")
-                .map(|(name, value)| (name.clone(), value.clone()))
-                .collect(),
-        ), // clone: the fragment is a new value
-        None => body.clone(), // clone: same
-    }
+/// An entity fragment for the attribute-level operations: the document
+/// without its `id`, which the request path already names.
+fn without_identifier(document: &EntityDocument) -> EntityDocument {
+    let mut parts = document.clone().into_parts(); // clone: the fragment is a new document
+    parts.id = None;
+    EntityDocument::new(parts.id, parts.types, parts.scope, parts.expires_at, parts.attributes)
 }
 
 #[cfg(test)]
@@ -52,11 +54,11 @@ mod tests {
     use crate::provision_batch::{
         fallback_plan::{SingleWrite, UpsertFollowUp},
         narrowing::NarrowedEntity,
-        registration_fixture::uri,
+        registration_fixture::{document, uri},
         single_write::single_write_request,
     };
     use andromeda_jsonld::{batch_contexts::BatchContexts, context_spec::ContextSpec};
-    use serde_json::{Value, json};
+    use std::borrow::Cow;
     use url::Url;
 
     #[test]
@@ -65,7 +67,11 @@ mod tests {
         let context = BatchContexts::shared(ContextSpec::none()).context_of(None);
         let entity = NarrowedEntity {
             id: uri("urn:ngsi-ld:Vehicle:1"),
-            body: Some(json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 1}})),
+            body: Some(Cow::Owned(document(
+                "urn:ngsi-ld:Vehicle:1",
+                "https://example.org/Vehicle",
+                &["https://example.org/speed"],
+            ))),
             proxied_attrs: Vec::new(),
             context: &context,
         };
@@ -109,16 +115,16 @@ mod tests {
             ),
         ];
         for (write, expected_method, expected_url, keeps_id) in cases {
-            let (url, method, body) = single_write_request(write, &endpoint, &entity);
-            pretty_assertions::assert_eq!(url.expect("joins").as_str(), expected_url, "{write:?}");
-            pretty_assertions::assert_eq!(method, expected_method, "{write:?}");
+            let request = single_write_request(write, &endpoint, &entity);
+            pretty_assertions::assert_eq!(request.url.expect("joins").as_str(), expected_url, "{write:?}");
+            pretty_assertions::assert_eq!(request.method, expected_method, "{write:?}");
             if write == SingleWrite::Delete {
-                assert!(body.is_none(), "a deletion carries no body");
+                assert!(request.body.is_none(), "a deletion carries no body");
                 continue;
             }
-            let body: Value = serde_json::from_slice(&body.expect("a body")).expect("JSON body");
-            pretty_assertions::assert_eq!(body.get("id").is_some(), keeps_id, "{write:?}");
-            assert!(body.get("speed").is_some(), "{write:?}");
+            let body = request.body.expect("a body");
+            pretty_assertions::assert_eq!(body.id().is_some(), keeps_id, "{write:?}");
+            assert!(!body.attributes().is_empty(), "{write:?}");
         }
     }
 }

@@ -15,6 +15,7 @@ use andromeda_http_response::{
     internal_failure_summary::InternalFailureSummary,
     problem_response::ProblemResponse,
 };
+use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_request::{
     empty::EmptyParams,
@@ -27,7 +28,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use headers::{HeaderMapExt, IfNoneMatch};
-use serde_json::Value;
+use serde_json::value::RawValue;
 
 /// Create a hosted or cached JSON-LD `@context` (clause 5.13.2).
 ///
@@ -52,17 +53,30 @@ pub(crate) async fn create(
     // many values costs its bytes and nothing more.
     RequestPayload(body): RequestPayload,
 ) -> Result<Response, ProblemResponse> {
-    let payload: Value = serde_json::from_slice(&body).map_err(|error| {
-        // clone: the refusal names the request, which the response below names too
-        ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, format!("request body is not valid JSON: {error}")).with_instance(uri.clone())
-    })?;
+    let payload = serde_json::from_slice::<&RawValue>(&body)
+        .map_err(|source| JsonLiteralError::Syntax { source })
+        .and_then(JsonLiteral::admit_raw)
+        .map_err(|error| {
+            // Clause 5.5.4: an object naming one member twice is well-formed
+            // JSON whose data is not syntactically correct (IETF RFC 8259
+            // section 4), the same refusal every other body draws.
+            let error_type = match &error {
+                JsonLiteralError::DuplicateMember { .. } => NgsiLdErrorType::BadRequestData,
+                JsonLiteralError::Syntax { .. }
+                | JsonLiteralError::Number { .. }
+                | JsonLiteralError::TooDeep { .. }
+                | JsonLiteralError::ProcessorText { .. } => NgsiLdErrorType::InvalidRequest,
+            };
+            // clone: the refusal names the request, which the response below names too
+            ClassifiedReport::public(error_type, format!("request body is not admissible JSON: {error}")).with_instance(uri.clone())
+        })?;
     // Clause 5.13.2 records the absolute URL the entry is served under, which a
     // request naming no authority gives nothing to build on (IETF RFC 9112
     // section 3.2 makes such an HTTP/1.1 request malformed).
     let urls = state.hosting.urls(&api_root).ok_or_else(|| {
         ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, "the request names no authority to serve the @context under").with_instance(uri.clone())
     })?;
-    let identifier = state.hosting.contexts().create(payload, &urls).await.with_context_registry_instance(&uri)?;
+    let identifier = state.hosting.contexts().create(&payload, &urls).await.with_context_registry_instance(&uri)?;
     let location =
         hosted_context_path(&identifier).map_err(|error| ClassifiedReport::internal(&error, InternalFailureSummary::RESPONSE_ENCODING).with_instance(uri))?;
     Ok(with_location(StatusCode::CREATED.into_response(), location))

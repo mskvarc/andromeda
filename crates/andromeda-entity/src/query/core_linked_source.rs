@@ -24,8 +24,9 @@ use andromeda_linked_retrieval::{
     typed::TypedEntities,
 };
 use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
+use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_model::{entity::Entity, entity_system_times::EntitySystemTimes, notification::SysAttrsSnapshot};
 use andromeda_ngsi_ld_representation::{
     linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind},
     sys_attrs::SysAttrsInclusion,
@@ -50,6 +51,10 @@ pub struct CoreLinkedSource<'s> {
     sys_attrs: SysAttrsInclusion,
     /// The context they are compacted under.
     context: &'s ContextSpec,
+    /// The Linked Entities the holders of the read's roots nested under the
+    /// roots' Relationships, read into the model: they stand for an entity the
+    /// store does not hold.
+    carried: &'s [ReceivedState],
 }
 
 impl<'s> CoreLinkedSource<'s> {
@@ -67,7 +72,15 @@ impl<'s> CoreLinkedSource<'s> {
             target,
             sys_attrs,
             context,
+            carried: &[],
         }
+    }
+
+    /// The same source, answering for an entity the store does not hold with
+    /// the one the roots' holders nested, if one did (clause 4.5.23).
+    #[must_use]
+    pub const fn with_carried(self, carried: &'s [ReceivedState]) -> CoreLinkedSource<'s> {
+        CoreLinkedSource { carried, ..self }
     }
 
     /// Read the candidates the local store holds, in candidate order.
@@ -87,8 +100,12 @@ impl<'s> CoreLinkedSource<'s> {
         let mut nodes = IndexMap::with_capacity(retrieved.len());
         let mut edges = Vec::new();
         for candidate in candidates {
-            let Some(RetrievedEntity { state, sys_attrs: times }) = retrieved.get(&candidate.id) else {
-                continue;
+            let (state, times) = match retrieved.get(&candidate.id) {
+                Some(RetrievedEntity { state, sys_attrs }) => (&**state, HeldTimes::Stored(sys_attrs)),
+                None => match self.carried.iter().find(|carried| carried.state.id() == &candidate.id) {
+                    Some(carried) => (&carried.state, HeldTimes::Carried(carried.system_times)),
+                    None => continue,
+                },
             };
             let read = EntityRead {
                 id_override: Some(&candidate.id),
@@ -97,9 +114,14 @@ impl<'s> CoreLinkedSource<'s> {
             };
             match entity_compactor.entity(state, &read).await {
                 Ok(entity) => {
-                    let entity = match self.sys_attrs {
-                        SysAttrsInclusion::Include => entity.with_sys_attrs(times),
-                        SysAttrsInclusion::Strip => entity,
+                    let entity = match (self.sys_attrs, times) {
+                        (SysAttrsInclusion::Include, HeldTimes::Stored(times)) => entity.with_sys_attrs(times),
+                        (SysAttrsInclusion::Include, HeldTimes::Carried(times)) => {
+                            let mut entity = entity;
+                            times.restore(&mut entity);
+                            entity
+                        }
+                        (SysAttrsInclusion::Strip, HeldTimes::Stored(_) | HeldTimes::Carried(_)) => entity,
                     };
                     TypedEntities::edges(&entity, &mut edges);
                     nodes.insert(candidate.id.clone(), entity); // clone: the level keys its nodes by owned identifiers
@@ -126,19 +148,45 @@ impl<'s> CoreLinkedSource<'s> {
             };
         };
         match remote.fetch_linked(&candidate.id, depth, held, self.context).await {
-            Ok(RemoteLinkedEntities { entities, failures }) => {
+            Ok(RemoteLinkedEntities { entities, mut failures }) => {
                 for failure in &failures {
                     tracing::warn!("Linked entity {} was not fully resolved: {} ({})", failure.id, failure.detail, failure.kind);
                 }
+                // A holder answers with the entity and, nested under its
+                // Relationships, the Linked Entities it joined for the depth
+                // that remains; every one of them is a node of the graph.
+                let mut received = Vec::new();
+                let mut pending = entities;
+                while let Some(mut version) = pending.pop() {
+                    pending.append(&mut version.linked);
+                    received.push(version);
+                }
+                let compactor = self.service.engine().compactor(self.context);
+                let entity_compactor = EntityCompactor::new(&compactor);
+                let read = EntityRead {
+                    id_override: None,
+                    sys_attrs: self.sys_attrs,
+                    now: Utc::now(),
+                };
+                let mut nodes = Vec::with_capacity(received.len());
                 let mut edges = Vec::new();
-                for entity in &entities {
-                    TypedEntities::edges(entity, &mut edges);
+                for version in received.into_iter().rev() {
+                    match entity_compactor.entity(&version.state, &read).await {
+                        Ok(mut entity) => {
+                            if self.sys_attrs == SysAttrsInclusion::Include {
+                                version.system_times.restore(&mut entity);
+                            }
+                            TypedEntities::edges(&entity, &mut edges);
+                            nodes.push(entity);
+                        }
+                        Err(error) => failures.push(LinkedResolutionFailure {
+                            id: version.state.id().clone(), // clone: the failure outlives the version it names
+                            kind: LinkedResolutionFailureKind::Unreachable,
+                            detail: error.to_string(),
+                        }),
+                    }
                 }
-                RemoteRead {
-                    nodes: entities,
-                    edges,
-                    failures,
-                }
+                RemoteRead { nodes, edges, failures }
             }
             Err(error) => {
                 tracing::warn!("Failed to resolve linked entity {} outside the local store: {}", candidate.id, error);
@@ -154,6 +202,15 @@ impl<'s> CoreLinkedSource<'s> {
             }
         }
     }
+}
+
+/// Where a level's entity-level clause 4.8 system times come from.
+#[derive(Clone, Copy)]
+enum HeldTimes<'t> {
+    /// The store's row.
+    Stored(&'t SysAttrsSnapshot),
+    /// What the holder that nested the entity wrote on it.
+    Carried(EntitySystemTimes),
 }
 
 impl LinkedSource for CoreLinkedSource<'_> {
@@ -188,6 +245,7 @@ mod tests {
         spatial_acceleration::SpatialAcceleration,
         storage_profile::StorageProfile,
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_linked_retrieval::{
         graph::{LinkedGraph, RootEdges},
@@ -195,6 +253,7 @@ mod tests {
         traversal::traverse,
     };
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
+    use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, page_window::PageWindow};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -223,12 +282,11 @@ mod tests {
 
     /// A root entity whose single Relationship names `targets` in order.
     fn root(id: &str, targets: &[&str]) -> Entity {
-        serde_json::from_value(json!({
-            "id": id,
-            "type": "Thing",
-            "linksTo": {"type": "Relationship", "object": targets}
-        }))
-        .expect("entity")
+        let mut entity = json!({"id": id, "type": "Thing"});
+        if !targets.is_empty() {
+            entity["linksTo"] = json!({"type": "Relationship", "object": targets});
+        }
+        serde_json::from_value(entity).expect("entity")
     }
 
     /// A root entity whose single Relationship names `targets` and annotates
@@ -405,7 +463,7 @@ mod tests {
             id: &Identifier,
             remaining_depth: NonZeroU32,
             visited: &[Identifier],
-            _context: &ContextSpec,
+            context: &ContextSpec,
         ) -> Result<RemoteLinkedEntities, EntityError> {
             self.calls().push(RemoteCall {
                 id: id.clone(), // clone: the recording owns the identifier it reports
@@ -413,10 +471,21 @@ mod tests {
                 visited: visited.to_vec(),
             });
             match &self.outcome {
-                RemoteOutcome::Returns(entities) => Ok(RemoteLinkedEntities {
-                    entities: entities.get(id).cloned().unwrap_or_default(), // clone: the source hands back owned entities
-                    failures: Vec::new(),
-                }),
+                RemoteOutcome::Returns(entities) => {
+                    // A holder's answer is read into the model under the
+                    // context it is spelled in, as the forwarding reads it.
+                    let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+                    let expansion = EntityExpansion::prepare(&engine, context).await.expect("the context processes");
+                    let mut received = Vec::new();
+                    for entity in entities.get(id).cloned().unwrap_or_default() {
+                        // clone: the source hands back owned entities
+                        received.push(expansion.received(entity).await.expect("the answer reads"));
+                    }
+                    Ok(RemoteLinkedEntities {
+                        entities: received,
+                        failures: Vec::new(),
+                    })
+                }
                 RemoteOutcome::Reports(kind) => Ok(RemoteLinkedEntities {
                     entities: Vec::new(),
                     failures: vec![LinkedResolutionFailure {
@@ -454,7 +523,7 @@ mod tests {
     /// A context mapping the tests' one term to a deterministic,
     /// offline-resolvable IRI, so compaction needs no network fetch.
     fn context() -> ContextSpec {
-        ContextSpec::from_body(json!({"linksTo": "https://example.com/linksTo"}))
+        ContextSpec::from_body(JsonLiteral::admit(&json!({"linksTo": "https://example.com/linksTo"}).to_string()).expect("an admissible literal"))
     }
 
     fn level(value: u32) -> NonZeroU32 {

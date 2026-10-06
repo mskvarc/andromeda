@@ -24,9 +24,10 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
-pub mod concise;
+pub mod body_response;
+mod concise;
 pub mod context;
-pub mod entity;
+pub mod contextual_body;
 mod entity_body;
 pub mod entity_map_body;
 pub mod entity_response;
@@ -35,19 +36,18 @@ mod entity_response_fallback_tests;
 #[cfg(test)]
 mod entity_response_tests;
 pub mod error;
-pub mod geojson;
+pub mod forwarded_entity;
 pub mod geometry_selection;
+pub mod joined_notification;
 pub mod language_negotiation;
 pub mod notification_data;
 pub mod notification_entity;
+pub mod notification_language;
 pub mod notified_changes;
 #[cfg(test)]
 mod notified_changes_tests;
-pub mod object_list;
 pub mod registration;
-pub mod relationship_targets;
 pub mod response;
-pub mod simplify;
 pub mod structural_projection;
 pub mod subscription;
 pub mod temporal;

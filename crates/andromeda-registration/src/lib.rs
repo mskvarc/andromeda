@@ -28,8 +28,11 @@ pub mod information_compaction;
 mod information_expansion;
 mod mode_rules;
 pub mod nullable_member;
-mod payload;
 pub mod query;
+/// The Create and Update Context Source Registration request body.
+pub mod registration_body;
+mod registration_body_reading;
+mod registration_compaction;
 /// The typed reasons a registration collides with existing context data.
 pub mod registration_conflict_reason;
 /// The invariants registration policy relies on.
@@ -110,17 +113,17 @@ impl RegistrationService {
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-json-literal",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-compaction",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-request",
         "andromeda-persistence-failure",
     ],
-    allow_workspace_dev_dependencies: [
-        "andromeda-ngsi-ld-number",
-    ],
+    allow_workspace_dev_dependencies: [],
     allow_production_dependencies: [],
 }

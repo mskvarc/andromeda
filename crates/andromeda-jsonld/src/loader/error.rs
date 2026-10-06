@@ -8,6 +8,7 @@
 //! Detail, instead of being flattened into one message at the boundary.
 
 use crate::{context_cache::ContextCacheError, context_subtree::UnusableLocalContext, error::JsonLdError};
+use andromeda_json_literal::admission::JsonLiteralError;
 use iri_rs::{InvalidIri, IriBuf};
 use mediatype::{MediaTypeBuf, MediaTypeError};
 use reqwest::StatusCode;
@@ -101,11 +102,12 @@ pub enum InvalidContextDocument {
     /// The response body is not UTF-8.
     #[error("the response body is not UTF-8: {0}")]
     NotUtf8(#[source] Utf8Error),
-    /// The response body is not JSON.
+    /// The response body is not JSON the broker admits: malformed, naming a
+    /// member twice in one object, or nesting too deep.
     ///
     /// Shared for the same reason as [`ContextUnavailable::Request`].
     #[error("the response body is not JSON: {0}")]
-    NotJson(#[source] Arc<serde_json::Error>),
+    NotJson(#[source] Arc<JsonLiteralError>),
     /// The document carries no usable top-level `@context`.
     #[error("the document has no usable top-level @context: {0}")]
     NoContext(#[source] UnusableLocalContext),
@@ -214,11 +216,12 @@ mod tests {
             | JsonLdError::ContextUrlNotIri(_)
             | JsonLdError::JsonLdContextText(_)
             | JsonLdError::JsonLdContextShape
-            | JsonLdError::DocumentShape
             | JsonLdError::ContextGraph(_)
             | JsonLdError::ScopedUserContext { .. }
             | JsonLdError::EmbeddedUserContext(_)
-            | JsonLdError::Json(_)) => panic!("expected ContextHttp, got {other}"),
+            | JsonLdError::Json(_)
+            | JsonLdError::ContextText(_)
+            | JsonLdError::ProcessorText(_)) => panic!("expected ContextHttp, got {other}"),
         }
     }
 }

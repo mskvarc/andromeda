@@ -274,7 +274,8 @@ async fn distop_types_details_merges_remote_type_objects() {
     // Remote returns a detailed type not present locally
     let mock_details = json!([
         {
-            "id": "Drone",
+            // Table 5.2.25-1: `id` is the Valid URI that is the type's FQN.
+            "id": "https://ngsi-ld-test-suite/context#Drone",
             "type": "EntityType",
             "typeName": "Drone",
             "attributeNames": ["altitude"]
@@ -286,7 +287,9 @@ async fn distop_types_details_merges_remote_type_objects() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("details=true response should be a JSON array");
-    let drone = arr.iter().find(|v| v.get("id").and_then(|id| id.as_str()) == Some("Drone"));
+    let drone = arr
+        .iter()
+        .find(|v| v.get("id").and_then(|id| id.as_str()) == Some("https://ngsi-ld-test-suite/context#Drone"));
     assert!(drone.is_some(), "merged details should include Drone from remote; got: {arr:?}");
 
     delete_entity(&c, &entity_id).await;
@@ -354,9 +357,11 @@ async fn distop_types_warning_on_csr_unreachable() {
     env.finish().await.expect("cleanup failed");
 }
 
-/// `get_type` forwards to CSR and returns merged type information including remote attributes.
+/// `get_type` forwards to the CSR and merges a spec-shaped remote `EntityTypeInfo`
+/// (clause 5.2.26): the remote `attributeDetails` join the local ones and the remote
+/// `entityCount` is added to the local count (clauses 5.7.7, 5.7.8).
 #[tokio::test]
-async fn distop_types_type_info_merges_remote_attributes() {
+async fn distop_types_type_info_merges_remote_attribute_details() {
     let env = TenantScopedEnvironment::from_suite("distop_types").await.expect("private tenant environment");
     let c = tenant_client(env.tenant());
     let mock = MockServer::start().await;
@@ -370,18 +375,35 @@ async fn distop_types_type_info_merges_remote_attributes() {
     let reg = vehicle_registration(&reg_id, &mock.url(""));
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Remote returns type info with extra attributes
+    // Remote returns the type information a conforming source answers with.
+    // Clauses 5.2.26 and 5.2.28 make `id` the Fully Qualified Name, and the
+    // merge is by that name: the remote record names the Vehicle type the
+    // local broker holds, under the test suite `@context`, and a further
+    // attribute that context defines.
     let mock_type_info = json!({
-        "id": "Vehicle",
+        "id": "https://ngsi-ld-test-suite/context#Vehicle",
         "type": "EntityTypeInfo",
         "typeName": "Vehicle",
         "entityCount": 5,
-        "attributeNames": ["extraAttr"]
+        "attributeDetails": [{
+            "id": "https://ngsi-ld-test-suite/context#airQualityLevel",
+            "type": "Attribute",
+            "attributeName": "airQualityLevel",
+            "attributeTypes": ["Property"]
+        }]
     });
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/types/Vehicle", 200, &mock_type_info).await;
 
-    let (status, _, _) = get_type(&c, "Vehicle", "").await;
+    let (status, _, body) = get_type(&c, "Vehicle", "").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
+
+    let details = body["attributeDetails"]
+        .as_array()
+        .expect("the merged type information carries attributeDetails");
+    let names: Vec<&str> = details.iter().filter_map(|detail| detail["attributeName"].as_str()).collect();
+    assert!(names.contains(&"airQualityLevel"), "the remote attribute detail is merged; got: {body}");
+    assert!(names.contains(&"brandName"), "the local attribute detail is kept; got: {body}");
+    pretty_assertions::assert_eq!(body["entityCount"], json!(6), "the remote entityCount is added to the local one; got: {body}");
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;

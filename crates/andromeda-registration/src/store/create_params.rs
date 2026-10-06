@@ -1,7 +1,9 @@
 //! The complete input one Create Context Source Registration writes (ETSI GS CIM 009 clause 5.9.2).
 
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
     non_empty_text::NonEmptyText,
@@ -16,9 +18,9 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
-use serde_json::Value;
 use typed_builder::TypedBuilder;
 
 /// Parameters for creating a new context source registration.
@@ -85,44 +87,8 @@ pub struct CreateCsrParams {
     /// Unique pseudonym for Via-based loop detection.
     #[builder(default = Default::default())]
     pub context_source_alias: Option<ContextSourcePseudonym>,
-    /// Non-standard properties preserved from the original request.
+    /// The Context Source Properties preserved from the original request, by
+    /// the expanded name they are stored under.
     #[builder(default = Default::default())]
-    pub additional_properties: Option<Value>,
-}
-
-impl CreateCsrParams {
-    /// Keys recognized as standard NGSI-LD CSR properties.
-    pub const STANDARD_KEYS: &'static [&'static str] = &[
-        "id",
-        "type",
-        "@context",
-        "registrationName",
-        "description",
-        "information",
-        "datasetId",
-        "tenant",
-        "observationInterval",
-        "managementInterval",
-        "location",
-        "observationSpace",
-        "operationSpace",
-        "expiresAt",
-        "endpoint",
-        "accept",
-        "mode",
-        "operations",
-        "scope",
-        "refreshRate",
-        "management",
-        "contextSourceInfo",
-        "jsonldContext",
-        "contextSourceAlias",
-        "status",
-        "timesSent",
-        "timesFailed",
-        "lastSuccess",
-        "lastFailure",
-        "createdAt",
-        "modifiedAt",
-    ];
+    pub additional_properties: IndexMap<AttributeName, JsonLiteral>,
 }

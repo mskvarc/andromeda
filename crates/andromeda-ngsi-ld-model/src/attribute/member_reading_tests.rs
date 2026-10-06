@@ -25,15 +25,7 @@ use std::{convert::Infallible, thread};
 /// The member `member` reads as under the name `name`, read from its text.
 fn read(name: &str, member: &Value) -> Result<AttributeValue, NodeReadError<Infallible>> {
     let text = RawValue::from_string(member.to_string()).expect("the member is JSON");
-    let from_text = <AttributeValue as MemberReading>::from_node(name, JsonPiece::new(&text));
-    let from_tree = <AttributeValue as MemberReading>::from_node(name, member);
-    // A parsed document and its text read alike.
-    match (&from_text, &from_tree) {
-        (Ok(text), Ok(tree)) => assert_eq!(rendered(text), rendered(tree), "{member}"),
-        (Err(NodeReadError::Refused(text)), Err(NodeReadError::Refused(tree))) => assert_eq!(text.path, tree.path, "{member}"),
-        (text, tree) => panic!("text read as {text:?} and the tree as {tree:?}: {member}"),
-    }
-    from_text
+    <AttributeValue as MemberReading>::from_node(name, JsonPiece::new(&text))
 }
 
 /// The member as the JSON it renders back to.
@@ -282,6 +274,46 @@ fn a_malformed_family_value_or_envelope_member_is_refused_where_it_stands() {
     }
 }
 
+/// Table 5.2.5-1 and clauses 4.5.3.2, 4.5.18.2, 4.5.20.2, 4.5.22.2 and 4.5.24.2:
+/// a `unitCode` that is no common code, and one on a unitless family, is refused
+/// at the member in words naming the attribute, the family and `'unitCode'`;
+/// the three quantity families keep theirs as their own member.
+#[test]
+fn a_unit_code_is_read_on_the_quantity_families_and_refused_elsewhere() {
+    let unusable = refused(&json!({"type": "Property", "value": 1, "unitCode": "km/h"}));
+    assert_eq!(unusable.path.to_string(), "/unitCode");
+    assert_eq!(unusable.refusal.to_string(), "attribute 'member': 'unitCode' is not a UN/CEFACT common code");
+    for family in AttributeType::ALL {
+        let member = match family {
+            AttributeType::Property => json!({"type": "Property", "value": 1, "unitCode": "KMH"}),
+            AttributeType::GeoProperty => json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2]}, "unitCode": "KMH"}),
+            AttributeType::ListProperty => json!({"type": "ListProperty", "valueList": [1], "unitCode": "KMH"}),
+            AttributeType::Relationship => json!({"type": "Relationship", "object": "urn:ngsi-ld:A:1", "unitCode": "KMH"}),
+            AttributeType::LanguageProperty => json!({"type": "LanguageProperty", "languageMap": {"en": "a"}, "unitCode": "KMH"}),
+            AttributeType::VocabProperty => json!({"type": "VocabProperty", "vocab": "x", "unitCode": "KMH"}),
+            AttributeType::JsonProperty => json!({"type": "JsonProperty", "json": {"a": 1}, "unitCode": "KMH"}),
+            AttributeType::ListRelationship => json!({"type": "ListRelationship", "objectList": ["urn:ngsi-ld:A:1"], "unitCode": "KMH"}),
+        };
+        match family {
+            AttributeType::Property | AttributeType::GeoProperty | AttributeType::ListProperty => {
+                let instance = single(&member);
+                assert!(instance.common().sub_attributes.is_empty(), "{family}: {instance:?}");
+            }
+            AttributeType::Relationship
+            | AttributeType::LanguageProperty
+            | AttributeType::VocabProperty
+            | AttributeType::JsonProperty
+            | AttributeType::ListRelationship => {
+                assert_eq!(
+                    refused(&member).refusal.to_string(),
+                    format!("attribute 'member': a {family} carries no 'unitCode'"),
+                    "{family}"
+                );
+            }
+        }
+    }
+}
+
 /// S18: a system member a Context Producer wrote is ignored, whatever it holds
 /// (clause 5.2.2); a peer's malformed one is refused.
 #[test]
@@ -430,10 +462,12 @@ fn an_entity_that_is_none_is_refused() {
         (json!({"id": "urn:ngsi-ld:T:1", "type": "T", "scope": "no scope"}), "/scope"),
         (json!({"id": "urn:ngsi-ld:T:1", "type": "T", "speed": {"type": "Property"}}), "/speed"),
     ] {
-        let Err(NodeReadError::Refused(refusal)) = <Entity>::from_node(&refused_entity) else {
+        let text = RawValue::from_string(refused_entity.to_string()).expect("the fixture is JSON");
+        let Err(NodeReadError::Refused(refusal)) = <Entity>::from_node(JsonPiece::new(&text)) else {
             panic!("refused: {refused_entity}");
         };
         assert_eq!(refusal.path.to_string(), at, "{refused_entity}");
     }
-    assert!(<Entity>::from_node(&json!([{"id": "urn:ngsi-ld:T:1", "type": "T"}])).is_err());
+    let array = RawValue::from_string(json!([{"id": "urn:ngsi-ld:T:1", "type": "T"}]).to_string()).expect("the fixture is JSON");
+    assert!(<Entity>::from_node(JsonPiece::new(&array)).is_err());
 }

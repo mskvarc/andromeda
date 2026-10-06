@@ -1,79 +1,97 @@
 //! Reading a forwarded batch request's answer entity by entity (clauses
 //! 5.6.7.5 and following).
 
-use crate::outcome::ForwardedWriteOutcome;
+use crate::{answer_body::AnswerBody, outcome::ForwardedWriteOutcome};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use serde_json::Value;
+use andromeda_ngsi_ld_problem_details::batch_operation::{BatchErrorKind, BatchOperationResult};
 use std::collections::HashMap;
+
+/// The status a reported entity error stands for when its type names none
+/// (RFC 7807 clause 3.1 makes `status` optional).
+const UNSTATED_STATUS: u16 = 500;
 
 /// The per-entity outcomes a forwarded batch request answered with
 /// (clauses 5.6.7.5 and following): a clause 5.2.16 body is read entity by
-/// entity, an array of identifiers names the successes, and a bodiless
-/// success or any failure applies to every entity of the array.
+/// entity, and a bodiless success, a success whose body is no batch result,
+/// or any failure applies to every entity of the array.
 pub(super) fn batch_outcomes(ids: &[Identifier], outcome: &ForwardedWriteOutcome) -> Vec<(Identifier, ForwardedWriteOutcome)> {
-    let ForwardedWriteOutcome::Completed { status, body: Some(body) } = outcome else {
-        return ids
-            .iter()
-            .map(|id| (id.clone(), outcome.clone())) // clone: every entity owns its identifier and the outcome it shares
-            .collect();
+    let ForwardedWriteOutcome::Completed { status, body } = outcome else {
+        return every(ids, outcome);
     };
-    let listed_errors = body
-        .get("errors")
-        .and_then(Value::as_array)
+    let Some(result) = body.decoded::<BatchOperationResult>() else {
+        return every(ids, outcome);
+    };
+    let listed_errors = result
+        .errors
         .into_iter()
-        .flatten()
         .filter_map(|error| {
-            let id = error.get("entityId")?.as_str()?.parse::<Identifier>().ok()?;
-            let problem = error.get("error")?;
-            let status = problem
-                .get("status")
-                .and_then(Value::as_u64)
-                .and_then(|status| u16::try_from(status).ok())
-                .unwrap_or(500);
+            let id = error.entity_id.as_str().parse::<Identifier>().ok()?;
+            let status = match &error.error.error_type {
+                BatchErrorKind::Known(classification) => classification.status_code().as_u16(),
+                BatchErrorKind::Other(_) => UNSTATED_STATUS,
+            };
             Some((
                 id,
                 ForwardedWriteOutcome::RemoteHttpFailure {
                     status,
-                    body: Some(problem.clone()), // clone: the per-entity outcome owns the problem detail reported for it
+                    body: AnswerBody::Problem(error.error),
                 },
             ))
         })
         .collect::<HashMap<_, _>>();
     ids.iter()
         .map(|id| {
-            let outcome = listed_errors
-                .get(id)
-                .cloned()
-                .unwrap_or(ForwardedWriteOutcome::Completed { status: *status, body: None }); // clone: the result owns its outcome
+            let outcome = listed_errors.get(id).cloned().unwrap_or(ForwardedWriteOutcome::Completed {
+                status: *status,
+                body: AnswerBody::Absent,
+            }); // clone: the result owns its outcome
             (id.clone(), outcome) // clone: the result owns its identifier
         })
+        .collect()
+}
+
+/// `outcome` for every entity of `ids`.
+fn every(ids: &[Identifier], outcome: &ForwardedWriteOutcome) -> Vec<(Identifier, ForwardedWriteOutcome)> {
+    ids.iter()
+        .map(|id| (id.clone(), outcome.clone())) // clone: every entity owns its identifier and the outcome it shares
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
+        answer_body::AnswerBody,
         outcome::{ForwardedWriteOutcome, TransportFailure},
         provision_batch::{batch_answer::batch_outcomes, registration_fixture::uri},
     };
     use serde_json::json;
-    use std::{collections::HashMap, time::Duration};
+    use std::{collections::HashMap, sync::Arc, time::Duration};
 
     #[test]
     fn a_forwarded_batch_answer_is_read_entity_by_entity() {
         let ids = [uri("urn:ngsi-ld:Vehicle:1"), uri("urn:ngsi-ld:Vehicle:2")];
         let multi_status = ForwardedWriteOutcome::Completed {
             status: 207,
-            body: Some(json!({
-                "success": ["urn:ngsi-ld:Vehicle:2"],
-                "errors": [{"entityId": "urn:ngsi-ld:Vehicle:1", "error": {"status": 409, "type": "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists", "title": "exists"}}]
-            })),
+            body: AnswerBody::Text(Arc::from(
+                json!({
+                    "success": ["urn:ngsi-ld:Vehicle:2"],
+                    "errors": [{"entityId": "urn:ngsi-ld:Vehicle:1", "error": {"status": 409, "type": "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists", "title": "exists"}}]
+                })
+                .to_string()
+                .into_bytes(),
+            )),
         };
         let outcomes = batch_outcomes(&ids, &multi_status).into_iter().collect::<HashMap<_, _>>();
         assert!(matches!(outcomes[&ids[0]], ForwardedWriteOutcome::RemoteHttpFailure { status: 409, .. }));
         assert!(matches!(outcomes[&ids[1]], ForwardedWriteOutcome::Completed { status: 207, .. }));
 
-        let bodiless = batch_outcomes(&ids, &ForwardedWriteOutcome::Completed { status: 204, body: None });
+        let bodiless = batch_outcomes(
+            &ids,
+            &ForwardedWriteOutcome::Completed {
+                status: 204,
+                body: AnswerBody::Absent,
+            },
+        );
         assert!(
             bodiless
                 .iter()

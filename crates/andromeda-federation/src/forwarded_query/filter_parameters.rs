@@ -11,7 +11,6 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::input::GeoQueryInput};
-use serde_json::Value;
 
 impl ForwardedQuery {
     /// Write the clause 4.9 query, spelled in the forwarding context, and the
@@ -70,15 +69,11 @@ impl ForwardedQuery {
         // A geometry that cannot travel is a broken invariant, never a reason to
         // forward the query without its geo filter: the source would answer
         // entities the client's filter excludes.
-        let (geometry_type, coordinates) = geo.reference.wire_members().map_err(FederationInvariant::ForwardedGeometry)?;
         // Coordinates still encoded travel as the text they arrived as.
-        let coordinates = match coordinates {
-            Value::String(text) => text,
-            read @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => read.to_string(),
-        };
+        let coordinates = geo.reference.coordinates_text().map_err(FederationInvariant::ForwardedGeometry)?;
         self.push(ForwardedParameter::Georel, geo.georel.to_string());
-        self.push(ForwardedParameter::Geometry, geometry_type.to_string());
-        self.push(ForwardedParameter::Coordinates, coordinates);
+        self.push(ForwardedParameter::Geometry, geo.reference.geometry_type().to_string());
+        self.push(ForwardedParameter::Coordinates, coordinates.into_owned());
         if let Some(geoproperty) = &geo.geoproperty {
             self.push(ForwardedParameter::Geoproperty, names.geoproperty(geoproperty).await?.to_string());
         }

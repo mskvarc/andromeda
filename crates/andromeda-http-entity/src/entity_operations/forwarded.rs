@@ -12,19 +12,10 @@ use andromeda_federation::{
 };
 use andromeda_http_response::{batch_projection::forwarded_write_error, problem_response::ProblemResponse};
 use andromeda_jsonld::{batch_contexts::BatchContexts, user_context_admission::AdmittedContext};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::{entity::Entity, entity_type::EntityTypeValue, registration::forwarding_mode::ForwardingMode};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
 use axum::http::{StatusCode, Uri as HttpUri};
-
-/// The type a registration is matched against for an entity: its single
-/// type, or the first of several.
-fn matching_type<M>(entity: &Entity<M>) -> Option<&EntityTypeName> {
-    match &entity.type_ {
-        EntityTypeValue::Single(name) => Some(name),
-        EntityTypeValue::Multiple(names) => names.first(),
-    }
-}
 
 /// What a batch operation asks the registrations matching it to do.
 ///
@@ -45,8 +36,9 @@ pub(crate) struct ForwardedBatch<'a> {
 /// Forward the admitted entities of a batch to every matching registration,
 /// each under the context it was submitted with.
 ///
-/// Each entity is serialised only for a registration it matches, so a batch
-/// no registration covers serialises nothing.
+/// Each entity is the document its admission expanded, compacted only for a
+/// registration it matches, so a batch no registration covers compacts
+/// nothing.
 pub(crate) async fn forward_entities<W: BatchWriteKind>(
     services: &EntityRouteServices,
     target: &ContextTarget,
@@ -60,12 +52,11 @@ pub(crate) async fn forward_entities<W: BatchWriteKind>(
         triggering,
     } = request;
     let batch = admitted
-        .entities()
-        .map(|(entity, context)| BatchEntity {
-            id: &entity.id,
-            entity_type: matching_type(entity),
-            body: Some(entity),
-            context,
+        .forwardable()
+        .map(|entity| BatchEntity {
+            id: entity.id,
+            document: Some(entity.document),
+            context: entity.context,
         })
         .collect::<Vec<_>>();
     services
@@ -98,8 +89,7 @@ pub(crate) async fn forward_identifiers(
         .iter()
         .map(|id| BatchEntity {
             id,
-            entity_type: None,
-            body: None,
+            document: None,
             context: &context,
         })
         .collect::<Vec<_>>();
@@ -184,7 +174,7 @@ pub(crate) fn created_remotely(forwarded: &[BatchForwardedResult]) -> impl Itera
 mod tests {
     use crate::entity_operations::forwarded::{created_remotely, drop_absent_proxied, merge_forwarded, proxied_attributes};
     use andromeda_entity::error::EntityError;
-    use andromeda_federation::{outcome::ForwardedWriteOutcome, provision_batch::BatchForwardedResult};
+    use andromeda_federation::{answer_body::AnswerBody, outcome::ForwardedWriteOutcome, provision_batch::BatchForwardedResult};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
     use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
@@ -203,6 +193,14 @@ mod tests {
         }
     }
 
+    /// A source's bodiless success with `status`.
+    const fn completed(status: u16) -> ForwardedWriteOutcome {
+        ForwardedWriteOutcome::Completed {
+            status,
+            body: AnswerBody::Absent,
+        }
+    }
+
     fn names(raw: &[&str]) -> Vec<AttributeName> {
         raw.iter().map(|name| name.parse::<AttributeName>().expect("valid name")).collect()
     }
@@ -212,24 +210,14 @@ mod tests {
     #[test]
     fn an_entity_loses_every_attribute_its_proxied_registrations_claim_and_nothing_else() {
         let forwarded = [
-            result(
-                "urn:ngsi-ld:Vehicle:1",
-                ForwardingMode::Exclusive,
-                ForwardedWriteOutcome::Completed { status: 204, body: None },
-                &["speed"],
-            ),
+            result("urn:ngsi-ld:Vehicle:1", ForwardingMode::Exclusive, completed(204), &["speed"]),
             result(
                 "urn:ngsi-ld:Vehicle:2",
                 ForwardingMode::Redirect,
                 ForwardedWriteOutcome::NotAdvertised,
                 &["speed", "brandName"],
             ),
-            result(
-                "urn:ngsi-ld:Vehicle:3",
-                ForwardingMode::Inclusive,
-                ForwardedWriteOutcome::Completed { status: 204, body: None },
-                &[],
-            ),
+            result("urn:ngsi-ld:Vehicle:3", ForwardingMode::Inclusive, completed(204), &[]),
         ];
         pretty_assertions::assert_eq!(proxied_attributes(&forwarded, &uri("urn:ngsi-ld:Vehicle:1")), names(&["speed"]));
         pretty_assertions::assert_eq!(proxied_attributes(&forwarded, &uri("urn:ngsi-ld:Vehicle:2")), names(&["speed", "brandName"]));
@@ -244,18 +232,8 @@ mod tests {
             errors: Vec::new(),
         };
         let forwarded = [
-            result(
-                "urn:ngsi-ld:Vehicle:1",
-                ForwardingMode::Inclusive,
-                ForwardedWriteOutcome::Completed { status: 204, body: None },
-                &[],
-            ),
-            result(
-                "urn:ngsi-ld:Vehicle:2",
-                ForwardingMode::Redirect,
-                ForwardedWriteOutcome::Completed { status: 201, body: None },
-                &["speed"],
-            ),
+            result("urn:ngsi-ld:Vehicle:1", ForwardingMode::Inclusive, completed(204), &[]),
+            result("urn:ngsi-ld:Vehicle:2", ForwardingMode::Redirect, completed(201), &["speed"]),
             result(
                 "urn:ngsi-ld:Vehicle:3",
                 ForwardingMode::Redirect,
@@ -274,18 +252,8 @@ mod tests {
     #[test]
     fn a_local_not_found_is_dropped_only_for_an_entity_a_proxied_source_holds() {
         let forwarded = [
-            result(
-                "urn:ngsi-ld:Vehicle:1",
-                ForwardingMode::Redirect,
-                ForwardedWriteOutcome::Completed { status: 204, body: None },
-                &[],
-            ),
-            result(
-                "urn:ngsi-ld:Vehicle:2",
-                ForwardingMode::Inclusive,
-                ForwardedWriteOutcome::Completed { status: 204, body: None },
-                &[],
-            ),
+            result("urn:ngsi-ld:Vehicle:1", ForwardingMode::Redirect, completed(204), &[]),
+            result("urn:ngsi-ld:Vehicle:2", ForwardingMode::Inclusive, completed(204), &[]),
         ];
         let mut errors = vec![
             (uri("urn:ngsi-ld:Vehicle:1"), EntityError::not_found(&uri("urn:ngsi-ld:Vehicle:1"))),

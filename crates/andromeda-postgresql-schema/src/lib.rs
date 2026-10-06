@@ -34,7 +34,6 @@ pub mod subscription_forwarding;
 pub mod subscriptions;
 pub mod temporal;
 pub mod tenancy;
-pub mod unit;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

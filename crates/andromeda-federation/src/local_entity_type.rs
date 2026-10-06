@@ -4,7 +4,7 @@
 //! an attribute-level write such as `DELETE /entities/{id}/attrs/{attr}` or
 //! `POST /entities/{id}/attrs` -- still has to be matched against registrations
 //! by the entity's actual type. Without it,
-//! [`crate::registration_selection::information_matches_entity`] treats an absent
+//! [`crate::registration_information::information_matches_entity`] treats an absent
 //! type as satisfying every selector's type axis (`entity_type.is_none_or(..)`),
 //! so a registration scoped to an unrelated type is wrongly taken to cover the
 //! write and, being proxied and not advertising the operation, refuses it with a

@@ -169,11 +169,9 @@ async fn distop_join_single_level_forwards_a_plain_retrieval() {
     let pairs = captured_query_pairs(captured.uri.query());
     pretty_assertions::assert_eq!(parameter(&pairs, "join"), None, "a zero-hop join is the absence of one: {pairs:?}");
     pretty_assertions::assert_eq!(parameter(&pairs, "joinLevel"), None, "a zero-hop join carries no level: {pairs:?}");
-    let contained_by = parameter(&pairs, "containedBy").expect("the forwarded retrieval names the entities already held");
-    assert!(
-        contained_by.split(',').any(|held| held == fixture.root),
-        "containedBy must name the root: {contained_by}"
-    );
+    // Clause 6.4.3.2 parameter tables: `containedBy` is "Only applicable if
+    // joinLevel is present", and a plain retrieval carries no joinLevel.
+    pretty_assertions::assert_eq!(parameter(&pairs, "containedBy"), None, "containedBy needs a joinLevel: {pairs:?}");
     pretty_assertions::assert_eq!(mock.get_total_count(), 1, "exactly one retrieval is forwarded");
 
     discard(&fixture).await;

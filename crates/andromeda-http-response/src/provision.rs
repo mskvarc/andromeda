@@ -146,7 +146,10 @@ mod tests {
         problem_response::ProblemResponse,
         provision::{LocalOutcome, multi_status_result, provision_response},
     };
-    use andromeda_federation::outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure};
+    use andromeda_federation::{
+        answer_body::AnswerBody,
+        outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -166,9 +169,15 @@ mod tests {
             registration_id: uri("urn:ngsi-ld:ContextSourceRegistration:test"),
             mode,
             outcome: if status < 400 {
-                ForwardedWriteOutcome::Completed { status, body: None }
+                ForwardedWriteOutcome::Completed {
+                    status,
+                    body: AnswerBody::Absent,
+                }
             } else {
-                ForwardedWriteOutcome::RemoteHttpFailure { status, body: None }
+                ForwardedWriteOutcome::RemoteHttpFailure {
+                    status,
+                    body: AnswerBody::Absent,
+                }
             },
             proxied_attrs: Vec::new(),
         }

@@ -9,6 +9,8 @@
 //! spellings, every geometry type in two and three dimensions, the clause
 //! 4.7.2 string geometry, scope, entity and instance expiry.
 
+use crate::differential_tests::oracle::expanded;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
 use chrono::{TimeZone, Utc};
@@ -37,7 +39,7 @@ pub(crate) async fn stored_documents(engine: &JsonLdEngine) -> Vec<StoredDocumen
     let stamped_at = SystemInstant::new(Utc.with_ymd_and_hms(2025, 6, 1, 8, 30, 15).single().expect("a valid instant"));
     let mut stored = Vec::new();
     for written in written_entities() {
-        let expanded = engine.expand(written.entity, &written.context).await.expect("the corpus entity expands");
+        let expanded = expanded(engine, &written.entity, &written.context).await;
         let mut state = EntityState::from_slice(&serde_json::to_vec(&expanded).expect("the expansion renders")).expect("the corpus entity is a state");
         state.stamp_attribute_instants(None, stamped_at);
         let expanded = serde_json::to_value(&state).expect("the stamped state renders");
@@ -83,10 +85,16 @@ fn written_entities() -> Vec<Written> {
                 "type": "Thing",
                 "address": {"type": "Property", "value": {"seq": [1, "two", {"x": 1}], "payload": {"raw": [1, null]}}}
             }),
-            context: ContextSpec::from_body(json!({
-                "seq": {"@id": "https://uri.etsi.org/ngsi-ld/default-context/seq", "@container": "@list"},
-                "payload": {"@id": "https://uri.etsi.org/ngsi-ld/default-context/payload", "@type": "@json"}
-            })),
+            context: ContextSpec::from_body(
+                JsonLiteral::admit(
+                    &json!({
+                        "seq": {"@id": "https://uri.etsi.org/ngsi-ld/default-context/seq", "@container": "@list"},
+                        "payload": {"@id": "https://uri.etsi.org/ngsi-ld/default-context/payload", "@type": "@json"}
+                    })
+                    .to_string(),
+                )
+                .expect("an admissible literal"),
+            ),
         },
     ]
 }

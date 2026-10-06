@@ -7,8 +7,6 @@
 pub mod aggregation_conflict;
 /// Eligibility of attributes for aggregation methods (clause 5.7.4.4).
 pub mod aggregation_eligibility;
-/// A Context Source's temporal answer, narrowed to the members a split query's filters read.
-mod answer_narrowing;
 /// The part of an entity a Context Source answered a split temporal query with.
 mod answered_evolution;
 /// The instances a Context Source answered a temporal query with, as history rows.
@@ -23,6 +21,10 @@ pub mod core_write_history;
 pub mod delete_by_query;
 pub mod error;
 mod evolution_write;
+/// What a distributed temporal write hands to registrations and keeps locally.
+pub mod forwarded_evolution;
+/// How many grouping terms nest the aggregates of a read.
+mod grouping_depth;
 /// The page sizes an instance-returning temporal read runs under.
 pub mod instance_limits;
 /// Choosing the instances of one attribute stream a temporal page keeps.
@@ -42,10 +44,6 @@ pub mod outcome;
 mod pending_observation;
 /// Read overlay combining stored history with committed pending intents.
 pub mod pending_overlay;
-/// Why an attribute in the simplified temporal representation is not one it admits.
-pub mod plural_member_refusal;
-/// Unfolding the simplified temporal representation of a Temporal Evolution into the instances it stands for.
-mod plural_member_unfold;
 pub mod port;
 mod read;
 /// What one reified Scope instance of a Temporal Evolution states.
@@ -62,8 +60,9 @@ pub mod service_limits;
 pub mod split_settlement;
 /// The physical storage policy an operator sets for temporal history.
 pub mod storage_policy;
-/// Compacting what one temporal read renders against its request context.
-mod temporal_compaction;
+/// A temporal service over one stubbed broker.
+#[cfg(test)]
+mod stub_broker;
 /// The invariants temporal policy relies on.
 pub mod temporal_invariant;
 pub mod temporal_not_found_reason;

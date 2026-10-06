@@ -6,6 +6,7 @@
 
 pub mod attribute;
 mod compact_screening;
+mod discovered_response;
 mod entity;
 mod entity_operations;
 pub mod entity_type;

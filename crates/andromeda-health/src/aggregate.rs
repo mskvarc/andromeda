@@ -79,7 +79,7 @@ mod tests {
         status::HealthStatus,
     };
     use async_trait::async_trait;
-    use std::{collections::BTreeMap, sync::Arc};
+    use std::sync::Arc;
 
     /// An indicator that reports whatever it was constructed with.
     struct FixedIndicator {
@@ -98,7 +98,7 @@ mod tests {
         async fn check(&self) -> ComponentDetail {
             ComponentDetail {
                 status: self.status,
-                details: BTreeMap::new(),
+                details: None,
             }
         }
     }

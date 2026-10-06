@@ -1,14 +1,13 @@
-//! NGSI-LD response type for batch operation results with pre-rendered payload.
+//! NGSI-LD response type for batch operation results with a body already written.
 
 use crate::{
     headers::{CommonHeadersOptions, apply_common_headers},
+    rendered_response::RenderedResponse,
     version_negotiation::apply_version_negotiation,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_render::response::RenderedOutput;
 use axum::{
-    Json,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -18,8 +17,8 @@ use headers::HeaderMapExt;
 pub struct NgsiLdBatchResponse {
     /// HTTP status returned for the batch operation.
     status: StatusCode,
-    /// Pre-rendered NGSI-LD response body and media type.
-    rendered: RenderedOutput,
+    /// The written NGSI-LD response body and its head.
+    rendered: RenderedResponse,
     /// Optional snapshot URI advertised by the response.
     snapshot_uri: Option<Identifier>,
     /// Distributed-operation warnings emitted as response headers.
@@ -27,9 +26,9 @@ pub struct NgsiLdBatchResponse {
 }
 
 impl NgsiLdBatchResponse {
-    /// Create a batch response with the given status and pre-rendered data.
+    /// Create a batch response with the given status and written body.
     #[must_use]
-    pub const fn new(status: StatusCode, rendered: RenderedOutput) -> NgsiLdBatchResponse {
+    pub const fn new(status: StatusCode, rendered: RenderedResponse) -> NgsiLdBatchResponse {
         NgsiLdBatchResponse {
             status,
             rendered,
@@ -42,7 +41,7 @@ impl NgsiLdBatchResponse {
 impl IntoResponse for NgsiLdBatchResponse {
     fn into_response(self) -> Response {
         let mut headers = HeaderMap::new();
-        let RenderedOutput { value, head } = self.rendered;
+        let RenderedResponse { body, head } = self.rendered;
         headers.typed_insert(head.media_type);
         let status = apply_version_negotiation(self.status, head.version_adaptation, &mut headers);
 
@@ -57,6 +56,6 @@ impl IntoResponse for NgsiLdBatchResponse {
             },
         );
 
-        (status, headers, Json(value)).into_response()
+        (status, headers, body.into_body()).into_response()
     }
 }

@@ -2,58 +2,46 @@
 //! 4.3.6.6, 5.2.18, 6.3.6 and 6.3.17).
 //!
 //! The status is the source's verdict on the operation. The body, when there
-//! is one, is either the clause 5.2.18 `UpdateResult` of a 207 or a problem
-//! detail; a source writes the attribute names of an `UpdateResult` in the
-//! context the forwarded request named, while clause 6.3.6 has a 207 body
-//! carry Fully Qualified Names, "as there is no context present". So the names
-//! of an `UpdateResult` are expanded against that forwarding context before the
-//! answer is merged with the broker's own.
+//! is one, is kept as the text the source wrote: a 207 `UpdateResult`, a batch
+//! result, a problem detail or a created resource, each read typed by the one
+//! that needs it. A source writes the attribute names of an `UpdateResult` in
+//! the context the forwarded request named, while clause 6.3.6 has a 207 body
+//! carry Fully Qualified Names, "as there is no context present"; so the
+//! `UpdateResult` of a single-entity write is read once, its names expanded
+//! against that forwarding context, before the answer is merged with the
+//! broker's own.
 
 use crate::{
-    SentResponse,
+    answer_body::AnswerBody,
     error::FederationError,
+    federation_invariant::FederationInvariant,
     outcome::{ForwardedWriteOutcome, TransportFailure},
+    source_exchange::SentResponse,
 };
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use serde_json::Value;
-use std::sync::Arc;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::update_result::UpdateResult;
+use serde::de::IgnoredAny;
+use std::{str::FromStr, sync::Arc};
 use tracing::warn;
 
-/// The `UpdateResult` member listing the attributes that were updated
-/// (clause 5.2.18).
-const UPDATED_MEMBER: &str = "updated";
-/// The `UpdateResult` member listing the attributes that were not updated
-/// (clause 5.2.18).
-const NOT_UPDATED_MEMBER: &str = "notUpdated";
-/// The `NotUpdatedDetails` member naming the attribute (clause 5.2.19).
-const ATTRIBUTE_NAME_MEMBER: &str = "attributeName";
 /// The status of a partial success (clause 6.3.2).
 const MULTI_STATUS: u16 = 207;
 
-/// What the body of a context source's answer to a forwarded write holds.
-#[derive(Debug)]
-pub(crate) enum AnswerBody {
-    /// The source sent no body.
-    Absent,
-    /// The source sent a JSON document.
-    Json(Value),
-    /// The source sent a body that is not JSON.
-    Unreadable(serde_json::Error),
-}
-
-impl AnswerBody {
-    /// Read the body a source sent.
-    pub(crate) fn read(bytes: &[u8]) -> AnswerBody {
-        if bytes.is_empty() {
-            return AnswerBody::Absent;
-        }
-        match serde_json::from_slice(bytes) {
-            Ok(value) => AnswerBody::Json(value),
-            Err(error) => AnswerBody::Unreadable(error),
+/// Read the body a source sent: absent when empty, refused to operators when
+/// it is no JSON.
+fn answer_body(registration: &Identifier, status: u16, bytes: &[u8]) -> AnswerBody {
+    if bytes.is_empty() {
+        return AnswerBody::Absent;
+    }
+    match serde_json::from_slice::<IgnoredAny>(bytes) {
+        Ok(_) => AnswerBody::Text(Arc::from(bytes)),
+        Err(error) => {
+            warn!(registration = %registration, status, %error, "context source answered a forwarded write with a body that is not JSON");
+            AnswerBody::Absent
         }
     }
 }
@@ -69,14 +57,7 @@ impl ForwardedWriteOutcome {
     /// with its typed parse failure.
     pub(crate) fn of_sent(registration: &Identifier, sent: &SentResponse) -> ForwardedWriteOutcome {
         let status = sent.status.as_u16();
-        let body = match AnswerBody::read(&sent.body) {
-            AnswerBody::Absent => None,
-            AnswerBody::Json(value) => Some(value),
-            AnswerBody::Unreadable(error) => {
-                warn!(registration = %registration, status, %error, "context source answered a forwarded write with a body that is not JSON");
-                None
-            }
-        };
+        let body = answer_body(registration, status, &sent.body);
         if sent.status.is_success() {
             ForwardedWriteOutcome::Completed { status, body }
         } else {
@@ -85,60 +66,63 @@ impl ForwardedWriteOutcome {
     }
 }
 
-/// The outcome of a forwarded single-entity write with the attribute names of
-/// a 207 `UpdateResult` expanded from `forwarding`, the context the request was
-/// written in, into Fully Qualified Names.
+/// The outcome of a forwarded single-entity write with its 207 `UpdateResult`
+/// read, its attribute names expanded from `forwarding`, the context the
+/// request was written in, into Fully Qualified Names.
 ///
-/// A name that does not expand leaves the answer unreadable in Fully Qualified
-/// Names, which is reported as [`TransportFailure::Unreadable`].
+/// A body that is no `UpdateResult`, or a name that does not expand, leaves
+/// the answer unreadable in Fully Qualified Names, which is reported as
+/// [`TransportFailure::Unreadable`].
 pub(crate) async fn with_full_update_result_names(engine: &JsonLdEngine, forwarding: &ContextSpec, outcome: ForwardedWriteOutcome) -> ForwardedWriteOutcome {
     let ForwardedWriteOutcome::Completed {
         status: MULTI_STATUS,
-        body: Some(body),
+        body: AnswerBody::Text(text),
     } = outcome
     else {
         return outcome;
     };
     let prepared = engine.prepare_term_context(forwarding);
-    match full_update_result_names(engine, &prepared, body).await {
-        Ok(body) => ForwardedWriteOutcome::Completed {
+    let read = match serde_json::from_slice::<UpdateResult>(&text) {
+        Ok(result) => full_update_result_names(engine, &prepared, result).await,
+        Err(error) => Err(FederationError::ForwardedBody(error)),
+    };
+    match read {
+        Ok(result) => ForwardedWriteOutcome::Completed {
             status: MULTI_STATUS,
-            body: Some(body),
+            body: AnswerBody::UpdateResult(result),
         },
         Err(error) => ForwardedWriteOutcome::Transport(TransportFailure::Unreadable(Arc::new(error))),
     }
 }
 
 /// Expand the attribute names of a clause 5.2.18 `UpdateResult`.
-async fn full_update_result_names(engine: &JsonLdEngine, forwarding: &PreparedTermContext, body: Value) -> Result<Value, FederationError> {
-    let Value::Object(mut members) = body else {
-        return Ok(body);
-    };
-    if let Some(Value::Array(updated)) = members.get_mut(UPDATED_MEMBER) {
-        for name in updated.iter_mut() {
-            if let Value::String(term) = name {
-                engine.expand_term(term, forwarding).await?.as_str().clone_into(term);
-            }
-        }
+async fn full_update_result_names(engine: &JsonLdEngine, forwarding: &PreparedTermContext, mut result: UpdateResult) -> Result<UpdateResult, FederationError> {
+    for name in &mut result.updated {
+        *name = expanded(engine, forwarding, name).await?;
     }
-    if let Some(Value::Array(not_updated)) = members.get_mut(NOT_UPDATED_MEMBER) {
-        for details in not_updated.iter_mut() {
-            if let Some(Value::String(term)) = details.get_mut(ATTRIBUTE_NAME_MEMBER) {
-                engine.expand_term(term, forwarding).await?.as_str().clone_into(term);
-            }
-        }
+    for details in &mut result.not_updated {
+        details.attribute_name = expanded(engine, forwarding, &details.attribute_name).await?;
     }
-    Ok(Value::Object(members))
+    Ok(result)
+}
+
+/// One attribute name, expanded against the forwarding context.
+async fn expanded(engine: &JsonLdEngine, forwarding: &PreparedTermContext, name: &AttributeName) -> Result<AttributeName, FederationError> {
+    let iri = engine.expand_term(name.as_str(), forwarding).await?;
+    AttributeName::from_str(iri.as_str()).map_err(|error| FederationError::from(FederationInvariant::ForwardedName(error)))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
+        answer_body::AnswerBody,
         outcome::{ForwardedWriteOutcome, TransportFailure},
-        write_answer::{AnswerBody, with_full_update_result_names},
+        write_answer::with_full_update_result_names,
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use serde_json::json;
+    use std::sync::Arc;
 
     fn engine() -> JsonLdEngine {
         JsonLdEngine::builder().allow_remote(false).build().expect("engine builds")
@@ -147,14 +131,14 @@ mod tests {
     /// The context the forwarded request was written in: the registration's
     /// `jsonldContext` spells the attribute `velocity`.
     fn forwarding() -> ContextSpec {
-        ContextSpec::from_body(json!({"velocity": "https://example.org/speed", "brand": "https://example.org/brand"}))
+        ContextSpec::from_body(
+            JsonLiteral::admit(&json!({"velocity": "https://example.org/speed", "brand": "https://example.org/brand"}).to_string())
+                .expect("an admissible literal"),
+        )
     }
 
-    #[test]
-    fn an_answer_body_is_absent_json_or_unreadable() {
-        assert!(matches!(AnswerBody::read(b""), AnswerBody::Absent));
-        assert!(matches!(AnswerBody::read(br#"{"notUpdated": []}"#), AnswerBody::Json(_)));
-        assert!(matches!(AnswerBody::read(b"not JSON"), AnswerBody::Unreadable(_)));
+    fn text(body: &serde_json::Value) -> AnswerBody {
+        AnswerBody::Text(Arc::from(body.to_string().into_bytes()))
     }
 
     /// Clause 6.3.6: a 207 body carries Fully Qualified Names, so the names a
@@ -164,7 +148,7 @@ mod tests {
     async fn a_multi_status_update_result_is_read_back_in_full_names() {
         let outcome = ForwardedWriteOutcome::Completed {
             status: 207,
-            body: Some(json!({
+            body: text(&json!({
                 "updated": ["brand"],
                 "notUpdated": [{"attributeName": "velocity", "reason": "already exists"}]
             })),
@@ -172,18 +156,16 @@ mod tests {
 
         let read = with_full_update_result_names(&engine(), &forwarding(), outcome).await;
 
-        let (status, body) = match read {
-            ForwardedWriteOutcome::Completed { status, body } => (status, body.expect("the update result stays")),
-            other @ (ForwardedWriteOutcome::RemoteHttpFailure { .. }
-            | ForwardedWriteOutcome::Transport(_)
-            | ForwardedWriteOutcome::LoopDetected
-            | ForwardedWriteOutcome::NotAdvertised
-            | ForwardedWriteOutcome::UpsertFollowUpNotAdvertised) => (0, json!({ "unexpected": format!("{other:?}") })),
+        let ForwardedWriteOutcome::Completed {
+            status: 207,
+            body: AnswerBody::UpdateResult(result),
+        } = read
+        else {
+            panic!("the update result is read: {read:?}");
         };
-        pretty_assertions::assert_eq!(status, 207, "{body}");
-        pretty_assertions::assert_eq!(body["updated"], json!(["https://example.org/brand"]));
-        pretty_assertions::assert_eq!(body["notUpdated"][0]["attributeName"], json!("https://example.org/speed"));
-        pretty_assertions::assert_eq!(body["notUpdated"][0]["reason"], json!("already exists"));
+        pretty_assertions::assert_eq!(result.updated[0].as_str(), "https://example.org/brand");
+        pretty_assertions::assert_eq!(result.not_updated[0].attribute_name.as_str(), "https://example.org/speed");
+        pretty_assertions::assert_eq!(result.not_updated[0].reason, "already exists");
     }
 
     /// Any other outcome carries no `UpdateResult` and is left as it is.
@@ -191,18 +173,46 @@ mod tests {
     async fn an_outcome_without_an_update_result_is_left_alone() {
         let engine = engine();
         for outcome in [
-            ForwardedWriteOutcome::Completed { status: 204, body: None },
+            ForwardedWriteOutcome::Completed {
+                status: 204,
+                body: AnswerBody::Absent,
+            },
             ForwardedWriteOutcome::RemoteHttpFailure {
                 status: 400,
-                body: Some(json!({"attributeName": "velocity"})),
+                body: text(&json!({"attributeName": "velocity"})),
             },
-            ForwardedWriteOutcome::Completed { status: 207, body: None },
+            ForwardedWriteOutcome::Completed {
+                status: 207,
+                body: AnswerBody::Absent,
+            },
         ] {
             let read = with_full_update_result_names(&engine, &forwarding(), outcome.clone()).await; // clone: compared below
             pretty_assertions::assert_eq!(format!("{read:?}"), format!("{outcome:?}"));
         }
         assert!(!matches!(
-            with_full_update_result_names(&engine, &forwarding(), ForwardedWriteOutcome::Completed { status: 204, body: None }).await,
+            with_full_update_result_names(
+                &engine,
+                &forwarding(),
+                ForwardedWriteOutcome::Completed {
+                    status: 204,
+                    body: AnswerBody::Absent
+                }
+            )
+            .await,
+            ForwardedWriteOutcome::Transport(TransportFailure::Unreadable(_))
+        ));
+    }
+
+    /// A 207 body that is no `UpdateResult` cannot be read in Fully Qualified
+    /// Names.
+    #[tokio::test]
+    async fn a_multi_status_body_that_is_no_update_result_is_unreadable() {
+        let outcome = ForwardedWriteOutcome::Completed {
+            status: 207,
+            body: text(&json!({"notUpdated": 5})),
+        };
+        assert!(matches!(
+            with_full_update_result_names(&engine(), &forwarding(), outcome).await,
             ForwardedWriteOutcome::Transport(TransportFailure::Unreadable(_))
         ));
     }

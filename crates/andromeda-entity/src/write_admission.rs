@@ -54,7 +54,6 @@ use andromeda_ngsi_ld_entity::{
 };
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::attribute_strip::AttributeStrip;
 use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
 
 /// One of the write operations whose payload is a whole Entity or an
@@ -208,29 +207,11 @@ impl EntityService {
     ///
     /// # Errors
     ///
-    /// Reports the refusals of [`EntityService::admit_remaining_entity`].
-    pub async fn admit_entity_write<W: EntityWriteKind>(
-        &self,
-        payload: impl WritePayload<Member = W::Member>,
-        context: &AdmittedContext,
-    ) -> Result<AdmittedEntity<W>, EntityError> {
-        self.admit_remaining_entity(payload, context).await
-    }
-
-    /// Run the clause 5.5.4 screening of `W` over what remains of a payload
-    /// once the forwarding phase took the attributes proxied registrations own
-    /// out of it.
-    ///
-    /// The payload rules run again, over the document the local write now
-    /// applies.
-    ///
-    /// # Errors
-    ///
     /// Reports [`EntityError::PayloadBudget`] when a typed geometry or the
     /// expanded document is past the budget, [`EntityError::JsonLd`] when the
-    /// payload cannot be expanded against `context`, and the [`EntityError::Validation`] of a
-    /// document clause 5.5.4 refuses for `W`.
-    pub async fn admit_remaining_entity<W: EntityWriteKind>(
+    /// payload cannot be expanded against `context`, and the
+    /// [`EntityError::Validation`] of a document clause 5.5.4 refuses for `W`.
+    pub async fn admit_entity_write<W: EntityWriteKind>(
         &self,
         payload: impl WritePayload<Member = W::Member>,
         context: &AdmittedContext,
@@ -242,33 +223,6 @@ impl EntityService {
         let document = payload.expand(&expansion, W::WRITE.normalization()).await?;
         admit_written_entity(self.payload_budget, &document, W::WRITE.null_sentinel_admission())?;
         Ok(AdmittedEntity::new(document))
-    }
-
-    /// The payload the local phase of a distributed write stores, given what
-    /// stripping the proxied attributes left of the payload `admitted` was
-    /// expanded from (clauses 5.6.1.4 and following: "any remaining input
-    /// data").
-    ///
-    /// An untouched payload is the admitted one; a narrowed one is `remainder`,
-    /// admitted anew; an emptied one leaves the local phase nothing to write,
-    /// which is `None`.
-    ///
-    /// # Errors
-    ///
-    /// The inner result reports the refusals of
-    /// [`EntityService::admit_remaining_entity`] for a narrowed payload.
-    pub async fn admit_local_remainder<W: EntityWriteKind>(
-        &self,
-        admitted: AdmittedEntity<W>,
-        strip: AttributeStrip,
-        remainder: impl WritePayload<Member = W::Member>,
-        context: &AdmittedContext,
-    ) -> Option<Result<AdmittedEntity<W>, EntityError>> {
-        match strip {
-            AttributeStrip::Untouched => Some(Ok(admitted)),
-            AttributeStrip::Narrowed => Some(self.admit_remaining_entity(remainder, context).await),
-            AttributeStrip::Emptied => None,
-        }
     }
 
     /// Run the clause 5.5.4 screening of `W` over the bare Attribute Fragment
@@ -326,12 +280,10 @@ mod tests {
     };
     use andromeda_ngsi_ld_expansion::normalization::Normalization;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT};
-    use andromeda_ngsi_ld_model::{
-        attribute_strip::AttributeStrip,
-        entity::{Entity, EntityPatch},
-    };
+    use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
     use serde_json::{Value, json};
+    use std::slice::from_ref;
 
     /// Decode an expanded entity document and screen it under `admission`,
     /// as the admission screens what it expanded.
@@ -549,75 +501,42 @@ mod tests {
         })
     }
 
-    /// What the forwarding phase left of `written_vehicle` once `speed` was
-    /// claimed by a proxied registration.
-    fn remaining_vehicle(brand: &Value) -> EntityPatch {
-        serde_json::from_value(json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "brandName": {"type": "Property", "value": brand}}))
-            .expect("the remainder decodes")
+    /// The expanded names `written_vehicle` carries its attributes under in the
+    /// core context.
+    fn vehicle_attributes() -> (AttributeName, AttributeName) {
+        (
+            "https://uri.etsi.org/ngsi-ld/default-context/speed".parse().expect("a valid attribute name"),
+            "https://uri.etsi.org/ngsi-ld/default-context/brandName"
+                .parse()
+                .expect("a valid attribute name"),
+        )
     }
 
-    /// Clause 5.6.1.4 and following: a payload the forwarding phase left alone
-    /// is written exactly as the admission expanded it, without expanding it
-    /// again.
+    /// Clause 5.6.1.4 and following: a payload no proxied attribute was taken
+    /// out of is written exactly as the admission expanded it.
     #[tokio::test]
     async fn an_untouched_payload_is_the_admitted_one() {
         let (service, _recorded) = recording_service().await;
         let context = ContextSpec::core_only();
         let expected = admitted_written::<CreateEntity>(&service, written_vehicle(), &context).await.into_document();
         let admitted = admitted_written::<CreateEntity>(&service, written_vehicle(), &context).await;
-        let remainder = service
-            .admit_local_remainder(
-                admitted,
-                AttributeStrip::Untouched,
-                &remaining_vehicle(&json!("ignored")),
-                &admitted_context(&service, &context).await,
-            )
-            .await
-            .expect("something remains")
-            .expect("the admitted payload is kept");
+        let absent: AttributeName = "https://example.org/colour".parse().expect("a valid attribute name");
+        let remainder = admitted.local_remainder(&[absent]).expect("something remains");
         pretty_assertions::assert_eq!(remainder.into_document(), expected);
     }
 
-    /// A narrowed payload is a different document: what remains is admitted
-    /// anew, and the attribute the proxied registration took is gone from it.
+    /// A narrowed payload is the admitted document without the attribute the
+    /// proxied registration took, and is not admitted again.
     #[tokio::test]
-    async fn a_narrowed_payload_is_admitted_anew_from_what_remains() {
+    async fn a_narrowed_payload_loses_the_proxied_attribute() {
         let (service, _recorded) = recording_service().await;
         let context = ContextSpec::core_only();
         let admitted = admitted_written::<CreateEntity>(&service, written_vehicle(), &context).await;
-        let remainder = service
-            .admit_local_remainder(
-                admitted,
-                AttributeStrip::Narrowed,
-                &remaining_vehicle(&json!("x")),
-                &admitted_context(&service, &context).await,
-            )
-            .await
-            .expect("something remains")
-            .expect("the remainder is admitted");
-        let names: Vec<String> = remainder.into_document().attributes().keys().map(ToString::to_string).collect();
-        assert!(!names.iter().any(|name| name.ends_with("/speed")), "{names:?}");
-        assert!(names.iter().any(|name| name.ends_with("/brandName")), "{names:?}");
-    }
-
-    /// The remainder is screened in its own right, so a remainder clause 5.5.4
-    /// refuses is refused rather than written.
-    #[tokio::test]
-    async fn a_narrowed_payload_is_screened_again() {
-        let (service, _recorded) = recording_service().await;
-        let context = ContextSpec::core_only();
-        let admitted = admitted_written::<CreateEntity>(&service, written_vehicle(), &context).await;
-        let refusal = service
-            .admit_local_remainder(
-                admitted,
-                AttributeStrip::Narrowed,
-                &remaining_vehicle(&json!("urn:ngsi-ld:null")),
-                &admitted_context(&service, &context).await,
-            )
-            .await
-            .expect("something remains")
-            .expect_err("a creation admits no NGSI-LD Null");
-        assert!(matches!(refusal, EntityError::Validation(_)), "{refusal}");
+        let (speed, brand) = vehicle_attributes();
+        let remainder = admitted.local_remainder(from_ref(&speed)).expect("something remains");
+        let names: Vec<&AttributeName> = remainder.document().attributes().keys().collect();
+        pretty_assertions::assert_eq!(names, vec![&brand]);
+        assert!(!remainder.document().attributes().contains_key(&speed));
     }
 
     /// Clause 5.6.1.4 and following: a payload left with no attribute leaves
@@ -627,15 +546,8 @@ mod tests {
         let (service, _recorded) = recording_service().await;
         let context = ContextSpec::core_only();
         let admitted = admitted_written::<CreateEntity>(&service, written_vehicle(), &context).await;
-        let remainder = service
-            .admit_local_remainder(
-                admitted,
-                AttributeStrip::Emptied,
-                &remaining_vehicle(&json!("x")),
-                &admitted_context(&service, &context).await,
-            )
-            .await;
-        assert!(remainder.is_none());
+        let (speed, brand) = vehicle_attributes();
+        assert!(admitted.local_remainder(&[speed, brand]).is_none());
     }
 
     /// A Vehicle located by a square: one ring of five positions.
@@ -654,7 +566,7 @@ mod tests {
     async fn the_create_admission_refuses_an_oversized_geometry() {
         let tight = budgeted_recording_service(geometry_budget(4));
         let refusal = tight
-            .admit_remaining_entity::<CreateEntity>(&located_vehicle(), &admitted_context(&tight, &ContextSpec::core_only()).await)
+            .admit_entity_write::<CreateEntity>(&located_vehicle(), &admitted_context(&tight, &ContextSpec::core_only()).await)
             .await
             .expect_err("five positions exceed a budget of four");
         assert!(
@@ -663,7 +575,7 @@ mod tests {
         );
         let roomy = budgeted_recording_service(geometry_budget(5));
         roomy
-            .admit_remaining_entity::<CreateEntity>(&located_vehicle(), &admitted_context(&roomy, &ContextSpec::core_only()).await)
+            .admit_entity_write::<CreateEntity>(&located_vehicle(), &admitted_context(&roomy, &ContextSpec::core_only()).await)
             .await
             .expect("five positions are within a budget of five");
     }
@@ -681,7 +593,7 @@ mod tests {
         .expect("a valid entity");
         let tight = budgeted_recording_service(geometry_budget(4));
         let refusal = tight
-            .admit_remaining_entity::<CreateEntity>(&concise, &admitted_context(&tight, &ContextSpec::core_only()).await)
+            .admit_entity_write::<CreateEntity>(&concise, &admitted_context(&tight, &ContextSpec::core_only()).await)
             .await
             .expect_err("five positions exceed a budget of four");
         assert!(
@@ -690,7 +602,7 @@ mod tests {
         );
         let roomy = budgeted_recording_service(geometry_budget(5));
         roomy
-            .admit_remaining_entity::<CreateEntity>(&concise, &admitted_context(&roomy, &ContextSpec::core_only()).await)
+            .admit_entity_write::<CreateEntity>(&concise, &admitted_context(&roomy, &ContextSpec::core_only()).await)
             .await
             .expect("five positions are within a budget of five");
     }
@@ -702,7 +614,7 @@ mod tests {
         let entity = located_vehicle();
         let tight = budgeted_recording_service(geometry_budget(4));
         let refusal = tight
-            .admit_remaining_entity::<CreateEntity>(&entity, &admitted_context(&tight, &ContextSpec::core_only()).await)
+            .admit_entity_write::<CreateEntity>(&entity, &admitted_context(&tight, &ContextSpec::core_only()).await)
             .await
             .expect_err("five positions exceed a budget of four");
         let EntityError::PayloadBudget(PayloadBudgetExceeded::GeometryPositions {

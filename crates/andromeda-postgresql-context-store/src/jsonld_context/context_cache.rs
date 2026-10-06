@@ -22,6 +22,7 @@ use crate::{
     },
     store_fault::{StoreFault, persistence_failure},
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{
     context_cache::{CachedContext, ContextCache, ContextCacheError},
     loader::cache_lifetime::{CacheLifetime, ResidualLifetime},
@@ -32,7 +33,6 @@ use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use sea_query::PostgresQueryBuilder;
 use sea_query_sqlx::SqlxBinder;
-use serde_json::Value;
 
 #[async_trait]
 impl ContextCache for JsonLdContextRepository {
@@ -65,16 +65,10 @@ impl ContextCache for JsonLdContextRepository {
         }))
     }
 
-    async fn put(&self, url: &IriBuf, document_url: &IriBuf, payload: &Value, lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
+    async fn put(&self, url: &IriBuf, document_url: &IriBuf, payload: &JsonLiteral, lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
         let local_id = cached_context_identifier()?;
-        let statement = cached_upsert(
-            local_id.as_ref(),
-            url.as_str(),
-            document_url.as_str(),
-            payload.clone(), // clone: the bound value owns the JSON for the round trip
-            lifetime.as_seconds(),
-        )
-        .map_err(|error| write_failure(error))?;
+        let statement =
+            cached_upsert(local_id.as_ref(), url.as_str(), document_url.as_str(), payload, lifetime.as_seconds()).map_err(|error| write_failure(error))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .execute(&self.pool)

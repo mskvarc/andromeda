@@ -88,10 +88,10 @@ pub async fn delete_attr_instance(
 
     // Clause 5.6.15.4: an instance of an attribute a proxied registration
     // covers is deleted at the source and needs no further processing.
-    let local = if collect_proxied_attrs(&forwarded).contains(&attr_id) {
-        LocalOutcome::NothingRemained
-    } else {
+    let local = if collect_proxied_attrs(&forwarded).is_empty() {
         local_temporal_outcome(service.delete_attr_instance(&target, &id, &attr_id, &instance, &context).await, &forwarded)
+    } else {
+        LocalOutcome::NothingRemained
     };
     provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

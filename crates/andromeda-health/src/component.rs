@@ -1,8 +1,7 @@
 //! The subsystems the broker reports on, and what each one reports.
 
-use crate::status::HealthStatus;
+use crate::{details::ComponentDetails, status::HealthStatus};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// Names of health-checkable system components.
 ///
@@ -25,24 +24,22 @@ pub enum ComponentName {
 pub struct ComponentDetail {
     /// Health status of this component.
     pub status: HealthStatus,
-    /// Free-form key-value details (pool size, latency, etc.).
+    /// What the component reports about itself (pool size, latency, etc.).
     ///
-    /// Genuinely free-form: each indicator decides what is worth reporting
-    /// about itself, and nothing above reads an individual key. The values are
-    /// [`serde_json::Value`] so a count serialises as a number rather than as
-    /// a quoted number.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub details: BTreeMap<String, serde_json::Value>,
+    /// Absent when the component has nothing to report beyond its status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<ComponentDetails>,
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         component::{ComponentDetail, ComponentName},
+        details::ComponentDetails,
+        postgresql_details::PostgreSqlDetails,
         status::HealthStatus,
     };
-    use serde_json::Value;
-    use std::collections::BTreeMap;
+    use serde_json::{Value, json};
 
     #[test]
     fn a_component_name_serialises_as_the_key_the_response_uses() {
@@ -60,22 +57,23 @@ mod tests {
 
     #[test]
     fn a_numeric_detail_serialises_as_a_number_rather_than_as_a_string() {
-        let mut details = BTreeMap::new();
-        details.insert("poolSize".to_owned(), Value::from(5));
-
         let component = ComponentDetail {
             status: HealthStatus::Up,
-            details,
+            details: Some(ComponentDetails::PostgreSql(PostgreSqlDetails::Reachable {
+                idle_connections: 3,
+                ping_latency_ms: 2,
+                pool_size: 5,
+            })),
         };
         let json = serde_json::to_value(&component).expect("serialises");
-        pretty_assertions::assert_eq!(json["details"]["poolSize"], Value::from(5));
+        pretty_assertions::assert_eq!(json["details"]["poolSize"], json!(5));
     }
 
     #[test]
     fn a_component_with_nothing_to_report_omits_the_details_member() {
         let component = ComponentDetail {
             status: HealthStatus::Up,
-            details: BTreeMap::new(),
+            details: None,
         };
         let json = serde_json::to_value(&component).expect("serialises");
         assert!(json.get("details").is_none());

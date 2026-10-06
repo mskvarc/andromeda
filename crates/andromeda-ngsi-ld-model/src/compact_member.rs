@@ -40,22 +40,29 @@ mod tests {
         attribute::{object_list::RelationshipObjectList, property::UnitCodeRef},
         compact_member::{decoded, decoded_optional},
     };
+    use andromeda_json_literal::piece::JsonPiece;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use serde_json::{Value, json};
+    use serde_json::{Value, json, value::RawValue};
+
+    /// The text of `value` as raw JSON, the way a request hands it over.
+    fn written(value: &Value) -> Box<RawValue> {
+        RawValue::from_string(value.to_string()).expect("the fixture is JSON")
+    }
 
     /// A unit code decodes only from a borrowed string, which a string member
     /// is handed over as.
     #[test]
     fn a_unit_code_member_decodes_from_its_string() {
-        let member = json!("CEL");
-        assert!(decoded::<UnitCodeRef, &Value>(&member).expect("a string is readable").is_ok());
-        assert!(decoded::<UnitCodeRef, &Value>(&json!("not a code")).expect("a string is readable").is_err());
+        let member = written(&json!("CEL"));
+        let invalid = written(&json!("not a code"));
+        assert!(decoded::<UnitCodeRef, _>(JsonPiece::new(&member)).expect("a string is readable").is_ok());
+        assert!(decoded::<UnitCodeRef, _>(JsonPiece::new(&invalid)).expect("a string is readable").is_err());
     }
 
     #[test]
     fn null_is_no_optional_value_and_no_required_one() {
-        let null = Value::Null;
-        assert!(matches!(decoded_optional::<Identifier, &Value>(&null), Ok(Ok(None))));
-        assert!(decoded::<RelationshipObjectList, &Value>(&null).expect("null is readable").is_err());
+        let null = written(&Value::Null);
+        assert!(matches!(decoded_optional::<Identifier, _>(JsonPiece::new(&null)), Ok(Ok(None))));
+        assert!(decoded::<RelationshipObjectList, _>(JsonPiece::new(&null)).expect("null is readable").is_err());
     }
 }

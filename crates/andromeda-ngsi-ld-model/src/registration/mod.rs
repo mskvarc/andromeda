@@ -19,9 +19,10 @@ pub mod operation;
 pub mod status;
 
 use crate::registration::{access::ContextSourceAccess, coverage::RegistrationCoverage, health::RegistrationHealth, lifecycle::RegistrationLifecycle};
-use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier, non_empty_text::NonEmptyText, tenant::TenantName};
+use andromeda_json_literal::JsonLiteral;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, identifier::Identifier, non_empty_text::NonEmptyText, tenant::TenantName};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use typed_builder::TypedBuilder;
 
 constant_string!(ContextSourceRegistrationType, "ContextSourceRegistration");
@@ -70,18 +71,21 @@ pub struct ContextSourceRegistration {
     /// When the registration applies.
     #[serde(flatten)]
     pub lifecycle: RegistrationLifecycle,
-    /// Non-standard properties from the original CSR payload.
+    /// The Context Source Properties of the registration (clause 4.9): the
+    /// members beyond Table 5.2.9-1, which the specification does not define and
+    /// the broker carries as data, in the order they were written.
     ///
     /// Declared last: it is the catch-all flatten, and it collects whatever the
     /// groups above did not claim.
-    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    #[serde(flatten, skip_serializing_if = "IndexMap::is_empty")]
     #[builder(default = Default::default())]
-    pub additional_properties: Option<Value>,
+    pub additional_properties: IndexMap<AttributeName, JsonLiteral>,
 }
 
 #[cfg(test)]
 mod tests {
     use crate::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode, info::RegistrationInfo, operation::CsrOperation, status::CsrStatus};
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use std::str::FromStr;
 
@@ -173,10 +177,26 @@ mod tests {
     #[test]
     fn a_registration_keeps_a_non_standard_member_in_its_catch_all() {
         let registration: ContextSourceRegistration = serde_json::from_value(fully_populated_registration()).expect("registration parses");
-        let extras = registration.additional_properties.expect("catch-all present");
-        pretty_assertions::assert_eq!(extras["customThing"], serde_json::json!({"kept": true}));
-        assert!(extras.get("endpoint").is_none(), "a grouped member must not leak into the catch-all");
-        assert!(extras.get("status").is_none(), "a grouped member must not leak into the catch-all");
+        let extras = registration.additional_properties;
+        let custom = "customThing".parse::<AttributeName>().expect("a valid name");
+        pretty_assertions::assert_eq!(extras.get(&custom).map(JsonLiteral::text), Some(r#"{"kept":true}"#));
+        pretty_assertions::assert_eq!(extras.len(), 1, "a grouped member must not leak into the catch-all");
+    }
+
+    /// Clause 5.2.9: a registration written as a client posted it reads into
+    /// the typed model and writes back as the same document, a member the
+    /// specification does not define included.
+    #[test]
+    fn a_context_source_registration_round_trips_through_its_typed_model() {
+        let posted = fully_populated_registration().to_string();
+        let registration: ContextSourceRegistration = serde_json::from_str(&posted).expect("registration parses");
+        let written = serde_json::to_string(&registration).expect("registration writes");
+        let reread: serde_json::Value = serde_json::from_str(&written).expect("the written body is JSON");
+        pretty_assertions::assert_eq!(reread, fully_populated_registration());
+        assert!(
+            written.contains(r#""customThing":{"kept":true}"#),
+            "the unknown member is written as data: {written}"
+        );
     }
 
     #[test]

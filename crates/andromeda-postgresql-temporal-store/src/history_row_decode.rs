@@ -180,7 +180,7 @@ mod tests {
     /// rings, its hole and the elevation of each elevated position.
     #[test]
     fn a_stored_ewkb_geometry_reads_back_as_the_geometry_written() {
-        let written = Geometry::from_geojson_value(&json!({
+        let written = serde_json::from_value::<Geometry>(json!({
             "type": "Polygon",
             "coordinates": [
                 [[0.0, 0.0, 12.5], [4.0, 0.0, 12.5], [4.0, 4.0, 12.5], [0.0, 4.0, 12.5], [0.0, 0.0, 12.5]],

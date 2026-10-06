@@ -2,7 +2,7 @@
 
 use crate::{
     jsonb_text::JsonbText,
-    snapshot::{mapper::row_to_snapshot, persistence_error, record::snapshot_select},
+    snapshot::{jsonb_value::optional_jsonb, mapper::row_to_snapshot, persistence_error, record::snapshot_select},
     store_fault::undecodable,
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use sea_query::{Alias, CaseStatement, Expr, ExprTrait, JoinType, Keyword, LockBehavior, LockType, Order, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
 use serde::Deserialize;
-use serde_json::{Value, value::RawValue};
+use serde_json::value::RawValue;
 use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
 use url::Url;
 use uuid::Uuid;
@@ -238,7 +238,7 @@ pub(crate) async fn enqueue_terminal_notification(transaction: &mut Transaction<
     }
     let snapshot_key: i64 = row.try_get("snapshot_key").map_err(|error| persistence_error(error))?;
     let payload = serde_json::to_string(&snapshot.build_notification())?;
-    let receiver_info = snapshot.receiver_info.as_ref().map(serde_json::to_value).transpose()?;
+    let receiver_info = optional_jsonb(snapshot.receiver_info.as_deref())?;
     let mut insert = Query::insert();
     insert
         .into_table(SnapshotNotificationOutbox::Table)
@@ -253,7 +253,7 @@ pub(crate) async fn enqueue_terminal_notification(transaction: &mut Transaction<
             Expr::val(Uuid::new_v4()),
             Expr::val(snapshot_key),
             Expr::val(endpoint.as_str()),
-            Expr::val(receiver_info),
+            receiver_info,
             cast(Expr::val(payload), PostgresType::Jsonb),
         ])
         .map_err(|error| persistence_error(error))?;
@@ -289,9 +289,9 @@ fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
     let payload: JsonbText<'_> = row.try_get("payload").map_err(|error| persistence_error(error))?;
     let notification: Box<RawValue> = serde_json::from_slice(payload.as_bytes())?;
     let receiver_info = row
-        .try_get::<Option<Value>, _>("receiver_info")
+        .try_get::<Option<JsonbText<'_>>, _>("receiver_info")
         .map_err(|error| persistence_error(error))?
-        .map(serde_json::from_value)
+        .map(|text| serde_json::from_slice(text.as_bytes()))
         .transpose()?;
     Ok(SnapshotStatusDelivery {
         id: row.try_get("id").map_err(|error| persistence_error(error))?,

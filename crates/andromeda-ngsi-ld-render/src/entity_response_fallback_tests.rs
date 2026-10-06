@@ -413,6 +413,28 @@ fn geojson_takes_the_geometry_of_the_kept_instance() {
     );
 }
 
+/// Clause 4.6.3 admits at most six fractional digits, yet a clock may read
+/// nanoseconds: a Feature written under a version fallback carries the entity
+/// times of such a reading without failing.
+#[test]
+fn a_geojson_feature_under_fallback_writes_nanosecond_entity_times() {
+    let building = entity(json!({
+        "id": "urn:ngsi-ld:Building:1",
+        "type": "Building",
+        "createdAt": "2026-10-06T13:29:28.000090386Z",
+        "modifiedAt": "2026-10-06T13:29:28.000090386Z",
+        "location": {
+            "type": "GeoProperty",
+            "value": {"type": "Point", "coordinates": [13.3986, 52.5547]},
+            "createdAt": "2026-10-06T13:29:28.000090386Z",
+            "modifiedAt": "2026-10-06T13:29:28.000090386Z"
+        }
+    }));
+    let (feature, head) = written(&building, ResponseMediaType::GeoJson, ResponseFormat::Normalized, Some(SpecVersion::V1_3), None);
+    assert_eq!(feature["geometry"], json!({"type": "Point", "coordinates": [13.3986, 52.5547]}));
+    assert_eq!(head.version_adaptation, VersionAdaptation::Applied { version: SpecVersion::V1_3 });
+}
+
 /// Clause 4.3.6.8: the conformant version asks for nothing, so the body is
 /// the one written without a preference, and the outcome says so.
 #[test]

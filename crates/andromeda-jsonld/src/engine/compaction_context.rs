@@ -10,6 +10,7 @@
 use crate::{
     context_graph::check_context_graph,
     context_spec::ContextSpec,
+    engine::context_syntax::context_syntax,
     error::JsonLdError,
     loader::{error::LoaderError, http::HttpContextLoader},
 };
@@ -21,7 +22,7 @@ use jsonld::{
     ExpandedDocument,
     Options,
     context_processing::{Process, ProcessedRef},
-    syntax::{Context as JsonLdContext, TryFromJson},
+    syntax::Context as JsonLdContext,
 };
 use rdfx::{BlankIdBuf, vocabulary::no_vocabulary_mut};
 use thiserror::Error;
@@ -58,14 +59,9 @@ impl CompactionContext {
     /// as the processor types it, when a context does not resolve or does not
     /// process.
     pub(crate) async fn prepare(spec: &ContextSpec, loader: &HttpContextLoader) -> Result<CompactionContext, CompactionContextError> {
-        let unprocessed = match spec.to_context_value() {
-            Some(value) => {
-                check_context_graph(loader, &value).await.map_err(CompactionContextError::Invalid)?;
-                JsonLdContext::try_from_json(&jsonld_syntax::Value::from_serde_json(value))
-                    .map_err(|error| CompactionContextError::Invalid(JsonLdError::InlineContextInvalid(error)))?
-            }
-            None => JsonLdContext::default(),
-        };
+        let resolved = spec.resolved_context();
+        check_context_graph(loader, &resolved).await.map_err(CompactionContextError::Invalid)?;
+        let unprocessed = context_syntax(&resolved).map_err(CompactionContextError::Invalid)?;
         let processed = unprocessed
             .process_full(
                 no_vocabulary_mut(),
@@ -101,7 +97,7 @@ impl CompactionContext {
         document: &ExpandedDocument<IriBuf, BlankIdBuf>,
         loader: &HttpContextLoader,
         embedding: ContextEmbedding,
-    ) -> Result<jsonld_syntax::Value, Box<CompactError<LoaderError>>> {
+    ) -> Result<jstrict::Value, Box<CompactError<LoaderError>>> {
         // The compaction algorithm writes whatever `@context` it is handed into
         // the output. A document that is about to lose it is handed the empty
         // one instead, which the algorithm leaves out, so the context is

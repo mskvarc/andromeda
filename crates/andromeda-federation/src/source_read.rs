@@ -1,12 +1,10 @@
 //! Reads forwarded to one registration: sending the GET or the POST batch
-//! query, interpreting the answer (clause 6.3.17) and reading it back in the
-//! client's terms (clause 4.3.6.6).
+//! query, interpreting the answer (clause 6.3.17) and naming the context it is
+//! spelled in, which is where its reader reads it under (clause 4.3.6.6).
 
 use crate::{
     FederationService,
-    SentResponse,
     cache::{CacheKey, Cacheability, ForwardedGetCache},
-    document_rewording::{DocumentRewording, DocumentVocabulary},
     error::FederationError,
     forwarded_payload::OutgoingBody,
     forwarding_context::{BodyPresence, ForwardingDecision},
@@ -14,15 +12,15 @@ use crate::{
     registration_payload::forwarding_decision,
     request::TriggeringRequest,
     source_continuation::SourceContinuation,
+    source_exchange::SentResponse,
     transport::ForwardedRequest,
 };
 use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, warning::Warning};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use serde_json::Value;
+use andromeda_ngsi_ld_model::{query::body::Query, registration::ContextSourceRegistration};
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::debug;
 use typed_builder::TypedBuilder;
 use url::Url;
 
@@ -41,30 +39,20 @@ pub(crate) struct SourceRead<'a> {
     /// outside an Entity Map.
     #[builder(default = None)]
     pub(crate) linked_map: Option<&'a Identifier>,
-    /// What kind of answer the read returns, which decides where its names sit.
-    pub(crate) vocabulary: DocumentVocabulary,
 }
 
 impl FederationService {
-    /// Read a source's answer back in the client's terms when the request was
-    /// written in another context (clause 4.3.6.6).
-    async fn read_back(
-        &self,
-        outcome: ForwardGetOutcome,
-        inbound: &ContextSpec,
-        decision: &ForwardingDecision,
-        vocabulary: DocumentVocabulary,
-    ) -> ForwardGetOutcome {
-        let ForwardGetOutcome::Success(mut response) = outcome else {
-            return outcome;
-        };
-        let forwarding = decision.context.naming(inbound);
-        match DocumentRewording::reword(&self.engine, &forwarding, inbound, response.body, vocabulary, decision.context.rewording()).await {
-            Ok(body) => {
-                response.body = body;
+    /// Name the context a source's answer is spelled in, which its reader
+    /// reads it under: the client's terms are applied when the model the answer
+    /// is read into is compacted for the response (clause 4.3.6.6).
+    fn name_context(outcome: ForwardGetOutcome, inbound: &ContextSpec, decision: &ForwardingDecision) -> ForwardGetOutcome {
+        match outcome {
+            ForwardGetOutcome::Success(mut response) => {
+                response.naming = Box::new(decision.context.naming(inbound));
                 ForwardGetOutcome::Success(response)
             }
-            Err(error) => ForwardGetOutcome::UnreadableNames(Arc::new(error)),
+            other
+            @ (ForwardGetOutcome::NotFound(_) | ForwardGetOutcome::ErrorStatus(_) | ForwardGetOutcome::Transport(_) | ForwardGetOutcome::LoopDetected) => other,
         }
     }
 
@@ -76,7 +64,6 @@ impl FederationService {
             inbound,
             triggering,
             linked_map,
-            vocabulary,
         } = read;
         if self.registration_loops(registration, triggering.via) {
             return ForwardGetOutcome::LoopDetected;
@@ -104,7 +91,7 @@ impl FederationService {
         if let Some(key) = &cache_key
             && let Some(response) = self.cache.lookup(key)
         {
-            return self.read_back(ForwardGetOutcome::Success(response), inbound, &decision, vocabulary).await;
+            return FederationService::name_context(ForwardGetOutcome::Success(response), inbound, &decision);
         }
         if let Some(remaining) = self.cooldowns.remaining(registration) {
             // Clause 5.2.34: a request inside the cooldown window is answered
@@ -137,7 +124,7 @@ impl FederationService {
         {
             self.cache.store(key, response, duration);
         }
-        self.read_back(outcome, inbound, &decision, vocabulary).await
+        FederationService::name_context(outcome, inbound, &decision)
     }
 
     /// Make a POST batch query (`/entityOperations/query`) to a context source
@@ -148,13 +135,12 @@ impl FederationService {
     ///
     /// `body` is the `Query` this broker wrote in the registration's forwarding
     /// context ([`crate::forwarded_names`]), so it is sent as written.
-    pub(crate) async fn forward_post_query(&self, read: SourceRead<'_>, url: Result<Url, FederationError>, body: &[u8]) -> ForwardGetOutcome {
+    pub(crate) async fn forward_post_query(&self, read: SourceRead<'_>, url: Result<Url, FederationError>, body: &Query) -> ForwardGetOutcome {
         let SourceRead {
             registration,
             inbound,
             triggering,
             linked_map,
-            vocabulary,
         } = read;
         if self.registration_loops(registration, triggering.via) {
             return ForwardGetOutcome::LoopDetected;
@@ -167,7 +153,7 @@ impl FederationService {
             Ok(decision) => decision,
             Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
         };
-        let payload = match self.payload_for(registration, inbound, Some(OutgoingBody::Expressed(body))).await {
+        let payload = match self.payload_for(registration, inbound, Some(OutgoingBody::Query(body))).await {
             Ok(payload) => payload,
             Err(error) => return ForwardGetOutcome::Transport(TransportFailure::unprepared(error)),
         };
@@ -196,7 +182,7 @@ impl FederationService {
             Err(failure) => return ForwardGetOutcome::Transport(failure),
         };
         let outcome = interpret_read_response(registration, &answered, sent);
-        self.read_back(outcome, inbound, &decision, vocabulary).await
+        FederationService::name_context(outcome, inbound, &decision)
     }
 }
 
@@ -236,19 +222,14 @@ fn interpret_read_response(registration: &ContextSourceRegistration, answered: &
         )));
     }
 
-    match serde_json::from_slice::<Value>(&sent.body) {
-        Ok(body) => ForwardGetOutcome::Success(ForwardedResponse {
-            body,
-            warnings,
-            entity_map: sent.entity_map,
-            continuation: SourceContinuation::of(sent.next_page.as_ref(), answered, registration.access.endpoint.url()),
-            partial_range: sent.partial_range,
-        }),
-        Err(error) => {
-            // The typed parse error names the line and column; the peer's body
-            // itself is not echoed into the log.
-            warn!(registration = %registration_id, %error, "context source answered with a body that is not JSON");
-            ForwardGetOutcome::InvalidPayload(error)
-        }
-    }
+    // The body is read by the answer's own reader, which says why a body that
+    // is not what it expects is refused.
+    ForwardGetOutcome::Success(ForwardedResponse {
+        body: Arc::from(sent.body),
+        naming: Box::new(ContextSpec::none()),
+        warnings,
+        entity_map: sent.entity_map,
+        continuation: SourceContinuation::of(sent.next_page.as_ref(), answered, registration.access.endpoint.url()),
+        partial_range: sent.partial_range,
+    })
 }

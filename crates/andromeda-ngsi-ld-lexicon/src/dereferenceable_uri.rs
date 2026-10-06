@@ -61,12 +61,6 @@ impl DereferenceableUri {
     pub fn as_str(&self) -> &str {
         &self.written
     }
-
-    /// Take ownership of the parsed URL, discarding the written spelling.
-    #[must_use]
-    pub fn into_url(self) -> Url {
-        self.dereferenced
-    }
 }
 
 // Validating parser: the URL decides whether the value is dereferenceable at

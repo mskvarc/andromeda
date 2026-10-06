@@ -1,13 +1,10 @@
 //! Rendering the temporal evolution of an entity from backend-neutral observations.
 
-pub mod aggregation;
-pub mod array_normalizer;
+pub mod aggregated_body;
 pub mod entity;
 pub mod history_row;
-pub mod inline_join;
-pub mod join_writer;
-pub mod linked_projection;
 pub mod page_cut;
-pub mod simplify;
+pub mod temporal_entity_body;
 pub mod temporal_evolutions;
-pub mod values;
+pub mod temporal_response;
+pub mod temporal_values_member;

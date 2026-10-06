@@ -15,23 +15,19 @@
 //!
 //! [`concise_reading`] says what a compact node written where an attribute
 //! stands is under clause 4.5.2.3 and its siblings: an instance of which
-//! family, a bare value, or a node they do not admit. [`normalization`] is the
-//! one transformation that belongs here rather than with a renderer: clause
-//! 4.5.2.3 lets a *request* abbreviate an attribute, and rewriting that into
-//! the normalized form of clause 4.5.1 happens before any resource type exists
-//! to hold it. [`attribute_type_validation`] is its gatekeeper: a node the
-//! reading refuses is rejected before normalization could mistake it for a
+//! family, a bare value, or a node they do not admit. Clause 4.5.2.3 lets a
+//! *request* abbreviate an attribute; the typed model reads the abbreviation
+//! as the attribute it stands for. [`attribute_type_validation`] says why a
+//! node the reading refuses is rejected before it could be mistaken for a
 //! value. The concise rendering writes only nodes the same reading reads back.
 //!
-//! The three member rules beside them say which members an attribute of a given
+//! The two member rules beside them say which members an attribute of a given
 //! family may carry at all. [`family_member_admission`] holds the fourteen
 //! "Prohibited" lists of clauses 4.5.2 through 4.5.24 as the one rule they
-//! are, [`proof_seal_admission`] the `ngsildproof` exception of clause 4.5.2.2,
-//! and [`output_only_member`] the `previous…` member clauses 5.2.5 through
-//! 5.2.38 say a Context Producer may not supply. They are stated here rather
-//! than beside a store or a service because each is a statement about a
-//! representation and nothing else, and because every layer that admits a
-//! written attribute has to agree on them.
+//! are, and [`proof_seal_admission`] the `ngsildproof` exception of clause
+//! 4.5.2.2. They are stated here rather than beside a store or a service
+//! because each is a statement about a representation and nothing else, and
+//! because every layer that admits a written attribute has to agree on them.
 //!
 //! [`payload_budget`] counts what a written compact payload will cost once
 //! expanded, before the expansion is attempted: what a representation costs is
@@ -59,17 +55,17 @@ pub mod compact_key_admission;
 pub mod compact_node;
 pub mod concise_reading;
 pub mod embedded_context_admission;
-pub mod entity_members;
 pub mod family_member_admission;
 pub mod join_mode;
 pub mod linked_resolution_failure;
 pub mod merge_representation;
-pub mod normalization;
-pub mod output_only_member;
 pub mod payload_budget;
 pub mod proof_seal_admission;
 pub mod response_format;
 pub mod sys_attrs;
+
+#[cfg(test)]
+mod written_json;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

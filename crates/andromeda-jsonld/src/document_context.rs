@@ -1,115 +1,126 @@
-//! Turning a [`ContextSpec`] into the `@context` a document carries.
+//! Turning a [`ContextSpec`] into the `@context` a document is processed under.
 //!
 //! Clause 5.5.7 gives the core context absolute precedence: it is appended
 //! *last* so that, under JSON-LD 1.1's rule of later entries overriding earlier
 //! ones, its definitions shadow any user context that redefines a core term (a
 //! user `@vocab`, a redeclared `observedAt`). A user context still contributes
-//! its own new terms; it just cannot override the core's. Both functions here
-//! implement that order: [`resolve_context_value`] builds the value,
-//! [`apply_context`] writes it onto a document.
+//! its own new terms; it just cannot override the core's. [`resolved_context`]
+//! implements that order once, as JSON text assembled from the entries the
+//! request named.
 
 use crate::{
+    context_graph::reference_iri,
     context_spec::{ContextSpec, CoreContextPolicy},
-    core_context_precedence::{CoreImport, drop_core_import, is_core_context_json_string},
-    error::JsonLdError,
+    context_value::{ContextEntry, EntriesShape, without_core, written_entries},
+    engine::context_url::is_absolute_iri,
+    hosted_context_recognizer::{HostedContextRecognizer, HostedReference},
 };
-use serde_json::{Map, Value};
+use iri_rs::{IriBuf, IriRefBuf};
+use std::{borrow::Cow, sync::Arc};
 
-/// Combine a document's own `@context` with a [`ContextSpec`].
+/// How the references a request named are read.
+#[derive(Clone, Copy)]
+pub enum ReferenceReading<'a> {
+    /// As written, which is what identifies the context a spec selects.
+    AsWritten,
+    /// With every root-relative reference to one of the tenant's own stored
+    /// `@context`s rewritten to its identifier, as the context is processed.
+    Hosted(&'a dyn HostedContextRecognizer),
+}
+
+/// The `@context` a document is processed under: the contexts a request named,
+/// in order and with their core references removed, then the core context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedContext {
+    /// The value as JSON text, always an array.
+    text: Arc<str>,
+    /// The absolute references among its entries and the context each
+    /// definition imports, in order: where the walk of its reference graph
+    /// starts (`context_graph`).
+    references: Vec<IriBuf>,
+}
+
+impl ResolvedContext {
+    /// The value as JSON text: an array of the contexts processed in order.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The text, shared: what identifies the processed context everywhere it
+    /// is kept, since two specs resolving to the same text process the same
+    /// value.
+    #[must_use]
+    pub fn key(&self) -> Arc<str> {
+        Arc::clone(&self.text) // clone: Arc ref-count bump
+    }
+
+    /// The absolute references the value names directly or through a
+    /// definition's `@import`.
+    #[must_use]
+    pub fn references(&self) -> &[IriBuf] {
+        &self.references
+    }
+}
+
+/// The `@context` a document is processed under for `spec`.
 ///
-/// Answers `None` when the combination is empty, which is the only case in
-/// which a document ends up with no `@context` at all.
+/// The one place the request named its context (clause 6.3.5: a `Link`
+/// header or the body, never both) comes first, its core references removed,
+/// and the core context last. Repeats are kept: JSON-LD processes an
+/// `@context` array in order, so `[A, B, A]` leaves A's definitions in force
+/// where `[A, B]` leaves B's, and clause 5.5.7 processes the context the call
+/// provided.
 #[must_use]
-pub fn resolve_context_value(document_context: Option<&Value>, spec: &ContextSpec) -> Option<Value> {
-    // The document's own context first, then the one place the request named
-    // its context (clause 6.3.5: a `Link` header or the body, never both).
-    // Repeats are kept: JSON-LD processes an `@context` array in order, so
-    // `[A, B, A]` leaves A's definitions in force where `[A, B]` leaves B's,
-    // and clause 5.5.7 processes the context the call provided.
-    let mut combined = extract_context_items(document_context);
-    combined.extend(spec.request_context().entries());
-
-    match spec.core_policy() {
-        CoreContextPolicy::Only => return Some(Value::Array(vec![Value::String(spec.effective_core_url().to_string())])),
-        CoreContextPolicy::Append => {
-            retain_non_core(&mut combined);
-            append_core(&mut combined, spec);
-        }
-    }
-
-    // What a response names is `crate::presented_context`'s; this is the
-    // context a document is processed under, which the processor takes in
-    // either shape.
-    if combined.is_empty() { None } else { Some(Value::Array(combined)) }
-}
-
-/// Write the resolved `@context` onto a document, or remove it when the spec
-/// resolves to nothing.
-///
-/// # Errors
-///
-/// Returns [`JsonLdError::DocumentShape`] when the document is neither an
-/// object nor an array of them.
-pub fn apply_context(document: Value, spec: &ContextSpec) -> Result<Value, JsonLdError> {
-    match document {
-        Value::Object(object) => Ok(Value::Object(with_resolved_context(object, spec))),
-        Value::Array(items) => Ok(Value::Array(
-            items
-                .into_iter()
-                .map(|item| match item {
-                    Value::Object(object) => Value::Object(with_resolved_context(object, spec)),
-                    other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => other,
-                })
-                .collect(),
-        )),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Err(JsonLdError::DocumentShape),
+pub fn resolved_context(spec: &ContextSpec, reading: ReferenceReading<'_>) -> ResolvedContext {
+    let core = spec.effective_core_url();
+    let mut entries = match spec.core_policy() {
+        CoreContextPolicy::Only => Vec::with_capacity(1),
+        CoreContextPolicy::Append => without_core(spec.request_context().entries())
+            .kept
+            .into_iter()
+            .map(|entry| read_reference(entry, reading))
+            .collect(),
+    };
+    entries.push(ContextEntry::reference(core.as_str()));
+    let references = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            ContextEntry::Reference(reference) => reference_iri(reference, None),
+            ContextEntry::Definition(definition) => definition.import().and_then(|import| reference_iri(&import, None)),
+            ContextEntry::Null | ContextEntry::Malformed(_) => None,
+        })
+        .collect();
+    ResolvedContext {
+        text: Arc::from(written_entries(&entries, EntriesShape::Array)),
+        references,
     }
 }
 
-/// Replace one object's `@context` with the resolution of its own and the
-/// spec's.
-fn with_resolved_context(mut object: Map<String, Value>, spec: &ContextSpec) -> Map<String, Value> {
-    let document_context = object.get("@context").cloned(); // clone: the slot is overwritten below
-    match resolve_context_value(document_context.as_ref(), spec) {
-        Some(context) => {
-            object.insert("@context".to_string(), context);
-        }
-        None => {
-            object.remove("@context");
-        }
-    }
-    object
-}
-
-/// Drop every core-context reference so the canonical one can be appended.
+/// `entry`, a root-relative reference to one of the tenant's own stored
+/// `@context`s rewritten to its identifier when `reading` asks for it.
 ///
-/// An inline definition's `@import` of a core context is such a reference too
-/// (JSON-LD 1.1 section 4.1.10): left in, an imported v1.8 would come before
-/// the appended v1.9 as a protected occurrence of differing definitions, which
-/// the processor refuses as a `protected term redefinition`.
-///
-/// A definition that held nothing but the core import (and `@version` or
-/// `@protected`) is removed with it, exactly as the presented context removes
-/// it ([`crate::presented_context`]), so the two readings of one request agree.
-fn retain_non_core(contexts: &mut Vec<Value>) {
-    contexts.retain_mut(|context| match context {
-        Value::String(reference) => !is_core_context_json_string(reference),
-        Value::Object(definition) => !(drop_core_import(definition) == CoreImport::Dropped && definition.is_empty()),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => true,
-    });
-}
-
-/// Append the core context.
-fn append_core(contexts: &mut Vec<Value>, spec: &ContextSpec) {
-    contexts.push(Value::String(spec.effective_core_url().to_string()));
-}
-
-/// Flatten a `@context` slot into the list of contexts it names.
-fn extract_context_items(context: Option<&Value>) -> Vec<Value> {
-    match context {
-        Some(Value::Array(items)) => items.clone(), // clone: the document is borrowed and stays valid
-        Some(Value::Null) | None => Vec::new(),
-        Some(other) => vec![other.clone()], // clone: the document is borrowed and stays valid
+/// A client that read a context from this broker may echo the path it read it
+/// from as its `@context`. A request body has no base URL to resolve such a
+/// reference against, so the processor could not dereference it; the
+/// identifier is a URN, which the loader resolves from storage (clause 5.13.1
+/// serves the document "on-demand"). An absolute reference is left as it is:
+/// the loader recognises it when it is resolved. A relative reference that is
+/// no IRI reference, or names no stored `@context` of the tenant, is left as
+/// written for the processor to refuse.
+fn read_reference<'a>(entry: ContextEntry<'a>, reading: ReferenceReading<'_>) -> ContextEntry<'a> {
+    let ReferenceReading::Hosted(hosted) = reading else {
+        return entry;
+    };
+    match entry {
+        ContextEntry::Reference(reference) if !is_absolute_iri(&reference) => match IriRefBuf::new(reference.as_ref()) {
+            Ok(relative) => match hosted.recognize(&relative) {
+                HostedReference::Own(identifier) => ContextEntry::Reference(Cow::Owned(identifier.to_string())),
+                HostedReference::Unrelated => ContextEntry::Reference(reference),
+            },
+            Err(_not_a_reference) => ContextEntry::Reference(reference),
+        },
+        other @ (ContextEntry::Null | ContextEntry::Reference(_) | ContextEntry::Definition(_) | ContextEntry::Malformed(_)) => other,
     }
 }
 
@@ -118,33 +129,28 @@ mod tests {
     use crate::{
         context_spec::ContextSpec,
         core_context::{NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_V18_URL},
-        document_context::{apply_context, resolve_context_value},
+        document_context::{ReferenceReading, resolved_context},
+        hosted_context_recognizer::{HostedContextRecognizer, HostedReference},
     };
+    use andromeda_json_literal::JsonLiteral;
+    use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::JsonLdContextId;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-    use iri_rs::IriBuf;
+    use iri_rs::{IriBuf, IriRefBuf};
     use serde_json::json;
 
-    /// A context URL as the absolute IRI a `Link` header resolves to.
-    fn iri_ref(url: &str) -> IriBuf {
-        IriBuf::new(url.to_owned()).expect("a valid IRI")
+    fn body(value: &serde_json::Value) -> ContextSpec {
+        ContextSpec::from_body(JsonLiteral::admit(&value.to_string()).expect("an admissible context"))
+    }
+
+    /// The resolved context of `spec`, read as written, as JSON.
+    fn resolved(spec: &ContextSpec) -> serde_json::Value {
+        serde_json::from_str(resolved_context(spec, ReferenceReading::AsWritten).text()).expect("the resolved context is JSON")
     }
 
     #[test]
-    fn the_document_context_comes_first_and_the_core_context_last() {
-        let spec = ContextSpec::from_link(iri_ref("https://example.com/a"));
-        let document_context = json!(["https://example.com/doc", "https://example.com/a"]);
-
-        let resolved = resolve_context_value(Some(&document_context), &spec).expect("a context value");
-
-        pretty_assertions::assert_eq!(
-            resolved,
-            json!([
-                "https://example.com/doc",
-                "https://example.com/a",
-                "https://example.com/a",
-                NGSI_LD_CORE_CONTEXT_URL
-            ])
-        );
+    fn a_link_context_comes_first_and_the_core_context_last() {
+        let spec = ContextSpec::from_link(IriBuf::new("https://example.com/a".to_owned()).expect("a valid IRI"));
+        pretty_assertions::assert_eq!(resolved(&spec), json!(["https://example.com/a", NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     /// JSON-LD 1.1 processes an `@context` array in order, so a repeated
@@ -152,12 +158,9 @@ mod tests {
     /// defines (clause 5.5.7: the context the call provided).
     #[test]
     fn a_repeated_request_context_is_kept_in_place() {
-        let spec = ContextSpec::from_body(json!(["https://example.com/a", "https://example.com/b", "https://example.com/a"]));
-
-        let resolved = resolve_context_value(None, &spec).expect("a context value");
-
+        let spec = body(&json!(["https://example.com/a", "https://example.com/b", "https://example.com/a"]));
         pretty_assertions::assert_eq!(
-            resolved,
+            resolved(&spec),
             json!([
                 "https://example.com/a",
                 "https://example.com/b",
@@ -168,27 +171,20 @@ mod tests {
     }
 
     #[test]
-    fn a_document_with_no_context_of_its_own_gets_the_core_context() {
-        let resolved = resolve_context_value(None, &ContextSpec::none()).expect("a context value");
-        pretty_assertions::assert_eq!(resolved, json!([NGSI_LD_CORE_CONTEXT_URL]));
+    fn a_request_naming_no_context_gets_the_core_context() {
+        pretty_assertions::assert_eq!(resolved(&ContextSpec::none()), json!([NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]
-    fn a_core_context_alias_in_the_document_is_replaced_by_the_canonical_one_last() {
-        let document_context = json!(["https://example.com/compound.jsonld", NGSI_LD_CORE_CONTEXT_V16_URL]);
-
-        let resolved = resolve_context_value(Some(&document_context), &ContextSpec::none()).expect("a context value");
-
-        pretty_assertions::assert_eq!(resolved, json!(["https://example.com/compound.jsonld", NGSI_LD_CORE_CONTEXT_URL]));
+    fn a_core_context_alias_the_request_named_is_replaced_by_the_canonical_one_last() {
+        let spec = body(&json!(["https://example.com/compound.jsonld", NGSI_LD_CORE_CONTEXT_V16_URL.as_str()]));
+        pretty_assertions::assert_eq!(resolved(&spec), json!(["https://example.com/compound.jsonld", NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]
     fn a_body_context_is_kept_and_the_core_context_still_comes_last() {
-        let spec = ContextSpec::from_body(json!("https://example.com/compound.jsonld"));
-
-        let resolved = resolve_context_value(None, &spec).expect("a context value");
-
-        pretty_assertions::assert_eq!(resolved, json!(["https://example.com/compound.jsonld", NGSI_LD_CORE_CONTEXT_URL]));
+        let spec = body(&json!("https://example.com/compound.jsonld"));
+        pretty_assertions::assert_eq!(resolved(&spec), json!(["https://example.com/compound.jsonld", NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     /// JSON-LD 1.1 section 4.1.10 and clause 5.5.7: a core context an inline
@@ -196,14 +192,11 @@ mod tests {
     /// appended last is the only occurrence.
     #[test]
     fn a_core_context_an_inline_definition_imports_is_dropped_before_the_core_is_appended() {
-        let spec = ContextSpec::from_body(json!({
+        let spec = body(&json!({
             "@import": NGSI_LD_CORE_CONTEXT_V18_URL.as_str(),
             "speed": "https://example.com/speed"
         }));
-
-        let resolved = resolve_context_value(None, &spec).expect("a context value");
-
-        pretty_assertions::assert_eq!(resolved, json!([{ "speed": "https://example.com/speed" }, NGSI_LD_CORE_CONTEXT_URL]));
+        pretty_assertions::assert_eq!(resolved(&spec), json!([{ "speed": "https://example.com/speed" }, NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     /// A definition that imported the core context and set nothing else but
@@ -211,26 +204,53 @@ mod tests {
     /// context leaves nothing behind for it.
     #[test]
     fn a_definition_holding_only_a_core_import_and_version_leaves_nothing_behind() {
-        let spec = ContextSpec::from_body(json!({ "@import": NGSI_LD_CORE_CONTEXT_V18_URL.as_str(), "@version": 1.1 }));
-
-        let resolved = resolve_context_value(None, &spec).expect("a context value");
-
-        pretty_assertions::assert_eq!(resolved, json!([NGSI_LD_CORE_CONTEXT_URL]));
+        let spec = body(&json!({ "@import": NGSI_LD_CORE_CONTEXT_V18_URL.as_str(), "@version": 1.1 }));
+        pretty_assertions::assert_eq!(resolved(&spec), json!([NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]
-    fn applying_a_context_writes_the_slot_on_an_object_and_on_every_array_member() {
-        let spec = ContextSpec::none();
-
-        let object = apply_context(json!({"id": "urn:test:1", "type": "Test"}), &spec).expect("an object document");
-        assert!(object.get("@context").is_some());
-
-        let array = apply_context(json!([{"id": "urn:test:1", "type": "Test"}]), &spec).expect("an array document");
-        assert!(array[0].get("@context").is_some());
+    fn a_core_only_spec_names_the_core_context_alone() {
+        pretty_assertions::assert_eq!(resolved(&ContextSpec::core_only()), json!([NGSI_LD_CORE_CONTEXT_URL]));
     }
 
+    /// The references a walk of the reference graph starts from: absolute
+    /// references and imports, never the relative ones nothing resolves.
     #[test]
-    fn a_document_that_is_neither_an_object_nor_an_array_is_refused() {
-        assert!(apply_context(json!("string"), &ContextSpec::none()).is_err());
+    fn the_absolute_references_and_imports_are_where_the_reference_walk_starts() {
+        let spec = body(&json!(["https://example.com/a", "relative.jsonld", {"@import": "https://example.com/b"}]));
+        let resolved = resolved_context(&spec, ReferenceReading::AsWritten);
+        let references: Vec<&str> = resolved.references().iter().map(IriBuf::as_str).collect();
+        pretty_assertions::assert_eq!(
+            references,
+            vec!["https://example.com/a", "https://example.com/b", NGSI_LD_CORE_CONTEXT_URL.as_str()]
+        );
+    }
+
+    /// The stored identifier the recogniser below knows.
+    const STORED: &str = "urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b";
+
+    /// Recognises the root-relative path of [`STORED`].
+    #[derive(Debug)]
+    struct StoredPath;
+
+    impl HostedContextRecognizer for StoredPath {
+        fn recognize(&self, reference: &IriRefBuf) -> HostedReference {
+            if reference.as_str() == "/ngsi-ld/v1/jsonldContexts/stored" {
+                HostedReference::Own(STORED.parse::<JsonLdContextId>().expect("a stored identifier"))
+            } else {
+                HostedReference::Unrelated
+            }
+        }
+    }
+
+    /// A request body has no base URL, so a root-relative reference to a
+    /// stored context is processed under the identifier the tenant stores it
+    /// under; any other relative reference is left for the processor.
+    #[test]
+    fn a_root_relative_reference_to_a_stored_context_is_processed_under_its_identifier() {
+        let spec = body(&json!(["/ngsi-ld/v1/jsonldContexts/stored", "other.jsonld"]));
+        let hosted = resolved_context(&spec, ReferenceReading::Hosted(&StoredPath));
+        let read: serde_json::Value = serde_json::from_str(hosted.text()).expect("JSON");
+        pretty_assertions::assert_eq!(read, json!([STORED, "other.jsonld", NGSI_LD_CORE_CONTEXT_URL]));
     }
 }

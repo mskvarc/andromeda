@@ -6,7 +6,7 @@
 //! own `geo_types` conversion drops every ordinate past the second, because
 //! `geo_types` is two-dimensional by construction, so routing through it would
 //! throw altitude away. Decoding reads a compact geometry object straight from
-//! a deserializer (see [`crate::written_geometry`]) or from a parsed tree (see
+//! a deserializer (see [`crate::written_geometry`]) or from its text (see
 //! [`crate::compact_geojson`]), the two sharing one reading of its members.
 
 use crate::{
@@ -119,10 +119,6 @@ pub enum GeometryError {
         /// Where the position sits in the geometry's `coordinates`.
         at: CoordinatePath,
     },
-    /// A JSON coordinate is outside the finite binary64 domain used for
-    /// spatial operations.
-    #[error("GeoJSON coordinate cannot be represented as a finite 64-bit float")]
-    NonFiniteCoordinate,
     /// The value is a `GeoJSON` `GeometryCollection`. ETSI GS CIM 009 v1.9.1 clause
     /// 4.7.1 allows a `GeoProperty` value every geometry RFC 7946 defines except
     /// this one, and clause 4.6.3 excludes it from reference geometries too.
@@ -188,7 +184,7 @@ mod tests {
 
     /// Read `value` as the compact `GeoJSON` geometry every write path reads.
     fn decode(value: &serde_json::Value) -> Result<GeometryForm, GeometryError> {
-        GeometryForm::from_compact_value(value)
+        GeometryForm::from_compact_text(&value.to_string())
     }
 
     #[test]

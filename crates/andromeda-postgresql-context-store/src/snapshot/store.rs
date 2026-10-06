@@ -28,6 +28,7 @@ use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::snapshot_target::SnapshotTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
+    key_value_pair::KeyValuePair,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
 };
@@ -39,7 +40,6 @@ use andromeda_snapshot::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
-use serde_json::Value;
 
 #[async_trait]
 impl SnapshotStore for SnapshotRepository {
@@ -85,7 +85,7 @@ impl SnapshotStore for SnapshotRepository {
         lifetime: Option<&Iso8601Duration>,
         priority: Option<SnapshotPriority>,
         endpoint: Option<Option<&url::Url>>,
-        receiver_info: Option<Option<Value>>,
+        receiver_info: Option<Option<Vec<KeyValuePair>>>,
         new_expires_at: Option<DateTime<Utc>>,
     ) -> Result<u64, SnapshotError> {
         update_snapshot_metadata(

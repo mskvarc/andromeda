@@ -316,7 +316,7 @@ impl EntityRepository {
             .bind(literal_texts(&entities.attribute_name_keys))
             .bind(literal_texts(&entities.attribute_instance_name_keys))
             .bind(literal_texts(&entities.attribute_instance_kinds))
-            .bind(&entities.scope_paths_json)
+            .bind(entities.scope_paths_bind())
             .bind(&locations)
             .bind(&observation_spaces)
             .bind(&operation_spaces)

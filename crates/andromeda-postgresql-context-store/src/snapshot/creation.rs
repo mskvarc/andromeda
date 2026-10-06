@@ -12,7 +12,7 @@ use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::placeholder::external_placeholder;
 use andromeda_snapshot::{error::SnapshotError, store::InsertSnapshotParams};
 use sea_query::{PostgresQueryBuilder, Query};
-use sqlx::PgPool;
+use sqlx::{PgPool, types::Json};
 use url::Url;
 
 /// The immutable control columns a create binds, in placeholder order; the
@@ -75,13 +75,13 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
     let control_sql = control_insert_sql()?;
     let snapshot_key_raw: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(control_sql.as_str()))
         .bind(params.id.as_str())
-        .bind(params.snapshot_queries.map(serde_json::to_value).transpose()?)
-        .bind(params.snapshot_temporal_queries.map(serde_json::to_value).transpose()?)
-        .bind(params.query_context_json)
+        .bind(params.snapshot_queries.map(Json))
+        .bind(params.snapshot_temporal_queries.map(Json))
+        .bind(Json(&params.query_context))
         .bind(params.snapshot_lifetime.map(ToString::to_string))
         .bind(params.snapshot_priority)
         .bind(params.endpoint.map(Url::as_str))
-        .bind(params.receiver_info_json)
+        .bind(params.receiver_info.map(Json))
         .bind(params.clone_source_id.map(Identifier::as_str))
         .bind(params.created_at)
         .bind(params.expires_at)
@@ -95,8 +95,8 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
         .bind(stored_status(params.status).code())
         .bind(params.modified_at)
         .bind(params.last_used_at)
-        .bind(params.queries_details_json)
-        .bind(params.temporal_queries_details_json)
+        .bind(params.queries_details.map(Json))
+        .bind(params.temporal_queries_details.map(Json))
         .bind(branch_version.get())
         .execute(&mut *tx)
         .await

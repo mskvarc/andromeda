@@ -264,7 +264,12 @@ pub(super) const fn classify_subscription_expiry_failure(error: SubscriptionErro
         | SubscriptionError::AlreadyExists { .. }
         | SubscriptionError::GeoQTooLarge { .. }
         | SubscriptionError::JsonLd(_)
-        | SubscriptionError::ContextHosting(ContextHostingError::NoHost | ContextHostingError::NoRequestAuthority | ContextHostingError::MintedUrlNotIri(_))
+        | SubscriptionError::ContextHosting(
+            ContextHostingError::NoHost
+            | ContextHostingError::NoRequestAuthority
+            | ContextHostingError::MintedUrlNotIri(_)
+            | ContextHostingError::Unwritable(_),
+        )
         | SubscriptionError::Query(_)
         | SubscriptionError::Representation(_) => FailureClass::Permanent,
     };
@@ -281,8 +286,7 @@ pub(super) const fn classify_registration_expiry_failure(error: RegistrationErro
         | RegistrationError::Conflict(_)
         | RegistrationError::GeometryTooLarge { .. }
         | RegistrationError::JsonLd(_)
-        | RegistrationError::Query(_)
-        | RegistrationError::Representation(_) => FailureClass::Permanent,
+        | RegistrationError::Query(_) => FailureClass::Permanent,
     };
     TaskFailure::new(class, error)
 }

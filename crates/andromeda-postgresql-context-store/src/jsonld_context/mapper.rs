@@ -9,6 +9,7 @@ use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
 use andromeda_postgresql_codes::{jsonld_context_kind::JsonldContextKindCode, registry::UnknownCompactCode};
 use iri_rs::{InvalidIri, IriBuf};
+use sqlx::types::Json;
 use thiserror::Error;
 use url::Url;
 
@@ -102,7 +103,7 @@ pub(crate) fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata
         .expires_at(row.expires_at)
         .last_usage(row.last_usage)
         .number_of_hits(number_of_hits)
-        .extra_info(row.extra_info)
+        .extra_info(row.extra_info.map(|Json(extra_info)| extra_info))
         .build())
 }
 

@@ -13,14 +13,20 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
+    query::temporal_query::TemporalQuery,
     subscription::{EntitySelector, NotificationParams, Subscription, SubscriptionStatus},
 };
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, page_window::PageWindow, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{
+    dataset::DatasetSelector,
+    filter::expression::Expr,
+    geo::input::GeoQueryInput,
+    page_window::PageWindow,
+    scope::query::ScopeQuery,
+};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
 use langtag::LangTagBuf;
-use serde_json::Value;
 
 /// Borrowed field values used when creating or updating a subscription.
 #[derive(Debug)]
@@ -39,8 +45,8 @@ pub struct SubscriptionFields<'a> {
     pub time_interval: Option<f64>,
     /// NGSI-LD query expression for filtering entities.
     pub q: Option<&'a Expr>,
-    /// Geo-spatial query as a JSON value.
-    pub geo_q: Option<&'a Value>,
+    /// Geo-spatial query.
+    pub geo_q: Option<&'a GeoQueryInput>,
     /// Scope query expression.
     pub scope_q: Option<&'a ScopeQuery>,
     /// Context source filter expression.
@@ -56,8 +62,8 @@ pub struct SubscriptionFields<'a> {
     pub expires_at: Option<DateTime<Utc>>,
     /// Minimum interval in seconds between consecutive notifications.
     pub throttling: Option<f64>,
-    /// Temporal query specification as a JSON value.
-    pub temporal_q: Option<&'a Value>,
+    /// Temporal query specification.
+    pub temporal_q: Option<&'a TemporalQuery>,
     /// Expanded attribute names whose `q` operands were coerced through the
     /// `@context` (Table 5.2.12-1 `expandValues`).
     pub expand_values: Option<&'a [AttributeName]>,
@@ -78,17 +84,13 @@ pub struct SubscriptionFields<'a> {
     pub ngsild_conformance: Option<SpecVersion>,
 }
 
-/// Fields that may be present in a subscription update request.
-///
-/// `Option<Option<T>>` distinguishes "not provided" (outer `None`) from
-/// "provided as null" (inner `None`), which clause 5.8.2 needs in order to
-/// clear an `expiresAt` rather than leave it alone.
+/// The members of a subscription request that decide its status.
 #[derive(Debug)]
 pub struct StatusUpdateFields {
-    /// New active/paused flag, if provided in the update request.
+    /// New active/paused flag, if provided in the request.
     pub is_active: Option<bool>,
-    /// New expiration timestamp; outer `None` means not provided, inner `None` means cleared.
-    pub expires_at: Option<Option<DateTime<Utc>>>,
+    /// New expiration timestamp, if provided in the request.
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 /// Storing subscriptions, and the lifecycle bookkeeping the notification path

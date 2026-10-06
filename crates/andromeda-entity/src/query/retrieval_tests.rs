@@ -11,13 +11,18 @@ use crate::{
     error::EntityError,
     pagination_outcome::PaginationOutcome,
     port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
-    query::{EntityQueryService, retrieval::RetrievalNarrowing},
+    query::{
+        EntityQueryService,
+        entity_versions::{VersionRead, held_version},
+        retrieval::RetrievalNarrowing,
+    },
     query_outcome::QueryOutcome,
     query_residual::ResidualFilter,
     spatial_acceleration::SpatialAcceleration,
     storage_profile::StorageProfile,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -30,11 +35,12 @@ use andromeda_ngsi_ld_query::{
     type_selection::grammar::TypeExprRaw,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::json;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, slice::from_ref, sync::Arc};
 
 const VEHICLE: &str = "urn:ngsi-ld:Vehicle:1";
 
@@ -145,12 +151,18 @@ fn service() -> EntityQueryService {
 }
 
 fn context() -> ContextSpec {
-    ContextSpec::from_body(json!({
-        "Vehicle": "https://example.com/Vehicle",
-        "speed": "https://example.com/speed",
-        "name": "https://example.com/name",
-        "brand": "https://example.com/brand"
-    }))
+    ContextSpec::from_body(
+        JsonLiteral::admit(
+            &json!({
+                "Vehicle": "https://example.com/Vehicle",
+                "speed": "https://example.com/speed",
+                "name": "https://example.com/name",
+                "brand": "https://example.com/brand"
+            })
+            .to_string(),
+        )
+        .expect("an admissible literal"),
+    )
 }
 
 fn id(value: &str) -> Identifier {
@@ -171,8 +183,23 @@ fn narrowing<'a>(attrs: &'a [AttributeName], sys_attrs: SysAttrsInclusion, proje
     }
 }
 
+/// Retrieve `id` (clause 5.6.3) from the one-entity store, narrowed to what
+/// the request selected and compacted under the test context.
+async fn compacted_retrieval(id: &Identifier, narrowing: &RetrievalNarrowing<'_>) -> Result<Entity, EntityError> {
+    let service = service();
+    let context = context();
+    let held = service.read_held(&ContextTarget::Live, id, narrowing, &context).await?;
+    let read = VersionRead {
+        id_override: Some(id),
+        sys_attrs: narrowing.sys_attrs,
+        dataset_ids: narrowing.dataset_ids,
+    };
+    let mut entities = service.compact_versions(from_ref(&held), &read, &context).await?;
+    entities.pop().ok_or_else(|| EntityError::not_found(id))
+}
+
 async fn retrieve(narrowing: &RetrievalNarrowing<'_>) -> Result<Entity, EntityError> {
-    service().get_inner(&ContextTarget::Live, &id(VEHICLE), narrowing, &context()).await
+    compacted_retrieval(&id(VEHICLE), narrowing).await
 }
 
 /// The entity's attribute names, sorted: JSON object member order is not
@@ -276,26 +303,28 @@ async fn an_entity_outside_the_type_selector_is_not_found() {
 /// Clause 5.6.3: an identifier the store does not hold is not found.
 #[tokio::test]
 async fn an_entity_the_store_does_not_hold_is_not_found() {
-    let error = service()
-        .get_inner(
-            &ContextTarget::Live,
-            &id("urn:ngsi-ld:Vehicle:2"),
-            &narrowing(&[], SysAttrsInclusion::Strip, None),
-            &context(),
-        )
+    let error = compacted_retrieval(&id("urn:ngsi-ld:Vehicle:2"), &narrowing(&[], SysAttrsInclusion::Strip, None))
         .await
         .expect_err("not found");
     assert!(matches!(error, EntityError::NotFound { .. }), "{error}");
 }
 
-/// A clause 5.7.2 query over the one-entity store.
+/// A clause 5.7.2 query over the one-entity store, its page compacted as a
+/// query response writes it.
 async fn query(parameters: &str) -> Vec<Entity> {
-    let parameters = serde_urlencoded::from_str(parameters).expect("valid query parameters");
-    let (entities, _) = service()
-        .query(&ContextTarget::Live, &parameters, &PageWindow::offset(20, 0), CountPolicy::Omit, &context())
+    let parameters: EntityQueryParameters = serde_urlencoded::from_str(parameters).expect("valid query parameters");
+    let service = service();
+    let (rows, _) = service
+        .query_states(&ContextTarget::Live, &parameters, &PageWindow::offset(20, 0), CountPolicy::Omit, &context())
         .await
         .expect("queried");
-    entities
+    let versions: Vec<_> = rows.into_iter().map(held_version).collect();
+    let read = VersionRead {
+        id_override: None,
+        sys_attrs: parameters.parse_options().expect("options").sys_attrs,
+        dataset_ids: &[],
+    };
+    service.compact_versions(&versions, &read, &context()).await.expect("compacted")
 }
 
 /// Clause 4.8, design defect 9.7: a query page's entity-level `createdAt` and

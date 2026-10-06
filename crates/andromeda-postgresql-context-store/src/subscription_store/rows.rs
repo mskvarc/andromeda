@@ -11,13 +11,13 @@ use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
+    query::temporal_query::TemporalQuery,
     subscription::{EntitySelector, NotificationParams, SubscriptionStatus},
 };
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use langtag::LangTagBuf;
-use serde_json::Value;
 
 /// A subscription row read from the `subscriptions` table. Column presence
 /// matches the macro-generated projection list; optional/nullable columns
@@ -42,8 +42,8 @@ pub struct SubscriptionRow {
     pub time_interval: Option<f64>,
     /// NGSI-LD q expression.
     pub q: Option<Expr>,
-    /// Geo query JSON (nullable).
-    pub geo_q: Option<Value>,
+    /// Geo query (nullable).
+    pub geo_q: Option<GeoQueryInput>,
     /// Scope query expression.
     pub scope_q: Option<ScopeQuery>,
     /// Context source filter.
@@ -62,8 +62,8 @@ pub struct SubscriptionRow {
     pub throttling: Option<f64>,
     /// Current lifecycle status.
     pub status: SubscriptionStatus,
-    /// Temporal query JSON.
-    pub temporal_q: Option<Value>,
+    /// Temporal query (nullable).
+    pub temporal_q: Option<TemporalQuery>,
     /// Preferred language.
     pub lang: Option<LangTagBuf>,
     /// Associated JSON-LD context URI.

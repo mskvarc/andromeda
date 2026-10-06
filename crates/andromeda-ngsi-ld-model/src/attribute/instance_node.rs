@@ -14,7 +14,7 @@ use crate::{
         geo_property_value::{GeoPropertyValue, GeoValueRefusal},
         inline_entity::InlineEntity,
         instance::Attribute,
-        instance_member::{InstanceMembers, ReadError, optional_member, refused_member},
+        instance_member::{InstanceMembers, ReadError, optional_member, refused_member, unit_code_member},
         json_property::JsonProperty,
         language_property::LanguageProperty,
         list_property::ListProperty,
@@ -53,10 +53,11 @@ impl Attribute {
             .and_then(|value| required(value, value_member));
         let common = members.common()?;
         let value_type = optional_member(members.value_type, RefusedMember::ValueType)?;
+        let unit_code = unit_code_member(name, members.unit_code)?;
         Ok(match family {
             AttributeType::Property => Attribute::Property(Property {
                 value: ngsi_ld_value(value?, value_member)?,
-                unit_code: optional_member(members.unit_code, RefusedMember::UnitCode)?,
+                unit_code,
                 value_type,
                 previous_value: optional_present(members.previous, |previous| ngsi_ld_value(previous, previous_member))?,
                 entity_id_sealed: optional_present(members.entity_id_sealed, |seal| json(seal, RefusedMember::EntityIdSealed))?,
@@ -78,6 +79,7 @@ impl Attribute {
             }),
             AttributeType::GeoProperty => Attribute::GeoProperty(GeoProperty {
                 value: geo_value(value?, value_member)?,
+                unit_code,
                 value_type,
                 previous_value: optional_present(members.previous, |previous| geo_value(previous, previous_member))?,
                 common,
@@ -96,6 +98,7 @@ impl Attribute {
             }),
             AttributeType::ListProperty => Attribute::ListProperty(ListProperty {
                 value_list: value_list(value?, value_member)?,
+                unit_code,
                 value_type,
                 previous_value_list: optional_present(members.previous, |previous| value_list(previous, previous_member))?,
                 common,
@@ -147,6 +150,7 @@ impl Attribute {
             .map_err(|refusal| ReadError::<N>::from(geo_refusal(member, refusal)))?;
         Ok(Attribute::GeoProperty(GeoProperty {
             value,
+            unit_code: None,
             value_type: None,
             previous_value: None,
             common: CommonAttributeFields::default(),

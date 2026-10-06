@@ -2,13 +2,12 @@
 //! the typed [`Entity`] into whatever the HTTP binding writes the response
 //! into.
 //!
-//! The stages are the ones [`crate::response`] runs over a document, in the
-//! same order and with the same outcome -- the clause 4.5 representation, the
-//! clause 4.15 negotiation, the clause 4.21 structural rule, the clause 4.5.23
-//! inline join, the presentation-boundary URI decoding, the clause 4.3.6.8
-//! version fallback a `Prefer: ngsi-ld=<version>` asks for, the clause 6.3.6
-//! `@context` member and the clause 4.5.16 `GeoJSON` envelope -- applied while
-//! each member is written.
+//! Every stage is applied while each member is written: the clause 4.5
+//! representation, the clause 4.15 negotiation, the clause 4.21 structural
+//! rule, the clause 4.5.23 inline join, the presentation-boundary URI decoding,
+//! the clause 4.3.6.8 version fallback a `Prefer: ngsi-ld=<version>` asks for,
+//! the clause 6.3.6 `@context` member and the clause 4.5.16 `GeoJSON` envelope.
+//! No document of the entity is built beside the body.
 
 use crate::{
     context::ResponseContext,
@@ -26,7 +25,6 @@ use crate::{
     version::{adaptation::VersionAdaptation, adapted_payload::AdaptedPayload, fallback::VersionFallback},
 };
 use andromeda_http_headers::{language::LanguageFilter, media_type::ResponseMediaType};
-use andromeda_json_literal::JsonLiteral;
 use andromeda_linked_retrieval::{
     narrowing::member::MemberRule,
     plan::{FlatEntity, InlineCursor},
@@ -34,7 +32,6 @@ use andromeda_linked_retrieval::{
 };
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
-use serde::Deserialize;
 use std::io::Write;
 
 /// One entity of an entity response, with the clause 4.21 structural rule
@@ -157,14 +154,10 @@ impl<'a> ReadyEntityResponse<'a> {
             Some(target) => (VersionAdaptation::requested(target), VersionFallback::new(target, AdaptedPayload::Entity)),
         };
         let (context, context_link) = match &self.renderer.context {
-            ResponseContext::Body(context) => (
-                Some(JsonLiteral::deserialize(context).map_err(|error| RenderError::serialization(RenderedShape::Context, error))?),
-                None,
-            ),
+            ResponseContext::Body(context) => (Some(context), None),
             ResponseContext::Link(target) => (None, Some(target.clone())), // clone: the head owns the target the renderer keeps
             ResponseContext::Absent => (None, None),
         };
-        let context = context.as_ref();
         let format = self.renderer.format;
         let selection = self.renderer.geometry_selection;
         let language_filter = self.language_filter;

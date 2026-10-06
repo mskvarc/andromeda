@@ -1,0 +1,186 @@
+//! Reading every source's answer of Temporal Evolutions into the model
+//! (clauses 5.7.3.4, 5.7.4.4 and 6.3.17).
+//!
+//! Each entity is expanded under the context it was written in -- its own
+//! `@context` when it names one, else the forwarding context the answer is
+//! spelled in -- so the histories of every holder merge by expanded name and
+//! are compacted once, under the client's context, for the response. The pages
+//! a source answered an entity in are put together here: a resumed walk
+//! answers the same entity again for the instants it did not reach, and an
+//! instance answered twice is the same instance, which the merge recognises by
+//! its `instanceId`.
+//!
+//! An aggregate carries no IRI to expand, so it is respelled instead: each
+//! name is expanded under the context the source spelled it in and compacted
+//! under the client's.
+
+use crate::{
+    FederationService,
+    outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
+    received_temporal_answer::ReceivedTemporalAnswer,
+};
+use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
+use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, error::ExpansionError};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
+use andromeda_ngsi_ld_model::{
+    entity_type::EntityTypeValue,
+    temporal::{
+        aggregated_entity::AggregatedTemporalEntity,
+        received_temporal::ContextualTemporalEntity,
+        temporal_body::TemporalBody,
+        temporal_document::MergeMode,
+        temporal_history::TemporalHistory,
+    },
+};
+use indexmap::{IndexMap, map::Entry};
+use thiserror::Error;
+use tracing::warn;
+
+/// Why one entity of an answer is not read into the model.
+#[derive(Debug, Error)]
+enum EntityReading {
+    /// The entity's own `@context` does not resolve or process.
+    #[error("its own @context cannot be processed: {0}")]
+    OwnContext(#[source] ExpansionError),
+    /// The entity does not read into the model.
+    #[error(transparent)]
+    Refused(ExpansionError),
+}
+
+impl FederationService {
+    /// Read every answer of a forwarded temporal read into the model, the
+    /// entities of each gathered by identifier.
+    ///
+    /// `context` is the client's, which an aggregate is respelled in, and
+    /// `timeproperty` the Temporal Property the instances of one entity are
+    /// ordered by when the pages of its history are put together.
+    pub(crate) async fn answered_temporal(
+        &self,
+        outcome: ForwardReadOutcome<ReceivedTemporalAnswer>,
+        context: &ContextSpec,
+        timeproperty: TimeProp,
+    ) -> ForwardReadOutcome<ForwardedTemporalEntities> {
+        let ForwardReadOutcome { results, sources } = outcome;
+        let mut read = Vec::with_capacity(results.len());
+        for answer in results {
+            read.push(self.answered_histories(answer, context, timeproperty).await);
+        }
+        ForwardReadOutcome { results: read, sources }
+    }
+
+    /// Read one source's entities into the model, each refused entity a clause
+    /// 6.3.17 warning naming it.
+    async fn answered_histories(&self, answer: ReceivedTemporalAnswer, context: &ContextSpec, timeproperty: TimeProp) -> ForwardedTemporalEntities {
+        let ReceivedTemporalAnswer {
+            registration_id,
+            mode,
+            naming,
+            entities,
+            mut warnings,
+            linked_map,
+            partial_ranges,
+        } = answer;
+        let source = registration_id.as_ref().map(ToString::to_string).unwrap_or_default();
+        let mut gathered: IndexMap<Identifier, TemporalHistory> = IndexMap::with_capacity(entities.len());
+        let mut client_names: Option<NameCompaction> = None;
+        let mut spelled_in: Option<EntityExpansion<'_>> = None;
+        for contextual in entities {
+            let ContextualTemporalEntity { context: own, body } = contextual;
+            let history = match body {
+                TemporalBody::Evolution(entity) => {
+                    let expanded = match own {
+                        Some(own) => match EntityExpansion::prepare(&self.engine, &ContextSpec::from_body(own)).await {
+                            Ok(expansion) => expansion.temporal(entity).await.map_err(EntityReading::Refused),
+                            Err(error) => Err(EntityReading::OwnContext(error)),
+                        },
+                        None => match &spelled_in {
+                            Some(expansion) => expansion.temporal(entity).await.map_err(EntityReading::Refused),
+                            None => match EntityExpansion::prepare(&self.engine, &naming).await {
+                                Ok(expansion) => {
+                                    let expanded = expansion.temporal(entity).await.map_err(EntityReading::Refused);
+                                    spelled_in = Some(expansion);
+                                    expanded
+                                }
+                                Err(error) => Err(EntityReading::OwnContext(error)),
+                            },
+                        },
+                    };
+                    match expanded {
+                        Ok(document) => TemporalHistory::Instances(document),
+                        Err(refusal) => {
+                            warn!("Context source {} returned a temporal entity that does not read: {}", source, refusal);
+                            warnings.push(NgsiLdWarning::RevalidationFailed(format!(
+                                "Context source {source} returned a temporal entity that does not read: {refusal}"
+                            )));
+                            continue;
+                        }
+                    }
+                }
+                TemporalBody::Aggregated(entity) => {
+                    if client_names.is_none() {
+                        match self.engine.compactor(context).processed_context().await {
+                            Ok(processed) => client_names = Some(NameCompaction::new(processed)),
+                            Err(error) => {
+                                warnings.push(NgsiLdWarning::RevalidationFailed(format!(
+                                    "Context source {source} answered an aggregate that cannot be spelled in the client's context: {error}"
+                                )));
+                                continue;
+                            }
+                        }
+                    }
+                    let Some(names) = &client_names else {
+                        continue;
+                    };
+                    TemporalHistory::Aggregates(self.respelled_aggregates(entity, &naming, names).await)
+                }
+            };
+            match history.id().cloned().map(|id| gathered.entry(id)) {
+                Some(Entry::Occupied(mut held)) => held.get_mut().merge(history, MergeMode::Inclusive, timeproperty),
+                Some(Entry::Vacant(vacant)) => {
+                    vacant.insert(history);
+                }
+                None => {}
+            }
+        }
+        ForwardedTemporalEntities {
+            registration_id,
+            mode,
+            entities: gathered.into_values().collect(),
+            warnings,
+            linked_map,
+            partial_ranges,
+        }
+    }
+
+    /// The aggregates `entity` a source spelled under `naming`, spelled in the
+    /// client's terms. A name that does not expand stays as the source spelled
+    /// it.
+    async fn respelled_aggregates(&self, entity: AggregatedTemporalEntity, naming: &ContextSpec, names: &NameCompaction) -> AggregatedTemporalEntity {
+        let AggregatedTemporalEntity { id, type_, attrs } = entity;
+        let type_ = match type_ {
+            EntityTypeValue::Single(name) => EntityTypeValue::Single(self.respelled_type(&name, naming, names).await.unwrap_or(name)),
+            EntityTypeValue::Multiple(types) => {
+                let mut respelled = Vec::with_capacity(types.len());
+                for name in types {
+                    respelled.push(self.respelled_type(&name, naming, names).await.unwrap_or(name));
+                }
+                EntityTypeValue::Multiple(respelled)
+            }
+        };
+        let mut respelled_attrs = IndexMap::with_capacity(attrs.len());
+        for (name, instances) in attrs {
+            let name = self.respelled_attribute(&name, naming, names).await.unwrap_or(name);
+            respelled_attrs.insert(name, instances);
+        }
+        AggregatedTemporalEntity {
+            id,
+            type_,
+            attrs: respelled_attrs,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

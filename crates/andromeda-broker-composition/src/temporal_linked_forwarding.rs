@@ -33,6 +33,7 @@ use andromeda_federation::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::source::RemoteReach;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::temporal::{temporal_document::MergeMode, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::{
@@ -138,13 +139,22 @@ impl RemoteTemporalLinkedSource for ForwardedTemporalLinkedSource {
         match forwarded {
             Ok(outcome) => {
                 let mut resolved = RemoteTemporalLinkedEntities::default();
+                let mut gathered: Vec<TemporalHistory> = Vec::new();
                 for source in outcome.results {
                     for warning in source.warnings {
                         warn!("Linked entity {} could not be fully resolved from a context source: {}", id, warning);
                         resolved.failures.push(resolution_failure(id, warning));
                     }
-                    resolved.entities.extend(source.entities);
+                    // Every source holding part of an entity's history contributes
+                    // it; an instance two of them answer is one instance.
+                    for history in source.entities {
+                        match gathered.iter().position(|held| held.id() == history.id()) {
+                            Some(held) => gathered[held].merge(history, MergeMode::Inclusive, window.timeproperty),
+                            None => gathered.push(history),
+                        }
+                    }
                 }
+                resolved.entities = gathered;
                 Ok(resolved)
             }
             Err(error) => {

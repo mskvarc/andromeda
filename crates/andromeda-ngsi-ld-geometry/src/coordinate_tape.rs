@@ -9,13 +9,13 @@
 //! costs four bytes beside its two ordinates, a fraction of what a JSON tree
 //! spends on it, which allocates every array and every number token.
 //!
-//! An ordinate is recorded as the double nearest to the number written, the
-//! reading `serde_json::Value::as_f64` gives, so a number no finite double
-//! stands for is recorded as a member that is not an ordinate at all.
+//! An ordinate is recorded as the double nearest to the number written, so a
+//! number no finite double stands for is recorded as a member that is not an
+//! ordinate at all.
 
 use andromeda_ngsi_ld_number::json_value::value_census::{MemberName, MemberNameSeed};
 use serde::de::{DeserializeSeed, Deserializer, Error as DeserializeError, IgnoredAny, MapAccess, SeqAccess, Visitor};
-use serde_json::{Number, Value};
+use serde_json::Number;
 use std::{fmt, slice::Iter};
 
 /// One step of a recorded `coordinates` member.
@@ -57,26 +57,17 @@ pub(crate) enum TapeItem {
 }
 
 impl CoordinateTape {
-    /// Record a `coordinates` member already parsed into a tree.
-    pub(crate) fn of_value(value: &Value) -> CoordinateTape {
+    /// Record a `coordinates` member written as JSON text.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `serde_json` failure for text that is no single JSON value.
+    pub(crate) fn of_text(text: &str) -> Result<CoordinateTape, serde_json::Error> {
         let mut tape = CoordinateTape::default();
-        tape.record_value(value);
-        tape
-    }
-
-    /// Record `value` and everything below it.
-    fn record_value(&mut self, value: &Value) {
-        match value {
-            Value::Array(items) => {
-                self.steps.push(CoordinateStep::Open);
-                for item in items {
-                    self.record_value(item);
-                }
-                self.steps.push(CoordinateStep::Close);
-            }
-            Value::Number(number) => self.record_number(number.as_f64()),
-            Value::Null | Value::Bool(_) | Value::String(_) | Value::Object(_) => self.steps.push(CoordinateStep::Other),
-        }
+        let mut reader = serde_json::Deserializer::from_str(text);
+        CoordinateTapeSeed::new(&mut tape).deserialize(&mut reader)?;
+        reader.end()?;
+        Ok(tape)
     }
 
     /// Record a number by the double that stands for it, if a finite one
@@ -269,7 +260,7 @@ impl Visitor<'_> for OrdinateTokenSeed {
 mod tests {
     use crate::coordinate_tape::{CoordinateTape, CoordinateTapeSeed, TapeItem};
     use serde::de::DeserializeSeed;
-    use serde_json::{Deserializer, Value};
+    use serde_json::Value;
     use std::iter::from_fn;
 
     /// Every item of `tape`, in order.
@@ -280,10 +271,20 @@ mod tests {
 
     /// The tape `text` records when read from its text.
     fn streamed(text: &str) -> CoordinateTape {
+        CoordinateTape::of_text(text).expect("valid JSON")
+    }
+
+    /// The tape a parsed tree records when it is read through serde.
+    fn of_tree(tree: &Value) -> CoordinateTape {
         let mut tape = CoordinateTape::default();
-        let mut reader = Deserializer::from_str(text);
-        CoordinateTapeSeed::new(&mut tape).deserialize(&mut reader).expect("valid JSON");
+        CoordinateTapeSeed::new(&mut tape).deserialize(tree).expect("a tree is read to its end");
         tape
+    }
+
+    #[test]
+    fn text_with_trailing_characters_or_no_value_records_no_tape() {
+        assert!(CoordinateTape::of_text("[1, 2] x").is_err());
+        assert!(CoordinateTape::of_text("[1, ").is_err());
     }
 
     #[test]
@@ -296,7 +297,7 @@ mod tests {
             "7",
         ] {
             let tree: Value = serde_json::from_str(text).expect("valid JSON");
-            pretty_assertions::assert_eq!(items(&streamed(text)), items(&CoordinateTape::of_value(&tree)), "{text}");
+            pretty_assertions::assert_eq!(items(&streamed(text)), items(&of_tree(&tree)), "{text}");
         }
     }
 

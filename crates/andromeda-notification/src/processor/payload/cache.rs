@@ -7,12 +7,9 @@
 //! computed once per change and shared, which is why a key names everything a
 //! rendering depends on and nothing else.
 
-use crate::{
-    error::NotificationError,
-    processor::payload::{join::report_unresolved, selection::Selection},
-};
+use crate::{error::NotificationError, processor::payload::selection::Selection};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::query::{EntityQueryService, core_linked_source::CoreLinkedSource};
+use andromeda_entity::query::{EntityQueryService, core_linked_source::CoreLinkedSource, notification_join::report_unresolved};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::{
     graph::{LinkedGraph, RootEdges},

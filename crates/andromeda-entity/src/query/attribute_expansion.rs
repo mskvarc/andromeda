@@ -73,6 +73,7 @@ impl<'a> AttributeExpansions<'a> {
 #[cfg(test)]
 mod tests {
     use crate::query::attribute_expansion::AttributeExpansions;
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::entity::Entity;
@@ -84,7 +85,7 @@ mod tests {
     }
 
     fn context() -> ContextSpec {
-        ContextSpec::from_body(json!({ "speed": "https://example.com/speed" }))
+        ContextSpec::from_body(JsonLiteral::admit(&json!({ "speed": "https://example.com/speed" }).to_string()).expect("an admissible literal"))
     }
 
     fn name(value: &str) -> AttributeName {

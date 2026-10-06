@@ -6,10 +6,10 @@
 //! processing may depend on which was made.
 
 use crate::loader::cache_lifetime::{CacheLifetime, ResidualLifetime};
+use andromeda_json_literal::JsonLiteral;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
 use iri_rs::IriBuf;
-use serde_json::Value;
 use std::fmt::Debug;
 use thiserror::Error;
 
@@ -35,7 +35,7 @@ pub enum ContextCacheError {
 #[derive(Debug, Clone)]
 pub struct CachedContext {
     /// The stored `@context` document.
-    pub payload: Value,
+    pub payload: JsonLiteral,
     /// How much of the entry's lifetime is still ahead of it.
     pub residual: ResidualLifetime,
     /// The URL the stored row keys clause 5.13.3.5 hit accounting on.
@@ -86,7 +86,7 @@ pub enum StoredDocumentSource {
 pub struct DownloadedContext {
     /// The downloaded document, reduced to its `@context` subtree (clause
     /// 5.13.2.3).
-    pub document: Value,
+    pub document: JsonLiteral,
     /// The URL the document was finally read from, after redirects and a
     /// JSON-LD alternate link.
     pub document_url: IriBuf,
@@ -129,5 +129,5 @@ pub trait ContextCache: Send + Sync + Debug {
     /// task the broker wires up, precisely so this write stays off the
     /// expansion path.
     #[must_use = "context-cache writes must be awaited"]
-    async fn put(&self, url: &IriBuf, document_url: &IriBuf, payload: &Value, lifetime: CacheLifetime) -> Result<(), ContextCacheError>;
+    async fn put(&self, url: &IriBuf, document_url: &IriBuf, payload: &JsonLiteral, lifetime: CacheLifetime) -> Result<(), ContextCacheError>;
 }

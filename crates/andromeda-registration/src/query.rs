@@ -2,9 +2,8 @@
 
 use crate::{
     RegistrationService,
-    context_source_properties::compact_context_source_properties,
     error::RegistrationError,
-    information_compaction::compacted_information,
+    registration_compaction::compacted_registration,
     registration_invariant::RegistrationInvariant,
     registration_validation_reason::RegistrationValidationReason,
 };
@@ -37,13 +36,13 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
 use iri_rs::IriBuf;
-use serde_json::Value;
 
 /// The registrations a discovery query answers with, and the pagination it
 /// reports around them (clause 5.10.2).
 pub struct DiscoveredRegistrations {
-    /// The clause-5.10.2.5-trimmed, response-ready registration documents.
-    pub registrations: Vec<Value>,
+    /// The clause-5.10.2.5-trimmed, response-ready registrations, their names
+    /// compacted under the request's context.
+    pub registrations: Vec<ContextSourceRegistration>,
     /// Total matches before pagination (clause 6.3.13).
     pub total: u64,
     /// The first and last registration identifiers of the raw store page,
@@ -74,10 +73,8 @@ impl RegistrationService {
     /// names an attribute that is not an IRI once expanded,
     /// [`RegistrationError::Query`] when the `q`, `csf`, geo or temporal
     /// filter cannot be compiled, [`RegistrationError::JsonLd`] when `context`
-    /// cannot be loaded or a response cannot be compacted under it,
-    /// [`RegistrationError::Internal`] when a matched registration cannot be
-    /// serialised, and [`RegistrationError::Persistence`] when the store
-    /// rejects the query.
+    /// cannot be loaded or a response cannot be compacted under it, and
+    /// [`RegistrationError::Persistence`] when the store rejects the query.
     pub async fn query(
         &self,
         params: &CsrQueryParameters,
@@ -102,24 +99,14 @@ impl RegistrationService {
         let scanned = page.registrations.len();
         let total = page.total;
         let names = NameCompaction::new(self.engine.compactor(context).processed_context().await?);
-        let mut values = Vec::with_capacity(page.registrations.len());
+        let mut matched = Vec::with_capacity(page.registrations.len());
         for registration in page.registrations {
-            let Some(mut registration) = registration_matching_the_query(registration, &compiled)? else {
-                continue;
-            };
-            let additional_properties = registration.additional_properties.take();
-            registration.coverage.information = compacted_information(&names, &registration.coverage.information);
-            let mut value = serde_json::to_value(registration).map_err(RegistrationError::Representation)?;
-            if let Some(properties) = additional_properties
-                && let Some(compacted) = compact_context_source_properties(&names, properties)
-                && let Some(target) = value.as_object_mut()
-            {
-                target.extend(compacted);
+            if let Some(registration) = registration_matching_the_query(registration, &compiled)? {
+                matched.push(compacted_registration(&names, registration));
             }
-            values.push(value);
         }
         Ok(DiscoveredRegistrations {
-            registrations: values,
+            registrations: matched,
             total,
             boundary,
             scanned,

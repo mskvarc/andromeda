@@ -26,7 +26,9 @@ pub fn classify_context_hosting_error(error: &ContextHostingError) -> Classified
     match error {
         ContextHostingError::NoRequestAuthority => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
         ContextHostingError::Persistence(failure) => classify_store_failure(*failure, error, CONTEXT_HOSTING),
-        ContextHostingError::NoHost | ContextHostingError::MintedUrlNotIri(_) => ClassifiedReport::internal(error, CONTEXT_HOSTING),
+        ContextHostingError::NoHost | ContextHostingError::MintedUrlNotIri(_) | ContextHostingError::Unwritable(_) => {
+            ClassifiedReport::internal(error, CONTEXT_HOSTING)
+        }
     }
 }
 

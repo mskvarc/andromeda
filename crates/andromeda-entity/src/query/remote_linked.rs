@@ -14,8 +14,8 @@
 
 use crate::error::EntityError;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use futures::future::BoxFuture;
 use std::{fmt, num::NonZeroU32};
@@ -26,8 +26,9 @@ use std::{fmt, num::NonZeroU32};
 /// report that part of what was asked for is missing.
 #[derive(Debug, Default)]
 pub struct RemoteLinkedEntities {
-    /// The entities the source resolved.
-    pub entities: Vec<Entity>,
+    /// The entities the source resolved, in the model, each with the Linked
+    /// Entities it nested.
+    pub entities: Vec<ReceivedState>,
     /// Every Linked Entity the attempt left unresolved.
     pub failures: Vec<LinkedResolutionFailure>,
 }

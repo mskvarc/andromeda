@@ -120,6 +120,11 @@ impl Serialize for ReifiedMember<'_> {
                 Some(kept) => self.notified(*kept, InstanceStanding::Alone).serialize(serializer),
                 None => serializer.collect_seq(instances.iter().map(|instance| self.notified(*instance, InstanceStanding::AmongInstances))),
             },
+            MemberInstances::Evolution(instances) => serializer.collect_seq(
+                instances
+                    .iter()
+                    .map(|attribute| self.instance(attribute, InstanceReport::default(), InstanceStanding::AmongInstances)),
+            ),
         }
     }
 }

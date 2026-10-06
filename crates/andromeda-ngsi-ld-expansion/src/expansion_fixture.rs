@@ -9,11 +9,15 @@
 
 use crate::{
     attribute_fragment::AttributeFragment,
+    error::ExpansionError,
     normalization::Normalization,
-    processor_decoding::{decode_attribute_fragment, decode_entity},
+    processor_decoding::{decode_attribute_fragment, decode_entity, decode_temporal},
+    processor_request::{attribute_text, entity_text, patch_text},
     typed_expander::TypedExpander,
     typed_expansion::TypedExpansion,
+    written_member::WrittenMember,
 };
+use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{expansion_context::ExpansionContext, processor::JsonLdEngine},
@@ -21,14 +25,18 @@ use andromeda_jsonld::{
 };
 use andromeda_ngsi_ld_entity::{document::EntityDocument, refusal::EntityRefusal};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
-use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact};
-use andromeda_ngsi_ld_representation::normalization::normalize_attribute_node;
+use andromeda_ngsi_ld_model::{
+    attribute::{instance::AttributeValue, member_reading::MemberReading, merge_member::MergeMember},
+    entity::{Entity, EntityPatch},
+    temporal::{temporal_document::TemporalDocument, temporal_entity::TemporalEntity},
+};
+use andromeda_ngsi_ld_number::json_value::text_admission::admit_json_text;
+use andromeda_ngsi_ld_representation::compact_node::produced_node::ProducedNode;
 use iri_rs::IriBuf;
-use jsonld::{ExpandedDocument, syntax::Value as JsonLdValue};
+use jsonld::ExpandedDocument;
 use rdfx::BlankIdBuf;
-use serde::{Serialize, de::DeserializeOwned};
-use serde_json::{Map, Value};
+use serde::de::{DeserializeOwned, Error as _};
+use serde_json::{Value, value::RawValue};
 use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::Arc};
 use url::Url;
 
@@ -132,9 +140,12 @@ impl<T: Debug + PartialEq> BothWays<T> {
 /// A request body as the transport reads it: numbers canonicalised and the
 /// body `@context` split off into the request context.
 pub fn admitted(mut body: Value) -> (Value, ContextSpec) {
-    canonicalize_numbers(&mut body).expect("the fixture's numbers are in range");
+    let text = serde_json::to_vec(&body).expect("a fixture body serialises");
+    admit_json_text(&text).expect("the fixture's numbers are in range");
     let context = body.as_object_mut().and_then(|members| members.remove("@context"));
-    let spec = context.map_or_else(ContextSpec::none, ContextSpec::from_body);
+    let spec = context.map_or_else(ContextSpec::none, |context| {
+        ContextSpec::from_body(JsonLiteral::admit(&context.to_string()).expect("the fixture's context is admissible"))
+    });
     (body, spec)
 }
 
@@ -143,24 +154,19 @@ async fn context(engine: &JsonLdEngine, spec: &ContextSpec) -> Result<Arc<Expans
     engine.expansion_context(spec).await.map_err(FixtureFailure::Context)
 }
 
-/// The processor's expansion of a compact document.
-async fn processor(engine: &JsonLdEngine, context: &ExpansionContext, document: Value) -> Result<ExpandedDocument<IriBuf, BlankIdBuf>, FixtureFailure> {
-    context
-        .expand(engine, &JsonLdValue::from_serde_json(document))
-        .await
-        .map_err(FixtureFailure::Processor)
-}
-
-/// The serialization the write path hands the processor today.
-fn serialized<T: Serialize>(request: &T, normalization: Normalization) -> Value {
-    let mut json = serde_json::to_value(request).expect("the typed request serializes");
-    normalization.apply(&mut json);
-    json
+/// The processor's expansion of a compact document, handed to it as `text`.
+async fn processor(engine: &JsonLdEngine, context: &ExpansionContext, text: &[u8]) -> Result<ExpandedDocument<IriBuf, BlankIdBuf>, FixtureFailure> {
+    context.expand_text(engine, text).await.map_err(FixtureFailure::Processor)
 }
 
 /// Decode a body as a typed compact request.
 fn typed<T: DeserializeOwned>(body: &Value) -> Result<T, FixtureFailure> {
-    deserialize_exact(body).map_err(FixtureFailure::NotTyped)
+    serde_json::from_str(&body.to_string()).map_err(FixtureFailure::NotTyped)
+}
+
+/// The text the write path hands the processor for a typed request.
+fn handed(text: Result<Vec<u8>, ExpansionError>) -> Result<Vec<u8>, FixtureFailure> {
+    text.map_err(|error| FixtureFailure::NotTyped(serde_json::Error::custom(error)))
 }
 
 /// Expand `body` decoded as the typed compact `Entity`.
@@ -168,47 +174,51 @@ pub async fn entity(engine: &JsonLdEngine, body: Value, normalization: Normaliza
     let (body, spec) = admitted(body);
     let entity: Entity = typed(&body)?;
     let context = context(engine, &spec).await?;
+    let text = handed(entity_text(&entity, normalization))?;
     Ok(BothWays {
         typed: TypedExpander::new(&context).entity(&entity, normalization),
-        processor: decode_entity(processor(engine, &context, serialized(&entity, normalization)).await?),
+        processor: decode_entity(processor(engine, &context, &text).await?),
     })
 }
 
-/// Expand `body` decoded as the typed compact `EntityPatch`.
+/// Expand `body` decoded as the typed compact `EntityPatch` of the write
+/// `normalization` names: an update fragment, or a merge fragment.
 pub async fn patch(engine: &JsonLdEngine, body: Value, normalization: Normalization) -> Result<BothWays<EntityDocument>, FixtureFailure> {
+    match normalization {
+        Normalization::Entity => patch_of::<AttributeValue>(engine, body, normalization).await,
+        Normalization::MemberDeletions => patch_of::<MergeMember>(engine, body, normalization).await,
+    }
+}
+
+/// Expand `body` decoded as the typed compact `EntityPatch` of members `M`.
+async fn patch_of<M: WrittenMember + MemberReading>(
+    engine: &JsonLdEngine,
+    body: Value,
+    normalization: Normalization,
+) -> Result<BothWays<EntityDocument>, FixtureFailure> {
     let (body, spec) = admitted(body);
-    let patch: EntityPatch = typed(&body)?;
+    let patch: EntityPatch<M> = typed(&body)?;
     let context = context(engine, &spec).await?;
+    let text = handed(patch_text(&patch, normalization))?;
     Ok(BothWays {
         typed: TypedExpander::new(&context).entity_patch(&patch, normalization),
-        processor: decode_entity(processor(engine, &context, serialized(&patch, normalization)).await?),
+        processor: decode_entity(processor(engine, &context, &text).await?),
     })
 }
 
-/// Expand `body` held as JSON (append, update).
-pub async fn fragment(engine: &JsonLdEngine, body: Value, normalization: Normalization) -> Result<BothWays<EntityDocument>, FixtureFailure> {
-    let (mut body, spec) = admitted(body);
-    normalization.apply(&mut body);
-    let context = context(engine, &spec).await?;
-    let typed = TypedExpander::new(&context).normalized_fragment(&body);
-    Ok(BothWays {
-        typed,
-        processor: decode_entity(processor(engine, &context, body).await?),
-    })
-}
-
-/// The processor's expansion of `body` held as JSON, read by the processor
-/// decoding and by the canonical decoder of the entity crate from the
-/// expanded text.
+/// The processor's expansion of `body` decoded as the typed compact
+/// `EntityPatch`, read by the processor decoding and by the canonical decoder
+/// of the entity crate from the expanded text.
 pub async fn decoded_both_ways(
     engine: &JsonLdEngine,
     body: Value,
     normalization: Normalization,
 ) -> Result<(Result<EntityDocument, EntityRefusal>, Result<EntityDocument, EntityRefusal>), FixtureFailure> {
-    let (mut body, spec) = admitted(body);
-    normalization.apply(&mut body);
+    let (body, spec) = admitted(body);
+    let patch: EntityPatch = typed(&body)?;
     let context = context(engine, &spec).await?;
-    let expanded = processor(engine, &context, body).await?;
+    let text = handed(patch_text(&patch, normalization))?;
+    let expanded = processor(engine, &context, &text).await?;
     let text = serde_json::to_vec(&expanded.clone().into_serde_json()).expect("the expanded document serializes"); // clone: the document is read twice
     Ok((decode_entity(expanded), EntityDocument::from_slice(&text)))
 }
@@ -216,14 +226,31 @@ pub async fn decoded_both_ways(
 /// Expand `body` as the attribute fragment of clauses 5.6.4 and 5.6.19,
 /// written for the attribute `name`.
 pub async fn attribute(engine: &JsonLdEngine, name: &str, body: Value) -> Result<BothWays<AttributeFragment>, FixtureFailure> {
-    let (mut body, spec) = admitted(body);
-    normalize_attribute_node(name, &mut body);
+    let (body, spec) = admitted(body);
+    let written = RawValue::from_string(body.to_string()).map_err(FixtureFailure::NotTyped)?;
+    let member = MergeMember::from_fragment_node(name, ProducedNode::new(JsonPiece::new(&written)))
+        .map_err(|error| FixtureFailure::NotTyped(serde_json::Error::custom(error)))?;
     let name: AttributeName = name.parse().expect("an attribute name");
     let context = context(engine, &spec).await?;
-    let typed = TypedExpander::new(&context).normalized_attribute(&name, &body);
-    let document = Value::Object(Map::from_iter([(name.to_string(), body)]));
+    let text = handed(attribute_text(&name, &member))?;
     Ok(BothWays {
-        typed,
-        processor: decode_attribute_fragment(&name, processor(engine, &context, document).await?),
+        typed: TypedExpander::new(&context).attribute(&name, &member),
+        processor: decode_attribute_fragment(&name, processor(engine, &context, &text).await?),
+    })
+}
+
+/// Expand `body` decoded as the Temporal Evolution of an entity, its clause 4.8
+/// system times travelling beside the instances.
+pub async fn temporal(engine: &JsonLdEngine, body: Value) -> Result<BothWays<TemporalDocument>, FixtureFailure> {
+    let (body, spec) = admitted(body);
+    let evolution: TemporalEntity = typed(&body)?;
+    let (entity, system_times) = evolution
+        .into_entity()
+        .map_err(|error| FixtureFailure::NotTyped(serde_json::Error::custom(error)))?;
+    let context = context(engine, &spec).await?;
+    let text = handed(entity_text(&entity, Normalization::Entity))?;
+    Ok(BothWays {
+        typed: TypedExpander::new(&context).temporal(&entity, system_times),
+        processor: decode_temporal(processor(engine, &context, &text).await?, system_times),
     })
 }

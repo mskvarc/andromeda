@@ -13,6 +13,7 @@ andromeda-context-registry.workspace = true
 andromeda-http-extraction.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true
+andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true
@@ -28,7 +29,7 @@ headers = "0.4.2"
 hex = "0.4.3"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 percent-encoding = "2.3.2"
-serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
+serde_json = { version = "1.0.151", features = ["arbitrary_precision", "raw_value"] }
 sha2 = "0.11.0"
 thiserror = "2.0.21"
 url = { version = "2.5.8", features = ["serde"] }
@@ -38,6 +39,7 @@ andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-test-harness.workspace = true
+chrono = "0.4.45"
 pretty_assertions = "1.4.1"
 tokio = { version = "1.53.2", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }

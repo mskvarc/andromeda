@@ -1,10 +1,10 @@
 //! The `@context` resources the broker caches, hosts, and serves (ETSI GS CIM 009 clause 5.13).
 
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 use typed_builder::TypedBuilder;
 use url::Url;
@@ -55,33 +55,48 @@ pub struct ContextMetadata {
     pub number_of_hits: u64,
     /// Implementation-specific extra information (clause 5.13).
     #[builder(default = Default::default())]
-    pub extra_info: Option<Value>,
-}
-
-/// Service-layer DTO: list result as URLs or full metadata records.
-#[derive(Debug)]
-pub enum ContextListResult {
-    /// List of context URLs or IDs.
-    Identifiers(Vec<Identifier>),
-    /// List of context metadata records with full details.
-    Detailed(Vec<ContextMetadata>),
-}
-
-/// Service-layer DTO: single-context fetch result (payload or metadata).
-#[derive(Debug)]
-pub enum ContextGetResult {
-    /// The raw JSON-LD context payload.
-    Payload(Value),
-    /// Full context metadata including usage statistics.
-    Detailed(Box<ContextMetadata>),
+    pub extra_info: Option<JsonLiteral>,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::jsonld_context::{ContextKind, ContextMetadata};
+    use andromeda_json_literal::JsonLiteral;
+    use chrono::{TimeZone, Utc};
+    use serde_json::json;
 
     #[test]
     fn an_unknown_context_kind_label_is_a_parse_error_not_a_panic() {
         assert!("NotAKind".parse::<ContextKind>().is_err());
+    }
+
+    /// Clause 5.13.2 and 5.13.3: the posted `@context` document is held as the
+    /// JSON it was posted as, and the implementation-specific `extraInfo`
+    /// member is written back exactly as it was held.
+    #[test]
+    fn a_jsonld_context_round_trips_through_its_typed_model() {
+        let document = r#"{"@context":{"Spot":"https://example.org/Spot","speed":{"@id":"https://example.org/speed","@type":"@json"}}}"#;
+        let held: JsonLiteral = serde_json::from_slice(document.as_bytes()).expect("the document is admitted straight from its bytes");
+        pretty_assertions::assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&serde_json::to_string(&held).expect("the document is written back")).expect("written JSON"),
+            serde_json::from_str::<serde_json::Value>(document).expect("posted JSON")
+        );
+        let extra = r#"{"origin":{"mirrored":true},"weights":[1,2.5]}"#;
+        let instant = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a valid instant");
+        let metadata = ContextMetadata::builder()
+            .serving_iri(None)
+            .local_id("urn:ngsi-ld:Context:c1".parse().expect("a valid identifier"))
+            .kind(ContextKind::Hosted)
+            .created_at(instant)
+            .last_usage(instant)
+            .number_of_hits(3)
+            .extra_info(Some(JsonLiteral::admit(extra).expect("an admissible literal")))
+            .build();
+        let written = serde_json::to_value(&metadata).expect("the metadata serialises");
+        pretty_assertions::assert_eq!(
+            written["extraInfo"],
+            serde_json::from_str::<serde_json::Value>(extra).expect("parsed extra info")
+        );
+        pretty_assertions::assert_eq!(written["localId"], json!("urn:ngsi-ld:Context:c1"));
     }
 }

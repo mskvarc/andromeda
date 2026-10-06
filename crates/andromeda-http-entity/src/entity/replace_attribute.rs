@@ -27,7 +27,7 @@ use crate::{
     written_payload_admission::admit_written_attribute,
 };
 use andromeda_entity::write_kind::ReplaceAttribute;
-use andromeda_federation::request::TriggeringRequest;
+use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_model::attribute::{instance::AttributeValue, written_attribute::WrittenAttribute};
@@ -70,16 +70,22 @@ pub(crate) async fn replace_attr(
     let plan = state.forwarding.plan_provision(&target, &request).await.with_entity_instance(&uri)?;
     // Clause 5.6.19.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and an
-    // attribute a proxied registration claims is still validated. Only a
-    // registration the plan sends the fragment to reads it again, so it is
-    // serialised for them before it moves into the admission.
-    let payload = plan.payload(&fragment).with_entity_instance(&uri)?;
+    // attribute a proxied registration claims is still validated. The
+    // registrations the plan sends the fragment to read the instance the
+    // admission expanded.
     let admitted = admit_written_attribute::<ReplaceAttribute>(service, &attr_id, &fragment, &context)
         .await
         .with_entity_instance(&uri)?;
     let forwarded = state
         .forwarding
-        .execute_provision(plan, &request, payload.as_deref())
+        .execute_provision(
+            plan,
+            &request,
+            Some(ForwardedContent::Attribute {
+                name: admitted.expanded_name(),
+                instance: admitted.instance(),
+            }),
+        )
         .await
         .with_entity_instance(&uri)?;
 
@@ -90,10 +96,10 @@ pub(crate) async fn replace_attr(
 
     // Clause 5.6.19.4: an attribute a proxied registration covers is replaced
     // at the source, never here; an inclusive one is replaced in both places.
-    let local = if collect_proxied_attrs(&forwarded).contains(&attr_id) {
-        LocalOutcome::NothingRemained
-    } else {
+    let local = if collect_proxied_attrs(&forwarded).is_empty() {
         LocalOutcome::processed(service.replace_attr(&target, &id, dataset_id, admitted).await, classify_entity_error)
+    } else {
+        LocalOutcome::NothingRemained
     };
     provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

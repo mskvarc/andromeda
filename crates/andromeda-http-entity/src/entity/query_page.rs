@@ -13,7 +13,6 @@ use crate::entity::query_forwarding::ForwardedQueryResults;
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::pagination::{PageOutcome, append_page_links};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
@@ -120,7 +119,7 @@ impl QueryPage {
     /// `local_total` is what the store counted, which stands whenever the store
     /// held the whole collection. A merged collection is ordered by `id` before
     /// the window is cut from it.
-    pub(crate) fn cut(&self, entities: Vec<Entity>, local_total: Option<i64>) -> (Vec<Entity>, Option<i64>) {
+    pub(crate) fn cut<T>(&self, entities: Vec<T>, id: impl Fn(&T) -> &str, local_total: Option<i64>) -> (Vec<T>, Option<i64>) {
         match self.cut_at {
             PageCut::Local => (entities, local_total),
             PageCut::AfterMerge { .. } => {
@@ -135,9 +134,9 @@ impl QueryPage {
                 // because clause 5.7.2.4 refuses `orderBy` once a source takes
                 // part.
                 let mut entities = entities;
-                entities.sort_unstable_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+                entities.sort_unstable_by(|left, right| id(left).cmp(id(right)));
                 let entities = entities;
-                (self.window.cut(entities, |entity| entity.id.as_str()), total)
+                (self.window.cut(entities, id), total)
             }
         }
     }
@@ -211,7 +210,7 @@ mod tests {
     /// deterministic order, the `id` order the local store pages in.
     #[test]
     fn a_merged_collection_is_cut_from_its_identifier_order() {
-        let (page, total) = merged_page(2, PageStart::Offset(1), CountPolicy::Emit).cut(five_merged(), None);
+        let (page, total) = merged_page(2, PageStart::Offset(1), CountPolicy::Emit).cut(five_merged(), |entity| entity.id.as_str(), None);
         pretty_assertions::assert_eq!(ids(&page), vec!["urn:b", "urn:c"]);
         pretty_assertions::assert_eq!(total, Some(5));
     }
@@ -222,7 +221,7 @@ mod tests {
     #[test]
     fn a_cursor_continues_a_walk_over_the_merged_collection() {
         let start = PageStart::Cursor(Some(PageCursor::After(uri("urn:b"))));
-        let (page, total) = merged_page(2, start, CountPolicy::Emit).cut(five_merged(), None);
+        let (page, total) = merged_page(2, start, CountPolicy::Emit).cut(five_merged(), |entity| entity.id.as_str(), None);
         pretty_assertions::assert_eq!(ids(&page), vec!["urn:c", "urn:d"]);
         pretty_assertions::assert_eq!(total, Some(5));
     }
@@ -232,7 +231,7 @@ mod tests {
     #[test]
     fn a_backward_cursor_pages_back_through_the_merged_collection() {
         let start = PageStart::Cursor(Some(PageCursor::Before(uri("urn:d"))));
-        let (page, _) = merged_page(2, start, CountPolicy::Omit).cut(five_merged(), None);
+        let (page, _) = merged_page(2, start, CountPolicy::Omit).cut(five_merged(), |entity| entity.id.as_str(), None);
         pretty_assertions::assert_eq!(ids(&page), vec!["urn:b", "urn:c"]);
     }
 
@@ -241,10 +240,10 @@ mod tests {
     #[test]
     fn the_count_of_a_merged_collection_is_its_whole_size() {
         let merged = vec![entity("urn:a"), entity("urn:b"), entity("urn:c")];
-        let (page, total) = merged_page(10, PageStart::Offset(3), CountPolicy::Emit).cut(merged, Some(1));
+        let (page, total) = merged_page(10, PageStart::Offset(3), CountPolicy::Emit).cut(merged, |entity| entity.id.as_str(), Some(1));
         assert!(page.is_empty());
         pretty_assertions::assert_eq!(total, Some(3));
-        let (_, total) = merged_page(10, PageStart::Offset(0), CountPolicy::Omit).cut(vec![entity("urn:a")], Some(1));
+        let (_, total) = merged_page(10, PageStart::Offset(0), CountPolicy::Omit).cut(vec![entity("urn:a")], |entity| entity.id.as_str(), Some(1));
         pretty_assertions::assert_eq!(total, None);
     }
 
@@ -255,7 +254,7 @@ mod tests {
             cut_at: PageCut::Local,
             ..merged_page(10, PageStart::Offset(0), CountPolicy::Emit)
         };
-        let (entities, total) = page.cut(vec![entity("urn:b"), entity("urn:a")], Some(7));
+        let (entities, total) = page.cut(vec![entity("urn:b"), entity("urn:a")], |entity| entity.id.as_str(), Some(7));
         pretty_assertions::assert_eq!(ids(&entities), vec!["urn:b", "urn:a"]);
         pretty_assertions::assert_eq!(total, Some(7));
     }

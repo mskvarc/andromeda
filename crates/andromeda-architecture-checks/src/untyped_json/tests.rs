@@ -1,9 +1,8 @@
 use crate::untyped_json::{
-    BaselineDrift,
     UntypedJsonSite,
-    baseline_drift,
     module_imports::{ModuleImports, ModulePosition},
     source_sites,
+    violation_report,
 };
 use pretty_assertions::assert_eq;
 
@@ -137,6 +136,13 @@ fn the_processor_tree_is_reported_outside_its_owners() {
 }
 
 #[test]
+fn the_processor_tree_re_exported_by_the_jsonld_facade_is_reported_too() {
+    let source = "fn f(v: jsonld::syntax::Value) {}\n";
+    assert_eq!(reports(OUTSIDE, source), vec![format!("{OUTSIDE}:1: jsonld::syntax::Value")]);
+    assert_eq!(reports("crates/andromeda-jsonld/src/engine/expansion.rs", source), Vec::<String>::new());
+}
+
+#[test]
 fn the_processor_tree_is_admitted_in_the_engine_and_the_literal_crate() {
     let source = "fn f(v: jsonld_syntax::Value) -> jstrict::Value { todo!() }\n";
     assert_eq!(reports("crates/andromeda-jsonld/src/engine/expansion.rs", source), Vec::<String>::new());
@@ -153,42 +159,23 @@ fn a_serde_json_tree_is_reported_in_the_processor_owners_too() {
 }
 
 #[test]
-fn a_baselined_file_may_not_grow() {
-    let sites = [site(OUTSIDE, 1), site(OUTSIDE, 2)];
-    let drift = baseline_drift(&sites, &[(OUTSIDE, 1)]);
-    assert_eq!(
-        drift.grown,
-        vec![format!(
-            "{OUTSIDE}: 2 (baseline 1)\n  {OUTSIDE}:1: serde_json::Value\n  {OUTSIDE}:2: serde_json::Value"
-        )]
-    );
-    assert_eq!(drift.shrunk, Vec::<String>::new());
+fn a_production_value_fails_the_gate_with_its_file_and_line() {
+    let report = violation_report(&[site(OUTSIDE, 7)]).unwrap_or_default();
+    assert!(report.ends_with(&format!("\n  {OUTSIDE}:7: serde_json::Value")), "{report}");
 }
 
 #[test]
-fn a_file_off_the_baseline_may_name_no_tree() {
-    let drift = baseline_drift(&[site(OUTSIDE, 7)], &[]);
-    assert_eq!(drift.grown, vec![format!("{OUTSIDE}: 1 (baseline 0)\n  {OUTSIDE}:7: serde_json::Value")]);
-}
-
-#[test]
-fn a_shrunk_file_must_lower_its_baseline() {
-    let drift = baseline_drift(&[site(OUTSIDE, 1)], &[(OUTSIDE, 3), ("crates/andromeda-gone/src/lib.rs", 2)]);
-    assert_eq!(
-        drift,
-        BaselineDrift {
-            grown: Vec::new(),
-            shrunk: vec![
-                "crates/andromeda-gone/src/lib.rs: 0 (baseline 2)".to_owned(),
-                format!("{OUTSIDE}: 1 (baseline 3)"),
-            ],
-        }
+fn every_site_is_reported_on_its_own_line() {
+    let report = violation_report(&[site(OUTSIDE, 1), site(OUTSIDE, 2)]).unwrap_or_default();
+    assert!(
+        report.contains(&format!("\n  {OUTSIDE}:1: serde_json::Value\n  {OUTSIDE}:2: serde_json::Value")),
+        "{report}"
     );
 }
 
 #[test]
-fn a_file_at_its_baseline_passes() {
-    assert_eq!(baseline_drift(&[site(OUTSIDE, 1)], &[(OUTSIDE, 1)]), BaselineDrift::default());
+fn a_workspace_without_sites_passes_the_gate() {
+    assert_eq!(violation_report(&[]), None);
 }
 
 #[test]

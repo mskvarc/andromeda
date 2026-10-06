@@ -313,3 +313,22 @@ async fn temporal_linked_retrieval_the_entity_map_records_linked_entities() {
     assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{:?}", deleted.body);
     scope.finish().await.expect("cleanup");
 }
+
+/// T8. Which entities are Linked Entities of a temporal read is the temporal
+/// catalogue's, not current state's: a Person whose current state a clause
+/// 5.6.6 deletion removed still has a history in the window, so the Building's
+/// join still nests it (clauses 4.5.23, 5.6.6).
+#[tokio::test]
+async fn temporal_linked_retrieval_a_linked_entity_whose_current_state_was_deleted_is_still_joined() {
+    let scope = TestEnvironment::from_suite("extensions").await.expect("isolated environment");
+    let fixture = Fixture::create(&scope, "t8").await;
+    let client = scope.client();
+
+    let deleted = client.delete_entity(&fixture.person).await.expect("delete entity request");
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{:?}", deleted.body);
+
+    let body = flat_query(&scope, &fixture, &format!("pick={}", projection("id,owner{name}"))).await;
+    assert_eq!(members(&body).len(), 2, "the Building and its owner, whose current state is gone: {body}");
+    assert_eq!(keys(&body[1]), set(&["name"]), "the owner's history is still joined: {body}");
+    scope.finish().await.expect("cleanup");
+}

@@ -14,13 +14,12 @@
 //! request fetches them again from wherever they are held.
 
 use crate::temporal::{TemporalQueryParameters, query::forwarding::ForwardedHistory};
-use andromeda_federation::temporal_instances::{instant_span, retain_instances};
 use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
+use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
 use andromeda_temporal::{error::TemporalError, service::TemporalRange};
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 
 /// How complete the history a temporal query answers with is.
 #[derive(Debug)]
@@ -89,18 +88,18 @@ impl HistoryCompleteness {
 
     /// Leave out of every merged entity the instances past the bound the
     /// history is complete up to.
-    pub(crate) fn trim(&self, entities: &mut [Value], timeproperty: TimeProp) {
+    pub(crate) fn trim(&self, entities: &mut [TemporalHistory], timeproperty: TimeProp) {
         let HistoryCompleteness::UpTo(bound) = self else {
             return;
         };
         for entity in entities {
-            retain_instances(entity, timeproperty, |instant| bound.admits(instant));
+            entity.retain_instants(timeproperty, |instant| bound.admits(instant));
         }
     }
 
     /// The range the response reports for the `page` it answers with, or
     /// `None` when it answers with the whole history.
-    pub(crate) fn range(self, page: &[Value], timeproperty: TimeProp) -> Option<TemporalRange> {
+    pub(crate) fn range(self, page: &[TemporalHistory], timeproperty: TimeProp) -> Option<TemporalRange> {
         match self {
             HistoryCompleteness::Local(range) => range,
             HistoryCompleteness::Complete => None,
@@ -111,6 +110,19 @@ impl HistoryCompleteness {
             }),
         }
     }
+}
+
+/// The least and most recent instants any instance of any of `histories`
+/// carries on `timeproperty`.
+fn instant_span(histories: &[TemporalHistory], timeproperty: TimeProp) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    histories
+        .iter()
+        .filter_map(|history| history.instant_span(timeproperty))
+        .fold(None, |span, (least, most)| {
+            Some(span.map_or((least, most), |(held_least, held_most): (DateTime<Utc>, DateTime<Utc>)| {
+                (held_least.min(least), held_most.max(most))
+            }))
+        })
 }
 
 impl HistoryBound {
@@ -125,9 +137,12 @@ impl HistoryBound {
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal::query::{
-        complete_history::{HistoryBound, HistoryCompleteness},
-        forwarding::ForwardedHistory,
+    use crate::{
+        temporal::query::{
+            complete_history::{HistoryBound, HistoryCompleteness},
+            forwarding::ForwardedHistory,
+        },
+        test_history::held_history,
     };
     use andromeda_federation::{entity_budget::EntityBudget, outcome::ForwardedTemporalEntities};
     use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
@@ -138,7 +153,7 @@ mod tests {
     use andromeda_temporal::service::TemporalRange;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
-    use serde_json::{Value, json};
+    use serde_json::json;
     use std::num::NonZeroU32;
 
     fn at(raw: &str) -> DateTime<Utc> {
@@ -159,11 +174,11 @@ mod tests {
     }
 
     /// A source answer holding one entity, cut at each range in `partial`.
-    fn source(partial: &[NgsiLdContentRange]) -> ForwardedTemporalEntities {
+    async fn source(partial: &[NgsiLdContentRange]) -> ForwardedTemporalEntities {
         ForwardedTemporalEntities {
             registration_id: Some("urn:ngsi-ld:ContextSourceRegistration:1".parse().expect("a valid URI")),
             mode: ForwardingMode::Inclusive,
-            entities: vec![json!({"id": "urn:ngsi-ld:Vehicle:remote", "type": "Vehicle"})],
+            entities: vec![held_history(json!({"id": "urn:ngsi-ld:Vehicle:remote", "type": "Vehicle"})).await],
             warnings: Vec::new(),
             linked_map: None,
             partial_ranges: partial.to_vec(),
@@ -190,8 +205,8 @@ mod tests {
     }
 
     /// Without a contributing source the local read's own range stands.
-    #[test]
-    fn without_a_contributing_source_the_local_range_stands() {
+    #[tokio::test]
+    async fn without_a_contributing_source_the_local_range_stands() {
         let local = local_cut("2020-01-01T00:00:00Z", "2020-01-02T00:00:00Z", PageDirection::Forward);
         let completeness = HistoryCompleteness::of(&params(None), Some(local.clone()), None).expect("a readable window");
         assert!(matches!(completeness, HistoryCompleteness::Local(Some(ref kept)) if kept.observed == local.observed));
@@ -199,9 +214,9 @@ mod tests {
 
     /// Clause 6.3.10: when every contributor answered in full, so does the
     /// response.
-    #[test]
-    fn when_every_contributor_answered_in_full_the_history_is_complete() {
-        let history = forwarded(vec![source(&[])]);
+    #[tokio::test]
+    async fn when_every_contributor_answered_in_full_the_history_is_complete() {
+        let history = forwarded(vec![source(&[]).await]);
         let completeness = HistoryCompleteness::of(&params(None), None, Some(&history)).expect("a readable window");
         assert!(matches!(completeness, HistoryCompleteness::Complete));
         assert!(completeness.range(&[], TimeProp::Observed).is_none());
@@ -209,11 +224,11 @@ mod tests {
 
     /// Forwards, the history is complete up to the earliest stop: the local
     /// cut's most recent instant and every source's range-end alike.
-    #[test]
-    fn forwards_the_bound_is_the_earliest_stop_of_every_contributor() {
+    #[tokio::test]
+    async fn forwards_the_bound_is_the_earliest_stop_of_every_contributor() {
         let history = forwarded(vec![
-            source(&[range("2020-01-01T00:00:00Z", "2020-01-05T00:00:00Z")]),
-            source(&[range("2020-01-01T00:00:00Z", "2020-01-03T00:00:00Z")]),
+            source(&[range("2020-01-01T00:00:00Z", "2020-01-05T00:00:00Z")]).await,
+            source(&[range("2020-01-01T00:00:00Z", "2020-01-03T00:00:00Z")]).await,
         ]);
         let local = local_cut("2020-01-01T00:00:00Z", "2020-01-04T00:00:00Z", PageDirection::Forward);
         let completeness = HistoryCompleteness::of(&params(None), Some(local), Some(&history)).expect("a readable window");
@@ -225,9 +240,9 @@ mod tests {
 
     /// Backwards (with `lastN`), the history is complete down to the latest
     /// stop, and the range reports the requested `lastN`.
-    #[test]
-    fn backwards_the_bound_is_the_latest_stop_of_every_contributor() {
-        let history = forwarded(vec![source(&[range("2021-01-01T00:00:00Z", "2020-06-01T00:00:00Z")])]);
+    #[tokio::test]
+    async fn backwards_the_bound_is_the_latest_stop_of_every_contributor() {
+        let history = forwarded(vec![source(&[range("2021-01-01T00:00:00Z", "2020-06-01T00:00:00Z")]).await]);
         let local = local_cut("2020-03-01T00:00:00Z", "2020-12-01T00:00:00Z", PageDirection::Backward { requested: 50 });
         let completeness = HistoryCompleteness::of(&params(Some(50)), Some(local), Some(&history)).expect("a readable window");
         assert!(matches!(
@@ -238,21 +253,24 @@ mod tests {
 
     /// The instances past the bound are left out, and the range the response
     /// reports is the one the trimmed page carries.
-    #[test]
-    fn instances_past_the_bound_are_left_out_and_the_range_is_the_page_s() {
-        let history = forwarded(vec![source(&[range("2020-01-01T00:00:00Z", "2020-01-02T00:00:00Z")])]);
+    #[tokio::test]
+    async fn instances_past_the_bound_are_left_out_and_the_range_is_the_page_s() {
+        let history = forwarded(vec![source(&[range("2020-01-01T00:00:00Z", "2020-01-02T00:00:00Z")]).await]);
         let completeness = HistoryCompleteness::of(&params(None), None, Some(&history)).expect("a readable window");
-        let mut page: Vec<Value> = vec![json!({
-            "id": "urn:ngsi-ld:Vehicle:local",
-            "type": "Vehicle",
-            "speed": [
-                {"type": "Property", "value": 1, "observedAt": "2020-01-01T12:00:00Z"},
-                {"type": "Property", "value": 2, "observedAt": "2020-01-02T00:00:00Z"},
-                {"type": "Property", "value": 3, "observedAt": "2020-01-03T00:00:00Z"}
-            ]
-        })];
+        let mut page = vec![
+            held_history(json!({
+                "id": "urn:ngsi-ld:Vehicle:local",
+                "type": "Vehicle",
+                "https://example.com/speed": [
+                    {"type": "Property", "value": 1, "observedAt": "2020-01-01T12:00:00Z"},
+                    {"type": "Property", "value": 2, "observedAt": "2020-01-02T00:00:00Z"},
+                    {"type": "Property", "value": 3, "observedAt": "2020-01-03T00:00:00Z"}
+                ]
+            }))
+            .await,
+        ];
         completeness.trim(&mut page, TimeProp::Observed);
-        assert_eq!(page[0]["speed"].as_array().map(Vec::len), Some(2), "{}", page[0]);
+        assert_eq!(page[0].instance_count(), 2, "{:?}", page[0]);
         let reported = completeness.range(&page, TimeProp::Observed).expect("a partial response");
         assert_eq!(reported.observed, Some((at("2020-01-01T12:00:00Z"), at("2020-01-02T00:00:00Z"))));
         assert_eq!(reported.interval, after_2020());

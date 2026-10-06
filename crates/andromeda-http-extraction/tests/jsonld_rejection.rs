@@ -1,4 +1,4 @@
-use andromeda_http_extraction::jsonld::{JsonLd, JsonLdDocument};
+use andromeda_http_extraction::jsonld::JsonLd;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_model::request_body::RequestBody;
@@ -43,7 +43,7 @@ async fn rejection_body(rejection: ExtractorRejection) -> Result<Value, Box<dyn 
 #[tokio::test]
 async fn malformed_json_is_invalid_request_with_the_exact_instance() -> Result<(), Box<dyn Error>> {
     let request = json_request("{")?;
-    let Err(rejection) = JsonLdDocument::from_request(request, &()).await else {
+    let Err(rejection) = JsonLd::<RequiredIdentifier>::from_request(request, &()).await else {
         return Err("malformed JSON was accepted".into());
     };
     assert!(matches!(rejection, ExtractorRejection::InvalidRequest { .. }));

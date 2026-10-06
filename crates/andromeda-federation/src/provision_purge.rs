@@ -15,7 +15,7 @@ use crate::{
     operation::ForwardingOperation,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     provision::{is_proxied, proxied_mode},
-    registration_selection::information_matches_entity,
+    registration_information::information_matches_entity,
     request::{EntityMapInUse, TriggeringRequest},
     term_resolver::TermResolver,
 };

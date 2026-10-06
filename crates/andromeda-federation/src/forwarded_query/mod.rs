@@ -313,6 +313,7 @@ mod tests {
         request::{SourcePage, TemporalAnswer},
         term_resolver::TermResolver,
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
@@ -390,7 +391,7 @@ mod tests {
         client: ClientQuery<'_>,
         registration: &ContextSourceRegistration,
         split: SplitEntities,
-        body_context: Value,
+        body_context: JsonLiteral,
     ) -> Vec<ForwardedQuery> {
         let engine = offline_engine();
         let context = ContextSpec::from_body(body_context);
@@ -416,8 +417,8 @@ mod tests {
 
     /// The `@context` body that spells the aliased IRIs `spd` and `Veh`, whose
     /// last segments (`speed`, `Vehicle`) the old heuristic would have produced.
-    fn aliased_context() -> Value {
-        json!({ "spd": ALIASED_SPEED, "Veh": ALIASED_VEHICLE })
+    fn aliased_context() -> JsonLiteral {
+        JsonLiteral::admit(&json!({ "spd": ALIASED_SPEED, "Veh": ALIASED_VEHICLE }).to_string()).expect("an admissible literal")
     }
 
     /// Clauses 4.3.6.1 and 4.3.6.3: an exclusive block names one entity and its
@@ -603,7 +604,8 @@ mod tests {
         pretty_assertions::assert_eq!(complete.value_of(ForwardedParameter::Q), Some("speed>50"));
         pretty_assertions::assert_eq!(complete.value_of(ForwardedParameter::ScopeQ), Some("/Madrid"));
         pretty_assertions::assert_eq!(complete.value_of(ForwardedParameter::Attrs), Some("speed"));
-        pretty_assertions::assert_eq!(complete.value_of(ForwardedParameter::Options), Some("aggregatedValues,sysAttrs"));
+        pretty_assertions::assert_eq!(complete.value_of(ForwardedParameter::Format), Some("aggregatedValues"));
+        pretty_assertions::assert_eq!(complete.value_of(ForwardedParameter::Options), Some("sysAttrs"));
         pretty_assertions::assert_eq!(complete.value_of(ForwardedParameter::AggrMethods), Some("avg,max"));
         pretty_assertions::assert_eq!(complete.value_of(ForwardedParameter::AggrPeriodDuration), Some("PT1H"));
     }
@@ -697,7 +699,7 @@ mod tests {
             ClientQuery::EntityQuery(&alternation),
             &reg,
             SplitEntities::Complete,
-            json!({ "Car": "https://example.org/Car" }),
+            JsonLiteral::admit(r#"{"Car": "https://example.org/Car"}"#).expect("an admissible literal"),
         )
         .await;
         let types = forwarded
@@ -753,7 +755,9 @@ mod tests {
     async fn a_configured_context_rewords_every_forwarded_name() {
         let engine = offline_engine();
         let inbound = ContextSpec::from_body(aliased_context());
-        let forwarding = ContextSpec::from_body(json!({ "velocity": ALIASED_SPEED, "Car": ALIASED_VEHICLE }));
+        let forwarding = ContextSpec::from_body(
+            JsonLiteral::admit(&json!({ "velocity": ALIASED_SPEED, "Car": ALIASED_VEHICLE }).to_string()).expect("an admissible literal"),
+        );
         let resolver = TermResolver::new(&engine, &inbound);
         let names = ForwardedNames::prepare(&engine, &resolver, &forwarding, Rewording::Reword)
             .await

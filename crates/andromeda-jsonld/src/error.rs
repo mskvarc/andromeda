@@ -11,12 +11,14 @@
 use crate::{
     context_graph::ContextGraphError,
     context_term::ContextTerm,
+    engine::processor_text::ProcessorTextError,
     loader::error::{ContextUnavailable, InvalidContextDocument, LoaderError},
 };
+use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_representation::embedded_context_admission::EmbeddedContext;
 use iri_rs::{InvalidIri, IriBuf};
 use jsonld::{CompactError, ContextLoadError, ExpandError, compaction, context_processing, expansion};
-use jsonld_syntax::{context::InvalidContext, parse};
+use jsonld_syntax::context::InvalidContext;
 use reqwest::StatusCode;
 use std::{io, path::PathBuf};
 use thiserror::Error;
@@ -96,9 +98,9 @@ pub enum JsonLdError {
     PreloadedContextInvalid {
         /// The configured file.
         path: PathBuf,
-        /// The JSON parse failure.
+        /// The JSON admission failure.
         #[source]
-        source: parse::Error,
+        source: JsonLiteralError,
     },
 
     /// A URL configured for preloading is not an IRI.
@@ -117,9 +119,9 @@ pub enum JsonLdError {
     EmbeddedContextInvalid {
         /// The embedded context's URL.
         url: IriBuf,
-        /// The JSON parse failure.
+        /// The JSON admission failure.
         #[source]
-        source: parse::Error,
+        source: JsonLiteralError,
     },
 
     /// An inline context could not be parsed as valid JSON-LD.
@@ -180,10 +182,6 @@ pub enum JsonLdError {
     #[error("jsonldContext must be a valid URI or JSON-LD context")]
     JsonLdContextShape,
 
-    /// A document to carry a `@context` is neither an object nor an array.
-    #[error("the document must be an object or an array")]
-    DocumentShape,
-
     /// A `@context`'s references form a cycle or nest too deep.
     ///
     /// Clause 5.5.6 makes an invalid remote `@context` a `BadRequestData`, and
@@ -195,6 +193,17 @@ pub enum JsonLdError {
     /// JSON serialisation / deserialisation error.
     #[error("JSON processing failed: {0}")]
     Json(#[from] serde_json::Error),
+
+    /// A `@context` value assembled from the contexts a request named could
+    /// not be held as JSON text, which text written from admitted pieces never
+    /// fails to be.
+    #[error("the @context value could not be written: {0}")]
+    ContextText(#[from] JsonLiteralError),
+
+    /// A document handed to the JSON-LD processor is not JSON text the
+    /// processor reads, which the broker's own writers never produce.
+    #[error("the document is not JSON text the processor reads: {0}")]
+    ProcessorText(#[from] ProcessorTextError),
 }
 
 impl From<ExpandError<LoaderError>> for JsonLdError {
@@ -378,7 +387,6 @@ mod tests {
             JsonLdError::TermNotExpanded,
             JsonLdError::TypeNotExpanded,
             JsonLdError::JsonLdContextShape,
-            JsonLdError::DocumentShape,
             JsonLdError::ScopedUserContext {
                 term: ContextTerm::new("speed"),
             },

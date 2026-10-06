@@ -22,7 +22,6 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_linked_retrieval::{
-    edge::LinkedEdge,
     graph::{LinkedGraph, RootEdges},
     join::{RetrievingJoin, TraversalBounds},
     narrowing::{list::ListInForce, member::MemberRule},
@@ -30,21 +29,19 @@ use andromeda_linked_retrieval::{
     representation::LinkedRepresentation,
     traversal::traverse,
 };
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::temporal::temporal_body::TemporalBody;
 use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, expansion::expand_attrs};
 use andromeda_ngsi_ld_render::temporal::temporal_evolutions::TemporalEvolutions;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
-use indexmap::IndexSet;
 use iri_rs::IriBuf;
-use serde_json::Value;
 
 /// A traversed temporal join, ready to be planned and written.
 pub struct TemporalLinkedJoin {
     /// The mode the Linked Entities reach the payload in.
     join: RetrievingJoin,
     /// What the traversal reached.
-    graph: LinkedGraph<Value>,
+    graph: LinkedGraph<TemporalBody>,
     /// The request's clause 4.21 projection, expanded.
     projection: Projection,
     /// The request's `attrs`, expanded: the `pick` synonym of Tables
@@ -76,14 +73,13 @@ impl TemporalLinkedJoin {
 }
 
 impl TemporalService {
-    /// Traverse from the rendered `roots` to their Linked Entities over the
+    /// Traverse from the compact `roots` to their Linked Entities over the
     /// window `params` selects, when `params` asks for a join that retrieves.
     ///
-    /// `seed` is what the locally read roots named, read off their normalized
-    /// form before a clause 4.5.8 or 4.5.19 projection erased the `object`
-    /// members; the rendered roots are read as well, which covers those a
-    /// context source answered with. `@none` and an absent `join` retrieve
-    /// nothing, and answer `None` without a traversal.
+    /// A root holds every instance of its attributes whatever representation
+    /// the response is written in, so the edges it names are read off it as it
+    /// is. `@none` and an absent `join` retrieve nothing, and answer `None`
+    /// without a traversal.
     ///
     /// # Errors
     ///
@@ -95,8 +91,7 @@ impl TemporalService {
     pub async fn join_linked_temporal(
         &self,
         target: &ContextTarget,
-        roots: &[Value],
-        seed: &[LinkedEdge],
+        roots: &[TemporalBody],
         params: &TemporalQueryParameters,
         context: &ContextSpec,
     ) -> Result<Option<TemporalLinkedJoin>, TemporalError> {
@@ -107,7 +102,7 @@ impl TemporalService {
         let compiled = self.compile_temporal_query(&window.to_parameters(), context).await?;
         let source = TemporalLinkedSource::new(self, target, &compiled, &window, context);
         let bounds = TraversalBounds::of(params.join_level, params.contained_by.as_deref());
-        let graph = traverse(&source, root_edges(roots, seed), &bounds).await?;
+        let graph = traverse(&source, RootEdges::of::<TemporalEvolutions>(roots), &bounds).await?;
 
         let prepared = self.engine.prepare_term_context(context);
         let expander = ContextualExpander::new(&self.engine, &prepared);
@@ -127,24 +122,6 @@ impl TemporalService {
             joined.index = AttributeIriIndex::of_keys(keys, &expander).await?;
         }
         Ok(Some(joined))
-    }
-}
-
-/// The identifiers and edges of the rendered `roots`: the edges `seed`
-/// reported for the locally read ones, then those the rendered roots still
-/// spell, each edge once.
-///
-/// A root whose list removed `id` (clause 4.21) no longer spells its
-/// identifier, so the roots are also identified by the entities the seed's
-/// edges leave from.
-fn root_edges(roots: &[Value], seed: &[LinkedEdge]) -> RootEdges {
-    let RootEdges { ids, edges: rendered } = RootEdges::of::<TemporalEvolutions>(roots);
-    let mut ids: IndexSet<Identifier> = ids.into_iter().collect();
-    ids.extend(seed.iter().map(|edge| edge.from.clone())); // clone: the traversal owns the roots it starts from
-    let edges: IndexSet<LinkedEdge> = seed.iter().cloned().chain(rendered).collect(); // clone: the traversal owns the edges it starts from
-    RootEdges {
-        ids: ids.into_iter().collect(),
-        edges: edges.into_iter().collect(),
     }
 }
 

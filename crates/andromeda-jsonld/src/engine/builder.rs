@@ -15,8 +15,8 @@ use crate::{
     hosted_context_recognizer::{HostedContextRecognizer, NoHostedContexts},
     loader::{cache_lifetime::CacheLifetime, context_lifetimes::ContextLifetimes, http::HttpContextLoader, loader_settings::LoaderSettings},
 };
+use andromeda_json_literal::JsonLiteral;
 use iri_rs::{Iri, IriBuf, iri};
-use jsonld_syntax::Parse;
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc, time::Duration};
 use tracing::info;
 use url::Url;
@@ -182,12 +182,13 @@ impl JsonLdEngineBuilder {
     /// client cannot be built.
     pub fn build(self) -> Result<JsonLdEngine, JsonLdError> {
         for url in NGSI_LD_CORE_CONTEXT_URL_LIST {
-            self.registry.register(IriBuf::from(url), parse_core_context(url)?);
+            register_embedded(&self.registry, url, &parse_core_context(url)?)?;
         }
-        self.registry.register(
-            IriBuf::from(DATA_INTEGRITY_CONTEXT_URL),
-            parse_embedded(DATA_INTEGRITY_STUB, DATA_INTEGRITY_CONTEXT_URL.as_ref())?,
-        );
+        register_embedded(
+            &self.registry,
+            DATA_INTEGRITY_CONTEXT_URL.as_ref(),
+            &parse_embedded(DATA_INTEGRITY_STUB, DATA_INTEGRITY_CONTEXT_URL.as_ref())?,
+        )?;
 
         let preloaded = register_preloaded(self.preload_contexts.as_ref(), &self.registry)?;
         if preloaded.is_empty() {
@@ -243,19 +244,28 @@ impl Default for JsonLdEngineBuilder {
     }
 }
 
+/// Register one embedded document under `url`.
+fn register_embedded(registry: &ContextRegistry, url: Iri<&str>, payload: &JsonLiteral) -> Result<(), JsonLdError> {
+    registry
+        .register(IriBuf::from(url), payload)
+        .map_err(|source| JsonLdError::EmbeddedContextInvalid {
+            url: IriBuf::from(url),
+            source,
+        })
+}
+
 /// Parse the embedded payload of one core context URL.
-fn parse_core_context(url: Iri<&str>) -> Result<jsonld_syntax::Value, JsonLdError> {
+fn parse_core_context(url: Iri<&str>) -> Result<JsonLiteral, JsonLdError> {
     let payload = embedded_core_context_payload(url).ok_or_else(|| JsonLdError::EmbeddedContextMissing { url: IriBuf::from(url) })?;
     parse_embedded(payload, url)
 }
 
 /// Parse an embedded context payload.
-fn parse_embedded(payload: &str, url: Iri<&str>) -> Result<jsonld_syntax::Value, JsonLdError> {
-    let (value, _) = jsonld_syntax::Value::parse_str(payload).map_err(|source| JsonLdError::EmbeddedContextInvalid {
+fn parse_embedded(payload: &str, url: Iri<&str>) -> Result<JsonLiteral, JsonLdError> {
+    JsonLiteral::admit(payload).map_err(|source| JsonLdError::EmbeddedContextInvalid {
         url: IriBuf::from(url),
         source,
-    })?;
-    Ok(value)
+    })
 }
 
 /// Parse a configuration URL before it enters an internal registry.
@@ -279,11 +289,12 @@ fn register_preloaded(entries: Option<&HashMap<Url, PathBuf>>, registry: &Contex
             path: file.clone(), // clone: the configuration map is borrowed and the failure outlives it
             source,
         })?;
-        let (value, _) = jsonld_syntax::Value::parse_str(&raw).map_err(|source| JsonLdError::PreloadedContextInvalid {
+        let preloaded = |source| JsonLdError::PreloadedContextInvalid {
             path: file.clone(), // clone: the configuration map is borrowed and the failure outlives it
             source,
-        })?;
-        registry.register_preloaded(typed_url, value);
+        };
+        let written = JsonLiteral::admit(&raw).map_err(preloaded)?;
+        registry.register_preloaded(typed_url, written).map_err(preloaded)?;
         loaded.push((url.clone(), file.clone())); // clone: the configuration map is borrowed and stays valid
     }
     Ok(loaded)
@@ -296,6 +307,7 @@ mod tests {
         core_context::{NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
         engine::processor::JsonLdEngine,
         error::JsonLdError,
+        test_documents::expanded_document,
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use serde_json::json;
@@ -332,7 +344,7 @@ mod tests {
 
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
 
-        assert!(engine.expand(document, &ContextSpec::none()).await.is_err());
+        assert!(expanded_document(&engine, &document, &ContextSpec::none()).await.is_err());
     }
 
     #[tokio::test]
@@ -347,17 +359,17 @@ mod tests {
             .build()
             .expect("engine builds");
 
-        let expanded = engine
-            .expand(
-                json!({
-                    "@context": "https://example.com/context.jsonld",
-                    "id": "urn:ngsi-ld:Device:001",
-                    "type": "Device",
-                    "temperature": 21
-                }),
-                &ContextSpec::none(),
-            )
-            .await;
+        let expanded = expanded_document(
+            &engine,
+            &json!({
+                "@context": "https://example.com/context.jsonld",
+                "id": "urn:ngsi-ld:Device:001",
+                "type": "Device",
+                "temperature": 21
+            }),
+            &ContextSpec::none(),
+        )
+        .await;
 
         assert!(expanded.is_ok(), "preloaded context must resolve: {:?}", expanded.err());
         let _ = fs::remove_file(path);
@@ -385,17 +397,17 @@ mod tests {
             .build()
             .expect("engine builds");
 
-        let expanded = engine
-            .expand(
-                json!({
-                    "@context": url,
-                    "id": "urn:ngsi-ld:Building:core-import",
-                    "type": "Building",
-                    "name": { "type": "Property", "value": "x" }
-                }),
-                &ContextSpec::none(),
-            )
-            .await;
+        let expanded = expanded_document(
+            &engine,
+            &json!({
+                "@context": url,
+                "id": "urn:ngsi-ld:Building:core-import",
+                "type": "Building",
+                "name": { "type": "Property", "value": "x" }
+            }),
+            &ContextSpec::none(),
+        )
+        .await;
 
         assert!(expanded.is_ok(), "expansion failed: {:?}", expanded.err());
         let _ = fs::remove_file(path);
@@ -424,18 +436,18 @@ mod tests {
             .build()
             .expect("engine builds");
 
-        let expanded = engine
-            .expand(
-                json!({
-                    "@context": url,
-                    "id": "urn:ngsi-ld:Building:location-redef",
-                    "type": "Building",
-                    "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [13.3986, 52.5547] } }
-                }),
-                &ContextSpec::none(),
-            )
-            .await
-            .expect("a redefinition of a core term expands, with the core winning");
+        let expanded = expanded_document(
+            &engine,
+            &json!({
+                "@context": url,
+                "id": "urn:ngsi-ld:Building:location-redef",
+                "type": "Building",
+                "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [13.3986, 52.5547] } }
+            }),
+            &ContextSpec::none(),
+        )
+        .await
+        .expect("a redefinition of a core term expands, with the core winning");
 
         let rendered = expanded.to_string();
         assert!(
@@ -499,19 +511,19 @@ mod tests {
     async fn every_release_of_the_core_context_expands_as_the_v1_9_core_context() {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
         for core in [NGSI_LD_CORE_CONTEXT_V16_URL, NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL, NGSI_LD_CORE_CONTEXT_URL] {
-            let expanded = engine
-                .expand(
-                    json!({
-                        "@context": core.as_str(),
-                        "id": "urn:ngsi-ld:Thing:1",
-                        "type": "Thing",
-                        "attributeCount": { "type": "Property", "value": 1 }
-                    }),
-                    &ContextSpec::none(),
-                )
-                .await
-                .expect("a core context expands")
-                .to_string();
+            let expanded = expanded_document(
+                &engine,
+                &json!({
+                    "@context": core.as_str(),
+                    "id": "urn:ngsi-ld:Thing:1",
+                    "type": "Thing",
+                    "attributeCount": { "type": "Property", "value": 1 }
+                }),
+                &ContextSpec::none(),
+            )
+            .await
+            .expect("a core context expands")
+            .to_string();
 
             assert!(expanded.contains("https://uri.etsi.org/ngsi-ld/attributeCount"), "{core}: {expanded}");
         }

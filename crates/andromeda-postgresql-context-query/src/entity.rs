@@ -428,7 +428,7 @@ mod tests {
     /// A `GeoJSON` point reference geometry, for tests that vary the relation
     /// rather than the geometry.
     fn point(coordinates: &serde_json::Value) -> Geometry {
-        Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses")
+        serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": coordinates })).expect("point parses")
     }
 
     /// A query with every filter absent, for tests that vary one part at a time.
@@ -1237,7 +1237,7 @@ mod tests {
     #[test]
     fn build_with_order_by_dist_with_ordering_geometry() {
         let mut q = empty_query();
-        let geometry = Geometry::from_geojson_value(&serde_json::json!({
+        let geometry = serde_json::from_value::<Geometry>(serde_json::json!({
             "type": "Point",
             "coordinates": [13.3986, 52.5547],
         }))
@@ -1269,7 +1269,7 @@ mod tests {
             geometry: point(&serde_json::json!([2.3522, 48.8566])),
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
-        let geometry = Geometry::from_geojson_value(&serde_json::json!({
+        let geometry = serde_json::from_value::<Geometry>(serde_json::json!({
             "type": "Point",
             "coordinates": [13.3986, 52.5547],
         }))
@@ -1530,7 +1530,7 @@ mod tests {
     #[test]
     fn a_distance_ordering_escapes_the_geoproperty_iri_its_value_comparison_reads() {
         let mut q = empty_query();
-        let geometry = Geometry::from_geojson_value(&serde_json::json!({
+        let geometry = serde_json::from_value::<Geometry>(serde_json::json!({
             "type": "Point",
             "coordinates": [13.3986, 52.5547],
         }))

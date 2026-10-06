@@ -2,7 +2,6 @@
 
 use crate::{
     attribute::instance::{Attribute, AttributeValue},
-    attribute_strip::AttributeStrip,
     entity_type::EntityTypeValue,
     notification::SysAttrsSnapshot,
     scope_member::ScopeMember,
@@ -86,15 +85,6 @@ impl<M> Entity<M> {
             self.expires_at = snapshot.expires_at;
         }
         self
-    }
-
-    /// Remove the named attributes, reporting what the removal left.
-    pub fn strip_attributes(&mut self, attributes: &[AttributeName]) -> AttributeStrip {
-        let before = self.attrs.len();
-        for attribute in attributes {
-            self.attrs.shift_remove(attribute.as_str());
-        }
-        AttributeStrip::from_counts(before, self.attrs.len())
     }
 
     /// The name of every Attribute member the entity carries, the three
@@ -249,16 +239,6 @@ pub struct EntityPatch<M = AttributeValue> {
 }
 
 impl<M> EntityPatch<M> {
-    /// Remove the named attributes (those a proxied registration owns per
-    /// clause 4.3.6.3), reporting what the removal left.
-    pub fn strip_attributes(&mut self, attributes: &[AttributeName]) -> AttributeStrip {
-        let before = self.attrs.len();
-        for attr in attributes {
-            self.attrs.shift_remove(attr.as_str());
-        }
-        AttributeStrip::from_counts(before, self.attrs.len())
-    }
-
     /// Every Attribute member the patch carries with its name, in the order
     /// of [`EntityPatch::attribute_members`], each open to rewriting.
     pub fn attribute_members_mut(&mut self) -> impl Iterator<Item = (&str, &mut M)> {
@@ -294,7 +274,6 @@ impl<M> EntityPatch<M> {
 mod tests {
     use crate::{
         attribute::instance::AttributeValue,
-        attribute_strip::AttributeStrip,
         entity::{Entity, EntityPatch},
         notification::SysAttrsSnapshot,
     };
@@ -641,53 +620,6 @@ mod tests {
         let entity = entity.with_sys_attrs(&snapshot);
         // User-provided expiresAt is preserved, not overwritten by snapshot
         pretty_assertions::assert_eq!(entity.expires_at, original_expires);
-    }
-
-    #[test]
-    fn strip_attributes_no_overlap_all_remain() {
-        let mut patch: EntityPatch = serde_json::from_value(json!({
-            "speed": { "type": "Property", "value": 100 },
-            "fuel": { "type": "Property", "value": 50 }
-        }))
-        .unwrap();
-        let exclusive = vec!["temperature".parse::<AttributeName>().expect("name")];
-        pretty_assertions::assert_eq!(patch.strip_attributes(&exclusive), AttributeStrip::Untouched);
-        pretty_assertions::assert_eq!(patch.attrs.len(), 2);
-    }
-
-    #[test]
-    fn strip_attributes_partial_overlap() {
-        let mut patch: EntityPatch = serde_json::from_value(json!({
-            "speed": { "type": "Property", "value": 100 },
-            "fuel": { "type": "Property", "value": 50 }
-        }))
-        .unwrap();
-        let exclusive = vec!["speed".parse::<AttributeName>().expect("name")];
-        pretty_assertions::assert_eq!(patch.strip_attributes(&exclusive), AttributeStrip::Narrowed);
-        pretty_assertions::assert_eq!(patch.attrs.len(), 1);
-        assert!(patch.attrs.contains_key("fuel"));
-    }
-
-    #[test]
-    fn strip_attributes_full_overlap_empties_the_patch() {
-        let mut patch: EntityPatch = serde_json::from_value(json!({
-            "speed": { "type": "Property", "value": 100 }
-        }))
-        .unwrap();
-        let exclusive = vec!["speed".parse::<AttributeName>().expect("name")];
-        pretty_assertions::assert_eq!(patch.strip_attributes(&exclusive), AttributeStrip::Emptied);
-        assert!(patch.attrs.is_empty());
-    }
-
-    #[test]
-    fn strip_attributes_empty_exclusive_list() {
-        let mut patch: EntityPatch = serde_json::from_value(json!({
-            "speed": { "type": "Property", "value": 100 }
-        }))
-        .unwrap();
-        let exclusive: Vec<AttributeName> = Vec::new();
-        pretty_assertions::assert_eq!(patch.strip_attributes(&exclusive), AttributeStrip::Untouched);
-        pretty_assertions::assert_eq!(patch.attrs.len(), 1);
     }
 
     fn entity_with_location() -> Entity {

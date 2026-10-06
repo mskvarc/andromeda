@@ -169,6 +169,7 @@ mod tests {
             compiled_csf: None,
             local_only: false,
             ngsild_conformance: None,
+            lang: None,
             notification_projection: Projection::default(),
         })
     }

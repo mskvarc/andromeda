@@ -1,14 +1,10 @@
 //! The registrations and entities the batch forwarding tests share.
 
-use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use serde_json::{Value, json};
-
-/// An engine that resolves only what is embedded, never the network.
-pub(super) fn offline_engine() -> JsonLdEngine {
-    JsonLdEngine::builder().allow_remote(false).build().expect("engine builds")
-}
+use indexmap::IndexMap;
+use serde_json::json;
 
 /// Parse a fixture identifier.
 pub(super) fn uri(raw: &str) -> Identifier {
@@ -53,7 +49,20 @@ pub(super) fn registration(
     .expect("valid registration")
 }
 
-/// A Vehicle carrying `brandName`, `speed` and `place`, as a client writes it.
-pub(super) fn vehicle(id: &str) -> Value {
-    json!({"id": id, "type": "Vehicle", "brandName": {"type": "Property", "value": "x"}, "speed": {"type": "Property", "value": 1}, "place": {"type": "Property", "value": "here"}})
+/// The document the admission expands an entity to: `id`, one type and one
+/// empty instance of every attribute IRI of `attributes`.
+pub(super) fn document(id: &str, entity_type: &str, attributes: &[&str]) -> EntityDocument {
+    EntityDocument::new(
+        Some(uri(id)),
+        vec![entity_type.parse().expect("a valid type name")],
+        None,
+        None,
+        attributes
+            .iter()
+            .map(|iri| {
+                let name: AttributeName = iri.parse().expect("a valid attribute name");
+                (name, AttributeMember::Instances(vec![InstanceDocument::builder().build()]))
+            })
+            .collect::<IndexMap<_, _>>(),
+    )
 }

@@ -2,10 +2,8 @@
 //! single host process on the run's port, against the dev compose database, with
 //! the temporal page size the suite's pagination precondition requires.
 
-use crate::{error::XtaskError, etsi, local_broker, readiness};
-use iri_rs::{Iri, iri};
+use crate::{error::XtaskError, etsi, local_broker, readiness, suite_context_preload};
 use reqwest::blocking::Client;
-use serde_json::{Value, json};
 use std::{
     fs::File,
     path::Path,
@@ -49,20 +47,12 @@ const RUNTIME_IDLE_TTL: &str = "30s";
 /// runtimes are reclaimed; five seconds is ample for that under the suite's
 /// serial drive.
 const JANITOR_INTERVAL: &str = "5s";
-/// The compound `@context` the suite's fixtures and queries reference, and the
-/// suite `@context` the compound pulls in by a relative reference. Both are
-/// served from the checkout so the broker never fetches them from forge: under
-/// `--isolate-tenants` every fresh tenant would otherwise cold-fetch these same
-/// URLs (the remote-context cache is per-tenant), and the resulting burst of
-/// identical requests draws the occasional dropped connection that surfaces as a
-/// spurious `LdContextNotAvailable` (504) on an entity create.
-const SUITE_COMPOUND_CONTEXT_URL: Iri<&str> =
-    iri!("https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld");
-/// The suite `@context` the compound references relatively; the loader resolves
-/// the relative reference against the compound's URL to exactly this URL.
-const SUITE_CONTEXT_URL: Iri<&str> =
-    iri!("https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld");
-/// The checkout-relative directory holding both suite context documents.
+/// The checkout-relative directory holding both suite context documents. They
+/// are served from the checkout so the broker never fetches them from forge:
+/// under `--isolate-tenants` every fresh tenant would otherwise cold-fetch these
+/// same URLs (the remote-context cache is per-tenant), and the resulting burst
+/// of identical requests draws the occasional dropped connection that surfaces
+/// as a spurious `LdContextNotAvailable` (504) on an entity create.
 const SUITE_CONTEXT_DIR: &str = "resources/jsonld-contexts";
 
 /// Build the broker binary and spawn it on `port`, streaming its output to
@@ -74,6 +64,7 @@ const SUITE_CONTEXT_DIR: &str = "resources/jsonld-contexts";
 pub(crate) fn spawn(repository_root: &Path, port: u16, broker_log: &Path) -> Result<Child, XtaskError> {
     local_broker::build(repository_root)?;
     let binary = repository_root.join("target/release/andromeda");
+    let preload = suite_context_preload::preload_map(&etsi::checkout_dir().join(SUITE_CONTEXT_DIR))?;
     let log = File::create(broker_log)?;
     let errors = log.try_clone()?;
     let child = Command::new(binary)
@@ -87,30 +78,11 @@ pub(crate) fn spawn(repository_root: &Path, port: u16, broker_log: &Path) -> Res
         .env("ANDROMEDA__TENANCY__RUNTIME_MAX_CACHED", RUNTIME_MAX_CACHED)
         .env("ANDROMEDA__TENANCY__RUNTIME_IDLE_TTL", RUNTIME_IDLE_TTL)
         .env("ANDROMEDA__TENANCY__JANITOR_INTERVAL", JANITOR_INTERVAL)
-        .env("ANDROMEDA__JSONLD__PRELOAD_CONTEXTS", suite_context_preload())
+        .env("ANDROMEDA__JSONLD__PRELOAD_CONTEXTS", preload)
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(errors))
         .spawn()?;
     Ok(child)
-}
-
-/// The JSON `url -> file` map that pins the suite's two `@context` documents to
-/// their copies in the checkout, for `ANDROMEDA__JSONLD__PRELOAD_CONTEXTS`. The
-/// broker registers these offline and never fetches them, so a run cannot fail
-/// on forge being briefly unreachable. `serde_json` renders the paths, so a
-/// checkout path containing a quote or backslash is escaped rather than
-/// producing malformed JSON.
-fn suite_context_preload() -> String {
-    let contexts = etsi::checkout_dir().join(SUITE_CONTEXT_DIR);
-    let compound = contexts.join("ngsi-ld-test-suite-compound.jsonld");
-    let suite = contexts.join("ngsi-ld-test-suite.jsonld");
-    let compound_url = SUITE_COMPOUND_CONTEXT_URL.as_str();
-    let suite_url = SUITE_CONTEXT_URL.as_str();
-    let map = json!({
-        compound_url: Value::from(compound.to_string_lossy().into_owned()),
-        suite_url: Value::from(suite.to_string_lossy().into_owned()),
-    });
-    map.to_string()
 }
 
 /// Poll the broker's health endpoint until it answers or the budget is spent,

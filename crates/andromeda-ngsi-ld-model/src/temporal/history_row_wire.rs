@@ -6,11 +6,11 @@
 //! That JSON says what it is only together with the row's attribute family and
 //! name, which serde does not hand a field's decoder; the row is therefore read
 //! into this wire form first and the two stored documents decoded once the
-//! whole row is known. They are buffered as generic JSON rather than as raw
-//! text because the row travels inside an internally tagged intent entry, which
+//! whole row is known. They are held as JSON literals rather than as raw text
+//! because the row travels inside an internally tagged intent entry, which
 //! serde buffers before it dispatches on the tag, and a raw-text holder cannot
-//! be read back out of that buffer; the buffered JSON is written straight back
-//! to text and decoded by the stored-JSON codec, never walked.
+//! be read back out of that buffer; a literal is transcribed out of the buffer
+//! into text and decoded by the stored-JSON codec, never walked.
 
 use crate::temporal::{
     TemporalHistoryRow,
@@ -20,6 +20,7 @@ use crate::temporal::{
     structured_value::StructuredValue,
     structured_value_codec::StoredValueError,
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_entity::refusal::EntityRefusal;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -32,7 +33,6 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_number::JsonNumber;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use serde_json::Value;
 use thiserror::Error;
 
 /// A durable history row whose stored documents do not read as its family's.
@@ -40,7 +40,7 @@ use thiserror::Error;
 pub enum StoredObservationError {
     /// The structured value is not one of the row's family.
     #[error("the structured value of '{attribute}' is unreadable: {source}")]
-    Value {
+    Structured {
         /// The attribute the row records.
         attribute: AttributeName,
         /// Why the value is unreadable.
@@ -80,7 +80,7 @@ enum ValueWire {
     /// A `GeoJSON` geometry, its members still raw.
     Geometry(GeometryWire),
     /// The stored JSON of a structured value.
-    Object(Value),
+    Object(JsonLiteral),
     /// A datetime attribute value.
     DateTime(DateTime<Utc>),
     /// A URI attribute value.
@@ -116,7 +116,7 @@ pub(crate) struct HistoryRowWire {
     /// Stable instance identity.
     instance: InstanceIdentity,
     /// The stored JSON of the metadata.
-    metadata: Option<Value>,
+    metadata: Option<JsonLiteral>,
     /// Partition total, when requested.
     partition_total: Option<i64>,
 }
@@ -153,7 +153,7 @@ impl TryFrom<HistoryRowWire> for TemporalHistoryRow {
                 )
             }
             ValueWire::Object(stored) => TemporalValue::Structured(
-                StructuredValue::from_stored(attribute_type, &attribute_name, &stored.to_string()).map_err(|source| StoredObservationError::Value {
+                StructuredValue::from_stored(attribute_type, &attribute_name, &stored.to_string()).map_err(|source| StoredObservationError::Structured {
                     attribute: attribute_name.clone(), // clone: the error owns the attribute it names
                     source,
                 })?,

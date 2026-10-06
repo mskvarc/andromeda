@@ -10,7 +10,6 @@
 use crate::{
     FederationService,
     cache::Cacheability,
-    document_rewording::DocumentVocabulary,
     entity_read::mode_admitted,
     error::FederationError,
     forwarding_context::BodyPresence,
@@ -149,13 +148,12 @@ impl FederationService {
                     .registration(&registration)
                     .inbound(context)
                     .triggering(triggering)
-                    .vocabulary(DocumentVocabulary::Opaque)
                     .build();
                 // Clause 6.3.17 allows caching for `/entities` only.
                 let outcome = self.forward_get(read, url, Cacheability::Uncacheable).await;
                 let error_status = outcome.error_status();
                 let (map, warnings) = match outcome {
-                    ForwardGetOutcome::Success(response) => match serde_json::from_value::<EntityMap>(response.body) {
+                    ForwardGetOutcome::Success(response) => match serde_json::from_slice::<EntityMap>(&response.body) {
                         Ok(map) => (Some(map), response.warnings),
                         Err(error) => {
                             warn!("Context source {} returned an invalid EntityMap: {}", registration.id, error);
@@ -169,11 +167,9 @@ impl FederationService {
                     },
                     // A source that declines to create a map is not abnormal (clause 5.5.14).
                     ForwardGetOutcome::NotFound(_) => (None, Vec::new()),
-                    other @ (ForwardGetOutcome::InvalidPayload(_)
-                    | ForwardGetOutcome::UnreadableNames(_)
-                    | ForwardGetOutcome::ErrorStatus(_)
-                    | ForwardGetOutcome::Transport(_)
-                    | ForwardGetOutcome::LoopDetected) => (None, other.warning(&registration.id).into_iter().collect()),
+                    other @ (ForwardGetOutcome::ErrorStatus(_) | ForwardGetOutcome::Transport(_) | ForwardGetOutcome::LoopDetected) => {
+                        (None, other.warning(&registration.id).into_iter().collect())
+                    }
                 };
                 SourceAnswer {
                     mode: registration.access.mode.unwrap_or_default(),

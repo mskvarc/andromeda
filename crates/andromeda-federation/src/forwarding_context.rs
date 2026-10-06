@@ -30,12 +30,15 @@
 
 use crate::{error::FederationError, federation_invariant::FederationInvariant};
 use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec, request_context::RequestContext};
+use andromeda_json_literal::{
+    JsonLiteral,
+    piece::{JsonKind, JsonPiece},
+};
+use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec, error::JsonLdError, request_context::RequestContext};
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfo;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, IriBuf};
 use mediatype::{MediaType, MediaTypeBuf};
-use serde_json::Value;
 use url::Url;
 
 /// The JSON-LD 1.1 keyword a context definition imports another context with
@@ -80,7 +83,7 @@ pub(crate) enum ForwardingContext {
     CoreForCompound,
     /// The inbound context carried inline in an `application/ld+json` body
     /// (clause 6.3.5); every reference it holds is absolute.
-    InlineInbound(Value),
+    InlineInbound(JsonLiteral),
     /// The contexts of a batch whose entities name different ones, each
     /// carried inline on its own entity of an `application/ld+json` array
     /// (clause 6.3.5, and JSON-LD applying a top-level node's `@context` to that
@@ -126,13 +129,18 @@ impl ForwardingContext {
 
     /// The `@context` an `application/ld+json` body carries inline for an entity
     /// submitted under `item`, if this context travels inline (clause 6.3.5).
-    pub(crate) fn inline_for(&self, item: &ContextSpec) -> Option<Value> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FederationError::JsonLd`] when a context URL cannot be written
+    /// as a JSON string, which no IRI fails to be.
+    pub(crate) fn inline_for(&self, item: &ContextSpec) -> Result<Option<JsonLiteral>, FederationError> {
         match self {
-            ForwardingContext::InlineInbound(context) => Some(context.clone()), // clone: every forwarded entity owns its inline context
-            ForwardingContext::InlinePerItem => Some(inline_context(item)),
-            ForwardingContext::InlineCore => Some(Value::String(NGSI_LD_CORE_CONTEXT_URL.as_str().to_owned())),
+            ForwardingContext::InlineInbound(context) => Ok(Some(context.clone())), // clone: every forwarded entity owns its inline context
+            ForwardingContext::InlinePerItem => inline_context(item).map(Some),
+            ForwardingContext::InlineCore => written_reference(NGSI_LD_CORE_CONTEXT_URL.as_str()).map(Some),
             ForwardingContext::Configured(_) | ForwardingContext::InboundLink(_) | ForwardingContext::InboundDefault | ForwardingContext::CoreForCompound => {
-                None
+                Ok(None)
             }
         }
     }
@@ -177,8 +185,8 @@ pub(crate) fn decide(
     let context = match (configured, media_type, presence) {
         (Some(url), _, _) => ForwardingContext::Configured(url),
         (None, ResponseMediaType::JsonLd, BodyPresence::Present) => {
-            let inline = inline_context(inbound);
-            if holds_only_absolute_references(&inline) {
+            let inline = inline_context(inbound)?;
+            if holds_only_absolute_references(inline.piece()) {
                 ForwardingContext::InlineInbound(inline)
             } else {
                 ForwardingContext::InlineCore
@@ -211,15 +219,15 @@ fn forwardable_media_type(content_type: &MediaTypeBuf) -> Result<ResponseMediaTy
 /// Whether every context reference in an inline `@context` -- the strings of
 /// the value or its array, and the `@import` of every definition -- is an
 /// absolute IRI, so a source reads each exactly as this broker does.
-fn holds_only_absolute_references(context: &Value) -> bool {
-    match context {
-        Value::String(reference) => Iri::parse(reference.as_str()).is_ok(),
-        Value::Array(entries) => entries.iter().all(holds_only_absolute_references),
-        Value::Object(definition) => match definition.get(IMPORT_KEYWORD) {
-            Some(Value::String(imported)) => Iri::parse(imported.as_str()).is_ok(),
-            Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) | None => true,
+fn holds_only_absolute_references(context: JsonPiece<'_>) -> bool {
+    match context.kind() {
+        JsonKind::String => context.as_str().is_some_and(|reference| Iri::parse(reference.as_ref()).is_ok()),
+        JsonKind::Array => context.elements().unwrap_or_default().into_iter().all(holds_only_absolute_references),
+        JsonKind::Object => match context.member(IMPORT_KEYWORD) {
+            Some(imported) if imported.kind() == JsonKind::String => imported.as_str().is_some_and(|imported| Iri::parse(imported.as_ref()).is_ok()),
+            Some(_) | None => true,
         },
-        Value::Null | Value::Bool(_) | Value::Number(_) => true,
+        JsonKind::Null | JsonKind::Boolean | JsonKind::Number => true,
     }
 }
 
@@ -261,7 +269,10 @@ fn decide_mixed(contexts: &[&BatchContext], info: &ContextSourceInfo<'_>, config
     let context = match decision.context {
         configured @ ForwardingContext::Configured(_) => configured,
         ForwardingContext::InlineInbound(_) | ForwardingContext::InlinePerItem | ForwardingContext::InlineCore => {
-            if contexts.iter().all(|context| holds_only_absolute_references(&inline_context(context.spec()))) {
+            let mut inline = contexts.iter().map(|context| inline_context(context.spec()));
+            if inline.try_fold(true, |all, context| {
+                context.map(|context| all && holds_only_absolute_references(context.piece()))
+            })? {
                 ForwardingContext::InlinePerItem
             } else {
                 ForwardingContext::InlineCore
@@ -281,7 +292,7 @@ fn inbound_link_context(inbound: &ContextSpec) -> ForwardingContext {
     match inbound.request_context() {
         RequestContext::Default => ForwardingContext::InboundDefault,
         RequestContext::Link(url) => ForwardingContext::InboundLink(url.clone()), // clone: the forwarding context owns its IRI
-        RequestContext::Body(context) => match single_url(context) {
+        RequestContext::Body(context) => match single_url(context.piece()) {
             Some(url) => ForwardingContext::InboundLink(url),
             None => ForwardingContext::CoreForCompound,
         },
@@ -290,25 +301,36 @@ fn inbound_link_context(inbound: &ContextSpec) -> ForwardingContext {
 
 /// The one absolute URL a body `@context` names, when it names exactly one:
 /// a string, or an array holding one string.
-fn single_url(context: &Value) -> Option<IriBuf> {
-    match context {
-        Value::String(url) => IriBuf::new(url.clone()).ok(), // clone: the IRI owns its text
-        Value::Array(entries) => match entries.as_slice() {
-            [Value::String(url)] => IriBuf::new(url.clone()).ok(), // clone: same
-            _ => None,
+fn single_url(context: JsonPiece<'_>) -> Option<IriBuf> {
+    let reference = match context.kind() {
+        JsonKind::String => context,
+        JsonKind::Array => match context.elements()?.as_slice() {
+            [only] if only.kind() == JsonKind::String => *only,
+            [] | [_] | [_, _, ..] => return None,
         },
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => None,
-    }
+        JsonKind::Null | JsonKind::Boolean | JsonKind::Number | JsonKind::Object => return None,
+    };
+    IriBuf::new(reference.as_str()?.into_owned()).ok()
 }
 
 /// The inbound context written inline, as the client wrote it; the core
 /// context when the client named none, so the forwarded body names one.
-pub(crate) fn inline_context(inbound: &ContextSpec) -> Value {
+///
+/// # Errors
+///
+/// Returns [`FederationError::JsonLd`] when a context URL cannot be written as
+/// a JSON string, which no IRI fails to be.
+pub(crate) fn inline_context(inbound: &ContextSpec) -> Result<JsonLiteral, FederationError> {
     match inbound.request_context() {
-        RequestContext::Default => Value::String(NGSI_LD_CORE_CONTEXT_URL.to_string()),
-        RequestContext::Link(url) => Value::String(url.as_str().to_owned()),
-        RequestContext::Body(context) => context.clone(), // clone: the forwarded body owns its inline context
+        RequestContext::Default => written_reference(NGSI_LD_CORE_CONTEXT_URL.as_str()),
+        RequestContext::Link(url) => written_reference(url.as_str()),
+        RequestContext::Body(context) => Ok(context.clone()), // clone: the forwarded body owns its inline context
     }
+}
+
+/// A context reference written as the JSON string a `@context` member holds.
+fn written_reference(url: &str) -> Result<JsonLiteral, FederationError> {
+    JsonLiteral::string(url).map_err(|error| FederationError::from(JsonLdError::ContextText(error)))
 }
 
 /// A registration's `jsonldContext` as the absolute IRI a forwarded request
@@ -325,6 +347,7 @@ mod tests {
         forwarding_context::{BodyPresence, ForwardingContext, Rewording, decide, forwardable_media_type},
     };
     use andromeda_http_headers::media_type::ResponseMediaType;
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, key_value_pair::KeyValuePair};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
@@ -366,7 +389,7 @@ mod tests {
         for inbound in [
             ContextSpec::none(),
             ContextSpec::from_link(iri(USER)),
-            ContextSpec::from_body(json!([USER, OTHER])),
+            ContextSpec::from_body(JsonLiteral::admit(&json!([USER, OTHER]).to_string()).expect("an admissible literal")),
         ] {
             let (media, context) = decided(
                 &inbound,
@@ -389,8 +412,8 @@ mod tests {
     fn a_single_inbound_url_is_forwarded_as_its_own_link() {
         for inbound in [
             ContextSpec::from_link(iri(USER)),
-            ContextSpec::from_body(json!(USER)),
-            ContextSpec::from_body(json!([USER])),
+            ContextSpec::from_body(JsonLiteral::admit(&json!(USER).to_string()).expect("an admissible literal")),
+            ContextSpec::from_body(JsonLiteral::admit(&json!([USER]).to_string()).expect("an admissible literal")),
         ] {
             let (media, context) = decided(&inbound, &[], None, BodyPresence::Present);
             pretty_assertions::assert_eq!(media, ResponseMediaType::Json);
@@ -405,9 +428,9 @@ mod tests {
     #[test]
     fn a_compound_inbound_context_is_forwarded_against_the_core_context() {
         for inbound in [
-            ContextSpec::from_body(json!([USER, OTHER])),
-            ContextSpec::from_body(json!({"speed": "https://example.org/speed"})),
-            ContextSpec::from_body(json!([USER, {"speed": "https://example.org/speed"}])),
+            ContextSpec::from_body(JsonLiteral::admit(&json!([USER, OTHER]).to_string()).expect("an admissible literal")),
+            ContextSpec::from_body(JsonLiteral::admit(&json!({"speed": "https://example.org/speed"}).to_string()).expect("an admissible literal")),
+            ContextSpec::from_body(JsonLiteral::admit(&json!([USER, {"speed": "https://example.org/speed"}]).to_string()).expect("an admissible literal")),
         ] {
             let (_, context) = decided(&inbound, &[], None, BodyPresence::Absent);
             pretty_assertions::assert_eq!(context, ForwardingContext::CoreForCompound);
@@ -432,11 +455,14 @@ mod tests {
     /// a `Link` header.
     #[test]
     fn an_ld_json_body_carries_the_inbound_context_inline() {
-        let inbound = ContextSpec::from_body(json!([USER, OTHER]));
+        let inbound = ContextSpec::from_body(JsonLiteral::admit(&json!([USER, OTHER]).to_string()).expect("an admissible literal"));
         let ld = [("contentType", "application/ld+json")];
         let (media, with_body) = decided(&inbound, &ld, None, BodyPresence::Present);
         pretty_assertions::assert_eq!(media, ResponseMediaType::JsonLd);
-        pretty_assertions::assert_eq!(with_body, ForwardingContext::InlineInbound(json!([USER, OTHER])));
+        pretty_assertions::assert_eq!(
+            with_body,
+            ForwardingContext::InlineInbound(JsonLiteral::admit(&json!([USER, OTHER]).to_string()).expect("an admissible literal"))
+        );
         assert!(with_body.link().is_none());
         pretty_assertions::assert_eq!(with_body.rewording(), Rewording::AsInbound);
 
@@ -444,7 +470,10 @@ mod tests {
         pretty_assertions::assert_eq!(body_less, ForwardingContext::CoreForCompound);
 
         let (_, default_inline) = decided(&ContextSpec::none(), &ld, None, BodyPresence::Present);
-        pretty_assertions::assert_eq!(default_inline, ForwardingContext::InlineInbound(json!(NGSI_LD_CORE_CONTEXT_URL.to_string())));
+        pretty_assertions::assert_eq!(
+            default_inline,
+            ForwardingContext::InlineInbound(JsonLiteral::admit(&json!(NGSI_LD_CORE_CONTEXT_URL.to_string()).to_string()).expect("an admissible literal"))
+        );
     }
 
     /// Clause 4.3.6.6 admits only `application/json` and `application/ld+json`

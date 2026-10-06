@@ -13,20 +13,30 @@
 use crate::{
     compacted::Compacted,
     compaction_error::CompactionError,
-    processor_fallback::{document_through_processor, entity_through_processor},
+    name_compaction::NameCompaction,
+    processor_fallback::{
+        document_entity_through_processor,
+        document_patch_through_processor,
+        entity_through_processor,
+        scope_history_through_processor,
+        temporal_through_processor,
+    },
     state_reading::{WalkError, walk_entity},
     term_context::TermContext,
-    undecidable::Undecidable,
-    walk::{GeometryOutput, Walk},
+    walk::Walk,
 };
 use andromeda_jsonld::engine::context_compactor::ContextCompactor;
 use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::{
+    entity::{Entity, EntityPatch},
+    node_refusal::NodeReadError,
+    temporal::{temporal_attribute::TemporalAttribute, temporal_document::TemporalDocument, temporal_entity::TemporalEntity},
+};
+use andromeda_ngsi_ld_representation::{compact_node::aliased_node::AliasedNode, sys_attrs::SysAttrsInclusion};
+use andromeda_ngsi_ld_vocabulary::compact::properties as compact_properties;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
-use std::sync::OnceLock;
+use std::{str::FromStr, sync::OnceLock};
 
 /// How one entity is read: under which identifier, with or without its
 /// system times, and at which instant its expired instances are dropped.
@@ -51,6 +61,8 @@ pub struct EntityCompactor<'a> {
     compactor: &'a ContextCompactor<'a>,
     /// The processed context and the keys selected in it so far.
     terms: OnceLock<TermContext>,
+    /// The names the operation compacts outside an entity, built on first use.
+    names: OnceLock<NameCompaction>,
 }
 
 impl<'a> EntityCompactor<'a> {
@@ -60,6 +72,7 @@ impl<'a> EntityCompactor<'a> {
         EntityCompactor {
             compactor,
             terms: OnceLock::new(),
+            names: OnceLock::new(),
         }
     }
 
@@ -89,26 +102,135 @@ impl<'a> EntityCompactor<'a> {
         Ok(entity)
     }
 
-    /// The compact JSON a written document is under the request context.
+    /// The compact entity a written document is under the request context,
+    /// a member the document removes written as the NGSI-LD Null (clause
+    /// 5.8.6 notifies a deleted attribute that way).
     ///
     /// # Errors
     ///
     /// Returns [`CompactionError::JsonLd`] when the request context does not
-    /// resolve or process or the processor refuses the document, and
+    /// resolve or process or the processor refuses the document,
     /// [`CompactionError::Encode`] when the document cannot be written for the
-    /// processor.
-    pub async fn document(&self, document: &EntityDocument) -> Result<Value, CompactionError> {
+    /// processor, and [`CompactionError::Refused`] when the compact model
+    /// refuses the compacted entity.
+    pub async fn document_entity(&self, document: &EntityDocument) -> Result<Entity, CompactionError> {
         let terms = self.terms().await?;
-        match Walk::new(terms, GeometryOutput::Written)
-            .compact_document(document)
-            .and_then(|node| serde_json::to_value(Compacted::Object(node)).map_err(|_unwritten| Undecidable::UnrepresentableValue))
-        {
-            Ok(node) => Ok(node),
+        let walked = Walk::new(terms).compact_document(document).map(Compacted::Object);
+        match walked {
+            Ok(tree) => <Entity>::from_node(AliasedNode::new(&tree, terms.aliases())).map_err(|error| match error {
+                NodeReadError::Refused(refused) => CompactionError::Refused(refused),
+                NodeReadError::Unreadable(unwritten) => CompactionError::Encode(unwritten),
+            }),
             Err(reason) => {
                 tracing::debug!(%reason, "compacting the document through the processor");
-                document_through_processor(self.compactor, document).await
+                document_entity_through_processor(self.compactor, terms, document).await
             }
         }
+    }
+
+    /// The compact partial entity a written document is under the request
+    /// context: the entity of [`EntityCompactor::document_entity`] with `id`
+    /// and `type` optional, which is what a fragment forwarded to a source is
+    /// (clauses 5.6.2, 5.6.3 and 5.6.17). A member the document removes is
+    /// written as the NGSI-LD Null.
+    ///
+    /// # Errors
+    ///
+    /// As [`EntityCompactor::document_entity`].
+    pub async fn patch(&self, document: &EntityDocument) -> Result<EntityPatch, CompactionError> {
+        let terms = self.terms().await?;
+        let walked = Walk::new(terms).compact_document(document).map(Compacted::Object);
+        match walked {
+            Ok(tree) => <EntityPatch>::from_node(AliasedNode::new(&tree, terms.aliases())).map_err(|error| match error {
+                NodeReadError::Refused(refused) => CompactionError::Refused(refused),
+                NodeReadError::Unreadable(unwritten) => CompactionError::Encode(unwritten),
+            }),
+            Err(reason) => {
+                tracing::debug!(%reason, "compacting the fragment through the processor");
+                document_patch_through_processor(self.compactor, terms, document).await
+            }
+        }
+    }
+
+    /// The compact Temporal Evolution of an entity a document holds under the
+    /// request context: every attribute the sequence of its instances, the
+    /// Scope history the attribute `scope`, and every attribute a clause 6.3.10
+    /// page cut left without an instance named by the term of its expanded
+    /// name, with the family its instances recorded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompactionError::JsonLd`] when the request context does not
+    /// resolve or process or the processor refuses the document,
+    /// [`CompactionError::Encode`] when the document cannot be written for the
+    /// processor, and [`CompactionError::Refused`] when the compact model
+    /// refuses the compacted entity.
+    pub async fn temporal(&self, document: &TemporalDocument) -> Result<TemporalEntity, CompactionError> {
+        let terms = self.terms().await?;
+        let walked = Walk::new(terms).compact_document(document.entity()).map(Compacted::Object);
+        let mut entity = match walked {
+            Ok(tree) => TemporalEntity::from_node(AliasedNode::new(&tree, terms.aliases())).map_err(|error| match error {
+                NodeReadError::Refused(refused) => CompactionError::Refused(refused),
+                NodeReadError::Unreadable(unwritten) => CompactionError::Encode(unwritten),
+            })?,
+            Err(reason) => {
+                tracing::debug!(%reason, "compacting the temporal document through the processor");
+                temporal_through_processor(self.compactor, terms, document.entity()).await?
+            }
+        };
+        entity.system_times = document.system_times();
+        let names = self.names().await?;
+        for (expanded, family) in document.emptied() {
+            let compacted = names.compact_attr_iri(expanded.as_str());
+            // A term the context gives the name that is no attribute name
+            // leaves the name expanded: it is the name the instances were
+            // compacted under, or none was.
+            let name = AttributeName::from_str(&compacted).unwrap_or_else(|_| expanded.clone()); // clone: the compact name is the expanded one verbatim
+            if name.as_str() == compact_properties::SCOPE {
+                entity.scope.get_or_insert_with(|| TemporalAttribute::emptied(*family));
+            } else {
+                entity.attrs.entry(name).or_insert_with(|| TemporalAttribute::emptied(*family));
+            }
+        }
+        Ok(entity)
+    }
+
+    /// The reified Scope history (clause 4.5.6) a document holds under the Scope
+    /// IRI, compacted under the request context to the instances a source reads
+    /// as its `scope`; `None` when the document holds none. The document names
+    /// no entity, which a Scope history alone does not.
+    ///
+    /// # Errors
+    ///
+    /// As [`EntityCompactor::temporal`].
+    pub async fn scope_history(&self, document: &EntityDocument) -> Result<Option<TemporalAttribute>, CompactionError> {
+        let terms = self.terms().await?;
+        let walked = Walk::new(terms).compact_document(document).map(Compacted::Object);
+        match walked {
+            Ok(tree) => TemporalAttribute::scope_history_of(AliasedNode::new(&tree, terms.aliases())).map_err(|error| match error {
+                NodeReadError::Refused(refused) => CompactionError::Refused(refused),
+                NodeReadError::Unreadable(unwritten) => CompactionError::Encode(unwritten),
+            }),
+            Err(reason) => {
+                tracing::debug!(%reason, "compacting the scope history through the processor");
+                scope_history_through_processor(self.compactor, terms, document).await
+            }
+        }
+    }
+
+    /// The names of the operation, compacted against the request context, built
+    /// on first use.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompactionError::JsonLd`] when the request context does not
+    /// resolve or process.
+    pub async fn names(&self) -> Result<&NameCompaction, CompactionError> {
+        if let Some(names) = self.names.get() {
+            return Ok(names);
+        }
+        let context = self.compactor.processed_context().await?;
+        Ok(self.names.get_or_init(|| NameCompaction::new(context)))
     }
 
     /// The processed request context, processed on first use.

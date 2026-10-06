@@ -17,7 +17,9 @@ use crate::{error::SubscriptionError, fields::SubscriptionWriteValues, subscript
 ///
 /// Returns [`SubscriptionError::Validation`] when the merged subscription
 /// carries `timeInterval` beside `watchedAttributes` or `throttling`, or a
-/// `timeInterval` or `throttling` that is not greater than zero.
+/// `timeInterval` or `throttling` that is not greater than zero, and, unless
+/// it is `localOnly`, when it names neither `entities` nor `watchedAttributes`
+/// (a deleted `entities` cannot leave it without a selector).
 pub fn validate_merged_subscription(values: &SubscriptionWriteValues) -> Result<(), SubscriptionError> {
     if values.time_interval.is_some() && values.watched_attributes.is_some() {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalWithWatchedAttributes));
@@ -31,6 +33,26 @@ pub fn validate_merged_subscription(values: &SubscriptionWriteValues) -> Result<
     if values.time_interval.is_some_and(|time_interval| time_interval <= 0.0) {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalNotPositive));
     }
+    validate_selector(values)
+}
+
+/// The presence rule closing clause 5.2.12, which an update that deletes
+/// `entities` or `localOnly` can break without naming either member again: "At
+/// least one of (a) entities or (b) watchedAttributes shall be present, unless
+/// the member localOnly is set to true". The second rule of Table 5.2.12-1,
+/// `entities` mandatory beside `timeInterval`, needs no check of its own here:
+/// `timeInterval` already excludes `watchedAttributes`, so a periodic
+/// subscription without `entities` is one without a selector.
+fn validate_selector(values: &SubscriptionWriteValues) -> Result<(), SubscriptionError> {
+    if values.local_only {
+        return Ok(());
+    }
+    // Table 5.2.12-1 forbids an empty `entities` array, so an empty one names no
+    // entities and satisfies neither presence rule.
+    let names_entities = values.entities.as_ref().is_some_and(|entities| !entities.is_empty());
+    if !names_entities && values.watched_attributes.is_none() {
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::SelectorRequired));
+    }
     Ok(())
 }
 
@@ -38,12 +60,24 @@ pub fn validate_merged_subscription(values: &SubscriptionWriteValues) -> Result<
 mod tests {
     use crate::{
         error::SubscriptionError,
-        fields::extract_create_fields,
+        fields::SubscriptionWriteValues,
         merged_validation::validate_merged_subscription,
         subscription_validation_reason::SubscriptionValidationReason,
         variant::DatasetIdPolicy,
     };
-    use serde_json::json;
+    use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
+    use serde_json::{Value, json};
+
+    /// The write values a create body of `members` describes, over a
+    /// notification that names its endpoint.
+    fn extract_create_fields(members: &Value, policy: DatasetIdPolicy) -> Result<SubscriptionWriteValues, SubscriptionError> {
+        let mut wire = json!({"notification": {"endpoint": {"uri": "https://receiver.example.com/notify"}}});
+        if let (Some(target), Some(extra)) = (wire.as_object_mut(), members.as_object()) {
+            target.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the fixture owns its members
+        }
+        let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes()).expect("a readable request");
+        SubscriptionWriteValues::from_create(request, policy)
+    }
 
     /// Clause 5.2.12, Table 5.2.12-1: a throttled subscription a PATCH gives a
     /// `timeInterval` is refused once merged, though the fragment alone is valid.
@@ -77,6 +111,44 @@ mod tests {
             DatasetIdPolicy::Retain,
         )?;
         validate_merged_subscription(&merged)
+    }
+
+    /// Clause 5.2.12: a subscription whose `entities` an update deleted, and
+    /// that names no `watchedAttributes`, has no selector and is refused once
+    /// merged, though the fragment alone names nothing wrong.
+    #[test]
+    fn a_merged_subscription_without_entities_or_watched_attributes_is_refused() -> Result<(), SubscriptionError> {
+        let merged = extract_create_fields(&json!({}), DatasetIdPolicy::Retain)?;
+        assert!(matches!(
+            validate_merged_subscription(&merged),
+            Err(SubscriptionError::Validation(SubscriptionValidationReason::SelectorRequired))
+        ));
+        Ok(())
+    }
+
+    /// Clause 5.2.12: `entities` is mandatory when `timeInterval` is present, so
+    /// an update that deleted it from a periodic subscription leaves no
+    /// selector and is refused.
+    #[test]
+    fn a_merged_periodic_subscription_without_entities_is_refused() -> Result<(), SubscriptionError> {
+        let merged = extract_create_fields(&json!({"timeInterval": 10}), DatasetIdPolicy::Retain)?;
+        assert!(matches!(
+            validate_merged_subscription(&merged),
+            Err(SubscriptionError::Validation(SubscriptionValidationReason::SelectorRequired))
+        ));
+        Ok(())
+    }
+
+    /// Clause 5.2.12: either presence rule is lifted by `localOnly`, and either
+    /// `entities` or `watchedAttributes` satisfies the first.
+    #[test]
+    fn a_merged_local_subscription_or_one_with_a_selector_is_admitted() -> Result<(), SubscriptionError> {
+        validate_merged_subscription(&extract_create_fields(&json!({"localOnly": true}), DatasetIdPolicy::Retain)?)?;
+        validate_merged_subscription(&extract_create_fields(&json!({"entities": [{"type": "Vehicle"}]}), DatasetIdPolicy::Retain)?)?;
+        validate_merged_subscription(&extract_create_fields(
+            &json!({"timeInterval": 10, "entities": [{"type": "Vehicle"}]}),
+            DatasetIdPolicy::Retain,
+        )?)
     }
 
     #[test]

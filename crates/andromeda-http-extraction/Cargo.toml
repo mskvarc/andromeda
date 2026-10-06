@@ -12,12 +12,12 @@ workspace = true
 andromeda-context-space.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true
+andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true
-andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-persistence-failure.workspace = true
@@ -28,7 +28,7 @@ headers = "0.4.2"
 iri-rs = { version = "3.4.1", features = ["static"] }
 mediatype = "0.23.0"
 serde = "1.0.229"
-serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
+serde_json = { version = "1.0.151", features = ["arbitrary_precision", "raw_value"] }
 serde_path_to_error = "0.1.20"
 serde_urlencoded = "0.7.1"
 strum = { version = "0.28.0", features = ["derive"] }

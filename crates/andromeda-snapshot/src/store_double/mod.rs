@@ -18,9 +18,9 @@ use crate::{
     store::SnapshotPreparationJob,
     store_double::entry::{Entry, Stage},
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, Snapshot, SnapshotStatus};
-use serde_json::Value;
 use std::{
     mem::take,
     sync::{
@@ -190,7 +190,7 @@ impl StoreDouble {
         Some(SnapshotPreparationJob {
             snapshot: entry.snapshot.clone(),            // clone: the job owns its Snapshot.
             clone_source_id: entry.clone_source.clone(), // clone: the job owns its source identifier.
-            query_context: Value::Null,
+            query_context: JsonLiteral::null(),
         })
     }
 

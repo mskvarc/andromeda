@@ -27,7 +27,7 @@ use crate::{
     written_payload_admission::admit_written_entity,
 };
 use andromeda_entity::write_kind::UpdateAttributes;
-use andromeda_federation::{outcome::ForwardedWriteResult, request::TriggeringRequest};
+use andromeda_federation::{forwarded_content::ForwardedContent, outcome::ForwardedWriteResult, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_request::empty::EmptyParams;
@@ -51,7 +51,7 @@ pub(crate) async fn update_attrs(
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
-    let mut fragment = body.admitted(&context)?;
+    let fragment = body.admitted(&context)?;
     let service = &state.entities;
     let request = ForwardProvisionRequest {
         resource: ProvisionResource::Entities,
@@ -71,16 +71,15 @@ pub(crate) async fn update_attrs(
     let plan = state.forwarding.plan_provision(&target, &request).await.with_entity_instance(&uri)?;
     // Clause 5.6.2.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and an
-    // update left with nothing local is still validated. Only a registration
-    // the plan sends the fragment to reads it again, so it is serialised for
-    // them before it moves into the admission.
-    let payload = plan.payload(&fragment).with_entity_instance(&uri)?;
+    // update left with nothing local is still validated. The registrations the
+    // plan sends the fragment to read the document the admission expanded.
     let admitted = admit_written_entity::<UpdateAttributes>(service, &fragment, &context)
         .await
         .with_entity_instance(&uri)?;
+    let sent_to_registrations = plan.reads_payload();
     let forwarded = state
         .forwarding
-        .execute_provision(plan, &request, payload.as_deref())
+        .execute_provision(plan, &request, Some(ForwardedContent::Entity(admitted.document())))
         .await
         .with_entity_instance(&uri)?;
 
@@ -101,14 +100,13 @@ pub(crate) async fn update_attrs(
     // Clause 5.6.2.4: the attributes proxied registrations cover leave the
     // fragment; whatever remains is updated here. A fragment no registration
     // read was taken over by none of them.
-    let local_update = if payload.is_none() {
-        Some(service.update_attrs(&target, &id, admitted).await)
-    } else {
-        let strip = fragment.strip_attributes(&collect_proxied_attrs(&forwarded));
-        match service.admit_local_remainder(admitted, strip, &fragment, &context).await {
-            Some(remainder) => Some(async { service.update_attrs(&target, &id, remainder?).await }.await),
+    let local_update = if sent_to_registrations {
+        match admitted.local_remainder(&collect_proxied_attrs(&forwarded)) {
+            Some(remainder) => Some(service.update_attrs(&target, &id, remainder).await),
             None => None,
         }
+    } else {
+        Some(service.update_attrs(&target, &id, admitted).await)
     };
 
     // Clause 5.6.2.5: the status says "whether all the new Attributes were

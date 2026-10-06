@@ -33,7 +33,11 @@ use andromeda_federation::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{query::body::Query, snapshot::ExecutionResultDetails};
+use andromeda_ngsi_ld_model::{
+    query::body::Query,
+    snapshot::ExecutionResultDetails,
+    temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory},
+};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     page_window::{PageStart, PageWindow},
@@ -41,7 +45,6 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::{error::TemporalError, service::TemporalQueryResult};
-use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
 use tracing::{error, warn};
 
@@ -97,12 +100,8 @@ impl SnapshotExecutor {
                 warn!(snapshot_id = %snapshot_id, query_index = index, entity_id = %warning.entity_id, warning = %warning.message, "Snapshot temporal query retained usable results with a warning");
             }
             let local_page_len = result.entities.len();
-            let last_local = result
-                .entities
-                .last()
-                .and_then(|entity| entity.get("id"))
-                .and_then(Value::as_str)
-                .and_then(|raw| raw.parse::<Identifier>().ok());
+            // clone: the cursor of the next page outlives the entities it was read from
+            let last_local = result.entities.last().and_then(TemporalHistory::id).cloned();
             let forwarded = match self
                 .sources
                 .forwarding
@@ -132,21 +131,26 @@ impl SnapshotExecutor {
                 }
             };
             let remote_page_full = forwarded.iter().any(|source| source.entities.len() >= self.capture_page_size as usize);
-            let entities = merge_temporal_query_results(result.entities, forwarded);
-            let (identifiers, values): (Vec<Identifier>, Vec<Value>) = entities
-                .into_iter()
-                .filter_map(|value| {
-                    let raw = value.get("id").and_then(Value::as_str)?;
-                    match raw.parse::<Identifier>() {
-                        Ok(id) => Some((id, value)),
-                        Err(error) => {
-                            warn!(snapshot_id = %snapshot_id, query_index = index, entity_id = raw, error = %error, "Temporal snapshot result carries an invalid entity URI");
-                            None
+            let histories = merge_temporal_query_results(result.entities, forwarded, params.timeproperty_or_default());
+            let mut identifiers = Vec::with_capacity(histories.len());
+            let mut documents = Vec::with_capacity(histories.len());
+            for history in histories {
+                match history {
+                    TemporalHistory::Instances(document) => match document.id().cloned() {
+                        Some(id) => {
+                            identifiers.push(id);
+                            documents.push(document);
                         }
-                    }
-                })
-                .unzip();
-            let detail = self.persist_temporal_results(target, snapshot_id, index, values, context).await?;
+                        None => {
+                            warn!(snapshot_id = %snapshot_id, query_index = index, "Temporal snapshot result carries no entity identifier");
+                        }
+                    },
+                    // An aggregate records no instance, so there is no history
+                    // of it to capture.
+                    TemporalHistory::Aggregates(_) => return Ok(failure_detail("A Snapshot cannot capture an aggregated temporal representation")),
+                }
+            }
+            let detail = self.persist_temporal_results(target, snapshot_id, index, documents).await?;
             if detail.problem_details.is_some() {
                 return Ok(detail);
             }
@@ -216,21 +220,18 @@ impl SnapshotExecutor {
 
     /// Write captured temporal evolutions into the Snapshot's branch.
     ///
-    /// The evolutions arrive compacted under the Snapshot's query `context`, so
-    /// they are expanded under that same context: any other would give their
-    /// terms other IRIs than the ones the query retrieved, and the stored
-    /// information would not be what clause 5.16.1.4 says to store.
+    /// The evolutions arrive in the expanded form, whatever context the query
+    /// was spelled in, so what is stored is what clause 5.16.1.4 says to store.
     async fn persist_temporal_results(
         &self,
         target: &ContextTarget,
         snapshot_id: &Identifier,
         index: usize,
-        values: Vec<Value>,
-        context: &ContextSpec,
+        documents: Vec<TemporalDocument>,
     ) -> Result<ExecutionResultDetails, SnapshotError> {
-        let captured = values.len();
-        for data in values {
-            if let Err(error) = self.sources.temporal.create_or_update(target, data, context).await {
+        let captured = documents.len();
+        for document in documents {
+            if let Err(error) = self.sources.temporal.record_history(target, document).await {
                 error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to materialize temporal Snapshot results");
                 return temporal_failure(error, "Failed to store temporal results: ");
             }

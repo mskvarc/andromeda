@@ -9,6 +9,7 @@
 use crate::{
     context_registry::RegisteredContext,
     context_tail::ContextTail,
+    engine::context_document::ContextDocument,
     loader::{
         cache_lifetime::{CacheLifetime, ContextFreshness, ResidualLifetime},
         pending_persistence::PendingPersistence,
@@ -27,10 +28,11 @@ use std::{
 /// accounting. Registry and preloaded contexts have no row to update.
 #[derive(Debug, Clone)]
 pub(crate) struct LoadedContext {
-    /// The parsed JSON-LD context payload supplied to the processor.
-    pub(crate) value: Arc<jsonld_syntax::Value>,
+    /// The document as the processor reads it.
+    pub(crate) document: Arc<ContextDocument>,
     /// What the document as written leaves in force last (clause 4.4), read
-    /// before its embedded Core @context references were removed from `value`.
+    /// before its embedded Core @context references were removed from
+    /// `document`.
     pub(crate) tail: ContextTail,
     /// Where the cached document's durability and hit accounting live.
     pub(crate) durability: ContextDurability,
@@ -167,7 +169,7 @@ impl EntryLifetime {
 /// can invalidate them.
 pub(crate) fn registry_context(registered: RegisteredContext) -> LoadedContext {
     LoadedContext {
-        value: registered.value,
+        document: registered.document,
         tail: registered.tail,
         durability: ContextDurability::Registry,
         lifetime: EntryLifetime::Unbounded,
@@ -201,19 +203,17 @@ mod tests {
             cache_lifetime::{CacheLifetime, ContextFreshness, ResidualLifetime},
             loaded_context::{ContextDurability, ContextProvenance, EntryLifetime, LoadedContext, ResponseDrivenExpiry},
         },
+        test_documents::{context_document, literal},
     };
     use iri_rs::IriBuf;
     use moka::Expiry;
     use serde_json::json;
-    use std::{
-        sync::Arc,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
 
     fn expiry_of(lifetime: EntryLifetime) -> Option<Duration> {
         let url = IriBuf::new("https://example.com/context.jsonld".to_string()).expect("valid URL");
         let loaded = LoadedContext {
-            value: Arc::new(jsonld_syntax::Value::from_serde_json(json!({ "@context": {} }))),
+            document: context_document(&json!({ "@context": {} })),
             tail: ContextTail::LocalDefinitions,
             durability: ContextDurability::Registry,
             lifetime,
@@ -278,7 +278,7 @@ mod tests {
         let resolved = IriBuf::new("https://example.com/requested.jsonld".to_string()).expect("valid URL");
         let final_url = IriBuf::new("https://example.com/moved/context.jsonld".to_string()).expect("valid URL");
         let mut loaded = LoadedContext {
-            value: Arc::new(jsonld_syntax::Value::from_serde_json(json!({ "@context": {} }))),
+            document: context_document(&json!({ "@context": {} })),
             tail: ContextTail::LocalDefinitions,
             durability: ContextDurability::Registry,
             lifetime: EntryLifetime::Unbounded,
@@ -301,8 +301,8 @@ mod tests {
     fn a_relative_tail_resolves_against_the_url_the_entry_is_resolved_by() {
         let requested = IriBuf::new("https://broker.example.com/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:outer".to_string()).expect("valid URL");
         let loaded = LoadedContext {
-            value: Arc::new(jsonld_syntax::Value::from_serde_json(json!({ "@context": "terms.jsonld" }))),
-            tail: ContextTail::of_document(&json!({ "@context": "terms.jsonld" })),
+            document: context_document(&json!({ "@context": "terms.jsonld" })),
+            tail: ContextTail::of_document(literal(&json!({ "@context": "terms.jsonld" })).piece()),
             durability: ContextDurability::Durable,
             lifetime: EntryLifetime::Unbounded,
             canonical_url: None,

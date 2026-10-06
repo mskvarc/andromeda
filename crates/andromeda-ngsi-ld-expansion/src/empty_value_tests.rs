@@ -8,7 +8,7 @@
 //! other value member names at least one target, term, string or geometry.
 
 use crate::{
-    expansion_fixture::{FixtureFailure, attribute, engine, entity, fragment, patch},
+    expansion_fixture::{FixtureFailure, attribute, engine, entity, patch},
     normalization::Normalization,
 };
 use andromeda_ngsi_ld_entity::document::{
@@ -79,7 +79,7 @@ async fn the_concise_empty_array_is_a_property_value() {
         .await
         .expect("the fixture expands")
         .agreed();
-    let updated = fragment(&engine(), json!({"tags": []}), Normalization::Entity)
+    let updated = patch(&engine(), json!({"tags": []}), Normalization::Entity)
         .await
         .expect("the fixture expands")
         .agreed();

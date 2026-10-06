@@ -12,7 +12,14 @@ use crate::{
     system_instant::SystemInstant,
     unit_code::UnitCode,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    identifier::Identifier,
+    reference::NgsiLdReference,
+    time_prop::TimeProp,
+};
+use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use typed_builder::TypedBuilder;
 
@@ -175,6 +182,20 @@ impl InstanceDocument {
     #[must_use]
     pub const fn proof_seals(&self) -> &ProofSeals {
         &self.proof_seals
+    }
+
+    /// The instant the instance carries on one of the four Temporal
+    /// Properties (clauses 4.8 and 5.2.21), `None` when it carries none on
+    /// that axis: an instance that declared no `observedAt` stands at no
+    /// `observedAt` instant, and an `observedAt` the instance removes is none.
+    #[must_use]
+    pub fn instant_on(&self, timeproperty: TimeProp) -> Option<DateTime<Utc>> {
+        match timeproperty {
+            TimeProp::Observed => self.observed_at.as_ref().and_then(Slot::as_set).map(DateTimeText::instant),
+            TimeProp::Created => self.created_at.map(SystemInstant::get),
+            TimeProp::Modified => self.modified_at.map(SystemInstant::get),
+            TimeProp::Deleted => self.deleted_at.as_ref().map(DateTimeText::instant),
+        }
     }
 
     /// The written sub-attributes.

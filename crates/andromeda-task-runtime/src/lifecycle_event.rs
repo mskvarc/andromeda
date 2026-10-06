@@ -47,8 +47,6 @@ pub enum LifecycleEventKind {
     },
     /// Task observed cancellation and stopped cooperatively.
     Cancelled,
-    /// A finite startup task completed successfully.
-    Completed,
     /// Cooperative cancellation exceeded the configured deadline.
     ForcedTermination,
 }

@@ -2,69 +2,62 @@
 //! of clauses 5.6.7.4 and following).
 
 use crate::{
-    error::FederationError,
+    attribute_coverage::{covered_attributes, narrowed_document},
     provision::is_proxied,
     provision_batch::BatchEntity,
-    registration_selection::{covered_attribute_members, csr_has_matching_information, is_entity_control_member, retain_covered_attributes},
-    term_resolver::TermResolver,
+    registration_information::csr_has_matching_information,
 };
 use andromeda_jsonld::batch_contexts::BatchContext;
+use andromeda_ngsi_ld_entity::document::EntityDocument;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode};
 use iri_rs::IriBuf;
-use serde_json::Value;
-use std::slice::from_ref;
-
-/// One entity of the client's array, read under the context it was submitted
-/// with.
-pub(super) struct ResolvedEntity<'a, 'r> {
-    /// The entity.
-    pub(super) entity: &'a BatchEntity<'a>,
-    /// Its type expanded under its own context; none for a deletion.
-    pub(super) entity_type: Option<IriBuf>,
-    /// Its own context, resolved once for every entity sharing it.
-    pub(super) resolver: &'r TermResolver<'r>,
-}
+use std::borrow::Cow;
 
 /// One entity of the array narrowed for one registration.
 pub(super) struct NarrowedEntity<'a> {
     /// The entity identifier.
     pub(super) id: Identifier,
-    /// The narrowed entity; none for a deletion.
-    pub(super) body: Option<Value>,
-    /// The attributes a proxied registration claims from it.
+    /// The narrowed document, borrowed as admitted when nothing was taken out
+    /// of it; none for a deletion.
+    pub(super) body: Option<Cow<'a, EntityDocument>>,
+    /// The attributes a proxied registration claims from it, by their expanded
+    /// names.
     pub(super) proxied_attrs: Vec<AttributeName>,
     /// The context the entity was submitted with, which it is forwarded under.
     pub(super) context: &'a BatchContext,
+}
+
+/// The types of an admitted document, as the IRIs registrations are matched
+/// on (clause 5.12 matches on any of them).
+fn entity_types(entity: &BatchEntity<'_>) -> Vec<IriBuf> {
+    entity
+        .document
+        .into_iter()
+        .flat_map(EntityDocument::types)
+        .filter_map(|name| IriBuf::new(name.to_string()).ok())
+        .collect()
 }
 
 /// Narrow the client's array to what `csr` receives (the `IN` of clauses
 /// 5.6.7.4 and following): the entities it matches, each reduced to the
 /// attributes it covers minus those another exclusive registration -- or,
 /// unless `csr` is itself a redirect, another redirect registration -- owns,
-/// and without the entities that keeps no attribute. Every entity is read under
-/// the context it was submitted with.
-///
-/// # Errors
-///
-/// Returns [`FederationError::JsonLd`] when a body attribute cannot be expanded
-/// against its context, and [`FederationError::ForwardedBody`] when an entity
-/// the registration matches cannot be serialised.
-pub(super) async fn narrow_input<'a>(
+/// and without the entities that keeps no attribute. Every entity is read
+/// under the expanded names its own context gave it.
+pub(super) fn narrow_input<'a>(
     csr: &ContextSourceRegistration,
     candidates: &[ContextSourceRegistration],
-    entities: &[ResolvedEntity<'a, '_>],
-) -> Result<Vec<NarrowedEntity<'a>>, FederationError> {
+    entities: &[BatchEntity<'a>],
+) -> Vec<NarrowedEntity<'a>> {
     let csr_is_redirect = csr.access.mode == Some(ForwardingMode::Redirect);
     let mut narrowed = Vec::new();
-    for ResolvedEntity { entity, entity_type, resolver } in entities {
-        // Clause 5.12 matches on any of the entity's types; a batch entity names
-        // at most one, so its resolved type (when known) is the whole set.
-        let entity_types: &[IriBuf] = entity_type.as_ref().map_or(&[], from_ref);
-        if !csr_has_matching_information(csr, entity_types, Some(entity.id), None) {
+    for entity in entities {
+        let types = entity_types(entity);
+        if !csr_has_matching_information(csr, &types, Some(entity.id), None) {
             continue;
         }
-        let Some(body) = entity.body else {
+        let Some(document) = entity.document else {
             narrowed.push(NarrowedEntity {
                 id: entity.id.clone(), // clone: the narrowed entity outlives the borrowed array
                 body: None,
@@ -73,13 +66,9 @@ pub(super) async fn narrow_input<'a>(
             });
             continue;
         };
-        // Each registration narrows its own copy of the entity.
-        let Value::Object(mut object) = body.to_json_value().map_err(FederationError::ForwardedBody)? else {
+        let Some(mut body) = narrowed_document(document, csr, &types, Some(entity.id)) else {
             continue;
         };
-        if !retain_covered_attributes(&mut object, csr, entity_types, Some(entity.id), resolver).await? {
-            continue;
-        }
         for other in candidates.iter().filter(|other| other.id != csr.id) {
             let owns = match other.access.mode {
                 Some(ForwardingMode::Exclusive) => true,
@@ -89,204 +78,136 @@ pub(super) async fn narrow_input<'a>(
             if !owns {
                 continue;
             }
-            for member in covered_attribute_members(&object, other, entity_types, Some(entity.id), resolver).await? {
-                object.remove(&member);
+            let taken = covered_attributes(&body, other, &types, Some(entity.id));
+            if !taken.is_empty() {
+                body.to_mut().attributes_mut().retain(|name, _| !taken.contains(name));
             }
         }
-        let remaining = object
-            .keys()
-            .filter(|name| !is_entity_control_member(name))
-            .filter_map(|name| name.parse::<AttributeName>().ok())
-            .collect::<Vec<_>>();
-        if remaining.is_empty() {
+        if body.attributes().is_empty() {
             continue;
         }
+        let proxied_attrs = if is_proxied(csr) {
+            body.attributes().keys().cloned().collect() // clone: the result owns the names the registration claims
+        } else {
+            Vec::new()
+        };
         narrowed.push(NarrowedEntity {
             id: entity.id.clone(), // clone: the narrowed entity outlives the borrowed array
-            body: Some(Value::Object(object)),
-            proxied_attrs: if is_proxied(csr) { remaining } else { Vec::new() },
+            body: Some(body),
+            proxied_attrs,
             context: entity.context,
         });
     }
-    Ok(narrowed)
+    narrowed
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        counted_body::CountedBody,
-        provision_batch::{
-            BatchEntity,
-            narrowing::{ResolvedEntity, narrow_input},
-            registration_fixture::{offline_engine, registration, uri, vehicle},
-        },
-        term_resolver::TermResolver,
+    use crate::provision_batch::{
+        BatchEntity,
+        narrowing::{NarrowedEntity, narrow_input},
+        registration_fixture::{document, registration, uri},
     };
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{batch_contexts::BatchContexts, context_spec::ContextSpec};
-    use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-    use iri_rs::IriBuf;
     use serde_json::json;
-    use std::slice::from_ref;
+    use std::{borrow::Cow, slice::from_ref};
 
-    /// The entities of `entities` read under `resolver`, each typed by the IRI
-    /// `types` gives its compact type.
-    fn resolved<'a, 'r>(entities: &'a [BatchEntity<'a>], types: &[(&str, &str)], resolver: &'r TermResolver<'r>) -> Vec<ResolvedEntity<'a, 'r>> {
-        entities
-            .iter()
-            .map(|entity| ResolvedEntity {
-                entity,
-                entity_type: entity.entity_type.and_then(|name| {
-                    types
-                        .iter()
-                        .find(|(compact, _)| *compact == name.as_str())
-                        .map(|(_, iri)| IriBuf::new((*iri).to_owned()).expect("valid IRI"))
-                }),
-                resolver,
-            })
-            .collect()
+    const VEHICLE_TYPE: &str = "https://example.org/Vehicle";
+    const SPEED: &str = "https://example.org/speed";
+    const PLACE: &str = "https://example.org/place";
+    const BRAND: &str = "https://example.org/brandName";
+
+    /// Names of the attributes a narrowed entity keeps, in written order.
+    fn kept(entity: &NarrowedEntity<'_>) -> Vec<String> {
+        entity
+            .body
+            .as_ref()
+            .map(|body| body.attributes().keys().map(ToString::to_string).collect())
+            .unwrap_or_default()
     }
 
-    const TYPES: [(&str, &str); 2] = [("Vehicle", "https://example.org/Vehicle"), ("Device", "https://example.org/Device")];
-
-    #[tokio::test]
-    async fn each_registration_receives_its_own_narrowed_copy_and_loses_what_other_proxied_sources_own() {
+    #[test]
+    fn each_registration_receives_its_own_narrowed_copy_and_loses_what_other_proxied_sources_own() {
         // Clause 5.6.7.4: per registration, unmatched entities are dropped,
         // non-matching attributes are removed, attributes another exclusive or
         // redirect registration owns are removed, and an entity left without
         // attributes is dropped.
-        let speed = registration(
-            "urn:ngsi-ld:csr:speed",
-            "redirect",
-            Some("https://example.org/Vehicle"),
-            None,
-            &["https://example.org/speed"],
-            &["createBatch"],
-        );
-        let location = registration(
-            "urn:ngsi-ld:csr:location",
-            "redirect",
-            Some("https://example.org/Vehicle"),
-            None,
-            &["https://example.org/place"],
-            &["createBatch"],
-        );
-        let everything = registration(
-            "urn:ngsi-ld:csr:all",
-            "inclusive",
-            Some("https://example.org/Vehicle"),
-            None,
-            &[],
-            &["createBatch"],
-        );
+        let speed = registration("urn:ngsi-ld:csr:speed", "redirect", Some(VEHICLE_TYPE), None, &[SPEED], &["createBatch"]);
+        let location = registration("urn:ngsi-ld:csr:location", "redirect", Some(VEHICLE_TYPE), None, &[PLACE], &["createBatch"]);
+        let everything = registration("urn:ngsi-ld:csr:all", "inclusive", Some(VEHICLE_TYPE), None, &[], &["createBatch"]);
         let candidates = vec![speed.clone(), location, everything.clone()]; // clone: the candidate list and the subjects both own the registrations
-        // The bodies name their attributes by the terms this @context maps to
-        // the declared IRIs, so coverage is decided by what each key means.
-        // `place` stands in for a plain vocabulary term; the core context
-        // protects `location`, so it could not be aliased to a peer IRI.
-        let engine = offline_engine();
-        let context = BatchContexts::per_entity().context_of(Some(json!({
-            "speed": "https://example.org/speed",
-            "place": "https://example.org/place",
-            "brandName": "https://example.org/brandName",
-            "colour": "https://example.org/colour"
-        })));
-        let resolver = TermResolver::new(&engine, context.spec());
+        let context = BatchContexts::per_entity().context_of(None);
         let v1 = uri("urn:ngsi-ld:Vehicle:1");
         let d1 = uri("urn:ngsi-ld:Device:1");
-        let vehicle_type = "Vehicle".parse::<EntityTypeName>().expect("valid type");
-        let device_type = "Device".parse::<EntityTypeName>().expect("valid type");
-        let vehicle_body = vehicle("urn:ngsi-ld:Vehicle:1");
-        let device_body = json!({"id": "urn:ngsi-ld:Device:1", "type": "Device", "brandName": {"type": "Property", "value": "sensor"}});
+        let vehicle = document("urn:ngsi-ld:Vehicle:1", VEHICLE_TYPE, &[BRAND, SPEED, PLACE]);
+        let device = document("urn:ngsi-ld:Device:1", "https://example.org/Device", &[BRAND]);
         let entities = [
             BatchEntity {
                 id: &v1,
-                entity_type: Some(&vehicle_type),
-                body: Some(&vehicle_body),
+                document: Some(&vehicle),
                 context: &context,
             },
             BatchEntity {
                 id: &d1,
-                entity_type: Some(&device_type),
-                body: Some(&device_body),
+                document: Some(&device),
                 context: &context,
             },
         ];
-        let entities = resolved(&entities, &TYPES, &resolver);
 
-        let for_speed = narrow_input(&speed, &candidates, &entities).await.expect("narrowing resolves");
+        let for_speed = narrow_input(&speed, &candidates, &entities);
         pretty_assertions::assert_eq!(for_speed.len(), 1, "the Device is not matched");
-        let body = for_speed[0].body.as_ref().expect("a narrowed body");
-        assert!(
-            body.get("speed").is_some() && body.get("place").is_none() && body.get("brandName").is_none(),
-            "{body}"
-        );
-        pretty_assertions::assert_eq!(for_speed[0].proxied_attrs.iter().map(ToString::to_string).collect::<Vec<_>>(), vec!["speed"]);
+        pretty_assertions::assert_eq!(kept(&for_speed[0]), vec![SPEED]);
+        pretty_assertions::assert_eq!(for_speed[0].proxied_attrs.iter().map(ToString::to_string).collect::<Vec<_>>(), vec![SPEED]);
 
-        let for_everything = narrow_input(&everything, &candidates, &entities).await.expect("narrowing resolves");
-        let body = for_everything[0].body.as_ref().expect("a narrowed body");
-        assert!(body.get("brandName").is_some(), "the unowned attribute stays: {body}");
-        assert!(
-            body.get("speed").is_none() && body.get("place").is_none(),
-            "the redirect-owned attributes leave the inclusive copy: {body}"
-        );
+        let for_everything = narrow_input(&everything, &candidates, &entities);
+        pretty_assertions::assert_eq!(kept(&for_everything[0]), vec![BRAND], "the redirect-owned attributes leave the inclusive copy");
         assert!(for_everything[0].proxied_attrs.is_empty(), "an inclusive registration proxies nothing");
 
         let colour = registration(
             "urn:ngsi-ld:csr:colour",
             "redirect",
-            Some("https://example.org/Vehicle"),
+            Some(VEHICLE_TYPE),
             None,
             &["https://example.org/colour"],
             &["createBatch"],
         );
         assert!(
-            narrow_input(&colour, &candidates, &entities).await.expect("narrowing resolves").is_empty(),
+            narrow_input(&colour, &candidates, &entities).is_empty(),
             "a source owning nothing present is skipped"
         );
     }
 
     /// JSON-LD applies a top-level node's `@context` to that node alone: two
-    /// entities naming `rate` through different contexts are narrowed by what
-    /// their own `rate` means, and each keeps the context it came with. The term
-    /// is not the registered IRI's short name, so the short-name fallback cannot
-    /// cover the second entity by spelling alone.
-    #[tokio::test]
-    async fn each_entity_is_narrowed_under_its_own_context() {
-        let speed = registration(
-            "urn:ngsi-ld:csr:speed",
-            "inclusive",
-            Some("https://example.org/Vehicle"),
-            None,
-            &["https://example.org/speed"],
-            &["createBatch"],
-        );
-        let engine = offline_engine();
+    /// entities naming `rate` through different contexts were expanded to
+    /// different IRIs, so only the one whose own `rate` is the registered
+    /// speed is covered, and it keeps the context it came with.
+    #[test]
+    fn each_entity_is_narrowed_by_what_its_own_context_expanded_it_to() {
+        let speed = registration("urn:ngsi-ld:csr:speed", "inclusive", Some(VEHICLE_TYPE), None, &[SPEED], &["createBatch"]);
         let mut contexts = BatchContexts::per_entity();
-        let registered = contexts.context_of(Some(json!({"rate": "https://example.org/speed"})));
-        let other = contexts.context_of(Some(json!({"rate": "https://other.example.org/rate"})));
-        let registered_resolver = TermResolver::new(&engine, registered.spec());
-        let other_resolver = TermResolver::new(&engine, other.spec());
+        let registered = contexts.context_of(Some(JsonLiteral::admit(&json!({"rate": SPEED}).to_string()).expect("an admissible literal")));
+        let other = contexts.context_of(Some(
+            JsonLiteral::admit(&json!({"rate": "https://other.example.org/rate"}).to_string()).expect("an admissible literal"),
+        ));
         let v1 = uri("urn:ngsi-ld:Vehicle:1");
         let v2 = uri("urn:ngsi-ld:Vehicle:2");
-        let vehicle_type = "Vehicle".parse::<EntityTypeName>().expect("valid type");
-        let first_body = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "rate": {"type": "Property", "value": 1}});
-        let second_body = json!({"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle", "rate": {"type": "Property", "value": 2}});
-        let first = [BatchEntity {
-            id: &v1,
-            entity_type: Some(&vehicle_type),
-            body: Some(&first_body),
-            context: &registered,
-        }];
-        let second = [BatchEntity {
-            id: &v2,
-            entity_type: Some(&vehicle_type),
-            body: Some(&second_body),
-            context: &other,
-        }];
-        let mut entities = resolved(&first, &TYPES, &registered_resolver);
-        entities.extend(resolved(&second, &TYPES, &other_resolver));
+        let first = document("urn:ngsi-ld:Vehicle:1", VEHICLE_TYPE, &[SPEED]);
+        let second = document("urn:ngsi-ld:Vehicle:2", VEHICLE_TYPE, &["https://other.example.org/rate"]);
+        let entities = [
+            BatchEntity {
+                id: &v1,
+                document: Some(&first),
+                context: &registered,
+            },
+            BatchEntity {
+                id: &v2,
+                document: Some(&second),
+                context: &other,
+            },
+        ];
 
-        let narrowed = narrow_input(&speed, from_ref(&speed), &entities).await.expect("narrowing resolves");
+        let narrowed = narrow_input(&speed, from_ref(&speed), &entities);
 
         pretty_assertions::assert_eq!(
             narrowed.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
@@ -296,50 +217,44 @@ mod tests {
         pretty_assertions::assert_eq!(narrowed[0].context.id(), registered.id());
     }
 
-    #[tokio::test]
-    async fn a_deletion_narrows_by_identifier_alone() {
+    #[test]
+    fn a_deletion_narrows_by_identifier_alone() {
         // A deletion names no type, so the registration's type selector is
         // not consulted and only its identifier narrows the array.
         let owner = registration(
             "urn:ngsi-ld:csr:v1",
             "redirect",
-            Some("https://example.org/Vehicle"),
+            Some(VEHICLE_TYPE),
             Some("urn:ngsi-ld:Vehicle:1"),
             &[],
             &["deleteBatch"],
         );
-        let engine = offline_engine();
         let context = BatchContexts::shared(ContextSpec::none()).context_of(None);
-        let resolver = TermResolver::new(&engine, context.spec());
         let v1 = uri("urn:ngsi-ld:Vehicle:1");
         let v2 = uri("urn:ngsi-ld:Vehicle:2");
         let entities = [
             BatchEntity {
                 id: &v1,
-                entity_type: None,
-                body: None,
+                document: None,
                 context: &context,
             },
             BatchEntity {
                 id: &v2,
-                entity_type: None,
-                body: None,
+                document: None,
                 context: &context,
             },
         ];
-        let narrowed = narrow_input(&owner, from_ref(&owner), &resolved(&entities, &[], &resolver))
-            .await
-            .expect("narrowing resolves");
+        let narrowed = narrow_input(&owner, from_ref(&owner), &entities);
         pretty_assertions::assert_eq!(
             narrowed.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
             vec!["urn:ngsi-ld:Vehicle:1"]
         );
     }
 
-    /// An entity is serialised only for a registration that matches it: a
-    /// batch no registration covers serialises nothing (clause 5.12).
-    #[tokio::test]
-    async fn an_entity_no_registration_matches_is_never_serialised() {
+    /// An entity no registration matches is not forwarded, and one a
+    /// registration covers in full is not copied for it.
+    #[test]
+    fn an_entity_no_registration_matches_is_dropped_and_a_covered_one_is_not_copied() {
         let devices = registration(
             "urn:ngsi-ld:csr:devices",
             "inclusive",
@@ -348,39 +263,33 @@ mod tests {
             &[],
             &["createBatch"],
         );
-        let engine = offline_engine();
         let context = BatchContexts::shared(ContextSpec::none()).context_of(None);
-        let resolver = TermResolver::new(&engine, context.spec());
         let vehicle_id = uri("urn:ngsi-ld:Vehicle:1");
         let device_id = uri("urn:ngsi-ld:Device:1");
-        let vehicle_type = "Vehicle".parse::<EntityTypeName>().expect("valid type");
-        let device_type = "Device".parse::<EntityTypeName>().expect("valid type");
-        let vehicle_body = CountedBody::new(vehicle("urn:ngsi-ld:Vehicle:1"));
-        let device_body = CountedBody::new(json!({"id": "urn:ngsi-ld:Device:1", "type": "Device", "brandName": {"type": "Property", "value": "sensor"}}));
+        let vehicle = document("urn:ngsi-ld:Vehicle:1", VEHICLE_TYPE, &[SPEED]);
+        let device = document("urn:ngsi-ld:Device:1", "https://example.org/Device", &[BRAND]);
         let entities = [
             BatchEntity {
                 id: &vehicle_id,
-                entity_type: Some(&vehicle_type),
-                body: Some(&vehicle_body),
+                document: Some(&vehicle),
                 context: &context,
             },
             BatchEntity {
                 id: &device_id,
-                entity_type: Some(&device_type),
-                body: Some(&device_body),
+                document: Some(&device),
                 context: &context,
             },
         ];
 
-        let narrowed = narrow_input(&devices, from_ref(&devices), &resolved(&entities, &TYPES, &resolver))
-            .await
-            .expect("the array narrows");
+        let narrowed = narrow_input(&devices, from_ref(&devices), &entities);
 
         pretty_assertions::assert_eq!(
             narrowed.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
             vec!["urn:ngsi-ld:Device:1"]
         );
-        pretty_assertions::assert_eq!(vehicle_body.serialisations(), 0, "the unmatched entity is never serialised");
-        pretty_assertions::assert_eq!(device_body.serialisations(), 1, "the matched entity is serialised once for its registration");
+        assert!(
+            matches!(narrowed[0].body, Some(Cow::Borrowed(_))),
+            "a document that loses nothing is not copied"
+        );
     }
 }

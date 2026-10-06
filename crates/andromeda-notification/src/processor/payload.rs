@@ -10,13 +10,13 @@ use crate::{
         carried_entities::{CarriedShape, NotifiedLinks, carried_entities},
         compaction::compact_notified_state,
         entity_instants::{ExpiryStamp, notified_instants},
-        join::{linked_attribute_index, notified_linked_graph},
+        join::notified_linked_graph,
         notified_entity::{DeletedRendering, NotifiedEntity},
         selection::{Selection, SelectionRule},
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::query::EntityQueryService;
+use andromeda_entity::query::{EntityQueryService, notification_join::linked_attribute_index};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_linked_retrieval::join::RetrievingJoin;
 use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
@@ -29,6 +29,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_render::{
     notification_data::DataShape,
     notification_entity::TargetSpelling,
+    notification_language::NotificationLanguage,
     notified_changes::HeldAttributes,
     structural_projection::StructuralProjection,
 };
@@ -136,6 +137,7 @@ async fn notification_payload(
             .map(|index| (graph, index)),
         None => None,
     };
+    let language = sub.lang.as_ref().map(NotificationLanguage::of);
     let shape = CarriedShape {
         format: sub.notification_format.unwrap_or_default(),
         join: sub.notification_join,
@@ -143,6 +145,7 @@ async fn notification_payload(
         projection: StructuralProjection::from(&sub.notification_projection),
         list,
         conformance: sub.ngsild_conformance,
+        language: language.as_ref(),
     };
     let links = indexed.as_ref().map(|(graph, index)| NotifiedLinks { graph, index });
     carried_entities(from_ref(&rooted.notified), links, shape, data)

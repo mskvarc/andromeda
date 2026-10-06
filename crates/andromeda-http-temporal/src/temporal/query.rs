@@ -22,22 +22,21 @@ use crate::{
             merged_page::{MergedPageCut, cut_merged_page},
             request::TemporalQueryRequest,
             request_entity_map::record_query_map,
-            response::{TemporalCollectionMetadata, query_response, simplified_collection},
+            response::{TemporalCollectionMetadata, query_response},
             split_contribution::{ContributionMerge, ContributionShape, contributed_entities, merge_with_contributions},
         },
     },
+    temporal_answer::matched_histories,
 };
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
-use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_linked_retrieval::edge::LinkedEdge;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
+use andromeda_ngsi_ld_render::structural_projection::StructuralProjection;
 use andromeda_temporal::{
     error::TemporalError,
     service::{TemporalQueryWarning, TemporalRange},
     temporal_invariant::TemporalInvariant,
 };
-use axum::http::Uri;
-use serde_json::Value;
 
 /// Admitting a decoded query before it runs.
 mod admission;
@@ -85,8 +84,6 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     } = request;
     let service = &state.temporal;
     let AdmittedQuery { prefer, incoming_via, map_use } = admit_request(&state, &target, &context, protocol, &mut params, &uri).await?;
-    let key_values = params.is_simplified();
-
     let scope = QueryScope::of(&target, &params);
 
     let split = state.forwarding.split_entities(params.split_entities);
@@ -118,11 +115,12 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         shape,
         contributed: &contributed,
     };
+    let projection = local_result.projection;
     let mut merged = merge_with_contributions(service, contribution, local_result.entities, forwarded, &uri).await?;
     let timeproperty = params.timeproperty_or_default();
     completeness.trim(&mut merged.entities, timeproperty);
 
-    let (mut entities, total_count) = cut_merged_page(
+    let (entities, total_count) = cut_merged_page(
         merged.entities,
         MergedPageCut {
             window: local.merged,
@@ -159,12 +157,15 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         params: &params,
         context: &context,
     };
-    let (warnings, linked_ids) = join_linked_entities(&read, &mut entities, &local_result.linked_edges, merged.warnings, &uri).await?;
+    // The histories are compacted under the request context once every holder's
+    // part has been merged into them (clause 5.7.3); the join then reads the
+    // compact roots.
+    let bodies = service.compact_histories(entities, &context).await.with_instance(&uri)?;
+    let (resolved, warnings) = apply_temporal_join(&read, &bodies, merged.warnings).await.with_instance(&uri)?;
+    let linked_ids = resolved.linked_ids();
 
     let map_created = map_use.mints();
     let entity_map_uri = record_query_map(&state.entity_maps, &read, map_use, merged.contributions, linked_ids, &uri).await?;
-
-    let values = if key_values { simplified_collection(entities, &uri)? } else { entities };
 
     let status = response_status(range.as_ref(), map_created);
     // Table 6.18.3.2-2 carries the 203 row and clause 6.3.6 the
@@ -175,13 +176,16 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     // behaviour of the GET and clause 6.3.6 ties the echo to any response
     // carrying a payload body, so both bindings answer the same way.
     let rendering = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root)
-        .start_rendering_temporal(accept.media_type(), prefer.rendering_preferences(), params.selected_format())
+        .start_rendering_normalized(accept.media_type(), prefer.rendering_preferences())
         .await
         .with_instance(&uri)?;
+    let plan = resolved.plan();
+    let answer = matched_histories(&bodies, plan.as_ref(), Some(StructuralProjection::from(&projection)));
     query_response(
         accept,
         rendering,
-        values,
+        answer,
+        &params,
         TemporalCollectionMetadata {
             status,
             warnings,
@@ -215,11 +219,10 @@ const fn response_status(range: Option<&TemporalRange>, map_created: bool) -> St
 ///
 /// Absent when the page is empty or when an entity carries no readable `id`, in
 /// which case the cursor pointers are not offered and the offset path stands.
-fn element_boundary(entities: &[Value]) -> Option<(Identifier, Identifier)> {
-    let id_of = |entity: &Value| entity.get("id").and_then(Value::as_str).and_then(|id| id.parse::<Identifier>().ok());
-    let first = entities.first().and_then(&id_of)?;
-    let last = entities.last().and_then(&id_of)?;
-    Some((first, last))
+fn element_boundary(entities: &[TemporalHistory]) -> Option<(Identifier, Identifier)> {
+    let first = entities.first().and_then(TemporalHistory::id)?;
+    let last = entities.last().and_then(TemporalHistory::id)?;
+    Some((first.clone(), last.clone())) // clone: the cursor pointers own the identifiers they are computed from
 }
 
 /// Record the non-fatal per-entity failures a temporal query collected.
@@ -240,25 +243,4 @@ fn local_match_count(total: Option<i64>) -> Result<Option<usize>, TemporalError>
     total
         .map(|count| usize::try_from(count).map_err(|_negative| TemporalError::from(TemporalInvariant::NegativeMatchCount)))
         .transpose()
-}
-
-/// Walk the join (clause 4.5.23) the query asked for, appending or inlining the
-/// linked entities and reporting what the traversal could not reach.
-///
-/// `@none` and an absent `join` retrieve nothing, so the merged warnings pass
-/// through untouched.
-///
-/// # Errors
-///
-/// The classified failure when the linked-entity query cannot be compiled or
-/// the base entity store cannot be read.
-async fn join_linked_entities(
-    read: &TemporalHistoryRead<'_>,
-    entities: &mut Vec<Value>,
-    seed: &[LinkedEdge],
-    warnings: Vec<NgsiLdWarning>,
-    instance: &Uri,
-) -> Result<(Vec<NgsiLdWarning>, Vec<Identifier>), ProblemResponse> {
-    let applied = apply_temporal_join(read, entities, seed, warnings).await.with_instance(instance)?;
-    Ok((applied.warnings, applied.linked_ids))
 }

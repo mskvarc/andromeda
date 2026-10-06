@@ -1,27 +1,24 @@
 //! A rendered response body and what the response carrying it says about it.
 //!
-//! A body reaches the response either as a JSON document the rendering
-//! pipeline built, or already written: a typed entity response is serialised
-//! straight into its body, so no document of the entity is ever held beside
-//! it.
+//! Every body is written straight from the typed model into the response: an
+//! entity, a temporal evolution or any other resource is serialised into its
+//! body as it is, so no document of the resource is ever held beside it.
 
 use crate::written_body::WrittenBody;
 use andromeda_ngsi_ld_render::{
+    body_response::ReadyBodyResponse,
     entity_response::ReadyEntityResponse,
     error::RenderError,
-    response::{RenderedOutput, ResponseHead},
+    response::ResponseHead,
+    temporal::temporal_response::ReadyTemporalResponse,
 };
-use axum::{
-    Json,
-    response::{IntoResponse, Response},
-};
-use serde_json::Value;
+use serde::Serialize;
 
 /// A rendered response body with its head.
 #[derive(Debug)]
 pub struct RenderedResponse {
-    /// The body.
-    pub(crate) body: RenderedBody,
+    /// The body, already written.
+    pub(crate) body: WrittenBody,
     /// What the response says about the body.
     pub(crate) head: ResponseHead,
 }
@@ -35,38 +32,31 @@ impl RenderedResponse {
     pub fn entities(ready: ReadyEntityResponse<'_>) -> Result<RenderedResponse, RenderError> {
         let mut body = WrittenBody::new();
         let head = ready.render_into(&mut body)?;
-        Ok(RenderedResponse {
-            body: RenderedBody::Written(body),
-            head,
-        })
+        Ok(RenderedResponse { body, head })
     }
-}
 
-// The document pipeline's output is one shape of a rendered response; the
-// conversion moves it and cannot fail.
-impl From<RenderedOutput> for RenderedResponse {
-    fn from(rendered: RenderedOutput) -> RenderedResponse {
-        RenderedResponse {
-            body: RenderedBody::Document(rendered.value),
-            head: rendered.head,
-        }
+    /// Write a typed resource that is no entity -- a Subscription, a
+    /// Registration, a Snapshot, an `EntityMap`, a batch operation result or
+    /// type information -- into its body.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`RenderError`] of a resource that could not be written.
+    pub fn resource<T: Serialize>(ready: ReadyBodyResponse<'_, '_, T>) -> Result<RenderedResponse, RenderError> {
+        let mut body = WrittenBody::new();
+        let head = ready.render_into(&mut body)?;
+        Ok(RenderedResponse { body, head })
     }
-}
 
-/// A response body in the form it was rendered in.
-#[derive(Debug)]
-pub(crate) enum RenderedBody {
-    /// A JSON document, serialised when the response is sent.
-    Document(Value),
-    /// A body already written.
-    Written(WrittenBody),
-}
-
-impl IntoResponse for RenderedBody {
-    fn into_response(self) -> Response {
-        match self {
-            RenderedBody::Document(value) => Json(value).into_response(),
-            RenderedBody::Written(body) => body.into_body().into_response(),
-        }
+    /// Write a typed temporal response into its body.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`RenderError`] of a temporal evolution that could not be
+    /// written.
+    pub fn temporal(ready: ReadyTemporalResponse<'_>) -> Result<RenderedResponse, RenderError> {
+        let mut body = WrittenBody::new();
+        let head = ready.render_into(&mut body)?;
+        Ok(RenderedResponse { body, head })
     }
 }

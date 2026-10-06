@@ -26,18 +26,6 @@ impl Keyword {
             Keyword::Scope => ProjectionTerm::Scope,
         }
     }
-
-    /// The keyword a member key spells, if it spells one.
-    #[must_use]
-    pub fn of_key(key: &str) -> Option<Keyword> {
-        match key {
-            ProjectionTerm::ID_KEYWORD => Some(Keyword::Id),
-            ProjectionTerm::TYPE_KEYWORD => Some(Keyword::Type),
-            ProjectionTerm::SCOPE_KEYWORD => Some(Keyword::Scope),
-            // `&str` is unbounded; every other key names no keyword.
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -47,15 +35,13 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn every_keyword_round_trips_through_its_key_and_term() {
-        for (key, keyword, term) in [
-            ("id", Keyword::Id, ProjectionTerm::Id),
-            ("type", Keyword::Type, ProjectionTerm::Type),
-            ("scope", Keyword::Scope, ProjectionTerm::Scope),
+    fn every_keyword_names_its_projection_term() {
+        for (keyword, term) in [
+            (Keyword::Id, ProjectionTerm::Id),
+            (Keyword::Type, ProjectionTerm::Type),
+            (Keyword::Scope, ProjectionTerm::Scope),
         ] {
-            assert_eq!(Keyword::of_key(key), Some(keyword));
             assert_eq!(keyword.term(), term);
         }
-        assert_eq!(Keyword::of_key("name"), None);
     }
 }

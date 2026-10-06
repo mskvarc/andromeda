@@ -25,6 +25,10 @@ pub(crate) enum MemberInstances<'a> {
     Held(&'a AttributeValue),
     /// The member as a notification reports it.
     Notified(&'a NotifiedMember<'a>),
+    /// The instances an attribute took over time (clause 4.5.7): a sequence
+    /// that is never the clause 4.5.5 set separated by `datasetId`, and never
+    /// collapsed to one instance.
+    Evolution(&'a [Attribute]),
 }
 
 /// The instances a notification reports for one attribute.

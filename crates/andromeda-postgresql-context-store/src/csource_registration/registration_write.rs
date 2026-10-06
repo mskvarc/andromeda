@@ -21,8 +21,10 @@ use crate::{
         routing_rewrite::replace_registration_information,
     },
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
     identifier::Identifier,
@@ -38,8 +40,16 @@ use andromeda_registration::{
     store::{create_params::CreateCsrParams, expired_deletion::ExpiredDeletion, forwarding_outcome::ForwardingOutcome, mutation::RegistrationMutation},
 };
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use sea_query::{Expr as SeaExpr, ExprTrait, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
+use sqlx::types::Json;
+
+/// The `additional_properties` column value: the Context Source Properties of
+/// a registration, or `NULL` for a registration that has none.
+fn stored_properties(properties: &IndexMap<AttributeName, JsonLiteral>) -> Option<Json<&IndexMap<AttributeName, JsonLiteral>>> {
+    (!properties.is_empty()).then_some(Json(properties))
+}
 
 /// Delete every registration due at or before `cutoff`, returning the deleted rows and the revision the sweep drew; their projection rows go in the same transaction.
 pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: DateTime<Utc>) -> Result<ExpiredDeletion, RegistrationError> {
@@ -97,12 +107,7 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
 /// Persist a new registration, its delivery state and its routing projection
 /// in one transaction, returning the revision the write drew.
 pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, params: &CreateCsrParams) -> Result<CsourceChangeRevision, RegistrationError> {
-    let information = serde_json::to_value(&params.information)?;
     let pattern_forms = stored_pattern_forms(&params.information);
-    let observation_interval = params.observation_interval.map(serde_json::to_value).transpose()?;
-    let management_interval = params.management_interval.map(serde_json::to_value).transpose()?;
-    let management = params.management.as_ref().map(serde_json::to_value).transpose()?;
-    let context_source_info = params.context_source_info.as_ref().map(serde_json::to_value).transpose()?;
     let operations = operation_codes(&params.operations);
     let dataset_id = dataset_selectors(params.dataset_id.as_deref());
     let scopes = stored_scopes(params.scope.as_deref());
@@ -112,11 +117,11 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
         .bind(id.as_str())
         .bind(params.registration_name.as_ref().map(NonEmptyText::as_str))
         .bind(params.description.as_ref().map(NonEmptyText::as_str))
-        .bind(information)
+        .bind(Json(&params.information))
         .bind(dataset_id.as_deref())
         .bind(params.tenant.as_ref().map(TenantName::as_str))
-        .bind(observation_interval)
-        .bind(management_interval)
+        .bind(params.observation_interval.as_ref().map(Json))
+        .bind(params.management_interval.as_ref().map(Json))
         .bind(geometry_bytes(params.location.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
         .bind(geometry_bytes(params.observation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
         .bind(geometry_bytes(params.operation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
@@ -127,12 +132,12 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
         .bind(operations.as_deref())
         .bind(scopes.label_paths.as_deref())
         .bind(params.refresh_rate.as_ref().map(ToString::to_string))
-        .bind(management)
-        .bind(context_source_info)
+        .bind(params.management.as_ref().map(Json))
+        .bind(params.context_source_info.as_ref().map(Json))
         .bind(params.jsonld_context.as_ref().map(DereferenceableUri::as_str))
         .bind(params.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
-        .bind(&params.additional_properties)
-        .bind(pattern_forms.as_ref().map(|stored| &stored.forms))
+        .bind(stored_properties(&params.additional_properties))
+        .bind(pattern_forms.as_ref().map(|stored| Json(&stored.forms)))
         .bind(pattern_forms.as_ref().map(|stored| stored.revision.get()))
         .bind(scopes.written.as_deref())
         .execute(&mut *transaction)
@@ -154,12 +159,7 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
 
 /// Replace a registration with a resolved value set and rebuild its routing projection in one transaction.
 pub(super) async fn update(store: &PostgresRegistrationStore, id: &Identifier, values: &ResolvedCsrUpdate) -> Result<RegistrationMutation, RegistrationError> {
-    let information = serde_json::to_value(&values.information)?;
     let pattern_forms = stored_pattern_forms(&values.information);
-    let observation_interval = values.observation_interval.map(serde_json::to_value).transpose()?;
-    let management_interval = values.management_interval.map(serde_json::to_value).transpose()?;
-    let management = values.management.as_ref().map(serde_json::to_value).transpose()?;
-    let context_source_info = values.context_source_info.as_ref().map(serde_json::to_value).transpose()?;
     let operations = operation_codes(&values.operations);
     let dataset_id = dataset_selectors(values.dataset_id.as_deref());
     let scopes = stored_scopes(values.scope.as_deref());
@@ -169,11 +169,11 @@ pub(super) async fn update(store: &PostgresRegistrationStore, id: &Identifier, v
         .bind(id.as_str())
         .bind(values.registration_name.as_ref().map(NonEmptyText::as_str))
         .bind(values.description.as_ref().map(NonEmptyText::as_str))
-        .bind(information)
+        .bind(Json(&values.information))
         .bind(dataset_id.as_deref())
         .bind(values.tenant.as_ref().map(TenantName::as_str))
-        .bind(observation_interval)
-        .bind(management_interval)
+        .bind(values.observation_interval.as_ref().map(Json))
+        .bind(values.management_interval.as_ref().map(Json))
         .bind(geometry_bytes(values.location.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
         .bind(geometry_bytes(values.observation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
         .bind(geometry_bytes(values.operation_space.as_ref().map(Geometry::form)).map_err(|error| persistence_error(error))?)
@@ -184,12 +184,12 @@ pub(super) async fn update(store: &PostgresRegistrationStore, id: &Identifier, v
         .bind(operations.as_deref())
         .bind(scopes.label_paths.as_deref())
         .bind(values.refresh_rate.as_ref().map(ToString::to_string))
-        .bind(management)
-        .bind(context_source_info)
+        .bind(values.management.as_ref().map(Json))
+        .bind(values.context_source_info.as_ref().map(Json))
         .bind(values.jsonld_context.as_ref().map(DereferenceableUri::as_str))
         .bind(values.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
-        .bind(&values.additional_properties)
-        .bind(pattern_forms.as_ref().map(|stored| &stored.forms))
+        .bind(stored_properties(&values.additional_properties))
+        .bind(pattern_forms.as_ref().map(|stored| Json(&stored.forms)))
         .bind(pattern_forms.as_ref().map(|stored| stored.revision.get()))
         .bind(scopes.written.as_deref())
         .execute(&mut *transaction)
@@ -258,4 +258,44 @@ pub(super) async fn delete(store: &PostgresRegistrationStore, id: &Identifier) -
     let revision = advance(&mut *transaction).await.map_err(|error| persistence_error(error))?;
     transaction.commit().await.map_err(|error| persistence_error(error))?;
     Ok(RegistrationMutation::Applied(revision))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::csource_registration::registration_write::stored_properties;
+    use andromeda_json_literal::JsonLiteral;
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use indexmap::IndexMap;
+
+    /// A registration without Context Source Properties stores `NULL`, not an
+    /// empty object, which the `q` pushdown reads as having none.
+    #[test]
+    fn a_registration_without_properties_stores_null() {
+        assert!(stored_properties(&IndexMap::new()).is_none());
+    }
+
+    /// The properties are stored as the JSON object they were written as, in
+    /// the order written.
+    #[test]
+    fn the_properties_are_stored_as_the_object_they_were_written_as() {
+        let properties: IndexMap<AttributeName, JsonLiteral> = [
+            (
+                "https://example.org/zeta".parse().expect("a valid name"),
+                JsonLiteral::admit("1").expect("a JSON literal"),
+            ),
+            (
+                "https://example.org/alpha".parse().expect("a valid name"),
+                JsonLiteral::admit(r#"{"type": "Property", "value": "x"}"#).expect("a JSON literal"),
+            ),
+        ]
+        .into_iter()
+        .collect();
+
+        let stored = stored_properties(&properties).expect("properties are stored");
+
+        pretty_assertions::assert_eq!(
+            serde_json::to_string(&stored.0).expect("the properties write"),
+            r#"{"https://example.org/zeta":1,"https://example.org/alpha":{"type":"Property","value":"x"}}"#
+        );
+    }
 }

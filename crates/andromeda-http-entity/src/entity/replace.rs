@@ -26,7 +26,7 @@ use crate::{
     written_payload_admission::admit_written_entity,
 };
 use andromeda_entity::write_kind::ReplaceEntity;
-use andromeda_federation::request::TriggeringRequest;
+use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use axum::http::Method;
@@ -79,7 +79,7 @@ pub(crate) async fn update(
                     headers: Some(&headers),
                 },
             },
-            Some(&patch),
+            Some(ForwardedContent::Entity(admitted.document())),
         )
         .await
         .with_entity_instance(&uri)?;
@@ -91,11 +91,8 @@ pub(crate) async fn update(
 
     // Clause 5.6.18.4: the attributes proxied registrations cover leave the
     // fragment; whatever remains replaces the entity here.
-    let proxied = collect_proxied_attrs(&forwarded);
-    let mut patch = patch;
-    let strip = patch.strip_attributes(&proxied);
-    let local = match service.admit_local_remainder(admitted, strip, &patch, &context).await {
-        Some(remainder) => LocalOutcome::processed(async { service.replace_entity(&target, &id, remainder?).await }.await, classify_entity_error),
+    let local = match admitted.local_remainder(&collect_proxied_attrs(&forwarded)) {
+        Some(remainder) => LocalOutcome::processed(service.replace_entity(&target, &id, remainder).await, classify_entity_error),
         None => LocalOutcome::NothingRemained,
     };
     provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)

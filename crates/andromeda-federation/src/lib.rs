@@ -2,25 +2,24 @@
 
 #![deny(missing_docs)]
 
-/// The clause 4.5.5 merge of attribute instances from several sources.
-pub mod attribute_instance_merge;
-/// The POST body of a forwarded batch entity query (clause 6.23).
-pub mod batch_query_body;
+/// The body a context source answered a forwarded write with.
+pub mod answer_body;
+/// Reading a context source's answer of entities into the model.
+mod answer_reading;
+/// Reading every source's answer of Temporal Evolutions into the model.
+mod answered_temporal;
+/// Which attributes of a forwarded write a registration covers.
+mod attribute_coverage;
 /// Cached forwarded GET responses (clause 6.3.17).
 pub mod cache;
 /// Federation operation configuration.
 pub mod config;
 /// Per-registration cooldown after failures (clause 5.2.34).
 pub mod cooldown;
-/// A write payload counting its serializations, for the forwarding tests.
-#[cfg(test)]
-mod counted_body;
 /// Context-source discovery request execution.
 pub mod discovery;
 /// Discovery response merging.
 pub mod discovery_result;
-/// Rewording a compact document from one context's terms into another's.
-mod document_rewording;
 /// The entities one forwarded query may gather from its sources.
 pub mod entity_budget;
 /// EntityMap creation forwarding (clauses 5.14.4 and 5.14.5).
@@ -30,7 +29,6 @@ pub mod entity_read;
 /// Current-entity response merging.
 pub mod entity_result;
 /// Dropping source entities a write to this broker would refuse (clause 6.3.17).
-mod entity_revalidation;
 /// Federation policy failures.
 pub mod error;
 /// The concrete reasons a single forwarded write is reported as a conflict.
@@ -42,8 +40,10 @@ pub mod federation_operation_unsupported;
 /// A fixed in-memory registration store for the forwarding tests.
 #[cfg(test)]
 mod fixed_registration_store;
-/// The payload a forwarded write is built from, serialised on demand.
-pub mod forwarded_body;
+/// The query a forwarded batch entity query sends (clause 6.23).
+mod forwarded_batch_query;
+/// What a forwarded write carries: the admitted content.
+pub mod forwarded_content;
 /// Spelling the names a forwarded request carries in its forwarding context.
 mod forwarded_names;
 /// The parameter vocabulary of a forwarded read request.
@@ -54,6 +54,8 @@ pub mod forwarded_payload;
 pub mod forwarded_query;
 /// Spelling the name-bearing parameters of a forwarded query string.
 mod forwarded_query_string;
+/// Spelling a reduced subscription in a forwarding context.
+mod forwarded_subscription;
 /// Sending forwarded writes and classifying their answers.
 mod forwarded_write;
 /// The one context a forwarded request is expressed against.
@@ -86,12 +88,17 @@ pub mod query_forwarding_error;
 pub mod read_binding;
 /// Registration selection and fan-out shared by forwarded reads.
 pub mod read_fan_out;
+/// Entity versions in the model, for the merge tests.
+#[cfg(test)]
+mod received_fixture;
+/// A context source's answer of Temporal Evolutions, decoded.
+mod received_temporal_answer;
+/// Registration-information matching.
+pub mod registration_information;
 /// The forwarded queries one registration receives.
 mod registration_narrowing;
 /// The context and representation one registration receives.
 mod registration_payload;
-/// Registration-information selection.
-pub mod registration_selection;
 /// What a context source answered a forwarded request with when it failed it.
 pub mod remote_answer;
 /// Typed forwarding inputs.
@@ -100,6 +107,8 @@ pub mod request;
 pub mod single_source_failure;
 /// Where a source's answer to a forwarded read continues.
 mod source_continuation;
+/// Sending one forwarded request and reading its answer's headers.
+mod source_exchange;
 /// What a registered Context Source says about its own configuration.
 pub mod source_identity;
 /// Reads forwarded to one registration and how their answers are read back.
@@ -112,16 +121,10 @@ pub mod subscription;
 pub mod temporal;
 /// Reading a source's temporal history to the end of its clause 6.3.10 pages.
 mod temporal_history_walk;
-/// The attribute instances of a merged temporal representation.
-pub mod temporal_instances;
-/// Post-aggregation `lastN` truncation of temporal representations.
-pub mod temporal_last_n;
 /// Temporal response merging.
 pub mod temporal_result;
 /// Expanding NGSI-LD names against one operation's inbound `@context`.
 mod term_resolver;
-/// The clause 4.5.5.2 differentiation of conflicting transient entities.
-mod transient_entity_conflict;
 /// Shared forwarding HTTP transport.
 pub mod transport;
 /// Reading what a context source answered a forwarded write with.
@@ -134,33 +137,14 @@ use crate::{
     error::FederationError,
     federation_invariant::FederationInvariant,
     local_entity_type::LocalEntityTypeResolver,
-    outcome::TransportFailure,
     source_identity::SourceIdentityCache,
 };
-use andromeda_http_headers::{
-    link::{header::Link, relation_type::RelationType},
-    ngsild_content_range::NgsiLdContentRange,
-    ngsild_entity_map::NgsiLdEntityMap,
-    ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
-    preference_applied::PreferenceApplied,
-    received_protocol::ReceivedProtocol,
-    via::Via,
-    warning::Warning,
-};
+use andromeda_http_headers::{received_protocol::ReceivedProtocol, via::Via};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::{
-    context_source_pseudonym::ContextSourcePseudonym,
-    identifier::Identifier,
-    positive_milliseconds::PositiveMilliseconds,
-    spec_version::SpecVersion,
-};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, positive_milliseconds::PositiveMilliseconds};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_registration::store::{RegistrationStore, forwarding_outcome::ForwardingOutcome};
-use andromeda_telemetry::federation_ops::record_upstream_status;
-use chrono::Utc;
-use iri_rs::IriRefBuf;
+use andromeda_registration::store::RegistrationStore;
 use std::{num::NonZeroU32, sync::Arc, time::Duration};
-use tracing::warn;
 
 /// Whether an incoming `Via` chain already contains the local context-source alias.
 fn loop_detected(incoming_via: Option<&Via>, source_alias: &ContextSourcePseudonym) -> bool {
@@ -176,32 +160,6 @@ fn registration_loops(registration: &ContextSourceRegistration, incoming_via: Op
         return false;
     };
     alias == local_alias || incoming_via.is_some_and(|via| via.contains_pseudonym(alias))
-}
-
-/// What a forwarded request answered with, before the caller reads the body.
-pub(crate) struct SentResponse {
-    /// The HTTP status.
-    pub(crate) status: reqwest::StatusCode,
-    /// The IANA `Warning` header the source sent, if any.
-    pub(crate) warning: Option<Warning>,
-    /// The clause 6.3.17 warnings the source itself reported about the
-    /// sources behind it, relayed to the client as part of this response.
-    pub(crate) ngsild_warnings: Vec<NgsiLdWarning>,
-    /// The specification version the source says its payload conforms to
-    /// (clause 4.3.6.8 `Preference-Applied`), when it said.
-    pub(crate) returned_version: Option<SpecVersion>,
-    /// The `EntityMap` the source used (clause 5.5.14 `NGSILD-EntityMap`), when
-    /// it returned one.
-    pub(crate) entity_map: Option<Identifier>,
-    /// The target of the source's `Link rel="next"` (clause 6.3.10), as the
-    /// source wrote it: the reference to the page following this one, still to
-    /// be resolved against the URL it answered.
-    pub(crate) next_page: Option<IriRefBuf>,
-    /// The temporal `Content-Range` of a 206 answer (clause 6.3.10), which says
-    /// how far into each entity's history the source's answer reaches.
-    pub(crate) partial_range: Option<NgsiLdContentRange>,
-    /// The raw body.
-    pub(crate) body: Vec<u8>,
 }
 
 /// Service for forwarding NGSI-LD operations to registered context sources.
@@ -336,79 +294,6 @@ impl FederationService {
             .and_then(|management| management.timeout)
             .map_or(self.default_timeout, PositiveMilliseconds::as_duration)
     }
-
-    /// Send a request to `registration` and return its status, `Warning` and raw body.
-    ///
-    /// Every attempt is recorded on the registration's clause 5.2.9 health
-    /// members and on the cooldown registry. A 404 is not a failure: clause
-    /// 6.3.17 says a source answering 404 is not behaving abnormally, so it
-    /// neither flips `status` nor opens a cooldown window.
-    pub(crate) async fn send_request(
-        &self,
-        registration: &ContextSourceRegistration,
-        request: reqwest::RequestBuilder,
-    ) -> Result<SentResponse, TransportFailure> {
-        let timeout = self.timeout_for(registration);
-        let outcome = match request.timeout(timeout).send().await {
-            Ok(response) => {
-                let status = response.status();
-                record_upstream_status(status.as_u16());
-                let warning = headers::HeaderMapExt::typed_get::<Warning>(response.headers());
-                let ngsild_warnings = headers::HeaderMapExt::typed_get::<NgsiLdWarningHeader>(response.headers())
-                    .map(NgsiLdWarningHeader::into_warnings)
-                    .unwrap_or_default();
-                let returned_version = headers::HeaderMapExt::typed_get::<PreferenceApplied>(response.headers()).and_then(|applied| applied.applied_version());
-                let entity_map = headers::HeaderMapExt::typed_get::<NgsiLdEntityMap>(response.headers()).map(NgsiLdEntityMap::into_inner);
-                let next_page = headers::HeaderMapExt::typed_get::<Link>(response.headers())
-                    .and_then(|link| link.find_by_rel(RelationType::Next).next().map(|value| value.link().clone())); // clone: the answer outlives the header map it was read from
-                let partial_range = (status == reqwest::StatusCode::PARTIAL_CONTENT)
-                    .then(|| headers::HeaderMapExt::typed_get::<NgsiLdContentRange>(response.headers()))
-                    .flatten();
-                match response.bytes().await {
-                    Ok(body) => Ok(SentResponse {
-                        status,
-                        warning,
-                        ngsild_warnings,
-                        returned_version,
-                        entity_map,
-                        next_page,
-                        partial_range,
-                        body: body.to_vec(),
-                    }),
-                    Err(error) => Err(classify_transport_failure(error, timeout)),
-                }
-            }
-            Err(error) => Err(classify_transport_failure(error, timeout)),
-        };
-        let health = match &outcome {
-            Ok(sent) if sent.status.is_success() || sent.status == reqwest::StatusCode::NOT_FOUND => ForwardingOutcome::Succeeded,
-            Ok(_) | Err(_) => ForwardingOutcome::Failed,
-        };
-        self.record_health(&registration.id, health).await;
-        outcome
-    }
-
-    /// Record one attempt on the registration's health members (clause
-    /// 5.2.34) before the response is handed back, so a client reading the
-    /// registration right after the forwarded call observes the attempt.
-    async fn record_health(&self, registration: &Identifier, outcome: ForwardingOutcome) {
-        match outcome {
-            ForwardingOutcome::Succeeded => self.cooldowns.record_success(registration),
-            ForwardingOutcome::Failed => self.cooldowns.record_failure(registration),
-        }
-        if let Err(error) = self.csr_repo.record_forwarding_outcome(registration, outcome, Utc::now()).await {
-            warn!(%registration, %error, "failed to record the forwarding outcome on the registration");
-        }
-    }
-}
-
-/// Sort a `reqwest` failure into the two clause 6.3.17 transport outcomes.
-fn classify_transport_failure(error: reqwest::Error, timeout: Duration) -> TransportFailure {
-    if error.is_timeout() {
-        TransportFailure::TimedOut { after: timeout }
-    } else {
-        TransportFailure::Undelivered(Arc::new(error))
-    }
 }
 
 #[cfg(test)]
@@ -425,9 +310,11 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-jsonld",
         "andromeda-ngsi-ld-compaction",
         "andromeda-ngsi-ld-entity",
+        "andromeda-ngsi-ld-expansion",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-number",
+        "andromeda-ngsi-ld-problem-details",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-render",
         "andromeda-ngsi-ld-representation",

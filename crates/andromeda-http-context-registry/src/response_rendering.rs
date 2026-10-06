@@ -22,10 +22,9 @@ use andromeda_http_response::{
     classified_report::ClassifiedReport,
     context_hosting_failure::classify_context_hosting_error,
     jsonld_failure::classify_jsonld_error,
-    render::{RenderingPreferences, start_rendering, start_rendering_temporal},
+    render::{RenderingPreferences, start_rendering},
 };
 use andromeda_jsonld::{compound_context_host::ContextHostingError, context_spec::ContextSpec, engine::processor::JsonLdEngine, error::JsonLdError};
-use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
 use andromeda_ngsi_ld_render::response::ResponseRenderer;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use thiserror::Error;
@@ -117,23 +116,6 @@ impl<'a> ResponseContextSource<'a> {
         preferences: RenderingPreferences,
     ) -> Result<ResponseRenderer<'r>, ResponseContextError> {
         self.start_rendering(media_type, preferences, ResponseFormat::Normalized).await
-    }
-
-    /// Configure a renderer for the Temporal Evolution of an Entity, rendered
-    /// in the clause 6.3.12 `format` (see
-    /// [`andromeda_http_response::render::start_rendering_temporal`]).
-    ///
-    /// # Errors
-    ///
-    /// As [`ResponseContextSource::start_rendering`].
-    pub async fn start_rendering_temporal<'r>(
-        &self,
-        media_type: ResponseMediaType,
-        preferences: RenderingPreferences,
-        format: TemporalFormat,
-    ) -> Result<ResponseRenderer<'r>, ResponseContextError> {
-        let presented = self.engine.presented_context(self.context).await?;
-        Ok(start_rendering_temporal(media_type, presented, &self.hosting.for_request(self.api_root), preferences, format).await?)
     }
 }
 

@@ -7,7 +7,7 @@
 //! in common: the members the narrowing reads before it knows which operation
 //! it is looking at.
 
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
@@ -50,6 +50,17 @@ impl ClientQuery<'_> {
             ClientQuery::EntityQuery(params) => params.id.as_deref(),
             ClientQuery::Temporal(params) => params.id.as_deref(),
             ClientQuery::EntityRetrieve { .. } => None,
+        }
+    }
+
+    /// The Temporal Property the client's temporal operation runs on, which
+    /// orders the instances of an entity's history; the operations that are
+    /// not temporal have none, which reads as the default.
+    #[must_use]
+    pub fn timeproperty(&self) -> TimeProp {
+        match self {
+            ClientQuery::Temporal(params) => params.timeproperty_or_default(),
+            ClientQuery::EntityQuery(_) | ClientQuery::EntityRetrieve { .. } => TimeProp::Observed,
         }
     }
 

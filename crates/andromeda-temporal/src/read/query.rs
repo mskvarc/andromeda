@@ -6,15 +6,14 @@ use crate::{
     read::{
         dataset_step::DatasetStep,
         ensure_aggregation_supported,
-        rendered_entity::{HistoryPresence, RenderedTemporalEntity},
+        rendered_entity::{HistoryPresence, RenderedTemporalEntity, render_history_page},
     },
     service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalService},
-    temporal_compaction::TemporalCompaction,
     temporal_invariant::TemporalInvariant,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_linked_retrieval::edge::LinkedEdge;
+use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
@@ -84,7 +83,7 @@ impl TemporalService {
 
             let dataset_step = DatasetStep::of(&compiled);
             let compactor = self.engine.compactor(context);
-            let compaction = TemporalCompaction::new(&compactor);
+            let compactor = EntityCompactor::new(&compactor);
             let mut warnings = Vec::new();
             let rendered = if compiled.representation.format.is_aggregated() {
                 let mut rendered = Vec::with_capacity(entity_ids.len());
@@ -92,7 +91,7 @@ impl TemporalService {
                     let entity_types = entity_types_map.get(&entity_id).map(Vec::as_slice).unwrap_or_default();
                     let entity_compiled = contributed_reading.query_for(&entity_id);
                     let outcome = self
-                        .render_one_temporal_entity(target, &entity_id, entity_types, entity_compiled, &compaction)
+                        .render_one_temporal_entity(target, &entity_id, entity_types, entity_compiled, &compactor)
                         .await;
                     rendered.extend(settle_entity(entity_id, outcome, &mut warnings)?);
                 }
@@ -116,14 +115,13 @@ impl TemporalService {
                     let entity_types = entity_types_map.get(&page.entity_id).map(Vec::as_slice).unwrap_or_default();
                     // clone: a render failure names the entity the page was consumed for.
                     let entity_id = page.entity_id.clone();
-                    let outcome = self.render_history_page(page, entity_types, &compiled, &compaction, cut).await;
+                    let outcome = render_history_page(page, entity_types, &compiled, cut);
                     rendered.extend(settle_entity(entity_id, outcome, &mut warnings)?);
                 }
                 rendered
             };
 
             let mut entities = Vec::with_capacity(rendered.len());
-            let mut linked_edges: Vec<LinkedEdge> = Vec::new();
             let mut cut = None;
             let mut overall_min: Option<DateTime<Utc>> = None;
             let mut overall_max: Option<DateTime<Utc>> = None;
@@ -149,8 +147,7 @@ impl TemporalService {
                     overall_min = Some(overall_min.map_or(min_t, |seen: DateTime<Utc>| seen.min(min_t)));
                     overall_max = Some(overall_max.map_or(max_t, |seen: DateTime<Utc>| seen.max(max_t)));
                 }
-                linked_edges.extend(rendered.edges);
-                entities.push(rendered.value);
+                entities.push(rendered.history);
             }
 
             let any_truncated = cut.is_some();
@@ -166,7 +163,7 @@ impl TemporalService {
                 any_truncated,
                 range,
                 warnings,
-                linked_edges,
+                projection: compiled.projection,
             })
         }
         .await;

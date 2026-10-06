@@ -23,12 +23,12 @@ use crate::{
     },
 };
 use andromeda_http_headers::json_ld_accept::JsonLdAccept;
+use andromeda_json_literal::JsonLiteral;
 use backon::{ConstantBuilder, Retryable};
 use headers::HeaderMapExt;
 use iri_rs::IriBuf;
 use mediatype::MediaTypeBuf;
 use reqwest::{Client, Response, header::HeaderMap};
-use serde_json::Value;
 use std::{str::from_utf8, sync::Arc, time::Duration};
 use tracing::warn;
 
@@ -36,8 +36,8 @@ use tracing::warn;
 /// it was finally read from.
 #[derive(Debug)]
 pub(crate) struct RemoteContextDocument {
-    /// Parsed JSON-LD document.
-    pub(crate) value: jsonld_syntax::Value,
+    /// The document's `@context` subtree, as written.
+    pub(crate) value: JsonLiteral,
     /// What the response permits a cache to do with the document.
     pub(crate) freshness: ContextFreshness,
     /// The URL the document was finally read from, after redirects and a
@@ -155,10 +155,10 @@ async fn read_document(
     }
 
     let text = from_utf8(&bytes).map_err(|error| invalid(reported, InvalidContextDocument::NotUtf8(error)))?;
-    let json = serde_json::from_str::<Value>(text).map_err(|error| invalid(reported, InvalidContextDocument::NotJson(Arc::new(error))))?;
-    let subtree = context_subtree(json).map_err(|reason| invalid(reported, InvalidContextDocument::NoContext(reason)))?;
+    let document = JsonLiteral::admit(text).map_err(|error| invalid(reported, InvalidContextDocument::NotJson(Arc::new(error))))?;
+    let subtree = context_subtree(&document).map_err(|reason| invalid(reported, InvalidContextDocument::NoContext(reason)))?;
     Ok(RemoteContextDocument {
-        value: jsonld_syntax::Value::from_serde_json(subtree),
+        value: subtree,
         freshness,
         document_url,
     })
@@ -282,6 +282,7 @@ mod tests {
             remote_document::{RemoteContextDocument, fetch_and_parse, is_json_like, is_transient_transport_failure, ld_json_media_type},
             test_origin::{TestOrigin, ok, redirect, untyped},
         },
+        test_documents::{as_value, literal},
     };
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use iri_rs::IriBuf;
@@ -300,7 +301,7 @@ mod tests {
 
     /// The document as JSON.
     fn json_of(document: &RemoteContextDocument) -> Value {
-        jsonld_syntax::Value::into_serde_json(document.value.clone()) // clone: the document is inspected, not consumed
+        as_value(&document.value)
     }
 
     /// JSON-LD 1.1 section 6.2: an HTML page naming one JSON-LD alternate is
@@ -422,7 +423,7 @@ mod tests {
 
         pretty_assertions::assert_eq!(document.document_url, origin.url("/contexts/v2/wrapper.jsonld"));
         pretty_assertions::assert_eq!(
-            ContextTail::of_document(&json_of(&document)).resolved_against(&document.document_url),
+            ContextTail::of_document(document.value.piece()).resolved_against(&document.document_url),
             ContextTail::Reference(origin.url("/contexts/v2/terms.jsonld"))
         );
     }
@@ -467,8 +468,10 @@ mod tests {
         });
 
         pretty_assertions::assert_eq!(
-            context_subtree(downloaded),
-            Ok(json!({ "@context": { "Device": "https://example.org/Device" } }))
+            context_subtree(&literal(&downloaded))
+                .map(|reduced| as_value(&reduced))
+                .expect("a local context"),
+            json!({ "@context": { "Device": "https://example.org/Device" } })
         );
     }
 

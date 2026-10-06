@@ -13,17 +13,19 @@
 use crate::{
     context_cache::{CachedContext, ContextCache, StoredDocumentSource},
     context_registry::RegisteredContext,
-    core_context_precedence::{PreparedContext, prepared_context},
-    engine::options::RemoteContextFetch,
+    engine::{
+        context_document::{ContextDocument, PreparedContext, RelativeReferences},
+        options::RemoteContextFetch,
+    },
     loader::{
         cache_lifetime::{CacheLifetime, ContextFreshness},
-        error::{ContextUnavailable, LoaderError, LoaderErrorKind},
+        error::{ContextUnavailable, InvalidContextDocument, LoaderError, LoaderErrorKind},
         loaded_context::{ContextDurability, ContextProvenance, EntryLifetime, LoadedContext},
         pending_persistence::PendingPersistence,
-        relative_context_references::resolve_relative_context_references,
         remote_document::fetch_and_parse_retrying,
     },
 };
+use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use iri_rs::IriBuf;
 use reqwest::Client;
 use std::sync::Arc;
@@ -55,9 +57,10 @@ pub(crate) async fn load_from_durable_cache(
     allow_remote: RemoteContextFetch,
     hosted_revalidation: CacheLifetime,
 ) -> Result<Option<LoadedContext>, LoaderError> {
-    Ok(read_durable_cache(cache, url, allow_remote)
+    read_durable_cache(cache, url, allow_remote)
         .await?
-        .map(|hit| durable_hit(url, hit, hosted_revalidation)))
+        .map(|hit| durable_hit(url, hit, hosted_revalidation))
+        .transpose()
 }
 
 /// The durable-cache step for one of the tenant's own stored `@context`s,
@@ -80,10 +83,11 @@ pub(crate) async fn load_stored_context(
     allow_remote: RemoteContextFetch,
     hosted_revalidation: CacheLifetime,
 ) -> Result<Option<LoadedContext>, LoaderError> {
-    Ok(read_durable_cache(cache, identifier, allow_remote)
+    read_durable_cache(cache, identifier, allow_remote)
         .await?
         .filter(|hit| hit.source == StoredDocumentSource::Broker)
-        .map(|hit| durable_hit(identifier, hit, hosted_revalidation)))
+        .map(|hit| durable_hit(identifier, hit, hosted_revalidation))
+        .transpose()
 }
 
 /// Read the durable cache, degrading a failed read to a miss when the network
@@ -111,20 +115,29 @@ async fn read_durable_cache(cache: &dyn ContextCache, url: &IriBuf, allow_remote
 /// references resolve against the URL a request names it by
 /// ([`LoadedContext::tail_from`]), which is also the base the processor reads
 /// it against.
-fn durable_hit(url: &IriBuf, hit: CachedContext, hosted_revalidation: CacheLifetime) -> LoadedContext {
+///
+/// # Errors
+///
+/// Returns [`InvalidContextDocument::NotJson`] when the JSON-LD processor's
+/// reader refuses the stored document.
+fn durable_hit(url: &IriBuf, hit: CachedContext, hosted_revalidation: CacheLifetime) -> Result<LoadedContext, LoaderError> {
     trace!("L2 cache hit for context: {url}");
     let (prepared, provenance) = match hit.source {
-        StoredDocumentSource::Downloaded { document_url } => (prepared_download(&document_url, hit.payload), ContextProvenance::Downloaded(document_url)),
-        StoredDocumentSource::Broker => (prepared_context(url, hit.payload), ContextProvenance::Broker),
+        StoredDocumentSource::Downloaded { document_url } => (prepared_download(&document_url, &hit.payload), ContextProvenance::Downloaded(document_url)),
+        StoredDocumentSource::Broker => (
+            ContextDocument::prepared(url, &hit.payload, RelativeReferences::AsWritten).map_err(|error| unreadable(url, error)),
+            ContextProvenance::Broker,
+        ),
     };
-    LoadedContext {
-        value: Arc::new(prepared.value),
+    let prepared = prepared?;
+    Ok(LoadedContext {
+        document: Arc::new(prepared.document),
         tail: prepared.tail,
         durability: ContextDurability::Durable,
         lifetime: EntryLifetime::of_residual(hit.residual, hosted_revalidation),
         canonical_url: hit.canonical_url,
         provenance,
-    }
+    })
 }
 
 /// The remote step: fetch the context and, on a first success, persist it.
@@ -148,14 +161,14 @@ pub(crate) async fn fetch_and_persist(
 ) -> Result<LoadedContext, LoaderError> {
     let fetched = fetch_and_parse_retrying(client, url, max_bytes, default_lifetime).await?;
     let lifetime = EntryLifetime::of(fetched.freshness);
-    let downloaded = jsonld_syntax::Value::into_serde_json(fetched.value);
+    let downloaded = fetched.value;
     let ContextFreshness::Fresh(granted) = fetched.freshness else {
         // Clause 6.3.16: `no-store`, `no-cache` and an already-lapsed expiry all
         // leave nothing to invalidate later, so the document is served once and
         // never stored in either tier.
-        let prepared = prepared_download(&fetched.document_url, downloaded);
+        let prepared = prepared_download(&fetched.document_url, &downloaded)?;
         return Ok(LoadedContext {
-            value: Arc::new(prepared.value),
+            document: Arc::new(prepared.document),
             tail: prepared.tail,
             durability: ContextDurability::Registry,
             lifetime,
@@ -166,7 +179,7 @@ pub(crate) async fn fetch_and_persist(
     // The document's own references resolve against where it was finally
     // read from, after redirects and an alternate, while the row is keyed by
     // the URL the request named.
-    let prepared = prepared_download(&fetched.document_url, downloaded.clone()); // clone: the row keeps the document as downloaded while the processor reads the prepared copy
+    let prepared = prepared_download(&fetched.document_url, &downloaded)?;
     // Written to L2 only here, on the first remote-fetch success: the row
     // carries no counter, because hit accounting is the HitCounter's job.
     let durability = match l2_cache {
@@ -174,7 +187,7 @@ pub(crate) async fn fetch_and_persist(
         None => ContextDurability::Registry,
     };
     Ok(LoadedContext {
-        value: Arc::new(prepared.value),
+        document: Arc::new(prepared.document),
         tail: prepared.tail,
         durability,
         lifetime,
@@ -186,10 +199,22 @@ pub(crate) async fn fetch_and_persist(
 /// Prepare a downloaded document for processing, its relative context
 /// references resolved against `document_url`, the URL it was finally read
 /// from (JSON-LD 1.1 API section 4.1.2 step 5.2.6; see
-/// [`resolve_relative_context_references`]).
-fn prepared_download(document_url: &IriBuf, mut downloaded: serde_json::Value) -> PreparedContext {
-    resolve_relative_context_references(&mut downloaded, document_url);
-    prepared_context(document_url, downloaded)
+/// `engine::context_document`).
+///
+/// # Errors
+///
+/// Returns [`InvalidContextDocument::NotJson`] when the JSON-LD processor's
+/// reader refuses the downloaded document.
+fn prepared_download(document_url: &IriBuf, downloaded: &JsonLiteral) -> Result<PreparedContext, LoaderError> {
+    ContextDocument::prepared(document_url, downloaded, RelativeReferences::ResolvedAgainst(document_url)).map_err(|error| unreadable(document_url, error))
+}
+
+/// The failure of a document the JSON-LD processor's reader refuses.
+fn unreadable(url: &IriBuf, error: JsonLiteralError) -> LoaderError {
+    LoaderError {
+        url: url.clone(), // clone: the failure is reported under the document's URL
+        kind: LoaderErrorKind::Invalid(InvalidContextDocument::NotJson(Arc::new(error))),
+    }
 }
 
 /// Record a preloaded registry context as a "Cached" durable entry.
@@ -214,13 +239,13 @@ pub(crate) async fn persist_registry_context(
     cache: &dyn ContextCache,
     url: &IriBuf,
     registered: RegisteredContext,
-    as_written: &jsonld_syntax::Value,
+    as_written: &JsonLiteral,
     lifetime: CacheLifetime,
 ) -> LoadedContext {
-    let payload = jsonld_syntax::Value::into_serde_json(as_written.clone()); // clone: the registry keeps the document as written for the next refresh
-    let durability = persist_to_durable_cache(cache, url, url, payload, lifetime).await;
+    // clone: the registry keeps the document as written for the next refresh
+    let durability = persist_to_durable_cache(cache, url, url, as_written.clone(), lifetime).await;
     LoadedContext {
-        value: registered.value,
+        document: registered.document,
         tail: registered.tail,
         durability,
         lifetime: EntryLifetime::Bounded(lifetime),
@@ -239,7 +264,7 @@ async fn persist_to_durable_cache(
     cache: &dyn ContextCache,
     url: &IriBuf,
     document_url: &IriBuf,
-    payload: serde_json::Value,
+    payload: JsonLiteral,
     lifetime: CacheLifetime,
 ) -> ContextDurability {
     match cache.put(url, document_url, &payload, lifetime).await {
@@ -266,6 +291,7 @@ mod tests {
             loaded_context::LoadedContext,
             test_origin::{TestOrigin, ok, redirect},
         },
+        test_documents::{document_value, literal},
     };
     use iri_rs::IriBuf;
     use reqwest::Client;
@@ -281,7 +307,7 @@ mod tests {
 
     /// The document an entry hands the processor, as JSON.
     fn processed(loaded: &LoadedContext) -> Value {
-        jsonld_syntax::Value::into_serde_json((*loaded.value).clone()) // clone: the entry is inspected, not consumed
+        document_value(&loaded.document)
     }
 
     /// A download read back from its durable row resolves its relative
@@ -292,7 +318,7 @@ mod tests {
         let requested = iri("https://origin.example.com/moved.jsonld");
         let final_url = iri("https://origin.example.com/v2/wrapper.jsonld");
         let hit = CachedContext {
-            payload: json!({ "@context": "terms.jsonld" }),
+            payload: literal(&json!({ "@context": "terms.jsonld" })),
             residual: ResidualLifetime::Bounded(CacheLifetime::from_seconds(30).expect("thirty seconds is a positive lifetime")),
             canonical_url: None,
             source: StoredDocumentSource::Downloaded {
@@ -300,7 +326,7 @@ mod tests {
             },
         };
 
-        let loaded = durable_hit(&requested, hit, revalidation());
+        let loaded = durable_hit(&requested, hit, revalidation()).expect("the stored document prepares");
 
         pretty_assertions::assert_eq!(loaded.document_url(&requested), &final_url);
         pretty_assertions::assert_eq!(
@@ -318,13 +344,13 @@ mod tests {
         let identifier = iri("urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b");
         let requested = iri("https://broker.example.com/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b");
         let hit = CachedContext {
-            payload: json!({ "@context": "terms.jsonld" }),
+            payload: literal(&json!({ "@context": "terms.jsonld" })),
             residual: ResidualLifetime::Unbounded,
             canonical_url: None,
             source: StoredDocumentSource::Broker,
         };
 
-        let loaded = durable_hit(&identifier, hit, revalidation());
+        let loaded = durable_hit(&identifier, hit, revalidation()).expect("the stored document prepares");
 
         pretty_assertions::assert_eq!(loaded.document_url(&requested), &requested);
         pretty_assertions::assert_eq!(

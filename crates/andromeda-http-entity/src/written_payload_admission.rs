@@ -312,6 +312,7 @@ mod tests {
     };
     use andromeda_entity::error::EntityError;
     use andromeda_http_extraction::{batch_item_refusal::BatchItemRefusal, entity_batch::BatchItem, undecodable_body::UndecodableBody};
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{
         batch_contexts::{AdmittedBatchContext, BatchContext, BatchContexts},
         context_spec::ContextSpec,
@@ -343,7 +344,9 @@ mod tests {
             .map(|(id, context)| BatchItem {
                 entity_id: id.parse().expect("a valid URI"),
                 entity: Ok(entity(&json!({ "id": id, "type": "Building" }))),
-                context: contexts.context_of(Some(serde_json::from_str(context).unwrap_or_else(|_| Value::from(*context)))),
+                context: contexts.context_of(Some(
+                    JsonLiteral::admit(context).unwrap_or_else(|_| JsonLiteral::string(context).expect("a JSON string")),
+                )),
                 embedded: None,
             })
             .collect()
@@ -481,7 +484,7 @@ mod tests {
     /// The admission the fake decides for `context`: the two failures named
     /// by URL, and otherwise the admission an offline engine gives.
     async fn admission_of(context: &BatchContext) -> Result<AdmittedBatchContext, EntityError> {
-        let named = |url: &str| *context.spec() == ContextSpec::from_body(Value::from(url));
+        let named = |url: &str| *context.spec() == ContextSpec::from_body(JsonLiteral::string(url).expect("a JSON string"));
         if named(UNRETRIEVABLE) {
             return Err(EntityError::JsonLd(JsonLdError::ContextFetchDisabled {
                 url: IriBuf::new(UNRETRIEVABLE.to_owned()).expect("a valid IRI"),

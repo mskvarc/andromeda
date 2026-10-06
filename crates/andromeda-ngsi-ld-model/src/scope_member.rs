@@ -30,25 +30,6 @@ impl ScopeMember {
     pub const fn slot(&self) -> &Slot<Scopes> {
         &self.0
     }
-
-    /// Fold another representation's member into this one.
-    ///
-    /// Clause 4.18: "In case multiple representations of the same Entity have
-    /// to be merged, e.g. when combining the results of distributed queries,
-    /// the values of scope are merged", through [`Scopes::merge`]. A
-    /// representation that deletes its Scope contributes nothing to the merge,
-    /// and one that states Scopes keeps them.
-    #[must_use]
-    pub fn merged_with(self, other: ScopeMember) -> ScopeMember {
-        match (self.0, other.0) {
-            (Slot::Set(mut held), Slot::Set(received)) => {
-                held.merge(received);
-                ScopeMember(Slot::Set(held))
-            }
-            (held @ Slot::Set(_), Slot::Remove) => ScopeMember(held),
-            (Slot::Remove, received) => ScopeMember(received),
-        }
-    }
 }
 
 /// The JSON shapes clause 4.18 writes the member in, before its items are read.
@@ -135,13 +116,5 @@ mod tests {
         for value in [json!("/A B"), json!([]), json!(["/A", "urn:ngsi-ld:null"]), json!([1])] {
             assert!(serde_json::from_value::<ScopeMember>(value.clone()).is_err(), "{value}"); // clone: from_value consumes its input
         }
-    }
-
-    #[test]
-    fn merging_keeps_each_spelling_once() {
-        let merged = member(&json!("/A")).merged_with(member(&json!(["/A", "A"])));
-        pretty_assertions::assert_eq!(serde_json::to_value(&merged).expect("serializes"), json!(["/A", "A"]));
-        let alone = member(&json!("/A")).merged_with(member(&json!("/A")));
-        pretty_assertions::assert_eq!(serde_json::to_value(&alone).expect("serializes"), json!("/A"));
     }
 }

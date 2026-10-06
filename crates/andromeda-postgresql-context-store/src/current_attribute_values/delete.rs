@@ -8,15 +8,12 @@ use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::{
-    cast::cast,
-    pg_array::any,
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
     placeholder::external_placeholder,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
 use sea_query::{Expr, ExprTrait, Iden, PostgresQueryBuilder, Query, SimpleExpr};
-use sea_query_sqlx::SqlxBinder;
 use sqlx::{Postgres, Transaction};
 
 /// The `UNNEST` set-delete's staging alias, `d`.
@@ -77,44 +74,6 @@ pub async fn delete_instances_in_tx(
     Ok(())
 }
 
-/// Delete every projection row of the named entities.
-///
-/// Only for a mutation that empties an entity's attributes without removing the
-/// entity itself. Deleting the entity needs no call at all: the projection's
-/// single foreign key cascades from `entities`, and that one ownership edge is
-/// the whole deletion path.
-///
-/// # Errors
-///
-/// Returns [`ContextStoreError::Database`] when the statement fails.
-pub async fn delete_entity_projections_in_tx(
-    tx: &mut Transaction<'_, Postgres>,
-    target: &ContextTarget,
-    entity_keys: &[EntityKey],
-) -> Result<(), ContextStoreError> {
-    if entity_keys.is_empty() {
-        return Ok(());
-    }
-
-    let keys: Vec<i64> = entity_keys.iter().copied().map(EntityKey::get).collect();
-    let (sql, values) = entity_delete_statement(target, keys).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut **tx).await?;
-
-    Ok(())
-}
-
-/// Build the entity-wide delete: `entity_key = ANY($1::bigint[])`.
-///
-/// The surrogate keys bind through sea-query as one array, since none is NULL,
-/// rather than one placeholder per key — a batch cannot exhaust the wire
-/// protocol's parameter space that way.
-fn entity_delete_statement(target: &ContextTarget, keys: Vec<i64>) -> sea_query::DeleteStatement {
-    Query::delete()
-        .from_table(table_of(target, CurrentAttributeValues::Table))
-        .and_where(Expr::col(CurrentAttributeValues::EntityKey).eq(any(cast(Expr::val(keys), PostgresType::BigintArray))))
-        .to_owned()
-}
-
 /// The three staging columns of the instance delete, in bind order.
 fn staging_columns() -> [UnnestColumn; 3] {
     [
@@ -162,11 +121,8 @@ fn delete_instances_sql(target: &ContextTarget) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::current_attribute_values::delete::{delete_instances_sql, entity_delete_statement};
+    use crate::current_attribute_values::delete::delete_instances_sql;
     use andromeda_context_space::context_target::ContextTarget;
-    use pretty_assertions::assert_eq;
-    use sea_query::PostgresQueryBuilder;
-    use sea_query_sqlx::SqlxBinder;
 
     #[test]
     fn the_instance_delete_reaches_the_default_instance() {
@@ -196,15 +152,5 @@ mod tests {
         }
         assert!(sql.contains("AS d(entity_key, attribute_name_key, dataset_id)"), "{sql}");
         assert!(!sql.contains("$4"), "only the three grain arrays are bound: {sql}");
-    }
-
-    #[test]
-    fn the_entity_delete_addresses_the_surrogate_key_alone() {
-        let (sql, values) = entity_delete_statement(&ContextTarget::Live, vec![1, 2]).build_sqlx(PostgresQueryBuilder);
-        assert!(
-            sql.contains(r#"DELETE FROM "current_attribute_values" WHERE "entity_key" = ANY($1::bigint[])"#),
-            "{sql}"
-        );
-        assert_eq!(values.0.0.len(), 1, "the whole key array is one bound value: {sql}");
     }
 }

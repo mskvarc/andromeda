@@ -1,5 +1,6 @@
 //! The invariants Snapshot policy relies on, and how each one broke.
 
+use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::SnapshotIdParseError};
 use chrono::OutOfRangeError;
 use std::num::TryFromIntError;
@@ -11,10 +12,10 @@ use thiserror::Error;
 /// `InternalError`.
 #[derive(Debug, Error)]
 pub enum SnapshotInvariant {
-    /// The request context a Snapshot runs its queries under could not be
-    /// materialised.
-    #[error("the Snapshot request context could not be materialized")]
-    RequestContextUnmaterialized,
+    /// The `@context` a Snapshot runs its queries under is not JSON text the
+    /// broker reads back, which the context it resolved itself always is.
+    #[error("the Snapshot query context is not readable JSON text: {0}")]
+    QueryContextText(#[source] JsonLiteralError),
     /// A freshly minted Snapshot identifier is not an identifier.
     #[error("a minted Snapshot identifier is invalid: {0}")]
     MintedIdentifier(#[source] SnapshotIdParseError),

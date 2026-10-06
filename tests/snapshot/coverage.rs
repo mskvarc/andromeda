@@ -8,7 +8,7 @@ const MAIN_SOURCE: &str = include_str!("main.rs");
 /// Every source file of the suite whose attributes the serial-group check
 /// covers, by the module name `main.rs` declares it under. This module is left
 /// out: it spells the forbidden attributes in the patterns it checks for.
-const EXECUTABLE_SOURCES: [(&str, &str); 17] = [
+const EXECUTABLE_SOURCES: [(&str, &str); 18] = [
     ("main", MAIN_SOURCE),
     ("branch_schema", include_str!("branch_schema.rs")),
     ("capture", include_str!("capture.rs")),
@@ -26,6 +26,7 @@ const EXECUTABLE_SOURCES: [(&str, &str); 17] = [
     ("support", include_str!("support.rs")),
     ("temporal", include_str!("temporal.rs")),
     ("tenancy_resilience", include_str!("tenancy_resilience.rs")),
+    ("typed_round_trip", include_str!("typed_round_trip.rs")),
 ];
 const EXPECTED_REQUIREMENTS: usize = 155;
 const EXPECTED_POLICIES: usize = 10;

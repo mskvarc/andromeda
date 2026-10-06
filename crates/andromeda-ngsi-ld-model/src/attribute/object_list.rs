@@ -1,10 +1,9 @@
 //! The `objectList` / `previousObjectList` member (ETSI GS CIM 009 clause 5.2.37).
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_vocabulary::{NULL_IRI, NULL_URI, compact::properties as compact_properties};
+use andromeda_ngsi_ld_vocabulary::{NULL_IRI, NULL_URI};
 use derive_more::{AsRef, Deref, From};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::{Map, Value};
 use std::{slice::Iter, vec::IntoIter};
 
 /// `objectList` / `previousObjectList` value as defined by clause 5.2.37.
@@ -19,15 +18,14 @@ use std::{slice::Iter, vec::IntoIter};
 #[derive(Debug, Clone, Default, PartialEq, Eq, AsRef, Deref, From)]
 pub struct RelationshipObjectList(pub Vec<Uri>);
 
-/// The clause 4.5.22.2 normalized representation of one `objectList` value.
+/// The clause 4.5.22.2 normalized representation of the ordered targets of one
+/// `objectList` value, written straight from the targets.
 ///
 /// Clause 4.5.22.2, Mandatory: "`objectList`: a JSON representation of an
 /// ordered array of Relationship Objects each consisting of a JSON object
 /// containing a single Attribute with a key called `object` and its value
 /// holding the Relationship's object represented by a URI." Table 5.2.37-1
-/// confines the bare-string spelling to the concise form, and clause 4.5.22.3
-/// lets a Context Producer write it, so a member already in either spelling
-/// reaches the normalized one from here and the rendering is idempotent.
+/// confines the bare-string spelling to the concise form.
 ///
 /// The clause gives the member a second right-hand side beside the ordered
 /// array of Relationship Objects: "An array consisting of a single NGSI-LD Null
@@ -38,45 +36,49 @@ pub struct RelationshipObjectList(pub Vec<Uri>);
 /// being wrapped as one.
 ///
 /// This is the one implementation of the representation. The typed member below
-/// renders through it and so does every renderer that has to move a payload
-/// between the two spellings, which is what keeps a query response, a
+/// writes through it and so does every renderer that writes the targets in some
+/// other form, such as percent-decoded, which is what keeps a query response, a
 /// notification and a temporal evolution from disagreeing about which shape the
 /// member has. `previousObjectList` is governed by the same rules: clause
 /// 4.5.22.2 makes its representation "the same as that of `objectList`".
-#[must_use]
-pub fn normalized_object_list(value: Value) -> Value {
-    match value {
-        Value::Array(members) => {
-            if is_deletion_encoding(&members) {
-                Value::Array(members)
-            } else {
-                Value::Array(members.into_iter().map(normalized_member).collect())
-            }
-        }
-        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other,
+#[derive(Debug, Clone, Copy)]
+pub struct NormalizedObjectList<'a, T> {
+    /// The ordered targets.
+    targets: &'a [T],
+}
+
+impl<'a, T: AsRef<str>> NormalizedObjectList<'a, T> {
+    /// The normalized representation of `targets`.
+    #[must_use]
+    pub const fn new(targets: &'a [T]) -> NormalizedObjectList<'a, T> {
+        NormalizedObjectList { targets }
+    }
+
+    /// Whether the targets encode a deletion rather than a list of
+    /// Relationship Objects (clause 4.5.22.2).
+    fn is_deletion_encoding(&self) -> bool {
+        let [only] = self.targets else {
+            return false;
+        };
+        only.as_ref() == NULL_URI.as_str() || only.as_ref() == NULL_IRI.as_str()
     }
 }
 
-/// One member of a normalized `objectList`, built from whichever spelling the
-/// value arrived in.
-fn normalized_member(member: Value) -> Value {
-    match member {
-        Value::String(uri) => {
-            let mut object = Map::with_capacity(1);
-            object.insert(compact_properties::OBJECT.to_owned(), Value::String(uri));
-            Value::Object(object)
+impl<T: AsRef<str>> Serialize for NormalizedObjectList<'_, T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.is_deletion_encoding() {
+            serializer.collect_seq(self.targets.iter().map(AsRef::as_ref))
+        } else {
+            serializer.collect_seq(self.targets.iter().map(|target| RelationshipObject { object: target.as_ref() }))
         }
-        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => other,
     }
 }
 
-/// Whether an `objectList` array encodes a deletion rather than a list of
-/// Relationship Objects (clause 4.5.22.2).
-fn is_deletion_encoding(members: &[Value]) -> bool {
-    let [Value::String(only)] = members else {
-        return false;
-    };
-    only.as_str() == NULL_URI.as_str() || only.as_str() == NULL_IRI.as_str()
+/// One Relationship Object of a normalized `objectList` (clause 4.5.22.2).
+#[derive(Serialize)]
+struct RelationshipObject<'a> {
+    /// The Relationship's object, a URI.
+    object: &'a str,
 }
 
 // Hand-written because the serialised shape is not the shape of the field and
@@ -89,15 +91,7 @@ fn is_deletion_encoding(members: &[Value]) -> bool {
 // ...)]` derive would express it only by cloning the whole list first.
 impl Serialize for RelationshipObjectList {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        // The ordered targets are written out as the bare array first and handed
-        // to the single normalizer above, rather than wrapped here: two spellings
-        // of the representation are what let one path honour clause 4.5.22.2's
-        // deletion encoding while the other wrapped the NGSI-LD Null as though it
-        // were a Relationship Object. The targets are copied into owned JSON
-        // strings because the normalizer reads the member as the document it is
-        // about to become.
-        let bare = Value::Array(self.0.iter().map(|object| Value::String(object.as_str().to_owned())).collect());
-        normalized_object_list(bare).serialize(serializer)
+        NormalizedObjectList::new(&self.0).serialize(serializer)
     }
 }
 
@@ -161,10 +155,15 @@ impl IntoIterator for RelationshipObjectList {
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute::object_list::{RelationshipObjectList, normalized_object_list};
+    use crate::attribute::object_list::{NormalizedObjectList, RelationshipObjectList};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use serde_json::json;
     use std::str::FromStr;
+
+    /// The normalized representation of `targets`, as JSON.
+    fn normalized(targets: &[&str]) -> serde_json::Value {
+        serde_json::to_value(NormalizedObjectList::new(targets)).expect("serialises")
+    }
 
     /// Clause 4.5.22.2: "An array consisting of a single NGSI-LD Null … can be
     /// used as the right-hand side of the `objectList` … as well as in
@@ -175,11 +174,8 @@ mod tests {
     /// path and left alone on the other.
     #[test]
     fn the_deletion_encoding_survives_both_readings_of_the_normalized_representation() {
-        pretty_assertions::assert_eq!(normalized_object_list(json!(["urn:ngsi-ld:null"])), json!(["urn:ngsi-ld:null"]));
-        pretty_assertions::assert_eq!(
-            normalized_object_list(json!(["https://uri.etsi.org/ngsi-ld/null"])),
-            json!(["https://uri.etsi.org/ngsi-ld/null"])
-        );
+        pretty_assertions::assert_eq!(normalized(&["urn:ngsi-ld:null"]), json!(["urn:ngsi-ld:null"]));
+        pretty_assertions::assert_eq!(normalized(&["https://uri.etsi.org/ngsi-ld/null"]), json!(["https://uri.etsi.org/ngsi-ld/null"]));
 
         let deleted = RelationshipObjectList(vec![Uri::from_str("urn:ngsi-ld:null").expect("the NGSI-LD Null is a URN")]);
         pretty_assertions::assert_eq!(serde_json::to_value(&deleted).expect("serialises"), json!(["urn:ngsi-ld:null"]));
@@ -200,17 +196,16 @@ mod tests {
         );
     }
 
-    /// The normalized rendering of an already-normalized list is itself, so the
-    /// shape a Context Producer wrote does not decide the shape it reads back.
+    /// The targets of a list of any length other than one are each wrapped as a
+    /// Relationship Object, the empty list included.
     #[test]
-    fn the_normalized_representation_is_idempotent() {
-        let normalized = json!([{"object": "urn:ngsi-ld:A:1"}]);
-        // clone: the transformation consumes its input and the expectation keeps the original
-        pretty_assertions::assert_eq!(normalized_object_list(normalized.clone()), normalized);
+    fn the_normalized_representation_wraps_every_target() {
         pretty_assertions::assert_eq!(
-            normalized_object_list(json!(["urn:ngsi-ld:A:1", "urn:ngsi-ld:A:2"])),
+            normalized(&["urn:ngsi-ld:A:1", "urn:ngsi-ld:A:2"]),
             json!([{"object": "urn:ngsi-ld:A:1"}, {"object": "urn:ngsi-ld:A:2"}])
         );
+        pretty_assertions::assert_eq!(normalized(&["urn:ngsi-ld:A:1"]), json!([{"object": "urn:ngsi-ld:A:1"}]));
+        pretty_assertions::assert_eq!(normalized(&[]), json!([]));
     }
 
     #[test]

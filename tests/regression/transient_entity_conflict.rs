@@ -399,11 +399,11 @@ async fn regression_transient_conflict_named_geo_properties_receive_the_propagat
     }
 }
 
-/// A member the broker carries through verbatim is not an attribute instance
-/// (clause 4.5.5), so it holds nothing the propagation can write to. It has to
-/// be skipped rather than failing the read, and it has to survive intact.
+/// Clause 4.5.2.3: a bare value written where an attribute stands is a concise
+/// Property, so the member is an attribute like `speed`. The expiry propagation
+/// of clauses 4.5.5.2 and 4.5.5.3 reaches it and its value reads back intact.
 #[tokio::test]
-async fn regression_transient_conflict_a_verbatim_member_is_skipped_and_survives() {
+async fn regression_transient_conflict_a_concise_member_is_an_attribute_that_takes_the_expiry_and_keeps_its_value() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let entity_type = scope.entity_type("TransientVerbatimProbe");
     let entity_id = scope.id("Vehicle:transient-verbatim");
@@ -472,9 +472,15 @@ async fn regression_transient_conflict_a_verbatim_member_is_skipped_and_survives
         merged.entity
     );
     assert_eq!(
-        merged.entity.get("vendorNote").and_then(Value::as_str),
+        merged.member_expiry("vendorNote"),
+        Some(ENTITY_EXPIRY),
+        "the concise member is a Property and takes the propagation: {}",
+        merged.entity
+    );
+    assert_eq!(
+        merged.entity.get("vendorNote").and_then(|member| member.get("value")).and_then(Value::as_str),
         Some("carried through verbatim"),
-        "a member that holds no attribute instance is untouched: {}",
+        "the value reads back as written: {}",
         merged.entity
     );
 }

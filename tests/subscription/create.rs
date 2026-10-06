@@ -175,6 +175,32 @@ async fn subscription_create_invalid_jsonld_context_returns_bad_request_data() {
     scope.finish().await.expect("cleanup failed");
 }
 
+/// Clause 5.2.1: an NGSI-LD Null outside clauses 5.5.8 and 5.5.12 is
+/// `BadRequestData`, and clause 4.5.0 spells it `urn:ngsi-ld:null` (an array of
+/// one where an array is required) in the members that take URIs.
+#[tokio::test]
+async fn subscription_create_ngsi_ld_null_uri_member_returns_bad_request_data_naming_it() {
+    let http_client = client();
+    let scope = TestEnvironment::from_suite("subscription").await.expect("isolated test environment");
+
+    for (member, null) in [
+        ("jsonldContext", json!("urn:ngsi-ld:null")),
+        ("datasetId", json!(["urn:ngsi-ld:null"])),
+        ("watchedAttributes", json!(["urn:ngsi-ld:null"])),
+    ] {
+        let subscription_id = scope.id(&format!("Subscription:create-null-{member}"));
+        let mut payload = default_subscription(&subscription_id);
+        payload[member] = null;
+
+        let (status, _, body) = create_subscription(&http_client, &payload).await;
+
+        pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST, "{member}: {body}");
+        pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str(), "{member}");
+        assert!(body["detail"].as_str().is_some_and(|detail| detail.contains(member)), "{member}: {body}");
+    }
+    scope.finish().await.expect("cleanup failed");
+}
+
 #[tokio::test]
 async fn subscription_create_unavailable_jsonld_context_returns_gateway_timeout() {
     let http_client = client();

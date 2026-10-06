@@ -201,7 +201,7 @@ mod tests {
     const EWKB_Z_FLAG: u32 = 0x8000_0000;
 
     fn parse(value: &Value) -> Geometry {
-        Geometry::from_geojson_value(value).expect("valid GeoJSON")
+        Geometry::from_geojson_text(&value.to_string()).expect("valid GeoJSON")
     }
 
     fn point() -> Geometry {

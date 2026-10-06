@@ -6,6 +6,7 @@
 
 use crate::{
     error::ContextStoreError,
+    jsonb_text::JsonbText,
     subscription_store::{
         params::DatasetIdPresence,
         rows::SubscriptionRow,
@@ -19,7 +20,6 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{
-        EntitySelector,
         NotificationParams,
         NotificationStatus,
         Subscription,
@@ -38,7 +38,7 @@ use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use langtag::LangTagBuf;
 use sea_query::Iden;
-use serde_json::Value;
+use serde::de::DeserializeOwned;
 use sqlx::{Row, postgres::PgRow};
 use std::{num::NonZeroU32, str::FromStr};
 
@@ -52,12 +52,38 @@ pub fn stored_subscription_uri(raw: &str) -> Result<Identifier, ContextStoreErro
     Ok(raw.parse().map_err(StoredSubscriptionError::Id)?)
 }
 
-/// The entity selectors the `entities` column holds.
-fn stored_entities(row: &PgRow) -> Result<Option<Vec<EntitySelector>>, ContextStoreError> {
-    let entities_json: Option<Value> = row.try_get(Subscriptions::Entities.unquoted())?;
-    entities_json
-        .map(|value| serde_json::from_value::<Vec<EntitySelector>>(value).map_err(|error| StoredSubscriptionError::Entities(error).into()))
-        .transpose()
+/// The value the JSON text of a column holds, read straight from the text.
+///
+/// A column holding the JSON `null` literal, which an earlier release wrote for
+/// a member a client removed, is read as the absent member.
+///
+/// # Errors
+///
+/// Returns the `unreadable` failure of the column when the text is not a `T`.
+pub(super) fn decoded_column<T: DeserializeOwned>(
+    text: JsonbText<'_>,
+    unreadable: fn(serde_json::Error) -> StoredSubscriptionError,
+) -> Result<Option<T>, StoredSubscriptionError> {
+    serde_json::from_slice(text.as_bytes()).map_err(unreadable)
+}
+
+/// The value an optional JSON column holds, decoded by the streaming reader
+/// from the column's text.
+///
+/// `unreadable` names the column in the failure, so the JSON columns of one
+/// row are told apart without carrying the column's text.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Database`] when the column cannot be read, and
+/// [`ContextStoreError::StoredSubscription`] when its JSON is not a `T`.
+fn stored_json<T: DeserializeOwned>(
+    row: &PgRow,
+    column: Subscriptions,
+    unreadable: fn(serde_json::Error) -> StoredSubscriptionError,
+) -> Result<Option<T>, ContextStoreError> {
+    let text: Option<JsonbText<'_>> = row.try_get(column.unquoted())?;
+    Ok(text.map(|text| decoded_column(text, unreadable)).transpose()?.flatten())
 }
 
 /// The attribute names one `TEXT[]` column of expanded names holds.
@@ -144,7 +170,7 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
         })
         .transpose()?;
     let id = stored_subscription_uri(row.try_get(Subscriptions::Id.unquoted())?)?;
-    let entities = stored_entities(row)?;
+    let entities = stored_json(row, Subscriptions::Entities, StoredSubscriptionError::Entities)?;
     let watched_attributes = stored_attribute_names(row, Subscriptions::WatchedAttributes, StoredSubscriptionError::WatchedAttribute)?;
     let notification_trigger = stored_notification_triggers(row)?;
     let q = stored_q(row)?;
@@ -158,8 +184,8 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
         .transpose()?;
     let expand_values = stored_attribute_names(row, Subscriptions::ExpandValues, StoredSubscriptionError::ExpandValue)?;
     let json_keys = stored_attribute_names(row, Subscriptions::JsonKeys, StoredSubscriptionError::JsonKey)?;
-    let notification_json: Value = row.try_get(Subscriptions::Notification.unquoted())?;
-    let notification = serde_json::from_value(notification_json).map_err(StoredSubscriptionError::Notification)?;
+    let notification: NotificationParams =
+        stored_json(row, Subscriptions::Notification, StoredSubscriptionError::Notification)?.ok_or(StoredSubscriptionError::NotificationAbsent)?;
     let lang_raw: Option<String> = row.try_get(Subscriptions::Lang.unquoted())?;
     let lang = lang_raw.map(LangTagBuf::new).transpose().map_err(StoredSubscriptionError::Lang)?;
     let jsonld_context_raw: Option<String> = row.try_get(Subscriptions::JsonldContext.unquoted())?;
@@ -183,7 +209,7 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
         notification_trigger,
         time_interval: row.try_get(Subscriptions::TimeInterval.unquoted())?,
         q,
-        geo_q: row.try_get(Subscriptions::GeoQ.unquoted())?,
+        geo_q: stored_json(row, Subscriptions::GeoQ, StoredSubscriptionError::GeoQ)?,
         scope_q,
         csf,
         expand_values,
@@ -193,7 +219,7 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
         expires_at: row.try_get(Subscriptions::ExpiresAt.unquoted())?,
         throttling: row.try_get(Subscriptions::Throttling.unquoted())?,
         status,
-        temporal_q: row.try_get(Subscriptions::TemporalQ.unquoted())?,
+        temporal_q: stored_json(row, Subscriptions::TemporalQ, StoredSubscriptionError::TemporalQ)?,
         lang,
         jsonld_context,
         local_only: row.try_get(Subscriptions::LocalOnly.unquoted())?,
@@ -324,5 +350,54 @@ fn notification_status_from_timestamps(last_success: Option<DateTime<Utc>>, last
         (Some(_), None) => Some(NotificationStatus::Ok),
         (None, Some(_)) => Some(NotificationStatus::Failed),
         (None, None) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        jsonb_text::JsonbText,
+        subscription_store::{mapper::decoded_column, stored_subscription_error::StoredSubscriptionError},
+    };
+    use andromeda_ngsi_ld_model::query::temporal_query::TemporalQuery;
+    use andromeda_ngsi_ld_query::geo::input::GeoQueryInput;
+    use serde_json::json;
+
+    /// The `geoQ` of Table 5.2.13-1, read as the request model reads it.
+    fn geo_q() -> GeoQueryInput {
+        serde_json::from_value(json!({"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [13.4, 52.5], "geoproperty": "location"}))
+            .expect("a readable geoQ")
+    }
+
+    /// The `geo_q` column is written from the typed `geoQ` and read back into
+    /// it, so the stored text is the clause 5.2.13 members and nothing a tree
+    /// holds.
+    #[test]
+    fn a_subscription_geo_q_is_stored_typed() {
+        let written = serde_json::to_vec(&geo_q()).expect("the typed geoQ writes as the column's JSON");
+        let stored = str::from_utf8(&written).expect("JSON text");
+        assert!(
+            stored.contains(r#""georel":"near;maxDistance==2000""#) && stored.contains(r#""geometry":"Point""#),
+            "{stored}"
+        );
+
+        let read = decoded_column::<GeoQueryInput>(JsonbText::new(&written), StoredSubscriptionError::GeoQ).expect("the column decodes");
+
+        pretty_assertions::assert_eq!(read, Some(geo_q()));
+    }
+
+    /// The JSON `null` literal an earlier release wrote for a removed member
+    /// is the absent member, and a column that is no `geoQ` or no `temporalQ`
+    /// names itself in the failure.
+    #[test]
+    fn a_null_column_is_absent_and_a_malformed_one_names_its_member() {
+        let absent = decoded_column::<GeoQueryInput>(JsonbText::new(b"null"), StoredSubscriptionError::GeoQ).expect("null decodes");
+        assert!(absent.is_none());
+
+        let refused = decoded_column::<GeoQueryInput>(JsonbText::new(br#"{"georel": "near;maxDistance==2000"}"#), StoredSubscriptionError::GeoQ);
+        assert!(matches!(refused, Err(StoredSubscriptionError::GeoQ(_))), "{refused:?}");
+
+        let refused = decoded_column::<TemporalQuery>(JsonbText::new(br#"{"timerel": "after"}"#), StoredSubscriptionError::TemporalQ);
+        assert!(matches!(refused, Err(StoredSubscriptionError::TemporalQ(_))), "{refused:?}");
     }
 }

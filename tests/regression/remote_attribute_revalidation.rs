@@ -185,7 +185,8 @@ async fn regression_remote_revalidation_a_temporal_query_drops_the_source_entiti
         {
             "id": paired,
             "type": entity_type,
-            "location": {"type": "GeoProperty", "values": [[{"type": "Point", "coordinates": [181, 0]}, "2020-01-01T00:00:00Z"]]},
+            // The broker asks sources for normalized instances (clause 4.5.7).
+            "location": [{"type": "GeoProperty", "value": {"type": "Point", "coordinates": [181, 0]}, "observedAt": "2020-01-01T00:00:00Z"}],
             "@context": TEST_SUITE_CONTEXT.as_str()
         }
     ]);

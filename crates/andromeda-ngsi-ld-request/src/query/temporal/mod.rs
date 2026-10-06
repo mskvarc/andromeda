@@ -720,10 +720,4 @@ mod tests {
         let entity_token: TemporalQueryParameters = serde_urlencoded::from_str("options=simplified").expect("the parameter set decodes");
         assert!(entity_token.parse_format().is_err(), "Table 6.3.12-1 defines no simplified token");
     }
-
-    #[test]
-    fn is_simplified_default_is_false() {
-        let p = params_from_query("");
-        assert!(!p.is_simplified());
-    }
 }

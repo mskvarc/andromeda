@@ -7,7 +7,7 @@
 use bigdecimal::{BigDecimal, ParseBigDecimalError, Zero, serde::json_num};
 use derive_more::Display;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError, ser::Error as SerializeError};
-use serde_json::{Number, Value};
+use serde_json::Number;
 use std::{num::ParseIntError, str::FromStr};
 use thiserror::Error;
 
@@ -73,19 +73,6 @@ impl JsonNumber {
     #[must_use]
     pub const fn decimal(&self) -> &BigDecimal {
         &self.0
-    }
-
-    /// Consumes this number and returns its exact decimal representation.
-    #[must_use]
-    pub fn into_decimal(self) -> BigDecimal {
-        self.0
-    }
-
-    /// Constructs the native `serde_json` number value used by exact JSON-LD
-    /// expansion and response rendering.
-    #[must_use]
-    pub fn to_json_value(&self) -> Value {
-        Value::Number(self.to_serde_number())
     }
 
     /// Constructs the native `serde_json` number token for this exact value.

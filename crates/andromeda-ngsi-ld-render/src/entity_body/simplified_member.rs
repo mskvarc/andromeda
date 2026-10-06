@@ -16,7 +16,7 @@
 //! it is reformatted as. The list families keep their arrays: clause 4.5.4
 //! writes a `ListProperty` as a Property value and a `ListRelationship` as the
 //! URIs a Relationship's simplified rendering is, so the reformat leaves both
-//! as they are (see [`crate::version::simplified_attribute`]).
+//! as they are (see [`crate::version::fallback`]).
 
 use crate::{
     entity_body::{
@@ -90,6 +90,7 @@ impl Serialize for SimplifiedMember<'_> {
                 Some(kept) => self.instance(kept.source, kept.report).serialize(serializer),
                 None => dataset_map(serializer, DatasetInstances::Notified(instances), self),
             },
+            MemberInstances::Evolution(instances) => serializer.collect_seq(instances.iter().map(|attribute| self.instance(attribute, held))),
         }
     }
 }

@@ -29,12 +29,12 @@ use crate::{
 };
 use andromeda_context_commit::{committer::ContextCommitter, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::snapshot::Snapshot;
 use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
 use chrono::Utc;
 use futures::future::BoxFuture;
-use serde_json::Value;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tracing::{debug, info, warn};
 
@@ -76,7 +76,7 @@ impl SnapshotExecutor {
     /// execution status is not a permitted transition out of `preparing`, a
     /// transient store failure a query or a staging write met, and the store's
     /// own failure when promoting the capture does not complete.
-    pub async fn execute(&self, snapshot: &Snapshot, query_context: &Value, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
+    pub async fn execute(&self, snapshot: &Snapshot, query_context: &JsonLiteral, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
         info!(snapshot_id = %snapshot.id, "Starting snapshot query execution");
         let target = self
             .snapshot_repo
@@ -121,8 +121,9 @@ impl SnapshotExecutor {
 /// all the same, so a core reference it holds of another release is processed
 /// as the v1.9 core context, last (clause 4.4), rather than as the release it
 /// names.
-fn persisted_query_context(query_context: &Value) -> ContextSpec {
-    // clone: a restarted preparation executes against the same persisted context again.
+fn persisted_query_context(query_context: &JsonLiteral) -> ContextSpec {
+    // clone: the spec owns the body context it processes under, and a
+    // restarted preparation reads the persisted literal again.
     ContextSpec::from_body(query_context.clone())
 }
 
@@ -292,8 +293,16 @@ fn lease_deadline(lease: Duration) -> Result<chrono::DateTime<Utc>, SnapshotErro
 #[cfg(test)]
 mod tests {
     use crate::executor::persisted_query_context;
+    use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
-    use serde_json::json;
+    use serde_json::{Value, json};
+
+    /// The context a persisted query context is processed under, as JSON.
+    fn resolved(persisted: &Value) -> Value {
+        let literal = JsonLiteral::admit(&persisted.to_string()).expect("an admissible context");
+        let context = persisted_query_context(&literal);
+        serde_json::from_str(context.resolved_context().text()).expect("JSON")
+    }
 
     /// Clause 4.4: a persisted context naming an older core context is
     /// processed as the v1.9 core context, last, like any request context.
@@ -305,8 +314,8 @@ mod tests {
         ]);
 
         pretty_assertions::assert_eq!(
-            persisted_query_context(&persisted).to_context_value(),
-            Some(json!(["https://example.com/user.jsonld", NGSI_LD_CORE_CONTEXT_URL.as_str()]))
+            resolved(&persisted),
+            json!(["https://example.com/user.jsonld", NGSI_LD_CORE_CONTEXT_URL.as_str()])
         );
     }
 
@@ -316,6 +325,6 @@ mod tests {
     fn a_persisted_context_ending_with_the_current_core_context_is_processed_unchanged() {
         let persisted = json!(["https://example.com/user.jsonld", NGSI_LD_CORE_CONTEXT_URL.as_str()]);
 
-        pretty_assertions::assert_eq!(persisted_query_context(&persisted).to_context_value(), Some(persisted));
+        pretty_assertions::assert_eq!(resolved(&persisted), persisted);
     }
 }

@@ -103,7 +103,7 @@ mod tests {
     fn geo_query(geoproperty: &str) -> GeoQuery {
         GeoQuery {
             georel: GeoRel::Within,
-            geometry: Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses"),
+            geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses"),
             geoproperty: name(geoproperty),
         }
     }

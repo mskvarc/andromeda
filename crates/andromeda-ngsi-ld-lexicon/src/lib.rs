@@ -21,6 +21,7 @@ mod validated_name;
 pub mod aggr_method;
 pub mod attribute_name;
 pub mod attribute_type;
+pub mod coerced_term;
 pub mod constant_string;
 pub mod context_source_pseudonym;
 pub mod dereferenceable_uri;

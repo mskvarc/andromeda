@@ -18,7 +18,8 @@
 //! processor then finds each one already in the in-process cache, and it is
 //! iterative, so the walk itself holds no stack per level.
 
-use crate::{error::JsonLdError, loader::http::HttpContextLoader};
+use crate::{document_context::ResolvedContext, error::JsonLdError, loader::http::HttpContextLoader};
+use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use iri_rs::{IriBuf, IriRef};
 use std::vec::IntoIter;
 use thiserror::Error;
@@ -75,10 +76,8 @@ struct PathEntry {
 /// Returns [`JsonLdError::ContextGraph`] for a cycle or a chain too deep, and
 /// the failure a referenced document cannot be loaded with, exactly as
 /// processing would have reported it.
-pub(crate) async fn check_context_graph(loader: &HttpContextLoader, context: &serde_json::Value) -> Result<(), JsonLdError> {
-    let mut roots = Vec::new();
-    collect_json_slot(context, &mut roots);
-    walk(loader, roots).await
+pub(crate) async fn check_context_graph(loader: &HttpContextLoader, context: &ResolvedContext) -> Result<(), JsonLdError> {
+    walk(loader, context.references().to_vec()).await
 }
 
 /// [`check_context_graph`] for the `@context` of `document`, and of each
@@ -87,32 +86,16 @@ pub(crate) async fn check_context_graph(loader: &HttpContextLoader, context: &se
 /// # Errors
 ///
 /// As [`check_context_graph`].
-pub(crate) async fn check_document_contexts(loader: &HttpContextLoader, document: &serde_json::Value) -> Result<(), JsonLdError> {
+pub(crate) async fn check_document_contexts(loader: &HttpContextLoader, document: JsonPiece<'_>) -> Result<(), JsonLdError> {
     let mut roots = Vec::new();
-    match document {
-        serde_json::Value::Object(members) => collect_json_member(members, &mut roots),
-        serde_json::Value::Array(items) => items.iter().for_each(|item| {
-            if let serde_json::Value::Object(members) = item {
-                collect_json_member(members, &mut roots);
-            }
-        }),
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
-    }
-    walk(loader, roots).await
-}
-
-/// [`check_document_contexts`] for a document already in the processor's
-/// JSON form.
-///
-/// # Errors
-///
-/// As [`check_context_graph`].
-pub(crate) async fn check_syntax_document_contexts(loader: &HttpContextLoader, document: &jsonld_syntax::Value) -> Result<(), JsonLdError> {
-    let mut roots = Vec::new();
-    match document {
-        jsonld_syntax::Value::Object(_) => collect_syntax_member(document, None, &mut roots),
-        jsonld_syntax::Value::Array(items) => items.iter().for_each(|item| collect_syntax_member(item, None, &mut roots)),
-        jsonld_syntax::Value::Null | jsonld_syntax::Value::Boolean(_) | jsonld_syntax::Value::Number(_) | jsonld_syntax::Value::String(_) => {}
+    match document.kind() {
+        JsonKind::Object => collect_member(document, &mut roots),
+        JsonKind::Array => document
+            .elements()
+            .unwrap_or_default()
+            .into_iter()
+            .for_each(|item| collect_member(item, &mut roots)),
+        JsonKind::Null | JsonKind::Boolean | JsonKind::Number | JsonKind::String => {}
     }
     walk(loader, roots).await
 }
@@ -139,9 +122,7 @@ async fn walk(loader: &HttpContextLoader, roots: Vec<IriBuf>) -> Result<(), Json
         if path.len() == MAX_CONTEXT_REFERENCE_DEPTH {
             return Err(ContextGraphError::TooDeep(url).into());
         }
-        let document = loader.load_value(&url).await?;
-        let mut pending = Vec::new();
-        collect_syntax_member(&document, Some(&url), &mut pending);
+        let pending = loader.load_document(&url).await?.context_references(Some(&url));
         path.push(PathEntry {
             url,
             pending: pending.into_iter(),
@@ -149,50 +130,29 @@ async fn walk(loader: &HttpContextLoader, roots: Vec<IriBuf>) -> Result<(), Json
     }
 }
 
-/// Collect the absolute references of the `@context` member of `members`.
-fn collect_json_member(members: &serde_json::Map<String, serde_json::Value>, references: &mut Vec<IriBuf>) {
-    if let Some(slot) = members.get(CONTEXT) {
-        collect_json_slot(slot, references);
+/// Collect the absolute references of the `@context` member of the object
+/// `document`.
+fn collect_member(document: JsonPiece<'_>, references: &mut Vec<IriBuf>) {
+    if let Some(slot) = document.member(CONTEXT) {
+        collect_slot(slot, references);
     }
 }
 
-/// Collect the absolute references of one `@context` slot written as JSON.
-fn collect_json_slot(slot: &serde_json::Value, references: &mut Vec<IriBuf>) {
-    match slot {
-        serde_json::Value::String(reference) => references.extend(reference_iri(reference, None)),
-        serde_json::Value::Array(entries) => entries.iter().for_each(|entry| collect_json_slot(entry, references)),
-        serde_json::Value::Object(definition) => {
-            if let Some(serde_json::Value::String(import)) = definition.get(IMPORT) {
-                references.extend(reference_iri(import, None));
+/// Collect the absolute references of one `@context` slot.
+fn collect_slot(slot: JsonPiece<'_>, references: &mut Vec<IriBuf>) {
+    match slot.kind() {
+        JsonKind::String => references.extend(slot.as_str().and_then(|reference| reference_iri(&reference, None))),
+        JsonKind::Array => slot
+            .elements()
+            .unwrap_or_default()
+            .into_iter()
+            .for_each(|entry| collect_slot(entry, references)),
+        JsonKind::Object => {
+            if let Some(import) = slot.member(IMPORT).and_then(JsonPiece::as_str) {
+                references.extend(reference_iri(&import, None));
             }
         }
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
-    }
-}
-
-/// Collect the references of the `@context` member of `document`, each
-/// resolved against `base`, the URL the processor resolves them against, when
-/// the document was loaded from one.
-fn collect_syntax_member(document: &jsonld_syntax::Value, base: Option<&IriBuf>, references: &mut Vec<IriBuf>) {
-    if let jsonld_syntax::Value::Object(members) = document {
-        members.get(CONTEXT).for_each(|slot| collect_syntax_slot(slot, base, references));
-    }
-}
-
-/// Collect the references of one `@context` slot in the processor's JSON form.
-fn collect_syntax_slot(slot: &jsonld_syntax::Value, base: Option<&IriBuf>, references: &mut Vec<IriBuf>) {
-    match slot {
-        jsonld_syntax::Value::String(reference) => references.extend(reference_iri(reference.as_str(), base)),
-        jsonld_syntax::Value::Array(entries) => entries.iter().for_each(|entry| collect_syntax_slot(entry, base, references)),
-        jsonld_syntax::Value::Object(definition) => definition.get(IMPORT).for_each(|import| match import {
-            jsonld_syntax::Value::String(import) => references.extend(reference_iri(import.as_str(), base)),
-            jsonld_syntax::Value::Null
-            | jsonld_syntax::Value::Boolean(_)
-            | jsonld_syntax::Value::Number(_)
-            | jsonld_syntax::Value::Array(_)
-            | jsonld_syntax::Value::Object(_) => {}
-        }),
-        jsonld_syntax::Value::Null | jsonld_syntax::Value::Boolean(_) | jsonld_syntax::Value::Number(_) => {}
+        JsonKind::Null | JsonKind::Boolean | JsonKind::Number => {}
     }
 }
 
@@ -205,7 +165,7 @@ const IMPORT: &str = "@import";
 /// The IRI `reference` names: itself when absolute, else its resolution
 /// against `base`. A reference that is no IRI reference, or is relative with
 /// no base, names nothing the walk can follow, and the processor refuses it.
-fn reference_iri(reference: &str, base: Option<&IriBuf>) -> Option<IriBuf> {
+pub(crate) fn reference_iri(reference: &str, base: Option<&IriBuf>) -> Option<IriBuf> {
     let Ok(parsed) = IriRef::parse(reference) else {
         return None;
     };
@@ -230,9 +190,10 @@ mod tests {
     use crate::{
         context_graph::{ContextGraphError, MAX_CONTEXT_REFERENCE_DEPTH},
         context_spec::ContextSpec,
-        engine::{expanded_input::ExpandedInput, options::CompactOptions, preloaded_engine::engine_preloading, processor::JsonLdEngine},
+        engine::{expanded_text::ExpandedText, options::CompactOptions, preloaded_engine::engine_preloading, processor::JsonLdEngine},
         error::JsonLdError,
         loader::test_origin::{TestOrigin, ok},
+        test_documents::expanded_document,
     };
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
@@ -273,7 +234,7 @@ mod tests {
 
     /// Expand the vehicle under the one context `url` names.
     async fn expanded_under(engine: &JsonLdEngine, url: &str) -> Result<Value, JsonLdError> {
-        engine.expand(vehicle(), &ContextSpec::from_link(iri(url))).await
+        expanded_document(engine, &vehicle(), &ContextSpec::from_link(iri(url))).await
     }
 
     /// A chain of exactly [`MAX_CONTEXT_REFERENCE_DEPTH`] documents is
@@ -462,7 +423,7 @@ mod tests {
 
         let refused = engine
             .compactor(&context)
-            .compact(ExpandedInput::Assembled(json!([])), CompactOptions::default())
+            .compact(ExpandedText::Assembled(b"[]"), CompactOptions::default())
             .await
             .expect_err("a cycle is refused");
 

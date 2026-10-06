@@ -7,8 +7,8 @@
 
 use crate::{
     FederationService,
-    document_rewording::DocumentVocabulary,
     error::FederationError,
+    forwarded_content::ForwardedContent,
     forwarded_payload::{ItemBody, OutgoingBody, build_identifiers_payload},
     forwarding_context::BodyPresence,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
@@ -18,10 +18,12 @@ use crate::{
     write_answer::with_full_update_result_names,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::InstanceDocument};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_render::version::adapted_payload::AdaptedPayload;
 use futures::{StreamExt, stream};
+use std::borrow::Cow;
 use tracing::{debug, warn};
 use url::Url;
 
@@ -34,7 +36,7 @@ pub(crate) struct PlannedWrite<'a> {
     /// The HTTP method.
     pub(crate) method: reqwest::Method,
     /// The body narrowed to what the registration covers.
-    pub(crate) body: Option<PlannedBody>,
+    pub(crate) body: Option<PlannedBody<'a>>,
     /// The attributes an exclusive registration claims from the payload.
     pub(crate) proxied_attrs: Vec<AttributeName>,
     /// The context of the triggering request.
@@ -48,15 +50,46 @@ pub(crate) struct PlannedWrite<'a> {
 }
 
 /// The body of one planned write.
-pub(crate) struct PlannedBody {
-    /// The serialised document.
-    pub(crate) bytes: Vec<u8>,
-    /// What kind of document it is, which decides where its names sit when it
-    /// is spelled in the forwarding context.
-    pub(crate) vocabulary: DocumentVocabulary,
-    /// Which NGSI-LD Element the document's Entity data is, which decides
-    /// how the clause 4.3.6.8 fallback reads it.
+pub(crate) struct PlannedBody<'a> {
+    /// The admitted content, narrowed to what the registration covers.
+    pub(crate) content: PlannedContent<'a>,
+    /// Which NGSI-LD Element the content's Entity data is, which decides how
+    /// the clause 4.3.6.8 fallback reads it.
     pub(crate) element: AdaptedPayload,
+}
+
+/// The admitted content of one planned write: borrowed as admitted when the
+/// registration covers all of it, its own narrowed copy otherwise.
+pub(crate) enum PlannedContent<'a> {
+    /// An entity or an entity-shaped fragment, boxed because it is the widest
+    /// member of a planned write.
+    Entity(Box<Cow<'a, EntityDocument>>),
+    /// A Temporal Evolution with a reified Scope: the narrowed instances, and
+    /// the Scope history, which narrowing leaves whole.
+    Evolution {
+        /// The instances, narrowed to what the registration covers.
+        document: Box<Cow<'a, EntityDocument>>,
+        /// The reified Scope instances.
+        scope_history: &'a EntityDocument,
+    },
+    /// The one attribute instance a request path names.
+    Attribute {
+        /// The attribute's expanded name.
+        name: &'a AttributeName,
+        /// The admitted instance.
+        instance: &'a InstanceDocument,
+    },
+}
+
+impl PlannedContent<'_> {
+    /// The content as the forwarding reads it.
+    fn forwarded(&self) -> ForwardedContent<'_> {
+        match self {
+            PlannedContent::Entity(document) => ForwardedContent::Entity(document),
+            PlannedContent::Evolution { document, scope_history } => ForwardedContent::Evolution { document, scope_history },
+            PlannedContent::Attribute { name, instance } => ForwardedContent::Attribute { name, instance },
+        }
+    }
 }
 
 /// What one forwarded write carries, and the context each part of it was
@@ -64,13 +97,11 @@ pub(crate) struct PlannedBody {
 pub(crate) enum WritePayload<'a> {
     /// A body-less write (a DELETE), triggered under `context`.
     Empty(&'a ContextSpec),
-    /// One document, already narrowed to what the registration covers,
-    /// submitted under `context`.
+    /// One admitted content, already narrowed to what the registration
+    /// covers, submitted under `context`.
     Document {
-        /// The serialised document.
-        bytes: &'a [u8],
-        /// What kind of document it is.
-        vocabulary: DocumentVocabulary,
+        /// The admitted content.
+        content: ForwardedContent<'a>,
         /// Which NGSI-LD Element its Entity data is.
         element: AdaptedPayload,
         /// The context it was submitted under.
@@ -127,9 +158,8 @@ impl FederationService {
         } = write;
         let mode = registration.access.mode.unwrap_or_default();
         let payload = match &body {
-            Some(PlannedBody { bytes, vocabulary, element }) => WritePayload::Document {
-                bytes,
-                vocabulary: *vocabulary,
+            Some(PlannedBody { content, element }) => WritePayload::Document {
+                content: content.forwarded(),
                 element: *element,
                 context,
             },
@@ -188,14 +218,8 @@ impl FederationService {
                 self.payload_for(registration, context, None).await,
                 single_write_naming(registration, context, BodyPresence::Absent),
             ),
-            WritePayload::Document {
-                bytes,
-                vocabulary,
-                element,
-                context,
-            } => (
-                self.payload_for(registration, context, Some(OutgoingBody::Document { bytes, vocabulary, element }))
-                    .await,
+            WritePayload::Document { content, element, context } => (
+                self.payload_for(registration, context, Some(outgoing_body(content, element))).await,
                 single_write_naming(registration, context, BodyPresence::Present),
             ),
             WritePayload::Items(items) => (self.payload_for_items(registration, items).await, Ok(None)),
@@ -227,6 +251,19 @@ impl FederationService {
             Some(naming) => with_full_update_result_names(&self.engine, &naming, outcome).await,
             None => outcome,
         }
+    }
+}
+
+/// The body `content` of an `element` payload is forwarded as.
+const fn outgoing_body(content: ForwardedContent<'_>, element: AdaptedPayload) -> OutgoingBody<'_> {
+    match content {
+        ForwardedContent::Entity(document) => OutgoingBody::Entity { document, element },
+        ForwardedContent::Evolution { document, scope_history } => OutgoingBody::Evolution {
+            document,
+            scope_history,
+            element,
+        },
+        ForwardedContent::Attribute { name, instance } => OutgoingBody::Attribute { name, instance },
     }
 }
 

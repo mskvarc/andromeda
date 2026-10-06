@@ -5,16 +5,11 @@
 //! produced [`ResolvedCsrUpdate`](crate::resolved_update::ResolvedCsrUpdate) as
 //! an unconditional UPDATE.
 
-use crate::{
-    csr_member::CsrMember,
-    error::RegistrationError,
-    mode_rules::default_operations,
-    nullable_member::NullableMember,
-    registration_validation_reason::RegistrationValidationReason,
-    store::update_fragment::CsrUpdateFragment,
-};
+use crate::{mode_rules::default_operations, store::update_fragment::CsrUpdateFragment};
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
     non_empty_text::NonEmptyText,
@@ -29,9 +24,9 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
-use serde_json::Value;
 use typed_builder::TypedBuilder;
 
 /// Fully-resolved CSR update values for a single row. Every field carries
@@ -76,31 +71,14 @@ pub struct ResolvedCsrUpdate {
     pub jsonld_context: Option<DereferenceableUri>,
     /// New Via alias pseudonym.
     pub context_source_alias: Option<ContextSourcePseudonym>,
-    /// New non-standard-properties blob (after shallow merge).
-    pub additional_properties: Option<Value>,
+    /// New Context Source Properties (after the shallow merge).
+    pub additional_properties: IndexMap<AttributeName, JsonLiteral>,
     /// New `location` geometry.
     pub location: Option<Geometry>,
     /// New `observation_space` geometry.
     pub observation_space: Option<Geometry>,
     /// New `operation_space` geometry.
     pub operation_space: Option<Geometry>,
-}
-
-/// Resolve one nullable geometry member (clause 5.5.8).
-///
-/// An omitted member keeps whatever the stored registration holds, which is
-/// still `GeoJSON` at that point and is decoded on its way into the resolved
-/// value set. `member` names the payload member in the failure message.
-fn resolve_geometry(fragment: &NullableMember<Geometry>, stored: Option<&Value>, member: CsrMember) -> Result<Option<Geometry>, RegistrationError> {
-    match fragment {
-        NullableMember::Absent => stored
-            .map(Geometry::from_geojson_value)
-            .transpose()
-            .map_err(|source| RegistrationError::Validation(RegistrationValidationReason::ExistingGeometry { member, source })),
-        NullableMember::Cleared => Ok(None),
-        // clone: own fragment side; the fragment is borrowed
-        NullableMember::Set(geometry) => Ok(Some(geometry.clone())),
-    }
 }
 
 /// Apply a partial `CsrUpdateFragment` on top of an existing CSR, producing
@@ -111,14 +89,9 @@ fn resolve_geometry(fragment: &NullableMember<Geometry>, stored: Option<&Value>,
 /// and consumed, and the producer needs to yield a single owned
 /// [`ResolvedCsrUpdate`] either way. There is no `&`/`Cow` alternative
 /// because the repository takes `&ResolvedCsrUpdate` and the struct fields
-/// are `Option<T>`/`String`/`Value` without lifetime parameters.
-///
-/// # Errors
-///
-/// Returns [`RegistrationError::Validation`] when the stored registration
-/// carries a `location`, `observationSpace` or `operationSpace` the fragment
-/// leaves alone and that value is not decodable `GeoJSON`.
-pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateFragment) -> Result<ResolvedCsrUpdate, RegistrationError> {
+/// are `Option<T>`/`Vec<T>` without lifetime parameters.
+#[must_use]
+pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateFragment) -> ResolvedCsrUpdate {
     let registration_name = fragment.registration_name.resolve(existing.registration_name);
     let description = fragment.description.resolve(existing.description);
     let information = fragment.information.clone().unwrap_or(existing.coverage.information); // clone: own the borrowed update fragment when it supplied information.
@@ -143,30 +116,18 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
     let jsonld_context = fragment.jsonld_context.resolve(existing.access.jsonld_context);
     let context_source_alias = fragment.context_source_alias.resolve(existing.access.context_source_alias);
 
-    let additional_properties = match (existing.additional_properties, &fragment.additional_properties) {
-        (Some(existing_val), Some(new_val)) => {
-            let mut merged = existing_val;
-            if let (Some(m), Some(n)) = (merged.as_object_mut(), new_val.as_object()) {
-                for (k, v) in n {
-                    m.insert(k.clone(), v.clone()); // clone: owned key/value for merged map insertion
-                }
-            }
-            Some(merged)
-        }
-        (None, Some(new_val)) => Some(new_val.clone()), // clone: own fragment Value
-        (Some(existing_val), None) => Some(existing_val),
-        (None, None) => None,
-    };
+    // A property the fragment names replaces the stored one in place; the others
+    // are kept, so the shallow merge keeps every stored property's position.
+    let mut additional_properties = existing.additional_properties;
+    additional_properties.extend(
+        fragment.additional_properties.iter().map(|(name, value)| (name.clone(), value.clone())), // clone: the fragment is borrowed and the resolved update owns what it writes
+    );
 
-    let location = resolve_geometry(&fragment.location, existing.coverage.location.as_ref(), CsrMember::Location)?;
-    let observation_space = resolve_geometry(
-        &fragment.observation_space,
-        existing.coverage.observation_space.as_ref(),
-        CsrMember::ObservationSpace,
-    )?;
-    let operation_space = resolve_geometry(&fragment.operation_space, existing.coverage.operation_space.as_ref(), CsrMember::OperationSpace)?;
+    let location = fragment.location.resolve(existing.coverage.location);
+    let observation_space = fragment.observation_space.resolve(existing.coverage.observation_space);
+    let operation_space = fragment.operation_space.resolve(existing.coverage.operation_space);
 
-    Ok(ResolvedCsrUpdate {
+    ResolvedCsrUpdate {
         registration_name,
         description,
         information,
@@ -189,5 +150,81 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
         location,
         observation_space,
         operation_space,
-    })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{nullable_member::NullableMember, resolved_update::apply_fragment, store::update_fragment::CsrUpdateFragment};
+    use andromeda_json_literal::JsonLiteral;
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+    use serde_json::json;
+
+    fn stored() -> ContextSourceRegistration {
+        serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:ContextSourceRegistration:merge",
+            "type": "ContextSourceRegistration",
+            "information": [{"propertyNames": ["speed"]}],
+            "location": {"type": "Point", "coordinates": [1.0, 2.0]},
+            "operationSpace": {"type": "Point", "coordinates": [3.0, 4.0]},
+            "endpoint": "https://source.example.com/",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-02T00:00:00Z",
+            "alpha": 1,
+            "beta": 2
+        }))
+        .expect("a stored registration")
+    }
+
+    fn property(name: &str, value: &str) -> (AttributeName, JsonLiteral) {
+        (name.parse().expect("a valid name"), JsonLiteral::admit(value).expect("a JSON literal"))
+    }
+
+    /// Clause 5.5.8: the fragment's Context Source Properties are merged
+    /// shallowly, each replacing the stored property of its name where it
+    /// stands.
+    #[test]
+    fn a_fragment_property_replaces_the_stored_one_in_place_and_the_others_are_kept() {
+        let fragment = CsrUpdateFragment {
+            additional_properties: [property("alpha", r#"{"n": 10}"#), property("gamma", "3")].into_iter().collect(),
+            ..CsrUpdateFragment::default()
+        };
+
+        let resolved = apply_fragment(stored(), &fragment);
+
+        let merged: Vec<(&str, &str)> = resolved
+            .additional_properties
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.text()))
+            .collect();
+        pretty_assertions::assert_eq!(merged, vec![("alpha", r#"{"n":10}"#), ("beta", "2"), ("gamma", "3")]);
+    }
+
+    /// Clause 5.5.8: an omitted geometry keeps the stored one, `null` removes
+    /// it, and a value replaces it.
+    #[test]
+    fn a_geometry_is_kept_removed_or_replaced_as_the_fragment_says() {
+        let replacement = serde_json::from_value(json!({"type": "Point", "coordinates": [9.0, 9.0]})).expect("a geometry");
+        let fragment = CsrUpdateFragment {
+            location: NullableMember::Absent,
+            observation_space: NullableMember::Cleared,
+            operation_space: NullableMember::Set(replacement),
+            ..CsrUpdateFragment::default()
+        };
+
+        let resolved = apply_fragment(stored(), &fragment);
+
+        pretty_assertions::assert_eq!(
+            resolved.location.map(|geometry| serde_json::to_value(geometry).expect("a geometry writes")),
+            Some(json!({"type": "Point", "coordinates": [1.0, 2.0]}))
+        );
+        assert!(resolved.observation_space.is_none());
+        pretty_assertions::assert_eq!(
+            resolved
+                .operation_space
+                .map(|geometry| serde_json::to_value(geometry).expect("a geometry writes")),
+            Some(json!({"type": "Point", "coordinates": [9.0, 9.0]}))
+        );
+    }
 }

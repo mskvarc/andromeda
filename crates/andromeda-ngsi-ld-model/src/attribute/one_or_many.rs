@@ -34,6 +34,15 @@ impl<T> OneOrMany<T> {
             OneOrMany::Many(values) => values.iter(),
         }
     }
+
+    /// Give the contained values up, in order.
+    #[must_use]
+    pub fn into_vec(self) -> Vec<T> {
+        match self {
+            OneOrMany::One(value) => vec![value],
+            OneOrMany::Many(values) => values,
+        }
+    }
 }
 
 // Borrowed iteration goes through the inherent `iter`; the impl is what lets a

@@ -125,15 +125,6 @@ impl TemporalQueryParameters {
         selected_representation(self.format.as_ref(), self.options.as_ref())
     }
 
-    /// Returns whether the query requests simplified (key-values) output.
-    ///
-    /// Checks both `keyValues` and `simplified` option values, which are
-    /// equivalent per NGSI-LD spec.
-    #[must_use]
-    pub const fn is_simplified(&self) -> bool {
-        false
-    }
-
     /// Validate the parameters for `operation`, with temporal Linked Entity
     /// retrieval as `linked_retrieval` says.
     ///

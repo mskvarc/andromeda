@@ -185,7 +185,7 @@ mod tests {
                     max_distance: Some(PositiveDistance::from_str("1000").expect("positive distance")),
                     min_distance: None,
                 },
-                geometry: Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [13.4, 52.5]})).expect("valid point"),
+                geometry: serde_json::from_value::<Geometry>(json!({"type": "Point", "coordinates": [13.4, 52.5]})).expect("valid point"),
                 geoproperty: LOCATION.parse().expect("valid location attribute name"),
             }))
             .scope_q(Some(ScopeQuery::parse("/A/#").expect("valid scope query")))

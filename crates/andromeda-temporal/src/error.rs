@@ -13,7 +13,6 @@ use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_entity::{history::current_state_fold::CurrentStateFoldError, operation::mutation_error::MutationError, refusal::EntityRefusal};
 use andromeda_ngsi_ld_expansion::error::ExpansionError;
 use andromeda_ngsi_ld_query::error::QueryError;
-use andromeda_ngsi_ld_render::temporal::values::TemporalValuesError;
 use andromeda_ngsi_ld_representation::{attribute_nesting::AttributeNestingExceeded, payload_budget::PayloadBudgetExceeded};
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -96,9 +95,6 @@ pub enum TemporalError {
     /// `Retry-After`, never the 500 a broker malfunction earns.
     #[error("the operation was rolled back by a concurrent transaction; retry shortly")]
     TransactionContended,
-    /// Temporal representation construction failed.
-    #[error("temporal rendering failed: {0}")]
-    Rendering(#[source] TemporalValuesError),
     /// An internal temporal invariant could not be satisfied.
     #[error("temporal invariant failed: {0}")]
     Internal(#[from] TemporalInvariant),

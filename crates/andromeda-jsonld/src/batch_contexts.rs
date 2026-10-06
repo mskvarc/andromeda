@@ -14,8 +14,8 @@
 //! compares two contexts again.
 
 use crate::{context_spec::ContextSpec, engine::processor::JsonLdEngine, error::JsonLdError, user_context_admission::screen_user_context};
+use andromeda_json_literal::JsonLiteral;
 use derive_more::Deref;
-use serde_json::Value;
 use std::{sync::Arc, vec::IntoIter};
 
 /// The identity of one distinct context a batch names.
@@ -42,12 +42,6 @@ impl BatchContext {
     /// The context itself.
     #[must_use]
     pub fn spec(&self) -> &ContextSpec {
-        &self.spec
-    }
-
-    /// The context as the shared handle every entity naming it holds.
-    #[must_use]
-    pub const fn shared_spec(&self) -> &Arc<ContextSpec> {
         &self.spec
     }
 
@@ -83,7 +77,7 @@ enum ContextNaming {
     /// Every entity carries its own `@context` member, as an
     /// `application/ld+json` batch does: each distinct written value, with the
     /// context it gave.
-    PerEntity(Vec<(Value, BatchContext)>),
+    PerEntity(Vec<(JsonLiteral, BatchContext)>),
     /// Every entity shares the one context the request named, as an
     /// `application/json` batch does.
     Shared(BatchContext),
@@ -120,11 +114,11 @@ impl BatchContexts {
     /// refuses a body `@context` with `application/json` before this is
     /// reached), so `own` is only read for a per-entity batch; one that wrote
     /// none is read under the default context.
-    pub fn context_of(&mut self, own: Option<Value>) -> BatchContext {
+    pub fn context_of(&mut self, own: Option<JsonLiteral>) -> BatchContext {
         match &mut self.naming {
             ContextNaming::Shared(shared) => shared.clone(), // clone: every entity holds the shared handle
             ContextNaming::PerEntity(distinct) => {
-                let written = own.unwrap_or(Value::Null);
+                let written = own.unwrap_or_else(JsonLiteral::null);
                 if let Some((_, context)) = distinct.iter().find(|(seen, _)| *seen == written) {
                     return context.clone(); // clone: every entity naming the context holds the shared handle
                 }
@@ -211,6 +205,7 @@ mod tests {
     use crate::{
         batch_contexts::{BatchContexts, ContextGroups},
         context_spec::ContextSpec,
+        test_documents::literal,
     };
     use iri_rs::IriBuf;
     use serde_json::json;
@@ -221,13 +216,13 @@ mod tests {
     #[test]
     fn equal_written_contexts_share_one_identity() {
         let mut contexts = BatchContexts::per_entity();
-        let a = contexts.context_of(Some(json!({"speed": "https://a.example/speed"})));
-        let b = contexts.context_of(Some(json!({"speed": "https://b.example/speed"})));
-        let a_again = contexts.context_of(Some(json!({"speed": "https://a.example/speed"})));
+        let a = contexts.context_of(Some(literal(&json!({"speed": "https://a.example/speed"}))));
+        let b = contexts.context_of(Some(literal(&json!({"speed": "https://b.example/speed"}))));
+        let a_again = contexts.context_of(Some(literal(&json!({"speed": "https://a.example/speed"}))));
 
         pretty_assertions::assert_eq!(a.id(), a_again.id());
         assert_ne!(a.id(), b.id());
-        pretty_assertions::assert_eq!(a.spec(), &ContextSpec::from_body(json!({"speed": "https://a.example/speed"})));
+        pretty_assertions::assert_eq!(a.spec(), &ContextSpec::from_body(literal(&json!({"speed": "https://a.example/speed"}))));
     }
 
     /// Every entity of a shared batch is read under the request's context.
@@ -248,13 +243,16 @@ mod tests {
     #[test]
     fn the_request_context_is_the_one_every_entity_named_or_the_default() {
         let mut agreeing = BatchContexts::per_entity();
-        agreeing.context_of(Some(json!("https://example.com/a.jsonld")));
-        agreeing.context_of(Some(json!("https://example.com/a.jsonld")));
-        pretty_assertions::assert_eq!(agreeing.request_context(), ContextSpec::from_body(json!("https://example.com/a.jsonld")));
+        agreeing.context_of(Some(literal(&json!("https://example.com/a.jsonld"))));
+        agreeing.context_of(Some(literal(&json!("https://example.com/a.jsonld"))));
+        pretty_assertions::assert_eq!(
+            agreeing.request_context(),
+            ContextSpec::from_body(literal(&json!("https://example.com/a.jsonld")))
+        );
 
         let mut differing = BatchContexts::per_entity();
-        differing.context_of(Some(json!("https://example.com/a.jsonld")));
-        differing.context_of(Some(json!("https://example.com/b.jsonld")));
+        differing.context_of(Some(literal(&json!("https://example.com/a.jsonld"))));
+        differing.context_of(Some(literal(&json!("https://example.com/b.jsonld"))));
         pretty_assertions::assert_eq!(differing.request_context(), ContextSpec::none());
 
         pretty_assertions::assert_eq!(BatchContexts::per_entity().request_context(), ContextSpec::none());
@@ -265,9 +263,9 @@ mod tests {
     #[test]
     fn items_are_grouped_by_the_identity_of_their_context() {
         let mut contexts = BatchContexts::per_entity();
-        let a = contexts.context_of(Some(json!({"speed": "https://a.example/speed"})));
-        let b = contexts.context_of(Some(json!({"speed": "https://b.example/speed"})));
-        let a_again = contexts.context_of(Some(json!({"speed": "https://a.example/speed"})));
+        let a = contexts.context_of(Some(literal(&json!({"speed": "https://a.example/speed"}))));
+        let b = contexts.context_of(Some(literal(&json!({"speed": "https://b.example/speed"}))));
+        let a_again = contexts.context_of(Some(literal(&json!({"speed": "https://a.example/speed"}))));
         let mut groups = ContextGroups::default();
 
         groups.push(&a, 0);

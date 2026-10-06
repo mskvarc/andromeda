@@ -79,12 +79,6 @@ impl IndexTarget {
     pub fn reindex_statement(self) -> MaintenanceStatement {
         reindex_index_concurrently(&MaintenanceSchema::Public, &self)
     }
-
-    /// Whether qualification also queues the unsupported trigram probe target.
-    #[must_use]
-    pub const fn queues_trigram_pair(self) -> bool {
-        matches!(self, IndexTarget::IdxCavValueString)
-    }
 }
 
 /// A heap relation eligible for catch-up ordinary vacuum.
@@ -179,13 +173,6 @@ mod tests {
         let commands = IndexTarget::ALL.map(|target| target.reindex_statement().as_sql().to_owned());
         assert!(commands.iter().all(|command| command.starts_with("REINDEX INDEX CONCURRENTLY \"public\".")));
         assert_eq!(commands.into_iter().collect::<HashSet<_>>().len(), IndexTarget::ALL.len());
-    }
-
-    #[test]
-    fn only_the_string_btree_queues_the_trigram_pair() {
-        assert!(IndexTarget::IdxCavValueString.queues_trigram_pair());
-        assert!(!IndexTarget::IdxCavValueStringTrgm.queues_trigram_pair());
-        assert!(!IndexTarget::IdxCavValueNumber.queues_trigram_pair());
     }
 
     #[test]

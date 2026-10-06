@@ -14,10 +14,8 @@
 //! hand JSON to and from the processor. Imports count once per leaf, and a
 //! local name bound by one counts wherever it is used, inside macro calls too.
 //!
-//! Detection is deny-by-default over a per-file baseline of counts that can
-//! only shrink: a file not on the baseline must name no tree, a baselined file
-//! may not exceed its count, and a baselined file that dropped below its count
-//! must have its entry lowered (or removed at zero). Integration tests, build
+//! Detection is deny-by-default and runs at zero: any production site naming
+//! a tree fails the gate with its `path:line`. Integration tests, build
 //! scripts, `*tests.rs` files, the test-infrastructure crates and test-only
 //! items are not production paths and are not inspected; tests keep `json!` to
 //! build fixtures and to compare parsed bodies.
@@ -33,10 +31,7 @@ use crate::{
         source_reading::untyped_json_findings,
     },
 };
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-};
+use std::path::Path;
 
 /// One production site that names an untyped JSON tree.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -55,17 +50,6 @@ impl UntypedJsonSite {
     pub fn report(&self) -> String {
         format!("{}:{}: {}", self.path, self.line, self.subject)
     }
-}
-
-/// Where the sites of a workspace depart from the baseline.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct BaselineDrift {
-    /// Files naming more trees than their baseline allows, as `path: count
-    /// (baseline n)`, each followed by its sites.
-    pub grown: Vec<String>,
-    /// Baselined files naming fewer trees than recorded, as `path: count
-    /// (baseline n)`; the entry is lowered to the count, or removed at zero.
-    pub shrunk: Vec<String>,
 }
 
 /// Every production site that names an untyped JSON tree, sorted by path and line.
@@ -109,51 +93,28 @@ pub(crate) fn source_sites(path: &str, syntax: &syn::File, imports: &ModuleImpor
         .collect()
 }
 
-/// Compare the sites found against the per-file baseline counts.
+/// The failure message for `sites`, one `path:line: subject` line per site, or
+/// `None` when no production source names an untyped JSON tree.
 #[must_use]
-pub fn baseline_drift(sites: &[UntypedJsonSite], baseline: &[(&str, usize)]) -> BaselineDrift {
-    let mut by_path: BTreeMap<&str, Vec<&UntypedJsonSite>> = BTreeMap::new();
-    for site in sites {
-        by_path.entry(site.path.as_str()).or_default().push(site);
+pub fn violation_report(sites: &[UntypedJsonSite]) -> Option<String> {
+    if sites.is_empty() {
+        return None;
     }
-    let allowed: BTreeMap<&str, usize> = baseline.iter().copied().collect();
-    let paths: BTreeSet<&str> = by_path.keys().copied().chain(allowed.keys().copied()).collect();
-
-    let mut drift = BaselineDrift::default();
-    for path in paths {
-        let found = by_path.get(path).map_or(&[][..], Vec::as_slice);
-        let count = found.len();
-        let recorded = allowed.get(path).copied().unwrap_or(0);
-        if count > recorded {
-            let reports = found.iter().map(|site| format!("  {}", site.report())).collect::<Vec<_>>().join("\n");
-            drift.grown.push(format!("{path}: {count} (baseline {recorded})\n{reports}"));
-        } else if count < recorded {
-            drift.shrunk.push(format!("{path}: {count} (baseline {recorded})"));
-        }
-    }
-    drift
+    let reports = sites.iter().map(|site| format!("  {}", site.report())).collect::<Vec<_>>().join("\n");
+    Some(format!(
+        "these sites name an untyped JSON tree; decode bytes into the typed model, write the model to bytes, or hold opaque JSON as a JsonLiteral:\n{reports}"
+    ))
 }
 
-/// Assert that no production source names an untyped JSON tree beyond the
-/// baseline, and that the baseline records the current counts exactly.
+/// Assert that no production source names an untyped JSON tree.
 ///
 /// # Panics
 ///
-/// Panics on a file over its baseline count (or naming a tree while off the
-/// baseline), on a baselined file now under its count, or when the workspace
-/// source tree cannot be read or parsed.
-pub fn assert_no_untyped_json(workspace_root: &str, baseline: &[(&str, usize)]) {
-    let drift = baseline_drift(&untyped_json_sites(workspace_root), baseline);
-    assert!(
-        drift.grown.is_empty(),
-        "these files name an untyped JSON tree beyond the baseline; decode bytes into the typed model, write the model to bytes, or hold opaque JSON as a JsonLiteral:\n{}",
-        drift.grown.join("\n")
-    );
-    assert!(
-        drift.shrunk.is_empty(),
-        "these files name fewer untyped JSON trees than the baseline records; lower each entry to its count (remove it at 0):\n{}",
-        drift.shrunk.join("\n")
-    );
+/// Panics on any production site naming a tree, or when the workspace source
+/// tree cannot be read or parsed.
+pub fn assert_no_untyped_json(workspace_root: &str) {
+    let report = violation_report(&untyped_json_sites(workspace_root));
+    assert!(report.is_none(), "{}", report.unwrap_or_default());
 }
 
 #[cfg(test)]

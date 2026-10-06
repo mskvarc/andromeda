@@ -4,4 +4,5 @@
 mod add;
 mod delete;
 mod list;
+mod registry_round_trip;
 mod serve;

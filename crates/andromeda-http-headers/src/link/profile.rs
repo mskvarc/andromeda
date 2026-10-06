@@ -53,7 +53,7 @@ impl Link {
 mod tests {
     use crate::link::{header::Link, relation_type::RelationType, value::LinkValue};
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
-    use iri_rs::{IriBuf, IriRefBuf};
+    use iri_rs::IriRefBuf;
     use std::str::FromStr;
 
     /// A validated IRI reference, for building link targets in tests.
@@ -77,9 +77,10 @@ mod tests {
 
     #[test]
     fn the_profile_attribute_wins_over_a_profile_relation_target() {
-        let value = LinkValue::new(iri_ref("https://uri.etsi.org/ngsi-ld/profile/1.3"))
-            .push_rel(RelationType::Profile)
-            .set_profile(IriBuf::new("https://uri.etsi.org/ngsi-ld/profile/1.4").expect("valid IRI"));
+        let mut value = LinkValue::new(iri_ref("https://uri.etsi.org/ngsi-ld/profile/1.3")).push_rel(RelationType::Profile);
+        value
+            .apply_param(r#"profile="https://uri.etsi.org/ngsi-ld/profile/1.4""#)
+            .expect("a profile parameter applies");
         pretty_assertions::assert_eq!(value.ngsi_ld_profile_version(), Some(SpecVersion::V1_4));
     }
 

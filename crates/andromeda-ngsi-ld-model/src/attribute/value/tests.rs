@@ -1,11 +1,12 @@
 use crate::attribute::value::{NgsiLdValue, ValueRefusal};
-use andromeda_json_literal::JsonLiteral;
+use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
 use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geojson::GeometryError, position::PositionError};
 use serde_json::{Value, json, value::RawValue};
 
-/// The value `json` reads as.
+/// The value `json` reads as, from the text it is written as.
 fn read(json: &Value) -> Result<NgsiLdValue, ValueRefusal> {
-    match NgsiLdValue::from_node(json) {
+    let text = RawValue::from_string(json.to_string()).expect("the fixture is JSON");
+    match NgsiLdValue::from_node(JsonPiece::new(&text)) {
         Ok(read) => read,
         Err(never) => match never {},
     }

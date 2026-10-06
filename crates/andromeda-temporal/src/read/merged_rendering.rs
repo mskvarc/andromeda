@@ -12,23 +12,23 @@
 use crate::{
     answered_history::answered_history,
     error::TemporalError,
+    grouping_depth::grouping_depth,
     service::{TemporalQueryWarning, TemporalService},
-    temporal_compaction::TemporalCompaction,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
+use andromeda_ngsi_ld_compaction::{aggregated_entity::aggregated_entity, entity_compactor::EntityCompactor};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use chrono::Utc;
-use serde_json::Value;
 
 /// The aggregated representations of the contributed entities, and the
 /// warnings of the parts or entities that could not be rendered.
 #[derive(Debug, Default)]
 pub struct MergedRendering {
     /// One aggregated representation per entity holding an aggregate.
-    pub entities: Vec<Value>,
+    pub entities: Vec<TemporalHistory>,
     /// One warning per answered part, or entity, that could not be read or
     /// rendered (clause 6.3.17).
     pub warnings: Vec<TemporalQueryWarning>,
@@ -54,40 +54,39 @@ impl TemporalService {
         target: &ContextTarget,
         params: &TemporalQueryParameters,
         context: &ContextSpec,
-        parts: &[(Identifier, Vec<&Value>)],
+        parts: Vec<(Identifier, Vec<TemporalDocument>)>,
     ) -> Result<MergedRendering, TemporalError> {
         let mut compiled = self.compile_temporal_query(params, context).await?;
         compiled.entities.scope_q = None;
         let compiled = compiled;
-        let expansion = EntityExpansion::prepare(&self.engine, context).await?;
         let entity_ids: Vec<Identifier> = parts.iter().map(|(entity_id, _)| entity_id.clone()).collect(); // clone: the catalogue read takes the identifiers by value
         let local_types = self.reader.entity_types(target, &entity_ids).await?;
         let compactor = self.engine.compactor(context);
-        let compaction = TemporalCompaction::new(&compactor);
+        let compactor = EntityCompactor::new(&compactor);
         let recorded_at = Utc::now();
         let mut rendering = MergedRendering::default();
         for (entity_id, answers) in parts {
             let mut rows = Vec::new();
             let mut answered_types = Vec::new();
             for answer in answers {
-                match answered_history(&expansion, answer, recorded_at).await {
+                match answered_history(answer, recorded_at) {
                     Ok(history) => {
                         rows.extend(history.rows);
                         answered_types.extend(history.entity_types);
                     }
-                    Err(error) => rendering.warnings.push(unreadable(entity_id, &error)),
+                    Err(error) => rendering.warnings.push(unreadable(&entity_id, &error)),
                 }
             }
-            let entity_types = local_types.get(entity_id).cloned().unwrap_or(answered_types); // clone: the catalogue's types are read for every entity
+            let entity_types = local_types.get(&entity_id).cloned().unwrap_or(answered_types); // clone: the catalogue's types are read for every entity
             let aggregated = match self
                 .reader
-                .query_merged_entity_aggregation(target, entity_id, &entity_types, &compiled, &rows)
+                .query_merged_entity_aggregation(target, &entity_id, &entity_types, &compiled, &rows)
                 .await
             {
                 Ok(aggregated) => aggregated,
                 Err(error @ TemporalError::TooManyResults { .. }) => return Err(error),
                 Err(error) => {
-                    rendering.warnings.push(unreadable(entity_id, &error));
+                    rendering.warnings.push(unreadable(&entity_id, &error));
                     continue;
                 }
             };
@@ -100,12 +99,16 @@ impl TemporalService {
             if aggregated.is_empty() {
                 continue;
             }
-            match self
-                .build_aggregated_compacted(entity_id, &entity_types, &aggregated, &compiled, &compaction)
-                .await
-            {
-                Ok(value) => rendering.entities.push(value),
-                Err(error) => rendering.warnings.push(unreadable(entity_id, &error)),
+            match compactor.names().await {
+                Ok(names) => rendering.entities.push(TemporalHistory::Aggregates(aggregated_entity(
+                    entity_id,
+                    &entity_types,
+                    &aggregated,
+                    &compiled.representation.aggr_methods,
+                    grouping_depth(&compiled),
+                    names,
+                ))),
+                Err(error) => rendering.warnings.push(unreadable(&entity_id, &TemporalError::from(error))),
             }
         }
         Ok(rendering)
@@ -119,3 +122,6 @@ fn unreadable(entity_id: &Identifier, error: &TemporalError) -> TemporalQueryWar
         message: format!("the merged aggregation of the entity could not be rendered in full: {error}"),
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -8,6 +8,7 @@
 //! measures nothing but this test.
 
 use andromeda_http_headers::media_type::ResponseMediaType;
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_geometry::{
     form::{GeometryForm, PolygonRings},
     geometry::Geometry,
@@ -33,7 +34,6 @@ use andromeda_ngsi_ld_render::{
 };
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use andromeda_test_allocator::counting_allocator::CountingAllocator;
-use serde_json::json;
 use std::io::{Result as IoResult, Write};
 
 #[global_allocator]
@@ -81,6 +81,7 @@ fn ring_positions() -> Result<Vec<Position>, PositionError> {
 fn polygon_entity(id: Identifier, entity_type: EntityTypeName, ring: LinearRing) -> Entity {
     let location = GeoProperty {
         value: GeoPropertyValue::Geometry(Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![ring])))),
+        unit_code: None,
         value_type: None,
         previous_value: None,
         common: CommonAttributeFields::default(),
@@ -93,11 +94,11 @@ fn polygon_entity(id: Identifier, entity_type: EntityTypeName, ring: LinearRing)
 }
 
 /// The peak above the allocation before it, and the bytes written, of
-/// rendering `entity` as `media_type`.
-fn rendering_peak(entity: &Entity, media_type: ResponseMediaType) -> Result<(usize, usize), RenderError> {
+/// rendering `entity` as `media_type` under `context`.
+fn rendering_peak(entity: &Entity, media_type: ResponseMediaType, context: JsonLiteral) -> Result<(usize, usize), RenderError> {
     let mut body = CountingBody::default();
     let mark = ALLOCATOR.mark();
-    ResponseRenderer::new(media_type, ResponseContext::Body(json!("https://example.org/ctx.jsonld")))
+    ResponseRenderer::new(media_type, ResponseContext::Body(context))
         .with_format(ResponseFormat::Normalized)
         .with_entities(EntityPayload::Single(EntityBody::new(entity, None)), None)
         .render_into(&mut body)?;
@@ -109,7 +110,12 @@ fn a_million_position_geometry_renders_without_a_tree_of_its_positions() {
     let ring = LinearRing::try_new(ring_positions().expect("positions on the CRS84 axes")).expect("a closed ring");
     let entity = polygon_entity("urn:ngsi-ld:Area:1".parse().expect("an identifier"), "Area".parse().expect("a type name"), ring);
     for media_type in [ResponseMediaType::JsonLd, ResponseMediaType::GeoJson] {
-        let (peak, written) = rendering_peak(&entity, media_type).expect("the entity renders");
+        let (peak, written) = rendering_peak(
+            &entity,
+            media_type,
+            JsonLiteral::string("https://example.org/ctx.jsonld").expect("a JSON string"),
+        )
+        .expect("the entity renders");
         // Every position is written: at least two ordinates of three characters each.
         assert!(written > POSITIONS * 6, "{media_type:?}: only {written} bytes were written");
         assert!(

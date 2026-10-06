@@ -22,7 +22,6 @@ use crate::{
         StatusCode,
         TypedPath,
         ValidatedQuery,
-        Value,
         classify_entity_error,
         collect_proxied_attrs,
         provision_response,
@@ -32,11 +31,14 @@ use crate::{
 };
 use andromeda_entity::write_kind::AppendAttributes;
 use andromeda_federation::{
+    answer_body::AnswerBody,
+    forwarded_content::ForwardedContent,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     request::TriggeringRequest,
 };
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
+use andromeda_ngsi_ld_model::update_result::NotUpdatedDetails;
 use axum::http::Method;
 
 pub(crate) async fn append_attrs(
@@ -53,7 +55,7 @@ pub(crate) async fn append_attrs(
     // Clause 5.5.4 judges the payload "according to the @context", so the
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
-    let mut fragment = body.admitted(&context)?;
+    let fragment = body.admitted(&context)?;
     let service = &state.entities;
     // The fragment is refused before the options are, so the options are
     // read here and their refusal raised after the admission.
@@ -78,10 +80,8 @@ pub(crate) async fn append_attrs(
     let plan = state.forwarding.plan_provision(&target, &request).await.with_entity_instance(&uri)?;
     // Clause 5.6.3.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and an
-    // append left with nothing local is still validated. Only a registration
-    // the plan sends the fragment to reads it again, so it is serialised for
-    // them before it moves into the admission.
-    let payload = plan.payload(&fragment).with_entity_instance(&uri)?;
+    // append left with nothing local is still validated. The registrations the
+    // plan sends the fragment to read the document the admission expanded.
     let admitted = admit_written_entity::<AppendAttributes>(service, &fragment, &context)
         .await
         .with_entity_instance(&uri)?;
@@ -89,9 +89,10 @@ pub(crate) async fn append_attrs(
         RequestOverwritePolicy::NoOverwrite => OverwritePolicy::Preserve,
         RequestOverwritePolicy::Overwrite => OverwritePolicy::Overwrite,
     };
+    let sent_to_registrations = plan.reads_payload();
     let forwarded = state
         .forwarding
-        .execute_provision(plan, &request, payload.as_deref())
+        .execute_provision(plan, &request, Some(ForwardedContent::Entity(admitted.document())))
         .await
         .with_entity_instance(&uri)?;
 
@@ -105,14 +106,13 @@ pub(crate) async fn append_attrs(
     // Clause 5.6.3.4: the attributes proxied registrations cover leave the
     // fragment; whatever remains is appended here. A fragment no registration
     // read was taken over by none of them.
-    let local_append = if payload.is_none() {
-        Some(service.append_attrs(&target, &id, admitted, overwrite).await)
-    } else {
-        let strip = fragment.strip_attributes(&collect_proxied_attrs(&forwarded));
-        match service.admit_local_remainder(admitted, strip, &fragment, &context).await {
-            Some(remainder) => Some(async { service.append_attrs(&target, &id, remainder?, overwrite).await }.await),
+    let local_append = if sent_to_registrations {
+        match admitted.local_remainder(&collect_proxied_attrs(&forwarded)) {
+            Some(remainder) => Some(service.append_attrs(&target, &id, remainder, overwrite).await),
             None => None,
         }
+    } else {
+        Some(service.append_attrs(&target, &id, admitted, overwrite).await)
     };
     // Clause 5.6.3.5: the status says "whether all the new Attributes were
     // appended or only some of them", and Table 6.6.3.1-2 reserves 204 for
@@ -153,7 +153,7 @@ pub(crate) async fn append_attrs(
 fn append_outcome_response(
     requested: &[AttributeName],
     not_appended: &[AttributeName],
-    remote_not_appended: Vec<Value>,
+    remote_not_appended: Vec<NotUpdatedDetails>,
     forwarded: ForwardedCompleteness,
 ) -> Response {
     if not_appended.is_empty() && forwarded == ForwardedCompleteness::Complete {
@@ -201,11 +201,14 @@ fn forwarded_completeness(forwarded: &[ForwardedWriteResult]) -> ForwardedComple
 /// only part of what it was sent names the part it refused. Those entries
 /// belong in this broker's answer: relaying a source's "only some" as 204 would
 /// assert the opposite of what the source said.
-fn forwarded_not_appended(forwarded: &[ForwardedWriteResult]) -> Vec<Value> {
+fn forwarded_not_appended(forwarded: &[ForwardedWriteResult]) -> Vec<NotUpdatedDetails> {
     forwarded
         .iter()
         .filter_map(|result| match &result.outcome {
-            ForwardedWriteOutcome::Completed { status, body } if *status == StatusCode::MULTI_STATUS.as_u16() => body.as_ref(),
+            ForwardedWriteOutcome::Completed {
+                body: AnswerBody::UpdateResult(update),
+                ..
+            } => Some(update),
             ForwardedWriteOutcome::Completed { .. }
             | ForwardedWriteOutcome::RemoteHttpFailure { .. }
             | ForwardedWriteOutcome::Transport(_)
@@ -213,7 +216,6 @@ fn forwarded_not_appended(forwarded: &[ForwardedWriteResult]) -> Vec<Value> {
             | ForwardedWriteOutcome::NotAdvertised
             | ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => None,
         })
-        .filter_map(|body| body.get("notUpdated").and_then(Value::as_array))
-        .flat_map(|entries| entries.iter().cloned()) // clone: the answer owns the entries the forwarded bodies still hold
+        .flat_map(|update| update.not_updated.iter().cloned()) // clone: the answer owns the entries the forwarded results still hold
         .collect()
 }

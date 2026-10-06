@@ -10,6 +10,7 @@ use crate::{
     batch::admitted_batch::{AdmittedBatch, SubmittedEntity},
     write_kind::{AttributeWriteKind, BatchWriteKind, EntityWriteKind},
 };
+use andromeda_json_literal::piece::JsonPiece;
 use andromeda_jsonld::{
     batch_contexts::BatchContexts,
     context_spec::ContextSpec,
@@ -20,7 +21,7 @@ use andromeda_ngsi_ld_model::{
     attribute::member_reading::MemberReading,
     entity::{Entity, EntityPatch},
 };
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 
 /// Admit `context` as a request handler admits the context it was submitted,
 /// failing the test when it is refused.
@@ -58,7 +59,8 @@ pub(crate) async fn admitted_attribute<'a, W: AttributeWriteKind>(
     context: &ContextSpec,
 ) -> AdmittedAttribute<'a, W> {
     let context = admitted_context(service, context).await;
-    let member = W::Member::from_fragment_node(attribute.as_str(), &payload).expect("the fragment decodes");
+    let written = RawValue::from_string(payload.to_string()).expect("the fragment is JSON");
+    let member = W::Member::from_fragment_node(attribute.as_str(), JsonPiece::new(&written)).expect("the fragment decodes");
     service
         .admit_attribute_write::<W>(attribute, &member, &context)
         .await

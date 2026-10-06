@@ -5,9 +5,10 @@ use crate::{
     geo_filter::SubscriptionGeoFilter,
     stored_subscription::StoredSubscription,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp, time_rel::TimeRel};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{
     notification::effective_notification_triggers,
+    query::temporal_query::TemporalQuery,
     subscription::{EntitySelector, NotificationParams, Subscription},
 };
 use andromeda_ngsi_ld_query::{
@@ -20,10 +21,9 @@ use andromeda_ngsi_ld_query::{
     temporal::window::TimeInterval,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use std::collections::HashSet;
-use tracing::debug;
+use tracing::{debug, error};
 
 /// Compile a stored subscription into a pre-compiled form for fast matching.
 ///
@@ -71,6 +71,7 @@ pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription
         compiled_csf: sub.filters.csf.clone(), // clone: compiled state owns its filter AST.
         local_only: sub.delivery.local_only.unwrap_or(false),
         ngsild_conformance: sub.delivery.ngsild_conformance,
+        lang: sub.delivery.lang.clone(), // clone: compiled state owns the language tag.
     }
 }
 
@@ -90,7 +91,11 @@ pub fn compile_csource_subscription(sub: &Subscription) -> CompiledCsrSubscripti
         endpoint_timeout: sub.notification.endpoint.timeout,
         selectors,
         matching_attrs: csource_matching_attributes(sub.selection.watched_attributes.as_deref(), sub.notification.attributes.as_deref()),
-        temporal_q: sub.filters.temporal_q.as_ref().and_then(|value| compile_temporal_q(value, sub.id.as_ref())),
+        temporal_q: sub
+            .filters
+            .temporal_q
+            .as_ref()
+            .and_then(|temporal_q| compile_temporal_q(temporal_q, sub.id.as_ref())),
         geo_q: SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref()),
         scope_q: sub.filters.scope_q.clone(), // clone: compiled state owns its scope AST.
         throttling_secs: sub.delivery.throttling,
@@ -119,50 +124,23 @@ fn csource_matching_attributes(watched: Option<&[AttributeName]>, notified: Opti
 /// registration's `observationInterval` or `managementInterval` is matched
 /// against (clause 5.11.2.4).
 ///
-/// `None` when the subscription carries no usable `temporalQ`, in which case
-/// it is matched as one without a temporal query.
-pub fn compile_temporal_q(temporal_q: &serde_json::Value, sub_id: &str) -> Option<CompiledCsrTemporalFilter> {
-    let object = temporal_q.as_object()?;
-    let timerel = match object.get("timerel").and_then(serde_json::Value::as_str).map(str::parse::<TimeRel>) {
-        Some(Ok(timerel)) => Some(timerel),
-        Some(Err(error)) => {
-            debug!(subscription = sub_id, %error, "Invalid subscription temporalQ timerel");
-            return None;
-        }
-        None => None,
-    };
-    let time_at = match object.get("timeAt").and_then(serde_json::Value::as_str).map(DateTime::parse_from_rfc3339) {
-        Some(Ok(instant)) => Some(instant.with_timezone(&Utc)),
-        Some(Err(error)) => {
-            debug!(subscription = sub_id, %error, "Invalid subscription temporalQ timeAt");
-            return None;
-        }
-        None => None,
-    };
-    let end_time_at = match object.get("endTimeAt").and_then(serde_json::Value::as_str).map(DateTime::parse_from_rfc3339) {
-        Some(Ok(instant)) => Some(instant.with_timezone(&Utc)),
-        Some(Err(error)) => {
-            debug!(subscription = sub_id, %error, "Invalid subscription temporalQ endTimeAt");
-            return None;
-        }
-        None => None,
-    };
-    let timeproperty = match object.get("timeproperty").and_then(serde_json::Value::as_str).map(str::parse::<TimeProp>) {
-        Some(Ok(timeproperty)) => Some(timeproperty),
-        Some(Err(error)) => {
-            debug!(subscription = sub_id, %error, "Invalid subscription temporalQ timeproperty");
-            return None;
-        }
-        None => None,
-    };
-    let interval = match TimeInterval::from_parts(timerel, time_at, end_time_at) {
-        Ok(interval) => interval,
+/// `None` when the window the `temporalQ` names is not one, such as a
+/// `between` that names no end. Admission refuses such a `temporalQ` with the
+/// same rule (Table 5.2.21-1), so only a row written outside the broker reaches
+/// this, and it is reported rather than matched as an unconstrained one silently.
+pub fn compile_temporal_q(temporal_q: &TemporalQuery, sub_id: &str) -> Option<CompiledCsrTemporalFilter> {
+    match TimeInterval::from_parts(Some(temporal_q.timerel), Some(temporal_q.time_at), temporal_q.end_time_at) {
+        Ok(interval) => Some(
+            CompiledCsrTemporalFilter::builder()
+                .interval(interval)
+                .timeproperty(temporal_q.timeproperty)
+                .build(),
+        ),
         Err(error) => {
-            debug!(subscription = sub_id, %error, "Invalid subscription temporalQ window");
-            return None;
+            error!(subscription = sub_id, %error, "Stored subscription temporalQ names no window and is ignored");
+            None
         }
-    };
-    Some(CompiledCsrTemporalFilter::builder().interval(interval).timeproperty(timeproperty).build())
+    }
 }
 
 /// Compile the clause 5.2.14 `pick` and `omit` members into the projection a
@@ -235,7 +213,7 @@ fn expanded_attribute(name: &str, sub_id: &str) -> Option<IriBuf> {
 mod tests {
     use crate::compilation::{compile_temporal_q, csource_matching_attributes, notification_attributes, notification_projection};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
-    use andromeda_ngsi_ld_model::subscription::NotificationParams;
+    use andromeda_ngsi_ld_model::{query::temporal_query::TemporalQuery, subscription::NotificationParams};
     use andromeda_ngsi_ld_query::{
         projection::{grammar::ProjectionList, term::ProjectionTerm},
         temporal::window::TimeInterval,
@@ -351,17 +329,24 @@ mod tests {
         assert_eq!(csource_matching_attributes(None, None), [] as [AttributeName; 0]);
     }
 
+    /// The `temporalQ` a request writes, read as the request model reads it.
+    fn temporal_q(wire: serde_json::Value) -> TemporalQuery {
+        serde_json::from_value(wire).expect("a readable temporalQ")
+    }
+
     #[test]
     fn a_temporal_q_compiles_to_the_window_and_timeproperty_it_names() {
         let compiled = compile_temporal_q(
-            &serde_json::json!({"timerel": "between", "timeAt": "2020-06-01T00:00:00Z", "endTimeAt": "2020-09-01T00:00:00Z", "timeproperty": "createdAt"}),
+            &temporal_q(
+                serde_json::json!({"timerel": "between", "timeAt": "2020-06-01T00:00:00Z", "endTimeAt": "2020-09-01T00:00:00Z", "timeproperty": "createdAt"}),
+            ),
             "urn:ngsi-ld:Subscription:test",
         )
         .expect("temporalQ compiles");
         assert!(matches!(compiled.interval, TimeInterval::Between { .. }));
         pretty_assertions::assert_eq!(compiled.timeproperty, Some(TimeProp::Created));
         let after = compile_temporal_q(
-            &serde_json::json!({"timerel": "after", "timeAt": "2020-06-01T00:00:00Z"}),
+            &temporal_q(serde_json::json!({"timerel": "after", "timeAt": "2020-06-01T00:00:00Z"})),
             "urn:ngsi-ld:Subscription:test",
         )
         .expect("temporalQ compiles");
@@ -369,23 +354,20 @@ mod tests {
         pretty_assertions::assert_eq!(after.timeproperty, None);
     }
 
+    /// A `between` that names no end is no window, so the subscription is
+    /// matched as one without a temporal query. A `temporalQ` that names no
+    /// `timeAt`, or a relation outside clause 4.11, is no `temporalQ` at all and
+    /// is refused when the body is read.
     #[test]
-    fn a_malformed_temporal_q_does_not_compile() {
-        assert!(compile_temporal_q(&serde_json::json!({"timerel": "after"}), "urn:ngsi-ld:Subscription:test").is_none());
+    fn a_between_without_an_end_does_not_compile() {
         assert!(
             compile_temporal_q(
-                &serde_json::json!({"timerel": "soon", "timeAt": "2020-06-01T00:00:00Z"}),
+                &temporal_q(serde_json::json!({"timerel": "between", "timeAt": "2020-06-01T00:00:00Z"})),
                 "urn:ngsi-ld:Subscription:test"
             )
             .is_none()
         );
-        assert!(
-            compile_temporal_q(
-                &serde_json::json!({"timerel": "between", "timeAt": "2020-06-01T00:00:00Z"}),
-                "urn:ngsi-ld:Subscription:test"
-            )
-            .is_none()
-        );
-        assert!(compile_temporal_q(&serde_json::json!("after"), "urn:ngsi-ld:Subscription:test").is_none());
+        assert!(serde_json::from_value::<TemporalQuery>(serde_json::json!({"timerel": "after"})).is_err());
+        assert!(serde_json::from_value::<TemporalQuery>(serde_json::json!({"timerel": "soon", "timeAt": "2020-06-01T00:00:00Z"})).is_err());
     }
 }

@@ -5,6 +5,7 @@ use crate::{
     jsonb_text::JsonbText,
     snapshot::{status_code::status_of, stored_snapshot_error::StoredSnapshotError},
 };
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
@@ -37,6 +38,18 @@ pub fn deserialize_json_column<T: DeserializeOwned>(
 ) -> Result<Option<T>, ContextStoreError> {
     let text: Option<JsonbText<'_>> = row.try_get(column.unquoted())?;
     Ok(text.map(|text| serde_json::from_slice(text.as_bytes()).map_err(unreadable)).transpose()?)
+}
+
+/// Read the `@context` a Snapshot's queries run under from its `snapshots` row.
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Database`] when the column cannot be read, and
+/// [`ContextStoreError::StoredSnapshot`] when its JSON is not an admissible
+/// literal.
+pub fn row_query_context(row: &PgRow) -> Result<JsonLiteral, ContextStoreError> {
+    let text: JsonbText<'_> = row.try_get(Snapshots::QueryContext.unquoted())?;
+    Ok(serde_json::from_slice(text.as_bytes()).map_err(StoredSnapshotError::QueryContext)?)
 }
 
 /// Convert a `snapshots` row into the domain [`Snapshot`].

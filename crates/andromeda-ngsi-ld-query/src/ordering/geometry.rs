@@ -1,8 +1,7 @@
 //! The reference geometry a distance ordering measures from (clause 4.23, clause 5.2.43).
 
-use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry, geometry_type::GeometryType};
+use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry, geometry_type::GeometryType, query_coordinates::QueryCoordinates};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError};
-use serde_json::Value;
 use thiserror::Error;
 
 /// A reference geometry for distance-based ordering (NGSI-LD S4.23, S5.2.43).
@@ -20,24 +19,14 @@ pub struct OrderingGeometry {
 #[derive(Deserialize)]
 struct OrderingGeometryWire {
     /// `GeoJSON` coordinates.
-    #[serde(alias = "orderFrom", deserialize_with = "deserialize_coordinates")]
-    coordinates: Value,
+    ///
+    /// Given directly in a Query body, and as JSON text in the GET `orderFrom`
+    /// parameter; both bindings read the same coordinates.
+    #[serde(alias = "orderFrom")]
+    coordinates: QueryCoordinates,
     /// `GeoJSON` geometry type; clause 5.2.43 defaults it to `Point`.
     #[serde(alias = "orderGeometry", default = "default_geometry_type")]
     geometry: GeometryType,
-}
-
-/// Accept JSON coordinates directly in a Query body and JSON text in the GET
-/// `orderFrom` parameter, producing the same semantic value for both bindings.
-fn deserialize_coordinates<'de, D>(deserializer: D) -> Result<Value, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = Value::deserialize(deserializer)?;
-    match value {
-        Value::String(raw) => serde_json::from_str(&raw).map_err(DeserializeError::custom),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => Ok(value),
-    }
 }
 
 /// The default geometry type required by Table 5.2.43-1.
@@ -72,7 +61,9 @@ impl<'de> Deserialize<'de> for OrderingGeometry {
         D: Deserializer<'de>,
     {
         let wire = OrderingGeometryWire::deserialize(deserializer)?;
-        Geometry::from_type_and_coordinates(wire.geometry, wire.coordinates)
+        let written = wire.coordinates.into_written().map_err(DeserializeError::custom)?;
+        written
+            .read_as(wire.geometry)
             .map(OrderingGeometry::new)
             .map_err(|error| DeserializeError::custom(OrderingGeometryError::Geometry(error)))
     }

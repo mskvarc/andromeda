@@ -23,7 +23,8 @@ use crate::{
     status_delivery_signal::StatusDeliverySignal,
     store::SnapshotStore,
 };
-use andromeda_jsonld::user_context_admission::AdmittedContext;
+use andromeda_json_literal::JsonLiteral;
+use andromeda_jsonld::{context_spec::ContextSpec, user_context_admission::AdmittedContext};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::SnapshotId};
 use andromeda_ngsi_ld_model::{
     snapshot::{Snapshot, SnapshotStatus},
@@ -170,8 +171,8 @@ impl SnapshotService {
             .last_used_at(Some(now))
             .build();
 
-        let query_context = context.to_context_value().ok_or(SnapshotInvariant::RequestContextUnmaterialized)?;
-        self.repo.create(to_insert_params(&snapshot, query_context)?).await?;
+        let query_context = JsonLiteral::admit(context.resolved_context().text()).map_err(SnapshotInvariant::QueryContextText)?;
+        self.repo.create(to_insert_params(&snapshot, query_context)).await?;
         self.enforce_quotas().await?;
 
         Ok(snapshot)
@@ -210,9 +211,8 @@ impl SnapshotService {
     /// Returns [`SnapshotError::NotFound`] when the snapshot is absent or
     /// expired, [`SnapshotError::Validation`] when the patch changes the
     /// identifier or either query collection or supplies a non-positive
-    /// lifetime, [`SnapshotError::Representation`] when the patched receiver
-    /// info cannot be serialised, and the store's own failure when the metadata
-    /// write does not complete.
+    /// lifetime, and the store's own failure when the metadata write does not
+    /// complete.
     pub async fn update(&self, id: &Identifier, patch: SnapshotPatch) -> Result<Snapshot, SnapshotError> {
         self.get(id).await?;
 
@@ -229,10 +229,10 @@ impl SnapshotService {
             MergePatchValue::Null => Some(None),
             MergePatchValue::Value(endpoint) => Some(Some(endpoint)),
         };
-        let receiver_info = match &patch.receiver_info {
+        let receiver_info = match patch.receiver_info {
             MergePatchValue::Absent => None,
             MergePatchValue::Null => Some(None),
-            MergePatchValue::Value(receiver_info) => Some(Some(serde_json::to_value(receiver_info)?)),
+            MergePatchValue::Value(receiver_info) => Some(Some(receiver_info)),
         };
 
         // Recalculate expiresAt from patch time and persist the capped effective lifetime.
@@ -324,8 +324,8 @@ impl SnapshotService {
             .expires_at(expires_at)
             .last_used_at(Some(now))
             .build();
-        let query_context = serde_json::json!([andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL]);
-        let mut params = to_insert_params(&cloned, query_context)?;
+        let query_context = JsonLiteral::admit(ContextSpec::core_only().resolved_context().text()).map_err(SnapshotInvariant::QueryContextText)?;
+        let mut params = to_insert_params(&cloned, query_context);
         params.clone_source_id = Some(source_id);
         self.repo.create(params).await?;
         self.enforce_quotas().await?;

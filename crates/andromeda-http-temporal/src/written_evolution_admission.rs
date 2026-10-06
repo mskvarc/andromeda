@@ -8,8 +8,9 @@
 //! is validated rather than answered 204 unexamined.
 //!
 //! What is screened is the half of clause 5.5.4 decidable on the compact
-//! payload a client wrote: the attribute types of clause 5.2.4, and the rule
-//! that `entityIdSealed` and `entityTypeSealed` belong to the `ngsildproof`
+//! payload a client wrote. The decode of the request holds two rules, so a
+//! decoded payload satisfies them: the attribute types of clause 5.2.4, and the
+//! rule that `entityIdSealed` and `entityTypeSealed` belong to the `ngsildproof`
 //! Property of clause 4.5.2.2 alone -- which clauses 4.5.3.2 and 4.5.3.3
 //! sharpen on a Relationship, in every representation, into "'entityIdSealed'
 //! and 'entityTypeSealed' shall never be present". The seals are declared only
@@ -45,18 +46,15 @@
 //! value position of a temporal write would refuse the representation the
 //! clause requires this broker to hold. The two bullets that do bind a temporal
 //! payload -- the first level member value and the key nested inside a Property
-//! value object, neither of which the temporal exception covers -- are recorded
-//! as a follow-up in `docs/spec-conformance-sweep.md` rather than screened,
-//! because reaching them needs the expanded payload the temporal write path
-//! does not build before it forwards.
+//! value object, neither of which the temporal exception covers -- are held by
+//! the temporal write, which reads the expanded payload.
 
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_model::temporal::written_temporal_entity::WrittenTemporalEntity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_representation::{attribute_type_validation::validate_fragment_attribute_types, compact_key_admission::screen_keys_in_fragment};
 use andromeda_ngsi_ld_request::{fragment_entity_id::admit_fragment_entity_id, temporal_instance_fragment::admit_temporal_instance_fragment};
 use axum::http::Uri as HttpUri;
-use serde_json::Value;
 use std::fmt::Display;
 
 /// Screen one written `EntityTemporal` payload (clauses 5.6.11 and 5.6.12)
@@ -64,14 +62,12 @@ use std::fmt::Display;
 ///
 /// # Errors
 ///
-/// Answers `BadRequestData` for the first attribute node clauses 5.2.4 and
-/// 4.5.2.2 do not admit, for a `@context` embedded below the document's top
-/// level, and for a key clause 4.6.4 refuses (see `compact_key_admission`).
-/// The request's `@context` was admitted before the payload is read (see
-/// `crate::request_context_admission`).
-pub(crate) fn admit_written_evolution(payload: &Value, instance: &HttpUri) -> Result<(), ProblemResponse> {
-    validate_fragment_attribute_types(payload).map_err(|error| bad_request_data(&error, instance))?;
-    screen_keys_in_fragment(payload).map_err(|error| bad_request_data(&error, instance))
+/// Answers `BadRequestData` for a key clause 4.6.4 refuses (see
+/// `WrittenTemporalEntity::screen_keys`). The attribute types and the seals
+/// were refused when the payload was decoded, and the request's `@context` was
+/// admitted before the payload is read (see `crate::request_context_admission`).
+pub(crate) fn admit_written_evolution(payload: &WrittenTemporalEntity, instance: &HttpUri) -> Result<(), ProblemResponse> {
+    payload.screen_keys().map_err(|error| bad_request_data(&error, instance))
 }
 
 /// Screen the `EntityTemporal` Fragment a clause 5.6.12 addition to `entity`
@@ -82,12 +78,8 @@ pub(crate) fn admit_written_evolution(payload: &Value, instance: &HttpUri) -> Re
 ///
 /// Answers `BadRequestData` for a Fragment whose `id` is not `entity` (clause
 /// 5.4), and otherwise on the same terms as [`admit_written_evolution`].
-pub(crate) fn admit_added_attributes(entity: &Identifier, payload: &Value, instance: &HttpUri) -> Result<(), ProblemResponse> {
-    // A payload that is no JSON object names no `id`; the checks below and the
-    // expansion refuse it on their own terms.
-    if let Value::Object(members) = payload {
-        admit_fragment_entity_id(members, entity).map_err(|error| bad_request_data(&error, instance))?;
-    }
+pub(crate) fn admit_added_attributes(entity: &Identifier, payload: &WrittenTemporalEntity, instance: &HttpUri) -> Result<(), ProblemResponse> {
+    admit_fragment_entity_id(payload.id.as_ref(), entity).map_err(|error| bad_request_data(&error, instance))?;
     admit_written_evolution(payload, instance)
 }
 
@@ -101,7 +93,7 @@ pub(crate) fn admit_added_attributes(entity: &Identifier, payload: &Value, insta
 /// one Attribute with an Array of exactly one instance, or whose `id` is not
 /// `entity` (clause 5.4), and otherwise on the same terms as
 /// [`admit_written_evolution`].
-pub(crate) fn admit_written_instance(entity: &Identifier, payload: &Value, instance: &HttpUri) -> Result<(), ProblemResponse> {
+pub(crate) fn admit_written_instance(entity: &Identifier, payload: &WrittenTemporalEntity, instance: &HttpUri) -> Result<(), ProblemResponse> {
     admit_temporal_instance_fragment(payload, entity).map_err(|error| bad_request_data(&error, instance))?;
     admit_written_evolution(payload, instance)
 }
@@ -115,7 +107,9 @@ fn bad_request_data<E: Display>(error: &E, instance: &HttpUri) -> ProblemRespons
 #[cfg(test)]
 mod tests {
     use crate::written_evolution_admission::{admit_added_attributes, admit_written_evolution, admit_written_instance};
+    use andromeda_http_response::problem_response::ProblemResponse;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_model::{request_body::RequestBody, temporal::written_temporal_entity::WrittenTemporalEntity};
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::http::{StatusCode, Uri as HttpUri};
     use serde_json::{Value, json};
@@ -134,6 +128,19 @@ mod tests {
         json!({"belongsTo": [instance]})
     }
 
+    /// What the request is refused for, decoding included: a payload the decode
+    /// refuses never reaches the admission.
+    fn refused(payload: &Value, admit: impl FnOnce(&WrittenTemporalEntity) -> Result<(), ProblemResponse>) -> bool {
+        match WrittenTemporalEntity::from_request_text(payload.to_string().as_bytes()) {
+            Ok(decoded) => admit(&decoded).is_err(),
+            Err(_) => true,
+        }
+    }
+
+    fn evolution_refused(payload: &Value) -> bool {
+        refused(payload, |decoded| admit_written_evolution(decoded, &instance()))
+    }
+
     /// Clauses 4.5.3.2 and 4.5.3.3, "Prohibited": on a Relationship, in either
     /// representation, "'entityIdSealed' and 'entityTypeSealed' shall never be
     /// present" -- including in the instances of a Temporal Evolution.
@@ -148,7 +155,7 @@ mod tests {
                     {"type": "Relationship", "object": "urn:ngsi-ld:Site:2", "observedAt": "2024-01-02T00:00:00Z", member: "urn:ngsi-ld:Vehicle:1"}
                 ]
             });
-            assert!(admit_written_evolution(&payload, &instance()).is_err(), "{member}");
+            assert!(evolution_refused(&payload), "{member}");
         }
     }
 
@@ -157,7 +164,7 @@ mod tests {
     #[test]
     fn a_forged_seal_on_a_modified_instance_is_refused() {
         let payload = fragment(&json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1", "entityTypeSealed": "Vehicle"}));
-        assert!(admit_written_instance(&entity(), &payload, &instance()).is_err());
+        assert!(refused(&payload, |decoded| admit_written_instance(&entity(), decoded, &instance())));
     }
 
     /// An ordinary Temporal Evolution passes, instances and all.
@@ -171,15 +178,9 @@ mod tests {
                 {"type": "Property", "value": 20, "observedAt": "2024-01-02T00:00:00Z"}
             ]
         });
-        assert!(admit_written_evolution(&payload, &instance()).is_ok());
-        assert!(
-            admit_written_instance(
-                &entity(),
-                &fragment(&json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1"})),
-                &instance()
-            )
-            .is_ok()
-        );
+        assert!(!evolution_refused(&payload));
+        let modified = fragment(&json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1"}));
+        assert!(!refused(&modified, |decoded| admit_written_instance(&entity(), decoded, &instance())));
     }
 
     /// Clause 5.6.14.3 takes an `EntityTemporal` Fragment; the bare instance it
@@ -187,7 +188,7 @@ mod tests {
     #[test]
     fn a_bare_modified_instance_is_refused() {
         let bare = json!({"type": "Relationship", "object": "urn:ngsi-ld:Site:1"});
-        assert!(admit_written_instance(&entity(), &bare, &instance()).is_err());
+        assert!(refused(&bare, |decoded| admit_written_instance(&entity(), decoded, &instance())));
     }
 
     /// The clause 5.6.12.3 Fragment adding a `speed` instance, carrying `id`
@@ -203,13 +204,17 @@ mod tests {
         payload
     }
 
+    fn decoded(payload: &Value) -> WrittenTemporalEntity {
+        WrittenTemporalEntity::from_request_text(payload.to_string().as_bytes()).expect("a decodable Temporal Evolution")
+    }
+
     /// Clause 5.4: a Fragment's `id` "shall be equal to the id of the target
     /// (mutated) NGSI-LD element"; one naming another Entity is data clause
     /// 5.5.4 answers with `BadRequestData`, before anything is forwarded.
     #[test]
     fn added_attributes_naming_another_entity_are_refused() {
-        let refusal = admit_added_attributes(&entity(), &added_attributes(Some("urn:ngsi-ld:Vehicle:2")), &instance())
-            .expect_err("a Fragment naming another Entity is refused");
+        let payload = decoded(&added_attributes(Some("urn:ngsi-ld:Vehicle:2")));
+        let refusal = admit_added_attributes(&entity(), &payload, &instance()).expect_err("a Fragment naming another Entity is refused");
         pretty_assertions::assert_eq!(refusal.problem().error_type(), NgsiLdErrorType::BadRequestData);
         pretty_assertions::assert_eq!(refusal.problem().status_code(), StatusCode::BAD_REQUEST);
     }
@@ -219,7 +224,10 @@ mod tests {
     #[test]
     fn added_attributes_naming_the_target_or_no_id_are_admitted() {
         for id in [Some("urn:ngsi-ld:Vehicle:1"), None] {
-            assert!(admit_added_attributes(&entity(), &added_attributes(id), &instance()).is_ok(), "{id:?}");
+            assert!(
+                admit_added_attributes(&entity(), &decoded(&added_attributes(id)), &instance()).is_ok(),
+                "{id:?}"
+            );
         }
     }
 
@@ -234,7 +242,7 @@ mod tests {
             "type": "Vehicle",
             "speed": [{"type": "Property", "value": "urn:ngsi-ld:null", "observedAt": "2024-01-02T00:00:00Z"}]
         });
-        assert!(admit_written_evolution(&payload, &instance()).is_ok());
+        assert!(!evolution_refused(&payload));
     }
 
     /// Clause 5.2.4 fixes the attribute types, so a token outside the eight is
@@ -246,7 +254,7 @@ mod tests {
             "type": "Vehicle",
             "speed": [{"type": "NotAnAttributeType", "value": 10}]
         });
-        assert!(admit_written_evolution(&payload, &instance()).is_err());
+        assert!(evolution_refused(&payload));
     }
 
     /// Clause 4.6.4: a key JSON-LD expansion would drop cannot be returned as
@@ -258,10 +266,10 @@ mod tests {
             "type": "Vehicle",
             "speed": [{"type": "Property", "value": 10, "observedAt": "2024-01-01T00:00:00Z", "@foo": 1}]
         });
-        assert!(admit_written_evolution(&payload, &instance()).is_err());
+        assert!(evolution_refused(&payload));
 
         let modified = fragment(&json!({"type": "Property", "value": 10, "unit": {"@foo": {}}}));
-        assert!(admit_written_instance(&entity(), &modified, &instance()).is_err());
+        assert!(refused(&modified, |decoded| admit_written_instance(&entity(), decoded, &instance())));
     }
 
     /// The `json` element of a `JsonProperty` holds native JSON, so a
@@ -273,6 +281,6 @@ mod tests {
             "type": "Vehicle",
             "config": [{"type": "JsonProperty", "json": {"@foo": "data"}, "observedAt": "2024-01-01T00:00:00Z"}]
         });
-        assert!(admit_written_evolution(&payload, &instance()).is_ok());
+        assert!(!evolution_refused(&payload));
     }
 }

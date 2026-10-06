@@ -5,7 +5,10 @@
 //! answered `InternalError`.
 
 use andromeda_http_headers::received_protocol::ReceivedProtocolError;
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, reference::NgsiLdReferenceError};
+use andromeda_ngsi_ld_lexicon::{
+    identifier::{Identifier, IdentifierParseError},
+    reference::NgsiLdReferenceError,
+};
 use andromeda_ngsi_ld_model::context_source_info::ContextSourceInfoError;
 use http::header::{InvalidHeaderName, InvalidHeaderValue};
 use iri_rs::InvalidIri;
@@ -36,6 +39,14 @@ pub enum FederationInvariant {
     /// can be.
     #[error("a name spelled for a forwarded request is not an NGSI-LD name: {0}")]
     ForwardedName(#[source] NgsiLdReferenceError),
+    /// An identifier a forwarded batch query selects by is not an NGSI-LD
+    /// identifier, although the narrowing took it from a parsed query.
+    #[error("an identifier of a forwarded batch query is not an NGSI-LD identifier: {0}")]
+    ForwardedIdentifier(#[source] IdentifierParseError),
+    /// The one attribute of a forwarded attribute fragment compacted to no
+    /// attribute member, although the fragment names one.
+    #[error("a forwarded attribute fragment compacted to no attribute")]
+    FragmentWithoutAttribute,
     /// A registration's admitted `contextSourceInfo` no longer reads as the
     /// clause 4.3.6.6 pairs it was admitted as.
     #[error("registration {registration} carries an invalid contextSourceInfo: {source}")]

@@ -22,7 +22,7 @@ use crate::{
     context_cache::{ContextCache, DownloadedContext},
     context_registry::ContextRegistry,
     context_tail::ContextTail,
-    engine::options::RemoteContextFetch,
+    engine::{context_document::ContextDocument, options::RemoteContextFetch},
     error::JsonLdError,
     hit_counter::HitCounter,
     hosted_context_recognizer::{HostedContextRecognizer, HostedReference},
@@ -35,7 +35,7 @@ use crate::{
         loaded_context::{ContextProvenance, EntryLifetime, LoadedContext, ResponseDrivenExpiry, registry_context},
         loader_settings::LoaderSettings,
         own_context::{CachedCopy, StoredLookup},
-        remote_document::{fetch_and_parse, ld_json_media_type},
+        remote_document::fetch_and_parse,
     },
 };
 use iri_rs::{Iri, IriBuf};
@@ -177,7 +177,7 @@ impl HttpContextLoader {
     ///
     /// Returns the [`JsonLdError`] a recognised identifier that is not an IRI
     /// is reported with.
-    pub(crate) async fn held_document(&self, url: &IriBuf) -> Result<Option<Arc<jsonld_syntax::Value>>, JsonLdError> {
+    pub(crate) async fn held_document(&self, url: &IriBuf) -> Result<Option<Arc<ContextDocument>>, JsonLdError> {
         let held = match self.resolution_of(url).map_err(|error| JsonLdError::from(error.as_ref()))? {
             Resolution::Stored(identifier) => match self.cache.get(&identifier).await {
                 Some(stored) if stored.provenance == ContextProvenance::Broker => Some(stored),
@@ -187,7 +187,7 @@ impl HttpContextLoader {
             },
             Resolution::Url => self.cache.get(url).await,
         };
-        Ok(held.map(|loaded| loaded.value))
+        Ok(held.map(|loaded| loaded.document))
     }
 
     /// Resolve a context URL through the full pipeline.
@@ -196,17 +196,17 @@ impl HttpContextLoader {
     ///
     /// Returns the [`JsonLdError`] variant describing which step failed and
     /// why.
-    pub async fn load_value(&self, url: &IriBuf) -> Result<Arc<jsonld_syntax::Value>, JsonLdError> {
-        self.load_value_raw(url).await.map_err(|error| JsonLdError::from(error.as_ref()))
+    pub async fn load_document(&self, url: &IriBuf) -> Result<Arc<ContextDocument>, JsonLdError> {
+        self.load_document_raw(url).await.map_err(|error| JsonLdError::from(error.as_ref()))
     }
 
-    /// [`Self::load_value`] yielding the raw [`LoaderError`].
+    /// [`Self::load_document`] yielding the raw [`LoaderError`].
     ///
     /// `Arc`-wrapped because `moka` requires a cached error to be
     /// `Clone + Send + Sync`. The [`Loader`] implementation needs this form,
     /// since the trait fixes the error type.
-    pub(crate) async fn load_value_raw(&self, url: &IriBuf) -> Result<Arc<jsonld_syntax::Value>, Arc<LoaderError>> {
-        self.load_entry(url).await.map(|loaded| loaded.value)
+    pub(crate) async fn load_document_raw(&self, url: &IriBuf) -> Result<Arc<ContextDocument>, Arc<LoaderError>> {
+        self.load_entry(url).await.map(|loaded| loaded.document)
     }
 
     /// What the context document at `url` leaves in force last (clause 4.4),
@@ -266,7 +266,7 @@ impl HttpContextLoader {
             },
             Resolution::Url => self.load_url(requested, CachedCopy::Recorded).await?,
         };
-        note_source(requested, &loaded.value);
+        note_source(requested, &loaded.document);
         Ok(loaded)
     }
 
@@ -357,7 +357,7 @@ impl HttpContextLoader {
         }
         let fetched = fetch_and_parse(&self.client, url, self.max_context_bytes, self.lifetimes.heuristic).await?;
         Ok(DownloadedContext {
-            document: jsonld_syntax::Value::into_serde_json(fetched.value),
+            document: fetched.value,
             document_url: fetched.document_url,
         })
     }
@@ -375,7 +375,7 @@ impl Loader for HttpContextLoader {
         // redirects and an alternate hop; a copy held without one is based on
         // the URL the request named.
         let base = loaded.document_url(&url_iri).clone(); // clone: the remote document owns its URL
-        Ok(RemoteDocument::new(Some(base), Some(ld_json_media_type()), (*loaded.value).clone())) // clone: the document is shared with the moka cache
+        Ok(loaded.document.remote_document(base))
     }
 }
 
@@ -393,7 +393,9 @@ mod tests {
             loader_settings::LoaderSettings,
         },
         operation_hit_scope::run_in_operation_scope,
+        test_documents::{document_value, literal},
     };
+    use andromeda_json_literal::JsonLiteral;
     use iri_rs::IriBuf;
     use jsonld::Loader;
     use serde_json::json;
@@ -403,9 +405,11 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
-    fn registry_with(url: &str, context: serde_json::Value) -> Arc<ContextRegistry> {
+    fn registry_with(url: &str, context: &serde_json::Value) -> Arc<ContextRegistry> {
         let registry = Arc::new(ContextRegistry::new());
-        registry.register(IriBuf::new(url.to_string()).expect("valid URL"), jsonld_syntax::Value::from_serde_json(context));
+        registry
+            .register(IriBuf::new(url.to_string()).expect("valid URL"), &literal(context))
+            .expect("registered");
         registry
     }
 
@@ -418,7 +422,7 @@ mod tests {
     #[derive(Debug)]
     struct FixedL2 {
         /// The stored `@context` document.
-        payload: serde_json::Value,
+        payload: JsonLiteral,
         /// What the fixture reports is left of the row's lifetime.
         residual: ResidualLifetime,
     }
@@ -439,7 +443,7 @@ mod tests {
                 source,
             }))
         }
-        async fn put(&self, _url: &IriBuf, _document_url: &IriBuf, _payload: &serde_json::Value, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
+        async fn put(&self, _url: &IriBuf, _document_url: &IriBuf, _payload: &JsonLiteral, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
             Ok(())
         }
     }
@@ -451,7 +455,7 @@ mod tests {
         /// The URL the row is stored under.
         url: IriBuf,
         /// The stored `@context` document.
-        payload: serde_json::Value,
+        payload: JsonLiteral,
         /// How many times the cache was read.
         reads: AtomicUsize,
     }
@@ -469,7 +473,7 @@ mod tests {
                 },
             }))
         }
-        async fn put(&self, _url: &IriBuf, _document_url: &IriBuf, _payload: &serde_json::Value, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
+        async fn put(&self, _url: &IriBuf, _document_url: &IriBuf, _payload: &JsonLiteral, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
             Ok(())
         }
     }
@@ -478,7 +482,7 @@ mod tests {
     fn counting_loader(url: &IriBuf) -> (HttpContextLoader, Arc<CountingL2>, Arc<HitCounter>) {
         let l2 = Arc::new(CountingL2 {
             url: url.clone(), // clone: the fixture owns the URL it answers for
-            payload: json!({ "@context": "https://example.com/terms.jsonld" }),
+            payload: literal(&json!({ "@context": "https://example.com/terms.jsonld" })),
             reads: AtomicUsize::new(0),
         });
         let counter = Arc::new(HitCounter::new());
@@ -498,7 +502,7 @@ mod tests {
         let (loader, l2, counter) = counting_loader(&url);
 
         let tail = run_in_operation_scope(async {
-            loader.load_value(&url).await.expect("processing resolves the document");
+            loader.load_document(&url).await.expect("processing resolves the document");
             loader.invalidate(&url).await;
             loader.load_tail(&url).await
         })
@@ -535,15 +539,15 @@ mod tests {
         // a (serde-impossible) failure and then reported an unrelated "invalid
         // context" error. Even with remote fetching denied, an L2 hit resolves.
         let l2 = Arc::new(FixedL2 {
-            payload: json!({ "@context": { "name": "https://example.com/name" } }),
+            payload: literal(&json!({ "@context": { "name": "https://example.com/name" } })),
             residual: ResidualLifetime::Bounded(CacheLifetime::from_seconds(30).expect("thirty seconds is a positive lifetime")),
         });
         let loader = offline_loader(Arc::new(ContextRegistry::new())).with_l2_cache(l2);
 
         let url = IriBuf::new("https://example.com/from-l2.jsonld".to_string()).expect("valid URL");
-        let value = loader.load_value(&url).await.expect("an L2 hit resolves");
+        let value = loader.load_document(&url).await.expect("an L2 hit resolves");
 
-        let json = jsonld_syntax::Value::into_serde_json((*value).clone());
+        let json = document_value(&value);
         assert!(json.is_object() || json.is_array(), "expected a parsed context document, got {json:?}");
     }
 
@@ -551,14 +555,14 @@ mod tests {
     async fn a_registered_context_resolves_with_remote_fetch_denied() {
         let registry = registry_with(
             "https://example.com/context.jsonld",
-            json!({ "@context": { "name": "https://example.com/name" } }),
+            &json!({ "@context": { "name": "https://example.com/name" } }),
         );
         let loader = offline_loader(registry);
         let iri = IriBuf::new("https://example.com/context.jsonld".to_string()).expect("valid IRI");
 
         let document = loader.load(iri.as_ref()).await.expect("registry hit");
 
-        assert!(document.document.is_object());
+        assert!(document.document().is_object());
     }
 
     #[tokio::test]
@@ -566,7 +570,7 @@ mod tests {
         let loader = offline_loader(Arc::new(ContextRegistry::new()));
 
         let url = IriBuf::new("https://example.com/unknown.jsonld".to_string()).expect("valid URL");
-        let error = loader.load_value(&url).await.expect_err("no registry entry");
+        let error = loader.load_document(&url).await.expect_err("no registry entry");
 
         assert!(error.is_context_not_available(), "expected a loading failure, got {error}");
     }
@@ -584,7 +588,7 @@ mod tests {
         async fn get(&self, _url: &IriBuf) -> Result<Option<CachedContext>, ContextCacheError> {
             Ok(None)
         }
-        async fn put(&self, url: &IriBuf, _document_url: &IriBuf, _payload: &serde_json::Value, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
+        async fn put(&self, url: &IriBuf, _document_url: &IriBuf, _payload: &JsonLiteral, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
             self.puts.lock().expect("mutex not poisoned").push(url.to_string());
             Ok(())
         }
@@ -596,14 +600,13 @@ mod tests {
     async fn a_preloaded_context_is_recorded_in_the_durable_cache() {
         let registry = Arc::new(ContextRegistry::new());
         let url = IriBuf::new("https://forge.example.com/suite.jsonld".to_string()).expect("valid URL");
-        registry.register_preloaded(
-            url.clone(),
-            jsonld_syntax::Value::from_serde_json(json!({ "@context": { "name": "https://example.com/name" } })),
-        );
+        registry
+            .register_preloaded(url.clone(), literal(&json!({ "@context": { "name": "https://example.com/name" } })))
+            .expect("registered");
         let recorder = Arc::new(RecordingL2::default());
         let loader = offline_loader(registry).with_l2_cache(Arc::clone(&recorder) as Arc<dyn ContextCache>);
 
-        loader.load_value(&url).await.expect("a preloaded context resolves");
+        loader.load_document(&url).await.expect("a preloaded context resolves");
 
         assert_eq!(
             recorder.puts.lock().expect("mutex not poisoned").as_slice(),
@@ -619,13 +622,13 @@ mod tests {
     async fn an_embedded_context_is_not_recorded_in_the_durable_cache() {
         let registry = registry_with(
             "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld",
-            json!({ "@context": { "name": "https://example.com/name" } }),
+            &json!({ "@context": { "name": "https://example.com/name" } }),
         );
         let recorder = Arc::new(RecordingL2::default());
         let loader = offline_loader(registry).with_l2_cache(Arc::clone(&recorder) as Arc<dyn ContextCache>);
         let url = IriBuf::new("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld".to_string()).expect("valid URL");
 
-        loader.load_value(&url).await.expect("an embedded context resolves");
+        loader.load_document(&url).await.expect("an embedded context resolves");
 
         assert!(
             recorder.puts.lock().expect("mutex not poisoned").is_empty(),
@@ -639,15 +642,14 @@ mod tests {
     async fn a_second_resolution_of_a_preloaded_context_does_not_write_again() {
         let registry = Arc::new(ContextRegistry::new());
         let url = IriBuf::new("https://forge.example.com/suite.jsonld".to_string()).expect("valid URL");
-        registry.register_preloaded(
-            url.clone(),
-            jsonld_syntax::Value::from_serde_json(json!({ "@context": { "name": "https://example.com/name" } })),
-        );
+        registry
+            .register_preloaded(url.clone(), literal(&json!({ "@context": { "name": "https://example.com/name" } })))
+            .expect("registered");
         let recorder = Arc::new(RecordingL2::default());
         let loader = offline_loader(registry).with_l2_cache(Arc::clone(&recorder) as Arc<dyn ContextCache>);
 
-        loader.load_value(&url).await.expect("first resolution");
-        loader.load_value(&url).await.expect("second resolution");
+        loader.load_document(&url).await.expect("first resolution");
+        loader.load_document(&url).await.expect("second resolution");
 
         assert_eq!(
             recorder.puts.lock().expect("mutex not poisoned").len(),

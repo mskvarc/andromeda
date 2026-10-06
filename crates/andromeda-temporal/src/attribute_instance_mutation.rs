@@ -23,8 +23,8 @@ use andromeda_ngsi_ld_entity::{
 };
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_identity::InstanceIdentity};
+use andromeda_ngsi_ld_model::temporal::written_temporal_entity::WrittenTemporalEntity;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
-use serde_json::Value;
 
 impl TemporalService {
     /// Replace an existing attribute instance with the one instance the clause
@@ -49,7 +49,7 @@ impl TemporalService {
         entity_id: &Identifier,
         attr_id: &AttributeName,
         instance: &InstanceIdentity,
-        fragment: Value,
+        fragment: WrittenTemporalEntity,
         context: &ContextSpec,
     ) -> Result<(), TemporalError> {
         let timer = temporal::start(TemporalOperation::ModifyAttributeInstance);
@@ -65,7 +65,7 @@ impl TemporalService {
         entity_id: &Identifier,
         attr_id: &AttributeName,
         instance: &InstanceIdentity,
-        fragment: Value,
+        fragment: WrittenTemporalEntity,
         context: &ContextSpec,
     ) -> Result<(), TemporalError> {
         self.mutation_barrier.synchronize(target, entity_id).await?;
@@ -92,7 +92,8 @@ impl TemporalService {
         // Attribute or instance before the Fragment is read, so a Fragment
         // naming another Attribute is refused only once the target is known.
         let expansion = EntityExpansion::prepare(&self.engine, context).await?;
-        let document = expansion.entity_fragment(fragment, Normalization::Entity).await?;
+        let (patch, _reified_scope) = fragment.into_fragment();
+        let document = expansion.entity_patch(&patch, Normalization::Entity).await?;
         let replacement = fragment_instance(document, &attr_iri)?;
         admit_instance_document(self.limits.payload_budget, &attr_iri, &replacement)?;
         admit_instance_nesting(self.limits.payload_budget.attribute_nesting, &attr_iri, &replacement)?;

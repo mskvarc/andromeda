@@ -130,7 +130,9 @@ mod tests {
             http::HttpContextLoader,
             loader_settings::LoaderSettings,
         },
+        test_documents::{document_value, literal},
     };
+    use andromeda_json_literal::JsonLiteral;
     use iri_rs::{IriBuf, IriRefBuf};
     use serde_json::{Value, json};
     use std::{
@@ -182,7 +184,7 @@ mod tests {
 
     impl StoredRows {
         /// Hold `payload` under `key`, with `residual` left of its lifetime.
-        fn holding(mut self, key: &str, payload: Value, residual: ResidualLifetime) -> StoredRows {
+        fn holding(mut self, key: &str, payload: &Value, residual: ResidualLifetime) -> StoredRows {
             // A row with no expiry is one the broker stores itself; any other
             // is a download of the key it is held under.
             let source = match residual {
@@ -194,7 +196,7 @@ mod tests {
             self.rows.insert(
                 key.to_owned(),
                 CachedContext {
-                    payload,
+                    payload: literal(payload),
                     residual,
                     canonical_url: None,
                     source,
@@ -215,7 +217,7 @@ mod tests {
             Ok(self.rows.get(url.as_str()).cloned()) // clone: the fixture keeps its row for the next read
         }
 
-        async fn put(&self, url: &IriBuf, _document_url: &IriBuf, _payload: &Value, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
+        async fn put(&self, url: &IriBuf, _document_url: &IriBuf, _payload: &JsonLiteral, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
             self.puts.lock().expect("the lock is not poisoned").push(url.to_string());
             Ok(())
         }
@@ -241,15 +243,15 @@ mod tests {
     /// URL names, and the network is never tried (fetching is denied here).
     #[tokio::test]
     async fn a_held_identifier_resolves_from_storage_on_any_origin() {
-        let rows = Arc::new(StoredRows::default().holding(HELD, terms(), ResidualLifetime::Unbounded));
+        let rows = Arc::new(StoredRows::default().holding(HELD, &terms(), ResidualLifetime::Unbounded));
         let loader = loader(Arc::new(ContextRegistry::new()), &rows);
 
         for origin in ["http://127.0.0.1:1056", "https://gateway.example.com/prefix"] {
             let value = loader
-                .load_value(&iri(format!("{origin}{CONTEXTS_PATH}{HELD}")))
+                .load_document(&iri(format!("{origin}{CONTEXTS_PATH}{HELD}")))
                 .await
                 .expect("the held entry resolves from storage");
-            pretty_assertions::assert_eq!(jsonld_syntax::Value::into_serde_json((*value).clone()), terms()); // clone: the entry is shared with the cache
+            pretty_assertions::assert_eq!(document_value(&value), terms()); // clone: the entry is shared with the cache
         }
         pretty_assertions::assert_eq!(rows.reads.load(Ordering::SeqCst), 1, "both spellings share one in-process entry");
         assert!(rows.puts().is_empty(), "no Cached row is recorded for the broker's own document");
@@ -265,7 +267,7 @@ mod tests {
         let loader = loader(Arc::new(ContextRegistry::new()), &rows);
         let requested = iri(format!("https://other-broker.example{CONTEXTS_PATH}{UNHELD}"));
 
-        let error = loader.load_value(&requested).await.expect_err("fetching is denied");
+        let error = loader.load_document(&requested).await.expect_err("fetching is denied");
 
         assert!(matches!(&error, JsonLdError::ContextFetchDisabled { url } if *url == requested), "{error}");
     }
@@ -275,11 +277,11 @@ mod tests {
     #[tokio::test]
     async fn a_cached_entry_is_not_served_from_storage_by_its_local_identifier() {
         let bounded = ResidualLifetime::Bounded(CacheLifetime::from_seconds(60).expect("a minute is a positive lifetime"));
-        let rows = Arc::new(StoredRows::default().holding(CACHED, terms(), bounded));
+        let rows = Arc::new(StoredRows::default().holding(CACHED, &terms(), bounded));
         let loader = loader(Arc::new(ContextRegistry::new()), &rows);
         let requested = iri(format!("http://127.0.0.1:1056{CONTEXTS_PATH}{CACHED}"));
 
-        let error = loader.load_value(&requested).await.expect_err("fetching is denied");
+        let error = loader.load_document(&requested).await.expect_err("fetching is denied");
 
         assert!(matches!(&error, JsonLdError::ContextFetchDisabled { url } if *url == requested), "{error}");
     }
@@ -291,11 +293,11 @@ mod tests {
     async fn a_url_shaped_like_an_own_url_is_never_recorded_as_cached() {
         let registry = Arc::new(ContextRegistry::new());
         let own_shaped = iri(format!("https://other-broker.example{CONTEXTS_PATH}{UNHELD}"));
-        registry.register_preloaded(own_shaped.clone(), jsonld_syntax::Value::from_serde_json(terms())); // clone: the load below names the same URL
+        registry.register_preloaded(own_shaped.clone(), literal(&terms())).expect("registered"); // clone: the load below names the same URL
         let rows = Arc::new(StoredRows::default());
         let loader = loader(registry, &rows);
 
-        loader.load_value(&own_shaped).await.expect("the preloaded document resolves");
+        loader.load_document(&own_shaped).await.expect("the preloaded document resolves");
 
         assert!(rows.puts().is_empty(), "no Cached row is recorded under a URL shaped like the broker's own");
     }
@@ -306,15 +308,15 @@ mod tests {
     #[tokio::test]
     async fn a_cached_download_under_an_identifier_key_is_not_served_as_an_own_context() {
         let bounded = ResidualLifetime::Bounded(CacheLifetime::from_seconds(60).expect("a minute is a positive lifetime"));
-        let rows = Arc::new(StoredRows::default().holding(CACHED, terms(), bounded));
+        let rows = Arc::new(StoredRows::default().holding(CACHED, &terms(), bounded));
         let loader = loader(Arc::new(ContextRegistry::new()), &rows);
         loader
-            .load_value(&iri(CACHED.to_owned()))
+            .load_document(&iri(CACHED.to_owned()))
             .await
             .expect("the bare identifier resolves the Cached row as the URL it is");
 
         let error = loader
-            .load_value(&iri(format!("http://127.0.0.1:1056{CONTEXTS_PATH}{CACHED}")))
+            .load_document(&iri(format!("http://127.0.0.1:1056{CONTEXTS_PATH}{CACHED}")))
             .await
             .expect_err("the Cached entry is not served under the stored-context path, and fetching is denied");
 
@@ -327,11 +329,11 @@ mod tests {
     async fn an_ordinary_preloaded_url_is_still_recorded_as_cached() {
         let registry = Arc::new(ContextRegistry::new());
         let ordinary = iri("https://example.org/terms.jsonld".to_owned());
-        registry.register_preloaded(ordinary.clone(), jsonld_syntax::Value::from_serde_json(terms())); // clone: the load below names the same URL
+        registry.register_preloaded(ordinary.clone(), literal(&terms())).expect("registered"); // clone: the load below names the same URL
         let rows = Arc::new(StoredRows::default());
         let loader = loader(registry, &rows);
 
-        loader.load_value(&ordinary).await.expect("the preloaded document resolves");
+        loader.load_document(&ordinary).await.expect("the preloaded document resolves");
 
         pretty_assertions::assert_eq!(rows.puts(), vec![ordinary.to_string()]);
     }

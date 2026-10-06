@@ -3,7 +3,6 @@
 use crate::{
     entity::{
         AcceptFormat,
-        Entity,
         EntityResultExt,
         EntityTenantState,
         GeometrySelection,
@@ -31,7 +30,7 @@ use crate::{
     },
     read_rendering::{EntityRepresentation, RetrievedAnswer, retrieved_entity, settle_representation},
 };
-use andromeda_entity::error::EntityError;
+use andromeda_entity::{error::EntityError, query::entity_versions::VersionRead};
 use andromeda_entity_map::recording::PageMatches;
 use andromeda_federation::request::{EntityMapInUse, TriggeringRequest};
 use andromeda_http_extraction::{context_target, response_context_request::ResponseContextRequest};
@@ -84,7 +83,7 @@ fn retrieval_response(
 /// entity is held nowhere, so it propagates unchanged to be classified on its
 /// own terms (a saturated read answers 503 with `Retry-After`) rather than
 /// masked as the `ResourceNotFound` an empty forwarding result would produce.
-fn local_entity_for_forwarding(result: Result<Entity, EntityError>) -> Result<Option<Entity>, EntityError> {
+fn local_entity_for_forwarding<T>(result: Result<T, EntityError>) -> Result<Option<T>, EntityError> {
     match result {
         Ok(entity) => Ok(Some(entity)),
         Err(EntityError::NotFound { .. }) => Ok(None),
@@ -137,14 +136,14 @@ pub(crate) async fn get(
         dataset_ids: params.dataset_id.as_deref().unwrap_or_default(),
         projection: projection.as_ref(),
     };
-    let local_result = service.get_inner(&target, &id, &narrowing, &context).await;
+    let local_result = service.read_held(&target, &id, &narrowing, &context).await;
 
     let is_local = !target.permits_federation() || params.local.unwrap_or(false);
     let referenced = entity_map_header.as_ref().map(NgsiLdEntityMap::as_inner);
     let map_use = resolve_retrieval_map_use(&state.entity_maps, &target, &params, referenced, &uri).await?;
 
     // If local=true, skip distributed forwarding
-    let (mut entity, warnings, entity_map_uri) = if is_local {
+    let (mut held, warnings, entity_map_uri) = if is_local {
         (local_result.with_entity_instance(&uri)?, Vec::new(), None)
     } else {
         let local_entity = local_entity_for_forwarding(local_result).with_entity_instance(&uri)?;
@@ -169,7 +168,7 @@ pub(crate) async fn get(
         // Attribute data leaves nothing to answer with -- the broker does not
         // invent an Entity from the registration's id and type, and clause
         // 6.3.17 does not treat a source's empty answer as abnormal.
-        let Some(entity) = retrieved.entity else {
+        let Some(merged) = retrieved.entity else {
             return Err(public_error(NgsiLdErrorType::ResourceNotFound, format!("entity {id} not found"), &uri).with_warnings(retrieved.warnings));
         };
         // Table 6.5.3.1-1 `entityMap`: the map the retrieval used is returned,
@@ -180,8 +179,22 @@ pub(crate) async fn get(
         // and the match set is never consulted; the per-source reading is the
         // only one it could need.
         let map_uri = record_map_use(&state.entity_maps, map_use, retrieved.contributions, map_entities, PageMatches::PerSource, &uri).await?;
-        (entity, retrieved.warnings, map_uri)
+        (merged, retrieved.warnings, map_uri)
     };
+    // The entity is compacted once, after the merge, under the request
+    // context: what every holder contributed is written the same way.
+    let read = VersionRead {
+        id_override: Some(&id),
+        sys_attrs,
+        dataset_ids: params.dataset_id.as_deref().unwrap_or_default(),
+    };
+    let carried = ResolvedJoin::carried_by(from_mut(&mut held));
+    let mut entity = service
+        .compact_versions(from_ref(&held), &read, &context)
+        .await
+        .with_entity_instance(&uri)?
+        .pop()
+        .ok_or_else(|| public_error(NgsiLdErrorType::ResourceNotFound, format!("entity {id} not found"), &uri))?;
 
     let representation = EntityRepresentation::new(params.resolve_render_mode().with_entity_instance(&uri)?, projection.as_ref());
     // Table 6.5.3.1-1 makes `attrs` the `pick` synonym, so it narrows every
@@ -196,6 +209,7 @@ pub(crate) async fn get(
         contained_by: params.contained_by.as_deref(),
         sys_attrs,
         list: ListInForce::of(projection.as_ref(), &attrs),
+        carried: &carried,
     };
     let mut resolved = ResolvedJoin::prepare(service, &target, from_ref(&entity), &context, &request)
         .await
@@ -233,7 +247,7 @@ mod tests {
     fn a_saturated_local_read_is_a_503_not_a_404() {
         // A saturated local read propagates as StoreSaturated rather than being
         // swallowed into the not-found a federated retrieval would answer 404.
-        let saturated = local_entity_for_forwarding(Err(EntityError::StoreSaturated));
+        let saturated = local_entity_for_forwarding::<()>(Err(EntityError::StoreSaturated));
         assert!(
             matches!(saturated, Err(EntityError::StoreSaturated)),
             "a saturated local read must propagate, not be masked as not-found"
@@ -246,7 +260,7 @@ mod tests {
 
         // A genuine not-found yields no local entity, so the registrations answer.
         let identifier = "urn:ngsi-ld:Entity:absent".parse::<Identifier>().expect("valid test URI");
-        let missing = local_entity_for_forwarding(Err(EntityError::NotFound { identifier }));
+        let missing = local_entity_for_forwarding::<()>(Err(EntityError::NotFound { identifier }));
         assert!(matches!(missing, Ok(None)), "a genuine not-found forwards to the registrations");
     }
 }

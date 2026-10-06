@@ -2,10 +2,7 @@
 //! and 5.14.5.4, Tables 6.34.3.1-1 and 6.35.3.1-1), whichever binding the
 //! request came through.
 
-use crate::{
-    error::{EntityMapResultExt, internal_problem},
-    state::EntityMapRouteServices,
-};
+use crate::{error::EntityMapResultExt, state::EntityMapRouteServices};
 use andromeda_federation::{
     entity_map::{EntityMapQueryKind, ForwardEntityMapRequest, ForwardedEntityMap},
     outcome::ForwardReadOutcome,
@@ -16,15 +13,15 @@ use andromeda_http_extraction::{accept::AcceptFormatNoGeo, api_root::ApiRoot, pr
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::{
     declined_representation::single_source_declined,
-    internal_failure_summary::InternalFailureSummary,
     problem_response::ProblemResponse,
+    rendered_response::RenderedResponse,
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{entity_map::EntityMap, entity_map_fingerprint::RequestFingerprint};
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
-use andromeda_ngsi_ld_render::{entity_map_body::EntityMapBody, response::ResponsePayload};
+use andromeda_ngsi_ld_render::entity_map_body::EntityMapBody;
 use axum::{
     http::{StatusCode, Uri as HttpUri},
     response::{IntoResponse, Response},
@@ -128,16 +125,13 @@ async fn render_created(
     warnings: Vec<NgsiLdWarning>,
 ) -> Result<Response, ProblemResponse> {
     let location = format!("/ngsi-ld/v1/{resource}/{}", map.id);
-    let value = serde_json::to_value(EntityMapBody::new(map, rendering.prefer.requested_version))
-        .map_err(|error| internal_problem(&error, InternalFailureSummary::RESPONSE_ENCODING, rendering.uri))?;
-    let rendered = ResponseContextSource::new(state.entity_query.engine(), rendering.context, &state.context_hosting, rendering.api_root)
+    let body = EntityMapBody::new(map, rendering.prefer.requested_version);
+    let renderer = ResponseContextSource::new(state.entity_query.engine(), rendering.context, &state.context_hosting, rendering.api_root)
         .start_rendering_normalized(rendering.accept.media_type(), rendering.prefer.rendering_preferences())
         .await
-        .with_entity_map_instance(rendering.uri)?
-        .with_payload(ResponsePayload::Single(value))
-        .render()
         .with_entity_map_instance(rendering.uri)?;
-    Ok(NgsiLdResponse::new(StatusCode::CREATED, rendered)
+    let written = RenderedResponse::resource(renderer.with_body(&body)).with_entity_map_instance(rendering.uri)?;
+    Ok(NgsiLdResponse::new(StatusCode::CREATED, written)
         .with_location(location)
         .with_entity_map_uri(map.id.clone()) // clone: the header owns the identifier beside the body
         .with_warnings(warnings)

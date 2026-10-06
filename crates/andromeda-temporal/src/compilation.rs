@@ -117,6 +117,20 @@ impl TemporalService {
             .build())
     }
 
+    /// Expand the request's clause 4.21 `pick` / `omit` projection against one
+    /// JSON-LD context, which narrows the members a response writes of every
+    /// entity (clause 5.7.3.5).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::Query`] when a projection term is not well
+    /// formed, and [`TemporalError::JsonLd`] when a term cannot be expanded
+    /// against `context`.
+    pub async fn request_projection(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Projection, TemporalError> {
+        let prepared_context = self.engine.prepare_term_context(context);
+        compile_projection(params, &ContextualExpander::new(&self.engine, &prepared_context)).await
+    }
+
     /// Compile the optional temporal geo selection through the prepared request context.
     ///
     /// A reference geometry holding more positions than the broker resolves

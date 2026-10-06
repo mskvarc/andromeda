@@ -16,7 +16,7 @@
 //!
 //! - Coverage: a client's term is kept when its expanded IRI equals a block
 //!   selector's stored type IRI or a declared attribute IRI. This is the same
-//!   comparison `crate::registration_selection::information_matches_entity`
+//!   comparison `crate::registration_information::information_matches_entity`
 //!   makes when it selects the registration, so a block that was selected is
 //!   narrowed consistently rather than discarded by a divergent string guess.
 //! - Spelling: every name the forwarded request carries is written in the

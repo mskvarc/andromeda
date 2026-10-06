@@ -18,7 +18,17 @@
 //! the forwarded request.
 
 use crate::{
-    compaction::{CAPTURE_TIMEOUT, CORE_CONTEXT, FORWARDED_ENTITIES, SPEED_IRI, VEHICLE_IRI, aliased_document, registration_context, serve},
+    compaction::{
+        CAPTURE_TIMEOUT,
+        CORE_CONTEXT,
+        FORWARDED_ENTITIES,
+        FORWARDED_TEMPORAL,
+        SPEED_IRI,
+        VEHICLE_IRI,
+        aliased_document,
+        registration_context,
+        serve,
+    },
     context_source_adapter::ContextSourceAdapter,
     hosted_context::{context_link, forget_cached, start_origin},
     oracle::{assert_status, forwarded_header, location},
@@ -37,6 +47,10 @@ const FORWARDED_BATCH_QUERY: &str = "/ngsi-ld/v1/entityOperations/query";
 /// The path a broker appends when forwarding a batch entity creation (clause
 /// 6.14).
 const FORWARDED_BATCH_CREATE: &str = "/ngsi-ld/v1/entityOperations/create";
+
+/// The path a broker appends when forwarding a list of the available entity
+/// types (clause 5.7.6).
+const FORWARDED_TYPES: &str = "/ngsi-ld/v1/types";
 
 /// The link relation that marks a `Link` link-value as a JSON-LD context
 /// (JSON-LD 1.1 section 6.1).
@@ -799,6 +813,243 @@ async fn distop_forwarding_context_a_mixed_context_batch_carries_one_absolute_co
     }
 
     forget_cached(front.pool(), &[client_context, rate_context]).await;
+    mock.shutdown().await;
+    origin.shutdown().await.expect("context server shuts down");
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A1: a temporal answer a source spelled in its registration's configured
+/// `jsonldContext` is expanded under that context and compacted under the
+/// client's, so the client reads its own `Veh` and `spd` and none of the
+/// source's `Car` and `velocity` (clauses 4.3.6.6, 5.7.4.4).
+#[serial_test::serial(distop_shared_type)]
+#[tokio::test]
+async fn distop_forwarding_context_a_temporal_answer_is_read_back_in_the_client_terms() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let mock = ContextSourceAdapter::start().await;
+    let remote = topology.id("Veh:forwarding-context-a1");
+    mock.set_stub_with_body(
+        Method::GET,
+        FORWARDED_TEMPORAL,
+        200,
+        &json!([{
+            "id": remote,
+            "type": "Car",
+            "velocity": [{ "type": "Property", "value": 3, "observedAt": "2024-01-01T00:00:00Z" }]
+        }]),
+    )
+    .await;
+
+    let origin = start_origin().await;
+    let client_context = serve(&origin, &aliased_document()).await;
+    let configured_context = serve(&origin, &configured_document()).await;
+
+    let registration = CsrBuilder::new(&topology.id("registration:forwarding-context-a1"), &mock.url(""))
+        .mode("inclusive")
+        .entity_type("Veh")
+        .property_names(&["spd"])
+        .operations(&["queryTemporal"])
+        .context_source_info("jsonldContext", &configured_context)
+        .context(registration_context(&client_context))
+        .build();
+    assert_status(&front.client().create_registration(&registration).await.expect("create registration"), 201);
+
+    let response = front
+        .client()
+        .query_temporal_entities("type=Veh&attrs=spd&timerel=before&timeAt=2030-01-01T00:00:00Z", Some(&client_context))
+        .await
+        .expect("temporal query");
+    assert_status(&response, 200);
+
+    let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
+    assert_single_context_link(&forwarded, &configured_context);
+    let answer = response.json_value().expect("the merged answer is JSON");
+    let entity = first_entity(&answer);
+    assert_eq!(entity["type"], json!("Veh"), "the temporal answer is read back in the client's terms: {answer}");
+    assert_eq!(
+        entity["spd"][0]["value"],
+        json!(3),
+        "the temporal answer is read back in the client's terms: {answer}"
+    );
+    assert!(entity.get("velocity").is_none(), "the source's spelling does not leak: {answer}");
+
+    forget_cached(front.pool(), &[client_context, configured_context]).await;
+    mock.shutdown().await;
+    origin.shutdown().await.expect("context server shuts down");
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A2: a discovery answer a source spelled in its registration's configured
+/// `jsonldContext` names its types under that context, and the client reads
+/// them under its own: `Veh`, never the source's `Car` (clauses 5.7.6 and
+/// 6.3.19).
+#[serial_test::serial(distop_shared_type)]
+#[tokio::test]
+async fn distop_forwarding_context_a_discovery_answer_is_read_back_in_the_client_terms() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let mock = ContextSourceAdapter::start().await;
+    mock.set_stub_with_body(
+        Method::GET,
+        FORWARDED_TYPES,
+        200,
+        &json!({ "id": "urn:ngsi-ld:EntityTypeList:forwarding-context-a2", "type": "EntityTypeList", "typeList": ["Car"] }),
+    )
+    .await;
+
+    let origin = start_origin().await;
+    let client_context = serve(&origin, &aliased_document()).await;
+    let configured_context = serve(&origin, &configured_document()).await;
+
+    let registration = CsrBuilder::new(&topology.id("registration:forwarding-context-a2"), &mock.url(""))
+        .mode("inclusive")
+        .entity_type("Veh")
+        .operations(&["retrieveEntityTypes"])
+        .context_source_info("jsonldContext", &configured_context)
+        .context(registration_context(&client_context))
+        .build();
+    assert_status(&front.client().create_registration(&registration).await.expect("create registration"), 201);
+
+    let response = front.client().list_types("", Some(&client_context)).await.expect("list types");
+    assert_status(&response, 200);
+
+    let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
+    assert_single_context_link(&forwarded, &configured_context);
+    let answer = response.json_value().expect("the merged answer is JSON");
+    let types: Vec<&str> = answer["typeList"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    assert!(types.contains(&"Veh"), "the source's type is read back in the client's terms: {answer}");
+    assert!(!types.contains(&"Car"), "the source's spelling does not leak: {answer}");
+
+    forget_cached(front.pool(), &[client_context, configured_context]).await;
+    mock.shutdown().await;
+    origin.shutdown().await.expect("context server shuts down");
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A3: a source answering a `join=inline` query nests a Linked Entity under the
+/// Relationship naming it. The nested copy is spelled in the source's
+/// configured `jsonldContext`, and the client reads it under its own terms,
+/// nested under that Relationship alone (clauses 4.5.23.2, 4.3.6.6).
+#[serial_test::serial(distop_shared_type)]
+#[tokio::test]
+async fn distop_forwarding_context_an_inline_join_answer_from_a_source_with_another_context() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let mock = ContextSourceAdapter::start().await;
+    let remote = topology.id("Veh:forwarding-context-a3");
+    let linked = topology.id("Veh:forwarding-context-a3-linked");
+    mock.set_stub_with_body(
+        Method::GET,
+        FORWARDED_ENTITIES,
+        200,
+        &json!([{
+            "id": remote,
+            "type": "Car",
+            "velocity": { "type": "Property", "value": 3 },
+            "next": {
+                "type": "Relationship",
+                "object": linked,
+                "entity": { "id": linked, "type": "Car", "velocity": { "type": "Property", "value": 7 } }
+            }
+        }]),
+    )
+    .await;
+
+    let origin = start_origin().await;
+    let client_context = serve(&origin, &aliased_document()).await;
+    let configured_context = serve(&origin, &configured_document()).await;
+
+    let registration = CsrBuilder::new(&topology.id("registration:forwarding-context-a3"), &mock.url(""))
+        .mode("inclusive")
+        .entity_type("Veh")
+        .property_names(&["spd"])
+        .operations(&["queryEntity"])
+        .context_source_info("jsonldContext", &configured_context)
+        .context(registration_context(&client_context))
+        .build();
+    assert_status(&front.client().create_registration(&registration).await.expect("create registration"), 201);
+
+    let response = front
+        .client()
+        .query_entities("type=Veh&join=inline&joinLevel=1", "application/ld+json", Some(&client_context))
+        .await
+        .expect("query");
+    assert_status(&response, 200);
+
+    let answer = response.json_value().expect("the merged answer is JSON");
+    let entities = answer.as_array().expect("a query answer is an array");
+    assert_eq!(entities.len(), 1, "the Linked Entity is nested, not answered beside its root: {answer}");
+    let root = &entities[0];
+    assert_eq!(root["type"], json!("Veh"), "the root is read back in the client's terms: {answer}");
+    let nested = &root["next"]["entity"];
+    assert_eq!(nested["type"], json!("Veh"), "the nested copy is read back in the client's terms: {answer}");
+    assert_eq!(nested["spd"]["value"], json!(7), "the nested copy is read back in the client's terms: {answer}");
+    assert!(
+        nested.get("velocity").is_none(),
+        "the source's spelling does not leak into the nested copy: {answer}"
+    );
+
+    forget_cached(front.pool(), &[client_context, configured_context]).await;
+    mock.shutdown().await;
+    origin.shutdown().await.expect("context server shuts down");
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A4: an answer entity that carries its own `@context` is read in that
+/// context, not in the one the request was forwarded against (JSON-LD 1.1: a
+/// node's `@context` applies to that node). The forwarding context here is the
+/// client's, which knows neither `Car` nor `velocity`; the entity's own
+/// context aliases both to the client's IRIs, so the client reads `Veh` and
+/// `spd`.
+#[serial_test::serial(distop_shared_type)]
+#[tokio::test]
+async fn distop_forwarding_context_an_answer_entity_with_its_own_context_is_read_in_that_context() {
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A).expect("topology broker A");
+    let mock = ContextSourceAdapter::start().await;
+    let remote = topology.id("Veh:forwarding-context-a4");
+
+    let origin = start_origin().await;
+    let client_context = serve(&origin, &aliased_document()).await;
+    let own_context = serve(&origin, &configured_document()).await;
+    mock.set_stub_with_body(
+        Method::GET,
+        FORWARDED_ENTITIES,
+        200,
+        &json!([{
+            "@context": own_context,
+            "id": remote,
+            "type": "Car",
+            "velocity": { "type": "Property", "value": 3 }
+        }]),
+    )
+    .await;
+
+    let registration = CsrBuilder::new(&topology.id("registration:forwarding-context-a4"), &mock.url(""))
+        .mode("inclusive")
+        .entity_type("Veh")
+        .property_names(&["spd"])
+        .operations(&["queryEntity"])
+        .context(registration_context(&client_context))
+        .build();
+    assert_status(&front.client().create_registration(&registration).await.expect("create registration"), 201);
+
+    let response = front
+        .client()
+        .query_entities("type=Veh&attrs=spd", "application/ld+json", Some(&client_context))
+        .await
+        .expect("query");
+    assert_status(&response, 200);
+
+    let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
+    assert_single_context_link(&forwarded, &client_context);
+    let answer = response.json_value().expect("the merged answer is JSON");
+    let entity = first_entity(&answer);
+    assert_eq!(entity["type"], json!("Veh"), "the entity is read in its own context: {answer}");
+    assert_eq!(entity["spd"]["value"], json!(3), "the entity is read in its own context: {answer}");
+
+    forget_cached(front.pool(), &[client_context, own_context]).await;
     mock.shutdown().await;
     origin.shutdown().await.expect("context server shuts down");
     topology.finish().await.expect("topology cleanup");

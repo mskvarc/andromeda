@@ -142,8 +142,7 @@ const fn classify_temporal_drain_failure(error: TemporalError) -> TaskFailure<Te
         | TemporalError::AttributeNesting(_)
         | TemporalError::JsonLd(_)
         | TemporalError::Query(_)
-        | TemporalError::Request(_)
-        | TemporalError::Rendering(_) => FailureClass::Permanent,
+        | TemporalError::Request(_) => FailureClass::Permanent,
     };
     TaskFailure::new(class, error)
 }

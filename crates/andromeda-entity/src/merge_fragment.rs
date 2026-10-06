@@ -162,12 +162,13 @@ fn adapt_language_instance(
 #[cfg(test)]
 mod tests {
     use crate::merge_fragment::{MergeFragmentError, adapt_member, held_attribute_family};
+    use andromeda_json_literal::piece::JsonPiece;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
     use andromeda_ngsi_ld_model::attribute::{member_reading::MemberReading, merge_member::MergeMember};
     use andromeda_ngsi_ld_representation::merge_representation::MergeRepresentation;
     use langtag::LangTagBuf;
-    use serde_json::{Value, json};
+    use serde_json::{Value, json, value::RawValue};
 
     fn attr() -> AttributeName {
         "attr".parse().expect("a valid attribute name")
@@ -184,7 +185,8 @@ mod tests {
         representation: MergeRepresentation,
         lang: Option<&LangTagBuf>,
     ) -> Result<Value, MergeFragmentError> {
-        let mut member = MergeMember::from_node(attr().as_str(), written).expect("a merge member");
+        let text = RawValue::from_string(written.to_string()).expect("the fixture is JSON");
+        let mut member = MergeMember::from_node(attr().as_str(), JsonPiece::new(&text)).expect("a merge member");
         adapt_member(&attr(), &mut member, existing, representation, lang)?;
         Ok(serde_json::to_value(&member).expect("the member is written"))
     }

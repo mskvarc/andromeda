@@ -7,21 +7,32 @@
 //! the compaction walk and nothing else.
 
 use crate::{
-    context_graph::check_syntax_document_contexts,
+    context_graph::check_document_contexts,
     context_spec::ContextSpec,
     engine::{
         compaction_context::{CompactionContext, CompactionContextError, ContextEmbedding},
-        expanded_input::ExpandedInput,
+        expanded_text::ExpandedText,
+        member_order::sort_members,
         options::{CompactOptions, ContextStripping},
         processor::JsonLdEngine,
+        processor_text::ProcessorTextError,
     },
     error::JsonLdError,
 };
+use andromeda_json_literal::piece::JsonPiece;
 use iri_rs::IriBuf;
-use jsonld::{CompactError, ExpandedDocument, JsonLdProcessor, Options, RemoteDocument};
-use jsonld_core::{Node, Object, TryFromJson};
+use jsonld::{
+    CompactError,
+    ExpandError,
+    ExpandedDocument,
+    ExpandedJsonTextError,
+    Options,
+    expansion::{Context as ActiveContext, SliceExpansionError, expand_slice},
+};
+use jsonld_core::{Node, Object};
+use jstrict::{Print, native_stack::on_sufficient_stack};
 use rdfx::{BlankIdBuf, vocabulary::no_vocabulary_mut};
-use serde_json::Value;
+use serde_json::value::RawValue;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
@@ -72,9 +83,10 @@ impl ContextCompactor<'_> {
     ///
     /// Returns [`JsonLdError::Compaction`] when compaction fails for any other
     /// reason, [`JsonLdError::InlineContextInvalid`] when the resolved
-    /// `@context` is not a JSON-LD context, or a context-loading variant when a
-    /// context did not resolve.
-    pub async fn compact(&self, document: ExpandedInput, options: CompactOptions) -> Result<Value, JsonLdError> {
+    /// `@context` is not a JSON-LD context, a context-loading variant when a
+    /// context did not resolve, and [`JsonLdError::ProcessorText`] for text
+    /// that is not JSON.
+    pub async fn compact(&self, document: ExpandedText<'_>, options: CompactOptions) -> Result<Box<RawValue>, JsonLdError> {
         let expanded = self.read(document).await?;
         let prepared = self.prepared().await?;
         let embedding = match options.strip_context {
@@ -82,7 +94,7 @@ impl ContextCompactor<'_> {
             ContextStripping::Keep => ContextEmbedding::Embed,
         };
 
-        let compacted = match prepared.compact(&expanded, self.engine.loader(), embedding).await {
+        let mut compacted = match prepared.compact(&expanded, self.engine.loader(), embedding).await {
             Ok(compacted) => compacted,
             Err(error) if JsonLdError::is_protected_term_error(&error) => {
                 tracing::warn!(error = %error, "{PROTECTED_TERM_FALLBACK}");
@@ -97,7 +109,9 @@ impl ContextCompactor<'_> {
                 return Err(JsonLdError::from(*error));
             }
         };
-        Ok(jsonld_syntax::Value::into_serde_json(compacted))
+        sort_members(&mut compacted);
+        let compacted = compacted;
+        Ok(RawValue::from_string(compacted.compact_print().to_string())?)
     }
 
     /// Read an expanded document into the processor's own form.
@@ -109,40 +123,47 @@ impl ContextCompactor<'_> {
     /// is not what the broker's expansion produces, so it is logged and
     /// expanded like an assembled one, which keeps its compaction exactly what
     /// it was.
-    async fn read(&self, document: ExpandedInput) -> Result<ExpandedDocument<IriBuf, BlankIdBuf>, JsonLdError> {
+    async fn read(&self, document: ExpandedText<'_>) -> Result<ExpandedDocument<IriBuf, BlankIdBuf>, JsonLdError> {
         match document {
-            ExpandedInput::Assembled(document) => self.expand(jsonld_syntax::Value::from_serde_json(document)).await,
-            ExpandedInput::Canonical(document) => {
-                let json = jsonld_syntax::Value::from_serde_json(document);
-                // clone: the direct reader consumes the document, and the one
-                // it cannot take as it stands is expanded instead.
-                match ExpandedDocument::try_from_json_in(no_vocabulary_mut(), json.clone()) {
-                    Ok(read) if every_member_key_is_an_identifier(&read) => Ok(read),
-                    Ok(_) => {
-                        tracing::warn!("A canonical document carries a member key that is not an absolute IRI; expanding it");
-                        self.expand(json).await
-                    }
-                    Err(error) => {
-                        tracing::warn!(error = %error, "A canonical document is not in expanded form; expanding it");
-                        self.expand(json).await
-                    }
+            ExpandedText::Assembled(text) => self.expand(text).await,
+            ExpandedText::Canonical(text) => match ExpandedDocument::try_from_json_slice_in(no_vocabulary_mut(), text) {
+                Ok(read) if every_member_key_is_an_identifier(&read) => Ok(read),
+                Ok(_) => {
+                    tracing::warn!("A canonical document carries a member key that is not an absolute IRI; expanding it");
+                    self.expand(text).await
                 }
-            }
+                Err(ExpandedJsonTextError::Invalid(error)) => {
+                    tracing::warn!(error = %error, "A canonical document is not in expanded form; expanding it");
+                    self.expand(text).await
+                }
+                Err(ExpandedJsonTextError::Syntax(error)) => Err(ProcessorTextError::from(error).into()),
+            },
         }
     }
 
     /// Take a document through the expansion algorithm into the processor's
     /// own form, normalizing it: a lone value becomes an array, and a member
     /// whose key is not an absolute IRI is dropped.
-    async fn expand(&self, document: jsonld_syntax::Value) -> Result<ExpandedDocument<IriBuf, BlankIdBuf>, JsonLdError> {
-        check_syntax_document_contexts(self.engine.loader(), &document).await?;
-        let remote: RemoteDocument<IriBuf> = RemoteDocument::new(None, None, document);
-        JsonLdProcessor::expand_full(&remote, no_vocabulary_mut(), self.engine.loader(), Options::default(), ())
-            .await
-            .map_err(|error| {
+    async fn expand(&self, text: &[u8]) -> Result<ExpandedDocument<IriBuf, BlankIdBuf>, JsonLdError> {
+        let document: &RawValue = serde_json::from_slice(text)?;
+        check_document_contexts(self.engine.loader(), JsonPiece::new(document)).await?;
+        expand_slice(
+            text,
+            no_vocabulary_mut(),
+            ActiveContext::new(None),
+            None,
+            self.engine.loader(),
+            Options::<IriBuf>::default().expansion_options(),
+            (),
+        )
+        .await
+        .map_err(|error| match error {
+            SliceExpansionError::Syntax(error) => JsonLdError::from(ProcessorTextError::from(error)),
+            SliceExpansionError::Expansion(error) => {
                 tracing::error!(error = %error, "Compaction failed");
-                JsonLdError::from(CompactError::Expand(error))
-            })
+                JsonLdError::from(CompactError::Expand(ExpandError::Expansion(error)))
+            }
+        })
     }
 
     /// The processed request context, for a compaction that selects terms
@@ -226,17 +247,25 @@ fn every_member_key_is_an_identifier(document: &ExpandedDocument<IriBuf, BlankId
 }
 
 /// Whether every member key below an object names an IRI or a blank node.
+///
+/// Recurses once per nesting level of the document, each level on sufficient
+/// native stack.
 fn object_keys_are_identifiers(object: &Object<IriBuf, BlankIdBuf>) -> bool {
-    match object {
+    on_sufficient_stack(|| match object {
         Object::Value(_) => true,
         Object::List(list) => list.iter().all(|item| object_keys_are_identifiers(item.inner())),
         Object::Node(node) => node_keys_are_identifiers(node),
-    }
+    })
 }
 
 /// Whether every member key of a node, and of every node below it, names an
 /// IRI or a blank node.
 fn node_keys_are_identifiers(node: &Node<IriBuf, BlankIdBuf>) -> bool {
+    on_sufficient_stack(|| node_members_are_identifiers(node))
+}
+
+/// [`node_keys_are_identifiers`] on the stack the caller left.
+fn node_members_are_identifiers(node: &Node<IriBuf, BlankIdBuf>) -> bool {
     node.properties()
         .iter()
         .all(|(key, objects)| key.is_valid() && objects.iter().all(|object| object_keys_are_identifiers(object.inner())))
@@ -265,12 +294,13 @@ mod tests {
         context_spec::ContextSpec,
         core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
         engine::{
-            expanded_input::ExpandedInput,
+            expanded_text::ExpandedText,
             options::{CompactOptions, ContextStripping},
             processor::JsonLdEngine,
         },
         error::JsonLdError,
         loader::replaceable_row::ReplaceableRow,
+        test_documents::{expanded_document, literal},
     };
     use iri_rs::IriBuf;
     use jsonld::{
@@ -279,6 +309,7 @@ mod tests {
         RemoteDocument,
         syntax::{Context as JsonLdContext, TryFromJson},
     };
+    use jstrict::{Print, parse::parse_str_value};
     use rdfx::vocabulary::{BlankIdIndex, IndexVocabulary, IriIndex};
     use serde_json::{Value, json};
     use std::sync::Arc;
@@ -318,12 +349,12 @@ mod tests {
     /// The request context of clause C.2.4, carried in the body so the test
     /// needs no network.
     fn example_body_context() -> ContextSpec {
-        ContextSpec::from_body(json!({
+        ContextSpec::from_body(literal(&json!({
             "Vehicle": "http://example.org/vehicle/Vehicle",
             "brandName": "http://example.org/vehicle/brandName",
             "speed": "http://example.org/vehicle/speed",
             "isParked": {"@type": "@id", "@id": "http://example.org/common/isParked"}
-        }))
+        })))
     }
 
     /// Compaction as the engine performed it before contexts were prepared
@@ -331,12 +362,9 @@ mod tests {
     /// processed for it alone, with the `@context` removed afterwards when it
     /// is not kept. The prepared path must match it byte for byte.
     async fn per_document_compaction(engine: &JsonLdEngine, document: Value, spec: &ContextSpec, options: CompactOptions) -> Value {
-        let context = match spec.to_context_value() {
-            Some(value) => JsonLdContext::try_from_json(&jsonld_syntax::Value::from_serde_json(value)).expect("a JSON-LD context"),
-            None => JsonLdContext::default(),
-        };
+        let context = JsonLdContext::try_from_json(&parse_str_value(spec.resolved_context().text()).expect("JSON")).expect("a JSON-LD context");
         let mut vocabulary: IndexVocabulary<IriIndex, BlankIdIndex> = IndexVocabulary::new();
-        let remote: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, jsonld_syntax::Value::from_serde_json(document));
+        let remote: RemoteDocument<IriIndex> = RemoteDocument::new(None, None, parse_str_value(&document.to_string()).expect("JSON"));
         let compacted = remote
             .compact_with(
                 &mut vocabulary,
@@ -345,7 +373,7 @@ mod tests {
             )
             .await
             .expect("per-document compaction succeeds");
-        let mut compacted = jsonld_syntax::Value::into_serde_json(compacted);
+        let mut compacted: Value = serde_json::from_str(&compacted.compact_print().to_string()).expect("JSON");
         if options.strip_context == ContextStripping::Strip
             && let Some(object) = compacted.as_object_mut()
         {
@@ -361,16 +389,22 @@ mod tests {
     #[tokio::test]
     async fn prepared_compaction_matches_per_document_compaction_byte_for_byte() {
         let engine = offline_engine();
-        let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
+        let expanded = expanded_document(&engine, &normalized_entity(), &ContextSpec::none())
+            .await
+            .expect("expansion succeeds");
         let specs = [ContextSpec::none(), ContextSpec::core_only(), example_body_context()];
 
         for spec in &specs {
             for options in [STRIP, KEEP] {
-                let prepared = engine
-                    .compactor(spec)
-                    .compact(ExpandedInput::Assembled(expanded.clone()), options)
-                    .await
-                    .expect("prepared compaction succeeds");
+                let prepared: Value = serde_json::from_str(
+                    engine
+                        .compactor(spec)
+                        .compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), options)
+                        .await
+                        .expect("prepared compaction succeeds")
+                        .get(),
+                )
+                .expect("JSON");
                 let reference = per_document_compaction(&engine, expanded.clone(), spec, options).await;
 
                 pretty_assertions::assert_eq!(
@@ -387,20 +421,26 @@ mod tests {
         let engine = offline_engine();
         let spec = example_body_context();
         let compactor = engine.compactor(&spec);
-        let first = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
-        let second = engine
-            .expand(
-                json!({"id": "urn:ngsi-ld:Vehicle:B", "type": "Vehicle", "speed": {"type": "Property", "value": 12}}),
-                &ContextSpec::none(),
-            )
+        let first = expanded_document(&engine, &normalized_entity(), &ContextSpec::none())
             .await
             .expect("expansion succeeds");
+        let second = expanded_document(
+            &engine,
+            &json!({"id": "urn:ngsi-ld:Vehicle:B", "type": "Vehicle", "speed": {"type": "Property", "value": 12}}),
+            &ContextSpec::none(),
+        )
+        .await
+        .expect("expansion succeeds");
 
         for document in [first, second] {
-            let prepared = compactor
-                .compact(ExpandedInput::Assembled(document.clone()), STRIP)
-                .await
-                .expect("prepared compaction succeeds");
+            let prepared: Value = serde_json::from_str(
+                compactor
+                    .compact(ExpandedText::Assembled(document.to_string().as_bytes()), STRIP)
+                    .await
+                    .expect("prepared compaction succeeds")
+                    .get(),
+            )
+            .expect("JSON");
             pretty_assertions::assert_eq!(prepared, per_document_compaction(&engine, document, &spec, STRIP).await);
         }
     }
@@ -410,16 +450,27 @@ mod tests {
         let engine = offline_engine();
         let spec = example_body_context();
         let compactor = engine.compactor(&spec);
-        let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
+        let expanded = expanded_document(&engine, &normalized_entity(), &ContextSpec::none())
+            .await
+            .expect("expansion succeeds");
 
-        let mut kept = compactor
-            .compact(ExpandedInput::Assembled(expanded.clone()), KEEP)
+        let kept = compactor
+            .compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), KEEP)
             .await
             .expect("compaction succeeds");
-        let stripped = compactor.compact(ExpandedInput::Assembled(expanded), STRIP).await.expect("compaction succeeds");
+        let mut kept: Value = serde_json::from_str(kept.get()).expect("JSON");
+        let stripped: Value = serde_json::from_str(
+            compactor
+                .compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), STRIP)
+                .await
+                .expect("compaction succeeds")
+                .get(),
+        )
+        .expect("JSON");
         let context = kept.as_object_mut().and_then(|object| object.remove("@context"));
 
-        pretty_assertions::assert_eq!(context, spec.to_context_value());
+        let resolved: Value = serde_json::from_str(spec.resolved_context().text()).expect("JSON");
+        pretty_assertions::assert_eq!(context, Some(resolved));
         pretty_assertions::assert_eq!(kept, stripped);
     }
 
@@ -428,15 +479,17 @@ mod tests {
         let engine = offline_engine();
         let spec = example_body_context();
         let compactor = engine.compactor(&spec);
-        let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
+        let expanded = expanded_document(&engine, &normalized_entity(), &ContextSpec::none())
+            .await
+            .expect("expansion succeeds");
 
         compactor
-            .compact(ExpandedInput::Assembled(expanded.clone()), STRIP)
+            .compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), STRIP)
             .await
             .expect("first compaction succeeds");
         let first = Arc::clone(compactor.prepared.get().expect("the first document prepared the context"));
         compactor
-            .compact(ExpandedInput::Assembled(expanded), STRIP)
+            .compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), STRIP)
             .await
             .expect("second compaction succeeds");
         let second = compactor.prepared.get().expect("the context stays prepared");
@@ -447,18 +500,20 @@ mod tests {
     #[tokio::test]
     async fn an_embedded_context_is_processed_once_across_compactors() {
         let engine = offline_engine();
-        let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
+        let expanded = expanded_document(&engine, &normalized_entity(), &ContextSpec::none())
+            .await
+            .expect("expansion succeeds");
         let none = ContextSpec::none();
         let versioned = ContextSpec::from_link(iri_ref(NGSI_LD_CORE_CONTEXT_V16_URL.as_str()));
         let first = engine.compactor(&none);
         let second = engine.compactor(&versioned);
 
         first
-            .compact(ExpandedInput::Assembled(expanded.clone()), STRIP)
+            .compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), STRIP)
             .await
             .expect("first compaction succeeds");
         second
-            .compact(ExpandedInput::Assembled(expanded), STRIP)
+            .compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), STRIP)
             .await
             .expect("second compaction succeeds");
 
@@ -482,7 +537,7 @@ mod tests {
     /// 6.3.16), the next operation processes the document the loader holds now.
     #[tokio::test]
     async fn a_context_whose_document_is_read_again_is_processed_again() {
-        let row = Arc::new(ReplaceableRow::new(json!({ "@context": { "alpha": "http://example.org/a" } })));
+        let row = Arc::new(ReplaceableRow::new(&json!({ "@context": { "alpha": "http://example.org/a" } })));
         let engine = JsonLdEngine::builder()
             .allow_remote(false)
             .with_l2_cache(Arc::clone(&row) as Arc<dyn ContextCache>)
@@ -491,19 +546,26 @@ mod tests {
         let url = iri_ref("https://example.org/stored.jsonld");
         let spec = ContextSpec::from_link(url.clone()); // clone: the invalidation below names the same URL
         let document = json!({"id": "urn:ngsi-ld:Thing:1", "type": "Thing", "http://example.org/a": {"type": "Property", "value": 1}});
-        let expanded = engine.expand(document, &ContextSpec::none()).await.expect("expansion succeeds");
+        let expanded = expanded_document(&engine, &document, &ContextSpec::none()).await.expect("expansion succeeds");
 
         let first = engine.compactor(&spec).processed_context().await.expect("the context processes");
         let kept = engine.compactor(&spec).processed_context().await.expect("the context processes");
         assert!(Arc::ptr_eq(&first, &kept), "an unchanged document keeps its processed context");
 
-        row.replace(json!({ "@context": { "beta": "http://example.org/a" } }));
+        row.replace(&json!({ "@context": { "beta": "http://example.org/a" } }));
         engine.invalidate_context(&url).await;
         let compactor = engine.compactor(&spec);
         let reprocessed = compactor.processed_context().await.expect("the context processes");
         assert!(!Arc::ptr_eq(&first, &reprocessed), "the document read again is processed again");
 
-        let compacted = compactor.compact(ExpandedInput::Assembled(expanded), STRIP).await.expect("compaction succeeds");
+        let compacted: Value = serde_json::from_str(
+            compactor
+                .compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), STRIP)
+                .await
+                .expect("compaction succeeds")
+                .get(),
+        )
+        .expect("JSON");
         assert!(compacted.get("beta").is_some(), "compacted under the document read again: {compacted}");
     }
 
@@ -514,10 +576,15 @@ mod tests {
         let engine = offline_engine();
         let spec = example_body_context();
         let compactor = engine.compactor(&spec);
-        let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
+        let expanded = expanded_document(&engine, &normalized_entity(), &ContextSpec::none())
+            .await
+            .expect("expansion succeeds");
 
         let processed = compactor.processed_context().await.expect("the context processes");
-        compactor.compact(ExpandedInput::Assembled(expanded), STRIP).await.expect("compaction succeeds");
+        compactor
+            .compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), STRIP)
+            .await
+            .expect("compaction succeeds");
 
         assert!(Arc::ptr_eq(&processed, compactor.prepared.get().expect("the context stays prepared")));
         assert!(processed.active_context().get("brandName").is_some(), "the request's own terms are defined");
@@ -528,10 +595,10 @@ mod tests {
     #[tokio::test]
     async fn the_processed_context_of_a_protected_term_redefinition_is_the_core_context() {
         let engine = offline_engine();
-        let spec = ContextSpec::from_body(json!([
+        let spec = ContextSpec::from_body(literal(&json!([
             {"@protected": true, "speed": "http://example.org/protected/speed"},
             {"speed": "http://example.org/redefined/speed"}
-        ]));
+        ])));
         let core = ContextSpec::core_only();
 
         let processed = engine.compactor(&spec).processed_context().await.expect("the fallback processes");
@@ -554,10 +621,12 @@ mod tests {
         let engine = offline_engine();
         let spec = ContextSpec::from_link(iri_ref("https://example.com/unreachable.jsonld"));
         let compactor = engine.compactor(&spec);
-        let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
+        let expanded = expanded_document(&engine, &normalized_entity(), &ContextSpec::none())
+            .await
+            .expect("expansion succeeds");
 
-        let first = compactor.compact(ExpandedInput::Assembled(expanded.clone()), STRIP).await;
-        let second = compactor.compact(ExpandedInput::Assembled(expanded), STRIP).await;
+        let first = compactor.compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), STRIP).await;
+        let second = compactor.compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), STRIP).await;
 
         assert!(first.as_ref().is_err_and(JsonLdError::is_context_not_available), "got {first:?}");
         assert!(second.as_ref().is_err_and(JsonLdError::is_context_not_available), "got {second:?}");
@@ -571,17 +640,23 @@ mod tests {
     #[tokio::test]
     async fn a_context_redefining_a_protected_term_compacts_every_document_against_the_core_context() {
         let engine = offline_engine();
-        let spec = ContextSpec::from_body(json!([
+        let spec = ContextSpec::from_body(literal(&json!([
             {"@protected": true, "speed": "http://example.org/protected/speed"},
             {"speed": "http://example.org/redefined/speed"}
-        ]));
-        let expanded = engine.expand(normalized_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
-
-        let compacted = engine
-            .compactor(&spec)
-            .compact(ExpandedInput::Assembled(expanded.clone()), STRIP)
+        ])));
+        let expanded = expanded_document(&engine, &normalized_entity(), &ContextSpec::none())
             .await
-            .expect("the fallback compacts");
+            .expect("expansion succeeds");
+
+        let compacted: Value = serde_json::from_str(
+            engine
+                .compactor(&spec)
+                .compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), STRIP)
+                .await
+                .expect("the fallback compacts")
+                .get(),
+        )
+        .expect("JSON");
         let core_only = per_document_compaction(&engine, expanded, &ContextSpec::core_only(), STRIP).await;
 
         pretty_assertions::assert_eq!(compacted, core_only);
@@ -593,31 +668,38 @@ mod tests {
     #[tokio::test]
     async fn a_type_scoped_protected_term_redefinition_falls_back_for_that_document_alone() {
         let engine = offline_engine();
-        let spec = ContextSpec::from_body(json!({
+        let spec = ContextSpec::from_body(literal(&json!({
             "Vehicle": {"@id": "http://example.org/vehicle/Vehicle", "@context": {"type": "http://example.org/redefined/type"}},
             "speed": "http://example.org/vehicle/speed"
-        }));
+        })));
         let compactor = engine.compactor(&spec);
-        let vehicle = engine
-            .expand(
-                json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "http://example.org/vehicle/Vehicle", "http://example.org/vehicle/speed": {"type": "Property", "value": 1}}),
+        let vehicle = expanded_document(&engine, &json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "http://example.org/vehicle/Vehicle", "http://example.org/vehicle/speed": {"type": "Property", "value": 1}}),
                 &ContextSpec::none(),
             )
             .await
             .expect("expansion succeeds");
-        let bicycle = engine
-            .expand(
-                json!({"id": "urn:ngsi-ld:Bicycle:1", "type": "http://example.org/vehicle/Bicycle", "http://example.org/vehicle/speed": {"type": "Property", "value": 2}}),
+        let bicycle = expanded_document(&engine, &json!({"id": "urn:ngsi-ld:Bicycle:1", "type": "http://example.org/vehicle/Bicycle", "http://example.org/vehicle/speed": {"type": "Property", "value": 2}}),
                 &ContextSpec::none(),
             )
             .await
             .expect("expansion succeeds");
 
-        let vehicle_compacted = compactor
-            .compact(ExpandedInput::Assembled(vehicle.clone()), STRIP)
-            .await
-            .expect("the fallback compacts");
-        let bicycle_compacted = compactor.compact(ExpandedInput::Assembled(bicycle), STRIP).await.expect("compaction succeeds");
+        let vehicle_compacted: Value = serde_json::from_str(
+            compactor
+                .compact(ExpandedText::Assembled(vehicle.to_string().as_bytes()), STRIP)
+                .await
+                .expect("the fallback compacts")
+                .get(),
+        )
+        .expect("JSON");
+        let bicycle_compacted: Value = serde_json::from_str(
+            compactor
+                .compact(ExpandedText::Assembled(bicycle.to_string().as_bytes()), STRIP)
+                .await
+                .expect("compaction succeeds")
+                .get(),
+        )
+        .expect("JSON");
 
         pretty_assertions::assert_eq!(
             vehicle_compacted,
@@ -687,14 +769,22 @@ mod tests {
     /// through expansion as assembled, rendered to JSON text.
     async fn both_readings(engine: &JsonLdEngine, spec: &ContextSpec, expanded: &Value, options: CompactOptions) -> (String, String) {
         let compactor = engine.compactor(spec);
-        let canonical = compactor
-            .compact(ExpandedInput::Canonical(expanded.clone()), options)
-            .await
-            .expect("canonical compaction succeeds");
-        let assembled = compactor
-            .compact(ExpandedInput::Assembled(expanded.clone()), options)
-            .await
-            .expect("assembled compaction succeeds");
+        let canonical: Value = serde_json::from_str(
+            compactor
+                .compact(ExpandedText::Canonical(expanded.to_string().as_bytes()), options)
+                .await
+                .expect("canonical compaction succeeds")
+                .get(),
+        )
+        .expect("JSON");
+        let assembled: Value = serde_json::from_str(
+            compactor
+                .compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), options)
+                .await
+                .expect("assembled compaction succeeds")
+                .get(),
+        )
+        .expect("JSON");
         (
             serde_json::to_string(&canonical).expect("canonical JSON"),
             serde_json::to_string(&assembled).expect("assembled JSON"),
@@ -708,19 +798,20 @@ mod tests {
     #[tokio::test]
     async fn a_canonical_document_read_directly_compacts_exactly_as_expanded() {
         let engine = offline_engine();
-        let with_times = engine.expand(every_family_entity(), &ContextSpec::none()).await.expect("expansion succeeds");
-        let without_times = engine
-            .expand(without_system_times(every_family_entity()), &ContextSpec::none())
+        let with_times = expanded_document(&engine, &every_family_entity(), &ContextSpec::none())
             .await
             .expect("expansion succeeds");
-        let type_scoped = ContextSpec::from_body(json!({
+        let without_times = expanded_document(&engine, &without_system_times(every_family_entity()), &ContextSpec::none())
+            .await
+            .expect("expansion succeeds");
+        let type_scoped = ContextSpec::from_body(literal(&json!({
             "Vehicle": {"@id": "https://uri.etsi.org/ngsi-ld/default-context/Vehicle", "@context": {"speed": "http://example.org/scoped/speed"}},
             "speed": "https://uri.etsi.org/ngsi-ld/default-context/speed"
-        }));
-        let protected_term_redefinition = ContextSpec::from_body(json!([
+        })));
+        let protected_term_redefinition = ContextSpec::from_body(literal(&json!([
             {"@protected": true, "speed": "http://example.org/protected/speed"},
             {"speed": "http://example.org/redefined/speed"}
-        ]));
+        ])));
         let specs = [
             ContextSpec::none(),
             ContextSpec::core_only(),

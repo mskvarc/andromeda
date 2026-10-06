@@ -39,8 +39,9 @@ use andromeda_federation::{
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{entity::Entity, query::body::Query, snapshot::ExecutionResultDetails};
+use andromeda_ngsi_ld_model::{query::body::Query, snapshot::ExecutionResultDetails};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     page_window::{PageStart, PageWindow},
@@ -78,7 +79,8 @@ impl PendingSources {
         self.answers
             .iter_mut()
             .filter_map(|answer| {
-                let (claimed, kept): (Vec<Entity>, Vec<Entity>) = answer.entities.drain(..).partition(|entity| held.contains(&entity.id));
+                let (claimed, kept): (Vec<ReceivedState>, Vec<ReceivedState>) =
+                    answer.entities.drain(..).partition(|received| held.contains(received.state.id()));
                 answer.entities = kept;
                 (!claimed.is_empty()).then(|| ForwardedEntities {
                     registration_id: answer.registration_id.clone(), // clone: the claimed part names the registration the rest still names
@@ -144,7 +146,7 @@ impl SnapshotExecutor {
         }
         let every_source_failed = !collect_warnings(&pending.answers).is_empty() && !pending.holds_entities();
 
-        let capture = ForwardedCapture::new(self.sources.entity_query.engine(), context, self.attribute_nesting);
+        let capture = ForwardedCapture::new(self.attribute_nesting);
         let mut ledger = CaptureLedger {
             captured: HashSet::new(),
             materialized: materialized_entities,
@@ -194,7 +196,7 @@ impl SnapshotExecutor {
                 narrow_captured(state, captured_at, params.dataset_id.as_deref());
             }
             let claimed = pending.claim(states.iter().map(EntityState::id));
-            let states = match merge_claimed(&capture, states, claimed, captured_at).await {
+            let states = match merge_claimed(&capture, states, claimed, captured_at) {
                 Ok(states) => states,
                 Err(error) => return Ok(failure_detail(error.to_string())),
             };
@@ -208,11 +210,11 @@ impl SnapshotExecutor {
         }
 
         // The source entities no local page held, merged across sources.
-        let remaining = EntityQueryService::merge_with_forwarded(Vec::new(), pending.answers, None);
+        let remaining = EntityQueryService::merge_with_forwarded(Vec::new(), pending.answers, &[]);
         let mut remaining = remaining.into_iter().peekable();
         while remaining.peek().is_some() {
             let page = remaining.by_ref().take(self.capture_page_size as usize).collect();
-            let states = match capture.states(page).await {
+            let states = match capture.states(page, Utc::now()) {
                 Ok(states) => states,
                 Err(error) => return Ok(failure_detail(error.to_string())),
             };
@@ -283,8 +285,8 @@ impl SnapshotExecutor {
 
 /// One local page's states, the ones a source also answered for merged with
 /// what it answered; the others stay as stored.
-async fn merge_claimed(
-    capture: &ForwardedCapture<'_>,
+fn merge_claimed(
+    capture: &ForwardedCapture,
     states: Vec<EntityState>,
     claimed: Vec<ForwardedEntities>,
     captured_at: DateTime<Utc>,
@@ -293,10 +295,13 @@ async fn merge_claimed(
         return Ok(states);
     }
     let (answered, unanswered): (Vec<EntityState>, Vec<EntityState>) = {
-        let answered_ids: HashSet<&Identifier> = claimed.iter().flat_map(|answer| answer.entities.iter().map(|entity| &entity.id)).collect();
+        let answered_ids: HashSet<&Identifier> = claimed
+            .iter()
+            .flat_map(|answer| answer.entities.iter().map(|received| received.state.id()))
+            .collect();
         states.into_iter().partition(|state| answered_ids.contains(state.id()))
     };
-    let mut merged = capture.merged(&answered, claimed, captured_at).await?;
+    let mut merged = capture.merged(answered, claimed, captured_at)?;
     merged.extend(unanswered);
     Ok(merged)
 }
@@ -305,12 +310,19 @@ async fn merge_claimed(
 mod tests {
     use crate::executor::entity_capture::PendingSources;
     use andromeda_federation::outcome::ForwardedEntities;
+    use andromeda_ngsi_ld_entity::entity_state::EntityState;
+    use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::{entity::Entity, registration::forwarding_mode::ForwardingMode};
+    use andromeda_ngsi_ld_model::{entity_system_times::EntitySystemTimes, registration::forwarding_mode::ForwardingMode};
     use serde_json::json;
 
-    fn entity(id: &str) -> Entity {
-        serde_json::from_value(json!({"id": id, "type": "Vehicle"})).expect("a valid entity")
+    fn entity(id: &str) -> ReceivedState {
+        let stored = json!([{"@id": id, "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Vehicle"]}]);
+        ReceivedState {
+            state: EntityState::from_slice(stored.to_string().as_bytes()).expect("a stored state"),
+            system_times: EntitySystemTimes::default(),
+            linked: Vec::new(),
+        }
     }
 
     fn identifier(id: &str) -> Identifier {
@@ -330,7 +342,7 @@ mod tests {
     fn ids(answers: &[ForwardedEntities]) -> Vec<&str> {
         answers
             .iter()
-            .flat_map(|answer| answer.entities.iter().map(|entity| entity.id.as_str()))
+            .flat_map(|answer| answer.entities.iter().map(|received| received.state.id().as_str()))
             .collect()
     }
 

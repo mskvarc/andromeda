@@ -7,10 +7,8 @@ use andromeda_ngsi_ld_render::error::RenderError;
 /// Failures local to the source-identity HTTP binding.
 #[derive(Debug, thiserror::Error)]
 pub enum SourceIdentityError {
-    /// The typed identity could not be serialized for the renderer.
-    #[error("context source identity serialization failed")]
-    Serialization(#[from] serde_json::Error),
-    /// The negotiated response representation could not be rendered.
+    /// The identity could not be written in the negotiated response
+    /// representation.
     #[error("context source identity rendering failed")]
     Rendering(#[from] RenderError),
     /// The request context the response names could not be presented or
@@ -23,7 +21,6 @@ pub enum SourceIdentityError {
 #[must_use]
 pub fn classify(error: &SourceIdentityError) -> ClassifiedReport {
     match error {
-        SourceIdentityError::Serialization(_) => ClassifiedReport::internal(error, InternalFailureSummary::RESPONSE_ENCODING),
         SourceIdentityError::Rendering(_) => ClassifiedReport::internal(error, InternalFailureSummary::RESPONSE_RENDERING),
         SourceIdentityError::ResponseContext(source) => classify_response_context_error(source),
     }

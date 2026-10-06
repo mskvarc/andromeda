@@ -18,7 +18,6 @@ use andromeda_ngsi_ld_model::{
     attribute_list::{AttributeDetail, AttributeResourceType},
     entity_type_list::{EntityTypeInfo, EntityTypeInfoType},
 };
-use serde_json::Value;
 
 impl EntityDiscoveryService {
     /// Return detailed information for a single entity type (clause 5.2.26):
@@ -43,7 +42,7 @@ impl EntityDiscoveryService {
         type_name: &EntityTypeName,
         scope: DiscoveryScope,
         context: &ContextSpec,
-    ) -> Result<Value, EntityError> {
+    ) -> Result<EntityTypeInfo, EntityError> {
         let prepared_context = self.engine.prepare_term_context(context);
         let names = request_name_compaction(&self.engine, context).await?;
         let type_iri = self.engine.expand_type(type_name.as_str(), &prepared_context).await?;
@@ -82,15 +81,13 @@ impl EntityDiscoveryService {
             });
         }
 
-        let type_info = EntityTypeInfo::builder()
+        Ok(EntityTypeInfo::builder()
             .id(type_iri)
             .type_(EntityTypeInfoType)
             .type_name(compacted_type_name(&names, &type_key)?)
             .entity_count(entity_count)
             .attribute_details(attribute_details)
-            .build();
-
-        Ok(serde_json::to_value(type_info)?)
+            .build())
     }
 }
 

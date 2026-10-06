@@ -20,30 +20,21 @@ use andromeda_ngsi_ld_entity::expanded_value_name::ExpandedValueName;
 use jsonld::{BlankIdBuf, IriBuf, Term, syntax::Keyword};
 use std::sync::Arc;
 
-/// How a geometry is written.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GeometryOutput {
-    /// As the compacted `GeoJSON` object, every position written out.
-    Written,
-    /// As the typed geometry it is, wherever the compact model reads the
-    /// compacted object as that geometry, so no position is written only to
-    /// be read back.
-    Typed,
-}
-
 /// One run of the walk over one document.
+///
+/// A geometry is written as the typed geometry it is wherever the compact model
+/// reads the compacted object as that geometry, so no position is written only
+/// to be read back.
 #[derive(Debug)]
 pub(crate) struct Walk<'t> {
     /// The processed context every decision is taken in.
     pub(crate) terms: &'t TermContext,
-    /// How geometries are written.
-    pub(crate) geometries: GeometryOutput,
 }
 
 impl<'t> Walk<'t> {
-    /// A walk writing geometries as `geometries` says.
-    pub(crate) const fn new(terms: &'t TermContext, geometries: GeometryOutput) -> Walk<'t> {
-        Walk { terms, geometries }
+    /// A walk deciding every term in `terms`.
+    pub(crate) const fn new(terms: &'t TermContext) -> Walk<'t> {
+        Walk { terms }
     }
 
     /// Compact one item that is not a list written under its own key: a

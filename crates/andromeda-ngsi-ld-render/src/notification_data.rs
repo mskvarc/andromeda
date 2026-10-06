@@ -86,9 +86,19 @@ mod tests {
     };
     use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_json_literal::JsonLiteral;
+    use andromeda_linked_retrieval::{
+        graph::{LinkedGraph, RootEdges},
+        join::RetrievingJoin,
+        narrowing::{list::ListInForce, member::MemberRule},
+        plan::JoinPlan,
+        representation::LinkedRepresentation,
+        typed::TypedEntities,
+    };
     use andromeda_ngsi_ld_model::entity::Entity;
+    use andromeda_ngsi_ld_query::projection::attribute_iri_index::AttributeIriIndex;
     use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
     use serde_json::{Value, json};
+    use std::{num::NonZeroU32, thread};
 
     fn located_building(id: &str) -> Entity {
         serde_json::from_value(json!({
@@ -106,6 +116,11 @@ mod tests {
     /// The `data` two Buildings are written into for `media_type`, carrying
     /// `context` when the body does.
     fn written(media_type: ResponseMediaType, context: Option<&JsonLiteral>) -> Value {
+        serde_json::from_str(&written_text(media_type, context)).expect("the written data is JSON")
+    }
+
+    /// The raw `data` text `written` parses.
+    fn written_text(media_type: ResponseMediaType, context: Option<&JsonLiteral>) -> String {
         let buildings = [located_building("urn:ngsi-ld:Building:1"), located_building("urn:ngsi-ld:Building:2")];
         let stamped = StampedInstants::default();
         let entities: Vec<NotificationEntity<'_>> = buildings
@@ -118,7 +133,20 @@ mod tests {
             context,
         };
         let data = notification_data(&entities, shape).expect("the data is written");
-        serde_json::from_str(data.text()).expect("the written data is JSON")
+        data.text().to_owned()
+    }
+
+    /// Clause 6.3.6: `@context` is the first member of every Entity of an
+    /// `application/ld+json` notification and of an `application/geo+json`
+    /// `FeatureCollection`.
+    #[test]
+    fn a_response_context_member_comes_first_in_notification_data() {
+        let context = context();
+        let ld = written_text(ResponseMediaType::JsonLd, Some(&context));
+        assert!(ld.starts_with(r#"[{"@context":"#), "{ld}");
+        assert!(ld.contains(r#"},{"@context":"#), "{ld}");
+        let geo = written_text(ResponseMediaType::GeoJson, Some(&context));
+        assert!(geo.starts_with(r#"{"@context":"#), "{geo}");
     }
 
     /// Table 5.3.1-1: an endpoint that did not ask for `application/geo+json`
@@ -164,6 +192,87 @@ mod tests {
             assert!(feature.get("@context").is_none(), "{feature}");
             assert!(feature["properties"].get("@context").is_none(), "{feature}");
         }
+    }
+
+    /// Clause 5.8.6: each notified entity is written once into the one `data`
+    /// text, so a notification of two entities names each of them once.
+    #[test]
+    fn an_entity_is_written_once_per_notification() {
+        let buildings = [located_building("urn:ngsi-ld:Building:1"), located_building("urn:ngsi-ld:Building:2")];
+        let stamped = StampedInstants::default();
+        let entities: Vec<NotificationEntity<'_>> = buildings
+            .iter()
+            .map(|building| NotificationEntity::new(building, &stamped, ResponseFormat::Normalized, TargetSpelling::Decoded))
+            .collect();
+        let shape = DataShape {
+            media_type: ResponseMediaType::Json,
+            selection: GeometrySelection::new(None, &[]),
+            context: None,
+        };
+        let data = notification_data(&entities, shape).expect("the data is written");
+        for building in &buildings {
+            pretty_assertions::assert_eq!(data.text().matches(building.id.as_str()).count(), 1, "{}", data.text());
+        }
+        pretty_assertions::assert_eq!(data.text().matches(r#""type":"Building""#).count(), 2, "{}", data.text());
+    }
+
+    /// Links in the chain the deep joined notification nests.
+    const CHAIN: u32 = 2_000;
+
+    /// The `index`th entity of the chain, naming the next one through `next`.
+    fn link(index: u32) -> Entity {
+        serde_json::from_value(json!({
+            "id": format!("urn:ngsi-ld:Link:{index}"),
+            "type": "Link",
+            "next": {"type": "Relationship", "object": format!("urn:ngsi-ld:Link:{}", index + 1)}
+        }))
+        .expect("a chain link decodes")
+    }
+
+    /// The `data` a `join=inline` notification of the chain root is written
+    /// as, built and released inside the calling thread.
+    fn joined_chain_data() -> String {
+        let root = link(0);
+        let nodes: Vec<Entity> = (1..=CHAIN).map(link).collect();
+        let RootEdges { ids, mut edges } = RootEdges::of::<TypedEntities>([&root]);
+        for node in &nodes {
+            TypedEntities::edges(node, &mut edges);
+        }
+        let graph = LinkedGraph {
+            roots: ids,
+            nodes: nodes.into_iter().map(|node| (node.id.clone(), node)).collect(), // clone: the graph keys its nodes by owned identifiers
+            edges,
+            failures: Vec::new(),
+            depth: NonZeroU32::new(CHAIN).expect("a positive depth"),
+        };
+        let index = AttributeIriIndex::new();
+        let JoinPlan::Inline(plan) = JoinPlan::<TypedEntities>::new(RetrievingJoin::Inline, &graph, MemberRule::new(ListInForce::Unrestricted, &index)) else {
+            panic!("an inline join plans inline");
+        };
+        let stamped = StampedInstants::default();
+        let entity = NotificationEntity::new(&root, &stamped, ResponseFormat::Normalized, TargetSpelling::Decoded).with_inline_join(plan.cursor());
+        let shape = DataShape {
+            media_type: ResponseMediaType::Json,
+            selection: GeometrySelection::new(None, &[]),
+            context: None,
+        };
+        notification_data(&[entity], shape).expect("the chain is written").text().to_owned()
+    }
+
+    /// Clause 4.5.23 sets no `joinLevel` cap, so the depth of an inline join
+    /// in a notification is bounded by the data alone: a chain nested far
+    /// deeper than the thread's stack holds frames for is still written, and
+    /// the graph it is written from released, whole.
+    #[test]
+    fn a_2000_level_joined_notification_is_written_and_released_on_a_256_kib_thread() {
+        let written = thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(joined_chain_data)
+            .expect("the thread starts")
+            .join()
+            .expect("the chain is written and released without exhausting the stack");
+        pretty_assertions::assert_eq!(written.matches(r#""entity":"#).count(), usize::try_from(CHAIN).expect("a small count"));
+        assert!(written.contains(&format!(r#""id":"urn:ngsi-ld:Link:{CHAIN}""#)), "the last link is nested");
     }
 
     /// Table 5.3.1-1: with `Prefer: body=json` "the `FeatureCollection` will

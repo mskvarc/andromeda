@@ -423,6 +423,7 @@ mod tests {
             compiled_csf: None,
             local_only: false,
             ngsild_conformance: None,
+            lang: None,
             notification_projection: Projection::default(),
         }
     }
@@ -698,20 +699,18 @@ mod tests {
     #[test]
     fn matches_entity_filters_geo_near() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_geo_q = SubscriptionGeoFilter::from_stored(
-            Some(&serde_json::json!({"georel": "near;maxDistance==100000", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"})),
-            "test",
-        );
+        let stored = serde_json::from_value(serde_json::json!({"georel": "near;maxDistance==100000", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"}))
+            .expect("a readable geoQ");
+        sub.compiled_geo_q = SubscriptionGeoFilter::from_stored(Some(&stored), "test");
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
     #[test]
     fn matches_entity_filters_geo_near_too_far() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_geo_q = SubscriptionGeoFilter::from_stored(
-            Some(&serde_json::json!({"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"})),
-            "test",
-        );
+        let stored = serde_json::from_value(serde_json::json!({"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"}))
+            .expect("a readable geoQ");
+        sub.compiled_geo_q = SubscriptionGeoFilter::from_stored(Some(&stored), "test");
         assert!(!matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 

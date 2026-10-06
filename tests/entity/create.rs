@@ -185,6 +185,38 @@ async fn entity_create_invalid_type_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
+/// Clause 5.5.4 with IETF RFC 8259 section 4: an object naming one member twice
+/// is not syntactically correct data, so an entity repeating an attribute, or a
+/// member of one, is `BadRequestData` naming the repeated member.
+#[tokio::test]
+async fn entity_create_repeated_member_returns_400_naming_it() {
+    let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
+    let c = client();
+    let id = scope.id("Building:create_001_02_05");
+    let context = TEST_SUITE_CONTEXT.as_str();
+
+    for (body, location) in [
+        (
+            format!(
+                r#"{{"id":"{id}","type":"Building","name":{{"type":"Property","value":"a"}},"name":{{"type":"Property","value":"b"}},"@context":"{context}"}}"#
+            ),
+            "/name",
+        ),
+        (
+            format!(r#"{{"id":"{id}","type":"Building","name":{{"type":"Property","value":"a","value":"b"}},"@context":"{context}"}}"#),
+            "/name/value",
+        ),
+    ] {
+        let (status, problem) = create_entity_raw(&c, body.as_bytes(), "application/ld+json").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(problem["type"].as_str().is_some_and(|kind| kind.ends_with("BadRequestData")), "{problem}");
+        assert!(problem["detail"].as_str().is_some_and(|detail| detail.contains(location)), "{problem}");
+    }
+    let (status, _) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a refused entity is not created");
+    scope.finish().await.expect("cleanup failed");
+}
+
 // ---------------------------------------------------------------------------
 // 001_03: Duplicate entity ID
 // ---------------------------------------------------------------------------

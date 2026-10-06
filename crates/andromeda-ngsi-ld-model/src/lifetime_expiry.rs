@@ -9,9 +9,14 @@
 //! year and month parts, adds the day-and-below part as a fixed offset, and
 //! reports an unrepresentable result as [`None`] rather than panicking.
 
-use chrono::{DateTime, Datelike, Months, TimeDelta, Utc};
+use chrono::{DateTime, Datelike, Months, SubsecRound, TimeDelta, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use std::time::Duration as StdDuration;
+
+/// Fractional digits clause 4.6.3 admits in a `DateTime`, and so the
+/// resolution of the instants a broker mints: a finer clock reading would be
+/// rendered with digits the stored value does not keep.
+const MICROSECOND_DIGITS: u16 = 6;
 
 /// Largest whole-month advance considered. `DateTime<Utc>` spans roughly
 /// 262 000 years, so any greater count cannot land in range; the bound also
@@ -59,7 +64,9 @@ pub fn expiry(start: DateTime<Utc>, lifetime: &Iso8601Duration) -> Option<DateTi
     }
 
     let offset = StdDuration::try_from_secs_f64(offset_seconds).ok()?;
-    advanced.checked_add_signed(TimeDelta::from_std(offset).ok()?)
+    advanced
+        .checked_add_signed(TimeDelta::from_std(offset).ok()?)
+        .map(|end| end.trunc_subsecs(MICROSECOND_DIGITS))
 }
 
 /// The number of days in the calendar month `instant` falls in.
@@ -72,7 +79,8 @@ fn days_in_month(instant: DateTime<Utc>) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use crate::lifetime_expiry::expiry;
-    use chrono::{DateTime, TimeZone, Utc};
+    use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
+    use chrono::{DateTime, TimeDelta, TimeZone, Utc};
     use iso8601_duration::Duration as Iso8601Duration;
 
     fn at(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> DateTime<Utc> {
@@ -125,6 +133,15 @@ mod tests {
         let lifetime: Iso8601Duration = "P1Y2M10DT2H30M".parse().expect("valid duration");
         // 2021-01-01 + 14 months = 2022-03-01, then 10 days and 2h30m.
         pretty_assertions::assert_eq!(expiry(start, &lifetime), Some(at(2022, 3, 11, 2, 30, 0)));
+    }
+
+    #[test]
+    fn a_nanosecond_start_yields_a_microsecond_expiry() {
+        let start = at(2026, 10, 6, 13, 29, 28) + TimeDelta::nanoseconds(90_386);
+        let lifetime: Iso8601Duration = "PT1H".parse().expect("valid duration");
+        let ends = expiry(start, &lifetime).expect("a representable expiry");
+        pretty_assertions::assert_eq!(ends, at(2026, 10, 6, 14, 29, 28) + TimeDelta::microseconds(90));
+        pretty_assertions::assert_eq!(sub_second(ends), "2026-10-06T14:29:28.000090Z");
     }
 
     #[test]

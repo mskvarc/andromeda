@@ -1,7 +1,13 @@
 # 3 pooled brokers + 1 direct baseline.
 name: andromeda-pgbouncer
 
+# The ETSI test-suite contexts are served from the repository: forge outages
+# would otherwise make every run depend on an external host.
+x-test-contexts-volumes: &test-contexts-volumes
+  - ../../../../tests/contexts:/etc/andromeda/test-contexts:ro
+
 x-broker-env: &broker-env
+  ANDROMEDA__JSONLD__PRELOAD_CONTEXTS: '{"https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite.jsonld","https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite-compound.jsonld"}'
   ANDROMEDA__SERVER__HOST: "0.0.0.0"
   # Provisioning, migration and maintenance bypass the pooler.
   ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
@@ -97,6 +103,7 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
+    volumes: *test-contexts-volumes
     environment:
       <<: [*broker-env, *broker-features, *pooled-env]
       ANDROMEDA__SERVER__PORT: "1067"
@@ -123,6 +130,7 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
+    volumes: *test-contexts-volumes
     environment:
       <<: [*broker-env, *broker-features, *pooled-env]
       ANDROMEDA__SERVER__PORT: "1068"
@@ -149,6 +157,7 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
+    volumes: *test-contexts-volumes
     environment:
       <<: [*broker-env, *pooled-env]
       ANDROMEDA__SERVER__PORT: "1069"
@@ -178,6 +187,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes: *test-contexts-volumes
     environment:
       <<: *broker-env
       ANDROMEDA__SERVER__PORT: "1070"

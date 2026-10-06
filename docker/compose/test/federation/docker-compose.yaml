@@ -23,7 +23,12 @@ x-broker-base: &broker-base
   restart: unless-stopped
   extra_hosts:
     - "host.docker.internal:host-gateway"
+  # The ETSI test-suite contexts are served from the repository: forge outages
+  # would otherwise make every run depend on an external host.
+  volumes:
+    - ../../../../tests/contexts:/etc/andromeda/test-contexts:ro
   environment: &broker-env
+    ANDROMEDA__JSONLD__PRELOAD_CONTEXTS: '{"https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite.jsonld","https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite-compound.jsonld"}'
     ANDROMEDA__SERVER__HOST: "0.0.0.0"
     ANDROMEDA__TENANCY__ENABLED: "true"
     ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"

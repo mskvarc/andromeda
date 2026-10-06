@@ -113,13 +113,6 @@ pub fn transaction_has_not_written() -> SimpleExpr {
     SimpleExpr::from(Func::cust(PgCurrentXactIdIfAssigned)).is_null()
 }
 
-/// `pg_column_size(to_jsonb(row))` - deterministic logical size of one relation row.
-#[must_use]
-pub fn jsonb_row_size(row: SimpleExpr) -> SimpleExpr {
-    let json = SimpleExpr::from(Func::cust(ToJsonb).arg(row));
-    Func::cust(PgColumnSize).arg(json).into()
-}
-
 /// `current_database()` - the name of the database the session is attached to.
 #[must_use]
 pub fn current_database() -> SimpleExpr {
@@ -144,16 +137,6 @@ struct CurrentDatabase;
 #[derive(Iden, Clone, Copy)]
 #[iden = "pg_database_size"]
 struct PgDatabaseSize;
-
-/// The `to_jsonb` PostgreSQL conversion function.
-#[derive(Iden, Clone, Copy)]
-#[iden = "to_jsonb"]
-struct ToJsonb;
-
-/// The `pg_column_size` PostgreSQL sizing function.
-#[derive(Iden, Clone, Copy)]
-#[iden = "pg_column_size"]
-struct PgColumnSize;
 
 #[cfg(test)]
 mod tests {

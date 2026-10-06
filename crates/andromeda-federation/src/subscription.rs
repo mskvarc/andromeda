@@ -19,25 +19,25 @@ use crate::{
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use serde_json::Value;
+use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription_request::SubscriptionRequest};
+use serde::Deserialize;
 use tracing::debug;
 
 /// One subscription operation to forward to a context source.
 pub enum SubscriptionForward<'a> {
     /// `POST /subscriptions` with the reduced copy (clause 5.8.1.4).
     Create {
-        /// The reduced subscription document, without an inline `@context`.
-        body: &'a [u8],
-        /// The context the document's terms are expressed in.
+        /// The reduced subscription.
+        body: &'a SubscriptionRequest,
+        /// The context the subscription's terms are expressed in.
         context: &'a ContextSpec,
     },
     /// `PATCH /subscriptions/{id}` with the reduced copy (clause 5.8.2.4).
     Update {
         /// The subscription the source assigned when the copy was created.
         remote_id: &'a Identifier,
-        /// The reduced subscription fragment, without an inline `@context`.
-        body: &'a [u8],
+        /// The reduced subscription fragment.
+        body: &'a SubscriptionRequest,
         /// The context the fragment's terms are expressed in.
         context: &'a ContextSpec,
     },
@@ -68,6 +68,14 @@ pub enum SubscriptionForwardAdmission {
     NotAdvertised,
 }
 
+/// The identity a source answers a created subscription with, when it echoes
+/// the document (clause 5.2.12 `id`).
+#[derive(Deserialize)]
+struct AssignedIdentity {
+    /// The subscription identifier the source holds the copy under.
+    id: Identifier,
+}
+
 /// What one subscription forward produced.
 pub struct ForwardedSubscription {
     /// Whether the source was contacted at all.
@@ -80,19 +88,12 @@ impl ForwardedSubscription {
     /// The subscription identifier the source assigned on a create, read from
     /// its `Location` is not available here, so from the 201 response body's
     /// `id` when the source echoes the document, else the one the request named.
+    #[must_use]
     pub fn assigned_id(&self, requested: &Identifier) -> Identifier {
         match &self.outcome {
-            Some(ForwardedWriteOutcome::Completed {
-                body: Some(Value::Object(object)),
-                ..
-            }) => object
-                .get("id")
-                .and_then(Value::as_str)
-                .and_then(|raw| raw.parse().ok())
-                .unwrap_or_else(|| requested.clone()), // clone: the caller keeps the id it minted
+            Some(ForwardedWriteOutcome::Completed { body, .. }) => body.decoded::<AssignedIdentity>().map_or_else(|| requested.clone(), |assigned| assigned.id), // clone: the caller keeps the id it minted
             Some(
-                ForwardedWriteOutcome::Completed { .. }
-                | ForwardedWriteOutcome::RemoteHttpFailure { .. }
+                ForwardedWriteOutcome::RemoteHttpFailure { .. }
                 | ForwardedWriteOutcome::Transport(_)
                 | ForwardedWriteOutcome::LoopDetected
                 | ForwardedWriteOutcome::NotAdvertised

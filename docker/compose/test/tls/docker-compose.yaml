@@ -2,6 +2,10 @@
 # ./certs is committed test material (see docs/tls-deployment.md).
 name: andromeda-tls
 
+# The ETSI test-suite contexts are served from the repository: forge outages
+# would otherwise make every run depend on an external host.
+x-test-contexts-mount: &test-contexts-mount ../../../../tests/contexts:/etc/andromeda/test-contexts:ro
+
 x-broker-base: &broker-base
   build:
     context: ../../../..
@@ -11,7 +15,10 @@ x-broker-base: &broker-base
   depends_on:
     postgres:
       condition: service_healthy
+  volumes:
+    - *test-contexts-mount
   environment: &broker-env
+    ANDROMEDA__JSONLD__PRELOAD_CONTEXTS: '{"https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite.jsonld","https://forge.etsi.org/rep/cim/ngsi-ld-test-suite/-/raw/develop/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld":"/etc/andromeda/test-contexts/ngsi-ld-test-suite-compound.jsonld"}'
     ANDROMEDA__SERVER__HOST: "0.0.0.0"
     ANDROMEDA__SERVER__PORT: "1056"
     ANDROMEDA__DATABASE__URL: "postgres://postgres:postgres@postgres:5432/postgres"
@@ -87,6 +94,7 @@ services:
       - "1156:1056"
       - "1186:1086"
     volumes:
+      - *test-contexts-mount
       - ./certs:/etc/andromeda/tls:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- --ca-certificate=/etc/andromeda/tls/ca.crt https://localhost:1056/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
@@ -108,6 +116,7 @@ services:
     ports:
       - "1157:1056"
     volumes:
+      - *test-contexts-mount
       - ./certs:/etc/andromeda/tls:ro
     healthcheck:
       # The plaintext management listener answers without a client certificate.
@@ -129,6 +138,7 @@ services:
     ports:
       - "1158:1056"
     volumes:
+      - *test-contexts-mount
       - ./certs/rotating:/etc/andromeda/tls:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:1086/readyz >/dev/null 2>&1 || exit 1"]

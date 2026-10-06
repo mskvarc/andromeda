@@ -17,7 +17,6 @@ use crate::{
         ProblemResponse,
         ResultInstanceExt,
         TemporalQueryParameters,
-        Value,
         collect_temporal_warnings,
         local_map_entities::LocalHistoryEntities,
         merge_temporal_retrieve_results,
@@ -37,14 +36,14 @@ use andromeda_federation::{
     forwarded_query::client_query::ClientQuery,
     outcome::ForwardReadOutcome,
     request::{EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
-    temporal_last_n::truncate_to_last_n,
 };
 use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
 use andromeda_http_response::{declined_representation::single_source_declined, forwarding_failure::local_federation_failure};
-use andromeda_linked_retrieval::edge::LinkedEdge;
+use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
+use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_temporal::{
     error::TemporalError,
-    service::{TemporalRange, TemporalReadResult},
+    service::{TemporalRange, TemporalReadResult, TemporalService},
     temporal_not_found_reason::TemporalNotFoundReason,
 };
 use axum::http::Uri as RequestUri;
@@ -52,15 +51,16 @@ use tracing::warn;
 
 /// What a temporal retrieval assembled before its representation is rendered.
 pub(crate) struct RetrievedHistory {
-    /// The temporal entity the response carries.
-    pub(crate) value: Value,
+    /// The history of the entity the response carries, merged over every
+    /// holder, before it is compacted under the request context.
+    pub(crate) history: TemporalHistory,
     /// Range metadata of the local read, present when it truncated the history.
     pub(crate) range: Option<TemporalRange>,
     /// The clause 6.3.17 warnings the forwarding produced.
     pub(crate) warnings: Vec<NgsiLdWarning>,
-    /// The edges to the Linked Entities the local representation names, read
-    /// off it before any format projection narrowed it (clause 4.5.23).
-    pub(crate) linked_edges: Vec<LinkedEdge>,
+    /// The request's clause 4.21 projection, which narrows the members the
+    /// response writes of the entity.
+    pub(crate) projection: Projection,
     /// The Entity Map the retrieval ran under, when one applies (clause 5.5.14).
     pub(crate) entity_map_uri: Option<Identifier>,
 }
@@ -98,6 +98,9 @@ pub(crate) async fn resolve_retrieve_map(
 /// the registered sources, and the Entity Map that fixes which of them are
 /// contacted and records what they returned.
 pub(crate) struct RetrievalSources<'a> {
+    /// The temporal service, which reads the local history and the request's
+    /// projection.
+    pub(crate) service: &'a TemporalService,
     /// The service that contacts every matching registration.
     pub(crate) forwarding: &'a FederationService,
     /// The store the used or minted Entity Map is written to (clause 5.5.14).
@@ -133,6 +136,7 @@ pub(crate) async fn distributed_retrieval(
     instance: &RequestUri,
 ) -> Result<RetrievedHistory, ProblemResponse> {
     let RetrievalSources {
+        service,
         forwarding,
         entity_maps,
         triggering,
@@ -173,25 +177,26 @@ pub(crate) async fn distributed_retrieval(
 
     // Clauses 5.6.12.4 and 5.7.3.4: a local not-found beside a matching
     // registration is nothing held here, not an error.
-    let (local_entity, range, linked_edges) = match local_result {
-        Ok(result) => (Some(result.value), result.range, result.linked_edges),
-        Err(ref error) if error.is_not_found() => (None, None, Vec::new()),
+    let (local_entity, range, local_projection) = match local_result {
+        Ok(result) => (Some(result.history), result.range, Some(result.projection)),
+        Err(ref error) if error.is_not_found() => (None, None, None),
         Err(error) => return Err(temporal_problem(&error, instance)),
     };
 
     let had_remote_history = forwarded.results.iter().any(|result| !result.entities.is_empty());
     let local_id = local_entity.is_some().then(|| id.clone()); // clone: the map owns the entity identifiers it names
-    let merged = merge_temporal_retrieve_results(local_entity, forwarded.results);
+    let timeproperty = params.timeproperty_or_default();
+    let merged = merge_temporal_retrieve_results(local_entity, forwarded.results, timeproperty);
     let entity_map_uri = record_retrieve_map(entity_maps, map_use, contributions, local_id, instance).await?;
 
-    let value = match merged {
-        Some(mut value) => {
+    let history = match merged {
+        Some(mut history) => {
             // Clause 5.7.3.4: `lastN` bounds the instances of the merged
             // history, so it is applied once more over the aggregation.
             if let (true, Some(last_n)) = (had_remote_history, params.last_n) {
-                truncate_to_last_n(&mut value, last_n, params.timeproperty_or_default());
+                history.keep_last(timeproperty, last_n);
             }
-            value
+            history
         }
         // Clause 5.7.3.4: ResourceNotFound when the target Entity's history is
         // held neither locally nor by any source a matching registration
@@ -203,11 +208,20 @@ pub(crate) async fn distributed_retrieval(
             return Err(temporal_problem(&TemporalError::NotFound(TemporalNotFoundReason::Entity { id: id.clone() }), instance).with_warnings(warnings));
         }
     };
+    // The local read compiled the request's projection already; a history only
+    // a source holds still answers under it.
+    let projection = match local_projection {
+        Some(projection) => projection,
+        None => service
+            .request_projection(params, context)
+            .await
+            .map_err(|error| temporal_problem(&error, instance))?,
+    };
     Ok(RetrievedHistory {
-        value,
+        history,
         range,
         warnings,
-        linked_edges,
+        projection,
         entity_map_uri,
     })
 }

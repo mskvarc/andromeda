@@ -14,20 +14,17 @@
 use crate::{
     FederationService,
     entity_budget::EntityBudget,
-    outcome::ForwardedTemporalEntities,
     query_forwarding_error::QueryForwardingError,
     read_fan_out::{ForwardedGetConditions, ForwardedRead, SourceAnswer},
+    received_temporal_answer::ReceivedTemporalAnswer,
     request::HistoryBudget,
     source_walk::incomplete_answer,
-    temporal_instances::instance_count,
-    temporal_result::merge_temporal_entity_attributes,
 };
 use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, rfc3339::sub_second};
+use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use chrono::{DateTime, Utc};
 use futures::{StreamExt, stream};
-use serde_json::Value;
 use url::Url;
 
 /// The window parameters a resumed request rewrites.
@@ -48,7 +45,7 @@ impl FederationService {
         targets: Vec<(ContextSourceRegistration, ForwardedRead)>,
         conditions: ForwardedGetConditions<'_>,
         budget: HistoryBudget<'_>,
-    ) -> Result<Vec<SourceAnswer<ForwardedTemporalEntities>>, QueryForwardingError> {
+    ) -> Result<Vec<SourceAnswer<ReceivedTemporalAnswer>>, QueryForwardingError> {
         stream::iter(targets)
             .map(|(registration, first)| async move { self.walk_history(&registration, first, conditions, budget).await })
             .buffer_unordered(self.csr_concurrency)
@@ -66,18 +63,18 @@ impl FederationService {
         first: ForwardedRead,
         conditions: ForwardedGetConditions<'_>,
         budget: HistoryBudget<'_>,
-    ) -> Result<SourceAnswer<ForwardedTemporalEntities>, QueryForwardingError> {
+    ) -> Result<SourceAnswer<ReceivedTemporalAnswer>, QueryForwardingError> {
         let first_url = match &first {
             ForwardedRead::Get(Ok(url)) => Some(url.clone()), // clone: every resumed request rewrites the first request's window
             ForwardedRead::Get(Err(_)) | ForwardedRead::PostQuery { .. } => None,
         };
         let mut answer = self
-            .walk_source::<ForwardedTemporalEntities>(registration, first, conditions, budget.entities)
+            .walk_source::<ReceivedTemporalAnswer>(registration, first, conditions, budget.entities)
             .await?;
         let Some(gathered) = answer.entry.as_mut() else {
             return Ok(answer);
         };
-        budget.instances.charge(gathered.entities.iter().map(instance_count).sum())?;
+        budget.instances.charge(gathered.instance_count())?;
         let mut resumed_at: Option<DateTime<Utc>> = None;
         while let Some(stopped_at) = least_range_end(&gathered.partial_ranges) {
             gathered.partial_ranges.clear();
@@ -96,15 +93,16 @@ impl FederationService {
             // entity budget a second time.
             let resumed_budget = EntityBudget::new(budget.entities.maximum());
             let page = self
-                .walk_source::<ForwardedTemporalEntities>(registration, ForwardedRead::Get(Ok(resumed)), conditions, &resumed_budget)
+                .walk_source::<ReceivedTemporalAnswer>(registration, ForwardedRead::Get(Ok(resumed)), conditions, &resumed_budget)
                 .await?;
             let Some(page) = page.entry else {
                 break;
             };
-            let before: usize = gathered.entities.iter().map(instance_count).sum();
-            fold_entities(&mut gathered.entities, page.entities);
-            let after: usize = gathered.entities.iter().map(instance_count).sum();
-            budget.instances.charge(after.saturating_sub(before))?;
+            // The pages of one entity are put together once they are read into
+            // the model, each instance once; what is charged is what the page
+            // carried, the instances at the instant two pages meet included.
+            budget.instances.charge(page.instance_count())?;
+            gathered.entities.extend(page.entities);
             gathered.warnings.extend(page.warnings);
             gathered.partial_ranges = page.partial_ranges;
             resumed_at = Some(stopped_at);
@@ -157,29 +155,10 @@ fn resumed_window(first: &Url, stopped_at: DateTime<Utc>) -> Option<Url> {
     Some(url)
 }
 
-/// Fold the entities of a resumed answer into those already gathered, by
-/// identifier, each instance once.
-fn fold_entities(gathered: &mut Vec<Value>, resumed: Vec<Value>) {
-    for entity in resumed {
-        let id = entity_id(&entity);
-        let held = id.and_then(|id| gathered.iter_mut().find(|held| entity_id(held).is_some_and(|held_id| held_id == id)));
-        match held {
-            Some(held) => merge_temporal_entity_attributes(held, &entity),
-            None => gathered.push(entity),
-        }
-    }
-}
-
-/// The identifier a temporal entity names, when it names a valid one.
-fn entity_id(entity: &Value) -> Option<Identifier> {
-    entity.get("id").and_then(Value::as_str).and_then(|raw| raw.parse().ok())
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::temporal_history_walk::{fold_entities, resumed_window};
+    use crate::temporal_history_walk::resumed_window;
     use chrono::{DateTime, Utc};
-    use serde_json::json;
     use url::Url;
 
     fn at(raw: &str) -> DateTime<Utc> {
@@ -213,28 +192,5 @@ mod tests {
     fn a_request_without_a_window_is_not_resumed() {
         let first = Url::parse("http://source/t?type=Vehicle").expect("a valid URL");
         assert!(resumed_window(&first, at("2020-01-02T00:00:00Z")).is_none());
-    }
-
-    /// A resumed answer's instances join the entity already gathered, each
-    /// instance once.
-    #[test]
-    fn a_resumed_answer_folds_into_the_gathered_entity() {
-        let first = json!({"type": "Property", "value": 1, "instanceId": "urn:ngsi-ld:i:1"});
-        let second = json!({"type": "Property", "value": 2, "instanceId": "urn:ngsi-ld:i:2"});
-        let mut gathered = vec![json!({"id": "urn:ngsi-ld:V:1", "type": "V", "speed": [first]})];
-        fold_entities(
-            &mut gathered,
-            vec![
-                json!({"id": "urn:ngsi-ld:V:1", "type": "V", "speed": [first, second]}),
-                json!({"id": "urn:ngsi-ld:V:2", "type": "V", "speed": [first]}),
-            ],
-        );
-        pretty_assertions::assert_eq!(
-            gathered,
-            vec![
-                json!({"id": "urn:ngsi-ld:V:1", "type": "V", "speed": [first, second]}),
-                json!({"id": "urn:ngsi-ld:V:2", "type": "V", "speed": [first]}),
-            ]
-        );
     }
 }

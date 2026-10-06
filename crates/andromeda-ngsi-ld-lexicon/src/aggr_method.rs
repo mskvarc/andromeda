@@ -1,9 +1,9 @@
 //! The aggregation methods a temporal query may request (ETSI GS CIM 009 clause 4.5.19).
 
-use strum::{Display, EnumString};
+use strum::{Display, EnumString, IntoStaticStr};
 
 /// Aggregation methods for temporal queries (clause 4.5.19).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, IntoStaticStr)]
 #[strum(serialize_all = "camelCase")]
 pub enum AggrMethod {
     /// Arithmetic mean.

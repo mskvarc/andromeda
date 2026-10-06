@@ -1,28 +1,25 @@
 //! Handlers for the `/attributes` discovery endpoints.
 
-use crate::{error::EntityResultExt, state::EntityTenantState};
-use andromeda_entity::discovery::{AttributeCollectionRepresentation, DiscoveryScope};
-use andromeda_federation::{
-    discovery_result::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results},
-    operation::ForwardingOperation,
-    request::{DiscoveryTarget, ForwardDiscoveryRequest, TriggeringRequest},
+use crate::{
+    discovered_response::{DiscoveryRequest, discovered_response},
+    error::EntityResultExt,
+    state::EntityTenantState,
 };
-use andromeda_http_context_registry::response_rendering::ResponseContextSource;
+use andromeda_entity::discovery::{AttributeCollectionRepresentation, DiscoveryScope, attribute_list::AttributeCollection};
+use andromeda_federation::{discovery_result::Discovered, operation::ForwardingOperation, request::DiscoveryTarget};
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     api_root::ApiRoot,
     context::ContextUrl,
     context_target,
-    prefer::PreferHeader,
     query::ValidatedQuery,
     request_envelope::NgsiLdRequestEnvelope,
     typed_path::TypedPath,
 };
-use andromeda_http_response::{problem_response::ProblemResponse, single::NgsiLdResponse};
+use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{discovery::DiscoveryListParams, local::LocalOnlyParams};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 
 /// GET /ngsi-ld/v1/attributes -- Query available attributes.
 ///
@@ -38,68 +35,44 @@ pub async fn query(
         snapshot,
     }: EntityTenantState,
     accept: AcceptFormatNoGeo,
-    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
+    envelope: NgsiLdRequestEnvelope,
     ContextUrl(context): ContextUrl,
     api_root: ApiRoot,
     ValidatedQuery(params): ValidatedQuery<DiscoveryListParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entity_discovery;
-
-    let is_local = !target.permits_federation() || params.local.unwrap_or(false);
     let scope = if target.permits_federation() {
         DiscoveryScope::for_local_request(params.local)
     } else {
         DiscoveryScope::Local
     };
-
-    let representation = if params.details {
-        AttributeCollectionRepresentation::Detailed
+    let (representation, operation) = if params.details {
+        (AttributeCollectionRepresentation::Detailed, ForwardingOperation::RetrieveAttrTypeDetails)
     } else {
-        AttributeCollectionRepresentation::List
+        (AttributeCollectionRepresentation::List, ForwardingOperation::RetrieveAttrTypes)
     };
-    let local_result = service.attributes(&target, representation, scope, &context).await.with_entity_instance(&uri)?;
-
-    let (result, warnings) = if is_local {
-        (local_result, Vec::new())
-    } else {
-        let query_string = uri.query().unwrap_or("");
-        let forwarded = state
-            .forwarding
-            .forward_discovery_query(
-                &target,
-                ForwardDiscoveryRequest {
-                    target: DiscoveryTarget::Attributes,
-                    query_string,
-                    context: &context,
-                    operation: if params.details {
-                        ForwardingOperation::RetrieveAttrTypeDetails
-                    } else {
-                        ForwardingOperation::RetrieveAttrTypes
-                    },
-                    triggering: TriggeringRequest {
-                        via: incoming_via.as_ref(),
-                        headers: Some(&headers),
-                    },
-                },
-            )
-            .await;
-        let warnings = collect_discovery_warnings(&forwarded);
-        let merged = merge_attributes_results(local_result, forwarded, params.details);
-        (merged, warnings)
-    };
-
-    let rendered = ResponseContextSource::new(state.entity_query.engine(), &context, &state.context_hosting, &api_root)
-        .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
+    let local = match service
+        .attributes(&target, representation, scope, &context)
         .await
-        .with_entity_instance(&uri)?
-        .with_payload(ResponsePayload::Single(result))
-        .render()
-        .with_entity_instance(&uri)?;
-    let response = NgsiLdResponse::ok(rendered).with_warnings(warnings);
-    Ok(match snapshot {
-        Some(snapshot_id) => response.with_snapshot_uri(snapshot_id).into_response(),
-        None => response.into_response(),
+        .with_entity_instance(&envelope.uri)?
+    {
+        AttributeCollection::List(list) => Discovered::Attributes(list),
+        AttributeCollection::Detailed(attributes) => Discovered::AttributeDetails(attributes),
+    };
+    discovered_response(DiscoveryRequest {
+        state: &state,
+        target: &target,
+        snapshot,
+        accept,
+        envelope: &envelope,
+        context: &context,
+        api_root: &api_root,
+        local_only: params.local.unwrap_or(false),
+        discovered: DiscoveryTarget::Attributes,
+        operation,
+        local,
     })
+    .await
 }
 
 /// GET /ngsi-ld/v1/attributes/{attr_id} -- Retrieve information about a specific attribute.
@@ -116,58 +89,34 @@ pub async fn get(
         snapshot,
     }: EntityTenantState,
     accept: AcceptFormatNoGeo,
-    NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
+    envelope: NgsiLdRequestEnvelope,
     ContextUrl(context): ContextUrl,
     api_root: ApiRoot,
     TypedPath(attr_id): TypedPath<AttributeName>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entity_discovery;
-
-    let is_local = !target.permits_federation() || params.local.unwrap_or(false);
     let scope = if target.permits_federation() {
         DiscoveryScope::for_local_request(params.local)
     } else {
         DiscoveryScope::Local
     };
-
-    let local_result = service.attribute_info(&target, &attr_id, scope, &context).await.with_entity_instance(&uri)?;
-
-    let (result, warnings) = if is_local {
-        (local_result, Vec::new())
-    } else {
-        let query_string = uri.query().unwrap_or("");
-        let forwarded = state
-            .forwarding
-            .forward_discovery_query(
-                &target,
-                ForwardDiscoveryRequest {
-                    target: DiscoveryTarget::Attribute(&attr_id),
-                    query_string,
-                    context: &context,
-                    operation: ForwardingOperation::RetrieveAttrTypeInfo,
-                    triggering: TriggeringRequest {
-                        via: incoming_via.as_ref(),
-                        headers: Some(&headers),
-                    },
-                },
-            )
-            .await;
-        let warnings = collect_discovery_warnings(&forwarded);
-        let merged = merge_attribute_info_results(local_result, forwarded);
-        (merged, warnings)
-    };
-
-    let rendered = ResponseContextSource::new(state.entity_query.engine(), &context, &state.context_hosting, &api_root)
-        .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
+    let local = service
+        .attribute_info(&target, &attr_id, scope, &context)
         .await
-        .with_entity_instance(&uri)?
-        .with_payload(ResponsePayload::Single(result))
-        .render()
-        .with_entity_instance(&uri)?;
-    let response = NgsiLdResponse::ok(rendered).with_warnings(warnings);
-    Ok(match snapshot {
-        Some(snapshot_id) => response.with_snapshot_uri(snapshot_id).into_response(),
-        None => response.into_response(),
+        .with_entity_instance(&envelope.uri)?;
+    discovered_response(DiscoveryRequest {
+        state: &state,
+        target: &target,
+        snapshot,
+        accept,
+        envelope: &envelope,
+        context: &context,
+        api_root: &api_root,
+        local_only: params.local.unwrap_or(false),
+        discovered: DiscoveryTarget::Attribute(&attr_id),
+        operation: ForwardingOperation::RetrieveAttrTypeInfo,
+        local: Discovered::AttributeInfo(local),
     })
+    .await
 }

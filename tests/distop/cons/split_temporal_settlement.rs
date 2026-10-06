@@ -31,15 +31,16 @@ fn observed(value: i64, observed_at: &str) -> Value {
     json!({ "type": "Property", "value": value, "observedAt": observed_at })
 }
 
-/// A `temporalValues` `Property` holding one `[value, instant]` pair per
-/// observation (clause 4.5.9).
-fn temporal_values(pairs: &[(i64, &str)]) -> Value {
-    json!({ "type": "Property", "values": pairs.iter().map(|(value, at)| json!([value, at])).collect::<Vec<_>>() })
+/// The normalized `Property` instances a source answers with, one per
+/// observation (clause 4.5.7).
+fn answered_instances(pairs: &[(i64, &str)]) -> Value {
+    Value::Array(pairs.iter().map(|(value, at)| observed(*value, at)).collect())
 }
 
-/// A `temporalValues` `GeoProperty` located at `coordinates` at noon.
+/// The normalized `GeoProperty` instance a source answers with, located at
+/// `coordinates` at noon (clause 4.5.7).
 fn located(coordinates: [f64; 2]) -> Value {
-    json!({ "type": "GeoProperty", "values": [[{ "type": "Point", "coordinates": coordinates }, "2020-08-01T12:00:00Z"]] })
+    json!([{ "type": "GeoProperty", "value": { "type": "Point", "coordinates": coordinates }, "observedAt": "2020-08-01T12:00:00Z" }])
 }
 
 /// The `id` strings of a temporal array body.
@@ -185,7 +186,7 @@ async fn distop_split_temporal_query_q_true_only_on_the_merge_keeps_the_entity()
         &topology,
         &mock,
         &vtype,
-        &json!([{ "id": held, "type": vtype, "speed": temporal_values(&[(60, "2020-08-01T13:00:00Z")]) }]),
+        &json!([{ "id": held, "type": vtype, "speed": answered_instances(&[(60, "2020-08-01T13:00:00Z")]) }]),
     )
     .await;
 
@@ -254,8 +255,8 @@ async fn distop_split_temporal_query_failing_merge_drops_the_entity() {
         &mock,
         &vtype,
         &json!([
-            { "id": failing, "type": vtype, "speed": temporal_values(&[(45, "2020-08-01T13:00:00Z")]) },
-            { "id": passing, "type": vtype, "speed": temporal_values(&[(60, "2020-08-01T13:00:00Z")]) }
+            { "id": failing, "type": vtype, "speed": answered_instances(&[(45, "2020-08-01T13:00:00Z")]) },
+            { "id": passing, "type": vtype, "speed": answered_instances(&[(60, "2020-08-01T13:00:00Z")]) }
         ]),
     )
     .await;
@@ -267,13 +268,13 @@ async fn distop_split_temporal_query_failing_merge_drops_the_entity() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Clause 4.5.9 wraps the value of a `LanguageProperty`, `JsonProperty` and
-/// `VocabProperty` pair in a one-member object. A source answering in that
-/// representation is read with the value wrapped once, so an existence filter
-/// on the attribute only the source holds keeps the entity; the wrapper was
-/// read as the value, the part was unreadable, and the entity was dropped.
+/// The source is asked for normalized instances and answers them (clause
+/// 4.5.7): a `LanguageProperty`, `JsonProperty` and `VocabProperty` instance
+/// each holds its value in the member of its family. An existence filter on
+/// the attribute only the source holds keeps the entity, whichever family the
+/// instance belongs to.
 #[tokio::test]
-async fn distop_split_temporal_query_wrapped_temporal_values_answers_decide_the_filter() {
+async fn distop_split_temporal_query_normalized_answers_decide_the_filter() {
     let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let vtype = topology.id("Vehicle");
@@ -281,17 +282,17 @@ async fn distop_split_temporal_query_wrapped_temporal_values_answers_decide_the_
         (
             topology.id("Vehicle:split32-language"),
             "says",
-            json!({ "type": "LanguageProperty", "languageMaps": [[{ "languageMap": { "en": "yes" } }, "2020-08-01T13:00:00Z"]] }),
+            json!([{ "type": "LanguageProperty", "languageMap": { "en": "yes" }, "observedAt": "2020-08-01T13:00:00Z" }]),
         ),
         (
             topology.id("Vehicle:split32-json"),
             "settings",
-            json!({ "type": "JsonProperty", "jsons": [[{ "json": { "mode": "eco" } }, "2020-08-01T13:00:00Z"]] }),
+            json!([{ "type": "JsonProperty", "json": { "mode": "eco" }, "observedAt": "2020-08-01T13:00:00Z" }]),
         ),
         (
             topology.id("Vehicle:split32-vocab"),
             "gender",
-            json!({ "type": "VocabProperty", "vocabs": [[{ "vocab": "Male" }, "2020-08-01T13:00:00Z"]] }),
+            json!([{ "type": "VocabProperty", "vocab": "Male", "observedAt": "2020-08-01T13:00:00Z" }]),
         ),
     ];
     let mut answer = Vec::new();

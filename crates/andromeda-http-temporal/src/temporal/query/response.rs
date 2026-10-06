@@ -1,39 +1,17 @@
 //! Rendering the collection a temporal query answers with, and the metadata
 //! that travels beside it (Table 6.18.3.2-2).
 
-use crate::temporal::{
-    AcceptFormatNoGeo,
-    IntoResponse,
-    NgsiLdCollectionResponse,
-    ProblemResponse,
-    Response,
-    ResponsePayload,
-    ResultInstanceExt,
-    StatusCode,
-    TemporalSimplifyPayload,
-    TemporalSimplifyRenderer,
-    query::page::QueriedPage,
+use crate::{
+    temporal::{AcceptFormatNoGeo, IntoResponse, NgsiLdCollectionResponse, ProblemResponse, Response, StatusCode, query::page::QueriedPage},
+    temporal_answer::TemporalAnswer,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::content_range::build_content_range;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_render::response::ResponseRenderer;
+use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::service::TemporalRange;
 use axum::http::Uri;
-use serde_json::Value;
-
-/// Project a temporal collection to its `keyValues` representation.
-///
-/// # Errors
-///
-/// The classified failure of the simplifying renderer.
-pub(crate) fn simplified_collection(entities: Vec<Value>, instance: &Uri) -> Result<Vec<Value>, ProblemResponse> {
-    TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Collection(entities))
-        .render()
-        .with_instance(instance)?
-        .into_collection()
-        .with_instance(instance)
-}
 
 /// The metadata a temporal query's response carries beside its rendered body.
 pub(crate) struct TemporalCollectionMetadata {
@@ -72,7 +50,8 @@ pub(crate) struct TemporalCollectionMetadata {
 pub(crate) fn query_response(
     accept: AcceptFormatNoGeo,
     rendering: ResponseRenderer<'_>,
-    entities: Vec<Value>,
+    answer: TemporalAnswer<'_>,
+    params: &TemporalQueryParameters,
     metadata: TemporalCollectionMetadata,
     instance: &Uri,
 ) -> Result<Response, ProblemResponse> {
@@ -86,7 +65,7 @@ pub(crate) fn query_response(
         returned,
         boundary,
     } = metadata;
-    let rendered = rendering.with_payload(ResponsePayload::Collection(entities)).render().with_instance(instance)?;
+    let rendered = answer.render(rendering, params, instance)?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
     if let Some(count) = total_count {
         response = response.with_total_count(count);

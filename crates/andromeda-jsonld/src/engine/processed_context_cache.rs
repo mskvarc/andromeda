@@ -60,21 +60,17 @@ where
     /// still resolves through `loader`, or the result of `prepare`, kept under
     /// `key` when it succeeds.
     ///
-    /// Without a key the context is prepared and nothing is kept. Two
-    /// operations that miss together each prepare the context and the later
-    /// insert wins; both results are identical.
+    /// Two operations that miss together each prepare the context and the
+    /// later insert wins; both results are identical.
     ///
     /// # Errors
     ///
     /// Returns whatever the preparation returns.
-    pub(crate) async fn get_or_prepare<E, P, F>(&self, key: Option<Arc<str>>, loader: &HttpContextLoader, prepare: P) -> Result<Arc<T>, E>
+    pub(crate) async fn get_or_prepare<E, P, F>(&self, key: Arc<str>, loader: &HttpContextLoader, prepare: P) -> Result<Arc<T>, E>
     where
         P: FnOnce() -> F,
         F: Future<Output = Result<T, E>>,
     {
-        let Some(key) = key else {
-            return Box::pin(prepare()).await.map(Arc::new);
-        };
         if let Some(held) = self.entries.get(&key).await
             && held.sources.still_resolve_through(loader).await
         {

@@ -10,11 +10,9 @@ const PROJECTION_GRAMMAR: &str = "crates/andromeda-ngsi-ld-query/src/";
 /// The sources that define the join modes or decode them from a request.
 const JOIN_MODE_DEFINITIONS: [&str; 2] = ["crates/andromeda-ngsi-ld-representation/src/", "crates/andromeda-http-headers/src/"];
 
-/// The two writers that spell an inline Linked Entity.
-const INLINE_WRITERS: [&str; 2] = [
-    "crates/andromeda-ngsi-ld-render/src/entity_body/",
-    "crates/andromeda-ngsi-ld-render/src/temporal/inline_join.rs",
-];
+/// The writer that spells an inline Linked Entity, whichever kind of entity it
+/// nests: an Entity, or the Temporal Evolution of one.
+const INLINE_WRITER: &str = "crates/andromeda-ngsi-ld-render/src/entity_body/";
 
 /// The one source that builds an `AttributeIriIndex`, by expanding keys.
 const INDEX_OWNER: &str = "crates/andromeda-ngsi-ld-query/src/projection/attribute_iri_index.rs";
@@ -54,7 +52,7 @@ impl Rule {
         match self {
             Rule::NestedTerm => in_engine || path.starts_with(PROJECTION_GRAMMAR),
             Rule::JoinModeMatch => in_engine || JOIN_MODE_DEFINITIONS.iter().any(|owner| path.starts_with(owner)),
-            Rule::InlineMember => in_engine || INLINE_WRITERS.iter().any(|writer| path.starts_with(writer)),
+            Rule::InlineMember => in_engine || path.starts_with(INLINE_WRITER),
             Rule::IndexBuild => path == INDEX_OWNER,
             Rule::AdmissionError | Rule::PrivateWalk => in_engine,
             Rule::Adapter => REGISTERED_ADAPTERS.contains(&path),

@@ -11,9 +11,8 @@ use crate::{
     entity_body::reified_member::Reification,
     uri_decoding::{DecodedTarget, UriDecoding, decode_percent_encoded_uri},
 };
-use andromeda_ngsi_ld_model::attribute::object_list::{RelationshipObjectList, normalized_object_list};
+use andromeda_ngsi_ld_model::attribute::object_list::{NormalizedObjectList, RelationshipObjectList};
 use serde::{Serialize, Serializer};
-use serde_json::Value;
 
 /// One `objectList` or `previousObjectList`.
 #[derive(Debug, Clone, Copy)]
@@ -44,12 +43,8 @@ impl Serialize for ObjectListBody<'_> {
             (Reification::Concise, decoding) => serializer.collect_seq(self.list.iter().map(|target| DecodedTarget::new(target, decoding))),
             (Reification::Normalized, UriDecoding::Keep) => self.list.serialize(serializer),
             (Reification::Normalized, UriDecoding::Decode) => {
-                let decoded = self
-                    .list
-                    .iter()
-                    .map(|target| Value::String(decode_percent_encoded_uri(target.as_str()).into_owned()))
-                    .collect();
-                normalized_object_list(Value::Array(decoded)).serialize(serializer)
+                let decoded = self.list.iter().map(|target| decode_percent_encoded_uri(target.as_str())).collect::<Vec<_>>();
+                NormalizedObjectList::new(&decoded).serialize(serializer)
             }
         }
     }

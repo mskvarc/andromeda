@@ -10,7 +10,6 @@
 
 use crate::geometry_value::GeometryValue;
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geojson::GeometryError};
-use serde_json::Value;
 
 /// A geometry written as a JSON string (clause 4.7.2).
 ///
@@ -32,8 +31,7 @@ impl EncodedGeometry {
     /// Returns [`GeometryError::EncodedNotJson`] when `text` is not JSON, and
     /// the refusal of the compact `GeoJSON` reading otherwise.
     pub fn parse(text: String) -> Result<EncodedGeometry, GeometryError> {
-        let value: Value = serde_json::from_str(&text).map_err(GeometryError::EncodedNotJson)?;
-        let form = GeometryForm::from_compact_value(&value)?;
+        let form = GeometryForm::from_compact_text(&text)?;
         Ok(EncodedGeometry { text, form })
     }
 

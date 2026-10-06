@@ -12,9 +12,9 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, written_temporal_entity::WrittenTemporalEntity};
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
-use serde_json::Value;
 use std::slice::from_ref;
 
 impl TemporalService {
@@ -31,7 +31,12 @@ impl TemporalService {
     /// payload cannot be expanded against `context`; and
     /// [`TemporalError::Commit`] or [`TemporalError::Persistence`] when the
     /// atomic write cannot be landed.
-    pub async fn create_or_update(&self, target: &ContextTarget, payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, TemporalError> {
+    pub async fn create_or_update(
+        &self,
+        target: &ContextTarget,
+        payload: WrittenTemporalEntity,
+        context: &ContextSpec,
+    ) -> Result<CreateOrUpdateResult, TemporalError> {
         let timer = temporal::start(TemporalOperation::CreateOrUpdate);
         let result = self.create_or_update_inner(target, payload, context).await;
         timer.finish_result(&result);
@@ -39,9 +44,38 @@ impl TemporalService {
     }
 
     /// The measured body of [`TemporalService::create_or_update`].
-    async fn create_or_update_inner(&self, target: &ContextTarget, payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, TemporalError> {
+    async fn create_or_update_inner(
+        &self,
+        target: &ContextTarget,
+        payload: WrittenTemporalEntity,
+        context: &ContextSpec,
+    ) -> Result<CreateOrUpdateResult, TemporalError> {
         let expansion = EntityExpansion::prepare(&self.engine, context).await?;
         let evolution = WrittenEvolution::expand(&expansion, payload).await?;
+        self.record_evolution(target, evolution).await
+    }
+
+    /// Record the Temporal Evolution `history`, already read into the model,
+    /// as a client's write of it would: created, or appended to the evolution
+    /// that exists.
+    ///
+    /// # Errors
+    ///
+    /// As [`TemporalService::create_or_update`], except that nothing is
+    /// expanded.
+    pub async fn record_history(&self, target: &ContextTarget, history: TemporalDocument) -> Result<CreateOrUpdateResult, TemporalError> {
+        let timer = temporal::start(TemporalOperation::CreateOrUpdate);
+        let result = match WrittenEvolution::of_history(history) {
+            Ok(evolution) => self.record_evolution(target, evolution).await,
+            Err(error) => Err(error),
+        };
+        timer.finish_result(&result);
+        result
+    }
+
+    /// Land a written evolution: held to the entity budget, then every
+    /// instance to history and the standing ones to current state.
+    async fn record_evolution(&self, target: &ContextTarget, evolution: WrittenEvolution) -> Result<CreateOrUpdateResult, TemporalError> {
         evolution.admit_budget(self.limits.payload_budget)?;
         let document = evolution.document();
         let entity_id = document
@@ -79,7 +113,13 @@ impl TemporalService {
     /// [`TemporalError::JsonLd`] when the payload cannot be expanded against
     /// `context`, and [`TemporalError::Commit`] or
     /// [`TemporalError::Persistence`] when the append cannot be landed.
-    pub async fn add_attrs(&self, target: &ContextTarget, entity_id: &Identifier, payload: Value, context: &ContextSpec) -> Result<(), TemporalError> {
+    pub async fn add_attrs(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Identifier,
+        payload: WrittenTemporalEntity,
+        context: &ContextSpec,
+    ) -> Result<(), TemporalError> {
         let timer = temporal::start(TemporalOperation::AddAttributes);
         let result = self.add_attrs_inner(target, entity_id, payload, context).await;
         timer.finish_result(&result);
@@ -87,7 +127,13 @@ impl TemporalService {
     }
 
     /// The measured body of [`TemporalService::add_attrs`].
-    async fn add_attrs_inner(&self, target: &ContextTarget, entity_id: &Identifier, payload: Value, context: &ContextSpec) -> Result<(), TemporalError> {
+    async fn add_attrs_inner(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Identifier,
+        payload: WrittenTemporalEntity,
+        context: &ContextSpec,
+    ) -> Result<(), TemporalError> {
         if !self.reader.entity_exists(target, entity_id).await? {
             return Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }));
         }

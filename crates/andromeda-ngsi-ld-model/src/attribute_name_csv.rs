@@ -50,12 +50,84 @@ where
     }
 }
 
+/// The form of a comma-separated member an update fragment may clear.
+///
+/// Clause 5.8.3 updates a resource with a fragment: a member the fragment does
+/// not mention stays, and an explicit `null` removes it, which is what a
+/// [`Clearable`](crate::clearable::Clearable) member says. The carrier field
+/// takes `#[serde(default)]` so that an absent member is
+/// [`Clearable::Absent`](crate::clearable::Clearable::Absent).
+pub mod clearable {
+    use crate::{attribute_name_csv, clearable::Clearable};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use serde::{Deserializer, Serializer};
+
+    /// Deserialize a member that is present: `null` clears it, a string names
+    /// the list.
+    ///
+    /// # Errors
+    ///
+    /// As [`attribute_name_csv::deserialize`].
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Clearable<Vec<AttributeName>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(attribute_name_csv::deserialize(deserializer)?.map_or(Clearable::Cleared, Clearable::Set))
+    }
+
+    /// Serialize a member as the fragment wrote it: the comma-separated string,
+    /// or `null` for a cleared member.
+    ///
+    /// # Errors
+    ///
+    /// Returns the serializer's own error when the member cannot be written.
+    pub fn serialize<S>(value: &Clearable<Vec<AttributeName>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Clearable::Set(names) => serializer.serialize_str(&names.iter().map(AttributeName::as_str).collect::<Vec<_>>().join(",")),
+            Clearable::Absent | Clearable::Cleared | Clearable::NgsiLdNull => serializer.serialize_none(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::attribute_name_csv;
+    use crate::{attribute_name_csv, clearable::Clearable};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
+
+    /// A carrier for a member an update fragment may clear.
+    #[derive(Debug, Serialize, Deserialize)]
+    struct ClearableCarrier {
+        #[serde(
+            default,
+            skip_serializing_if = "Clearable::is_absent",
+            deserialize_with = "attribute_name_csv::clearable::deserialize",
+            serialize_with = "attribute_name_csv::clearable::serialize"
+        )]
+        names: Clearable<Vec<AttributeName>>,
+    }
+
+    /// Clause 5.8.3: an absent member is left alone, a `null` clears it, and a
+    /// string replaces it.
+    #[test]
+    fn a_clearable_member_tells_absent_from_null_from_a_list() {
+        let absent: ClearableCarrier = serde_json::from_value(json!({})).expect("absent");
+        assert!(absent.names.is_absent());
+        let cleared: ClearableCarrier = serde_json::from_value(json!({"names": null})).expect("null");
+        assert!(matches!(cleared.names, Clearable::Cleared));
+        let named: ClearableCarrier = serde_json::from_value(json!({"names": "speed,colour"})).expect("a list");
+        pretty_assertions::assert_eq!(
+            named.names.as_set().map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
+            Some(vec!["speed", "colour"])
+        );
+        pretty_assertions::assert_eq!(serde_json::to_value(&cleared).expect("serialises"), json!({"names": null}));
+        pretty_assertions::assert_eq!(serde_json::to_value(&named).expect("serialises"), json!({"names": "speed,colour"}));
+        pretty_assertions::assert_eq!(serde_json::to_value(&absent).expect("serialises"), json!({}));
+    }
 
     /// A carrier standing in for any resource that owns one of these members.
     #[derive(Debug, Serialize, Deserialize)]

@@ -1,4 +1,4 @@
-//! NGSI-LD response type for entity collections with pre-rendered payload.
+//! NGSI-LD response type for collections with a body already written.
 
 use crate::{
     headers::{CommonHeadersOptions, apply_common_headers},
@@ -15,15 +15,13 @@ use headers::HeaderMapExt;
 
 /// NGSI-LD response wrapper for a collection of entities.
 ///
-/// Constructed from what the rendering pipeline produced -- a rendered
-/// document or a typed entity body already written:
+/// Constructed from a typed collection already written into a
+/// [`RenderedResponse`]:
 ///
 /// ```ignore
 /// let host = context_hosting.for_request(&api_root);
-/// let rendered = start_rendering(media_type, engine.presented_context(&context).await?, &host, prefer, format)
-///     .await?
-///     .with_payload(ResponsePayload::Collection(entity_values))
-///     .render()?;
+/// let renderer = start_rendering(media_type, engine.presented_context(&context).await?, &host, prefer, format).await?;
+/// let rendered = RenderedResponse::resource(renderer.with_collection(&resources))?;
 /// NgsiLdCollectionResponse::ok(rendered)
 ///     .with_total_count(count)
 ///     .into_response()
@@ -48,10 +46,10 @@ pub struct NgsiLdCollectionResponse {
 impl NgsiLdCollectionResponse {
     /// Create a 200 OK response for a collection.
     #[must_use]
-    pub fn ok(rendered: impl Into<RenderedResponse>) -> NgsiLdCollectionResponse {
+    pub const fn ok(rendered: RenderedResponse) -> NgsiLdCollectionResponse {
         NgsiLdCollectionResponse {
             status: StatusCode::OK,
-            rendered: rendered.into(),
+            rendered,
             total_count: None,
             content_range: None,
             entity_map_uri: None,
@@ -129,6 +127,6 @@ impl IntoResponse for NgsiLdCollectionResponse {
             },
         );
 
-        (status, headers, body).into_response()
+        (status, headers, body.into_body()).into_response()
     }
 }

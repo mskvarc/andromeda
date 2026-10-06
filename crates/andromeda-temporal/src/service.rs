@@ -11,12 +11,15 @@ use andromeda_entity::{
     port::{reader::EntityReader, retry_delay::RetryDelay},
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_linked_retrieval::{admission::TemporalJoin, edge::LinkedEdge};
+use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
+use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
+use andromeda_ngsi_ld_query::{
+    projection::compiled::Projection,
+    temporal::{instance_page::PageDirection, window::TimeInterval},
+};
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::sync::Arc;
 
 /// Return short IRI token from fragment or last path segment.
@@ -68,15 +71,14 @@ pub enum CreateOrUpdateResult {
 
 /// Result of a temporal read operation.
 pub struct TemporalReadResult {
-    /// The compacted temporal entity JSON payload.
-    pub value: Value,
+    /// The history of the entity, before it is compacted under the request
+    /// context.
+    pub history: TemporalHistory,
     /// Range metadata, present when the response is a partial page.
     pub range: Option<TemporalRange>,
-    /// The edges to the Linked Entities the representation names, read off
-    /// it before any format projection narrowed it (clause 4.5.23). A caller
-    /// that joins hands these back as the roots' edges; one that does not
-    /// simply drops them.
-    pub linked_edges: Vec<LinkedEdge>,
+    /// The request's clause 4.21 projection, expanded, which narrows the
+    /// members the response writes of the entity.
+    pub projection: Projection,
 }
 
 /// Neutral metadata the HTTP binding builds a temporal `Content-Range` from
@@ -102,8 +104,9 @@ pub struct TemporalQueryWarning {
 
 /// Result of a temporal query operation.
 pub struct TemporalQueryResult {
-    /// Temporal entity representations matching the query.
-    pub entities: Vec<Value>,
+    /// The histories of the entities matching the query, before they are
+    /// compacted under the request context.
+    pub entities: Vec<TemporalHistory>,
     /// Total entity count when the `count` option was requested.
     pub total_count: Option<i64>,
     /// Whether the page cut the history of any entity short.
@@ -112,10 +115,9 @@ pub struct TemporalQueryResult {
     pub range: Option<TemporalRange>,
     /// Non-fatal warnings encountered during per-entity processing.
     pub warnings: Vec<TemporalQueryWarning>,
-    /// The edges to the Linked Entities the results name, in result order,
-    /// read off each representation before any format projection narrowed it
-    /// (clause 4.5.23).
-    pub linked_edges: Vec<LinkedEdge>,
+    /// The request's clause 4.21 projection, expanded, which narrows the
+    /// members the response writes of every entity.
+    pub projection: Projection,
 }
 
 impl TemporalService {
