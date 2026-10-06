@@ -299,10 +299,11 @@ mod tests {
             processor::JsonLdEngine,
         },
         error::JsonLdError,
+        hosted_context_recognizer::{HostedContextRecognizer, HostedReference},
         loader::replaceable_row::ReplaceableRow,
         test_documents::{expanded_document, literal},
     };
-    use iri_rs::IriBuf;
+    use iri_rs::{IriBuf, IriRefBuf};
     use jsonld::{
         JsonLdProcessor,
         RemoteContextReference,
@@ -384,6 +385,53 @@ mod tests {
 
     fn iri_ref(url: &str) -> IriBuf {
         IriBuf::new(url.to_owned()).expect("a valid IRI")
+    }
+
+    /// The identifier the stored `@context` below is held under.
+    const STORED: &str = "urn:ngsi-ld:JsonLdContext:6f1c0e2a-3b5d-4e7f-8a9b-0c1d2e3f4a5b";
+
+    /// Recognises the root-relative path of [`STORED`] as that identifier.
+    #[derive(Debug)]
+    struct StoredPath;
+
+    impl HostedContextRecognizer for StoredPath {
+        fn recognize(&self, reference: &IriRefBuf) -> HostedReference {
+            if reference.as_str() == format!("/ngsi-ld/v1/jsonldContexts/{STORED}") {
+                HostedReference::Own(STORED.parse().expect("a stored identifier"))
+            } else {
+                HostedReference::Unrelated
+            }
+        }
+    }
+
+    /// A body `@context` naming one of the tenant's own stored contexts by the
+    /// root-relative path the broker returned is compacted against, exactly
+    /// as expansion reads it: a request body has no base URL to resolve it
+    /// against, so the path stands for the stored context.
+    #[tokio::test]
+    async fn a_root_relative_reference_to_a_stored_context_compacts_as_expansion_reads_it() {
+        let row = Arc::new(ReplaceableRow::new(&json!({ "@context": { "speed": "http://example.org/vehicle/speed" } })));
+        let engine = JsonLdEngine::builder()
+            .allow_remote(false)
+            .with_l2_cache(Arc::clone(&row) as Arc<dyn ContextCache>)
+            .hosted_contexts(Arc::new(StoredPath))
+            .build()
+            .expect("engine builds");
+        let spec = ContextSpec::from_body(literal(&json!(format!("/ngsi-ld/v1/jsonldContexts/{STORED}"))));
+        let entity = json!({ "id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": { "type": "Property", "value": 40 } });
+        let expanded = expanded_document(&engine, &entity, &spec).await.expect("expansion reads the reference");
+
+        let compacted: Value = serde_json::from_str(
+            engine
+                .compactor(&spec)
+                .compact(ExpandedText::Assembled(expanded.to_string().as_bytes()), STRIP)
+                .await
+                .expect("compaction reads the same reference")
+                .get(),
+        )
+        .expect("JSON");
+
+        pretty_assertions::assert_eq!(compacted["speed"]["value"], json!(40));
     }
 
     #[tokio::test]

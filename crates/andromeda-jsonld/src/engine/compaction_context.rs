@@ -10,6 +10,7 @@
 use crate::{
     context_graph::check_context_graph,
     context_spec::ContextSpec,
+    document_context::{ReferenceReading, resolved_context},
     engine::context_syntax::context_syntax,
     error::JsonLdError,
     loader::{error::LoaderError, http::HttpContextLoader},
@@ -45,7 +46,8 @@ pub struct CompactionContext {
 }
 
 impl CompactionContext {
-    /// Resolve and process the `@context` a spec selects.
+    /// Resolve and process the `@context` a spec selects, its references to
+    /// the tenant's own stored `@context`s read as expansion reads them.
     ///
     /// Mirrors what the processor does before compacting a document: the
     /// context is processed against an empty active context with no base IRI,
@@ -59,7 +61,7 @@ impl CompactionContext {
     /// as the processor types it, when a context does not resolve or does not
     /// process.
     pub(crate) async fn prepare(spec: &ContextSpec, loader: &HttpContextLoader) -> Result<CompactionContext, CompactionContextError> {
-        let resolved = spec.resolved_context();
+        let resolved = resolved_context(spec, ReferenceReading::Hosted(loader.hosted_contexts()));
         check_context_graph(loader, &resolved).await.map_err(CompactionContextError::Invalid)?;
         let unprocessed = context_syntax(&resolved).map_err(CompactionContextError::Invalid)?;
         let processed = unprocessed
