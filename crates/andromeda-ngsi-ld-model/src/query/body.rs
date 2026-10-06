@@ -2,7 +2,7 @@
 
 use crate::{
     attribute_name_csv,
-    query::{aggregation_parameters::AggregationParameters, entity_selector::QueryEntitySelector, temporal_query::TemporalQuery},
+    query::{aggregation_parameters::AggregationParameters, entity_selector::QueryEntitySelector, non_empty_member, temporal_query::TemporalQuery},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
@@ -32,7 +32,7 @@ pub struct Query {
     #[serde(rename = "type")]
     pub type_: QueryType,
     /// Entity selector union.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "non_empty_member::deserialize_array")]
     pub entities: Option<Vec<QueryEntitySelector>>,
     /// Clause-4.9 entity filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -47,7 +47,7 @@ pub struct Query {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temporal_q: Option<TemporalQuery>,
     /// Attributes that matching entities must carry.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "non_empty_member::deserialize_array")]
     pub attrs: Option<Vec<AttributeName>>,
     /// Members removed from each result entity.
     #[serde(
@@ -72,7 +72,7 @@ pub struct Query {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub csf: Option<Expr>,
     /// Entity identifiers already encountered during graph traversal.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "non_empty_member::deserialize_array")]
     pub contained_by: Option<Vec<Identifier>>,
     /// Dataset instances selected for each matching attribute.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -109,7 +109,7 @@ pub struct Query {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<LangTagBuf>,
     /// Entity ordering definition.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "non_empty_member::deserialize_ordering")]
     pub ordering: Option<OrderingParameters>,
     /// Whether distributed entity fragments must be reassembled before filters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -129,8 +129,9 @@ pub struct Query {
 /// the pair of functions is the encoding those members have, and a caller
 /// rendering one of them outside a `Query` needs the same encoding.
 pub mod projection_term_list {
+    use crate::query::non_empty_member;
     use andromeda_ngsi_ld_query::projection::grammar::{ProjectionList, RawProjectionTerm};
-    use serde::{Deserialize, Deserializer, Serializer, de::Error as DeserializeError};
+    use serde::{Deserializer, Serializer, de::Error as DeserializeError};
 
     /// Deserialize the array of projection-language strings into the terms
     /// they parse to, concatenated in array order.
@@ -144,7 +145,7 @@ pub mod projection_term_list {
     where
         D: Deserializer<'de>,
     {
-        Option::<Vec<String>>::deserialize(deserializer)?
+        non_empty_member::deserialize_array::<D, String>(deserializer)?
             .map(|members| {
                 members
                     .iter()
