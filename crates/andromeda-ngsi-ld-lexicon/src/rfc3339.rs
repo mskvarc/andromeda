@@ -30,7 +30,11 @@
 //! like any other broker-held instant. The serde adapters below are that same
 //! rendering reached through `#[serde(with = …)]`.
 
-use chrono::{DateTime, SecondsFormat, SubsecRound, Utc};
+use crate::fractional_seconds::{FractionalSecondsError, accept_comma_decimal_separator};
+use chrono::{DateTime, ParseError, SecondsFormat, SubsecRound, Utc};
+use serde::Deserialize;
+use std::borrow::Cow;
+use thiserror::Error;
 
 /// The fractional digits clause 4.6.3 admits at most, and the resolution of a
 /// `TIMESTAMPTZ`.
@@ -57,9 +61,66 @@ pub fn sub_second(dt: DateTime<Utc>) -> String {
     dt.trunc_subsecs(MICROSECOND_DIGITS).to_rfc3339_opts(SecondsFormat::AutoSi, true)
 }
 
+/// Why a client-supplied RFC 3339 instant is unusable.
+#[derive(Debug, Error)]
+pub enum InstantError {
+    /// The fractional-seconds separator is ambiguous (clause 4.6.3).
+    #[error("instant {0}")]
+    Separator(#[from] FractionalSecondsError),
+    /// The text is not an RFC 3339 date-time.
+    #[error("not an RFC 3339 date-time: {0}")]
+    Malformed(#[source] ParseError),
+}
+
+/// A client-supplied instant: the instant it names and the text it is kept as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientInstant<'a> {
+    /// The text with the clause 4.6.3 compatibility comma rewritten to the
+    /// decimal point, which is the spelling the broker stores and renders.
+    pub canonical: Cow<'a, str>,
+    /// The instant the text names.
+    pub instant: DateTime<Utc>,
+}
+
+/// Read an RFC 3339 instant a client supplied in a request.
+///
+/// Clause 4.6.3: "In requests, also a comma instead of a decimal point may be
+/// used as separator for compatibility reasons." This is the one place the
+/// comma is accepted for an instant that may carry a numeric offset
+/// (`observedAt`, `expiresAt`, `timeAt`); the `DateTime` and `Time` values of
+/// clause 4.6.3 share the same rewrite through
+/// [`accept_comma_decimal_separator`]. The digit count is left to the RFC 3339
+/// parser.
+///
+/// # Errors
+///
+/// Returns [`InstantError::Separator`] for more than one comma and
+/// [`InstantError::Malformed`] when the rewritten text is not RFC 3339.
+pub fn parse_client_instant(text: &str) -> Result<ClientInstant<'_>, InstantError> {
+    let canonical = accept_comma_decimal_separator(text)?;
+    let instant = DateTime::parse_from_rfc3339(&canonical).map_err(InstantError::Malformed)?.with_timezone(&Utc);
+    Ok(ClientInstant { canonical, instant })
+}
+
+/// An instant a request carries, read as [`parse_client_instant`] reads it.
+///
+/// A decoder that reads a member into a typed value names this type so the
+/// clause 4.6.3 comma separator is accepted there as everywhere else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(transparent)]
+pub struct RequestInstant(#[serde(with = "datetime")] DateTime<Utc>);
+
+impl RequestInstant {
+    /// The instant.
+    #[must_use]
+    pub const fn get(self) -> DateTime<Utc> {
+        self.0
+    }
+}
+
 /// Serialize and deserialize a required `DateTime<Utc>` as an RFC 3339 string.
 pub mod datetime {
-    use crate::rfc3339::sub_second;
+    use crate::rfc3339::{parse_client_instant, sub_second};
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
 
@@ -86,13 +147,13 @@ pub mod datetime {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)).map_err(Error::custom)
+        parse_client_instant(&s).map(|parsed| parsed.instant).map_err(Error::custom)
     }
 }
 
 /// Serialize and deserialize an optional `DateTime<Utc>` as an RFC 3339 string.
 pub mod optional_datetime {
-    use crate::rfc3339::sub_second;
+    use crate::rfc3339::{parse_client_instant, sub_second};
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
 
@@ -123,7 +184,7 @@ pub mod optional_datetime {
     {
         let opt: Option<String> = Option::deserialize(deserializer)?;
         match opt {
-            Some(s) => DateTime::parse_from_rfc3339(&s).map(|dt| Some(dt.with_timezone(&Utc))).map_err(Error::custom),
+            Some(s) => parse_client_instant(&s).map(|parsed| Some(parsed.instant)).map_err(Error::custom),
             None => Ok(None),
         }
     }
@@ -131,7 +192,7 @@ pub mod optional_datetime {
 
 #[cfg(test)]
 mod tests {
-    use crate::rfc3339::sub_second;
+    use crate::rfc3339::{parse_client_instant, sub_second};
     use chrono::{DateTime, TimeZone, Utc};
     use serde::{Deserialize, Serialize};
 
@@ -218,5 +279,23 @@ mod tests {
         assert!(!json.contains("ts"));
         let parsed: TestOptional = serde_json::from_str(&json).unwrap();
         pretty_assertions::assert_eq!(parsed.ts, None);
+    }
+
+    /// Clause 4.6.3: a comma separator reads as the decimal point, with an
+    /// offset too, and the canonical text carries the point.
+    #[test]
+    fn a_comma_fraction_reads_as_a_decimal_fraction() {
+        let parsed = parse_client_instant("2024-01-01T01:00:00,25+01:00").expect("a comma fraction");
+        pretty_assertions::assert_eq!(parsed.canonical, "2024-01-01T01:00:00.25+01:00");
+        pretty_assertions::assert_eq!(
+            parsed.instant,
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).single().expect("instant") + chrono::Duration::milliseconds(250)
+        );
+    }
+
+    #[test]
+    fn two_commas_and_non_instants_are_refused() {
+        assert!(parse_client_instant("2024-01-01T00:00:00,5,5Z").is_err());
+        assert!(parse_client_instant("not an instant").is_err());
     }
 }

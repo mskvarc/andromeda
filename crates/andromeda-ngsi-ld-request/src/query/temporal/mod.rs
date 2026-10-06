@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
     attribute_name::AttributeName,
     identifier::Identifier,
+    rfc3339,
     temporal_format::TemporalFormat,
     time_prop::TimeProp,
     time_rel::TimeRel,
@@ -105,10 +106,10 @@ pub struct TemporalQueryParameters {
     #[serde(default, deserialize_with = "deserialize_option_timerel")]
     pub timerel: Option<TimeRel>,
     /// The instant the window is anchored at (`timeAt`).
-    #[serde(rename = "timeAt")]
+    #[serde(rename = "timeAt", default, deserialize_with = "rfc3339::optional_datetime::deserialize")]
     pub time_at: Option<DateTime<Utc>>,
     /// The closing instant, required by `timerel=between` (`endTimeAt`).
-    #[serde(rename = "endTimeAt")]
+    #[serde(rename = "endTimeAt", default, deserialize_with = "rfc3339::optional_datetime::deserialize")]
     pub end_time_at: Option<DateTime<Utc>>,
     /// The temporal property the window applies to (clause 4.8 `timeproperty`).
     #[serde(default, deserialize_with = "deserialize_option_timeproperty")]
@@ -272,6 +273,14 @@ mod tests {
     fn validate_between_requires_end_time_at() {
         let p = params_from_query("timerel=between&timeAt=2024-01-01T00:00:00Z");
         assert!(p.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended).is_err());
+    }
+
+    /// Clause 4.6.3: a comma fraction separator is accepted in a request.
+    #[test]
+    fn a_comma_fraction_is_accepted_in_the_window_instants() {
+        let p = params_from_query("timerel=between&timeAt=2020-08-01T12:00:00,0Z&endTimeAt=2020-08-01T12:00:01,5Z");
+        pretty_assertions::assert_eq!(p.time_at.map(|at| at.to_rfc3339()).as_deref(), Some("2020-08-01T12:00:00+00:00"));
+        pretty_assertions::assert_eq!(p.end_time_at.map(|at| at.to_rfc3339()).as_deref(), Some("2020-08-01T12:00:01.500+00:00"));
     }
 
     #[test]

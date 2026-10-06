@@ -23,7 +23,7 @@ use crate::{
         merge_value::MergeValue,
         nested_null::NestedMergeMember,
         one_or_many::OneOrMany,
-        patched::{Patched, is_ngsi_ld_null, patched_member},
+        patched::{Patched, is_ngsi_ld_null, patched_instant_member, patched_member},
         property::UnitCodeRef,
         value::NgsiLdValue,
     },
@@ -132,9 +132,9 @@ impl MergeInstance {
             entity_id_sealed: members.entity_id_sealed.map(|seal| json(seal, RefusedMember::EntityIdSealed)).transpose()?,
             entity_type_sealed: members.entity_type_sealed.map(|seal| json(seal, RefusedMember::EntityTypeSealed)).transpose()?,
             dataset_id: optional_dataset_member(system.dataset_id)?,
-            expires_at: patched_member(system.expires_at, RefusedMember::ExpiresAt)?,
+            expires_at: patched_instant_member(system.expires_at, RefusedMember::ExpiresAt)?,
             instance_id: optional_member(system.instance_id, RefusedMember::InstanceId)?,
-            observed_at: patched_member(system.observed_at, RefusedMember::ObservedAt)?,
+            observed_at: patched_instant_member(system.observed_at, RefusedMember::ObservedAt)?,
             sub_attributes,
         })
     }

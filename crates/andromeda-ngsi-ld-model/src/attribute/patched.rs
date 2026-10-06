@@ -11,8 +11,10 @@ use crate::{
     attribute::instance_member::{ReadError, optional_member},
     node_refusal::RefusedMember,
 };
+use andromeda_ngsi_ld_lexicon::rfc3339::RequestInstant;
 use andromeda_ngsi_ld_representation::compact_node::{CompactNode, NodeShape};
 use andromeda_ngsi_ld_vocabulary::NULL_URI;
+use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer, de::DeserializeOwned};
 
 /// A merge fragment member: a value to set, or the removal of the one held.
@@ -58,6 +60,23 @@ pub(crate) fn patched_member<'n, T: DeserializeOwned, N: CompactNode<'n>>(
         Some(node) if is_ngsi_ld_null(node) => Ok(Some(Patched::Null)),
         Some(_) | None => Ok(optional_member(member, name)?.map(Patched::Set)),
     }
+}
+
+/// Read a merge fragment instant member (`observedAt`, `expiresAt`),
+/// accepting the clause 4.6.3 comma separator.
+///
+/// # Errors
+///
+/// Returns the refusal of a member that is not an RFC 3339 date-time, located
+/// at the member, and the node's [`CompactNode::Unreadable`].
+pub(crate) fn patched_instant_member<'n, N: CompactNode<'n>>(
+    member: Option<N>,
+    name: RefusedMember,
+) -> Result<Option<Patched<DateTime<Utc>>>, ReadError<'n, N>> {
+    Ok(patched_member::<RequestInstant, N>(member, name)?.map(|patched| match patched {
+        Patched::Set(instant) => Patched::Set(instant.get()),
+        Patched::Null => Patched::Null,
+    }))
 }
 
 #[cfg(test)]

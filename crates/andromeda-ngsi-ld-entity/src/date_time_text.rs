@@ -6,7 +6,7 @@
 //! is written back; the instant parsed from it is what expiry and recency
 //! comparisons read.
 
-use andromeda_ngsi_ld_lexicon::rfc3339::sub_second;
+use andromeda_ngsi_ld_lexicon::rfc3339::{parse_client_instant, sub_second};
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use derive_more::Display;
@@ -61,10 +61,10 @@ impl FromStr for DateTimeText {
     type Err = DateTimeTextError;
 
     fn from_str(text: &str) -> Result<DateTimeText, DateTimeTextError> {
-        let instant = DateTime::parse_from_rfc3339(text).map_err(|_| DateTimeTextError)?.with_timezone(&Utc);
+        let parsed = parse_client_instant(text).map_err(|_| DateTimeTextError)?;
         Ok(DateTimeText {
-            text: CompactString::from(text),
-            instant,
+            text: CompactString::from(parsed.canonical.as_ref()),
+            instant: parsed.instant,
         })
     }
 }
@@ -73,10 +73,10 @@ impl TryFrom<String> for DateTimeText {
     type Error = DateTimeTextError;
 
     fn try_from(text: String) -> Result<DateTimeText, DateTimeTextError> {
-        let instant = DateTime::parse_from_rfc3339(&text).map_err(|_| DateTimeTextError)?.with_timezone(&Utc);
+        let parsed = parse_client_instant(&text).map_err(|_| DateTimeTextError)?;
         Ok(DateTimeText {
-            text: CompactString::from(text),
-            instant,
+            text: CompactString::from(parsed.canonical.as_ref()),
+            instant: parsed.instant,
         })
     }
 }
@@ -94,6 +94,14 @@ mod tests {
             text.instant(),
             Utc.with_ymd_and_hms(2026, 3, 1, 9, 0, 0).single().expect("a valid instant") + chrono::Duration::milliseconds(500)
         );
+    }
+
+    /// Clause 4.6.3: a comma separator is accepted in requests and kept as the
+    /// decimal point.
+    #[test]
+    fn a_comma_fraction_is_kept_as_a_decimal_point() {
+        let text: DateTimeText = "2024-01-01T01:00:00,25+01:00".parse().expect("a comma fraction");
+        pretty_assertions::assert_eq!(text.as_str(), "2024-01-01T01:00:00.25+01:00");
     }
 
     #[test]

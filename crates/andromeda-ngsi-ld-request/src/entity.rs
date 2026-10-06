@@ -18,7 +18,7 @@ use crate::{
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_linked_retrieval::admission::{LinkedOperation, LinkedRequest, admit_request};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, rfc3339};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     projection::{
@@ -93,7 +93,7 @@ pub struct MergeParams {
     pub lang: Option<LangTagBuf>,
     /// The `observedAt` a merged attribute that previously carried one takes
     /// when the fragment names none.
-    #[serde(rename = "observedAt")]
+    #[serde(rename = "observedAt", default, deserialize_with = "rfc3339::optional_datetime::deserialize")]
     pub observed_at: Option<DateTime<Utc>>,
     /// The deprecated alternative to `format` (`options=simplified`).
     pub options: Option<WrittenValue<EntityRepresentationOptions>>,
@@ -463,6 +463,13 @@ mod tests {
     fn an_attribute_write_refuses_a_dataset_id_parameter() {
         let error = serde_urlencoded::from_str::<AttributeWriteParams>("datasetId=urn:ngsi-ld:Dataset:test").expect_err("datasetId is not defined");
         assert!(error.to_string().contains("unknown field"), "got {error}");
+    }
+
+    /// Clause 4.6.3: a comma fraction separator is accepted in a request.
+    #[test]
+    fn a_merge_observed_at_with_a_comma_fraction_is_accepted() {
+        let params: MergeParams = serde_urlencoded::from_str("observedAt=2024-01-01T00:00:00,5Z").expect("parses");
+        pretty_assertions::assert_eq!(params.observed_at.map(|at| at.to_rfc3339()).as_deref(), Some("2024-01-01T00:00:00.500+00:00"));
     }
 
     #[test]
