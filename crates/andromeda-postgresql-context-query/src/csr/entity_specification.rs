@@ -13,7 +13,7 @@
 
 use crate::csr::unnesting::{ent, entities_of_item, lacks_key, registered_pattern_form};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::pattern::Pattern;
+use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern};
 use andromeda_postgresql_seaquery::{
     jsonb::jsonb_exists,
     literal::{int_literal, text_literal},
@@ -61,36 +61,40 @@ impl EntitySpecification<'_> {
     /// The clause 5.12 identifier conditions, or `None` when neither
     /// identifiers nor a pattern were asked for.
     fn identifier_axis(&self) -> Option<Condition> {
-        if self.ids.is_empty() && self.id_pattern.is_none() {
+        let specified = IdentifierAxis::of(self.ids, self.id_pattern);
+        if matches!(specified, IdentifierAxis::Any) {
             return None;
         }
         // Clause 5.12 first bullet: an entry constraining the identifier not at
         // all matches every identifier.
         let mut axis = Condition::any().add(Condition::all().add(lacks_key(ent(), "id")).add(lacks_key(ent(), "idPattern")));
-        if !self.ids.is_empty() {
-            let ids: Vec<&str> = self.ids.iter().map(Identifier::as_str).collect();
-            // Second bullet: one of the identifiers equals the entry's `id`.
-            axis = axis.add(SeaExpr::expr(registered_id()).eq(any(text_array(&ids))));
-            // Third bullet: one of the identifiers matches the entry's
-            // `idPattern`, which clause 5.2.8 only consults when no `id` is
-            // registered beside it.
-            axis = axis.add(
-                Condition::all()
-                    .add(pattern_only_entry())
-                    .add(SeaExpr::exists(some_identifier_matches_registered_pattern(&ids))),
-            );
-        }
-        if let Some(pattern) = self.id_pattern {
-            // Fourth bullet: the asked-for pattern matches the entry's `id`.
-            axis = axis.add(
-                Condition::all()
-                    .add(jsonb_exists(ent(), text_literal("id")))
-                    .add(regex_match(registered_id(), SeaExpr::val(pattern.portable().as_str()))),
-            );
-            // Fifth bullet: both sides carry a pattern; whether two regular
-            // expressions admit a common identifier is not decidable cheaply,
-            // so the entry is taken as matching.
-            axis = axis.add(pattern_only_entry());
+        match specified {
+            IdentifierAxis::Ids(ids) => {
+                let ids: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
+                // Second bullet: one of the identifiers equals the entry's `id`.
+                axis = axis.add(SeaExpr::expr(registered_id()).eq(any(text_array(&ids))));
+                // Third bullet: one of the identifiers matches the entry's
+                // `idPattern`, which clause 5.2.8 only consults when no `id` is
+                // registered beside it.
+                axis = axis.add(
+                    Condition::all()
+                        .add(pattern_only_entry())
+                        .add(SeaExpr::exists(some_identifier_matches_registered_pattern(&ids))),
+                );
+            }
+            IdentifierAxis::Pattern(pattern) => {
+                // Fourth bullet: the asked-for pattern matches the entry's `id`.
+                axis = axis.add(
+                    Condition::all()
+                        .add(jsonb_exists(ent(), text_literal("id")))
+                        .add(regex_match(registered_id(), SeaExpr::val(pattern.portable().as_str()))),
+                );
+                // Fifth bullet: both sides carry a pattern; whether two regular
+                // expressions admit a common identifier is not decidable cheaply,
+                // so the entry is taken as matching.
+                axis = axis.add(pattern_only_entry());
+            }
+            IdentifierAxis::Any => {}
         }
         Some(axis)
     }

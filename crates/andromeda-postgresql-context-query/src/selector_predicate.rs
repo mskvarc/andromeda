@@ -13,7 +13,10 @@
 
 use crate::entity_relations::RowSource;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use andromeda_ngsi_ld_query::entity_selection::{EntitySelection, EntitySelector};
+use andromeda_ngsi_ld_query::{
+    entity_selection::{EntitySelection, EntitySelector},
+    identifier_axis::IdentifierAxis,
+};
 use andromeda_postgresql_query::{
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
@@ -71,16 +74,19 @@ pub fn condition(selection: &EntitySelection, rows: &EntityRowRefs, types: &Reso
 /// `{id:A,type:T}` selects entity `A` *and only if* it is a `T`.
 fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &ResolvedNames<EntityTypeName>, test: TypeTest) -> Condition {
     let mut condition = Condition::all();
-    if !selector.ids.is_empty() {
-        let ids: Vec<&str> = selector.ids.iter().map(AsRef::as_ref).collect();
-        // A warm spatial prefilter can push tens of thousands of candidate ids
-        // here; `IN ($1, … $N)` would bind one parameter per id and blow past
-        // PostgreSQL's 65535 parameter ceiling. A single bound `text[]` with
-        // `= ANY($1)` keeps it to one parameter regardless of set size.
-        condition = condition.add(rows.identity_column(Entities::Id).eq(any(text_array(&ids))));
-    }
-    if let Some(pattern) = &selector.id_pattern {
-        condition = condition.add(regex_match(rows.identity_column(Entities::Id), Expr::val(pattern.portable().as_str())));
+    match selector.identifier_axis() {
+        IdentifierAxis::Ids(ids) => {
+            let ids: Vec<&str> = ids.iter().map(AsRef::as_ref).collect();
+            // A warm spatial prefilter can push tens of thousands of candidate ids
+            // here; `IN ($1, … $N)` would bind one parameter per id and blow past
+            // PostgreSQL's 65535 parameter ceiling. A single bound `text[]` with
+            // `= ANY($1)` keeps it to one parameter regardless of set size.
+            condition = condition.add(rows.identity_column(Entities::Id).eq(any(text_array(&ids))));
+        }
+        IdentifierAxis::Pattern(pattern) => {
+            condition = condition.add(regex_match(rows.identity_column(Entities::Id), Expr::val(pattern.portable().as_str())));
+        }
+        IdentifierAxis::Any => {}
     }
     if let Some(type_expr) = &selector.type_expr {
         match test {

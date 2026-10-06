@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_model::{notification::ChangeOrigin, subscription::SubscriptionStatus};
 use andromeda_ngsi_ld_query::{
     filter::eval::evaluate,
+    identifier_axis::IdentifierAxis,
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
 };
 use chrono::Utc;
@@ -73,7 +74,6 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
     }
 
     if !sub.selectors.is_empty() {
-        let entity_id_str = event.entity_id.to_string(); // convert once for the pattern comparison below
         let any_selector_matches = sub.selectors.iter().any(|sel| {
             let entity_types: Vec<&str> = event.entity_types.iter().map(EntityTypeName::as_str).collect();
             if !sel.type_.matches(&entity_types) {
@@ -84,21 +84,11 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
                 return false;
             }
 
-            if let Some(ref id) = sel.id
-                && id != &event.entity_id
-            {
-                debug!("Subscription {} selector id mismatch: selector={} event_id={}", sub.id, id, event.entity_id);
-                return false;
-            }
-
-            if let Some(ref pattern) = sel.id_pattern
-                && !pattern.is_match(&entity_id_str)
-            {
+            let axis = IdentifierAxis::of(sel.id.as_slice(), sel.id_pattern.as_ref());
+            if !axis.admits(&event.entity_id) {
                 debug!(
-                    "Subscription {} selector idPattern mismatch: pattern={} event_id={}",
-                    sub.id,
-                    pattern.as_str(),
-                    event.entity_id
+                    "Subscription {} selector identifier mismatch: axis={:?} event_id={}",
+                    sub.id, axis, event.entity_id
                 );
                 return false;
             }

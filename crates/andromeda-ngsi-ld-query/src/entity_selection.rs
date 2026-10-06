@@ -3,6 +3,7 @@
 use crate::{
     filter::expression::Expr,
     geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
+    identifier_axis::IdentifierAxis,
     pattern::Pattern,
     projection::projected_members::ProjectedMembers,
     scope::query::ScopeQuery,
@@ -35,6 +36,13 @@ pub struct EntitySelector {
 }
 
 impl EntitySelector {
+    /// What this selector constrains about the entity identifier, with the
+    /// clause 5.2.33 precedence of `id` over `idPattern` applied.
+    #[must_use]
+    pub fn identifier_axis(&self) -> IdentifierAxis<'_> {
+        IdentifierAxis::of(&self.ids, self.id_pattern.as_ref())
+    }
+
     /// Whether this selector constrains a candidate at all.
     ///
     /// An unconstrained selector — no id, no pattern, no type — admits every
@@ -176,9 +184,20 @@ impl EntitySelection {
 mod tests {
     use crate::{
         entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
+        identifier_axis::IdentifierAxis,
         pattern::Pattern,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+
+    /// Clause 5.2.33: a selector naming an `id` reads as constraining by id
+    /// alone, whatever `idPattern` it also carries.
+    #[test]
+    fn a_selector_with_an_id_and_an_id_pattern_constrains_by_id() {
+        let pattern = Pattern::parse("^urn:nomatch").expect("valid pattern");
+        let id: Identifier = "urn:ngsi-ld:A:1".parse().expect("valid id");
+        let selector = EntitySelector::builder().ids(vec![id]).id_pattern(Some(pattern)).build();
+        assert!(matches!(selector.identifier_axis(), IdentifierAxis::Ids(_)));
+    }
 
     /// Clause 5.5.14: a request that named no identifier fixes nothing, so the
     /// selectors and filters alone decide what it considers.

@@ -514,6 +514,22 @@ mod tests {
     }
 
     #[test]
+    fn an_id_takes_precedence_over_a_non_matching_id_pattern() {
+        let sub = make_sub(
+            "sub1",
+            vec![EntitySelector {
+                id: Some("urn:ngsi-ld:Vehicle:A1".parse().expect("valid id")),
+                id_pattern: Some("urn:ngsi-ld:Parking:.*".parse().expect("valid pattern")),
+                type_: "Vehicle".parse().expect("valid type expression"),
+            }],
+            vec!["attributeUpdated"],
+            None,
+        );
+        let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
+        assert!(matches_subscription(&sub, &event));
+    }
+
+    #[test]
     fn matches_with_id_pattern() {
         let sub = make_sub(
             "sub1",

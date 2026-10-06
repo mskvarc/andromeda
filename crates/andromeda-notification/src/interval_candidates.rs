@@ -8,6 +8,7 @@ use andromeda_entity::port::payload_pages::EntityPayloadPages;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_model::subscription::Subscription;
+use andromeda_ngsi_ld_query::identifier_axis::IdentifierAxis;
 
 /// Rows read per round trip while a periodic notification assembles its
 /// candidate set.
@@ -52,13 +53,7 @@ impl IntervalCandidates<'_> {
                     if single_type.is_none() && !selector.type_.matches(entity.types().as_slice()) {
                         return false;
                     }
-                    let entity_id = entity.id();
-                    if let Some(id) = selector.id.as_ref()
-                        && entity_id != id
-                    {
-                        return false;
-                    }
-                    selector.id_pattern.as_ref().is_none_or(|pattern| pattern.is_match(entity_id.as_str()))
+                    IdentifierAxis::of(selector.id.as_slice(), selector.id_pattern.as_ref()).admits(entity.id())
                 })
                 .await?;
             all_entities.extend(matched);

@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
     filter::{eval::evaluate, expression::Expr},
     geo::query::GeoQuery,
-    pattern::Pattern,
+    identifier_axis::IdentifierAxis,
     projection::projected_members::{ProjectedMembers, ScopeRetention},
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::NoLinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
     scope::query::ScopeQuery,
@@ -144,7 +144,7 @@ fn selectors_match<'a, E: SelectedEntity<'a>>(selectors: &[EntitySelector], enti
 
 /// Whether one selector's identifier list, pattern and type all hold at once.
 fn selector_matches<'a, E: SelectedEntity<'a>>(selector: &EntitySelector, entity: E) -> bool {
-    identifier_matches(&selector.ids, selector.id_pattern.as_ref(), entity.identifier()) && type_matches(selector.type_expr.as_ref(), entity)
+    identifier_matches(selector.identifier_axis(), entity.identifier()) && type_matches(selector.type_expr.as_ref(), entity)
 }
 
 /// Clause 5.7.2 `id` and `idPattern`.
@@ -154,11 +154,11 @@ fn selector_matches<'a, E: SelectedEntity<'a>>(selector: &EntitySelector, entity
 /// extended regular expressions clause 5.2.8 mandates and diverges only on
 /// engine extensions no conforming client may write. An entity naming no
 /// identifier satisfies neither once either constrains it.
-fn identifier_matches(ids: &[Identifier], id_pattern: Option<&Pattern>, id: Option<&Identifier>) -> bool {
-    if ids.is_empty() && id_pattern.is_none() {
-        return true;
+fn identifier_matches(axis: IdentifierAxis<'_>, id: Option<&Identifier>) -> bool {
+    match axis {
+        IdentifierAxis::Any => true,
+        IdentifierAxis::Ids(_) | IdentifierAxis::Pattern(_) => id.is_some_and(|id| axis.admits(id)),
     }
-    id.is_some_and(|id| (ids.is_empty() || ids.contains(id)) && id_pattern.is_none_or(|pattern| pattern.is_match(id.as_str())))
 }
 
 /// Clause 4.17 type selection.

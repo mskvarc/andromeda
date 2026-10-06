@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity_selection::{ConsideredEntities, EntitySelector},
+    identifier_axis::IdentifierAxis,
     page_window::{PageStart, PageWindow},
     read_order::ReadOrder,
     temporal::compiled::CompiledTemporalQuery,
@@ -226,12 +227,15 @@ fn build_entity_conditions_for_temporal(schema: Option<&DynIden>, compiled: &Com
 /// selector means.
 fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<EntityTypeName>) -> Condition {
     let mut condition = Condition::all();
-    if !selector.ids.is_empty() {
-        let ids: Vec<&str> = selector.ids.iter().map(AsRef::as_ref).collect();
-        condition = condition.add(SeaExpr::col((E, TemporalEntities::Id)).is_in(ids));
-    }
-    if let Some(pattern) = &selector.id_pattern {
-        condition = condition.add(regex_match(SeaExpr::col((E, TemporalEntities::Id)), SeaExpr::val(pattern.portable().as_str())));
+    match selector.identifier_axis() {
+        IdentifierAxis::Ids(ids) => {
+            let ids: Vec<&str> = ids.iter().map(AsRef::as_ref).collect();
+            condition = condition.add(SeaExpr::col((E, TemporalEntities::Id)).is_in(ids));
+        }
+        IdentifierAxis::Pattern(pattern) => {
+            condition = condition.add(regex_match(SeaExpr::col((E, TemporalEntities::Id)), SeaExpr::val(pattern.portable().as_str())));
+        }
+        IdentifierAxis::Any => {}
     }
     if let Some(type_expr) = &selector.type_expr {
         condition = condition.add(type_condition(type_expr, &SeaExpr::col((E, TemporalEntities::EntityTypeNameKeys)), types));

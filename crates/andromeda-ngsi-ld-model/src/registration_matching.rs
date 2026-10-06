@@ -9,7 +9,7 @@
 
 use crate::{entity_info::EntityInfo, registration::info::RegistrationInfo, subscription::EntitySelector};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern, type_selection::grammar::TypeExprRaw};
 
 /// One entity specification of clause 5.12: a type selector, entity
 /// identifiers and an identifier pattern, each optional.
@@ -37,6 +37,13 @@ impl<'spec> EntitySpecification<'spec> {
         }
     }
 
+    /// What this specification constrains about the identifier, with the
+    /// clause 5.2.33 precedence of `id` over `idPattern` applied.
+    #[must_use]
+    pub const fn identifier_axis(&self) -> IdentifierAxis<'spec> {
+        IdentifierAxis::of(self.ids, self.id_pattern)
+    }
+
     /// Whether this specification matches one `EntityInfo` (clause 5.12): the
     /// type selector matches the registered type(s), and one of the five
     /// identifier conditions holds.
@@ -49,20 +56,17 @@ impl<'spec> EntitySpecification<'spec> {
     /// The five clause 5.12 identifier conditions, read with the clause 5.2.8
     /// precedence of a registered `id` over a registered `idPattern`.
     fn identifier_axis_matches(&self, info: &EntityInfo) -> bool {
-        if self.ids.is_empty() && self.id_pattern.is_none() {
-            return true;
-        }
-        match (&info.id, &info.id_pattern) {
-            // The EntityInfo contains neither an id nor an idPattern.
-            (None, None) => true,
-            // One of the specified identifiers equals the registered id, or the
-            // specified pattern matches it.
-            (Some(registered), _) => self.ids.contains(registered) || self.id_pattern.is_some_and(|pattern| pattern.is_match(registered.as_str())),
-            // One of the specified identifiers matches the registered pattern,
-            // or both sides carry a pattern, which is taken as matching since
-            // whether two patterns admit a common identifier is not decidable
-            // cheaply.
-            (None, Some(registered)) => self.ids.iter().any(|id| registered.is_match(id.as_str())) || self.id_pattern.is_some(),
+        let axis = self.identifier_axis();
+        match (&info.id, &info.id_pattern, axis) {
+            // Nothing specified; or the EntityInfo contains neither an id nor
+            // an idPattern; or both sides carry a pattern, which is taken as
+            // matching since whether two patterns admit a common identifier is
+            // not decidable cheaply.
+            (_, _, IdentifierAxis::Any) | (None, None, _) | (None, Some(_), IdentifierAxis::Pattern(_)) => true,
+            // The specified identifiers or pattern admit the registered id.
+            (Some(registered), _, axis) => axis.admits(registered),
+            // One of the specified identifiers matches the registered pattern.
+            (None, Some(registered), IdentifierAxis::Ids(ids)) => ids.iter().any(|id| registered.is_match(id.as_str())),
         }
     }
 }
@@ -162,6 +166,23 @@ mod tests {
             attributes: &[],
         }
         .matches_information(element)
+    }
+
+    #[test]
+    fn a_specified_id_takes_precedence_over_a_specified_id_pattern() {
+        let element = info(json!({"entities": [{"id": "urn:ngsi-ld:A:1", "type": "A"}]}));
+        let nomatch = pattern("^urn:nomatch");
+        let ids = [uri("urn:ngsi-ld:A:1")];
+        let entities = [EntitySpecification {
+            type_selector: None,
+            ids: &ids,
+            id_pattern: Some(&nomatch),
+        }];
+        let specification = RegistrationMatchSpecification {
+            entities: &entities,
+            attributes: &[],
+        };
+        assert!(specification.matches_information(&element));
     }
 
     #[test]
