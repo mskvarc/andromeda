@@ -135,6 +135,8 @@ pub async fn query(
 
 /// PATCH /ngsi-ld/v1/subscriptions/{subscription_id} -- Update a subscription.
 pub async fn update(
+    // Clause 6.3.20: the operation defines no parameter, so any is an `InvalidRequest`.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Identifier>,
@@ -154,6 +156,8 @@ pub async fn update(
 
 /// DELETE /ngsi-ld/v1/subscriptions/{subscription_id} -- Delete a subscription.
 pub async fn delete(
+    // Clause 6.3.20: the operation defines no parameter, so any is an `InvalidRequest`.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Identifier>,

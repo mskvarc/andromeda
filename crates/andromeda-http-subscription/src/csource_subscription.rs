@@ -136,6 +136,8 @@ pub async fn query(
 
 /// PATCH /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Update a context source subscription.
 pub async fn update(
+    // Clause 6.3.20: the operation defines no parameter, so any is an `InvalidRequest`.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Identifier>,
@@ -155,6 +157,8 @@ pub async fn update(
 
 /// DELETE /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Delete a context source subscription.
 pub async fn delete(
+    // Clause 6.3.20: the operation defines no parameter, so any is an `InvalidRequest`.
+    ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Identifier>,
