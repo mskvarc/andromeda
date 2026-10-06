@@ -15,6 +15,7 @@ use axum::{
     extract::FromRequest,
     http::{
         HeaderValue,
+        Method,
         Request,
         StatusCode,
         header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, LINK},
@@ -302,11 +303,27 @@ async fn rejects_json_patch_as_unsupported() {
     }
 }
 
+/// Clause 6.3.4: `application/merge-patch+json` is admitted for PATCH alone.
 #[tokio::test]
-async fn accepts_merge_patch_json() {
-    let req = request_of("application/merge-patch+json", &json!({"id": "urn:ngsi-ld:T:1", "type": "T"}));
+async fn accepts_merge_patch_json_on_patch() {
+    let mut req = request_of("application/merge-patch+json", &json!({"id": "urn:ngsi-ld:T:1", "type": "T"}));
+    *req.method_mut() = Method::PATCH;
 
-    assert!(admit(req).await.is_ok(), "merge-patch+json should be accepted");
+    assert!(admit(req).await.is_ok(), "merge-patch+json should be accepted on PATCH");
+}
+
+/// Clause 6.3.4: on POST and PUT the same media type is a bare 415.
+#[tokio::test]
+async fn rejects_merge_patch_json_on_post_and_put() {
+    for method in [Method::POST, Method::PUT] {
+        let mut req = request_of("application/merge-patch+json", &json!({"id": "urn:ngsi-ld:T:1", "type": "T"}));
+        *req.method_mut() = method.clone();
+
+        assert!(
+            matches!(admit(req).await, Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE))),
+            "{method}"
+        );
+    }
 }
 
 #[tokio::test]

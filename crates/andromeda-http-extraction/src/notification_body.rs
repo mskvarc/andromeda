@@ -8,19 +8,13 @@
 //! 5.3.1-1). Every other body precondition applies, and the receiver decodes
 //! the text straight into the notification it is.
 
-use crate::{
-    addressed_uri::addressed_request_uri,
-    body_admission::{AdmittedBody, admit_request_body},
-    content_kind::{ContentKind, classify_content_type},
-};
+use crate::body_admission::{AdmittedBody, admit_request_body};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::context_spec::ContextSpec;
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
-    http::StatusCode,
 };
-use headers::HeaderMapExt;
 
 /// Axum extractor for the body of a received Notification.
 pub struct NotificationBody {
@@ -37,18 +31,8 @@ where
     type Rejection = ExtractorRejection;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        // Clause 6.3.4 admits `application/merge-patch+json` for the Merge
-        // Entity operation alone; a Notification is `application/json` or
-        // `application/ld+json` (clause 5.3.1).
-        let content_type = req
-            .headers()
-            .typed_get::<headers::ContentType>()
-            .map(|value| value.to_string())
-            .unwrap_or_default();
-        if matches!(classify_content_type(&content_type), Some(ContentKind::MergePatchJson)) {
-            tracing::warn!(uri = %addressed_request_uri(&req), "a notification announced application/merge-patch+json");
-            return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
-        }
+        // Clause 6.3.4 admits `application/merge-patch+json` for PATCH alone, so
+        // the admission refuses it on a Notification's POST.
         admit_request_body(req, state, |AdmittedBody { text, context, .. }| Ok(NotificationBody { text, context })).await
     }
 }

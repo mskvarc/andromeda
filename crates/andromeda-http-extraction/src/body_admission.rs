@@ -194,7 +194,7 @@ async fn read_body<S: Send + Sync>(req: Request, state: &S) -> Result<ReadBody, 
         .map(|value| value.to_string())
         .unwrap_or_default();
 
-    let Some(content_kind) = classify_content_type(&content_type_raw) else {
+    let Some(content_kind) = classify_content_type(&content_type_raw, req.method()) else {
         tracing::warn!("JsonLd extraction failed: unsupported media type '{}'", content_type_raw);
         return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
     };

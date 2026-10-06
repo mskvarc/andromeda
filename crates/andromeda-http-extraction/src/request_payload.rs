@@ -21,6 +21,7 @@
 
 use crate::{
     addressed_uri::addressed_request_uri,
+    content_kind::request_content_kind,
     content_length_precondition::{DeclaredBodyLength, declared_body_length},
     json_value_budget::refuse_values_past_budget,
     request_body_limit::RequestBodyLimit,
@@ -35,7 +36,7 @@ use axum::{
         Request,
         rejection::{BytesRejection, FailedToBufferBody},
     },
-    http::{Uri, Version},
+    http::{StatusCode, Uri, Version},
 };
 
 /// What a client whose payload was refused as too large can do about it.
@@ -60,6 +61,12 @@ where
         let instance = addressed_request_uri(&request);
         // clone: the precondition's refusal and the payload's each name the request.
         let declared = declared_body_length(request.headers()).map_err(|error| error.into_rejection(instance.clone()))?;
+        // Clause 6.3.4: the `Content-Type` is `application/json` or
+        // `application/ld+json` (`application/merge-patch+json` for PATCH
+        // alone); anything else is "just a 415 HTTP status code".
+        if request_content_kind(request.headers(), request.method()).is_none() {
+            return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
+        }
         let value_limit = request.extensions().get::<RequestJsonValueLimit>().copied();
         // clone: a counted payload over its limit names the request too.
         let body = buffer_payload(request, state, declared, instance.clone()).await?;
@@ -145,7 +152,7 @@ mod tests {
             Request,
             StatusCode,
             Version,
-            header::{CONNECTION, CONTENT_LENGTH},
+            header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE},
         },
         routing::post,
     };
@@ -194,6 +201,7 @@ mod tests {
     fn declared(size: usize) -> Request<Body> {
         Request::post("/ngsi-ld/v1/jsonldContexts")
             .header(CONTENT_LENGTH, size)
+            .header(CONTENT_TYPE, "application/json")
             .body(Body::from(vec![b'x'; size]))
             .expect("a valid request")
     }
@@ -204,6 +212,7 @@ mod tests {
         let chunks = stream::iter([Ok::<_, Infallible>(vec![b'x'; size])]);
         Request::post("/ngsi-ld/v1/jsonldContexts")
             .header(CONTENT_LENGTH, 1)
+            .header(CONTENT_TYPE, "application/json")
             .body(Body::from_stream(chunks))
             .expect("a valid request")
     }
@@ -299,12 +308,33 @@ mod tests {
     /// Clause 6.3.4: the length precondition comes first.
     #[tokio::test]
     async fn a_payload_declaring_no_length_is_the_bare_411() {
-        let request = Request::post("/ngsi-ld/v1/jsonldContexts").body(Body::from("{}")).expect("a valid request");
+        let request = Request::post("/ngsi-ld/v1/jsonldContexts")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .expect("a valid request");
 
         let (status, problem) = answer(router(true), request).await;
 
         pretty_assertions::assert_eq!(status, StatusCode::LENGTH_REQUIRED);
         pretty_assertions::assert_eq!(problem, Value::Null);
+    }
+
+    /// Clause 6.3.4: `application/merge-patch+json` on a POST, and a missing
+    /// `Content-Type`, are the bare 415.
+    #[tokio::test]
+    async fn a_post_payload_without_a_json_media_type_is_the_bare_415() {
+        for content_type in [Some("application/merge-patch+json"), Some("text/plain"), None] {
+            let mut builder = Request::post("/ngsi-ld/v1/jsonldContexts").header(CONTENT_LENGTH, 2);
+            if let Some(content_type) = content_type {
+                builder = builder.header(CONTENT_TYPE, content_type);
+            }
+            let request = builder.body(Body::from("{}")).expect("a valid request");
+
+            let (status, problem) = answer(router(true), request).await;
+
+            pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{content_type:?}");
+            pretty_assertions::assert_eq!(problem, Value::Null);
+        }
     }
 
     /// Clause 6.3.2: a JSON payload holding more values than the published
@@ -322,6 +352,7 @@ mod tests {
         let request = |body: &'static str| {
             Request::post("/ngsi-ld/v1/entityOperations/delete")
                 .header(CONTENT_LENGTH, body.len())
+                .header(CONTENT_TYPE, "application/json")
                 .body(Body::from(body))
                 .expect("a valid request")
         };

@@ -4,6 +4,8 @@
 //! matching, preventing false positives: `application/json-patch+json` is not
 //! `application/json`.
 
+use axum::http::{HeaderMap, Method};
+use headers::HeaderMapExt;
 use mediatype::{MediaTypeBuf, names};
 
 /// Classify the Content-Type into one of the supported NGSI-LD types.
@@ -17,8 +19,17 @@ pub(crate) enum ContentKind {
     MergePatchJson,
 }
 
+/// The representation a request's `Content-Type` announces, when clause 6.3.4
+/// admits it under the request's method.
+pub(crate) fn request_content_kind(headers: &HeaderMap, method: &Method) -> Option<ContentKind> {
+    classify_content_type(&headers.typed_get::<headers::ContentType>()?.to_string(), method)
+}
+
 /// Classify a raw content type into a supported JSON representation kind.
-pub(crate) fn classify_content_type(raw: &str) -> Option<ContentKind> {
+///
+/// Clause 6.3.4: `application/merge-patch+json` is admitted for HTTP PATCH
+/// requests alone, so under any other method it is unsupported.
+pub(crate) fn classify_content_type(raw: &str, method: &Method) -> Option<ContentKind> {
     let mt: MediaTypeBuf = raw.parse().ok()?;
 
     if mt.ty() != names::APPLICATION {
@@ -31,7 +42,7 @@ pub(crate) fn classify_content_type(raw: &str) -> Option<ContentKind> {
     }
 
     // application/merge-patch+json
-    if mt.subty() == names::MERGE_PATCH && mt.suffix() == Some(names::JSON) {
+    if *method == Method::PATCH && mt.subty() == names::MERGE_PATCH && mt.suffix() == Some(names::JSON) {
         return Some(ContentKind::MergePatchJson);
     }
 
@@ -46,23 +57,34 @@ pub(crate) fn classify_content_type(raw: &str) -> Option<ContentKind> {
 #[cfg(test)]
 mod tests {
     use crate::content_kind::{ContentKind, classify_content_type};
+    use axum::http::Method;
 
     #[test]
     fn the_three_supported_json_media_types_are_told_apart() {
-        pretty_assertions::assert_eq!(classify_content_type("application/json"), Some(ContentKind::Json));
-        pretty_assertions::assert_eq!(classify_content_type("application/ld+json"), Some(ContentKind::LdJson));
-        pretty_assertions::assert_eq!(classify_content_type("application/merge-patch+json"), Some(ContentKind::MergePatchJson));
+        pretty_assertions::assert_eq!(classify_content_type("application/json", &Method::POST), Some(ContentKind::Json));
+        pretty_assertions::assert_eq!(classify_content_type("application/ld+json", &Method::POST), Some(ContentKind::LdJson));
+        pretty_assertions::assert_eq!(
+            classify_content_type("application/merge-patch+json", &Method::PATCH),
+            Some(ContentKind::MergePatchJson)
+        );
     }
 
     #[test]
     fn a_charset_parameter_does_not_change_the_kind() {
-        pretty_assertions::assert_eq!(classify_content_type("application/json; charset=utf-8"), Some(ContentKind::Json));
+        pretty_assertions::assert_eq!(classify_content_type("application/json; charset=utf-8", &Method::PUT), Some(ContentKind::Json));
     }
 
     #[test]
     fn any_other_suffixed_or_foreign_media_type_is_unsupported() {
         for raw in ["application/json-patch+json", "application/xml", "text/json", "not a media type", ""] {
-            pretty_assertions::assert_eq!(classify_content_type(raw), None, "{raw}");
+            pretty_assertions::assert_eq!(classify_content_type(raw, &Method::PATCH), None, "{raw}");
+        }
+    }
+
+    #[test]
+    fn merge_patch_is_unsupported_under_every_method_but_patch() {
+        for method in [Method::POST, Method::PUT, Method::GET, Method::DELETE] {
+            pretty_assertions::assert_eq!(classify_content_type("application/merge-patch+json", &method), None, "{method}");
         }
     }
 }
