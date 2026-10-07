@@ -12,6 +12,7 @@
 use crate::{
     jsonb::{attribute_value_jsonpath, json_literal_member_jsonpath, lift_comparison},
     operator::{compare, pattern as pattern_predicate},
+    q_predicate::string_ordering::ordered_string,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
@@ -88,10 +89,11 @@ fn payload_extraction(path: &AttrPath, terminal_iri: &str, document: &SimpleExpr
 /// Everything that decides the comparison domain (the cast a number or boolean
 /// needs, the guarded `timestamptz` comparison a `DateTime` needs, the
 /// normalisation a `Time` needs) lives in [`lift_comparison`], so this fallback
-/// and the CSR renderer compare the same way.
+/// and the CSR renderer compare the same way. A String ordering compares under
+/// the collation [`ordered_string`] picks.
 fn scalar_predicate(stored_text: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
     let lifted = lift_comparison(scalar, stored_text);
-    compare(lifted.stored, op, lifted.operand)
+    compare(ordered_string(lifted.stored, scalar, op), op, lifted.operand)
 }
 
 /// Build a single-scalar equality comparison (`==`/`!=`), `COALESCing` a
@@ -123,16 +125,18 @@ pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &Compa
             let lower = lift_comparison(min, stored.clone()); // clone: the stored side is compared against both bounds
             let upper_operand = lift_comparison(max, stored).operand;
             let stored_side = lower.stored;
+            // Each bound orders the stored side under its own collation.
+            let bounded = |op: CmpOp, bound: &Scalar, operand: SimpleExpr| compare(ordered_string(stored_side.clone(), bound, op), op, operand); // clone: the stored side is read by both halves
             // A missing element makes the extraction NULL, and every comparison
             // against NULL is unknown, so presence is required structurally in
             // both polarities (clause 4.9).
             match membership {
                 SetMembership::Within => Condition::all()
-                    .add(compare(stored_side.clone(), CmpOp::GreaterEq, lower.operand)) // clone: the stored side is read by both halves
-                    .add(compare(stored_side, CmpOp::LessEq, upper_operand)),
+                    .add(bounded(CmpOp::GreaterEq, min, lower.operand))
+                    .add(bounded(CmpOp::LessEq, max, upper_operand)),
                 SetMembership::Outside => Condition::any()
-                    .add(compare(stored_side.clone(), CmpOp::Less, lower.operand)) // clone: the stored side is read by both halves
-                    .add(compare(stored_side, CmpOp::Greater, upper_operand)),
+                    .add(bounded(CmpOp::Less, min, lower.operand))
+                    .add(bounded(CmpOp::Greater, max, upper_operand)),
             }
         }
         CompareValue::ValueList(values) => {
@@ -361,6 +365,23 @@ mod tests {
             assert!(!sql.contains("hasObject"), "{expression}: {sql}");
             assert!(sql.contains("hasValue"), "{expression}: {sql}");
         }
+    }
+
+    /// Clause 4.9 recommends the UCA for ordering text strings, so a payload
+    /// String ordering and both String bounds of a range collate under the ICU
+    /// root collation, and a String equality does not.
+    #[test]
+    fn a_payload_string_ordering_and_range_collate_under_the_icu_root_collation() {
+        for expression in [
+            "\"https://example.com/address\".\"https://example.com/sub\">\"a\"",
+            "\"https://example.com/address\".\"https://example.com/sub\"==\"a\"..\"m\"",
+            "\"https://example.com/address\".\"https://example.com/sub\"!=\"a\"..\"m\"",
+        ] {
+            let sql = render(expression);
+            assert!(sql.contains(r#"COLLATE "und-x-icu""#), "{expression}: {sql}");
+        }
+        let sql = render("\"https://example.com/address\".\"https://example.com/sub\"==\"a\"");
+        assert!(!sql.contains(r#"COLLATE "und-x-icu""#), "{sql}");
     }
 
     #[test]

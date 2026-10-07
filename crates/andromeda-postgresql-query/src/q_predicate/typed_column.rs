@@ -26,7 +26,7 @@
 
 use crate::{
     operator::compare,
-    q_predicate::{instance_scan::InstanceScan, value_column::ValueColumn},
+    q_predicate::{instance_scan::InstanceScan, string_ordering::ordered_string, value_column::ValueColumn},
 };
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::{predicate::CmpOp, scalar::Scalar};
@@ -63,7 +63,7 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, scan: &InstanceScan<'_
         Scalar::Number(number) => compare(scan.value(ValueColumn::Number), op, SeaExpr::val(number.decimal().clone())),
         Scalar::Bool(value) => compare(scan.value(ValueColumn::Boolean), op, SeaExpr::val(*value)),
         Scalar::Str(value) | Scalar::Uri(value) => {
-            let string_test = string_condition(value.as_str(), op, scan);
+            let string_test = string_condition(scalar, value.as_str(), op, scan);
             match relationship_object_is_comparable(op) {
                 RelationshipObjects::Comparable => {
                     // Equality is byte identity, so a stored object equal to the
@@ -98,12 +98,14 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, scan: &InstanceScan<'_
 /// therefore compiles exactly as it would with no overflow column at all. An
 /// ordering reads both columns, because a stored value of any length may order
 /// on either side of the operand; a row whose value is in the other column
-/// yields NULL for that arm, which the disjunction absorbs.
-fn string_condition(value: &str, op: CmpOp, scan: &InstanceScan<'_>) -> SimpleExpr {
+/// yields NULL for that arm, which the disjunction absorbs. An ordering
+/// compares under the collation [`ordered_string`] picks.
+fn string_condition(scalar: &Scalar, value: &str, op: CmpOp, scan: &InstanceScan<'_>) -> SimpleExpr {
     match op {
         CmpOp::Equal | CmpOp::Unequal => compare(scan.value(ValueColumn::of_string(value)), op, SeaExpr::val(value)),
         CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => {
-            compare(scan.value(ValueColumn::String), op, SeaExpr::val(value)).or(compare(scan.value(ValueColumn::LongText), op, SeaExpr::val(value)))
+            let ordered = |column| compare(ordered_string(scan.value(column), scalar, op), op, SeaExpr::val(value));
+            ordered(ValueColumn::String).or(ordered(ValueColumn::LongText))
         }
     }
 }
@@ -252,9 +254,18 @@ mod tests {
     fn string_ordering_reads_both_string_columns_and_never_relationship_objects() {
         for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
             let sql = render(current(&Scalar::Str("m".to_owned()), op));
-            assert!(sql.contains(r#""cav"."value_string" "#), "{op:?}: {sql}");
-            assert!(sql.contains(r#""cav"."value_long_text" "#), "{op:?}: {sql}");
+            assert!(sql.contains(r#"("cav"."value_string") COLLATE "und-x-icu""#), "{op:?}: {sql}");
+            assert!(sql.contains(r#"("cav"."value_long_text") COLLATE "und-x-icu""#), "{op:?}: {sql}");
             assert!(!sql.contains("value_uri"), "{op:?}: {sql}");
+        }
+    }
+
+    /// RFC 8259 section 8.3 makes String equality code unit identity, so an
+    /// equality keeps the byte order of the column and its index.
+    #[test]
+    fn a_string_equality_compares_under_the_column_byte_order() {
+        for op in [CmpOp::Equal, CmpOp::Unequal] {
+            assert!(!render(current(&Scalar::Str("m".to_owned()), op)).contains("COLLATE"), "{op:?}");
         }
     }
 

@@ -114,6 +114,7 @@ pub mod ordering_term;
 pub mod pattern_term;
 pub mod projection;
 pub mod projection_probe;
+pub mod string_ordering;
 pub mod structured_target;
 pub mod traversal;
 pub mod typed_column;

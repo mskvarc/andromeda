@@ -29,6 +29,7 @@ pub mod quoting;
 pub mod referenced_attributes;
 pub mod scalar;
 pub mod serialize;
+pub mod string_order;
 pub mod target_value;
 pub mod token;
 pub mod token_cursor;

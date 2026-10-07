@@ -11,7 +11,10 @@
 use crate::{
     jsonb::lift_comparison,
     operator::{compare, pattern as pattern_predicate},
-    q_predicate::language_map::{LanguageMap, LanguageSelection},
+    q_predicate::{
+        language_map::{LanguageMap, LanguageSelection},
+        string_ordering::string_ordering_collation,
+    },
 };
 use andromeda_ngsi_ld_query::{
     filter::{
@@ -101,19 +104,23 @@ fn string_in_range(text: SimpleExpr, min: &Scalar, max: &Scalar) -> SimpleExpr {
 /// Compare one string against one operand.
 ///
 /// A number or a boolean is a datatype no string carries, which clause 4.9
-/// makes a non-match. A String, a `Date` and a `Time` operand compare as the
-/// canonical text the String column holds them in, under its byte order; a
-/// `DateTime` compares as an instant once the string is shown to be one, which
-/// carries no collation. The lifting is [`lift_comparison`]'s, which the
-/// payload reading shares.
+/// makes a non-match. A String ordering compares under the collation
+/// [`string_ordering_collation`] picks. Any other String, `Date` or `Time`
+/// comparison runs on the canonical text the String column holds the value in,
+/// under that column's byte order. A `DateTime` compares as an instant once the
+/// string is shown to be one, which carries no collation. The lifting is
+/// [`lift_comparison`]'s, which the payload reading shares.
 fn string_comparison(text: SimpleExpr, op: CmpOp, scalar: &Scalar) -> SimpleExpr {
     if string_comparability(scalar) == StringComparability::Incomparable {
         return false_literal();
     }
     let lifted = lift_comparison(scalar, text);
-    let stored = match scalar {
-        Scalar::DateTime(_) => lifted.stored,
-        Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::Number(_) | Scalar::Bool(_) => {
+    let stored = match (scalar, string_ordering_collation(scalar, op)) {
+        (Scalar::DateTime(_), _) => lifted.stored,
+        (Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::Number(_) | Scalar::Bool(_), Some(collation)) => {
+            collate(lifted.stored, &collation)
+        }
+        (Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::Number(_) | Scalar::Bool(_), None) => {
             collate(lifted.stored, &PostgresCollation::new(BYTE_ORDER))
         }
     };
@@ -147,12 +154,20 @@ mod tests {
             .to_string(PostgresQueryBuilder)
     }
 
-    /// Clause 4.9 compares Strings by RFC 8259 code points, which is the byte
+    /// Clause 4.9 recommends the UCA for ordering text strings, under the ICU
+    /// root collation clause 4.23.1 makes the default.
+    #[test]
+    fn a_string_ordering_compares_under_the_icu_root_collation() {
+        let sql = render("\"https://example.com/name\">\"m\"", LanguageSelection::AnyLanguage);
+        assert!(sql.contains(r#"COLLATE "und-x-icu") > 'm'"#), "{sql}");
+    }
+
+    /// RFC 8259 section 8.3 makes String equality code unit identity, the byte
     /// order of the stored String columns.
     #[test]
-    fn a_string_operand_compares_under_the_byte_order_of_the_string_columns() {
-        let sql = render("\"https://example.com/name\">\"m\"", LanguageSelection::AnyLanguage);
-        assert!(sql.contains(r#"COLLATE "C") > 'm'"#), "{sql}");
+    fn a_string_equality_compares_under_the_byte_order_of_the_string_columns() {
+        let sql = render("\"https://example.com/name\"==\"m\"", LanguageSelection::AnyLanguage);
+        assert!(sql.contains(r#"COLLATE "C") = 'm'"#), "{sql}");
     }
 
     /// A number or a boolean is a datatype no string carries.

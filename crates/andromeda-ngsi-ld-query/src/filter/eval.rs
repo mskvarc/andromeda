@@ -13,6 +13,7 @@ use crate::{
         path::QueryPath,
         predicate::{CmpOp, Predicate, SetMembership},
         scalar::{CompareValue, Scalar, parse_date, parse_date_time, parse_time},
+        string_order::string_order,
         target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
     },
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities},
@@ -204,7 +205,8 @@ fn compare_in_domain(value: &TargetValue<'_>, op: CmpOp, scalar: &Scalar) -> Opt
     match scalar {
         Scalar::Number(rhs) => Some(cmp_op(value.as_number()?.as_ref().cmp(rhs), op)),
         Scalar::Bool(rhs) => Some(cmp_op(value.as_boolean()?.cmp(rhs), op)),
-        Scalar::Str(rhs) | Scalar::Uri(rhs) => Some(cmp_op(value.as_lexical()?.as_ref().cmp(rhs.as_str()), op)),
+        Scalar::Str(rhs) => Some(cmp_op(string_order(&value.as_lexical()?, rhs, op), op)),
+        Scalar::Uri(rhs) => Some(cmp_op(value.as_lexical()?.as_ref().cmp(rhs.as_str()), op)),
         // A stored temporal value is compared in its own domain, not as text:
         // clause 4.6.3 lets the same instant be written with any offset, and
         // lexicographic order over those renderings is not chronological order.
@@ -408,6 +410,15 @@ mod tests {
     fn eval_string_unequal() {
         let expr = parse("\"https://example.com/brandName\"!=\"BMW\"").unwrap();
         assert!(holds(&expr, &vehicle_entity()));
+    }
+
+    /// Clause 4.9 recommends the UCA for ordering text strings: `Mercedes`
+    /// follows `a` under it, though `M` precedes `a` by code point.
+    #[test]
+    fn a_string_ordering_follows_the_unicode_collation_algorithm() {
+        assert!(holds(&parse("\"https://example.com/brandName\">\"a\"").unwrap(), &vehicle_entity()));
+        assert!(!holds(&parse("\"https://example.com/brandName\"<\"a\"").unwrap(), &vehicle_entity()));
+        assert!(holds(&parse("\"https://example.com/brandName\"==\"a\"..\"z\"").unwrap(), &vehicle_entity()));
     }
 
     #[test]

@@ -333,7 +333,7 @@ mod tests {
             "\"https://example.com/brandName\"<=\"Mercedes\"",
         ] {
             let (sql, _) = render(expression);
-            assert!(sql.contains("\"cav\".\"value_string\" "), "{expression}: {sql}");
+            assert!(sql.contains("(\"cav\".\"value_string\") COLLATE \"und-x-icu\""), "{expression}: {sql}");
             assert!(!sql.contains("value_uri"), "{expression}: {sql}");
         }
     }
@@ -390,12 +390,12 @@ mod tests {
     }
 
     /// A string range is two ordering comparisons, and each reads both string
-    /// columns.
+    /// columns under the ICU root collation (clause 4.9 recommends the UCA).
     #[test]
     fn a_string_range_reads_both_string_columns_on_each_bound() {
         let (sql, _) = render("\"https://example.com/brandName\"==\"a\"..\"z\"");
-        assert_eq!(sql.matches("\"cav\".\"value_string\" ").count(), 2, "{sql}");
-        assert_eq!(sql.matches("\"cav\".\"value_long_text\" ").count(), 2, "{sql}");
+        assert_eq!(sql.matches("(\"cav\".\"value_string\") COLLATE \"und-x-icu\"").count(), 2, "{sql}");
+        assert_eq!(sql.matches("(\"cav\".\"value_long_text\") COLLATE \"und-x-icu\"").count(), 2, "{sql}");
     }
 
     /// A Relationship object is an identifier of at most 1024 octets, so the
