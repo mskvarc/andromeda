@@ -13,6 +13,7 @@ andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
+andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-persistence-failure.workspace = true
 chrono = { version = "0.4.45", features = ["serde"] }

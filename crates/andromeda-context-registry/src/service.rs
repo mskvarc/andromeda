@@ -1,6 +1,7 @@
 //! Hosted and cached Context lifecycle policy.
 
 use crate::{
+    context_page::ContextPage,
     core_context,
     creation_kind::ContextCreationKind,
     detail_level::ContextDetailLevel,
@@ -23,12 +24,10 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{compound_context_host::WrapperUse, context_subtree::context_subtree, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
+use andromeda_ngsi_ld_query::page_window::PageWindow;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::IriBuf;
 use std::sync::Arc;
-
-/// Maximum stored rows included in the current unpaginated HTTP representation.
-const LIST_DEFAULT_LIMIT: u32 = 1000;
 
 /// Manages hosted and cached JSON-LD Contexts independently of persistence.
 pub struct ContextRegistryService {
@@ -104,7 +103,13 @@ impl ContextRegistryService {
         self.hosting.host(&document, locator, usage).await
     }
 
-    /// List available Contexts, optionally filtered by lifecycle kind.
+    /// The page `window` selects of the available Contexts, optionally
+    /// filtered by lifecycle kind (clause 5.13.3).
+    ///
+    /// The embedded core Context is an `ImplicitlyCreated` entry the broker
+    /// serves without storing it, so it is listed at its identifier among the
+    /// stored rows whenever the kind filter admits it, and a page walk reaches
+    /// it like any other entry.
     ///
     /// # Errors
     ///
@@ -112,41 +117,30 @@ impl ContextRegistryService {
     /// the stored rows, [`ContextRegistryError::Invariant`] when the embedded
     /// core Context URL does not parse as a resource identifier or carries no
     /// representable metadata.
-    pub async fn list(&self, kind: Option<ContextKind>, detail_level: ContextDetailLevel) -> Result<ListedContexts, ContextRegistryError> {
-        let include_core = kind.is_none() || kind == Some(ContextKind::ImplicitlyCreated);
+    pub async fn list(&self, kind: Option<ContextKind>, detail_level: ContextDetailLevel, window: &PageWindow) -> Result<ContextPage, ContextRegistryError> {
+        let embedded = match kind {
+            None | Some(ContextKind::ImplicitlyCreated) => Some(core_context::metadata(&core_context_identifier()?)?),
+            Some(ContextKind::Cached | ContextKind::Hosted) => None,
+        };
         let counter = self.engine.hit_counter();
         let _flush_held_off = match (&counter, detail_level) {
             (Some(counter), ContextDetailLevel::Full) => Some(counter.read_settled().await),
             (Some(_) | None, ContextDetailLevel::Full | ContextDetailLevel::Summary) => None,
         };
-        let listed = self
+        let mut page = self
             .store
             .list(ContextListQuery {
                 kind: kind.as_ref(),
                 detail_level,
-                after: None,
-                limit: LIST_DEFAULT_LIMIT,
+                window,
+                embedded: embedded.as_ref(),
             })
             .await?;
-        match listed {
-            ListedContexts::Detailed(mut metadata) => {
-                if include_core {
-                    metadata.push(core_context::metadata(&core_context_identifier()?)?);
-                }
-                if let Some(counter) = &counter {
-                    for entry in &mut metadata {
-                        fold_pending_hits(counter, entry);
-                    }
-                }
-                Ok(ListedContexts::Detailed(metadata))
-            }
-            ListedContexts::Summary(mut identifiers) => {
-                if include_core {
-                    identifiers.push(core_context_identifier()?);
-                }
-                Ok(ListedContexts::Summary(identifiers))
-            }
+        match (&counter, &mut page.contexts) {
+            (Some(counter), ListedContexts::Detailed(metadata)) => metadata.iter_mut().for_each(|entry| fold_pending_hits(counter, entry)),
+            (Some(_), ListedContexts::Summary(_)) | (None, ListedContexts::Detailed(_) | ListedContexts::Summary(_)) => {}
         }
+        Ok(page)
     }
 
     /// Retrieve a Context document or its lifecycle metadata.

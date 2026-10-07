@@ -111,13 +111,25 @@ pub(crate) fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata
 pub(crate) fn row_to_identifier(row: ContextSummaryRow) -> Result<Identifier, ContextMapperError> {
     match row.url {
         Some(raw) => Ok(Identifier::try_from(Url::parse(&raw).map_err(|source| ContextMapperError::Url { source })?)?),
-        None => row.id.parse().map_err(ContextMapperError::LocalId),
+        None => row.local_id.parse().map_err(ContextMapperError::LocalId),
+    }
+}
+
+/// The local identifiers of the first and last of `rows`, read in
+/// presentation order, or `None` for an empty page.
+pub(crate) fn page_boundary<T>(rows: &[T], local_id: impl Fn(&T) -> &str) -> Result<Option<(Identifier, Identifier)>, ContextMapperError> {
+    match (rows.first(), rows.last()) {
+        (Some(first), Some(last)) => Ok(Some((
+            local_id(first).parse().map_err(ContextMapperError::LocalId)?,
+            local_id(last).parse().map_err(ContextMapperError::LocalId)?,
+        ))),
+        (None, _) | (_, None) => Ok(None),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::jsonld_context::mapper::{ContextMapperError, row_document_source};
+    use crate::jsonld_context::mapper::{ContextMapperError, page_boundary, row_document_source};
     use andromeda_jsonld::context_cache::StoredDocumentSource;
     use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
     use iri_rs::IriBuf;
@@ -168,6 +180,22 @@ mod tests {
             row_document_source(JsonldContextKindCode::Cached.code(), Some("not an iri".to_owned())),
             Err(ContextMapperError::DocumentUrl(_))
         ));
+    }
+
+    /// The cursors of a page are built from its first and last local
+    /// identifiers.
+    #[test]
+    fn a_page_is_bounded_by_its_first_and_last_local_identifier() {
+        let boundary = page_boundary(&["urn:a", "urn:b", "urn:c"], |id| id).expect("readable identifiers");
+        pretty_assertions::assert_eq!(
+            boundary.map(|(first, last)| (first.to_string(), last.to_string())),
+            Some(("urn:a".to_owned(), "urn:c".to_owned()))
+        );
+    }
+
+    #[test]
+    fn an_empty_page_has_no_boundary() {
+        assert!(page_boundary::<&str>(&[], |id| id).expect("nothing to read").is_none());
     }
 
     #[test]

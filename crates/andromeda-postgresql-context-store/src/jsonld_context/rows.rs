@@ -27,11 +27,11 @@ pub(crate) struct ContextMetadataRow {
     pub extra_info: Option<Json<JsonLiteral>>,
 }
 
-/// Summary row (id + url only).
+/// Summary row (local identifier + url only).
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct ContextSummaryRow {
-    /// Internal identifier.
-    pub id: String,
+    /// Internal identifier (URN/URL text).
+    pub local_id: String,
     /// Public URL, if any.
     pub url: Option<String>,
 }

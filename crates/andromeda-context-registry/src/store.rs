@@ -1,13 +1,13 @@
 //! The replaceable persistence capability for hosted and cached Contexts.
 
 use crate::{
+    context_page::ContextPage,
     creation_kind::ContextCreationKind,
     detail_level::ContextDetailLevel,
     error::ContextRegistryError,
     fetched_context::FetchedContext,
     insertion::ContextInsertion,
     list_query::ContextListQuery,
-    listed_contexts::ListedContexts,
     mutation::ContextMutation,
     stored_context::StoredContext,
 };
@@ -38,8 +38,9 @@ pub trait ContextRegistryStore: Send + Sync + 'static {
         kind: ContextCreationKind,
     ) -> ContextRegistryFuture<'a, ContextInsertion>;
 
-    /// List stored Contexts using a policy-owned projection and keyset query.
-    fn list<'a>(&'a self, query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ListedContexts>;
+    /// The page `query.window` selects of the stored Contexts and the embedded
+    /// one, ordered by local identifier.
+    fn list<'a>(&'a self, query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ContextPage>;
 
     /// Fetch one stored Context using the requested projection.
     fn get<'a>(&'a self, identifier: &'a Identifier, detail_level: ContextDetailLevel) -> ContextRegistryFuture<'a, Option<FetchedContext>>;

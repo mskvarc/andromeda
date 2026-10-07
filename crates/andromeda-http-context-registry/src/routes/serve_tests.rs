@@ -8,6 +8,7 @@ use crate::{
     tenant_context_hosting::TenantContextHosting,
 };
 use andromeda_context_registry::{
+    context_page::ContextPage,
     creation_kind::ContextCreationKind,
     detail_level::ContextDetailLevel,
     fetched_context::FetchedContext,
@@ -25,9 +26,11 @@ use andromeda_jsonld::{context_cache::DownloadedContext, engine::processor::Json
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId, tenant::TenantName};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
+use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::LeasedState, tenant_ref::TenantRef};
 use andromeda_test_harness::resident_tenancy::ResidentTenancy;
 use axum::{
+    Extension,
     Router,
     body::{Body, to_bytes},
     http::{HeaderMap, Method, Request, StatusCode, header::VARY},
@@ -84,8 +87,13 @@ impl ContextRegistryStore for TwoEntryStore {
         Box::pin(async { Ok(ContextInsertion::Inserted) })
     }
 
-    fn list<'a>(&'a self, _query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ListedContexts> {
-        Box::pin(async { Ok(ListedContexts::Summary(Vec::new())) })
+    fn list<'a>(&'a self, _query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ContextPage> {
+        Box::pin(async {
+            Ok(ContextPage {
+                contexts: ListedContexts::Summary(Vec::new()),
+                boundary: None,
+            })
+        })
     }
 
     fn get<'a>(&'a self, identifier: &'a Identifier, _detail_level: ContextDetailLevel) -> ContextRegistryFuture<'a, Option<FetchedContext>> {
@@ -149,7 +157,8 @@ impl ContextRegistryStateResolver for ResidentResolver {
     }
 }
 
-/// The `/jsonldContexts` routes over the two-entry store.
+/// The `/jsonldContexts` routes over the two-entry store, with the pagination
+/// policy the API assembly installs on every NGSI-LD request.
 fn routes() -> Router {
     let engine = JsonLdEngine::builder().allow_remote(false).build().expect("an offline engine");
     let hosting = |hosted| {
@@ -163,7 +172,9 @@ fn routes() -> Router {
         tenancy: ResidentTenancy::new(Arc::new(hosting(HOSTED)), vec![acme]),
         acme: hosting(ACME_HOSTED),
     };
-    ContextRegistryRoutes::new(Arc::new(resolver)).into_router()
+    ContextRegistryRoutes::new(Arc::new(resolver))
+        .into_router()
+        .layer(Extension(PaginationPolicy::CursorDefault))
 }
 
 /// The answer to `method` on `uri` with `headers`.
@@ -294,6 +305,31 @@ async fn the_former_tenant_parameter_is_invalid_request_on_every_operation() {
         let response = answer(method.clone(), uri, &headers).await; // clone: the method labels the assertion
         pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{method} {uri}");
         pretty_assertions::assert_eq!(problem_type(response).await.as_deref(), Some("InvalidRequest"), "{method} {uri}");
+    }
+}
+
+/// Clause 5.13.3.4 lists every stored `@context`, so the listing reads the
+/// pagination parameters every paged collection reads (clause 6.3.10).
+#[tokio::test]
+async fn the_listing_reads_the_pagination_parameters() {
+    for uri in [
+        "/jsonldContexts?limit=1",
+        "/jsonldContexts?limit=1&offset=2",
+        "/jsonldContexts?cursor=",
+        "/jsonldContexts?kind=Hosted&details=true&limit=5",
+    ] {
+        pretty_assertions::assert_eq!(answer(Method::GET, uri, &[]).await.status(), StatusCode::OK, "{uri}");
+    }
+}
+
+/// The listing is refused by the pagination rules every collection shares:
+/// `limit=0` asks for nothing without a count (Table 6.3.10-1), and a
+/// cursor beside an offset is contradictory (clause 5.5.9).
+#[tokio::test]
+async fn the_listing_refuses_what_the_pagination_policy_refuses() {
+    for uri in ["/jsonldContexts?limit=0", "/jsonldContexts?cursor=&offset=1", "/jsonldContexts?limit=ten"] {
+        let response = answer(Method::GET, uri, &[]).await;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
     }
 }
 

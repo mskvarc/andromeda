@@ -110,6 +110,7 @@ impl ImplicitContextHosting {
 #[cfg(test)]
 mod tests {
     use crate::{
+        context_page::ContextPage,
         creation_kind::ContextCreationKind,
         detail_level::ContextDetailLevel,
         fetched_context::FetchedContext,
@@ -163,8 +164,13 @@ mod tests {
             })
         }
 
-        fn list<'a>(&'a self, _query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ListedContexts> {
-            Box::pin(async move { Ok(ListedContexts::Summary(Vec::new())) })
+        fn list<'a>(&'a self, _query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ContextPage> {
+            Box::pin(async move {
+                Ok(ContextPage {
+                    contexts: ListedContexts::Summary(Vec::new()),
+                    boundary: None,
+                })
+            })
         }
 
         fn get<'a>(&'a self, _identifier: &'a Identifier, _detail_level: ContextDetailLevel) -> ContextRegistryFuture<'a, Option<FetchedContext>> {

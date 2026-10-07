@@ -1,13 +1,34 @@
 //! Query parameter types for JSON-LD context management endpoints.
 
-use crate::case_insensitive_bool::deserialize_option_bool_case_insensitive;
+use crate::{
+    case_insensitive_bool::deserialize_option_bool_case_insensitive,
+    pagination::{
+        page_size::{PageSizeBounds, PageSizeCap},
+        parameters::PageParameters,
+    },
+};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use serde::Deserialize;
 
+/// The page size of List @contexts: 100 when the request names no `limit`,
+/// and whatever it names otherwise, as for the broker's other administrative
+/// collections.
+pub const CONTEXT_PAGE_SIZE: PageSizeBounds = PageSizeBounds {
+    default: 100,
+    cap: PageSizeCap::Uncapped,
+};
+
 /// Query parameters for `GET /jsonldContexts` (list contexts).
+///
+/// Clause 5.13.3.4 lists every stored `@context`, so the collection is paged
+/// like every other one, by the broker's pagination policy (clause 4.12).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListParams {
+    /// The page asked for (clauses 5.5.9 and 6.3.10 `limit`, `offset` and
+    /// `cursor`).
+    #[serde(flatten)]
+    pub page: PageParameters,
     /// The kind of context to list (`kind`).
     pub kind: Option<ContextKind>,
     /// Whether the response uses the detailed representation (`details`).
@@ -41,6 +62,8 @@ pub struct DeleteParams {
 #[cfg(test)]
 mod tests {
     use crate::jsonld_context::{DeleteParams, ListParams, ServeParams};
+    use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn serve_reads_the_detail_level() {
@@ -63,5 +86,22 @@ mod tests {
         assert!(serde_urlencoded::from_str::<ServeParams>("details=true&andromedaTenant=acme").is_err());
         assert!(serde_urlencoded::from_str::<ListParams>("andromedaTenant=acme").is_err());
         assert!(serde_urlencoded::from_str::<DeleteParams>("andromedaTenant=acme").is_err());
+    }
+
+    /// The listing reads its filter, its detail level and the page together.
+    #[test]
+    fn list_reads_the_filter_the_detail_level_and_the_page() {
+        let params: ListParams = serde_urlencoded::from_str("kind=Hosted&details=true&limit=3&offset=6").expect("valid parameters");
+        assert_eq!(params.kind, Some(ContextKind::Hosted));
+        assert_eq!(params.details, Some(true));
+        assert_eq!(params.page.limit, Some(3));
+        assert_eq!(params.page.offset, Some(6));
+    }
+
+    /// A parameter the listing does not define stays unknown beside the page.
+    #[test]
+    fn list_refuses_an_undefined_parameter_beside_the_page() {
+        let message = serde_urlencoded::from_str::<ListParams>("limit=3&page=2").expect_err("rejected").to_string();
+        assert!(message.contains("unknown field"), "{message}");
     }
 }

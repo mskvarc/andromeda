@@ -3,24 +3,24 @@
 use crate::{
     jsonld_context::{
         kind_code::{created_kind, kind_of, stored_kind},
-        mapper::{row_to_identifier, row_to_metadata},
+        mapper::{page_boundary, row_to_identifier, row_to_metadata},
         repo::JsonLdContextRepository,
         rows::{ContextMetadataRow, ContextSummaryRow},
         statement::{
             delete_by_identifier,
             hosted_insert,
+            listing_page_query,
             metadata_by_identifier_query,
-            metadata_page_query,
             payload_by_identifier_query,
             record_access_update,
             replace_download_update,
             stored_context_query,
-            summary_page_query,
         },
     },
     store_fault::{StoreFault, persistence_failure, undecodable},
 };
 use andromeda_context_registry::{
+    context_page::ContextPage,
     creation_kind::ContextCreationKind,
     detail_level::ContextDetailLevel,
     error::ContextRegistryError,
@@ -54,37 +54,46 @@ impl ContextRegistryStore for JsonLdContextRepository {
         Box::pin(async move { insert_context(self, identifier, payload, serving_url, kind).await })
     }
 
-    fn list<'a>(&'a self, query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ListedContexts> {
+    fn list<'a>(&'a self, query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ContextPage> {
         Box::pin(async move {
-            let after = query.after.map(Identifier::as_str);
-            let limit = i64::from(query.limit);
             let kind = query.kind.map(stored_kind);
+            let (statement, read_order) =
+                listing_page_query(query.detail_level, kind, query.embedded, query.window).map_err(|error| persistence_error(error))?;
+            let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
             match query.detail_level {
                 ContextDetailLevel::Full => {
-                    let (sql, values) = metadata_page_query(kind, after, limit).build_sqlx(PostgresQueryBuilder);
-                    let rows: Vec<ContextMetadataRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    let mut rows: Vec<ContextMetadataRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                         .fetch_all(&self.pool)
                         .await
                         .map_err(|error| persistence_error(error))?;
+                    read_order.present(&mut rows);
+                    let boundary = page_boundary(&rows, |row| row.local_id.as_str()).map_err(|error| persistence_error(error))?;
                     let metadata = rows
                         .into_iter()
                         .map(row_to_metadata)
                         .collect::<Result<Vec<ContextMetadata>, _>>()
                         .map_err(|error| persistence_error(error))?;
-                    Ok(ListedContexts::Detailed(metadata))
+                    Ok(ContextPage {
+                        contexts: ListedContexts::Detailed(metadata),
+                        boundary,
+                    })
                 }
                 ContextDetailLevel::Summary => {
-                    let (sql, values) = summary_page_query(kind, after, limit).build_sqlx(PostgresQueryBuilder);
-                    let rows: Vec<ContextSummaryRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    let mut rows: Vec<ContextSummaryRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                         .fetch_all(&self.pool)
                         .await
                         .map_err(|error| persistence_error(error))?;
+                    read_order.present(&mut rows);
+                    let boundary = page_boundary(&rows, |row| row.local_id.as_str()).map_err(|error| persistence_error(error))?;
                     let identifiers = rows
                         .into_iter()
                         .map(row_to_identifier)
                         .collect::<Result<Vec<Identifier>, _>>()
                         .map_err(|error| persistence_error(error))?;
-                    Ok(ListedContexts::Summary(identifiers))
+                    Ok(ContextPage {
+                        contexts: ListedContexts::Summary(identifiers),
+                        boundary,
+                    })
                 }
             }
         })

@@ -32,6 +32,7 @@ mod tests {
         state::SourceIdentityState,
     };
     use andromeda_context_registry::{
+        context_page::ContextPage,
         creation_kind::ContextCreationKind,
         detail_level::ContextDetailLevel,
         fetched_context::FetchedContext,
@@ -105,8 +106,13 @@ mod tests {
             Box::pin(async { Ok(ContextInsertion::Inserted) })
         }
 
-        fn list<'a>(&'a self, _query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ListedContexts> {
-            Box::pin(async { Ok(ListedContexts::Summary(Vec::new())) })
+        fn list<'a>(&'a self, _query: ContextListQuery<'a>) -> ContextRegistryFuture<'a, ContextPage> {
+            Box::pin(async {
+                Ok(ContextPage {
+                    contexts: ListedContexts::Summary(Vec::new()),
+                    boundary: None,
+                })
+            })
         }
 
         fn get<'a>(&'a self, _identifier: &'a Identifier, _detail_level: ContextDetailLevel) -> ContextRegistryFuture<'a, Option<FetchedContext>> {

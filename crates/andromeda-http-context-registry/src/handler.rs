@@ -1,25 +1,34 @@
 //! Handlers for the `/jsonldContexts` endpoints.
 
 use crate::{error::ContextRegistryResultExt, hosted_context_url::hosted_context_path, served_document::served_response, state::ContextRegistryTenantState};
-use andromeda_context_registry::{detail_level::ContextDetailLevel, identifier::ContextIdentifier, removal::ContextRemoval};
+use andromeda_context_registry::{detail_level::ContextDetailLevel, identifier::ContextIdentifier, listed_contexts::ListedContexts, removal::ContextRemoval};
 use andromeda_http_extraction::{
     api_root::ApiRoot,
     content_length_precondition::DeclaredBodyLength,
+    pagination_policy::RequestPagination,
     query::ValidatedQuery,
     request_payload::RequestPayload,
     tenant_state::ExistingTenantState,
 };
+use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::{
     classified_report::ClassifiedReport,
     headers::with_location,
     internal_failure_summary::InternalFailureSummary,
+    pagination::{PageOutcome, append_page_links},
+    parameter_failure::classify_parameter_error,
     problem_response::ProblemResponse,
 };
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_ngsi_ld_query::count_policy::CountPolicy;
 use andromeda_ngsi_ld_request::{
     empty::EmptyParams,
-    jsonld_context::{DeleteParams, ListParams, ServeParams},
+    jsonld_context::{CONTEXT_PAGE_SIZE, DeleteParams, ListParams, ServeParams},
+    pagination::{
+        page_pointers::PagePointers,
+        page_request::{CollectionOrder, PageRequest},
+    },
 };
 use axum::{
     Json,
@@ -82,22 +91,58 @@ pub(crate) async fn create(
     Ok(with_location(StatusCode::CREATED.into_response(), location))
 }
 
+/// List the stored `@context`s (clause 5.13.3).
+///
+/// Clause 5.13.3.4 answers with every stored `@context` that matches the
+/// filter, so the collection is paged by the broker's pagination policy like
+/// every other one (clauses 4.12 and 5.5.9): a page in local-identifier order,
+/// with the clause 6.3.10 `Link` pointers while other pages exist.
 pub(crate) async fn query(
     ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
+    RequestPagination { policy: pagination, context }: RequestPagination,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, ProblemResponse> {
     let detail_level = match params.details {
         Some(true) => ContextDetailLevel::Full,
         Some(false) | None => ContextDetailLevel::Summary,
     };
-    let result = state
+    let window = pagination
+        .window(
+            &params.page,
+            PageRequest {
+                size: CONTEXT_PAGE_SIZE,
+                order: CollectionOrder::Identifier,
+                count: CountPolicy::Omit,
+                pointers: PagePointers::OverRequestUri,
+                context: &context,
+            },
+        )
+        .map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?;
+    let page = state
         .hosting
         .contexts()
-        .list(params.kind, detail_level)
+        .list(params.kind, detail_level, &window)
         .await
         .with_context_registry_instance(&uri)?;
-    Ok((StatusCode::OK, Json(result)).into_response())
+    let returned = match &page.contexts {
+        ListedContexts::Detailed(metadata) => metadata.len(),
+        ListedContexts::Summary(identifiers) => identifiers.len(),
+    };
+    let mut response = (StatusCode::OK, Json(page.contexts)).into_response();
+    append_page_links(
+        &mut response,
+        &uri,
+        &context,
+        &window,
+        PageOutcome {
+            total: None,
+            returned,
+            boundary: page.boundary,
+        },
+        ResponseMediaType::Json,
+    );
+    Ok(response)
 }
 
 /// Serve a stored `@context` or its metadata (clause 5.13.4).
