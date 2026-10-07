@@ -20,7 +20,7 @@ use std::{
 /// This is the form a stored resource carries: clause 5.2.33 puts a `type` in
 /// an `EntitySelector`, and it reaches the broker before any `@context` has
 /// been applied to it. The wire form is the clause 4.17 expression itself, so a
-/// subscription that selected `(Building|Tower)` gives back an equivalent
+/// subscription that selected `Building|Tower` gives back an equivalent
 /// expression rather than a regex someone rebuilt from it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -103,7 +103,7 @@ enum Nesting {
 // Clause 4.17's grammar is `OrEntityType = "(" EntityType *(";" EntityType) ")"
 // / EntityType`: a conjunction is legal *only* parenthesised, with no
 // unparenthesised form and no precedence that would let one be inferred. So an
-// `And` group is always wrapped — a bare `Home;Vehicle` is text outside the
+// `And` group is always wrapped: a bare `Home;Vehicle` is text outside the
 // grammar that a conforming parser rejects, where `(Home;Vehicle)` is not.
 impl fmt::Display for TypeExprRaw {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn a_type_expression_round_trips_through_its_clause_4_17_text() {
-        for raw in ["Building", "Building,Tower", "Building;Vehicle", "(Home;Vehicle),Motorhome"] {
+        for raw in ["Building", "Building,Tower", "(Building;Vehicle)", "(Home;Vehicle),Motorhome"] {
             let parsed: TypeExprRaw = raw.parse().expect("valid type expression");
             let reparsed: TypeExprRaw = parsed.to_string().parse().expect("re-parses");
             pretty_assertions::assert_eq!(parsed, reparsed, "{raw}");
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn an_alternation_matches_whole_names_only() {
         // Names are compared whole: `Building` does not match `MyBuilding`.
-        let expr: TypeExprRaw = "(Building|Tower)".parse().expect("valid type expression");
+        let expr: TypeExprRaw = "Building|Tower".parse().expect("valid type expression");
         assert!(expr.matches(&["Building"]));
         assert!(expr.matches(&["Tower"]));
         assert!(!expr.matches(&["MyBuilding"]));
@@ -259,17 +259,14 @@ mod tests {
     /// A stored selector is re-serialised whenever the resource carrying it is
     /// read back, and clause 4.17 admits a conjunction only in parentheses:
     /// `OrEntityType = "(" EntityType *(";" EntityType) ")" / EntityType`. So a
-    /// conjunction always renders parenthesised — a bare `Home;Vehicle` is
-    /// outside the grammar a conforming parser accepts — while a top-level
-    /// disjunction, which the grammar admits unparenthesised, stays bare.
+    /// conjunction always renders parenthesised, while a top-level disjunction
+    /// stays bare.
     #[test]
     fn a_conjunction_always_renders_parenthesised_per_clause_4_17() {
         let shapes = [
             ("Building", "Building"),
             ("Building,Tower", "Building,Tower"),
             ("Building|Tower", "Building,Tower"),
-            ("(Building|Tower)", "Building,Tower"),
-            ("Home;Vehicle", "(Home;Vehicle)"),
             ("(Home;Vehicle)", "(Home;Vehicle)"),
             ("(Home;Vehicle),Motorhome", "(Home;Vehicle),Motorhome"),
             ("Motorhome,(Home;Vehicle)", "Motorhome,(Home;Vehicle)"),
@@ -285,7 +282,7 @@ mod tests {
 
     #[test]
     fn a_conjunction_needs_every_type_present() {
-        let expr: TypeExprRaw = "Home;Vehicle".parse().expect("valid type expression");
+        let expr: TypeExprRaw = "(Home;Vehicle)".parse().expect("valid type expression");
         assert!(expr.matches(&["Home", "Vehicle"]));
         assert!(!expr.matches(&["Home"]));
     }

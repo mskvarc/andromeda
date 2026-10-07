@@ -120,14 +120,17 @@ fn any_row(dimension: SimpleExpr) -> SimpleExpr {
     SeaExpr::exists(correlated_scan(dimension))
 }
 
-/// Registrations that may declare `entity_type`, by the routing projection.
+/// Registrations that may declare one of `entity_types`, by the routing
+/// projection.
 ///
-/// One overlap against the requested type IRI and the wildcard sentinel, which
-/// is what `idx_registration_information_entity_types` serves. The two values
-/// cross the bind boundary as one `text[]`.
+/// One overlap against the requested type IRIs and the wildcard sentinel, which
+/// is what `idx_registration_information_entity_types` serves. The values cross
+/// the bind boundary as one `text[]`. For a clause 4.17 conjunction the overlap
+/// over-approximates, and the `information` unnesting decides.
 #[must_use]
-pub fn entity_type_candidate(entity_type: &IriBuf) -> SimpleExpr {
-    any_row(ri_col(RegistrationInformation::EntityTypes).array_overlaps(text_array(&[entity_type.as_str(), ANY_TYPE])))
+pub fn entity_type_candidate(entity_types: &[IriBuf]) -> SimpleExpr {
+    let named: Vec<&str> = entity_types.iter().map(IriBuf::as_str).chain([ANY_TYPE]).collect();
+    any_row(ri_col(RegistrationInformation::EntityTypes).array_overlaps(text_array(&named)))
 }
 
 /// Registrations that may serve one of `entity_ids`, by the routing projection.
@@ -206,7 +209,7 @@ mod tests {
 
     fn every_dimension() -> [String; 3] {
         [
-            render(entity_type_candidate(&iri("https://example.com/Vehicle"))),
+            render(entity_type_candidate(&[iri("https://example.com/Vehicle")])),
             render(entity_id_candidate(&[uri("urn:ngsi-ld:Vehicle:1")])),
             render(attribute_name_candidate(&[iri("https://example.com/speed")])),
         ]
@@ -238,11 +241,11 @@ mod tests {
         let (sql, values) = Query::select()
             .expr(SeaExpr::cust("1"))
             .from(Alias::new("context_source_registrations"))
-            .and_where(entity_type_candidate(&iri("https://example.com/Vehicle")))
+            .and_where(entity_type_candidate(&[iri("https://example.com/Vehicle")]))
             .build(PostgresQueryBuilder);
         assert!(sql.contains("\"ri\".\"entity_types\" && $1"), "{sql}");
         pretty_assertions::assert_eq!(values.0.len(), 1, "the type and the sentinel cross as one array: {sql}");
-        let rendered = render(entity_type_candidate(&iri("https://example.com/Vehicle")));
+        let rendered = render(entity_type_candidate(&[iri("https://example.com/Vehicle")]));
         assert!(rendered.contains("ARRAY ['https://example.com/Vehicle','*']"), "{rendered}");
         assert!(!rendered.contains("IS NULL"), "{rendered}");
     }

@@ -44,7 +44,7 @@ use std::slice;
 pub fn entity_type_coverage(entity_type: &IriBuf) -> SimpleExpr {
     let mut entities_match = entities_of_item();
     entities_match.and_where(entity_type_admits(entity_type));
-    entity_type_candidate(entity_type).and(information_covers(entities_match))
+    entity_type_candidate(slice::from_ref(entity_type)).and(information_covers(entities_match))
 }
 
 /// Whether a registration's `information[].entities[]` covers `entity_id`.

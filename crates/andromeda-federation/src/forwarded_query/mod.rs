@@ -681,7 +681,7 @@ mod tests {
     #[tokio::test]
     async fn only_a_flat_alternation_of_types_is_narrowed_per_block() {
         let reg = registration(&json!([{"entities": [{"type": VEHICLE}]}, {"entities": [{"type": "https://example.org/Car"}]}]));
-        let conjunction = entity_query("type=Vehicle%3BDevice");
+        let conjunction = entity_query("type=%28Vehicle%3BDevice%29");
         let forwarded = narrow(ClientQuery::EntityQuery(&conjunction), &reg, SplitEntities::Complete).await;
         // Both blocks forward the conjunction whole, so the two queries are
         // identical and collapse to one.

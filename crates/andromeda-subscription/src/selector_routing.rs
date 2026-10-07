@@ -175,8 +175,8 @@ mod tests {
     fn an_id_pattern_does_not_index_and_a_boolean_type_falls_back_per_selector() -> Result<(), SubscriptionError> {
         let routing = SelectorRouting::of(&subscription(vec![
             selector("Building", None, Some("urn:ngsi-ld:E:.*"))?,
-            selector("(Building|Vehicle)", Some("urn:ngsi-ld:E:2"), None)?,
-            selector("(Building|Vehicle)", None, Some(".*"))?,
+            selector("Building|Vehicle", Some("urn:ngsi-ld:E:2"), None)?,
+            selector("Building|Vehicle", None, Some(".*"))?,
         ])?);
         assert!(routing.wildcard, "the boolean type without an id must route every event");
         assert_eq!(routing.by_type.len(), 1);

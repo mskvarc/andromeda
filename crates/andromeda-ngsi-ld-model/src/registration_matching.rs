@@ -197,7 +197,7 @@ mod tests {
         assert!(type_only_matches("Car", &several));
         assert!(type_only_matches("Vehicle", &several));
         assert!(!type_only_matches("Building", &several));
-        assert!(type_only_matches("(Building|Car)", &several));
+        assert!(type_only_matches("Building|Car", &several));
     }
 
     /// The five identifier conditions of clause 5.12, with the clause 5.2.8

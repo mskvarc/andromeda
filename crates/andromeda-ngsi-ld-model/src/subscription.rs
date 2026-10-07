@@ -402,7 +402,7 @@ mod tests {
     fn an_entity_selector_type_is_a_selection_string() {
         let single: EntitySelector = serde_json::from_value(serde_json::json!({"type": "Vehicle"})).expect("string form parses");
         assert!(matches!(single.type_, TypeExprRaw::Type(_)));
-        let alternation: EntitySelector = serde_json::from_value(serde_json::json!({"type": "(Vehicle|Car)"})).expect("alternation parses");
+        let alternation: EntitySelector = serde_json::from_value(serde_json::json!({"type": "Vehicle|Car"})).expect("alternation parses");
         assert!(matches!(&alternation.type_, TypeExprRaw::Or(alternatives) if alternatives.len() == 2));
         assert!(serde_json::from_value::<EntitySelector>(serde_json::json!({"type": ["Vehicle", "Car"]})).is_err());
         assert!(serde_json::from_value::<EntitySelector>(serde_json::json!({"type": 5})).is_err());

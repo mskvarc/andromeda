@@ -22,7 +22,6 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::TypeExprUnexpectedEnd
         | QueryError::TypeExprUnbalanced(_)
         | QueryError::TypeExprUnexpected { .. }
-        | QueryError::TypeExprEmptyName(_)
         | QueryError::TypeExprInvalidName { .. }
         | QueryError::GeoIncomplete
         | QueryError::ProjectionUnbalancedBrace { .. }

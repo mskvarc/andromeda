@@ -13,7 +13,7 @@
 
 use crate::csr::unnesting::{ent, entities_of_item, lacks_key, registered_pattern_form};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern};
+use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern, type_selection::grammar::TypeExpr};
 use andromeda_postgresql_seaquery::{
     jsonb::jsonb_exists,
     literal::{int_literal, text_literal},
@@ -28,8 +28,8 @@ use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Query, SelectState
 /// The entity axis of a discovery query, as clause 5.12 reads it.
 #[derive(Debug, Clone, Copy)]
 pub struct EntitySpecification<'query> {
-    /// The expanded entity type the selector names, if any.
-    pub entity_type: Option<&'query IriBuf>,
+    /// The expanded clause 4.17 type selector, if any.
+    pub entity_type: Option<&'query TypeExpr>,
     /// The entity identifiers asked for; empty when none were.
     pub ids: &'query [Identifier],
     /// The identifier pattern asked for, if any.
@@ -49,8 +49,8 @@ impl EntitySpecification<'_> {
     #[must_use]
     pub fn matching_entities(&self) -> SelectStatement {
         let mut scan = entities_of_item();
-        if let Some(entity_type) = self.entity_type {
-            scan.and_where(entity_type_admits(entity_type));
+        if let Some(selection) = self.entity_type.and_then(type_selection_admits) {
+            scan.and_where(selection);
         }
         if let Some(identifier_axis) = self.identifier_axis() {
             scan.cond_where(identifier_axis);
@@ -122,6 +122,28 @@ pub(crate) fn entity_type_admits(entity_type: &IriBuf) -> SimpleExpr {
     jsonb_exists(ent().json_get(text_literal("type")), SeaExpr::val(entity_type.as_str()))
 }
 
+/// Whether the entry's `type` satisfies the clause 4.17 `selection`, or `None`
+/// when the selection admits every entry (the wildcard).
+///
+/// A conjunction needs every named type among the entry's types and a
+/// disjunction one of them, as clause 5.12 matches the type selector against
+/// the entity types of the `EntityInfo`.
+fn type_selection_admits(selection: &TypeExpr) -> Option<SimpleExpr> {
+    match selection {
+        TypeExpr::Wildcard => None,
+        TypeExpr::Type(entity_type) => Some(entity_type_admits(entity_type)),
+        TypeExpr::And(children) => {
+            let all = children.iter().filter_map(type_selection_admits).fold(Condition::all(), Condition::add);
+            Some(all.into())
+        }
+        TypeExpr::Or(children) => children
+            .iter()
+            .map(type_selection_admits)
+            .collect::<Option<Vec<_>>>()
+            .map(|admitted| admitted.into_iter().fold(Condition::any(), Condition::add).into()),
+    }
+}
+
 /// `EXISTS (SELECT 1 FROM unnest(ids) AS queried WHERE queried ~ <restatement of ent->>'idPattern'>)`.
 fn some_identifier_matches_registered_pattern(ids: &[&str]) -> SelectStatement {
     let mut scan = Query::select();
@@ -154,7 +176,7 @@ mod tests {
     #[test]
     fn a_type_selector_reads_the_entry_type_with_the_existence_operator() {
         // Table 5.2.8-1: `type` is a string or an array, and `?` admits both.
-        let entity_type = iri("https://example.com/Vehicle");
+        let entity_type = TypeExpr::Type(iri("https://example.com/Vehicle"));
         let sql = render(&EntitySpecification {
             entity_type: Some(&entity_type),
             ids: &[],
@@ -165,6 +187,38 @@ mod tests {
             "{sql}"
         );
         assert!(!sql.contains("'id'"), "no identifier axis without identifiers: {sql}");
+    }
+
+    /// Clause 5.12 matches the selector against the entry's types: a
+    /// conjunction needs every type present, a disjunction one of them.
+    #[test]
+    fn a_conjunction_needs_every_type_and_a_disjunction_one_of_them() {
+        let conjunction = TypeExpr::And(vec![
+            TypeExpr::Type(iri("https://example.com/Home")),
+            TypeExpr::Type(iri("https://example.com/Vehicle")),
+        ]);
+        let sql = render(&EntitySpecification {
+            entity_type: Some(&conjunction),
+            ids: &[],
+            id_pattern: None,
+        });
+        assert!(
+            sql.contains("jsonb_exists(\"ent\".\"value\" -> ('type'), 'https://example.com/Home') AND jsonb_exists(\"ent\".\"value\" -> ('type'), 'https://example.com/Vehicle')"),
+            "{sql}"
+        );
+        let disjunction = TypeExpr::Or(vec![
+            TypeExpr::Type(iri("https://example.com/Home")),
+            TypeExpr::Type(iri("https://example.com/Vehicle")),
+        ]);
+        let sql = render(&EntitySpecification {
+            entity_type: Some(&disjunction),
+            ids: &[],
+            id_pattern: None,
+        });
+        assert!(
+            sql.contains("jsonb_exists(\"ent\".\"value\" -> ('type'), 'https://example.com/Home') OR jsonb_exists(\"ent\".\"value\" -> ('type'), 'https://example.com/Vehicle')"),
+            "{sql}"
+        );
     }
 
     #[test]

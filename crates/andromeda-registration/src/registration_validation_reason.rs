@@ -25,9 +25,6 @@ pub enum RegistrationValidationReason {
     /// `expiresAt` was not in the future.
     #[error("expiresAt must be in the future")]
     ExpiresAtInPast,
-    /// A discovery query named more than one entity type (clause 5.10.2).
-    #[error("CSR discovery requires a single entity type")]
-    DiscoveryRequiresSingleType,
     /// An exclusive registration block named no entities (clause 4.3.6.3).
     #[error("an exclusive registration must name the entity it covers by id")]
     ExclusiveMissingEntities,

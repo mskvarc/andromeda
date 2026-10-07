@@ -1,15 +1,20 @@
-//! Parser for the NGSI-LD Entity Type Selection Language (S4.17).
+//! Parser for the NGSI-LD Entity Type Selection Language (clause 4.17).
 //!
-//! The grammar supports boolean expressions over type names:
-//! - `|` and `,` are OR operators (lowest precedence)
-//! - `;` is the AND operator (higher precedence)
-//! - `()` for grouping
+//! The grammar is flat:
 //!
-//! Example: `(Home;Vehicle)|Motorhome` matches entities that have both
-//! `Home` and `Vehicle` types, or entities with `Motorhome` type.
+//! ```text
+//! EntityTypes  = OrEntityType *(orOp OrEntityType)
+//! OrEntityType = "(" EntityType *(";" EntityType) ")" / EntityType
+//! orOp         = "|" / ","
+//! ```
+//!
+//! A conjunction exists only inside one pair of parentheses around plain type
+//! names, so `Home;Vehicle`, `((Home;Vehicle))` and `(Building|House)` are all
+//! outside the language and refused.
 
 use crate::{error::QueryError, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+use std::iter;
 
 /// Parses a type selection expression string into a raw AST.
 ///
@@ -18,9 +23,9 @@ use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 /// Returns [`QueryError::TypeExprEmpty`] for blank input,
 /// [`QueryError::TypeExprUnexpectedEnd`] and [`QueryError::TypeExprUnbalanced`]
 /// for an expression that ends early or leaves a parenthesis open,
-/// [`QueryError::TypeExprUnexpected`] for a character outside the grammar, and
-/// [`QueryError::TypeExprEmptyName`] or [`QueryError::TypeExprInvalidName`] when
-/// a type-name production yields no valid clause 4.6.2 name.
+/// [`QueryError::TypeExprUnexpected`] for a character the clause 4.17 grammar
+/// does not admit at its position, and [`QueryError::TypeExprInvalidName`]
+/// when a type-name production yields no valid clause 4.6.2 name.
 pub fn parse(input: &str) -> Result<TypeExprRaw, QueryError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -31,7 +36,7 @@ pub fn parse(input: &str) -> Result<TypeExprRaw, QueryError> {
     }
 
     let mut parser = Parser::new(trimmed);
-    let expr = parser.parse_or()?;
+    let expr = parser.parse_entity_types()?;
 
     if parser.pos < parser.input.len() {
         let ch = parser.input[parser.pos..].chars().next().unwrap_or(' ');
@@ -67,90 +72,65 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parses an OR expression: `and_expr (('|' | ',') and_expr)*`
+    /// Parses `EntityTypes = OrEntityType *(orOp OrEntityType)`.
     ///
     /// A single operand is returned as itself rather than wrapped in a
-    /// one-element `Or`. The first operand is held separately from the rest so
-    /// that "was there more than one?" is a property of the remainder, not a
-    /// length test on a vector that the code then has to prove is non-empty.
-    fn parse_or(&mut self) -> Result<TypeExprRaw, QueryError> {
-        let first = self.parse_and()?;
-        let mut rest = Vec::new();
-
-        while matches!(self.peek(), Some('|' | ',')) {
-            self.advance();
-            rest.push(self.parse_and()?);
-        }
-
-        if rest.is_empty() {
+    /// one-element `Or`.
+    fn parse_entity_types(&mut self) -> Result<TypeExprRaw, QueryError> {
+        let first = self.parse_or_entity_type()?;
+        if !matches!(self.peek(), Some('|' | ',')) {
             return Ok(first);
         }
-        let mut terms = Vec::with_capacity(rest.len() + 1);
-        terms.push(first);
-        terms.append(&mut rest);
+        let mut terms = vec![first];
+        while matches!(self.peek(), Some('|' | ',')) {
+            self.advance();
+            terms.push(self.parse_or_entity_type()?);
+        }
         Ok(TypeExprRaw::Or(terms))
     }
 
-    /// Parses an AND expression: `primary (';' primary)*`
+    /// Parses `OrEntityType = "(" EntityType *(";" EntityType) ")" / EntityType`.
     ///
-    /// Single operands collapse to themselves, as in [`Parser::parse_or`].
-    fn parse_and(&mut self) -> Result<TypeExprRaw, QueryError> {
-        let first = self.parse_primary()?;
+    /// A parenthesised group with a single name is that name.
+    fn parse_or_entity_type(&mut self) -> Result<TypeExprRaw, QueryError> {
+        self.skip_whitespace();
+        if self.peek() != Some('(') {
+            return self.parse_type_name().map(TypeExprRaw::Type);
+        }
+        self.advance();
+        let first = self.parse_type_name()?;
         let mut rest = Vec::new();
-
         while self.peek() == Some(';') {
             self.advance();
-            rest.push(self.parse_primary()?);
+            rest.push(self.parse_type_name()?);
         }
-
-        if rest.is_empty() {
-            return Ok(first);
+        if self.peek() != Some(')') {
+            return Err(QueryError::TypeExprUnbalanced(self.pos));
         }
-        let mut terms = Vec::with_capacity(rest.len() + 1);
-        terms.push(first);
-        terms.append(&mut rest);
-        Ok(TypeExprRaw::And(terms))
-    }
-
-    /// Parses a primary: either a parenthesized group or a bare type name.
-    fn parse_primary(&mut self) -> Result<TypeExprRaw, QueryError> {
+        self.advance();
         self.skip_whitespace();
-
-        match self.peek() {
-            Some('(') => {
-                self.advance();
-                let expr = self.parse_or()?;
-                self.skip_whitespace();
-                if self.peek() != Some(')') {
-                    return Err(QueryError::TypeExprUnbalanced(self.pos));
-                }
-                self.advance();
-                Ok(expr)
-            }
-            Some(c) if is_type_char(c) => self.parse_type_name(),
-            Some(c) => Err(QueryError::TypeExprUnexpected { ch: c, position: self.pos }),
-            None => Err(QueryError::TypeExprUnexpectedEnd),
+        if rest.is_empty() {
+            return Ok(TypeExprRaw::Type(first));
         }
+        Ok(TypeExprRaw::And(iter::once(first).chain(rest).map(TypeExprRaw::Type).collect()))
     }
 
-    /// Parses a bare type name (any non-delimiter characters).
-    fn parse_type_name(&mut self) -> Result<TypeExprRaw, QueryError> {
+    /// Parses one `EntityType`: a clause 4.6.2 name or a URI.
+    fn parse_type_name(&mut self) -> Result<EntityTypeName, QueryError> {
+        self.skip_whitespace();
         let start = self.pos;
-        while let Some(c) = self.peek() {
-            if is_type_char(c) {
-                self.advance();
-            } else {
-                break;
-            }
+        match self.peek() {
+            Some(c) if is_type_char(c) => {}
+            Some(c) => return Err(QueryError::TypeExprUnexpected { ch: c, position: start }),
+            None => return Err(QueryError::TypeExprUnexpectedEnd),
         }
-        let name = self.input[start..self.pos].trim();
-        if name.is_empty() {
-            return Err(QueryError::TypeExprEmptyName(start));
+        while self.peek().is_some_and(is_type_char) {
+            self.advance();
         }
-        let name = name
-            .parse::<EntityTypeName>()
-            .map_err(|source| QueryError::TypeExprInvalidName { position: start, source })?;
-        Ok(TypeExprRaw::Type(name))
+        let name = &self.input[start..self.pos];
+        self.skip_whitespace();
+        name.parse::<EntityTypeName>()
+            .map_err(|source| QueryError::TypeExprInvalidName { position: start, source })
     }
 
     /// Skip over any run of whitespace.
@@ -173,7 +153,10 @@ const fn is_type_char(c: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        error::QueryError,
+        type_selection::{grammar::TypeExprRaw, parser::parse},
+    };
 
     fn t(name: &str) -> TypeExprRaw {
         TypeExprRaw::Type(name.parse().expect("valid type name"))
@@ -198,8 +181,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_and_with_semicolon() {
-        let expr = parse("Home;Vehicle").unwrap();
+    fn parse_parenthesised_conjunction() {
+        let expr = parse("(Home;Vehicle)").unwrap();
         pretty_assertions::assert_eq!(expr, TypeExprRaw::And(vec![t("Home"), t("Vehicle"),]));
     }
 
@@ -210,9 +193,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_nested_parens() {
-        let expr = parse("((A;B)|C)").unwrap();
-        pretty_assertions::assert_eq!(expr, TypeExprRaw::Or(vec![TypeExprRaw::And(vec![t("A"), t("B"),]), t("C"),]));
+    fn a_parenthesised_single_name_is_that_name() {
+        pretty_assertions::assert_eq!(parse("(Home)").unwrap(), t("Home"));
+    }
+
+    #[test]
+    fn a_shape_outside_the_clause_4_17_grammar_is_rejected() {
+        for raw in [
+            "Home;Vehicle",
+            "((Home;Vehicle))",
+            "(Building|House)",
+            "((A;B)|C)",
+            "A|B;C",
+            "(A;(B|C))",
+            "()",
+            "A|",
+        ] {
+            assert!(parse(raw).is_err(), "{raw} must be rejected");
+        }
     }
 
     #[test]
@@ -250,15 +248,8 @@ mod tests {
 
     #[test]
     fn error_on_unbalanced_close_paren() {
-        let result = parse("A;B)");
+        let result = parse("(A;B))");
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn and_higher_precedence_than_or() {
-        // A|B;C should parse as A | (B AND C)
-        let expr = parse("A|B;C").unwrap();
-        pretty_assertions::assert_eq!(expr, TypeExprRaw::Or(vec![t("A"), TypeExprRaw::And(vec![t("B"), t("C"),]),]));
     }
 
     #[test]

@@ -9,12 +9,7 @@ use crate::{
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    context_source_pseudonym::ContextSourcePseudonym,
-    entity_type_name::EntityTypeName,
-    identifier::Identifier,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     registration::ContextSourceRegistration,
     registration_matching::{EntitySpecification, RegistrationMatchSpecification},
@@ -31,8 +26,10 @@ use andromeda_ngsi_ld_query::{
     page_window::PageWindow,
     projection::expansion::expand_attrs,
     temporal::window::TimeInterval,
-    term_expander::TermExpander,
-    type_selection::grammar::TypeExprRaw,
+    type_selection::{
+        expansion::expand_type_expression,
+        grammar::{TypeExpr, TypeExprRaw},
+    },
 };
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
 use iri_rs::IriBuf;
@@ -69,8 +66,7 @@ impl RegistrationService {
     /// # Errors
     ///
     /// Returns [`RegistrationError::Validation`] when `params` is not a
-    /// well-formed discovery request, names more than one entity type, or
-    /// names an attribute that is not an IRI once expanded,
+    /// well-formed discovery request or names an attribute that is not an IRI once expanded,
     /// [`RegistrationError::Query`] when the `q`, `csf`, geo or temporal
     /// filter cannot be compiled, [`RegistrationError::JsonLd`] when `context`
     /// cannot be loaded or a response cannot be compacted under it, and
@@ -99,9 +95,17 @@ impl RegistrationService {
         let scanned = page.registrations.len();
         let total = page.total;
         let names = NameCompaction::new(self.engine.compactor(context).processed_context().await?);
+        // clone: clause 5.12 matching reads the selector in its serialisable
+        // shape, and the compiled query keeps the expanded one.
+        let type_selector = compiled
+            .entity_type
+            .clone()
+            .map(TypeExpr::into_raw)
+            .transpose()
+            .map_err(RegistrationInvariant::ExpandedTypeName)?;
         let mut matched = Vec::with_capacity(page.registrations.len());
         for registration in page.registrations {
-            if let Some(registration) = registration_matching_the_query(registration, &compiled)? {
+            if let Some(registration) = registration_matching_the_query(registration, &compiled, type_selector.as_ref())? {
                 matched.push(compacted_registration(&names, registration));
             }
         }
@@ -122,10 +126,7 @@ impl RegistrationService {
         let prepared_context = self.engine.prepare_term_context(context);
         let expander = ContextualExpander::new(&self.engine, &prepared_context);
         let expanded_type = match params.entity_type.as_ref() {
-            Some(selection) => match selection.as_single_type() {
-                Some(entity_type) => Some(expander.expand_type(entity_type.as_str()).await?),
-                None => return Err(RegistrationError::Validation(RegistrationValidationReason::DiscoveryRequiresSingleType)),
-            },
+            Some(selection) => Some(expand_type_expression(selection, &expander).await?),
             None => None,
         };
         let mut attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
@@ -203,19 +204,10 @@ impl RegistrationService {
 fn registration_matching_the_query(
     registration: ContextSourceRegistration,
     compiled: &CompiledCsrQuery,
+    type_selector: Option<&TypeExprRaw>,
 ) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
-    let type_selector = compiled
-        .entity_type
-        .as_ref()
-        .map(|iri| {
-            iri.as_str()
-                .parse::<EntityTypeName>()
-                .map_err(|error| RegistrationError::from(RegistrationInvariant::ExpandedTypeName(error)))
-        })
-        .transpose()?
-        .map(TypeExprRaw::Type);
     let entity = EntitySpecification {
-        type_selector: type_selector.as_ref(),
+        type_selector,
         ids: &compiled.ids,
         id_pattern: compiled.id_pattern.as_ref(),
     };

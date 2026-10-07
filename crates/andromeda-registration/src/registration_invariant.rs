@@ -1,6 +1,7 @@
 //! The invariants registration policy relies on, and how each one broke.
 
-use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::ContextSourceRegistrationIdParseError, reference::NgsiLdReferenceError};
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::ContextSourceRegistrationIdParseError;
+use andromeda_ngsi_ld_query::error::QueryError;
 use thiserror::Error;
 
 /// A registration policy invariant that did not hold.
@@ -12,9 +13,10 @@ pub enum RegistrationInvariant {
     /// A freshly minted registration identifier is not an identifier.
     #[error("a minted registration identifier is invalid: {0}")]
     MintedIdentifier(#[source] ContextSourceRegistrationIdParseError),
-    /// An entity type the JSON-LD engine expanded is not a type name.
+    /// A type selector the JSON-LD engine expanded has a leaf that is not a
+    /// type name.
     #[error("an expanded entity type is not a type name: {0}")]
-    ExpandedTypeName(#[source] NgsiLdReferenceError),
+    ExpandedTypeName(#[source] QueryError),
     /// The entity store could not answer a proxied-registration admission check.
     #[error("the entity store could not answer a registration admission check")]
     EntityProbe,

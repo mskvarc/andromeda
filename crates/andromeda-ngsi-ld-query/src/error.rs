@@ -146,9 +146,6 @@ pub enum QueryError {
         /// Zero-based character offset in the input.
         position: usize,
     },
-    /// A type name production produced an empty name.
-    #[error("type expression: empty type name at position {0}")]
-    TypeExprEmptyName(usize),
     /// A type name did not satisfy the clause 4.6.2 name grammar.
     #[error("type expression: invalid type name at position {position}: {source}")]
     TypeExprInvalidName {

@@ -12,7 +12,13 @@ use crate::csr::{
     temporal_partition::temporal_partition,
     unnesting::{entity_axis_covers, information_item_matches},
 };
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, geo::query::GeoQuery, page_window::PageWindow, read_order::ReadOrder};
+use andromeda_ngsi_ld_query::{
+    csr::compiled::CompiledCsrQuery,
+    geo::query::GeoQuery,
+    page_window::PageWindow,
+    read_order::ReadOrder,
+    type_selection::grammar::TypeExpr,
+};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBSERVATION_SPACE, OPERATION_SPACE};
 use andromeda_postgresql_query::{
     dictionary::resolved_names::ResolvedNames,
@@ -96,8 +102,8 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
         ids: &query.ids,
         id_pattern: query.id_pattern.as_ref(),
     };
-    if let Some(entity_type) = &query.entity_type {
-        condition = condition.add(entity_type_candidate(entity_type));
+    if let Some(selection) = query.entity_type.as_ref().filter(|selection| !matches!(selection, TypeExpr::Wildcard)) {
+        condition = condition.add(entity_type_candidate(&selection.named_types()));
     }
     if !query.ids.is_empty() {
         condition = condition.add(entity_id_candidate(&query.ids));
@@ -351,7 +357,7 @@ mod tests {
     #[test]
     fn build_with_entity_type() {
         let mut q = empty_query();
-        q.entity_type = Some(iri("https://example.com/Vehicle"));
+        q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
         let built = build(&q);
         assert!(
             built.sql.contains("jsonb_exists(\"ent\".\"value\" -> ('type'), 'https://example.com/Vehicle')"),
@@ -432,7 +438,7 @@ mod tests {
     #[test]
     fn entity_and_attribute_axes_are_decided_on_the_same_information_item() {
         let mut q = empty_query();
-        q.entity_type = Some(iri("https://example.com/Vehicle"));
+        q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
         q.attrs = vec![iri("https://example.com/speed")];
         let built = build(&q);
         assert_eq!(built.sql.matches("jsonb_array_elements(\"information\")").count(), 1, "{}", built.sql);
@@ -445,7 +451,7 @@ mod tests {
         // with still decides membership, so the preselect only has to be a
         // superset of it.
         let mut q = empty_query();
-        q.entity_type = Some(iri("https://example.com/Vehicle"));
+        q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
         q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
         q.attrs = vec![iri("https://example.com/speed")];
         let built = build(&q);
@@ -623,7 +629,7 @@ mod tests {
     #[test]
     fn build_with_multiple_filters() {
         let mut q = empty_query();
-        q.entity_type = Some(iri("https://example.com/Vehicle"));
+        q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
         q.ids = ids(&["urn:a"]);
         q.attrs = vec![iri("https://example.com/speed")];
         let built = build(&q);

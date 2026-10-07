@@ -128,7 +128,7 @@ fn type_expression(desc: &TypeDesc) -> String {
     match desc {
         TypeDesc::Wildcard => "*".to_owned(),
         TypeDesc::Single(index) => TYPES[*index].to_owned(),
-        TypeDesc::Or(left, right) => format!("({}|{})", TYPES[*left], TYPES[*right]),
+        TypeDesc::Or(left, right) => format!("{}|{}", TYPES[*left], TYPES[*right]),
         TypeDesc::And(left, right) => format!("({};{})", TYPES[*left], TYPES[*right]),
     }
 }
