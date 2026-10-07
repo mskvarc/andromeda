@@ -156,7 +156,9 @@ mod tests {
     #[test]
     fn a_distance_sorting_style_is_rejected() {
         for rejected in ["id;dist-asc", "id;dist-desc"] {
-            let error = TemporalEntityOrdering::of_parameters(&parameters(rejected)).expect_err("a distance ordering has no GeoProperty to measure");
+            let ordering: OrderingParameters =
+                serde_json::from_value(serde_json::json!({"orderBy": rejected, "orderFrom": "[8, 40]"})).expect("a distance ordering with its reference");
+            let error = TemporalEntityOrdering::of_parameters(&ordering).expect_err("a distance ordering has no GeoProperty to measure");
             assert!(matches!(error, QueryError::TemporalOrderingDirection(_)), "{rejected}: got {error:?}");
         }
     }

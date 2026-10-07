@@ -71,9 +71,6 @@ pub enum EntityValidationReason {
         /// The entity the payload names.
         named: Identifier,
     },
-    /// A distance ordering was requested with nothing to measure from (clause 5.7.2.4).
-    #[error("distance-based ordering requires either a geo-query or an orderFrom parameter")]
-    DistanceOrderingWithoutReference,
     /// The client's `collation` is not a locale the database can honour.
     #[error("'{collation}' does not conform to a valid ICU collation")]
     Collation {

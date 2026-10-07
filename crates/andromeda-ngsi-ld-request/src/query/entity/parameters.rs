@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn parse_order_by_dist_asc() {
-        let p = params_from_query("orderBy=location;dist-asc");
+        let p = params_from_query("orderBy=location;dist-asc&orderFrom=%5B8%2C40%5D");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
         pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "location");
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn parse_order_by_dist_desc() {
-        let p = params_from_query("orderBy=location;dist-desc");
+        let p = params_from_query("orderBy=location;dist-desc&orderFrom=%5B8%2C40%5D");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
         pretty_assertions::assert_eq!(order[0].attr.attr.as_str(), "location");
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn parse_order_by_mixed_directions() {
-        let p = params_from_query("orderBy=name,age;desc,location;dist-asc");
+        let p = params_from_query("orderBy=name,age;desc,location;dist-asc&orderFrom=%5B8%2C40%5D");
         let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 3);
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);

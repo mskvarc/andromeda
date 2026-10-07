@@ -69,6 +69,11 @@ impl<'de> Deserialize<'de> for OrderingParameters {
                 Some(OrderingGeometry::new(geometry))
             }
         };
+        // Table 6.4.3.2-1 makes `orderFrom` mandatory when `orderBy` orders by
+        // distance, so a geo-query's geometry never stands in for it.
+        if geometry.is_none() && wire.order_by.iter().any(|term| term.direction.is_distance()) {
+            return Err(DeserializeError::custom("orderBy: a distance ordering requires orderFrom"));
+        }
         Ok(OrderingParameters {
             collation: wire.collation,
             geometry,
@@ -152,6 +157,24 @@ mod tests {
         }))
         .expect("valid ordering");
         pretty_assertions::assert_eq!(ordering, body);
+    }
+
+    /// Table 6.4.3.2-1: `orderFrom` "shall be one if orderBy uses order by
+    /// distance", whichever term carries the distance direction.
+    #[test]
+    fn a_distance_ordering_without_a_reference_geometry_is_rejected() {
+        for order_by in ["location;dist-asc", "location;dist-desc", "name;asc,location;dist-asc"] {
+            assert!(
+                serde_json::from_value::<OrderingParameters>(serde_json::json!({ "orderBy": order_by })).is_err(),
+                "{order_by}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_ordering_needs_no_reference_geometry() {
+        let ordering: OrderingParameters = serde_json::from_value(serde_json::json!({ "orderBy": "name;desc,location" })).expect("valid ordering");
+        assert!(ordering.geometry.is_none());
     }
 
     #[test]

@@ -4,7 +4,6 @@
 
 use crate::{
     compiled_cache::CompiledQueryKey,
-    entity_validation_reason::EntityValidationReason,
     error::EntityError,
     query::{EntityQueryService, selector_compilation::compile_entity_selectors},
 };
@@ -84,13 +83,6 @@ impl EntityQueryService {
 
         let order_by = self.compile_order_terms(params, &prepared_context).await?;
         let ordering_geometry = compile_ordering_geometry(params, self.reference_limits)?;
-
-        // Clause 5.7.2.4: distance ordering has no reference point without a
-        // geo-query or an explicit `orderFrom`.
-        let has_distance_term = order_by.iter().any(|term| term.direction.is_distance());
-        if has_distance_term && geo.is_none() && ordering_geometry.is_none() {
-            return Err(EntityError::Validation(EntityValidationReason::DistanceOrderingWithoutReference));
-        }
 
         let projection = Projection::builder().pick(pick).omit(omit).build();
         let compiled = CompiledEntityQuery::builder()

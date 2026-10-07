@@ -641,7 +641,8 @@ mod tests {
     fn a_distance_sorting_style_does_not_order_a_temporal_query() {
         let window = "type=Vehicle&timerel=before&timeAt=2030-01-01T00:00:00Z";
         assert!(matches!(
-            params_from_query(&format!("{window}&local=true&orderBy=id;dist-asc")).validate(TemporalQueryOperation::Query, TemporalJoin::Extended),
+            params_from_query(&format!("{window}&local=true&orderBy=id;dist-asc&orderFrom=%5B8%2C40%5D"))
+                .validate(TemporalQueryOperation::Query, TemporalJoin::Extended),
             Err(ParameterError::Query(QueryError::TemporalOrderingDirection(_)))
         ));
     }

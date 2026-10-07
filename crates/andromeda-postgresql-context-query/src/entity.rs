@@ -205,7 +205,7 @@ fn window_and_sort_keys(
     let identifier = rows.identity_column(Entities::Id);
     let read_order = bound_to_window(select, &identifier, window);
     let keys = match window.start {
-        PageStart::Offset(_) => result_ordering::sort_keys(select, rows, &query.ordering, query.selection.geo.as_ref(), attributes)?,
+        PageStart::Offset(_) => result_ordering::sort_keys(select, rows, &query.ordering, attributes)?,
         PageStart::Cursor(_) => vec![SortKey::new(identifier, KeyOrder::new(read_order.into(), NullPlacement::Unstated))],
     };
     Ok((keys, read_order))
@@ -327,6 +327,7 @@ mod tests {
         count_policy::CountPolicy,
         cursor::PageCursor,
         entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
+        error::QueryError,
         filter::{
             expression::Expr,
             parser,
@@ -347,7 +348,7 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, error::RenderError};
     use iri_rs::IriBuf;
     use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::{PostgresQueryBuilder, Value};
@@ -1200,8 +1201,10 @@ mod tests {
         assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC NULLS LAST"#), "{}", built.sql);
     }
 
+    /// Table 6.4.3.2-1 makes `orderFrom` mandatory for a distance ordering, so
+    /// the geo-query's geometry is not measured from in its place.
     #[test]
-    fn build_with_order_by_dist_asc_with_geo() {
+    fn a_distance_ordering_beside_a_geo_query_without_a_reference_geometry_is_refused() {
         let mut q = empty_query();
         q.selection.geo = Some(GeoQuery {
             georel: GeoRel::Near {
@@ -1216,9 +1219,9 @@ mod tests {
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        let built = build(&q, &known_types());
-        assert!(built.sql.contains("ST_DistanceSphere("), "{}", built.sql);
-        assert!(built.sql.contains("ASC"));
+        let target = ContextTarget::Live;
+        let result = build_query(&target, &q, &first_offset_page(), CountPolicy::Omit, &known_types());
+        assert!(matches!(result, Err(RenderError::Query(QueryError::DistanceOrderWithoutReference))));
     }
 
     #[test]

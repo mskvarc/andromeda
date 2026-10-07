@@ -17,7 +17,6 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     error::QueryError,
     filter::path::AttrPath,
-    geo::query::GeoQuery,
     ordering::{
         compiled::ResultOrdering,
         sort_direction::SortDirection,
@@ -49,23 +48,22 @@ use sea_query::{Expr as SeaExpr, JoinType, SelectStatement, SimpleExpr};
 /// Returns [`RenderError::ReferenceGeometryEncoding`] when a reference geometry
 /// has no EWKB spelling the store can bind, and
 /// [`RenderError::Query`] carrying [`QueryError::DistanceOrderWithoutReference`]
-/// for a distance term with no reference geometry anywhere in the query to
-/// measure from, which clause 5.7.2.4 makes `BadRequestData`.
+/// for a distance term with no `orderFrom` to measure from, which Table
+/// 6.4.3.2-1 makes mandatory for a distance ordering.
 pub fn sort_keys(
     select: &mut SelectStatement,
     rows: &EntityRowRefs,
     ordering: &ResultOrdering,
-    geo: Option<&GeoQuery>,
     attribute_names: &ResolvedNames<AttributeName>,
 ) -> Result<Vec<SortKey>, RenderError> {
     let mut keys = Vec::new();
     for (position, term) in ordering.terms.iter().enumerate() {
         let direction = SortDirection::from(term.direction);
         let collation = ordering_collation(term.collation.as_ref());
-        // Clause 5.7.2.4 rejects a distance ordering with no location to
-        // measure from, whatever the term names: the reference is a property of
-        // the request, not of the attribute it happens to address.
-        let reference = distance_reference(term, ordering, geo)?;
+        // A distance ordering with no `orderFrom` is refused whatever the term
+        // names: the reference is a property of the request, not of the
+        // attribute it happens to address.
+        let reference = distance_reference(term, ordering)?;
         match &term.target {
             OrderTarget::Id => keys.push(entity_identifier_key(rows.identity_column(Entities::Id), direction, &collation)),
             // The interned keys sort by dictionary id, which is meaningless to a
@@ -118,17 +116,16 @@ const fn nulls_last(direction: SortDirection) -> KeyOrder {
 
 /// The reference geometry a distance term measures from, encoded as EWKB.
 ///
-/// `orderFrom` names it outright (clause 5.2.43); a query that only carries a
-/// geo-query measures from the geometry that query already matched against.
-/// A term that does not sort by distance needs none.
-fn distance_reference(term: &CompiledOrderTerm, ordering: &ResultOrdering, geo: Option<&GeoQuery>) -> Result<Option<Vec<u8>>, RenderError> {
+/// Only `orderFrom` names it (Table 6.4.3.2-1); a geo-query's geometry decides
+/// which entities match, never where distance is measured from. A term that
+/// does not sort by distance needs none.
+fn distance_reference(term: &CompiledOrderTerm, ordering: &ResultOrdering) -> Result<Option<Vec<u8>>, RenderError> {
     if !term.direction.is_distance() {
         return Ok(None);
     }
-    match (ordering.geometry.as_ref(), geo) {
-        (Some(reference), _) => Ok(Some(encode(reference.geometry.form())?.to_vec())),
-        (None, Some(geo)) => Ok(Some(encode(geo.geometry.form())?.to_vec())),
-        (None, None) => Err(RenderError::Query(QueryError::DistanceOrderWithoutReference)),
+    match &ordering.geometry {
+        Some(reference) => Ok(Some(encode(reference.geometry.form())?.to_vec())),
+        None => Err(RenderError::Query(QueryError::DistanceOrderWithoutReference)),
     }
 }
 

@@ -226,7 +226,7 @@ pub enum QueryError {
     NearWithoutDistance,
 
     /// A distance ordering was requested with no geometry to measure from.
-    #[error("orderBy: distance ordering requires either a geo-query or an orderFrom parameter")]
+    #[error("orderBy: a distance ordering requires orderFrom")]
     DistanceOrderWithoutReference,
 
     /// A compact term could not be expanded through the active `@context`.
