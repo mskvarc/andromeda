@@ -20,15 +20,25 @@ use serde::Serialize;
 
 /// The language-map entry clause 4.15 answers a `LanguageProperty` with under
 /// a `lang` filter: the entry the filter selects by RFC 4647 basic filtering,
-/// or, when nothing matches, any supported language.
+/// or, when nothing matches, the unmatched-language default.
 ///
 /// `None` only when the language map is empty, which has nothing to serve and
 /// leaves the property as itself.
 pub(crate) fn negotiated_entry<'a>(language_property: &'a LanguageProperty, filter: &LanguageFilter) -> Option<NegotiatedEntry<'a>> {
     let available = language_entries(&language_property.language_map);
     negotiate_entry(&available, filter)
-        .or_else(|| default_supported_entry(&available))
+        .or_else(|| unmatched_language_entry(&available))
         .map(AvailableLanguage::entry)
+}
+
+/// The entry served when no range of the filter matches: the `@none` default
+/// when present, else a tagged entry. Clause 4.15 lets the broker default to any
+/// supported language, and clause 5.7.2.5 makes it the `@none` entry if present.
+fn unmatched_language_entry<'a, 'b>(available: &'b [AvailableLanguage<'a>]) -> Option<&'b AvailableLanguage<'a>> {
+    available
+        .iter()
+        .find(|entry| matches!(entry.range, AvailableLanguageRange::Default))
+        .or_else(|| available.iter().find(|entry| matches!(entry.range, AvailableLanguageRange::Tag(_))))
 }
 
 /// The entry clause 4.15 selects out of a language map.
@@ -40,10 +50,9 @@ pub(crate) struct NegotiatedEntry<'a> {
     pub(crate) value: &'a LanguageMapValue,
 }
 
-/// Any supported entry of a language map: a tagged one by preference, else the
-/// `@none` default. The clause 4.15 fallback target, shared by the wildcard
-/// range and the no-match default so the two cannot diverge.
-fn default_supported_entry<'a, 'b>(available: &'b [AvailableLanguage<'a>]) -> Option<&'b AvailableLanguage<'a>> {
+/// The entry the wildcard range selects: a tagged one by preference, since
+/// RFC 4647 `*` matches any language tag, else the `@none` default.
+fn wildcard_entry<'a, 'b>(available: &'b [AvailableLanguage<'a>]) -> Option<&'b AvailableLanguage<'a>> {
     available
         .iter()
         .find(|entry| matches!(entry.range, AvailableLanguageRange::Tag(_)))
@@ -56,7 +65,7 @@ fn negotiate_entry<'a, 'b>(available: &'b [AvailableLanguage<'a>], filter: &Lang
         let range = preference.value();
         match range {
             LanguageRange::Wildcard => {
-                if let Some(entry) = default_supported_entry(available) {
+                if let Some(entry) = wildcard_entry(available) {
                     return Some(entry);
                 }
             }
@@ -146,9 +155,9 @@ enum AvailableLanguageRange {
 /// Clause 4.15: the selected entry becomes the value, the tag it came from
 /// becomes a `lang` member, and everything else about the attribute survives.
 /// With a `lang` filter present the answer is always a `Property`: the entry the
-/// filter selects, or -- when nothing matches -- any supported language, because
-/// clause 4.15 states the broker *shall* default to a supported language rather
-/// than return the raw language map.
+/// filter selects or, when nothing matches, the unmatched-language default,
+/// because clause 4.15 states the broker *shall* default to a supported language
+/// rather than return the raw language map.
 pub(crate) struct NegotiatedProperty<'a> {
     #[serde(rename = "type")]
     /// Always `Property`: negotiation replaces the language map with one value.
@@ -220,8 +229,7 @@ mod tests {
 
     #[test]
     fn no_matching_language_defaults_to_a_supported_one() {
-        // Clause 4.15: the broker shall default to any supported language rather
-        // than return the raw language map. The first tagged entry is served.
+        // Clause 4.15: with no @none entry, any supported language is served.
         let rendered = negotiated(&json!({"fr": "Grand Place", "nl": "Grote Markt"}), "de");
         pretty_assertions::assert_eq!(rendered["type"], "Property");
         pretty_assertions::assert_eq!(rendered["value"], "Grand Place");
@@ -242,5 +250,21 @@ mod tests {
         let rendered = negotiated(&json!({"@none": "untagged"}), "de");
         pretty_assertions::assert_eq!(rendered["value"], "untagged");
         pretty_assertions::assert_eq!(rendered["lang"], "@none");
+    }
+
+    /// Clause 5.7.2.5: with no match, the `@none` default is chosen if present.
+    #[test]
+    fn no_match_prefers_the_none_entry_over_a_tagged_one() {
+        let rendered = negotiated(&json!({"en": "red", "@none": "x"}), "de");
+        pretty_assertions::assert_eq!(rendered["value"], "x");
+        pretty_assertions::assert_eq!(rendered["lang"], "@none");
+    }
+
+    /// RFC 4647 `*` matches any language tag, so a tagged entry wins over `@none`.
+    #[test]
+    fn the_wildcard_prefers_a_tagged_entry_over_the_none_entry() {
+        let rendered = negotiated(&json!({"@none": "x", "en": "red"}), "*");
+        pretty_assertions::assert_eq!(rendered["value"], "red");
+        pretty_assertions::assert_eq!(rendered["lang"], "en");
     }
 }
