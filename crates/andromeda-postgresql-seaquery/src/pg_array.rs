@@ -50,6 +50,22 @@ pub fn has_elements(array: SimpleExpr) -> SimpleExpr {
     SimpleExpr::from(Func::cust(Cardinality).args([array])).gt(0)
 }
 
+/// The `nullif` function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "nullif"]
+struct NullIf;
+
+/// `nullif(array, '{}')` - `array`, or NULL when it holds no element.
+///
+/// A sort key that ranks an empty array as an absent value: PostgreSQL orders
+/// an empty array before every non-empty one, so only a NULL reaches the
+/// position `NULLS LAST` gives it. The untyped literal takes the type of
+/// `array`.
+#[must_use]
+pub fn elements_or_null(array: SimpleExpr) -> SimpleExpr {
+    Func::cust(NullIf).args([array, Expr::cust("'{}'")]).into()
+}
+
 /// The `array_append` function.
 #[derive(Iden, Clone, Copy)]
 #[iden = "array_append"]
@@ -135,7 +151,7 @@ pub fn nullable_text_array(values: &[Option<&str>]) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::pg_array::{any, array_append, array_position, array_subquery, has_elements, nullable_text_array};
+    use crate::pg_array::{any, array_append, array_position, array_subquery, elements_or_null, has_elements, nullable_text_array};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr};
 
@@ -147,6 +163,12 @@ mod tests {
     fn an_element_test_compares_the_array_cardinality() {
         let sql = render_expr(has_elements(Expr::col(Alias::new("scope_paths"))));
         assert_eq!(sql, "SELECT cardinality(\"scope_paths\") > 0");
+    }
+
+    #[test]
+    fn an_empty_array_reads_as_null() {
+        let sql = render_expr(elements_or_null(Expr::col(Alias::new("scope_paths"))));
+        assert_eq!(sql, "SELECT nullif(\"scope_paths\", '{}')");
     }
 
     #[test]

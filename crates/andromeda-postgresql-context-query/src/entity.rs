@@ -1201,6 +1201,27 @@ mod tests {
         assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC NULLS LAST"#), "{}", built.sql);
     }
 
+    /// Clause 4.23.2 ranks "Attribute does not exist" last, and an unscoped
+    /// entity stores an empty scope path array.
+    #[test]
+    fn ordering_by_scope_reads_an_empty_scope_as_absent_and_ranks_it_last() {
+        for (direction, spelled) in [(OrderDirection::Asc, "ASC"), (OrderDirection::Desc, "DESC")] {
+            let mut q = empty_query();
+            q.ordering.terms = vec![CompiledOrderTerm {
+                target: OrderTarget::Scope,
+                direction,
+                collation: None,
+            }];
+            let built = build(&q, &known_types());
+            assert!(
+                built.sql.contains(r#"nullif("entity_search"."scope_paths", '{}') AS "sort_0""#),
+                "{}",
+                built.sql
+            );
+            assert!(built.sql.contains(&format!(r#"ORDER BY "sort_0" {spelled} NULLS LAST"#)), "{}", built.sql);
+        }
+    }
+
     /// Table 6.4.3.2-1 makes `orderFrom` mandatory for a distance ordering, so
     /// the geo-query's geometry is not measured from in its place.
     #[test]
