@@ -1,20 +1,6 @@
 //! Clause 4.9 `quotedStr` and its `char` production, end to end.
 //!
-//! Clause 4.9 defines `quotedStr = String` and says "String shall be a text
-//! string as mandated by the JSON Specification, following the ABNF Grammar,
-//! production rule named String, section 7 of IETF RFC 8259" and "char shall be
-//! a character as mandated by the JSON Specification, ABNF Grammar, production
-//! rule named char, section 7 of IETF RFC 8259". RFC 8259 section 7 admits
-//! exactly eight two-character escapes (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`,
-//! `\r`, `\t`) and the six-character `\uXXXX` form, requires a surrogate pair
-//! for a character outside the Basic Multilingual Plane, and forbids an
-//! unescaped control character.
-//!
-//! The defect these cover resolved any backslash pair to its second character,
-//! so `q=name=="aé"` matched the literal text `au00e9` rather than `aé`,
-//! and every malformed escape was silently accepted as data.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Clause 4.9 defines `quotedStr = String` and says "String shall be a text string as mandated by the JSON Specification, following the ABNF Grammar, production rule named String, section 7 of IETF RFC 8259" and "char shall be a character as mandated by the JSON Specification, ABNF Grammar, production rule named char, section 7 of IETF RFC 8259". RFC 8259 section 7 admits exactly eight two-character escapes (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`) and the six-character `\uXXXX` form, requires a surrogate pair for a character outside the Basic Multilingual Plane, and forbids an unescaped control character.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -129,8 +115,7 @@ async fn regression_query_string_a_unicode_escape_matches_a_non_ascii_stored_val
     assert_eq!(status, StatusCode::OK, "a \\uXXXX escape is a well-formed filter: {body}");
     assert_eq!(ids_from_response(&body), vec![id.clone()], "\\u00e9 must match the stored 'é'");
 
-    // The defect: the escape resolved to its second character, so the filter
-    // became the literal text `au00e9` and matched an entity holding that.
+    // The escape must denote U+00E9, not the literal text `au00e9`.
     let literal = create_named(&scope, client, "unicode-literal", "au00e9").await;
     let (status, body) = query(client, &filter(&[&id, &literal], &format!("{MATCHED_ATTRIBUTE}==\"a\\u00e9\""))).await;
     assert_eq!(status, StatusCode::OK, "{body}");

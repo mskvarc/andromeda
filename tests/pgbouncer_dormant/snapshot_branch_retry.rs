@@ -92,7 +92,6 @@ async fn a_failed_snapshot_branch_delivery_is_retried_after_eviction() {
         .expect("create Snapshot-scoped subscription");
     assert_eq!(subscribed.status(), StatusCode::CREATED, "the branch subscription is created");
 
-    // A change on the branch: its first delivery attempt gets a 500.
     let created = scoped(&client, Method::POST, format!("{broker}entities"), &tenant, &snapshot)
         .json(&json!({
             "id": format!("urn:ngsi-ld:BranchDevice:{tenant}"),

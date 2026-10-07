@@ -6,14 +6,11 @@
 //! restrictions of clause 5.2.4 -- an Entity `id` and a Relationship `object`
 //! being valid URIs -- are not met.
 //!
-//! The [`andromeda_ngsi_ld_lexicon::uri::Uri`] type fell back to the WHATWG URL
-//! parser, which is not a URI validator: it kept the literal space of
-//! `urn:ngsi-ld:Building:has space` in the opaque path, so the entity was
-//! created 201, and it silently stripped a tab or line break, so the entity was
-//! stored under an identifier the client never sent. The grammar is now held
-//! before any form is parsed.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! The [`andromeda_ngsi_ld_lexicon::uri::Uri`] type holds the URI grammar before
+//! any form is parsed. The WHATWG URL parser is not a URI validator: it keeps the
+//! literal space of `urn:ngsi-ld:Building:has space` in the opaque path, and
+//! silently strips a tab or line break, which would store the entity under an
+//! identifier the client never sent.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

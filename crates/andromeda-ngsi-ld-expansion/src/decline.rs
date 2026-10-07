@@ -3,8 +3,8 @@
 //! The walk models the JSON-LD 1.1 expansion algorithm for the shapes NGSI-LD
 //! requests take. A context feature or a document shape outside them is not
 //! guessed at: the walk declines, and the processor, which is the authority on
-//! expansion (clause 5.5.7), expands the request instead -- including
-//! reporting the failure of a document that is not valid JSON-LD.
+//! expansion (clause 5.5.7), expands the request instead, and reports the
+//! failure of a document that is not valid JSON-LD.
 
 use strum::{Display, IntoStaticStr};
 

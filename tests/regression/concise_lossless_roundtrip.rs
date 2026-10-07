@@ -1,16 +1,14 @@
 //! Clause 4.5.2.3 concise representation that reads back as what was written.
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 4.5.2.3 calls the concise representation
-//! "concise but lossless". The rendering collapsed a Property to its bare value
-//! whatever the value was, so a Property holding a `GeoJSON` geometry read back
-//! as a `GeoProperty` and one holding an object with a `type`, another family's
-//! value member or `value` read back as an attribute of its own; it wrote the
-//! default instance of a multi-attribute as a bare element of the array; and the
-//! reading took neither a typeless `{"value": …}` instance in an array nor a lone
-//! one for an instance at all. Each concise answer here is written back as a new
-//! entity and read normalized, so the round trip is asserted, not only the shape.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! "concise but lossless". A Property holding a `GeoJSON` geometry reads back as
+//! a Property, not a `GeoProperty`; one holding an object with a `type`, another
+//! family's value member or `value` reads back with that object as its value,
+//! not as an attribute of its own; the default instance of a multi-attribute is
+//! written as an object, not a bare element of the array; and the reading takes a
+//! typeless `{"value": …}` instance, in an array or alone, as an instance. Each
+//! concise answer here is written back as a new entity and read normalized, so
+//! the round trip is asserted, not only the shape.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

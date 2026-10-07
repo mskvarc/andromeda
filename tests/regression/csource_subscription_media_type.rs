@@ -9,11 +9,6 @@
 //! the body is JSON. When the media type is declared as JSON and the body is
 //! malformed, the parse then fails and the request is `InvalidRequest` (400),
 //! the category clause 5.5.2 gives to a request that is not valid JSON.
-//!
-//! Corresponds to the official suite case `039_05_01`, whose fixture sends the
-//! update fragment with no `Content-Type` and expects the JSON-parse failure.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

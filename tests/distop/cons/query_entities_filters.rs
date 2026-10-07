@@ -1,7 +1,4 @@
-//! Query Entities auxiliary supplementation, distributed pagination, csf
-//! forwarding, post-merge `datasetId` filtering, and local `orderBy`
-//! (clauses 5.7.2.4, 5.5.9). Forwarding-selection and array-merge rows live in
-//! `crate::cons::query_entities`.
+//! Query Entities auxiliary supplementation, distributed pagination, csf forwarding, post-merge `datasetId` filtering, and local `orderBy` (clauses 5.7.2.4, 5.5.9).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -39,9 +36,7 @@ fn attribute_instances(body: &Value, id: &str, attribute: &str) -> Vec<Value> {
     })
 }
 
-/// An auxiliary source supplies an attribute in a query result only where the
-/// merged entity lacks it; it never overrides a present value (clause 5.7.2.4).
-/// Confirms REQ-CONS-32.
+/// An auxiliary source supplies an attribute in a query result only where the merged entity lacks it; it never overrides a present value (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_query_entities_auxiliary_added_only_where_attr_absent() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -94,9 +89,7 @@ async fn distop_query_entities_auxiliary_added_only_where_attr_absent() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Distributed pagination over candidate entities covers every candidate across
-/// pages with no duplicate and no page exceeding the limit (clause 5.5.9).
-/// Confirms REQ-CONS-34.
+/// Distributed pagination over candidate entities covers every candidate across pages with no duplicate and no page exceeding the limit (clause 5.5.9).
 #[tokio::test]
 async fn distop_query_entities_pagination_over_mapped_candidates() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -148,8 +141,7 @@ async fn distop_query_entities_pagination_over_mapped_candidates() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `csf` expression is forwarded byte-identical into the downstream discovery a
-/// chained source performs (clause 5.7.2.4). Confirms REQ-CONS-35, REQ-CONS-72.
+/// A `csf` expression is forwarded byte-identical into the downstream discovery a chained source performs (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_query_entities_csf_forwarded_unchanged_to_discovery() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -197,9 +189,7 @@ async fn distop_query_entities_csf_forwarded_unchanged_to_discovery() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `datasetId` query parameter applies per-attribute instance filtering across
-/// aggregated entities; `@none` matches the default instance (clause 5.7.2.4).
-/// Confirms REQ-CONS-36.
+/// A `datasetId` query parameter applies per-attribute instance filtering across aggregated entities; `@none` matches the default instance (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_query_entities_datasetid_per_attribute_filtering() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -272,8 +262,7 @@ async fn distop_query_entities_datasetid_per_attribute_filtering() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `datasetId` no instance carries omits that attribute from each aggregated
-/// entity (clause 5.7.2.4). Confirms REQ-CONS-37.
+/// A `datasetId` no instance carries omits that attribute from each aggregated entity (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_query_entities_datasetid_no_match_omits_attribute() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -326,11 +315,7 @@ async fn distop_query_entities_datasetid_no_match_omits_attribute() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `local=true` query with `orderBy` on an attribute member orders the result by
-/// that member, ascending then descending (clause 5.7.2.4). The descending
-/// direction is the `;desc` suffix of the clause 4.23.3 grammar
-/// (`OrderingTerm = AttrName *1(DirectionTerm)`, `DirectionTerm = %x3B
-/// directionOp`), sent percent-encoded. Confirms REQ-CONS-38.
+/// A `local=true` query with `orderBy` on an attribute member orders the result by that member, ascending then descending (clause 5.7.2.4). The descending direction is the `;desc` suffix of the clause 4.23.3 grammar (`OrderingTerm = AttrName *1(DirectionTerm)`, `DirectionTerm = %x3B directionOp`), sent percent-encoded.
 #[tokio::test]
 async fn distop_query_entities_orderby_local_orders_by_member() {
     let topology = topology::single().await.expect("single-broker topology");

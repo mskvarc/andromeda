@@ -108,7 +108,7 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
     Ok(())
 }
 
-/// The unique constraint migration 0014 names on `snapshots.id`.
+/// The unique constraint on `snapshots.id`.
 const UQ_SNAPSHOTS_ID: &str = "uq_snapshots_id";
 
 /// Preserve the protocol-visible duplicate-id classification from PostgreSQL.
@@ -126,7 +126,7 @@ mod tests {
         snapshot::creation::{UQ_SNAPSHOTS_ID, control_insert_sql, preparation_insert_sql},
     };
 
-    /// Migration 0014 names every constraint, so the duplicate-identity
+    /// Every constraint is named by the migrations, so the duplicate-identity
     /// refusal matches the declared name rather than one PostgreSQL generated.
     #[test]
     fn the_duplicate_id_refusal_names_the_constraint_migration_0014_declares() {

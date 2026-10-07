@@ -86,13 +86,10 @@ pub const DEFAULT_MAX_QUERY_INSTANCES: NonZeroU32 = NonZeroU32::MIN.saturating_a
 pub struct FederationConfig {
     /// Maximum parallel Context Source forwarding requests.
     pub forward_concurrency: usize,
-    /// Time allowed to establish a connection to a Context Source, in
-    /// human-readable form (`"3s"`).
+    /// Time allowed to establish a connection to a Context Source, in human-readable form (`"3s"`).
     #[toml_comment(inline)]
     pub connect_timeout: HumanDuration,
-    /// Time a forwarded request may take before it is assumed to have failed,
-    /// unless the registration's `management.timeout` says otherwise (clause
-    /// 5.2.34), in human-readable form (`"5s"`, `"500ms"`).
+    /// Time a forwarded request may take before it is assumed to have failed, unless the registration's `management.timeout` says otherwise (clause 5.2.34), in human-readable form (`"5s"`, `"500ms"`).
     #[toml_comment(inline)]
     pub request_timeout: HumanDuration,
     /// Most cached forwarded GET responses held per tenant (clause 6.3.17).

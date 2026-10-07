@@ -61,8 +61,8 @@ pub(crate) fn text_rejection(refusal: JsonTextRefusal, uri: Uri) -> ExtractorRej
 ///
 /// # Errors
 ///
-/// Returns an `InvalidRequest` for a text that is no JSON, which the earlier
-/// preconditions refuse first.
+/// Returns an `InvalidRequest` for a text that is no JSON, which the
+/// preceding preconditions refuse first.
 pub(crate) fn submitted_context(context: ContextSpec, text: &[u8], uri: &Uri) -> Result<SubmittedContext, ExtractorRejection> {
     let embedded = find_embedded_context(text).map_err(|error| text_rejection(JsonTextRefusal::Syntax(error), uri.clone()))?; // clone: the refusal names the request
     Ok(SubmittedContext::new(context, embedded))

@@ -6,9 +6,9 @@
 //! forward to matching registrations. The admission prepares every entity the
 //! way the local phase writes it, and the local phase writes what it
 //! prepared: an entity is expanded once per request. The forwarding phase
-//! reads the same documents, and what it leaves to the local phase -- each
+//! reads the same documents, and what it leaves to the local phase, each
 //! document without the attributes an exclusive or redirect registration
-//! claimed (clause 4.3.6.3) -- is a part of what was admitted, so it is never
+//! claimed (clause 4.3.6.3), is a part of what was admitted, so it is never
 //! prepared again.
 
 use crate::{
@@ -157,8 +157,8 @@ impl EntityService {
     /// prepared for the local phase.
     ///
     /// An entity this broker refuses is never handed to a Context Source, and
-    /// one whose attributes a proxied registration claims in full -- an entity
-    /// the local phase never sees -- has still been validated.
+    /// one whose attributes a proxied registration claims in full, an entity
+    /// the local phase never sees, has still been validated.
     ///
     /// Returns, beside the admitted entities, one error per entity that fails,
     /// against that entity's own identifier: clause 5.6.7.4 adds "a new

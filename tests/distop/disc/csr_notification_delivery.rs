@@ -1,7 +1,4 @@
-//! Context Source Notification delivery and bookkeeping (clause 5.11.7): the
-//! endpoint POST, the success counters and timestamps, the failure status, and
-//! status-gated delivery for paused and expired subscriptions. `T-LOCAL` plus
-//! the notification adapter.
+//! Context Source Notification delivery and bookkeeping (clause 5.11.7): the endpoint POST, the success counters and timestamps, the failure status, and status-gated delivery for paused and expired subscriptions.
 
 use crate::{
     disc::{
@@ -26,9 +23,7 @@ const ABSENT: Duration = Duration::from_secs(4);
 /// The settle time for asynchronous notification bookkeeping to persist.
 const BOOKKEEPING: Duration = Duration::from_millis(750);
 
-/// The notification is delivered to the subscription endpoint as an
-/// `application/ld+json` Context Source Notification (clause 5.11.7). Confirms
-/// REQ-DISC-87.
+/// The notification is delivered to the subscription endpoint as an `application/ld+json` Context Source Notification (clause 5.11.7).
 #[tokio::test]
 async fn csr_notification_sent_to_endpoint() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -62,9 +57,7 @@ async fn csr_notification_sent_to_endpoint() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A successful delivery increments `timesSent`, advances `lastNotification` and
-/// `lastSuccess`, and sets the notification status to `ok` (clause 5.11.7).
-/// Confirms REQ-DISC-88, REQ-DISC-89, REQ-DISC-90.
+/// A successful delivery increments `timesSent`, advances `lastNotification` and `lastSuccess`, and sets the notification status to `ok` (clause 5.11.7).
 #[tokio::test]
 async fn csr_notification_success_increments_times_sent_and_updates_last_timestamps() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -105,8 +98,7 @@ async fn csr_notification_success_increments_times_sent_and_updates_last_timesta
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A failed delivery sets `lastFailure` and the notification status to `failed`
-/// (clause 5.11.7). Confirms REQ-DISC-91, REQ-DISC-92.
+/// A failed delivery sets `lastFailure` and the notification status to `failed` (clause 5.11.7).
 #[tokio::test]
 async fn csr_notification_failed_delivery_updates_last_failure_and_status() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -136,7 +128,6 @@ async fn csr_notification_failed_delivery_updates_last_failure_and_status() {
 }
 
 /// Paused and expired subscriptions do not emit notifications (clause 5.11.7).
-/// Confirms REQ-DISC-78.
 #[tokio::test]
 async fn csr_notification_paused_and_expired_subscriptions_do_not_emit() {
     let topology = topology::single().await.expect("single-broker topology");

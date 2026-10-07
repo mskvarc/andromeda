@@ -1,7 +1,4 @@
-//! Matching algorithm, attribute part and the subscription-side attribute union
-//! (clause 5.12). The query rows run on `T-LOCAL` through the discovery surface;
-//! the subscription rows capture a `ContextSourceNotification` through the
-//! in-process notification adapter.
+//! Matching algorithm, attribute part and the subscription-side attribute union (clause 5.12).
 
 use crate::{
     disc::{
@@ -21,9 +18,7 @@ use urlencoding::encode;
 /// The wait budget for a change-driven Context Source Notification.
 const NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// With no attribute names in the query the attribute part is unconstrained and
-/// a registration with registered attributes still matches (clause 5.12).
-/// Confirms REQ-DISC-107.
+/// With no attribute names in the query the attribute part is unconstrained and a registration with registered attributes still matches (clause 5.12).
 #[tokio::test]
 async fn matching_attribute_no_names_specified_all_match() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -43,8 +38,7 @@ async fn matching_attribute_no_names_specified_all_match() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration with an empty registered attribute combination (entity-only)
-/// matches any requested attribute name (clause 5.12). Confirms REQ-DISC-108.
+/// A registration with an empty registered attribute combination (entity-only) matches any requested attribute name (clause 5.12).
 #[tokio::test]
 async fn matching_attribute_empty_registered_combination_entity_only_match() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -57,9 +51,7 @@ async fn matching_attribute_empty_registered_combination_entity_only_match() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The attribute part matches when at least one requested name matches a
-/// registered name, and excludes when none do (clause 5.12). Confirms
-/// REQ-DISC-109.
+/// The attribute part matches when at least one requested name matches a registered name, and excludes when none do (clause 5.12).
 #[tokio::test]
 async fn matching_attribute_at_least_one_name_matches_registered() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -79,9 +71,7 @@ async fn matching_attribute_at_least_one_name_matches_registered() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A subscription with empty notification attributes matches any registration,
-/// so a newly matching registration drives a notification (clause 5.11.7).
-/// Confirms REQ-DISC-96, REQ-DISC-49, REQ-DISC-81.
+/// A subscription with empty notification attributes matches any registration, so a newly matching registration drives a notification (clause 5.11.7).
 #[tokio::test]
 async fn matching_subscription_empty_notification_attributes_all_match() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -112,10 +102,7 @@ async fn matching_subscription_empty_notification_attributes_all_match() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A subscription matches on the union of its watched attributes and its
-/// notification attributes: a registration covering an attribute drawn only
-/// from the notification set still matches (clause 5.12). Confirms REQ-DISC-97,
-/// REQ-DISC-48, REQ-DISC-95.
+/// A subscription matches on the union of its watched attributes and its notification attributes: a registration covering an attribute drawn only from the notification set still matches (clause 5.12).
 #[tokio::test]
 async fn matching_subscription_union_of_watched_and_notification_attributes() {
     let topology = topology::single().await.expect("single-broker topology");

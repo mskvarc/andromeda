@@ -331,13 +331,11 @@ mod tests {
             .expect("the forwarding context processes");
 
         pretty_assertions::assert_eq!(names.attr(&attr("speed")).await.expect("rewords").as_str(), "velocity");
-        // A term the forwarding context does not abbreviate travels as its IRI.
         pretty_assertions::assert_eq!(names.attr(&attr("brand")).await.expect("rewords").as_str(), "https://example.org/brand");
         let vehicle: EntityTypeName = "Vehicle".parse().expect("a type name");
         pretty_assertions::assert_eq!(names.entity_type(&vehicle).await.expect("rewords").as_str(), "Car");
         let expression: TypeExprRaw = "Vehicle,Other".parse().expect("a type selection");
         pretty_assertions::assert_eq!(names.type_expr(&expression).await.expect("rewords").to_string(), "Car,Other");
-        // An IRI carries dots, so the clause 4.9 serialisation quotes it.
         let query = parser::parse("speed>10;brand==\"x\"").expect("a query");
         pretty_assertions::assert_eq!(
             names.q(&query, None).await.expect("rewords").to_string(),

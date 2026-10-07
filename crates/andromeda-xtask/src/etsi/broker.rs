@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-/// Database endpoint served by `docker/compose/dev`; matches the compose port map.
+/// Database endpoint served by the dev compose stack; matches its port map.
 const DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
 /// The suite pages temporal instances at twenty per attribute, so the broker's
 /// default last-n is pinned just under that for the duration of the run.
@@ -39,13 +39,12 @@ const RUNTIME_MAX_CACHED: &str = "8";
 /// bounded by the runtime-cache cap (enforced synchronously on cold insert), not
 /// by this idle window.
 const RUNTIME_IDLE_TTL: &str = "30s";
-/// How often the janitor sweeps. The runtime-cache cap is now enforced
+/// How often the janitor sweeps. The runtime-cache cap is enforced
 /// synchronously on cold insert (the trim runs as each fresh tenant's runtime is
 /// built, not only on the sweep), so the open PostgreSQL connection count is
-/// bounded per request rather than left to climb under `--isolate-tenants` churn.
-/// This cadence therefore governs only how responsively idle and orphaned
-/// runtimes are reclaimed; five seconds is ample for that under the suite's
-/// serial drive.
+/// bounded per request even under `--isolate-tenants` churn. This cadence
+/// therefore governs only how responsively idle and orphaned runtimes are
+/// reclaimed; five seconds is ample under the suite's serial drive.
 const JANITOR_INTERVAL: &str = "5s";
 /// The checkout-relative directory holding both suite context documents. They
 /// are served from the checkout so the broker never fetches them from forge:

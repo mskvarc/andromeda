@@ -1,5 +1,5 @@
 //! Which identifier a stored `@context` is given (clauses 5.13.1, 5.13.2.4
-//! and Table 6.30.2-1; study group G).
+//! and Table 6.30.2-1).
 //!
 //! Clause 5.13.1 leaves the format of a stored `@context`'s local identifier to
 //! the broker. Andromeda names every entry `urn:ngsi-ld:JsonLdContext:<uuid>`:

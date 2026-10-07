@@ -22,10 +22,6 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 
-// ---------------------------------------------------------------------------
-// Retrieve by ID
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_retrieve_by_id_returns_entity() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -42,10 +38,6 @@ async fn entity_retrieve_by_id_returns_entity() {
     assert!(body.get("airQualityLevel").is_some());
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Retrieve with attrs filter
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_retrieve_with_attrs_filter_returns_only_requested() {
@@ -65,10 +57,6 @@ async fn entity_retrieve_with_attrs_filter_returns_only_requested() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Invalid entity ID
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_retrieve_invalid_id_returns_bad_request() {
     let client = client();
@@ -76,10 +64,6 @@ async fn entity_retrieve_invalid_id_returns_bad_request() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body["type"].as_str().unwrap().contains("BadRequestData"));
 }
-
-// ---------------------------------------------------------------------------
-// Entity not found
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_retrieve_not_found_returns_404() {
@@ -105,10 +89,6 @@ async fn entity_retrieve_unknown_attribute_returns_404() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Simplified representation
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_retrieve_key_values_returns_simplified() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -123,10 +103,6 @@ async fn entity_retrieve_key_values_returns_simplified() {
     assert!(body["name"].is_string(), "name should be a simple string");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// GeoJSON representation
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_retrieve_geojson_simplified_returns_feature() {
@@ -203,10 +179,6 @@ async fn entity_retrieve_geojson_nonexistent_geometry_property_returns_null_geom
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// JSON-LD context resolution
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_retrieve_json_empty_context_returns_expanded_terms() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -255,10 +227,6 @@ async fn entity_retrieve_json_with_context_returns_compacted_terms() {
     assert!(body.get("name").is_some());
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Language filter
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_retrieve_lang_fr_returns_french() {
@@ -351,10 +319,6 @@ async fn entity_retrieve_lang_any_simplified_returns_simplified() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// observationSpace geoProperty
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_retrieve_observation_space_simplified_present() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -386,10 +350,6 @@ async fn entity_retrieve_observation_space_normalized_is_geoproperty() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// operationSpace geoProperty
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_retrieve_operation_space_simplified_present() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -420,10 +380,6 @@ async fn entity_retrieve_operation_space_normalized_is_geoproperty() {
     assert_eq!(body["operationSpace"]["type"], "GeoProperty");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// One-level linked entities
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_retrieve_inline_linked_returns_nested_entity() {
@@ -527,10 +483,6 @@ async fn entity_retrieve_flat_linked_simplified_returns_array() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Inline linked entity with sysAttrs
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_retrieve_inline_linked_sys_attrs_includes_created_at() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -557,10 +509,6 @@ async fn entity_retrieve_inline_linked_sys_attrs_includes_created_at() {
     assert!(body["locatedAt"]["entity"].get("createdAt").is_some());
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Flat linked entity with sysAttrs
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_retrieve_flat_linked_sys_attrs_includes_created_at() {
@@ -591,10 +539,6 @@ async fn entity_retrieve_flat_linked_sys_attrs_includes_created_at() {
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Two-level linked entities
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_retrieve_inline_two_level_returns_nested() {
@@ -705,10 +649,6 @@ async fn entity_retrieve_flat_two_level_simplified_returns_all() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Non-existent linked entity
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_retrieve_inline_nonexistent_linked_returns_entity() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -748,10 +688,6 @@ async fn entity_retrieve_flat_nonexistent_linked_returns_entity() {
     assert_eq!(status, StatusCode::OK);
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Format and options parameters
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_retrieve_format_key_values_returns_simplified() {

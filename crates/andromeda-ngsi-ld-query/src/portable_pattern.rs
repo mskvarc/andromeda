@@ -42,24 +42,13 @@ use crate::{error::QueryError, non_posix_construct::NonPosixConstruct};
 use regex_syntax::hir::{Class, ClassUnicode, ClassUnicodeRange, Hir, HirKind, Look, Repetition};
 use std::str;
 
-/// A pattern restated in the constructs PostgreSQL's regular-expression engine
-/// and the `regex` crate read alike, with no embedded option left in it.
-///
-/// This is what a store binds wherever it evaluates a pattern, and what it
-/// persists beside a pattern it evaluates later.
+/// A pattern restated in the constructs PostgreSQL's regular-expression engine and the `regex` crate read alike, with no embedded option left in it. A store binds it wherever it evaluates a pattern and persists it beside a pattern it evaluates later.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub struct PortablePattern(String);
 
 /// The revision of the rendering [`PortablePattern`] performs.
 ///
-/// A store that persists a restatement stores this beside it and renders again
-/// every restatement an older revision produced. It is bumped by hand whenever
-/// the restatement of some admitted pattern would change: a change to this
-/// module or to [`crate::posix_dialect`] that alters an output, or an upgrade of
-/// `regex-syntax`, whose Unicode tables the case-fold sets and the shorthand
-/// classes are taken from. A unit test
-/// pins the current revision to the `regex-syntax` version `Cargo.lock` holds,
-/// so an upgrade cannot land without a decision about the revision.
+/// A store that persists a restatement stores this beside it and renders again every restatement an older revision produced. It is bumped by hand whenever the restatement of some admitted pattern would change: a change to the rendering or to [`crate::posix_dialect`] that alters an output, or an upgrade of `regex-syntax`, whose Unicode tables the case-fold sets and the shorthand classes are taken from. A unit test pins the current revision to the locked `regex-syntax` version, so an upgrade cannot land without a decision about the revision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 pub struct RenderingRevision(i16);
 
@@ -321,9 +310,7 @@ mod tests {
             .to_owned()
     }
 
-    /// A pattern with no embedded option and no class is its own restatement,
-    /// so the anchored identifier prefix PostgreSQL turns into a B-tree range
-    /// is still there to be found.
+    /// A pattern with no embedded option and no class is its own restatement, so the anchored identifier prefix PostgreSQL turns into a B-tree range is still there to be found.
     #[test]
     fn a_pattern_without_options_or_classes_is_restated_as_written() {
         for raw in ["^urn:ngsi-ld:Vehicle:.*", "Merc", "^A", "a$", "urn:ngsi-ld:Vehicle:A4567"] {

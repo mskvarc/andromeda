@@ -232,9 +232,8 @@ impl From<MutationError> for EntityError {
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
-/// A context that does not load and a document the processor refuses are the
-/// JSON-LD failures they always were; a refused document is classified as the
-/// model refuses it.
+/// A context that does not load and a document the processor refuses are
+/// JSON-LD failures; a refused document is classified as the model refuses it.
 impl From<ExpansionError> for EntityError {
     fn from(error: ExpansionError) -> EntityError {
         match error {

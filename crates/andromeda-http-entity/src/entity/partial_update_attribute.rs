@@ -94,7 +94,6 @@ pub(crate) async fn partial_update_attr(
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
-        // No matching CSRs — update locally
         service.partial_update_attr(&target, entity, admitted).await.with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }

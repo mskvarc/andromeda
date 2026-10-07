@@ -17,8 +17,6 @@
 //! attribute term expands through the NGSI-LD Core Context alone and the suite
 //! needs no reachable remote context document.
 //!
-//! Standalone test suite using `tokio::test` and `reqwest` directly.
-//!
 //! Naming convention: `temporal_semantics_<property>_<expected_outcome>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
@@ -45,10 +43,6 @@ use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
-
-// ---------------------------------------------------------------------------
-// Environment
-// ---------------------------------------------------------------------------
 
 /// A plain HTTP client; every request declares its own headers.
 fn client() -> Client {
@@ -80,10 +74,6 @@ async fn database() -> PgPool {
 fn attribute_iri(term: &str) -> String {
     format!("https://uri.etsi.org/ngsi-ld/default-context/{term}")
 }
-
-// ---------------------------------------------------------------------------
-// Current-state operations
-// ---------------------------------------------------------------------------
 
 /// Create one Entity through clause 5.6.1.
 async fn create_entity(http: &Client, entity: &Value) -> StatusCode {
@@ -159,10 +149,6 @@ async fn get_entity(http: &Client, entity_id: &str) -> (StatusCode, Value) {
     (status, response.json().await.unwrap_or(Value::Null))
 }
 
-// ---------------------------------------------------------------------------
-// Temporal operations
-// ---------------------------------------------------------------------------
-
 /// Create or update a Temporal Representation through clause 5.6.11.
 async fn create_temporal_entity(http: &Client, entity: &Value) -> (StatusCode, Value) {
     let response = http
@@ -207,10 +193,6 @@ async fn delete_temporal_entity(http: &Client, entity_id: &str) -> StatusCode {
         .expect("temporal evolution deletion request")
         .status()
 }
-
-// ---------------------------------------------------------------------------
-// Rendering accessors
-// ---------------------------------------------------------------------------
 
 /// The rendered instances of one attribute, or an empty slice when the
 /// attribute is absent from the answer.

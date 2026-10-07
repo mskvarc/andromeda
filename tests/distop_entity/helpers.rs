@@ -8,10 +8,6 @@ use serde_json::{Value, json};
 use urlencoding::encode;
 use uuid::Uuid;
 
-// ---------------------------------------------------------------------------
-// Test utilities
-// ---------------------------------------------------------------------------
-
 pub fn client() -> Client {
     Client::new()
 }
@@ -29,10 +25,6 @@ pub async fn clean_database() -> SerializedEnvironment {
         .await
         .expect("serialized test database environment")
 }
-
-// ---------------------------------------------------------------------------
-// Entity builders
-// ---------------------------------------------------------------------------
 
 pub fn vehicle_entity(id: &str) -> Value {
     json!({
@@ -209,10 +201,6 @@ pub fn building_linking_to(id: &str, target: &str, object_type: Option<&str>) ->
     entity
 }
 
-// ---------------------------------------------------------------------------
-// Registration builders
-// ---------------------------------------------------------------------------
-
 /// Registration of one Building held by the context source at `endpoint`.
 pub fn building_registration(reg_id: &str, entity_id: &str, endpoint: &str) -> Value {
     json!({
@@ -383,10 +371,6 @@ pub fn vehicle_registration_speed_default_ops(reg_id: &str, entity_id: &str, end
     reg
 }
 
-// ---------------------------------------------------------------------------
-// HTTP helpers
-// ---------------------------------------------------------------------------
-
 pub async fn create_entity(client: &Client, entity: &Value) -> (StatusCode, Option<String>) {
     let resp = client
         .post(format!("{BASE_URL}/entities"))
@@ -548,10 +532,6 @@ pub async fn replace_entity(client: &Client, id: &str, payload: &Value, link: &s
 pub async fn delete_registration(client: &Client, id: &str) {
     let _ = client.delete(format!("{BASE_URL}/csourceRegistrations/{}", encode(id))).send().await;
 }
-
-// ---------------------------------------------------------------------------
-// Warning header extraction
-// ---------------------------------------------------------------------------
 
 pub fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
     headers

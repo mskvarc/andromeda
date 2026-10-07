@@ -1,4 +1,4 @@
-//! List @contexts (clause 5.13.3, binding 6.29.3.2; ETSI 052).
+//! List @contexts (clause 5.13.3, binding 6.29.3.2).
 
 use crate::{
     broker_endpoints::broker_url,
@@ -77,8 +77,6 @@ async fn create_implicit_context_for_list(c: &reqwest::Client) -> String {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     extract_id(location.as_ref().unwrap())
 }
-
-// ── 052_01: List @contexts with no previous creation ──────────────
 
 #[tokio::test]
 async fn list_no_contexts_no_params() {
@@ -168,8 +166,6 @@ async fn list_no_contexts_details_false_kind_implicitly_created() {
     env.finish().await.expect("cleanup failed");
 }
 
-// ── 052_02: List with one created context ────────────────────────��
-
 #[tokio::test]
 async fn list_one_context_no_params() {
     let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
@@ -218,8 +214,6 @@ async fn list_one_context_details_false_kind_hosted() {
     env.finish().await.expect("cleanup failed");
 }
 
-// ── 052_03: List with multiple created contexts ───────────────────
-
 #[tokio::test]
 async fn list_multiple_contexts_no_params() {
     let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
@@ -267,8 +261,6 @@ async fn list_multiple_contexts_details_false_kind_hosted() {
     assert_contains_all(&contexts, &uris);
     env.finish().await.expect("cleanup failed");
 }
-
-// ── 052_04: Invalid params -> 400 ────────────────────────────────
 
 #[tokio::test]
 async fn list_invalid_kind_returns_400() {
@@ -347,8 +339,6 @@ async fn list_invalid_details_and_kind_returns_400() {
     env.finish().await.expect("cleanup failed");
 }
 
-// ── 052_05: details=true ──────────────────────────────────────────
-
 #[tokio::test]
 async fn list_details_true_no_kind() {
     let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
@@ -407,8 +397,6 @@ async fn list_details_true_kind_hosted() {
     env.finish().await.expect("cleanup failed");
 }
 
-// ── 052_06: ImplicitlyCreated contexts ────────────────────────────
-
 #[tokio::test]
 async fn list_implicit_no_params() {
     let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
@@ -451,7 +439,6 @@ async fn list_implicit_kind_cached() {
 
     let (status, _contexts) = list_contexts(&c, "kind=Cached").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
-    // External @context URIs may get cached -- just verify valid response
 
     delete_subscription(&c, &sub_id).await;
     env.finish().await.expect("cleanup failed");
@@ -514,7 +501,6 @@ async fn list_implicit_details_false_kind_cached() {
 
     let (status, _contexts) = list_contexts(&c, "details=false&kind=Cached").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
-    // External @context URIs may get cached -- just verify valid response
 
     delete_subscription(&c, &sub_id).await;
     env.finish().await.expect("cleanup failed");
@@ -535,8 +521,6 @@ async fn list_implicit_details_false_kind_implicitly_created() {
     env.finish().await.expect("cleanup failed");
 }
 
-// ── 052_07: List cached contexts with details=true ────────────────
-
 #[tokio::test]
 async fn list_cached_contexts_with_details() {
     let env = TenantScopedEnvironment::from_suite("jsonld_context").await.expect("private tenant environment");
@@ -544,7 +528,6 @@ async fn list_cached_contexts_with_details() {
     provision_tenant(&c).await;
     let (server, ctx_url) = setup_cached_context(&c).await;
 
-    // List with details=true and kind=Cached
     let (status, contexts) = list_contexts(&c, "details=true&kind=Cached").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 

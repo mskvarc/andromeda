@@ -82,8 +82,7 @@ impl IntervalNotificationOperation {
     /// Every due subscription's grid anchor is advanced past `cutoff` before this
     /// returns, whether or not it had anything to send: a subscription that
     /// matched nothing still ticked, so its anchor moves and the sweep stops
-    /// re-reading it every pass (the clause 5.8.6 defect where a matches-nothing
-    /// subscription re-ran a paged scan every second).
+    /// re-reading it, and re-running its paged scan, every pass.
     ///
     /// # Errors
     ///
@@ -99,7 +98,6 @@ impl IntervalNotificationOperation {
         let this = &self;
         let _results: Vec<()> = stream::iter(due_subs)
             .map(|sub| async move {
-                // Fetch entities matching the subscription's entity selectors
                 let entities = match this.candidates().matching(&sub).await {
                     Ok(e) => e,
                     Err(e) => {
@@ -111,7 +109,6 @@ impl IntervalNotificationOperation {
                     }
                 };
 
-                // Apply q/geoQ/scopeQ filters
                 let entities = match matching_entities(&this.entity_query, &this.target, &sub, entities, Utc::now()).await {
                     Ok(entities) => entities,
                     Err(e) => {
@@ -128,7 +125,7 @@ impl IntervalNotificationOperation {
                     return;
                 }
 
-                // Claim slot only once we know we are actually going to send a notification.
+                // The slot is claimed only once a notification is certain to be sent.
                 // Table 5.2.15-1: a periodic subscription carries no
                 // `throttling` (Table 5.2.12-1 makes the pair mutually
                 // exclusive), but its endpoint's `cooldown` still suppresses a

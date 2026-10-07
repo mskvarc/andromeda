@@ -106,9 +106,7 @@ mod tests {
         // Clause 4.18 has two readings in this workspace: `ScopePattern::matches`
         // answers it in memory for subscription matching and for a residual
         // filter, and this module answers it by handing PostgreSQL an `lquery`.
-        // They are the same clause, so they must give the same verdict; an
-        // earlier in-memory reading had `#` consume exactly one further level
-        // while `*{1,}` consumed one or more, and nothing held the two together.
+        // They are the same clause, so they must give the same verdict.
         let paths = ["/A/B", "/A/B/C", "/A/B/C/D", "/A"];
         let cases = [
             // pattern, rendered lquery, verdict per path above

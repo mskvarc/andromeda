@@ -1,8 +1,4 @@
-//! Exclusive mode: registered attributes are served only from the source, never
-//! held locally; an exclusive footprint must be an exact id with attributes and
-//! may not overlap another exclusive or redirect registration (ETSI GS CIM 009
-//! v1.9.1, clauses 4.3.6.3, 5.2.9, 5.7). Rejection rows are `T-LOCAL`;
-//! forwarding rows are `T-MOCK`.
+//! Exclusive mode: registered attributes are served only from the source, never held locally; an exclusive footprint must be an exact id with attributes and may not overlap another exclusive or redirect registration (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.3, 5.2.9, 5.7).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -30,10 +26,7 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
     body.as_array()?.iter().find(|entity| entity["id"].as_str() == Some(id))
 }
 
-/// An exclusive registration serves its registered attribute only from the
-/// source: the provision is forwarded, the attribute is absent from the local
-/// store, and the retrieve returns it from the source (clause 4.3.6.3).
-/// Confirms REQ-FW-19, REQ-FW-21.
+/// An exclusive registration serves its registered attribute only from the source: the provision is forwarded, the attribute is absent from the local store, and the retrieve returns it from the source (clause 4.3.6.3).
 #[tokio::test]
 async fn distop_entity_exclusive_registered_attrs_served_only_from_source_none_local() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -104,9 +97,7 @@ async fn distop_entity_exclusive_registered_attrs_served_only_from_source_none_l
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Attributes outside the exclusive footprint may be held locally: the
-/// registered attribute is forwarded and the unregistered attribute stays local
-/// (clause 4.3.6.3). Confirms REQ-FW-20.
+/// Attributes outside the exclusive footprint may be held locally: the registered attribute is forwarded and the unregistered attribute stays local (clause 4.3.6.3).
 #[tokio::test]
 async fn distop_entity_exclusive_unregistered_attrs_may_be_held_locally() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -168,9 +159,7 @@ async fn distop_entity_exclusive_unregistered_attrs_may_be_held_locally() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A second exclusive registration overlapping an existing one on the same id
-/// and attribute is rejected with 409 Conflict (clause 5.2.9). Confirms
-/// REQ-FW-22, REQ-FW-25.
+/// A second exclusive registration overlapping an existing one on the same id and attribute is rejected with 409 Conflict (clause 5.2.9).
 #[tokio::test]
 async fn distop_entity_exclusive_second_overlapping_exclusive_rejected_conflict() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -210,9 +199,7 @@ async fn distop_entity_exclusive_second_overlapping_exclusive_rejected_conflict(
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A redirect registration overlapping an existing exclusive one on the same id
-/// and attribute is rejected with 409 Conflict (clause 5.2.9). Confirms
-/// REQ-FW-25.
+/// A redirect registration overlapping an existing exclusive one on the same id and attribute is rejected with 409 Conflict (clause 5.2.9).
 #[tokio::test]
 async fn distop_entity_exclusive_then_redirect_same_id_attrs_rejected() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -252,8 +239,7 @@ async fn distop_entity_exclusive_then_redirect_same_id_attrs_rejected() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An exclusive registration expressed by `idPattern` rather than an exact id is
-/// rejected with 400 `BadRequestData` (clause 5.2.9). Confirms REQ-FW-23.
+/// An exclusive registration expressed by `idPattern` rather than an exact id is rejected with 400 `BadRequestData` (clause 5.2.9).
 #[tokio::test]
 async fn distop_entity_exclusive_registration_with_id_pattern_rejected() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -274,8 +260,7 @@ async fn distop_entity_exclusive_registration_with_id_pattern_rejected() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An exclusive registration by type only, without an exact id, is rejected with
-/// 400 `BadRequestData` (clause 5.2.9). Confirms REQ-FW-23.
+/// An exclusive registration by type only, without an exact id, is rejected with 400 `BadRequestData` (clause 5.2.9).
 #[tokio::test]
 async fn distop_entity_exclusive_registration_type_only_rejected() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -297,8 +282,7 @@ async fn distop_entity_exclusive_registration_type_only_rejected() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An exclusive registration with an exact id but no property or relationship
-/// names is rejected with 400 `BadRequestData` (clause 5.2.9). Confirms REQ-FW-24.
+/// An exclusive registration with an exact id but no property or relationship names is rejected with 400 `BadRequestData` (clause 5.2.9).
 #[tokio::test]
 async fn distop_entity_exclusive_registration_without_attributes_rejected() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -319,9 +303,7 @@ async fn distop_entity_exclusive_registration_without_attributes_rejected() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A query matching a single exclusive registration reaches the source by
-/// inferred relevance, with no entity map requested and none returned (clause
-/// 4.3.6.3, 6.3.15). Confirms REQ-FW-52.
+/// A query matching a single exclusive registration reaches the source by inferred relevance, with no entity map requested and none returned (clause 4.3.6.3, 6.3.15).
 #[tokio::test]
 async fn distop_entity_exclusive_relevance_inferred_without_entity_map() {
     let topology = topology::single().await.expect("single-broker topology");

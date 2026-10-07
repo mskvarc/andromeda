@@ -3,11 +3,9 @@
 //! ETSI GS CIM 009 v1.9.1 Table 4.20-2 fixes the membership of each named
 //! operation group, and clause 5.9.2 makes a registration's `operations` member
 //! the gate a distributed operation has to pass before it is forwarded. The
-//! broker expanded `purgeEntity` to no group at all, so a Context Source that
-//! advertised `redirectionOps` -- which the table lists `purgeEntity` under --
-//! never received a forwarded purge.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! broker expands `purgeEntity` to the groups the table lists it under, so a
+//! Context Source that advertises `redirectionOps` -- which the table lists
+//! `purgeEntity` under -- receives a forwarded purge.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -52,9 +50,9 @@ async fn purge_by_type(client: &TestClient, entity_type: &str) -> StatusCode {
 }
 
 /// Table 4.20-2 lists `purgeEntity` under `redirectionOps`, so a registration
-/// advertising that group alone is one the purge has to be forwarded to. The
-/// broker expanded `purgeEntity` to its own token only, so this source was
-/// never consulted and the purge silently completed locally.
+/// advertising that group alone is one the purge has to be forwarded to. Expanding
+/// `purgeEntity` to its own token only would leave this source unconsulted and
+/// the purge silently completed locally.
 #[tokio::test]
 async fn regression_operation_group_redirection_ops_advertises_purge_entity() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -88,7 +86,7 @@ async fn regression_operation_group_redirection_ops_advertises_purge_entity() {
 }
 
 /// The same table lists `purgeEntity` under no other group. `federationOps` and
-/// `associationOps` therefore must not admit it -- widening the fix to every
+/// `associationOps` therefore must not admit it -- widening the expansion to every
 /// group would leak provisioning operations to sources that only advertise
 /// consumption ones.
 ///
@@ -138,9 +136,9 @@ async fn regression_operation_group_no_other_group_advertises_purge_entity() {
     }
 }
 
-/// Clause 4.20: a registration naming `purgeEntity` itself has always been a
-/// match, and must remain one -- the group expansion is additional to the
-/// operation's own token, never a replacement for it.
+/// Clause 4.20: a registration naming `purgeEntity` itself is a match
+/// -- the group expansion is additional to the operation's own token, never a
+/// replacement for it.
 #[tokio::test]
 async fn regression_operation_group_purge_entity_named_directly_still_matches() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

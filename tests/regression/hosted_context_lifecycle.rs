@@ -1,45 +1,8 @@
 //! What a `{contextId}` addresses, and what a use of it counts.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.13.4.3 gives Serve @context its input as
-//! "the locally unique identifier that identifies the desired @context in the
-//! broker's internal storage... For @contexts of kind 'Cached' this can also be
-//! the original URL the broker downloaded the @context from", and clause
-//! 5.13.5.3 says the same of Delete and Reload. Both spellings are URIs and
-//! every stored entry is keyed by one, so a path segment that is neither keys
-//! no entry.
+//! ETSI GS CIM 009 v1.9.1 clauses 5.13.4.3 and 5.13.5.3 take "the locally unique identifier that identifies the desired @context in the broker's internal storage", which for a Cached @context may also be the original download URL. Both spellings are URIs and every stored entry is keyed by one, so a path segment that is neither keys no entry. Clauses 5.13.4.4 and 5.13.5.4 then require `ResourceNotFound` for an identifier that is not found; only an identifier that is not supplied is `BadRequestData`, and a path segment is never missing.
 //!
-//! Clauses 5.13.4.4 and 5.13.5.4 then decide what that is: "It shall give back
-//! `ResourceNotFound` if the identifier is not found", and "If the @context
-//! identifier does not correspond to any existing entry in the @context
-//! storage, then an error of type `ResourceNotFound` shall be raised". Only an
-//! identifier that is *not supplied* is `BadRequestData`, and a path segment is
-//! never missing. The broker typed the segment as a URI at extraction, so a
-//! client asking about an identifier it had invented was told its request was
-//! malformed instead of being told there is no such @context.
-//!
-//! Clause 5.13.3.5 gives the metadata a `numberOfHits`, "number of times the
-//! @context was found in the storage". The count was only visible after a
-//! background flush folded the resolver's pending deltas into the row, so a
-//! client reading it straight after using a @context was told a number that was
-//! already out of date -- and reported zero for a @context it had just used. A
-//! reader is now told the accesses that have happened rather than the ones
-//! already written down.
-//!
-//! One NGSI-LD operation resolves the same @context several times internally --
-//! a write is screened (clause 5.5.4) and then expanded again for storage -- and
-//! the count now folds those internal resolutions into one find per operation.
-//! Clause 5.13.3.5's "number of times the @context was found in the storage" is
-//! read as the client-visible use of the context, not the broker's internal
-//! plumbing, so one request that uses a context reports one find and two
-//! requests report two (`crate::operation scope` in `andromeda_jsonld`).
-//!
-//! A @context a client echoes back as the relative path clause 5.13.2.5 handed
-//! it (`/ngsi-ld/v1/jsonldContexts/{id}`) resolves by its local id, while its
-//! `numberOfHits` and the durable flush key on the serving URL; the resolver
-//! attributes the find to that serving URL so a relative use is counted, where
-//! before it was silently attributed to the bare identifier and lost.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Clause 5.13.3.5 gives the metadata a `numberOfHits`, "number of times the @context was found in the storage". It is read as the client-visible use of the context, not the broker's internal plumbing: one NGSI-LD operation resolves a @context several times internally (a write is screened, clause 5.5.4, then expanded again for storage), and those resolutions fold into one find per operation. A reader is told the accesses that have happened, not only those a background flush has written down. A @context echoed back as the relative path clause 5.13.2.5 handed out resolves by its local id, but its find is attributed to the serving URL, which is what `numberOfHits` and the durable flush key on.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -98,9 +61,7 @@ fn assert_not_found(response: &TestResponse, scenario: &str) {
     assert!(problem["title"].is_string(), "{scenario}: a problem carries a title: {problem}");
 }
 
-/// Clauses 5.13.4.4 and 5.13.5.4: an identifier that corresponds to no entry is
-/// `ResourceNotFound`, whether it is a well-formed URI the broker never stored
-/// or a segment no entry could be keyed by at all.
+/// Clauses 5.13.4.4 and 5.13.5.4: an identifier that corresponds to no entry is `ResourceNotFound`, whether a well-formed URI never stored or a segment no entry could be keyed by.
 #[tokio::test]
 async fn regression_hosted_context_an_unknown_identifier_is_not_found() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -146,9 +107,7 @@ async fn regression_hosted_context_an_unknown_identifier_is_not_found() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.13.2.5 hands back an identifier the following operations address,
-/// so a stored `@context` is served, its metadata read and it is deleted --
-/// after which the same identifier is `ResourceNotFound` like any other.
+/// Clause 5.13.2.5 hands back an identifier the following operations address: the stored `@context` is served, its metadata read and it is deleted, after which the identifier is `ResourceNotFound` like any other.
 #[tokio::test]
 async fn regression_hosted_context_a_stored_identifier_addresses_its_entry_until_it_is_deleted() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -177,9 +136,7 @@ async fn regression_hosted_context_a_stored_identifier_addresses_its_entry_until
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.13.5.4: "If reload is true and the kind of the @context is not
-/// 'Cached', implementations shall return a `BadRequestData` error." A hosted
-/// `@context` has no source to re-download from.
+/// Clause 5.13.5.4: "If reload is true and the kind of the @context is not 'Cached', implementations shall return a `BadRequestData` error." A hosted `@context` has no source to re-download from.
 #[tokio::test]
 async fn regression_hosted_context_reload_is_refused_for_a_kind_that_was_never_downloaded() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -195,18 +152,14 @@ async fn regression_hosted_context_reload_is_refused_for_a_kind_that_was_never_d
     let problem = reloaded.json_value().expect("a refusal carries a problem details body");
     assert_eq!(problem["type"], json!("https://uri.etsi.org/ngsi-ld/errors/BadRequestData"), "{problem}");
 
-    // The refused reload left the entry alone: clause 5.13.5.4 removes nothing
-    // when the operation ends in an error.
+    // Clause 5.13.5.4: an operation ending in an error removes nothing.
     let still_there = client.retrieve_jsonld_context(&id).await.expect("serve request");
     assert_eq!(still_there.status, StatusCode::OK, "a refused reload deletes nothing: {:?}", still_there.body);
 
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.13.3.5: `numberOfHits` is the "number of times the @context was
-/// found in the storage". A newly stored one has been found none, and a request
-/// that resolves it has found it -- reported when the metadata is read rather
-/// than when the background flush next runs.
+/// Clause 5.13.3.5: `numberOfHits` is the "number of times the @context was found in the storage". A freshly stored one has been found none, and a request that resolves it has found it, reported when the metadata is read rather than when the background flush next runs.
 #[tokio::test]
 async fn regression_hosted_context_a_use_is_counted_before_the_flush_runs() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -219,7 +172,6 @@ async fn regression_hosted_context_a_use_is_counted_before_the_flush_runs() {
         .to_owned();
 
     assert_eq!(hits(client, &id).await, 0, "a context nothing has used yet has been found nowhere");
-    // Reading the metadata is not a find in the storage of the document.
     assert_eq!(hits(client, &id).await, 0, "reading the metadata twice still reports none");
 
     let entity_id = scope.id("Testing:hosted-context-use");
@@ -240,10 +192,7 @@ async fn regression_hosted_context_a_use_is_counted_before_the_flush_runs() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.13.2.5 hands the client a relative path for the stored `@context`;
-/// echoing it back as a request's `@context` must count as a find. Before, the
-/// relative path was reduced to the bare identifier and the find was attributed
-/// to a key `numberOfHits` never reads, so a genuine use reported zero.
+/// Clause 5.13.2.5 hands the client a relative path for the stored `@context`; echoing it back as a request's `@context` must count as a find against the entry's serving URL, the key `numberOfHits` reads.
 #[tokio::test]
 async fn regression_hosted_context_a_relative_reference_is_resolved_and_counted() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -251,7 +200,6 @@ async fn regression_hosted_context_a_relative_reference_is_resolved_and_counted(
     let id = create_hosted_context(client).await;
     assert_eq!(hits(client, &id).await, 0, "a freshly stored context has been found nowhere");
 
-    // The path clause 5.13.2.5 hands back, exactly as a client would echo it.
     let relative = format!("/ngsi-ld/v1/jsonldContexts/{id}");
     let entity_id = scope.id("Testing:relative-context-use");
     let created = client
@@ -271,12 +219,7 @@ async fn regression_hosted_context_a_relative_reference_is_resolved_and_counted(
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clauses 6.29.3.1 and 4.14: Add @context answers a tenant's client with the
-/// root-relative path of the entry it stored for that tenant, and a resource
-/// path names a resource of the tenant the request addresses. Echoed back as a
-/// request's `@context` in the same tenant, the path names that tenant's entry.
-/// Before, a root-relative path naming no tenant was read as the default
-/// tenant's, so the only tenant it worked in was the default one.
+/// Clauses 6.29.3.1 and 4.14: Add @context answers with the root-relative path of the entry stored for the requesting tenant, and a resource path names a resource of the tenant the request addresses. Echoed back as a `@context` in the same tenant, the path names that tenant's entry, not the default tenant's.
 #[tokio::test]
 async fn regression_hosted_context_a_relative_reference_names_the_requesting_tenants_entry() {
     let scope = TenantScopedEnvironment::from_suite("regression").await.expect("private tenant environment");
@@ -316,10 +259,7 @@ async fn regression_hosted_context_a_relative_reference_names_the_requesting_ten
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.13.3.5, one find per operation: a single request that resolves a
-/// context several times internally counts one, and a second request counts a
-/// second, so the number tracks client-visible uses rather than internal
-/// resolutions.
+/// Clause 5.13.3.5, one find per operation: a single request that resolves a context several times internally counts one, and a second request counts a second.
 #[tokio::test]
 async fn regression_hosted_context_each_request_counts_a_single_find() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

@@ -1,8 +1,7 @@
 //! The reading of attribute members from a compact node: every node written
 //! where an attribute stands is read into a typed member the specification
 //! defines (clauses 4.5.2.3, 4.5.5, 4.7.3 and their siblings) or refused where
-//! it stands (clause 5.5.4). Each shape of the phase-0 inventory of untyped
-//! members has its case here.
+//! it stands (clause 5.5.4).
 
 use crate::{
     attribute::{
@@ -63,7 +62,7 @@ fn property_value(instance: &Attribute) -> &NgsiLdValue {
     &property.value
 }
 
-/// S1: a bare scalar is a concise Property (clause 4.5.2.3), at the top level
+/// A bare scalar is a concise Property (clause 4.5.2.3), at the top level
 /// and as a sub-attribute.
 #[test]
 fn a_bare_scalar_member_reads_as_a_concise_property() {
@@ -78,7 +77,7 @@ fn a_bare_scalar_member_reads_as_a_concise_property() {
     assert_eq!(property_value(accuracy), &NgsiLdValue::Json(literal("0.5")));
 }
 
-/// S2: an array none of whose items is an instance is the value of a concise
+/// An array none of whose items is an instance is the value of a concise
 /// Property, the empty array included.
 #[test]
 fn an_array_of_values_reads_as_a_concise_property_value() {
@@ -88,14 +87,14 @@ fn an_array_of_values_reads_as_a_concise_property_value() {
     }
 }
 
-/// S3: an object with no `type` and no value member is a Property value.
+/// An object with no `type` and no value member is a Property value.
 #[test]
 fn a_typeless_object_without_a_value_member_reads_as_a_property_value() {
     let instance = single(&json!({"street": "Main", "no": 1}));
     assert_eq!(property_value(&instance), &NgsiLdValue::Json(literal(r#"{"street":"Main","no":1}"#)));
 }
 
-/// S4: an object with no `type` carrying `value` is a Property, or a
+/// An object with no `type` carrying `value` is a Property, or a
 /// `GeoProperty` when the value is a geometry (clauses 4.5.2.3 and 4.7.3).
 #[test]
 fn a_typeless_object_with_value_reads_as_a_property_or_geo_property() {
@@ -110,7 +109,7 @@ fn a_typeless_object_with_value_reads_as_a_property_or_geo_property() {
     assert!(geo.common.sub_attributes.contains_key("accuracy"));
 }
 
-/// S5: an object with no `type` is the family its value member names.
+/// An object with no `type` is the family its value member names.
 #[test]
 fn a_typeless_object_reads_as_the_family_its_value_member_names() {
     for (member, family) in [
@@ -125,7 +124,7 @@ fn a_typeless_object_reads_as_the_family_its_value_member_names() {
     }
 }
 
-/// S6: a bare geometry is a concise `GeoProperty` (clause 4.7.3).
+/// A bare geometry is a concise `GeoProperty` (clause 4.7.3).
 #[test]
 fn a_bare_geometry_reads_as_a_concise_geo_property() {
     let Attribute::GeoProperty(geo) = single(&json!({"type": "Point", "coordinates": [13.4, 52.5]})) else {
@@ -134,7 +133,7 @@ fn a_bare_geometry_reads_as_a_concise_geo_property() {
     assert!(matches!(geo.value, GeoPropertyValue::Geometry(_)));
 }
 
-/// S7: an array of instances, some of them concise, is a multi-attribute.
+/// An array of instances, some of them concise, is a multi-attribute.
 #[test]
 fn an_array_of_concise_instances_reads_as_a_multi_attribute() {
     let member = json!([{"value": 1, "datasetId": "urn:ngsi-ld:Dataset:a"}, {"type": "Property", "value": 2}]);
@@ -196,7 +195,7 @@ fn an_observed_at_with_a_comma_fraction_is_read_as_the_instant_it_names() {
     );
 }
 
-/// S8: a geometry written as a JSON string is kept as its text (clause
+/// A geometry written as a JSON string is kept as its text (clause
 /// 4.7.2); a string that is no geometry is refused.
 #[test]
 fn a_string_encoded_geometry_reads_as_a_geo_property() {
@@ -211,13 +210,13 @@ fn a_string_encoded_geometry_reads_as_a_geo_property() {
     assert_eq!(refused(&json!({"type": "GeoProperty", "value": "not json"})).path.to_string(), "/value");
 }
 
-/// S9: the NGSI-LD Null in place of the whole member.
+/// The NGSI-LD Null in place of the whole member.
 #[test]
 fn a_bare_null_member_reads_as_the_ngsi_ld_null() {
     assert!(matches!(read("owner", &json!("urn:ngsi-ld:null")), Ok(AttributeValue::NgsiLdNull)));
 }
 
-/// S10: a `GeoProperty` whose value is the NGSI-LD Null (clause 4.5.0).
+/// A `GeoProperty` whose value is the NGSI-LD Null (clause 4.5.0).
 #[test]
 fn a_geo_property_null_value_reads_typed() {
     for spelling in ["urn:ngsi-ld:null", "https://uri.etsi.org/ngsi-ld/null"] {
@@ -228,7 +227,7 @@ fn a_geo_property_null_value_reads_typed() {
     }
 }
 
-/// S12: no member admits a JSON `null` directly (clause 5.2.1).
+/// No member admits a JSON `null` directly (clause 5.2.1).
 #[test]
 fn a_json_null_member_or_family_value_is_refused() {
     assert!(matches!(refused(&Value::Null).refusal, NodeRefusal::Null));
@@ -247,7 +246,7 @@ fn a_json_null_member_or_family_value_is_refused() {
     }
 }
 
-/// S13, S14, S20, S21: nodes no clause admits where an attribute stands.
+/// Nodes no clause admits where an attribute stands.
 #[test]
 fn a_node_no_clause_admits_is_refused_with_its_fault() {
     for (member, fault) in [
@@ -275,7 +274,7 @@ fn a_node_no_clause_admits_is_refused_with_its_fault() {
     }
 }
 
-/// S15: an instance missing its family's value member.
+/// An instance missing its family's value member.
 #[test]
 fn an_instance_without_its_value_member_is_refused() {
     for family in AttributeType::ALL {
@@ -284,7 +283,7 @@ fn an_instance_without_its_value_member_is_refused() {
     }
 }
 
-/// S16, S17: a family value or an envelope member that does not decode is
+/// A family value or an envelope member that does not decode is
 /// refused at the member.
 #[test]
 fn a_malformed_family_value_or_envelope_member_is_refused_where_it_stands() {
@@ -362,7 +361,7 @@ fn a_unit_code_is_read_on_the_quantity_families_and_refused_elsewhere() {
     }
 }
 
-/// S18: a system member a Context Producer wrote is ignored, whatever it holds
+/// A system member a Context Producer wrote is ignored, whatever it holds
 /// (clause 5.2.2); a peer's malformed one is refused.
 #[test]
 fn a_system_member_a_producer_writes_is_ignored() {
@@ -380,7 +379,7 @@ fn a_system_member_a_producer_writes_is_ignored() {
     assert!(serde_json::from_str::<Entity>(&text).is_err(), "a peer's malformed system member is refused");
 }
 
-/// S19: a sub-attribute named by no attribute name is refused at its name.
+/// A sub-attribute named by no attribute name is refused at its name.
 #[test]
 fn a_sub_attribute_named_by_no_attribute_name_is_refused() {
     let refusal = refused(&json!({"type": "Property", "value": 1, "bad name": {"type": "Property", "value": 1}}));
@@ -388,7 +387,7 @@ fn a_sub_attribute_named_by_no_attribute_name_is_refused() {
     assert_eq!(refusal.path.to_string(), "/bad name");
 }
 
-/// S22: a geometry carrying a JSON-LD keyword is no `GeoJSON` geometry.
+/// A geometry carrying a JSON-LD keyword is no `GeoJSON` geometry.
 #[test]
 fn a_geometry_carrying_a_json_ld_keyword_is_refused() {
     let refusal = refused(&json!({"type": "GeoProperty", "value": {"@context": {}, "type": "Point", "coordinates": [13.4, 52.5]}}));

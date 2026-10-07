@@ -1,12 +1,4 @@
-//! The `Query` a forwarded batch entity query sends (clause 6.23: an NGSI-LD
-//! `Query` posted to `/entityOperations/query`).
-//!
-//! A registration advertising `queryBatch` but not `queryEntity` (or a client
-//! that queried via POST) is contacted through the batch query endpoint. The
-//! query is the typed clause 5.2.23 [`Query`], built from the parameters the
-//! narrowing produced, which are already spelled in the registration's
-//! forwarding context (clause 4.3.6.6); it is written to the wire from that
-//! model.
+//! A registration advertising `queryBatch` but not `queryEntity` (or a client that queried via POST) is contacted through the batch query endpoint (clause 6.23). The query is the typed clause 5.2.23 [`Query`], built from the parameters the narrowing produced, which are already spelled in the registration's forwarding context (clause 4.3.6.6).
 
 use crate::{error::FederationError, federation_invariant::FederationInvariant, forwarded_parameter::ForwardedParameter, forwarded_query::ForwardedQuery};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -118,9 +110,7 @@ mod tests {
         serde_json::to_value(query).expect("the query writes")
     }
 
-    /// The fork mock (and clause 6.23) require the first entity selector to carry
-    /// both the type and the id the stubbed entity has, so a narrowed id+type
-    /// query builds exactly that.
+    /// Clause 6.23 requires the first entity selector to carry both the type and the id, so a narrowed id+type query builds exactly that.
     #[tokio::test]
     async fn a_narrowed_id_and_type_query_builds_a_single_selector_with_both() {
         let value = written(

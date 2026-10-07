@@ -68,7 +68,6 @@ impl Stream for SseEventStream {
     type Item = Result<Event, Infallible>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Check cancellation first.
         if self.cancellation_token.is_cancelled() {
             return Poll::Ready(None);
         }
@@ -94,11 +93,9 @@ pub async fn stream(
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Identifier>,
 ) -> Result<Response, ProblemResponse> {
-    // Validate subscription exists.
     let subscription = state.subscriptions.get(&target, &subscription_id).await.with_subscription_instance(&uri)?;
 
-    // Validate subscription uses SSE transport via the canonical parser
-    // (handles case-insensitive URI schemes like SSE://).
+    // The canonical parser handles case-insensitive URI schemes like `SSE://`.
     let is_sse = parse_endpoint_transport(
         subscription.notification.endpoint.uri.url(),
         subscription.notification.endpoint.notifier_info.as_deref(),
@@ -112,15 +109,12 @@ pub async fn stream(
         ));
     }
 
-    // Get SSE registry and config.
     let sse_registry = Arc::clone(&state.sse_registry);
     let keep_alive_secs = state.sse_keep_alive_interval_secs;
     let buffer_size = state.sse_channel_buffer_size;
 
-    // Register connection.
     let (connection_id, rx, cancellation_token) = sse_registry.register(&subscription_id, buffer_size);
 
-    // Build the event stream with cleanup guard.
     let event_stream = SseEventStream {
         rx,
         cancellation_token,
@@ -131,7 +125,6 @@ pub async fn stream(
         },
     };
 
-    // Return SSE response with keep-alive.
     let sse = Sse::new(event_stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(keep_alive_secs)));
 
     Ok(sse.into_response())

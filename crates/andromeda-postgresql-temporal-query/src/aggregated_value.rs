@@ -12,8 +12,8 @@
 //! `sum` or `sumsq` at all, and clause 4.5.22.1 makes `ListRelationship` "a
 //! specialized type of Relationship" so the same row governs it. Every operand
 //! that reads a value is therefore gated on the family before it reads a
-//! column, which is what stops a `ListRelationship`'s `objectList` — a JSON
-//! array in storage — from answering `avg` with the mean number of targets.
+//! column, which is what stops a `ListRelationship`'s `objectList` (a JSON
+//! array in storage) from answering `avg` with the mean number of targets.
 //!
 //! Every numeric branch is `NUMERIC`, the type the value column itself carries:
 //! a JSON number is an exact decimal (clause 4.5.2 gives no precision limit),
@@ -160,8 +160,8 @@ pub fn average_time_expr() -> SimpleExpr {
 /// every typed value column into one comparable text.
 ///
 /// Every table's `distinctCount` row reads "Calculate the count of distinct
-/// values inside the period" with no column excepted — Table 4.5.19.1-3's row
-/// reads "the count of distinct relationships targets inside the period" — so
+/// values inside the period" with no column excepted (Table 4.5.19.1-3's row
+/// reads "the count of distinct relationships targets inside the period"), so
 /// the fold covers every value column and is never gated on the family.
 #[must_use]
 pub fn distinct_value_expr() -> SimpleExpr {

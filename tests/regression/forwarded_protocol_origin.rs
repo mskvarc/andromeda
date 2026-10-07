@@ -6,14 +6,14 @@
 //! defined by IETF RFC 5246 [19] shall be supported. HTTP without TLS is not
 //! recommended."
 //!
-//! A deployment may meet that clause by terminating TLS at a reverse proxy
-//! (`docs/tls-deployment.md`), which leaves the broker serving plaintext HTTP.
-//! The broker previously hardcoded `http://` when reconstructing its own origin, so a
-//! broker behind a terminator advertised `http://` URLs for an `https://`
-//! deployment -- including the `@context` URL clause 5.13 has it store, which
-//! outlives the request that created it.
+//! A deployment may meet that clause by terminating TLS at a reverse proxy,
+//! which leaves the broker serving plaintext HTTP. A broker that hardcoded
+//! `http://` when reconstructing its own origin would, behind a terminator,
+//! advertise `http://` URLs for an `https://` deployment -- including the
+//! `@context` URL clause 5.13 has it store, which outlives the request that
+//! created it.
 //!
-//! The fix reads `Forwarded` (IETF RFC 7239) and `X-Forwarded-Proto`, but only
+//! The broker reads `Forwarded` (IETF RFC 7239) and `X-Forwarded-Proto`, but only
 //! when an operator has declared the edge trusted through
 //! `ANDROMEDA_HTTP_FORWARDED_HEADERS`. Both fields are ordinary request fields,
 //! so believing them by default would let any client choose the scheme of a
@@ -26,9 +26,8 @@
 //! `ANDROMEDA_HTTP_FORWARDED_HEADERS=trusted` against the same database.
 //! Neither half is optional. A trusted broker that is not running fails these
 //! tests rather than skipping them, because the assertions that discriminate a
-//! working implementation from the hardcoded `http://` it replaced are exactly
-//! the ones only that half can make. `docs/tls-deployment.md` states how the
-//! tier is started.
+//! working implementation from a hardcoded `http://` are exactly the ones only
+//! that half can make.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

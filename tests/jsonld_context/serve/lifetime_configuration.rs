@@ -1,4 +1,4 @@
-//! Refusing a context lifetime the broker cannot state (study E11).
+//! Refusing a context lifetime the broker cannot state.
 //!
 //! Both `[jsonld]` lifetimes are advertised or applied in whole seconds (the
 //! Serve `max-age`, the in-process revalidation span), so a zero or sub-second

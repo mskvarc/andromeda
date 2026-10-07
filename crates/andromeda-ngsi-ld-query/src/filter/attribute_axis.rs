@@ -274,10 +274,7 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
 ///
 /// * A structured Property value is a node whose members are keyed by expanded
 ///   IRI, so `city` is a member *hop* — the first value, then the member's
-///   first value, down to a literal. This is the shape a notification payload
-///   and a stored entity carry, and the one an earlier evaluator missed
-///   entirely: it read the terminal literal first and then indexed into it,
-///   which for this shape resolves nothing.
+///   first value, down to a literal. This is the shape a notification payload and a stored entity carry.
 /// * A `JsonProperty`'s value, and a Property value held as an opaque JSON
 ///   object, are raw JSON, where `city` is an ordinary object key. The NGSI-LD
 ///   data model puts no constraint on those keys, so they are read verbatim.

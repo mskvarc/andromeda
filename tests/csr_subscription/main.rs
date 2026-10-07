@@ -317,8 +317,7 @@ async fn csr_subscription_sys_attrs_adds_the_timestamps_without_changing_the_oth
     // clause 5.11.2.3 takes the Subscription data type unchanged and clause
     // 5.11.4.5 returns "the subscription details as mandated by clause 5.2.12",
     // while clause 5.8.1.4 requires the member to be initialised from the
-    // @context the subscription was created under. The broker used to scrub it
-    // here as though it were internal.
+    // @context the subscription was created under, so it is not internal state.
     let client = client();
     let id = "urn:ngsi-ld:Subscription:r2-76-sysattrs-leak";
     let (status, _, _) = create_csource_subscription(&client, &csource_subscription_payload(id)).await;

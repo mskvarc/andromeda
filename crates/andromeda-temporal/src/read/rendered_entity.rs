@@ -186,7 +186,7 @@ impl TemporalService {
         let rows = self.reader.query_entity_aggregation(target, entity_id, compiled).await?;
         // The grouped extension refuses a runaway grouping off the count of
         // distinct groups it produced -- one per row -- mirroring the
-        // delete-by-query bound (study section 4.9). `TooManyResults` is fatal
+        // delete-by-query bound. `TooManyResults` is fatal
         // to the whole operation, so the query loop must not demote it to a
         // per-entity warning.
         if compiled.representation.format.is_grouped() {

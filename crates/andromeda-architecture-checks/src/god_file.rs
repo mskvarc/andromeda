@@ -1,6 +1,6 @@
 //! The workspace-wide ceiling on production file length.
 //!
-//! CLAUDE.md splits a file past ~400 production lines on sight and never lets
+//! The project rules split a file past ~400 production lines on sight and never lets
 //! one past 600. This gate makes that measurable rather than a hand-kept
 //! ledger: a file over the hard limit fails outright, and a file over the
 //! signal line is tolerated only while it is on a baseline that can only shrink

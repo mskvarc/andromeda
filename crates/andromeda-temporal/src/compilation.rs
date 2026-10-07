@@ -157,7 +157,7 @@ async fn compile_q_filter(params: &TemporalQueryParameters, expander: &impl Term
     let expr = expand_q_expr(expr, &json_keys, expander).await?;
 
     // `expandValues`: expand string right-hand-side values for the attributes
-    // that opted in (spec temporal params).
+    // that opted in.
     let expr = match params.expand_values.as_deref() {
         Some(attributes) => {
             let opted_in: HashSet<AttributeName> = expand_attribute_names(attributes, expander).await?.into_iter().collect();
@@ -203,7 +203,7 @@ fn compile_representation(params: &TemporalQueryParameters, format: TemporalForm
         .build()
 }
 
-/// Parse and expand the `aggrGroupBy` grouping (the extension, study §4.2).
+/// Parse and expand the `aggrGroupBy` grouping (an Andromeda extension).
 ///
 /// Value-path keys are expanded against the request context so they match the
 /// stored attribute IRIs, exactly as `attrs` and `q` are; member and bucket

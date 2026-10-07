@@ -23,7 +23,7 @@ pub enum ManagementMode {
     #[default]
     SeparatePort,
     /// The management endpoints are mounted at the root of the data-plane port,
-    /// behind the full inbound stack. The documented cost of a single port.
+    /// behind the full inbound stack.
     Merged,
     /// No management plane is served; the data-plane probes remain and metrics
     /// cannot be enabled.

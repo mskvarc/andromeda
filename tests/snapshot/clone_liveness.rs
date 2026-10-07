@@ -317,7 +317,7 @@ async fn a_clone_status_stays_readable_while_its_copy_runs() {
     environment.reset_and_finish().await.expect("reset");
 }
 
-/// Andromeda policy under clause 5.16.2.4 (REQ-SNAP-CLONE-17): the clone is its
+/// Andromeda policy under clause 5.16.2.4: the clone is its
 /// source as of the start of the copy, and the copy never blocks a write to the
 /// source.
 #[tokio::test]

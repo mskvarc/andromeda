@@ -1,25 +1,8 @@
-//! An entity a Context Source answers with is held to the attribute rules a
-//! write to this broker is held to.
+//! An entity a Context Source answers with is held to the attribute rules a write to this broker is held to.
 //!
-//! A client writing a `unitCode` that names no UN/CEFACT common code (ETSI GS
-//! CIM 009 v1.9.1 Table 5.2.5-1), a `unitCode` on a family clause 4.5.2 leaves
-//! unitless, or a `GeoProperty` that is no RFC 7946 geometry (clause 4.7) is
-//! answered `BadRequestData`. A Context Source answering with the same
-//! attributes had them relayed verbatim: entity decoding keeps an attribute it
-//! cannot read as raw JSON rather than failing the entity, and the temporal
-//! merge never decoded the source's answer at all. So the hub handed its
-//! client, on a query, exactly what it refuses to hold.
+//! A client writing a `unitCode` that names no UN/CEFACT common code (ETSI GS CIM 009 v1.9.1 Table 5.2.5-1), a `unitCode` on a family clause 4.5.2 leaves unitless, or a `GeoProperty` that is no RFC 7946 geometry (clause 4.7) is answered `BadRequestData`. The current and the temporal read drop such an entity from a source's answer with a clause 6.3.17 `RevalidationFailed` warning naming the source, the entity and the refused attribute, and merge the rest of the answer as usual.
 //!
-//! Both the current and the temporal read now drop such an entity from the
-//! source's answer with a clause 6.3.17 `RevalidationFailed` warning naming the
-//! source, the entity and the refused attribute, and merge the rest of the
-//! answer as usual.
-//!
-//! Each scenario releases its registration and its mock source before it
-//! asserts anything, because a registration left behind points at a port that
-//! no longer listens.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Each scenario releases its registration and its mock source before it asserts anything, because a registration left behind points at a port that no longer listens.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -148,9 +131,7 @@ async fn regression_remote_revalidation_a_query_drops_the_source_entities_a_writ
     assert_dropped(&warnings, &open_ring, "GeoJSON linear ring is open");
 }
 
-/// Clause 5.7.4.4 with clause 6.3.17: a source's temporal entities are held to
-/// the same rules, instance by instance, in the normalized and in the
-/// `temporalValues` representation, where they used to be merged as raw JSON.
+/// Clause 5.7.4.4 with clause 6.3.17: a source's temporal entities are held to the same rules, instance by instance, in the normalized and in the `temporalValues` representation.
 #[tokio::test]
 async fn regression_remote_revalidation_a_temporal_query_drops_the_source_entities_a_write_would_refuse() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

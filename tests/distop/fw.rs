@@ -1,15 +1,8 @@
-//! FW area — distributed framework and the four registration modes
-//! (ETSI GS CIM 009 v1.9.1, clauses 4.3.6, 4.5.4-4.5.5, 5.7, 5.11, 5.16, 6.3.15-6.3.18).
+//! FW area — distributed framework and the four registration modes (ETSI GS CIM 009 v1.9.1, clauses 4.3.6, 4.5.4-4.5.5, 5.7, 5.11, 5.16, 6.3.15-6.3.18).
 //!
-//! Broker-side enforcement of registration constraints on forwarded requests,
-//! the inclusive/exclusive/redirect/auxiliary distribution modes, cascade
-//! limiting via the `Via` header, `contextSourceInfo` forwarding, backwards
-//! compatible version negotiation, local scope, linked entity maps, and
-//! snapshot locality.
+//! Broker-side enforcement of registration constraints on forwarded requests, the inclusive/exclusive/redirect/auxiliary distribution modes, cascade limiting via the `Via` header, `contextSourceInfo` forwarding, backwards compatible version negotiation, local scope, linked entity maps, and snapshot locality.
 //!
-//! Real peers (`pair`/`chain`) exercise end-to-end federation semantics; the
-//! in-process mock Context Source (`ContextSourceAdapter`) captures the exact
-//! forwarded request for byte-level oracles and injects faults.
+//! Real peers (`pair`/`chain`) exercise end-to-end federation semantics; the in-process mock Context Source (`ContextSourceAdapter`) captures the exact forwarded request for byte-level oracles and injects faults.
 
 mod backwards_compat;
 mod backwards_compat_fallback;

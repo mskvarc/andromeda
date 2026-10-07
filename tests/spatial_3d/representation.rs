@@ -128,7 +128,7 @@ async fn representation_keyvalues_3d_location() {
 
     create(client, &building_point_3d(&id, 13.4, 52.52, 300.0)).await;
 
-    // NGSI-LD 4.5.4: format=keyValues and the legacy options=keyValues alias
+    // NGSI-LD 4.5.4: format=keyValues and the options=keyValues alias
     // must produce the same simplified representation.
     for query in ["format=keyValues", "options=keyValues"] {
         let body = get_with(client, &id, query).await;

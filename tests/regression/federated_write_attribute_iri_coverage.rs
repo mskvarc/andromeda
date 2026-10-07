@@ -5,11 +5,7 @@
 //! and `relationshipNames` against the expanded names of the operation. Two
 //! different IRIs that happen to end in the same word (`http://a.example/v#speed`
 //! and `http://b.example/ns/speed`) name different attributes, so a write of the
-//! first is not forwarded to a registration declaring only the second. The broker
-//! once compared the trailing segments of the two IRIs as a fallback and so
-//! forwarded the write.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! first is not forwarded to a registration declaring only the second.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

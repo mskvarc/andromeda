@@ -1,6 +1,4 @@
-//! Matching algorithm: datasetId intersection, loop prevention, and `EntityMap`
-//! preference (clause 5.12). The datasetId rows run on `T-LOCAL`; the loop and
-//! `EntityMap` rows require the distributed forwarding path and are tracked gaps.
+//! Matching algorithm: datasetId intersection, loop prevention, and `EntityMap` preference (clause 5.12).
 
 use crate::{
     disc::{
@@ -15,8 +13,7 @@ use reqwest::Method;
 use serde_json::json;
 use urlencoding::encode;
 
-/// When both the query and the registration specify a datasetId, they match
-/// only on a shared value (clause 5.12, SHOULD). Confirms REQ-DISC-110.
+/// When both the query and the registration specify a datasetId, they match only on a shared value (clause 5.12, SHOULD).
 #[tokio::test]
 async fn matching_datasetid_both_specified_require_shared_value() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -36,9 +33,7 @@ async fn matching_datasetid_both_specified_require_shared_value() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// When only one side specifies a datasetId the other is unconstrained and they
-/// match: a registration without a datasetId matches a datasetId-scoped query
-/// (clause 5.12). Confirms REQ-DISC-111.
+/// When only one side specifies a datasetId the other is unconstrained and they match: a registration without a datasetId matches a datasetId-scoped query (clause 5.12).
 #[tokio::test]
 async fn matching_datasetid_only_one_side_specifies_matches() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -52,11 +47,7 @@ async fn matching_datasetid_only_one_side_specifies_matches() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration whose `contextSourceAlias` is already in the request's
-/// encountered listing is excluded from matching, preventing forwarding loops
-/// (clause 5.12, 4.3.6.4). Requires the distributed forwarding path to carry the
-/// encountered listing, which is not available at `T-LOCAL`. Confirms
-/// REQ-DISC-112.
+/// A registration whose `contextSourceAlias` is already in the request's encountered listing is excluded from matching, preventing forwarding loops (clause 5.12, 4.3.6.4).
 #[tokio::test]
 async fn matching_loop_prevention_excludes_csr_with_alias_in_encountered_listing() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -90,9 +81,7 @@ async fn matching_loop_prevention_excludes_csr_with_alias_in_encountered_listing
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A valid `EntityMap` passed into a request is preferred over re-running the
-/// matching algorithm (clause 5.12, 6.3.15). Cross-instance/durable `EntityMap`
-/// sharing is not implemented. Confirms REQ-DISC-113.
+/// A valid `EntityMap` passed into a request is preferred over re-running the matching algorithm (clause 5.12, 6.3.15). Cross-instance/durable `EntityMap` sharing is not implemented.
 #[tokio::test]
 async fn matching_valid_entitymap_preferred_over_rematching() {
     let topology = topology::chain().await.expect("three-broker topology");

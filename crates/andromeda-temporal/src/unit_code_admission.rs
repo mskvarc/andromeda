@@ -1,7 +1,7 @@
 //! `unitCode` admission for temporal writes.
 //!
 //! The Core API refuses a `unitCode` on an attribute family clause 4.5.2
-//! defines without one when it admits a written entity (`andromeda-entity`).
+//! defines without one when it admits a written entity.
 //! The Temporal API builds its own atomic writes and instance updates from its
 //! own written documents, so it holds their instances to the same rule. A
 //! `unitCode` that names no UN/CEFACT common code (Table 5.2.5-1) is refused by

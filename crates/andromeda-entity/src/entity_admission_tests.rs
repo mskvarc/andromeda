@@ -183,7 +183,7 @@ async fn a_batch_merge_admits_the_deletion_sentinel() {
 }
 
 /// Clauses 4.5.21.2 and 4.5.22.2 give the list families their own spelling of
-/// the sentinel -- the array holding one single NGSI-LD Null of clause 4.5.0 --
+/// the sentinel, the array holding one single NGSI-LD Null of clause 4.5.0,
 /// and clause 4.5.18 gives a `languageMap` the `{"@none": ...}` one. A
 /// creation admits none of them, whichever wire spelling the Context Producer
 /// wrote.
@@ -436,7 +436,7 @@ fn an_entity_carrying_no_geo_property_is_accepted() {
     admit_expanded(&json!([{"@id": "urn:ngsi-ld:Building:001", "@type": ["https://example.org/Building"]}])).expect("nothing to read as a geometry");
 }
 
-/// S9: the NGSI-LD Null in place of a whole member deletes it only in a
+/// The NGSI-LD Null in place of a whole member deletes it only in a
 /// partial update or a merge; a creation refuses it (clause 5.2.1).
 #[tokio::test]
 async fn a_bare_null_member_is_refused_on_create() {
@@ -446,7 +446,7 @@ async fn a_bare_null_member_is_refused_on_create() {
     assert!(error.contains("urn:ngsi-ld:null"), "{error}");
 }
 
-/// S10: a `GeoProperty` whose value is the NGSI-LD Null is a deletion, which
+/// A `GeoProperty` whose value is the NGSI-LD Null is a deletion, which
 /// a creation refuses (clause 5.2.1).
 #[tokio::test]
 async fn a_geo_property_null_value_is_refused_on_create() {
@@ -456,7 +456,7 @@ async fn a_geo_property_null_value_is_refused_on_create() {
     assert!(error.contains("urn:ngsi-ld:null"), "{error}");
 }
 
-/// S11: outside a merge, the NGSI-LD Null on an instance member is no value
+/// Outside a merge, the NGSI-LD Null on an instance member is no value
 /// of that member, refused where it stands (clause 5.2.1).
 #[tokio::test]
 async fn a_null_on_an_instance_member_is_refused_outside_a_merge() {

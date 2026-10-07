@@ -1,12 +1,4 @@
-//! `aggregatedValues` over several holders of one temporal entity (clauses
-//! 4.5.19 and 5.7.3.4). A source is asked for its aggregates as the client asked
-//! for them, and an aggregate answered for an attribute and `datasetId` the
-//! front broker already holds one for is never combined with it: two aggregates
-//! of one period are no aggregate of the union of their instances, and an
-//! aggregate is never appended to an instance list. What a source alone holds --
-//! an attribute, or one more `datasetId` of an attribute -- joins the answer
-//! whole. (The case that does merge instances before aggregating, a split query
-//! with a value filter, lives in `crate::cons::split_temporal_settlement`.)
+//! `aggregatedValues` over several holders of one temporal entity (clauses 4.5.19 and 5.7.3.4). A source is asked for its aggregates as the client asked for them, and an aggregate answered for an attribute and `datasetId` the front broker already holds one for is never combined with it: two aggregates of one period are no aggregate of the union of their instances, and an aggregate is never appended to an instance list. What a source alone holds -- an attribute, or one more `datasetId` of an attribute -- joins the answer whole.
 
 use crate::{
     entity::entity,
@@ -32,8 +24,7 @@ fn observed(value: i64, observed_at: &str, dataset_id: Option<&str>) -> Value {
     instance
 }
 
-/// The aggregate objects one attribute of an aggregated answer is written as: a
-/// single object for one dataset, an array of them for several.
+/// The aggregate objects one attribute of an aggregated answer is written as: a single object for one dataset, an array of them for several.
 fn aggregate_objects(attribute: &Value) -> Vec<&Value> {
     match attribute {
         Value::Array(objects) => objects.iter().collect(),
@@ -42,9 +33,7 @@ fn aggregate_objects(attribute: &Value) -> Vec<&Value> {
     }
 }
 
-/// The front broker holds a default-dataset `speed`; the source holds another
-/// default-dataset `speed`, a `speed` of the dataset `dataset:b` and a
-/// `fuelLevel`; the front broker answers the aggregation over both.
+/// The front broker holds a default-dataset `speed`; the source holds another default-dataset `speed`, a `speed` of the dataset `dataset:b` and a `fuelLevel`; the front broker answers the aggregation over both.
 #[tokio::test]
 async fn distop_aggregated_temporal_sources_merge_by_attribute_and_dataset_without_combining() {
     let topology = topology::pair().await.expect("two-broker topology");

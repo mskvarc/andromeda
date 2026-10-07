@@ -1,8 +1,4 @@
-//! EntityMap-from-query map building and forwarding to supporting Context
-//! Sources (clause 5.14.4): the fully-filtered local map, and the forwarded
-//! createEntityMapQueryEntity that folds a remote map into `linkedMaps` and the
-//! `entityMap` element. Local rows are `T-LOCAL`; forwarding rows are `T-MOCK`,
-//! seeded `UNKNOWN`.
+//! EntityMap-from-query map building and forwarding to supporting Context Sources (clause 5.14.4): the fully-filtered local map, and the forwarded createEntityMapQueryEntity that folds a remote map into `linkedMaps` and the `entityMap` element.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -32,8 +28,7 @@ async fn seed_vehicle(client: &TestClient, entity_type: &str, id: &str, speed: i
     );
 }
 
-/// Register an inclusive source for the given entity type on the front broker and
-/// stub the map and entity endpoints the forwarded query may hit.
+/// Register an inclusive source for the given entity type on the front broker and stub the map and entity endpoints the forwarded query may hit.
 async fn query_source(topology: &MultiBrokerTopology<BrokerRole>, entity_type: &str, registration_local: &str, remote_entity_id: &str) -> ContextSourceAdapter {
     let mock = ContextSourceAdapter::start().await;
     let remote_map = json!({
@@ -63,8 +58,7 @@ async fn query_source(topology: &MultiBrokerTopology<BrokerRole>, entity_type: &
     mock
 }
 
-/// A non-local split builds the local map by id, type, and idPattern only
-/// (clause 5.14.4). Confirms REQ-MAP-121.
+/// A non-local split builds the local map by id, type, and idPattern only (clause 5.14.4).
 #[tokio::test]
 async fn emq_split_non_local_builds_local_map_by_id_type_pattern() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -91,7 +85,6 @@ async fn emq_split_non_local_builds_local_map_by_id_type_pattern() {
 }
 
 /// A non-split local query builds a fully filtered map (clause 5.14.4).
-/// Confirms REQ-MAP-122.
 #[tokio::test]
 async fn emq_non_split_local_builds_fully_filtered_map() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -112,8 +105,7 @@ async fn emq_non_split_local_builds_fully_filtered_map() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Any matching instance of a multi-instance geoproperty keeps the entity in the
-/// map (clause 5.14.4). Confirms REQ-MAP-123.
+/// Any matching instance of a multi-instance geoproperty keeps the entity in the map (clause 5.14.4).
 #[tokio::test]
 async fn emq_multi_instance_geoproperty_any_match_keeps_entity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -156,8 +148,7 @@ async fn emq_multi_instance_geoproperty_any_match_keeps_entity() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An attribute list keeps only the entities that hold the attribute
-/// (clause 5.14.4). Confirms REQ-MAP-124.
+/// An attribute list keeps only the entities that hold the attribute (clause 5.14.4).
 #[tokio::test]
 async fn emq_attribute_list_keeps_only_holders() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -190,8 +181,7 @@ async fn emq_attribute_list_keeps_only_holders() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A non-local query forwards createEntityMapQueryEntity to the supporting CSR
-/// (clause 5.14.4). Confirms REQ-MAP-125.
+/// A non-local query forwards createEntityMapQueryEntity to the supporting CSR (clause 5.14.4).
 #[tokio::test]
 async fn emq_non_local_forwards_to_supporting_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -221,11 +211,7 @@ async fn emq_non_local_forwards_to_supporting_csrs() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A forwarded query under `splitEntities=true` strips the local filters
-/// (clause 5.14.4.4 applies the clause 5.7.2.4 split-entities rule: the `q`
-/// filter is evaluated after re-assembly, not at the source). The parameter is
-/// sent explicitly because the deployment default is complete entities.
-/// Confirms REQ-MAP-126.
+/// A forwarded query under `splitEntities=true` strips the local filters (clause 5.14.4.4 applies the clause 5.7.2.4 split-entities rule: the `q` filter is evaluated after re-assembly, not at the source). The parameter is sent explicitly because the deployment default is complete entities.
 #[tokio::test]
 async fn emq_split_forward_strips_filters() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -255,8 +241,7 @@ async fn emq_split_forward_strips_filters() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The forwarded query returns an `EntityMap` that the front broker folds in
-/// (clause 5.14.4). Confirms REQ-MAP-127.
+/// The forwarded query returns an `EntityMap` that the front broker folds in (clause 5.14.4).
 #[tokio::test]
 async fn emq_forwarded_query_returns_entity_map() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -283,7 +268,6 @@ async fn emq_forwarded_query_returns_entity_map() {
 }
 
 /// A remote map updates `linkedMaps` with its id (clause 5.14.4).
-/// Confirms REQ-MAP-128.
 #[tokio::test]
 async fn emq_remote_map_updates_linked_maps() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -309,8 +293,7 @@ async fn emq_remote_map_updates_linked_maps() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A remote map updates the `entityMap` element with the source id
-/// (clause 5.14.4). Confirms REQ-MAP-129.
+/// A remote map updates the `entityMap` element with the source id (clause 5.14.4).
 #[tokio::test]
 async fn emq_remote_map_updates_entity_map_element() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -340,7 +323,7 @@ async fn emq_remote_map_updates_entity_map_element() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The local map is stored and retrievable (clause 5.14.4). Confirms REQ-MAP-130.
+/// The local map is stored and retrievable (clause 5.14.4).
 #[tokio::test]
 async fn emq_local_map_stored_and_retrievable() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -370,8 +353,7 @@ async fn emq_local_map_stored_and_retrievable() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Success returns `201` with the `NGSILD-EntityMap` header and an `EntityMap`
-/// body (clause 5.14.4). Confirms REQ-MAP-131.
+/// Success returns `201` with the `NGSILD-EntityMap` header and an `EntityMap` body (clause 5.14.4).
 #[tokio::test]
 async fn emq_success_returns_201_location_and_body() {
     let topology = topology::single().await.expect("single-broker topology");

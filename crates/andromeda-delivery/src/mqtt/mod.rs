@@ -2,7 +2,7 @@
 //!
 //! Unlike HTTP, MQTT delivery is not one exchange per notification. A broker
 //! connection is expensive and long-lived, several subscriptions may name the
-//! same broker, and the connection's health is a thing in its own right — which
+//! same broker, and the connection's health is a thing in its own right, which
 //! is why this module is a pool, a per-endpoint handle onto it, and a health
 //! indicator, rather than a single transport.
 

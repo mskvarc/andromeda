@@ -1,10 +1,4 @@
-//! Why a single forwarded write is reported as a conflict.
-//!
-//! [`FederationError::Conflict`](crate::error::FederationError::Conflict) carries
-//! one of these. A conflict this broker reasons about names its registration
-//! with a typed identifier; a conflict the remote source declared carries that
-//! source's own answer. The clauses (5.6.1.4, 6.3.17)
-//! stay in doc comments.
+//! A conflict this broker reasons about names its registration with a typed identifier; a conflict the remote source declared carries that source's own answer.
 
 use crate::remote_answer::RemoteAnswer;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;

@@ -143,8 +143,7 @@ mod tests {
         );
     }
 
-    /// The two callers differ in one thing only, and this is it: temporal
-    /// stage 1 reads the catalogue's column under its `e` alias.
+    /// The temporal path reads the catalogue's column under its `e` alias.
     #[test]
     fn the_aliased_temporal_column_differs_only_in_which_relation_it_reads() {
         let expr = TypeExpr::Type(iri("https://example.com/Vehicle"));

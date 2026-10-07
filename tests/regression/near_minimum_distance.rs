@@ -1,26 +1,6 @@
-//! `near` measures the minimum distance between the geometries, on the WGS 84
-//! spheroid.
+//! `near` measures the minimum distance between the geometries, on the WGS 84 spheroid.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 4.10 matches `near;maxDistance` against "the
-//! buffer geometric object (as defined by [14])" of the reference geometry and
-//! `near;minDistance` against its complement, and OGC 06-103r4 clause 6.1.2.4
-//! defines both `Buffer` and `Distance` through "the shortest distance between
-//! any two Points in the two geometric objects". A building whose nearest wall
-//! is 100 m from the reference point is therefore within 150 m, wherever its
-//! centroid lies, and a point inside a polygon is zero metres from it. The
-//! distance is measured on the WGS 84 spheroid, the datum of every `GeoJSON`
-//! position (RFC 7946 section 4) and the one `geography` measures on.
-//!
-//! The in-memory spatial index once refined `near` by the distance between
-//! centroids on a sphere before the store re-checked it, and subscriptions were
-//! matched by that reading alone, so a query answered the intersection of the
-//! two readings and a subscription answered the wrong one. Every query here
-//! names its entities by `id`, so only the test's own entities count.
-//!
-//! The replica cases run against the base tier's second broker, which serves
-//! the same database.
-//!
-//! Naming convention: `regression_near_minimum_distance_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 clause 4.10 matches `near;maxDistance` against "the buffer geometric object (as defined by [14])" of the reference geometry and `near;minDistance` against its complement, and OGC 06-103r4 clause 6.1.2.4 defines both `Buffer` and `Distance` through "the shortest distance between any two Points in the two geometric objects". A building whose nearest wall is 100 m from the reference point is therefore within 150 m, wherever its centroid lies, and a point inside a polygon is zero metres from it. The distance is measured on the WGS 84 spheroid, the datum of every `GeoJSON` position (RFC 7946 section 4) and the one `geography` measures on, so queries and subscription matching must agree. Every query names its entities by `id`, so only the test's own entities count. The replica cases run against the base tier's second broker, which serves the same database.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -55,8 +35,7 @@ fn ring((west, south, east, north): (f64, f64, f64, f64)) -> Value {
     json!([[west, south], [east, south], [east, north], [west, north], [west, south]])
 }
 
-/// A square whose west wall is 100.06 m east of Bremen and whose centroid is
-/// 170.10 m east of it.
+/// A square whose west wall is 100.06 m east of Bremen and whose centroid is 170.10 m east of it.
 fn east_square() -> Value {
     boxes_polygon(&[(8.808_693, 53.075_171, 8.810_783, 53.076_429)])
 }
@@ -304,16 +283,14 @@ async fn regression_near_minimum_distance_notifies_by_the_nearest_wall() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Both replicas answer `near` alike, and a write one replica committed is
-/// found through the other.
+/// Both replicas answer `near` alike, and a write one replica committed is found through the other.
 #[tokio::test]
 async fn regression_near_minimum_distance_is_answered_alike_by_both_replicas() {
     let scope = TenantScopedEnvironment::from_suite("regression").await.expect("private tenant environment");
     let first = scope.client();
     let second = second_replica(&scope);
     let entity_type = "Building";
-    // The tenant comes into being through the first replica, and the second
-    // builds its runtime and seeds its spatial index before the probe write.
+    // The tenant comes into being through the first replica, and the second builds its runtime and seeds its spatial index before the probe write.
     let seed = scope.id("Building:seed");
     create_located(first, &seed, entity_type, &json!({"type": "Point", "coordinates": [9.5, BREMEN.1]})).await;
     let read = second.get_entity(&seed, "", "application/json", None).await.expect("retrieve entity request");
@@ -343,9 +320,7 @@ async fn regression_near_minimum_distance_is_answered_alike_by_both_replicas() {
     scope.finish().await.expect("cleanup");
 }
 
-/// A replica matches a write against subscriptions the other replica created.
-/// The first replica builds its runtime only after both subscriptions exist, so
-/// it loads them rather than depending on a change it never saw.
+/// A replica matches a write against subscriptions the other replica created. The first replica builds its runtime only after both subscriptions exist, so it loads them rather than depending on a change it never saw.
 #[tokio::test]
 async fn regression_near_minimum_distance_notifies_alike_from_either_replica() {
     let scope = TenantScopedEnvironment::from_suite("regression").await.expect("private tenant environment");

@@ -8,18 +8,18 @@
 //! mentions the other, so an Entity whose history a client already deleted is an
 //! ordinary state of the system that every operation has to survive.
 //!
-//! The broker survived none of it, in two rounds. First, a deletion of current
-//! state records one clause 4.5.7/4.5.8 tombstone per attribute instance the
-//! Entity still held, and the temporal catalogue refused a tombstone whose
-//! Temporal Evolution was missing, because a write that states no Entity type
-//! cannot create one (clause 4.5.1). Then the same refusal met every write that
-//! observes something — clauses 5.6.2, 5.6.3, 5.6.4, 5.6.17 and 5.6.19 — because
-//! the Entity types were being read off the request Fragment, whose `type` those
-//! clauses each make optional, rather than off the Entity the write produced.
-//! Both refusals reached the client as the `InternalError` clause 5.5.6 reserves
-//! for "an unexpected error [that] happens and the operation cannot be
-//! completed" — which a state the API itself lets a client produce is not, and
-//! which none of the clause 6 response tables for those operations even lists.
+//! Two things follow. A deletion of current state records one clause 4.5.7/4.5.8
+//! tombstone per attribute instance the Entity still held, and the temporal
+//! catalogue has to accept a tombstone whose Temporal Evolution is missing,
+//! because a write that states no Entity type cannot create one (clause 4.5.1).
+//! The same holds for every write that observes something — clauses 5.6.2,
+//! 5.6.3, 5.6.4, 5.6.17 and 5.6.19 — whose Entity types come from the Entity the
+//! write produced, not from the request Fragment, whose `type` those clauses
+//! each make optional. A refusal in either place would reach the client as the
+//! `InternalError` clause 5.5.6 reserves for "an unexpected error [that] happens
+//! and the operation cannot be completed" — which a state the API itself lets a
+//! client produce is not, and which none of the clause 6 response tables for
+//! those operations even lists.
 //!
 //! The two halves resolve differently and both directions are pinned here. An
 //! observation states what the Entity is, so it recreates the evolution clause
@@ -28,8 +28,6 @@
 //! with its value set to the URI urn:ngsi-ld:null and the deletedAt Temporal
 //! Property set" — one more instance of a sequence that is no longer there, so
 //! it records nothing and brings nothing back.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -80,7 +78,7 @@ async fn delete_temporal_evolution(client: &TestClient, id: &str) {
 }
 
 /// Assert `response` is the clause 5.5.2 `ResourceNotFound` of a target the
-/// broker does not know, rather than a success the fix swallowed it into.
+/// broker does not know, rather than a success.
 fn assert_resource_not_found(response: &TestResponse, scenario: &str) {
     assert_eq!(response.status, StatusCode::NOT_FOUND, "{scenario}: {:?}", response.body);
     let problem = response.json_value().expect("a refusal carries a problem details body");
@@ -128,7 +126,7 @@ async fn regression_temporal_evolution_delete_order_an_entity_delete_after_its_h
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The other order, which always worked and has to keep working: clause 5.6.6
+/// The other order: clause 5.6.6
 /// removes current state while clause 5.6.16 leaves the Temporal Evolution
 /// standing, so the evolution is still there to be deleted afterwards.
 #[tokio::test]
@@ -293,9 +291,9 @@ async fn regression_temporal_evolution_delete_order_a_purge_after_the_history_wa
 
 /// The control. Clause 5.6.6.4 still raises `ResourceNotFound` when "there is no
 /// existing Entity whose id (URI) ... is equivalent held locally", so a deletion
-/// that finds nothing must keep answering 404. A fix that turned the missing
-/// Temporal Evolution into a success at the HTTP boundary would have turned this
-/// into a 204 as well, reporting a deletion that never happened.
+/// that finds nothing must keep answering 404. Turning the missing Temporal
+/// Evolution into a success at the HTTP boundary would turn this into a 204 as
+/// well, reporting a deletion that never happened.
 #[tokio::test]
 async fn regression_temporal_evolution_delete_order_a_delete_of_an_unknown_entity_is_still_not_found() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -708,7 +706,7 @@ async fn regression_temporal_evolution_delete_order_an_attribute_delete_does_not
 
 /// The not-found control for the write paths. Clauses 5.6.2.4, 5.6.3.4 and
 /// 5.6.17.4 each raise `ResourceNotFound` when "there is no existing Entity
-/// whose id (URI) [...] is equivalent held locally", and a write that can now
+/// whose id (URI) [...] is equivalent held locally", and a write that can
 /// create a Temporal Evolution must not create an Entity along with it.
 #[tokio::test]
 async fn regression_temporal_evolution_delete_order_a_write_to_an_unknown_entity_is_still_not_found() {

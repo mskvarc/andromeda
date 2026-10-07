@@ -67,7 +67,7 @@ pub(crate) fn deletion(previous: &EntityState) -> EntityChange {
 /// Clause 4.22 makes an instance past its `expiresAt` invalid, so writing one
 /// changes nothing a subscriber can see: a created or updated instance that has
 /// expired in the Entity the write left behind is dropped from the change. A
-/// deleted instance reports what the write removed and is kept as it is -- the
+/// deleted instance reports what the write removed and is kept as it is, the
 /// removal of an expired instance by the expiry sweep is still a deletion. A
 /// modification left with no instance changed nothing at all; a creation or a
 /// deletion is still an Entity lifecycle change without one.
@@ -89,7 +89,7 @@ fn standing_change(mut change: EntityChange, current: Option<&EntityState>, at: 
 impl ChangeNotifier {
     /// Plan both notification channels for one write's `change` to one Entity.
     ///
-    /// `entity_snapshot` is the entity as it stands after the mutation -- the
+    /// `entity_snapshot` is the entity as it stands after the mutation, the
     /// state a `keyValues`/`normalized` notification renders, never the
     /// request fragment. The previous state is carried for `showChanges` and
     /// for the filters of a change that removed instances.

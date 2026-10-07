@@ -12,10 +12,6 @@ use urlencoding::encode;
 
 use crate::context_source_adapter::ContextSourceAdapter as MockServer;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn client() -> Client {
     Client::new()
 }
@@ -116,10 +112,6 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 /// local=true retrieves only local temporal entity, skips CSR forwarding.
 /// Spec ref: 5.7.3.4 - when local=true, distributed operations are not performed.
 #[tokio::test]
@@ -131,24 +123,19 @@ async fn distop_temporal_retrieve_local_true_skips_forwarding() {
     let entity_id = scope.id("Vehicle:tr-local");
     let reg_id = scope.id("Registration:tr-local");
 
-    // Create local temporal entity
     let entity = temporal_vehicle_entity(&entity_id);
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &entity).await, StatusCode::CREATED);
 
-    // Create CSR
     let reg = vehicle_registration(&reg_id, &entity_id, &mock.url(""), None);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Stub retrieve endpoint
     let mock_entity = temporal_vehicle_entity(&entity_id);
     mock.set_stub_with_body(Method::GET, &format!("/ngsi-ld/v1/temporal/entities/{entity_id}"), 200, &mock_entity)
         .await;
 
-    // Retrieve with local=true
     let (status, _, _) = get_temporal_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    // Mock should not be called
     pretty_assertions::assert_eq!(
         mock.get_count(Method::GET, &format!("/ngsi-ld/v1/temporal/entities/{entity_id}")),
         0,
@@ -172,15 +159,12 @@ async fn distop_temporal_retrieve_merges_local_and_remote_attributes() {
     let entity_id = scope.id("Vehicle:tr-merge");
     let reg_id = scope.id("Registration:tr-merge");
 
-    // Create local temporal entity (has speed, fuelLevel)
     let entity = temporal_vehicle_entity(&entity_id);
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &entity).await, StatusCode::CREATED);
 
-    // Create CSR
     let reg = vehicle_registration(&reg_id, &entity_id, &mock.url(""), None);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Mock returns entity with extra attribute (altitude)
     let mock_entity = json!({
         "id": entity_id,
         "type": "Vehicle",
@@ -192,7 +176,6 @@ async fn distop_temporal_retrieve_merges_local_and_remote_attributes() {
     let (status, _, body) = get_temporal_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    // Should have both local (speed, fuelLevel) and remote (altitude) attributes
     assert!(body.get("speed").is_some(), "local attribute 'speed' should be present");
     assert!(body.get("altitude").is_some(), "remote attribute 'altitude' should be merged");
 
@@ -213,7 +196,6 @@ async fn distop_temporal_retrieve_remote_only_entity() {
     let entity_id = scope.id("Vehicle:tr-remote-only");
     let reg_id = scope.id("Registration:tr-remote-only");
 
-    // No local entity - only exists in remote
     let reg = vehicle_registration(&reg_id, &entity_id, &mock.url(""), None);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
@@ -254,7 +236,6 @@ async fn distop_temporal_retrieve_warning_on_context_source_error() {
     let reg = vehicle_registration(&reg_id, &entity_id, &mock.url(""), None);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Mock returns 500 error
     mock.set_stub(Method::GET, &format!("/ngsi-ld/v1/temporal/entities/{entity_id}"), 500).await;
 
     let (status, headers, _) = get_temporal_entity(&c, &entity_id, "", &jsonld_link_value()).await;
@@ -299,13 +280,11 @@ async fn distop_temporal_retrieve_exclusive_mode_returns_remote() {
     });
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &local_entity).await, StatusCode::CREATED);
 
-    // Create CSR in exclusive mode over the entity id and the `speed` property
     let mut reg = vehicle_registration(&reg_id, &entity_id, &mock.url(""), Some("exclusive"));
     reg["information"][0]["propertyNames"] = json!(["speed"]);
     let reg = reg;
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Mock returns the registered attribute
     let mock_entity = json!({
         "id": entity_id,
         "type": "Vehicle",
@@ -317,7 +296,6 @@ async fn distop_temporal_retrieve_exclusive_mode_returns_remote() {
     let (status, _, body) = get_temporal_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    // The registered attribute comes from the exclusive source
     let speed = body.get("speed").expect("speed should be present");
     let speed_values: Vec<i64> = speed.as_array().unwrap().iter().filter_map(|v| v["value"].as_i64()).collect();
     assert!(

@@ -325,7 +325,7 @@ mod tests {
     /// `GeoJSON` geometry object then the geometry shall be undefined and
     /// returned with a value of null". The attribute is present and carries a
     /// value in every case here, so this is the branch the absent one never
-    /// reaches — answering the raw value instead put a `geometry` member that is
+    /// reaches. Answering the raw value would put a `geometry` member that is
     /// not a geometry into an IETF RFC 7946 Feature.
     #[test]
     fn a_value_that_is_not_a_geojson_geometry_leaves_the_geometry_undefined() {

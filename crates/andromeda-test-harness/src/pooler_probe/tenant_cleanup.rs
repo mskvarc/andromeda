@@ -19,8 +19,7 @@ pub const DEFAULT_TENANT_DB_PREFIX: &str = "andromeda_tenant";
 /// Best-effort throughout: an unreachable broker, a tenant-management extension
 /// that is off (the listing 404s) and a malformed listing are all ignored, since
 /// [`drop_tenant_databases`] force-closes any backend a suspend did not. The
-/// suspend is the deterministic pool-close that replaced the retired orphan
-/// eviction sweep.
+/// suspend is the deterministic pool-close.
 pub async fn suspend_tenants(client: &Client, broker_base: &str) {
     let Ok(response) = client.get(format!("{broker_base}tenants")).send().await else {
         return;

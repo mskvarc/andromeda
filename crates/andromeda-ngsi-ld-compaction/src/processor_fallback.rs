@@ -1,7 +1,7 @@
 //! Compacting through the JSON-LD processor what the term walk leaves to it.
 //!
 //! The model is written in its canonical expanded form, which is the stored
-//! document, and compacted as the broker has always compacted that document;
+//! document, and compacted from that document;
 //! the result is therefore exactly the one the processor gives. Its text is
 //! read by the compact model as every compact document is, through the terms
 //! the request context defines for core terms.

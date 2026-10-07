@@ -125,9 +125,6 @@ pub async fn serve(
         signal_token.cancel();
     });
 
-    // At most three listeners share the shutdown token: the data-plane TCP
-    // listener always, the QUIC listener when HTTP/3 is enabled, and the
-    // management listener in `separate-port` mode.
     let mut listeners: Vec<ListenerFuture<'_>> = Vec::new();
     let tcp = serve_tcp(&config.server, tcp_security, tcp_service, wait_for(&shutdown_token));
     listeners.push(Box::pin(async move { tcp.await.map_err(ListenerError::from) }));

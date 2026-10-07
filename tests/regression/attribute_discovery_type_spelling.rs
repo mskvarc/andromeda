@@ -1,34 +1,8 @@
-//! `GET /attributes` over a stored Attribute node whose `@type` is the JSON-LD
-//! string spelling.
+//! ETSI GS CIM 009 v1.9.1 clause 5.7.9 has Retrieve Available Attributes answer "an Attribute List as mandated by clause 5.2.28", and clause 5.5.6 admits no `InternalError` for a well-formed read of data the broker itself stored.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.7.9 has Retrieve Available Attributes answer
-//! "an Attribute List as mandated by clause 5.2.28", and clause 5.5.6 admits no
-//! `InternalError` for a well-formed read of data the broker itself stored. The
-//! attribute-discovery aggregate reads each stored Attribute node's `@type` to
-//! report the families of clause 5.2.28's `attributeTypes`, and it used to read
-//! it as a JSON array unconditionally.
+//! JSON-LD 1.1 section 4.1 admits both spellings on a node object -- "the value of @type ... MUST be either a string or an array of strings" -- and only expansion normalises it to the array form, so a stored node carrying the string spelling is well-formed.
 //!
-//! JSON-LD 1.1 section 4.1 admits both spellings on a node object -- "the value
-//! of @type ... MUST be either a string or an array of strings" -- and only the
-//! expansion algorithm normalises it to the array form. A stored node carrying
-//! the string spelling is therefore well-formed JSON-LD, and reading it as an
-//! array raises PostgreSQL's `cannot extract elements from a scalar`. Because
-//! the expansion is cross-joined into the aggregate, that failure answered 500
-//! for the whole listing rather than for the one attribute that provoked it:
-//! every other attribute of every other entity disappeared with it.
-//!
-//! Each test writes that spelling into the stored payload directly, because the
-//! ingest path expands what it is given and so cannot produce it through the
-//! API. That is the shape the defect reached a read through -- a row the broker
-//! reads back.
-//!
-//! Discovery no longer reads the payloads at all: it answers from the census
-//! the entity writes keep, which records the family each instance declared when
-//! it was written (clause 4.5.2 makes an instance without one a Property). A
-//! payload rewritten behind the broker therefore cannot fail a listing any
-//! more, and cannot change what it reports either; the tests hold it to both.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Discovery answers from the census the entity writes keep, which records the family each instance declared when it was written (clause 4.5.2 makes an instance without one a Property). A payload rewritten behind the broker therefore can neither fail a listing nor change what it reports. Each test writes that spelling into the stored payload directly, because the ingest path expands what it is given and so cannot produce it through the API.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -47,8 +21,7 @@ const PROPERTY_IRI: &str = "https://uri.etsi.org/ngsi-ld/Property";
 /// module uses is already a full IRI, so nothing else has to be declared.
 const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
 
-/// The vocabulary one run declares, unique per run so a shared tenant cannot
-/// let two runs contribute to each other's answers.
+/// The vocabulary one run declares, unique per run so a shared tenant cannot let two runs contribute to each other's answers.
 struct RunVocabulary {
     /// The run-unique token every IRI is built from.
     token: String,
@@ -91,11 +64,7 @@ async fn create(client: &TestClient, body: &Value) {
     assert_eq!(response.status, StatusCode::CREATED, "create {}: {:?}", body["id"], response.body);
 }
 
-/// Rewrite the stored `@type` of one Attribute node to `spelling`.
-///
-/// The expanded payload is an array holding one node object, so the Attribute
-/// node is at `payload -> 0 -> <attribute IRI> -> 0`, and its `@type` is the
-/// member the aggregate reads.
+/// The expanded payload is an array holding one node object, so the Attribute node is at `payload -> 0 -> <attribute IRI> -> 0`.
 async fn store_attribute_type(pool: &PgPool, id: &str, attribute: &str, spelling: &Value) {
     let updated = sqlx::query(
         "UPDATE entity_documents AS d \
@@ -155,8 +124,6 @@ async fn regression_attribute_discovery_a_string_spelled_at_type_is_read_as_its_
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(lists(&body, &stated), "{body}");
 
-    // Clause 5.2.28 `attributeTypes`: the family the node named, read out of
-    // the spelling it was stored in.
     let (info_status, info) = attribute_info(client, &stated).await;
     assert_eq!(info_status, StatusCode::OK, "{info}");
     assert_eq!(info["attributeTypes"], json!(["Property"]), "{info}");
@@ -165,7 +132,7 @@ async fn regression_attribute_discovery_a_string_spelled_at_type_is_read_as_its_
 }
 
 /// The expansion is cross-joined into the aggregate, so one node that failed it
-/// failed every group of the listing. Nothing about one attribute may decide
+/// would fail every group of the listing. Nothing about one attribute may decide
 /// whether another is reported.
 #[tokio::test]
 async fn regression_attribute_discovery_one_node_never_decides_another_attributes_fate() {
@@ -189,11 +156,7 @@ async fn regression_attribute_discovery_one_node_never_decides_another_attribute
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.2.28 makes `attributeTypes` the families the instances declare,
-/// and the census records the family each write declared. A stored `@type`
-/// rewritten behind the broker to something no JSON-LD spelling allows neither
-/// fails the listing nor changes the family reported: the instance was written
-/// as a Property, and a Property is what discovery says it is.
+/// Clause 5.2.28 makes `attributeTypes` the families the instances declare, and the census records the family each write declared, so a stored `@type` rewritten behind the broker neither fails the listing nor changes the family reported.
 #[tokio::test]
 async fn regression_attribute_discovery_an_unreadable_at_type_changes_no_answer() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -246,10 +209,7 @@ async fn regression_attribute_discovery_an_empty_at_type_array_names_no_family()
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clauses 5.7.5 to 5.7.7 read the same stored payloads for their own
-/// aggregate, which walks the attribute keys rather than the `@type` of each
-/// node; the spelling cannot reach it, and this says so rather than leaving it
-/// to be assumed.
+/// Clauses 5.7.5 to 5.7.7 aggregate over the attribute keys rather than the `@type` of each node, so the spelling cannot reach them.
 #[tokio::test]
 async fn regression_attribute_discovery_the_type_listing_is_unaffected_by_the_spelling() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

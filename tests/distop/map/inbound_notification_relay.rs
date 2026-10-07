@@ -1,9 +1,4 @@
-//! What a front broker does with a notification a context source posts to it
-//! under the identifier of a forwarded subscription copy (clauses 5.8.6 and
-//! 6.3.4). A stub Context Source stands in for the sender, accepts the copy and
-//! shows the copy's identifier; the test then posts the crafted notification at
-//! the front broker's receiver as the source would, and reads what the local
-//! subscriber is sent. Topology `T-SINGLE`.
+//! What a front broker does with a notification a context source posts to it under the identifier of a forwarded subscription copy (clauses 5.8.6 and 6.3.4). A stub Context Source stands in for the sender, accepts the copy and shows the copy's identifier; the test then posts the crafted notification at the front broker's receiver as the source would, and reads what the local subscriber is sent.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -37,8 +32,7 @@ const FORWARDED_SUBSCRIPTIONS_PATH: &str = "/ngsi-ld/v1/subscriptions";
 /// The resource a source notifies the front broker's forwarded copy at.
 const RECEIVER_PATH: &str = "/ngsi-ld/v1/notifications";
 
-/// One front broker, the stub source it forwarded a subscription copy to, and
-/// the local subscriber of that subscription.
+/// One front broker, the stub source it forwarded a subscription copy to, and the local subscriber of that subscription.
 struct RelayScene {
     /// The single-broker topology the scene runs on.
     topology: MultiBrokerTopology<BrokerRole>,
@@ -55,9 +49,7 @@ struct RelayScene {
 }
 
 impl RelayScene {
-    /// A front broker with the stub source registered for a per-test entity
-    /// type and a local subscription of that type created from
-    /// `subscription(..)` after `customize` has changed it.
+    /// A front broker with the stub source registered for a per-test entity type and a local subscription of that type created from `subscription(..)` after `customize` has changed it.
     async fn start(label: &str, customize: impl FnOnce(&mut Value)) -> RelayScene {
         let topology = topology::single().await.expect("single-broker topology");
         let receiver = NotificationAdapter::start().await;
@@ -133,8 +125,7 @@ impl RelayScene {
     }
 }
 
-/// The identifier of the subscription copy the front broker placed at
-/// `source`: the `id` of the first copy created there.
+/// The identifier of the subscription copy the front broker placed at `source`: the `id` of the first copy created there.
 async fn placed_copy_id(source: &ContextSourceAdapter) -> String {
     loop {
         let request = source.next_request(DELIVER).await;
@@ -157,11 +148,7 @@ fn entity_named<'a>(entities: &'a [Value], id: &str) -> &'a Value {
     entities.iter().find(|entity| entity["id"].as_str() == Some(id)).unwrap_or(&Value::Null)
 }
 
-/// Clause 5.8.6 with JSON-LD 1.1: an `application/ld+json` notification, the
-/// shape this broker itself sends to an `application/ld+json` endpoint, writes
-/// the `@context` on each entity of `data`, and a node's context applies to
-/// that node. Every entity was lost when the extractor read the member as an
-/// attribute.
+/// Clause 5.8.6 with JSON-LD 1.1: an `application/ld+json` notification, the shape this broker itself sends to an `application/ld+json` endpoint, writes the `@context` on each entity of `data`, and a node's context applies to that node.
 #[tokio::test]
 async fn an_ld_json_notification_with_entity_contexts_is_relayed() {
     let scene = RelayScene::start("relay-entity-contexts", |_| {}).await;
@@ -185,8 +172,7 @@ async fn an_ld_json_notification_with_entity_contexts_is_relayed() {
     );
 }
 
-/// Clause 5.8.6: an entity that cannot be read leaves the copy and the others
-/// are relayed, and the sender is answered as for any notification it posted.
+/// Clause 5.8.6: an entity that cannot be read leaves the copy and the others are relayed, and the sender is answered as for any notification it posted.
 #[tokio::test]
 async fn one_invalid_entity_among_valid_ones_is_skipped() {
     let scene = RelayScene::start("relay-one-invalid", |_| {}).await;
@@ -211,9 +197,7 @@ async fn one_invalid_entity_among_valid_ones_is_skipped() {
     assert_eq!(ids, expected, "{relayed:?}");
 }
 
-/// Clause 6.3.4: `application/merge-patch+json` is the media type of the Merge
-/// Entity operation alone, so a notification posted as one is refused with
-/// 415 and nothing is relayed.
+/// Clause 6.3.4: `application/merge-patch+json` is the media type of the Merge Entity operation alone, so a notification posted as one is refused with 415 and nothing is relayed.
 #[tokio::test]
 async fn merge_patch_notification_is_refused() {
     let scene = RelayScene::start("relay-merge-patch", |_| {}).await;
@@ -227,11 +211,7 @@ async fn merge_patch_notification_is_refused() {
     assert_status(&answer, 415);
 }
 
-/// Clause 5.8.6 with clauses 4.21 and 5.3.1: a notification a source relays
-/// is written the way the local subscription writes a local entity, so the
-/// same subscription gives the same members and the same spelling for an
-/// entity held locally and for one a source notified. `pick` removes `type`,
-/// keeps `id`, and a Relationship target is spelled decoded.
+/// Clause 5.8.6 with clauses 4.21 and 5.3.1: a notification a source relays is written the way the local subscription writes a local entity, so the same subscription gives the same members and the same spelling for an entity held locally and for one a source notified. `pick` removes `type`, keeps `id`, and a Relationship target is spelled decoded.
 #[tokio::test]
 async fn relayed_notification_matches_a_local_one() {
     let scene = RelayScene::start("relay-matches-local", |local| {
@@ -274,9 +254,7 @@ async fn relayed_notification_matches_a_local_one() {
     assert_eq!(relayed["owner"]["object"], local["owner"]["object"], "local: {local}\nrelayed: {relayed}");
 }
 
-/// Table 5.2.12-1 `lang` and clause 4.15: the subscription's `lang` picks the
-/// language of every `LanguageProperty` of a notified entity, whether the
-/// entity is held locally or was relayed from a source.
+/// Table 5.2.12-1 `lang` and clause 4.15: the subscription's `lang` picks the language of every `LanguageProperty` of a notified entity, whether the entity is held locally or was relayed from a source.
 #[tokio::test]
 async fn relayed_notification_applies_the_subscription_lang() {
     let scene = RelayScene::start("relay-applies-lang", |local| {
@@ -301,10 +279,7 @@ async fn relayed_notification_applies_the_subscription_lang() {
     assert_eq!(name["lang"], json!("en"), "{name}");
 }
 
-/// Clause 5.8.6: a subscription declaring `ngsildConformance` has every Entity
-/// it sends amended to that version, a relayed one included (Tables 4.3.6.8-1
-/// and 4.3.6.8-2: `observedAt` is 1.3 and the `LanguageProperty` 1.4, both
-/// unknown to 1.0).
+/// Clause 5.8.6: a subscription declaring `ngsildConformance` has every Entity it sends amended to that version, a relayed one included (Tables 4.3.6.8-1 and 4.3.6.8-2: `observedAt` is 1.3 and the `LanguageProperty` 1.4, both unknown to 1.0).
 #[tokio::test]
 async fn relayed_notification_honours_conformance() {
     let scene = RelayScene::start("relay-conformance", |local| {
@@ -331,9 +306,7 @@ async fn relayed_notification_honours_conformance() {
     assert_eq!(amended["name"]["type"], json!("Property"), "{amended}");
 }
 
-/// Clause 5.8.6: a source reports a deleted attribute as "only the name of
-/// the attribute as key and the URI "urn:ngsi-ld:null" as value", and the copy
-/// relayed in the `format` of the local subscription reports it the same way.
+/// Clause 5.8.6: a source reports a deleted attribute as "only the name of the attribute as key and the URI "urn:ngsi-ld:null" as value", and the copy relayed in the `format` of the local subscription reports it the same way.
 async fn assert_deletion_relayed_bare(label: &str, format: &str) {
     let scene = RelayScene::start(label, |local| {
         local["notification"]["format"] = json!(format);
@@ -355,26 +328,19 @@ async fn assert_deletion_relayed_bare(label: &str, format: &str) {
     assert_eq!(notified["owner"], json!("urn:ngsi-ld:null"), "{format}: {notified}");
 }
 
-/// A relayed deletion is the bare Null in the concise representation (R22,
-/// R56).
+/// A relayed deletion is the bare Null in the concise representation.
 #[tokio::test]
 async fn regression_r56_a_notified_deletion_is_relayed_bare_in_the_concise_format() {
     assert_deletion_relayed_bare("relay-deletion-concise", "concise").await;
 }
 
-/// A relayed deletion is the bare Null in the simplified (`keyValues`)
-/// representation (R22, R56).
+/// A relayed deletion is the bare Null in the simplified (`keyValues`) representation.
 #[tokio::test]
 async fn regression_r56_a_notified_deletion_is_relayed_bare_in_the_simplified_format() {
     assert_deletion_relayed_bare("relay-deletion-simplified", "keyValues").await;
 }
 
-/// Clause 5.8.6 with clause 4.5.5: when the local subscription splits
-/// entities, the part a source notified is completed from this broker's own
-/// copy, and an attribute the source notified deleted stays the bare Null of
-/// that notification while no other holder's instance of it overrides the
-/// deletion. The part keeps what the source named, and the local copy fills
-/// in what the source did not.
+/// Clause 5.8.6 with clause 4.5.5: when the local subscription splits entities, the part a source notified is completed from this broker's own copy, and an attribute the source notified deleted stays the bare Null of that notification while no other holder's instance of it overrides the deletion. The part keeps what the source named, and the local copy fills in what the source did not.
 #[tokio::test]
 async fn regression_r56_a_notified_deletion_survives_split_reassembly() {
     let scene = RelayScene::start("relay-deletion-split", |local| {
@@ -414,9 +380,7 @@ async fn regression_r56_a_notified_deletion_survives_split_reassembly() {
     assert_eq!(completed["colour"]["value"], json!("red"), "the local holder completes the part: {completed}");
 }
 
-/// The entities the local subscriber is sent for a relayed Vehicle located in a
-/// City the front broker holds, under a subscription naming `join`, with the
-/// City's identifier.
+/// The entities the local subscriber is sent for a relayed Vehicle located in a City the front broker holds, under a subscription naming `join`, with the City's identifier.
 async fn relay_with_join(label: &str, join: &str) -> (Vec<Value>, String, String) {
     let scene = RelayScene::start(label, |local| {
         local["notification"]["join"] = json!(join);
@@ -437,9 +401,7 @@ async fn relay_with_join(label: &str, join: &str) -> (Vec<Value>, String, String
     (relayed, vehicle_id, city_id)
 }
 
-/// Clause 4.5.23.2 with clause 5.8.6: a subscription with `join=inline` sends a
-/// relayed entity as it sends a local one, the Linked Entity the front broker
-/// holds nested under the Relationship naming it.
+/// Clause 4.5.23.2 with clause 5.8.6: a subscription with `join=inline` sends a relayed entity as it sends a local one, the Linked Entity the front broker holds nested under the Relationship naming it.
 #[tokio::test]
 async fn relayed_notification_applies_an_inline_join() {
     let (relayed, vehicle_id, city_id) = relay_with_join("relay-join-inline", "inline").await;
@@ -450,8 +412,7 @@ async fn relayed_notification_applies_an_inline_join() {
     assert_eq!(vehicle["locatedIn"]["entity"]["name"]["value"], json!("Paris"), "{vehicle}");
 }
 
-/// Clause 4.5.23.3 with clause 5.8.6: a subscription with `join=flat` sends the
-/// Linked Entity beside a relayed entity, as it does beside a local one.
+/// Clause 4.5.23.3 with clause 5.8.6: a subscription with `join=flat` sends the Linked Entity beside a relayed entity, as it does beside a local one.
 #[tokio::test]
 async fn relayed_notification_applies_a_flat_join() {
     let (relayed, vehicle_id, city_id) = relay_with_join("relay-join-flat", "flat").await;

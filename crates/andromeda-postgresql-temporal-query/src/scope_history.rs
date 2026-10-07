@@ -4,16 +4,16 @@
 //! the normalized Entity representation and reified in the temporal
 //! representation of an Entity", and clause 4.5.6 has that reified form carry
 //! the four non-reified Temporal Properties. It is stored apart from attribute
-//! history — `scope_history` hangs off the temporal entity and has no attribute
+//! history: `scope_history` hangs off the temporal entity and has no attribute
 //! stream, because clause 4.5.4 gives a Scope no dataset dimension and no
-//! attribute family — so the temporal representation is assembled from two
+//! attribute family, so the temporal representation is assembled from two
 //! statements rather than one, and this is the second of them.
 //!
 //! What it selects is not the events inside the window. Clause 4.18 makes a
 //! Scope "valid from the time it has been set until the time it has been
 //! explicitly removed", so the statement selects every event whose validity
 //! interval overlaps the window, which is what carries annex C clause C.5.16's
-//! Vehicle B9211 — scoped at 11:00, queried between 12:00 and 13:00 — into the
+//! Vehicle B9211 (scoped at 11:00, queried between 12:00 and 13:00) into the
 //! answer with the 11:00 instant the annex renders.
 
 use crate::alias::Te;
@@ -36,8 +36,8 @@ pub const SCOPE_EVENT_AT: &str = "scope_event_at";
 /// Whether the request's `attrs` selection reaches the reified scope at all.
 ///
 /// Table 6.18.3.2-1 makes `attrs` "a synonym for a combination of the pick and
-/// q parameters", and `pick` names Entity members — "id", "type", "scope" or an
-/// Attribute name — so a temporal query may name `scope` there; annex C clause
+/// q parameters", and `pick` names Entity members ("id", "type", "scope" or an
+/// Attribute name), so a temporal query may name `scope` there; annex C clause
 /// C.5.16 does exactly that with `attrs=speed,scope`. An `attrs` that names
 /// other members and not `scope` therefore excludes it, and an absent `attrs`
 /// selects everything the temporal representation carries.
@@ -58,10 +58,10 @@ pub fn scope_is_selected(compiled: &CompiledTemporalQuery) -> bool {
 /// together: clause 4.18 admits at most one instance of the scope Property per
 /// Entity and renders more than one Scope as a JSON array, so the several rows
 /// a multi-Scope write lands at one instant are one rendered instance. One
-/// write can still state several instances — clause 4.5.7 makes the temporal
+/// write can still state several instances: clause 4.5.7 makes the temporal
 /// representation of a Property "an Array of JSON-LD objects, each one
 /// representing an instance of the referred Property [...] at a particular
-/// point in time" — so the instant separates the events and the write identity
+/// point in time", so the instant separates the events and the write identity
 /// alone does not.
 ///
 /// `lastN` does not bound this statement. Clause 5.7.4.4 defines it over "a

@@ -2,19 +2,16 @@
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 5.2.5 puts no restriction on a Property
 //! `value`: Table 5.2.5-1 gives it the data type "JSON value", so an array of
-//! objects, and an array mixing objects with scalars, are admissible. The broker
-//! accepted `{"a":1}` and `[{"a":1}]` but refused `[{"a":1},{"b":2}]` and
-//! `[1,{"a":1}]` with `400 BadRequestData` "Property array element carries no
-//! value": JSON-LD expansion turns each object into a node object rather than a
-//! value node, and the history decoder demanded `@value` from every element of
-//! a multi-element array. Real producer impact: every cassiopeia-examples
-//! Country (its `timezones` is an array of zone objects) was lost.
+//! objects, and an array mixing objects with scalars, are admissible. `{"a":1}`,
+//! `[{"a":1}]`, `[{"a":1},{"b":2}]` and `[1,{"a":1}]` are all accepted: JSON-LD
+//! expansion turns each object into a node object rather than a value node, so a
+//! history decoder demanding `@value` from every element of a multi-element array
+//! would wrongly refuse them with `400 BadRequestData` "Property array element
+//! carries no value".
 //!
 //! Every write path that records the value is exercised, and each asserts the
 //! current representation and the Temporal Evolution give back the array with
 //! its object keys intact.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -30,8 +27,7 @@ const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context
 /// The window every temporal read of this module asks for.
 const WINDOW: &str = "timerel=after&timeAt=2000-01-01T00:00:00Z&timeproperty=modifiedAt";
 
-/// The shape of the cassiopeia-examples Country `timezones` that exposed the
-/// defect.
+/// An array of zone objects, as in a Country's `timezones`.
 fn zones() -> Value {
     json!([
         {"zoneName": "Europe/Andorra", "gmtOffset": 3600},

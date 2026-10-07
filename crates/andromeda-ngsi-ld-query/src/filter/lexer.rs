@@ -216,10 +216,7 @@ fn scan_signed_number(chars: &[char], start: usize) -> (Token, usize) {
 /// each of the three opens with a digit run that a `Number` cannot continue
 /// with: RFC 8259's `number` production carries neither `-` after its integer
 /// digits nor `:` at all, and clause 4.6.2 makes every `AttrName` open with a
-/// letter, so a digit run followed by either separator is a clause 4.6.3
-/// literal rather than a number followed by punctuation. Without the `:` case
-/// the `time` production had no unquoted spelling at all: `q=readingTime==\
-/// 12:00:00Z` lexed as the number `12` followed by an unexpected identifier.
+/// letter, so a digit run followed by either separator is a clause 4.6.3 literal rather than a number followed by punctuation.
 fn scan_digit_run(chars: &[char], start: usize) -> (Token, usize) {
     let after_digits = consume_digits(chars, start);
     let opens_time_value = (is_at(chars, after_digits, '-') || is_at(chars, after_digits, ':')) && starts_digit(chars, after_digits + 1);
@@ -391,11 +388,7 @@ mod tests {
         assert_eq!(lex("2017-12-24..2017-12-25"), vec![ident("2017-12-24"), Token::Dots, ident("2017-12-25")]);
     }
 
-    /// Clause 4.9's `ComparableValue` admits a bare `time` beside `dateTime`
-    /// and `date`, so a time of day survives the tokeniser whole. It used to
-    /// split — `12:00:00Z` lexed as the number `12` followed by the identifier
-    /// `:00:00Z` — which left the `time` production with no unquoted spelling
-    /// at all and made every such filter a `BadRequestData`.
+    /// Clause 4.9's `ComparableValue` admits a bare `time` beside `dateTime` and `date`, so a time of day survives the tokeniser whole.
     #[test]
     fn a_bare_time_of_day_is_one_literal() {
         assert_eq!(lex("12:00:00Z"), vec![ident("12:00:00Z")]);

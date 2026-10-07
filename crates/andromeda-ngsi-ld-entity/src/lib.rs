@@ -4,12 +4,12 @@
 //! one or more types, optional scopes (clause 4.18) and an expiry (clause
 //! 4.22), and attributes of eight families (clause 4.5), each attribute with at
 //! most one instance per `datasetId` (clause 4.5.5). This crate holds that
-//! state as [`entity_state::EntityState`], and what a write carries — which
+//! state as [`entity_state::EntityState`], and what a write carries (which
 //! may delete members with the NGSI-LD Null, omit members, or repeat a
-//! `datasetId` — as [`document::EntityDocument`], a different type.
+//! `datasetId`) as [`document::EntityDocument`], a different type.
 //!
-//! The persisted and exchanged form is the standard expanded JSON-LD document
-//! the broker has always stored. [`codec`] reads and writes it straight from
+//! The persisted and exchanged form is the standard expanded JSON-LD document.
+//! [`codec`] reads and writes it straight from
 //! and to bytes, decoding a geometry's nested `@list`s directly into its
 //! positions. [`admission`] holds the clause 5.5.4 rules a written document is
 //! held to, [`reads`] the cheap reads the rest of the broker takes from a

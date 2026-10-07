@@ -1,8 +1,4 @@
-//! Notification delivery state: endpoint targeting with receiver info, the
-//! content type that follows the endpoint `accept`, and the subscription
-//! delivery counters and status that record each attempt (clauses 5.8.6, 5.2.14,
-//! 6.3.5). All `T-LOCAL`; the sink is an in-process server that controls the
-//! delivery outcome.
+//! Notification delivery state: endpoint targeting with receiver info, the content type that follows the endpoint `accept`, and the subscription delivery counters and status that record each attempt (clauses 5.8.6, 5.2.14, 6.3.5).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -25,8 +21,7 @@ const DELIVER: Duration = Duration::from_secs(12);
 /// receiver has been contacted.
 const SETTLE: Duration = Duration::from_millis(750);
 
-/// A notification is delivered to `endpoint.uri` carrying the subscription's
-/// receiver info as a header (clauses 5.8.6, 6.3.5). Confirms REQ-MAP-92.
+/// A notification is delivered to `endpoint.uri` carrying the subscription's receiver info as a header (clauses 5.8.6, 6.3.5).
 #[tokio::test]
 async fn notif_sent_to_endpoint_uri_with_receiver_info() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -71,9 +66,7 @@ async fn notif_sent_to_endpoint_uri_with_receiver_info() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The delivery content type follows the endpoint `accept`: an `application/json`
-/// endpoint receives a `Link` header carrying the context (clause 5.8.6).
-/// Confirms REQ-MAP-93.
+/// The delivery content type follows the endpoint `accept`: an `application/json` endpoint receives a `Link` header carrying the context (clause 5.8.6).
 #[tokio::test]
 async fn notif_content_type_follows_endpoint_accept() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -135,8 +128,7 @@ async fn notification_state(topology: &MultiBrokerTopology<BrokerRole>, id: &str
     json_body(&retrieved)["notification"].clone()
 }
 
-/// A delivery increments `timesSent` and records `lastNotification`
-/// (clause 5.2.14). Confirms REQ-MAP-94, REQ-MAP-95.
+/// A delivery increments `timesSent` and records `lastNotification` (clause 5.2.14).
 #[tokio::test]
 async fn notif_times_sent_and_last_notification_updated() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -181,8 +173,7 @@ async fn notif_times_sent_and_last_notification_updated() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A successful delivery sets `status` `ok` and records `lastSuccess`
-/// (clause 5.2.14). Confirms REQ-MAP-96, REQ-MAP-97.
+/// A successful delivery sets `status` `ok` and records `lastSuccess` (clause 5.2.14).
 #[tokio::test]
 async fn notif_success_sets_status_ok_and_last_success() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -228,8 +219,7 @@ async fn notif_success_sets_status_ok_and_last_success() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A failed delivery sets `status` `failed` and records `lastFailure`
-/// (clause 5.2.14). Confirms REQ-MAP-98, REQ-MAP-99.
+/// A failed delivery sets `status` `failed` and records `lastFailure` (clause 5.2.14).
 #[tokio::test]
 async fn notif_failure_sets_status_failed_and_last_failure() {
     let topology = topology::single().await.expect("single-broker topology");

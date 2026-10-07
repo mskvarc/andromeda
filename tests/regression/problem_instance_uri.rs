@@ -2,15 +2,13 @@
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 5.5.3 makes every error body an IETF RFC 7807
 //! section 3.1 object, whose `instance` is "a URI reference that identifies the
-//! specific occurrence of the problem". Every refusal raised while a request's
-//! parameters, headers or body were still being read named the URI the nested
-//! API router had stripped of its `/ngsi-ld/v1` mount: `/?type=GtfsStop&q=bad((`
-//! for a query, `/query` for `POST /entityOperations/query`, `/` for `GET
-//! /types` on an unknown tenant. Resolved against the broker, each names a
-//! resource that does not exist, while a refusal raised later in the same
-//! operation named the full path.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! specific occurrence of the problem". Every refusal, whether raised while a
+//! request's parameters, headers or body are still being read or later in the
+//! operation, names the full request target, not the URI the nested API router
+//! has stripped of its `/ngsi-ld/v1` mount (`/?type=GtfsStop&q=bad((` for a
+//! query, `/query` for `POST /entityOperations/query`, `/` for `GET /types` on an
+//! unknown tenant), which resolved against the broker names a resource that does
+//! not exist.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -31,7 +29,7 @@ fn addressed_target(client: &TestClient, path: &str) -> String {
 /// Require `response` to refuse the request with a problem detail, and report
 /// the `instance` it named when that is not `expected`.
 ///
-/// The mismatch is returned rather than asserted so that a regression names
+/// The mismatch is returned rather than asserted so that a failure names
 /// every request it reaches, not only the first.
 fn misnamed_instance(response: &TestResponse, expected: &str, request: &str) -> Option<String> {
     assert!(

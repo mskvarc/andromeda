@@ -1,11 +1,4 @@
-//! Single-source and multi-source error mapping (clause 6.3.17): when an HTTP
-//! unsafe method resolves to exactly one exclusive or redirect source holding
-//! all of the data, that source's outcome maps onto the client status (508
-//! loop, 504 timeout, 404 absent, 502 other), while a multi-endpoint operation
-//! with a failing member yields `207`. Distributed GET failures never become
-//! status codes: clause 6.3.17 routes them to `NGSILD-Warning` 199 on a
-//! successful response. Auxiliary registrations never advertise unsafe
-//! methods (clause 5.9.2.4).
+//! Single-source and multi-source error mapping (clause 6.3.17): when an HTTP unsafe method resolves to exactly one exclusive or redirect source holding all of the data, that source's outcome maps onto the client status (508 loop, 504 timeout, 404 absent, 502 other), while a multi-endpoint operation with a failing member yields `207`. Distributed GET failures never become status codes: clause 6.3.17 routes them to `NGSILD-Warning` 199 on a successful response. Auxiliary registrations never advertise unsafe methods (clause 5.9.2.4).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -19,13 +12,10 @@ use pretty_assertions::assert_eq;
 use reqwest::Method;
 use serde_json::json;
 
-/// An endpoint no packet reaches, so a forwarded request only ends by its
-/// deadline.
+/// An endpoint no packet reaches, so a forwarded request only ends by its deadline.
 const BLACKHOLE_ENDPOINT: &str = "http://10.255.255.1:9";
 
-/// A single exclusive source registered back onto the broker itself is a loop,
-/// mapped to `508 Loop Detected` for an unsafe method (clause 6.3.17).
-/// Confirms REQ-HTTP-25.
+/// A single exclusive source registered back onto the broker itself is a loop, mapped to `508 Loop Detected` for an unsafe method (clause 6.3.17).
 #[tokio::test]
 async fn dist_http_single_source_loop_back_returns_508() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -62,11 +52,7 @@ async fn dist_http_single_source_loop_back_returns_508() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A single redirect source registered back onto the broker itself is a loop,
-/// mapped to `508 Loop Detected` for an unsafe method exactly as the exclusive
-/// case is: clause 6.3.17 scopes 508 to "the single registered source and tenant
-/// is registered to redirect back on to the Context Broker", which covers both
-/// the exclusive and redirect single-source shapes (clause 6.3.18).
+/// A single redirect source registered back onto the broker itself is a loop, mapped to `508 Loop Detected` for an unsafe method exactly as the exclusive case is: clause 6.3.17 scopes 508 to "the single registered source and tenant is registered to redirect back on to the Context Broker", which covers both the exclusive and redirect single-source shapes (clause 6.3.18).
 #[tokio::test]
 async fn dist_http_single_source_redirect_loop_back_returns_508() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -103,9 +89,7 @@ async fn dist_http_single_source_redirect_loop_back_returns_508() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A single source that does not answer within the registration's timeout is
-/// mapped to `504 Gateway Timeout` for an unsafe method (clause 6.3.17).
-/// Confirms REQ-HTTP-26.
+/// A single source that does not answer within the registration's timeout is mapped to `504 Gateway Timeout` for an unsafe method (clause 6.3.17).
 #[tokio::test]
 async fn dist_http_single_source_timeout_returns_504() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -151,8 +135,7 @@ async fn dist_http_single_source_timeout_returns_504() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A single source reporting the resource absent maps to `404 Not Found` for
-/// an unsafe method (clause 6.3.17). Confirms REQ-HTTP-27.
+/// A single source reporting the resource absent maps to `404 Not Found` for an unsafe method (clause 6.3.17).
 #[tokio::test]
 async fn dist_http_single_source_resource_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -188,8 +171,7 @@ async fn dist_http_single_source_resource_absent_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A single source failing with a definite error other than absence maps to
-/// `502 Bad Gateway` for an unsafe method (clause 6.3.17). Confirms REQ-HTTP-28.
+/// A single source failing with a definite error other than absence maps to `502 Bad Gateway` for an unsafe method (clause 6.3.17).
 #[tokio::test]
 async fn dist_http_single_source_other_failure_returns_502() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -232,9 +214,7 @@ async fn dist_http_single_source_other_failure_returns_502() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A distributed GET whose single exclusive source loops back onto the broker
-/// is not a 508: clause 6.3.17 reports the loop as `NGSILD-Warning` 199 on the
-/// response. Confirms REQ-HTTP-25 for the safe method.
+/// A distributed GET whose single exclusive source loops back onto the broker is not a 508: clause 6.3.17 reports the loop as `NGSILD-Warning` 199 on the response.
 #[tokio::test]
 async fn dist_http_get_loop_back_returns_199_warning_not_508() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -267,9 +247,7 @@ async fn dist_http_get_loop_back_returns_199_warning_not_508() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A distributed GET whose single exclusive source times out is not a 504:
-/// clause 6.3.17 reports the missing response as `NGSILD-Warning` 199.
-/// Confirms REQ-HTTP-26 for the safe method.
+/// A distributed GET whose single exclusive source times out is not a 504: clause 6.3.17 reports the missing response as `NGSILD-Warning` 199.
 #[tokio::test]
 async fn dist_http_get_timeout_returns_199_warning_not_504() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -311,8 +289,7 @@ async fn dist_http_get_timeout_returns_199_warning_not_504() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A create spanning several endpoints where one fails is a multi-status result,
-/// mapped to `207` (clause 6.3.17). Confirms REQ-HTTP-29.
+/// A create spanning several endpoints where one fails is a multi-status result, mapped to `207` (clause 6.3.17).
 #[tokio::test]
 async fn dist_http_multi_endpoint_source_error_returns_207() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -363,8 +340,7 @@ async fn dist_http_multi_endpoint_source_error_returns_207() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An auxiliary registration is read-only, so an unsafe (write) method is never
-/// forwarded to it and is handled locally (clause 4.3.6.2). Confirms REQ-HTTP-30.
+/// An auxiliary registration is read-only, so an unsafe (write) method is never forwarded to it and is handled locally (clause 4.3.6.2).
 #[tokio::test]
 async fn dist_http_auxiliary_registration_rejects_unsafe_method() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -405,8 +381,7 @@ async fn dist_http_auxiliary_registration_rejects_unsafe_method() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An unsafe method forwarded to a failing source produces an informative
-/// response body rather than a silent success (clause 6.3.17). Confirms REQ-HTTP-32.
+/// An unsafe method forwarded to a failing source produces an informative response body rather than a silent success (clause 6.3.17).
 #[tokio::test]
 async fn dist_http_unsafe_method_source_error_is_informative() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -449,9 +424,7 @@ async fn dist_http_unsafe_method_source_error_is_informative() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A failed endpoint whose registration declares a `cooldown` is declined for
-/// that period, with `NGSILD-Warning` 199 standing in for its answer (clauses
-/// 5.2.34 and 6.3.17). Confirms REQ-HTTP-31.
+/// A failed endpoint whose registration declares a `cooldown` is declined for that period, with `NGSILD-Warning` 199 standing in for its answer (clauses 5.2.34 and 6.3.17).
 #[tokio::test]
 async fn dist_http_failed_endpoint_skipped_until_cooldown() {
     let topology = topology::single().await.expect("single-broker topology");

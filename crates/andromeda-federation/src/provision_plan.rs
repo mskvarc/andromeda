@@ -110,13 +110,7 @@ impl FederationService {
                 let expanded = expand_type_expression(raw, &ContextualExpander::new(&self.engine, resolver.prepared())).await?;
                 (expanded.named_types(), Some(expanded.into_raw()?))
             }
-            // A write that carries no `type` in its request is matched against
-            // registrations by the local entity's actual types -- every one it
-            // carries, since clause 5.12 matches on any of them -- so a
-            // registration scoped to an unrelated type is not taken to cover
-            // the write and refuse it. A write to an entity this broker holds
-            // only at a source resolves to an empty set and falls back to
-            // id-only matching, as before.
+            // A write that carries no `type` in its request is matched against registrations by the local entity's actual types -- every one it carries, since clause 5.12 matches on any of them -- so a registration scoped to an unrelated type is not taken to cover the write and refuse it. A write to an entity this broker holds only at a source resolves to an empty set and falls back to id-only matching.
             None => (self.local_entity_types.local_entity_types(target, request.entity_id).await, None),
         };
         // The path attribute is a compact term; matching compares IRIs, so

@@ -1,8 +1,4 @@
-//! Query Entities forwarding (clause 5.7.2.4): request-width and `orderBy`
-//! validation, capability/mode-based forwarding selection, expired-entity
-//! discard, and the 4.5.5 array merge. `datasetId`, pagination, csf, auxiliary,
-//! and local ordering rows live in `crate::cons::query_entities_filters`;
-//! split-filter timing in `crate::cons::split_entities`.
+//! Query Entities forwarding (clause 5.7.2.4): request-width and `orderBy` validation, capability/mode-based forwarding selection, expired-entity discard, and the 4.5.5 array merge.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -23,9 +19,7 @@ fn ids(body: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// A query with none of type/attrs/q/geoQ/local is too wide and rejected with
-/// `400 BadRequestData` before any forwarding (clause 5.7.2.4). Confirms
-/// REQ-CONS-19.
+/// A query with none of type/attrs/q/geoQ/local is too wide and rejected with `400 BadRequestData` before any forwarding (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_query_entities_too_wide_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -50,11 +44,7 @@ async fn distop_query_entities_too_wide_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `orderBy` is refused where a registered Context Source takes part in the
-/// answer -- clause 4.23.1's "Sort ordering is never applied to distributed
-/// operations" -- and the same `orderBy` succeeds under `local=true`, which
-/// clause 5.5.13 says leaves the Context Registry unused (clause 5.7.2.4).
-/// Confirms REQ-CONS-20.
+/// `orderBy` is refused where a registered Context Source takes part in the answer -- clause 4.23.1's "Sort ordering is never applied to distributed operations" -- and the same `orderBy` succeeds under `local=true`, which clause 5.5.13 says leaves the Context Registry unused (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_query_entities_orderby_with_a_participating_source_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -94,8 +84,7 @@ async fn distop_query_entities_orderby_with_a_participating_source_returns_400()
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A non-local query forwards only to `queryEntity`-capable sources; a `local=true`
-/// query forwards to none (clause 5.7.2.4). Confirms REQ-CONS-25.
+/// A non-local query forwards only to `queryEntity`-capable sources; a `local=true` query forwards to none (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_query_entities_forwards_matching_queryentity_csrs_local_none() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -145,12 +134,7 @@ async fn distop_query_entities_forwards_matching_queryentity_csrs_local_none() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Exclusive, redirect, and inclusive sources each return an Entity Array, and the
-/// aggregated response contains entities from all three (clause 5.7.2.4). The
-/// exclusive registration names its entity id and attributes, as clause 4.3.6.3
-/// requires ("An exclusive registration shall always relate to specific
-/// Attributes found on a single Entity. Thus, the registration shall define
-/// both: An entity id ... Attributes."). Confirms REQ-CONS-29.
+/// Exclusive, redirect, and inclusive sources each return an Entity Array, and the aggregated response contains entities from all three (clause 5.7.2.4). The exclusive registration names its entity id and attributes, as clause 4.3.6.3 requires ("An exclusive registration shall always relate to specific Attributes found on a single Entity. Thus, the registration shall define both: An entity id ... Attributes.").
 #[tokio::test]
 async fn distop_query_entities_forwards_all_modes_returns_entity_arrays() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -198,8 +182,7 @@ async fn distop_query_entities_forwards_all_modes_returns_entity_arrays() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Entities whose attributes have all expired are discarded from a remote Entity
-/// Array before aggregation (clause 5.7.2.4). Confirms REQ-CONS-30.
+/// Entities whose attributes have all expired are discarded from a remote Entity Array before aggregation (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_query_entities_discards_expired_entities_in_remote_array() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -239,9 +222,7 @@ async fn distop_query_entities_discards_expired_entities_in_remote_array() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Register an inclusive `queryEntity` source of `entity_type` on the front
-/// broker that answers every query with `answer`, and query the front broker
-/// for `entity_type` with `extra` appended to the query string.
+/// Register an inclusive `queryEntity` source of `entity_type` on the front broker that answers every query with `answer`, and query the front broker for `entity_type` with `extra` appended to the query string.
 async fn query_answered_by_source(label: &str, answer: impl FnOnce(&str) -> Value, extra: &str) -> (Vec<Value>, String) {
     let topology = topology::single().await.expect("single-broker topology");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
@@ -268,9 +249,7 @@ async fn query_answered_by_source(label: &str, answer: impl FnOnce(&str) -> Valu
     (entities, vtype)
 }
 
-/// Clause 5.7.2.4: `attrs` selects attributes by name after the merge as it
-/// does locally, so `attrs=speed` keeps `speed` and drops `maxspeed`, whose
-/// name only ends the same way.
+/// Clause 5.7.2.4: `attrs` selects attributes by name after the merge as it does locally, so `attrs=speed` keeps `speed` and drops `maxspeed`, whose name only ends the same way.
 #[tokio::test]
 async fn distop_query_entities_attrs_after_merge_is_an_exact_match() {
     let id = "Vehicle:attrs-exact";
@@ -296,9 +275,7 @@ async fn distop_query_entities_attrs_after_merge_is_an_exact_match() {
     );
 }
 
-/// Clause 5.7.2.4: the geo-properties a source answers are selected by `attrs`
-/// like every other attribute, so `location` does not survive the merge of a
-/// query that did not name it.
+/// Clause 5.7.2.4: the geo-properties a source answers are selected by `attrs` like every other attribute, so `location` does not survive the merge of a query that did not name it.
 #[tokio::test]
 async fn distop_query_entities_attrs_after_merge_filters_geo_properties() {
     let (entities, _) = query_answered_by_source(
@@ -326,8 +303,7 @@ async fn distop_query_entities_attrs_after_merge_filters_geo_properties() {
     assert!(merged.get("location").is_none(), "a geo-property the query did not name is dropped: {merged}");
 }
 
-/// Clause 5.7.2.4: an entity left with only a geo-property its query named is
-/// still an entity of the answer, not an empty one to be discarded.
+/// Clause 5.7.2.4: an entity left with only a geo-property its query named is still an entity of the answer, not an empty one to be discarded.
 #[tokio::test]
 async fn distop_query_entities_an_entity_left_with_only_location_is_kept() {
     let (entities, _) = query_answered_by_source(
@@ -355,8 +331,7 @@ async fn distop_query_entities_an_entity_left_with_only_location_is_kept() {
     assert!(merged.get("speed").is_none(), "the attribute the query did not name is dropped: {merged}");
 }
 
-/// Per-source Entity Arrays merge per clause 4.5.5: a same-id entity is merged
-/// across sources, and distinct-id entities coexist. Confirms REQ-CONS-31.
+/// Per-source Entity Arrays merge per clause 4.5.5: a same-id entity is merged across sources, and distinct-id entities coexist.
 #[tokio::test]
 async fn distop_query_entities_merges_arrays_per_4_5_5() {
     let topology = topology::chain().await.expect("three-broker topology");

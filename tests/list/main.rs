@@ -34,8 +34,6 @@ async fn query(client: &TestClient, query_str: &str) -> Value {
     response.json_value().expect("entity query response must be valid JSON")
 }
 
-// --- ListProperty (spec 5.2.36) ---
-
 #[tokio::test]
 async fn list_property_create_retrieve_normalized_returns_list_property_with_value_list() {
     let scope = TestEnvironment::from_suite("list").await.expect("isolated test environment");
@@ -100,8 +98,6 @@ async fn list_property_string_values_round_trip_through_create_and_retrieve() {
     assert_eq!(value_list[3], "delta");
     scope.finish().await.expect("cleanup failed");
 }
-
-// --- ListRelationship (spec 5.2.37) ---
 
 #[tokio::test]
 async fn list_relationship_create_retrieve_normalized_returns_list_relationship_with_object_list() {

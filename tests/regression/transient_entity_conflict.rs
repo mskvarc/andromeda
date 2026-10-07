@@ -8,17 +8,15 @@
 //! of its own is given one "corresponding to the expiresAt found on the
 //! Entity", and an Attribute whose own value "is further in the future than the
 //! expiresAt value found on the Entity" is "overwritten to corresponding to the
-//! earlier `DateTime`". Nothing implemented that: the merge folded the versions
-//! and let clause 4.5.5.3 resolve the entity-level value away, so the
-//! transience a source did report was lost entirely.
+//! earlier `DateTime`". The merge must not fold the versions and let clause
+//! 4.5.5.3 resolve the entity-level value away, which would lose the transience
+//! a source reported entirely.
 //!
 //! Every scenario here registers a Context Source, so every scenario releases
 //! its registrations and its mock sources before it asserts anything: a
 //! registration left behind by a failed assertion points at a mock port that is
 //! no longer listening, and the broker goes on forwarding to it for every later
 //! request that matches.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -320,8 +318,7 @@ async fn regression_transient_conflict_attribute_expiry_is_clamped_only_when_it_
 ///
 /// The coordinates are whole numbers deliberately: a forwarded geometry with a
 /// fractional coordinate is currently carried verbatim rather than parsed as a
-/// `GeoProperty`, which is a separate defect recorded as
-/// `followup-forwarded-geometry-precision` in `docs/spec-conformance-sweep.md`.
+/// `GeoProperty`.
 #[tokio::test]
 async fn regression_transient_conflict_named_geo_properties_receive_the_propagation() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -862,7 +859,7 @@ async fn regression_transient_conflict_the_query_path_differentiates_the_same_wa
 /// Clause 4.5.5.2 is scoped to Entities "received from a registered Context
 /// Source". A purely local read has no version to conflict with, so an
 /// entity-level `expiresAt` never reaches the Attributes of a locally held
-/// Entity -- the independence `tests/expiration` pins for the write path.
+/// Entity.
 #[tokio::test]
 async fn regression_transient_conflict_a_local_read_leaves_attribute_expiry_independent() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

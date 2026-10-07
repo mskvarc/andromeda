@@ -3,12 +3,12 @@
 //!
 //! The single merge (clause 5.6.17) and replace (clause 5.6.18) paths each
 //! record one match carrying the precise instance transitions the mutation
-//! made -- never a coarse `entityUpdated`, and never one match per changed
+//! made, never a coarse `entityUpdated`, and never one match per changed
 //! attribute (clause 5.8.6). These tests commit each operation against the
 //! shared recording harness and read the `subscription_matches` off the
 //! [`AtomicWrite`](andromeda_context_commit::atomic_write::AtomicWrite) it
-//! produced, so a regression to a whole-entity trigger would fail loudly rather
-//! than only under an HTTP-status integration test.
+//! produced, so a whole-entity trigger fails here rather than only under an
+//! HTTP-status integration test.
 
 use crate::{
     admission_fixture::{admitted_context, admitted_entity},

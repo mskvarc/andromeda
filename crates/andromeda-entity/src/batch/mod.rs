@@ -95,7 +95,7 @@ pub enum UpsertPolicy {
 /// at the handler boundary.
 ///
 /// One submitted instance contributes exactly one entry, so an identifier the
-/// array repeats appears once per instance — clause 5.5.11.0 has each instance
+/// array repeats appears once per instance, clause 5.5.11.0 has each instance
 /// answered as if it had arrived in its own request.
 pub struct BatchResult {
     /// Entity IDs that were successfully processed.
@@ -332,7 +332,7 @@ impl EntityService {
     /// Reports the first chunk-level failure: [`EntityError::Persistence`]
     /// when the store could not read or commit a chunk. A failure that concerns
     /// one entity only is carried in [`BatchResult::errors`] instead, because
-    /// clause 5.6.8 reports batch results per entity -- among them an entity
+    /// clause 5.6.8 reports batch results per entity, among them an entity
     /// the forwarding phase narrowed whose remainder does not expand, and
     /// [`EntityError::Contention`] for an entity whose write lost to a
     /// concurrent writer on every attempt.

@@ -1,7 +1,4 @@
-//! Cascade limiting, `Via` propagation, loop prevention, and per-tenant
-//! separation of federated requests (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.4,
-//! 6.3.18). Header capture on `T-MOCK`; real cascades on `T-PAIR`; loops on
-//! `T-LOOP`; tenancy on `T-TENANT`.
+//! Cascade limiting, `Via` propagation, loop prevention, and per-tenant separation of federated requests (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.4, 6.3.18).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -22,9 +19,7 @@ const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
 /// The path a broker appends to a registration `endpoint` for an entity query.
 const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 
-/// The request a broker forwards to a registered endpoint signals cascade
-/// limiting: its `Via` chain carries the forwarding broker's own alias (clause
-/// 6.3.18). Confirms REQ-FW-30.
+/// The request a broker forwards to a registered endpoint signals cascade limiting: its `Via` chain carries the forwarding broker's own alias (clause 6.3.18).
 #[tokio::test]
 async fn distop_entity_via_local_scope_signaled_to_registered_endpoint() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -71,9 +66,7 @@ async fn distop_entity_via_local_scope_signaled_to_registered_endpoint() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The `Via` header of a forwarded request carries the encountered source
-/// aliases, letting a downstream source detect a loop (clause 6.3.18). Confirms
-/// REQ-FW-31.
+/// The `Via` header of a forwarded request carries the encountered source aliases, letting a downstream source detect a loop (clause 6.3.18).
 #[tokio::test]
 async fn distop_entity_via_header_carries_encountered_source_aliases() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -121,9 +114,7 @@ async fn distop_entity_via_header_carries_encountered_source_aliases() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A query whose incoming `Via` already lists a source's alias is not forwarded
-/// to that source: the registration is skipped to prevent a loop (clause
-/// 6.3.18). Confirms REQ-FW-31.
+/// A query whose incoming `Via` already lists a source's alias is not forwarded to that source: the registration is skipped to prevent a loop (clause 6.3.18).
 #[tokio::test]
 async fn distop_entity_via_csr_alias_in_header_skips_csr() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -165,9 +156,7 @@ async fn distop_entity_via_csr_alias_in_header_skips_csr() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A two-hop cascade appends each broker's alias to the `Via` chain, so the
-/// final source sees both aliases and can exclude an already-listed hop (clause
-/// 6.3.18). Confirms REQ-FW-31, REQ-FW-30.
+/// A two-hop cascade appends each broker's alias to the `Via` chain, so the final source sees both aliases and can exclude an already-listed hop (clause 6.3.18).
 #[tokio::test]
 async fn distop_entity_via_chain_appends_alias_and_excludes_loop() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -218,10 +207,7 @@ async fn distop_entity_via_chain_appends_alias_and_excludes_loop() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A single exclusive registration on each of two brokers pointing at the other
-/// for the same id forms a loop. For a distributed GET clause 6.3.17 reports the
-/// loop as `NGSILD-Warning` 199 rather than 508, which is reserved for the HTTP
-/// unsafe methods. Confirms REQ-FW-31.
+/// A single exclusive registration on each of two brokers pointing at the other for the same id forms a loop. For a distributed GET clause 6.3.17 reports the loop as `NGSILD-Warning` 199 rather than 508, which is reserved for the HTTP unsafe methods.
 #[tokio::test]
 async fn distop_entity_loop_single_exclusive_returns_199_warning() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -258,8 +244,7 @@ async fn distop_entity_loop_single_exclusive_returns_199_warning() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A loop among multiple inclusive sources does not fail the request: it returns
-/// 200 with a 199 warning rather than 508 (clause 6.3.18). Confirms REQ-FW-31.
+/// A loop among multiple inclusive sources does not fail the request: it returns 200 with a 199 warning rather than 508 (clause 6.3.18).
 #[tokio::test]
 async fn distop_entity_loop_multi_source_returns_199_warning() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -315,15 +300,7 @@ async fn distop_entity_loop_multi_source_returns_199_warning() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Each tenant is federated separately (clause 4.3.6.4) and a forwarded
-/// request runs in the tenant its registration names (clause 4.14: "the Tenant
-/// information from the Context Source Registration has to be used. If no
-/// Tenant information is present in the Context Source Registration, no Tenant
-/// information is to be used and thus the default Tenant is targeted"). Two
-/// tenants hold a registration with the same id: the first names a tenant at the
-/// source and is forwarded with it, the second names none and is forwarded
-/// without `NGSILD-Tenant`, although both queries ran under a tenant of their
-/// own. Confirms REQ-FW-32.
+/// Each tenant is federated separately (clause 4.3.6.4) and a forwarded request runs in the tenant its registration names (clause 4.14: "the Tenant information from the Context Source Registration has to be used. If no Tenant information is present in the Context Source Registration, no Tenant information is to be used and thus the default Tenant is targeted"). Two tenants hold a registration with the same id: the first names a tenant at the source and is forwarded with it, the second names none and is forwarded without `NGSILD-Tenant`, although both queries ran under a tenant of their own.
 #[tokio::test]
 async fn distop_entity_via_multi_tenant_each_tenant_considered_separately() {
     let topology = topology::single().await.expect("single-broker topology");

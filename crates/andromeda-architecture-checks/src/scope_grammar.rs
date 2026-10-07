@@ -7,8 +7,8 @@
 //! goes through those, so a Scope is read the same way wherever it is written,
 //! stored, matched or merged. A second reading -- splitting a Scope on `/` by
 //! hand, admitting a level without its bound, or holding the raw grammar type
-//! that skips both -- is what let two stores rebuild every Scope with a leading
-//! `/` while a third kept it as written.
+//! that skips both -- lets one store drop a Scope's leading
+//! `/` while another keeps it as written.
 //!
 //! The guard flags, in any production source outside the lexicon's `scope`
 //! module:

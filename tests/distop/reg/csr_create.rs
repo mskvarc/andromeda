@@ -52,7 +52,7 @@ fn contains_token(value: &Value, token: &str) -> bool {
     }
 }
 
-/// An omitted `mode` defaults to `inclusive` (clause 5.2.9). Confirms REQ-REG-20.
+/// An omitted `mode` defaults to `inclusive` (clause 5.2.9).
 #[tokio::test]
 async fn reg_mode_omitted_defaults_inclusive() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -64,7 +64,6 @@ async fn reg_mode_omitted_defaults_inclusive() {
 }
 
 /// Omitted `operations` default to the `federationOps` group (clause 5.2.9).
-/// Confirms REQ-REG-24.
 #[tokio::test]
 async fn reg_operations_omitted_defaults_federationops() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -80,7 +79,6 @@ async fn reg_operations_omitted_defaults_federationops() {
 }
 
 /// A valid ISO 8601 `refreshRate` duration is accepted and stored verbatim.
-/// Confirms REQ-REG-26.
 #[tokio::test]
 async fn reg_refreshrate_valid_duration_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -92,7 +90,7 @@ async fn reg_refreshrate_valid_duration_accepted() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A valid `management.cacheDuration` is accepted and stored. Confirms REQ-REG-39.
+/// A valid `management.cacheDuration` is accepted and stored.
 #[tokio::test]
 async fn reg_management_cacheduration_valid_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -104,7 +102,7 @@ async fn reg_management_cacheduration_valid_accepted() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `datasetId` accepts both URIs and the `@none` token. Confirms REQ-REG-14.
+/// `datasetId` accepts both URIs and the `@none` token.
 #[tokio::test]
 async fn reg_datasetid_valid_uris_and_none_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -117,7 +115,7 @@ async fn reg_datasetid_valid_uris_and_none_accepted() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `contextSourceInfo` round-trips. Confirms REQ-REG-11.
+/// `contextSourceInfo` round-trips.
 #[tokio::test]
 async fn reg_contextsourceinfo_stored() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -136,7 +134,7 @@ async fn reg_contextsourceinfo_stored() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A non-empty `contextSourceAlias` is stored. Confirms REQ-REG-12.
+/// A non-empty `contextSourceAlias` is stored.
 #[tokio::test]
 async fn reg_contextsourcealias_nonempty_stored() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -148,7 +146,7 @@ async fn reg_contextsourcealias_nonempty_stored() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The whole `management` object round-trips. Confirms REQ-REG-17, REQ-REG-41.
+/// The whole `management` object round-trips.
 #[tokio::test]
 async fn reg_management_object_stored() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -162,7 +160,7 @@ async fn reg_management_object_stored() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `scope` round-trips. Confirms REQ-REG-28.
+/// `scope` round-trips.
 #[tokio::test]
 async fn reg_scope_stored() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -176,7 +174,6 @@ async fn reg_scope_stored() {
 }
 
 /// A `managementInterval` with only `startAt` is accepted as open-ended.
-/// Confirms REQ-REG-38.
 #[tokio::test]
 async fn reg_timeinterval_startat_only_open_ended_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -195,7 +192,7 @@ async fn reg_timeinterval_startat_only_open_ended_accepted() {
 }
 
 /// A registration with no `id` is assigned a generated URI, returned in
-/// `Location` and retrievable there. Confirms REQ-REG-6, REQ-REG-63.
+/// `Location` and retrievable there.
 #[tokio::test]
 async fn reg_missing_id_generates_uri() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -229,7 +226,6 @@ async fn reg_missing_id_generates_uri() {
 }
 
 /// A valid CSR with an explicit id returns 201 and carries that id.
-/// Confirms REQ-REG-64.
 #[tokio::test]
 async fn reg_valid_registration_returns_201_with_id() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -240,7 +236,7 @@ async fn reg_valid_registration_returns_201_with_id() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The 201 `Location` ends with the CSR URI. Confirms REQ-REG-65.
+/// The 201 `Location` ends with the CSR URI.
 #[tokio::test]
 async fn reg_success_returns_location_with_csr_uri() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -266,7 +262,6 @@ async fn reg_success_returns_location_with_csr_uri() {
 /// A registration is scoped to the tenant that created it: visible under that
 /// tenant, absent under the default tenant, and the same id can be created
 /// independently under the default tenant (clause 5.2.9, multi-tenancy 4.14).
-/// Confirms REQ-REG-29.
 #[tokio::test]
 async fn reg_tenant_scopes_registration() {
     let topology = topology::single().await.expect("single-broker topology");

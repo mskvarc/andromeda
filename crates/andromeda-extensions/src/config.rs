@@ -1,7 +1,6 @@
 //! Operator configuration for Andromeda's opt-in, non-standard extensions.
 //!
-//! Every extension is a Class 1 additive feature in the sense of
-//! `docs/studies/extension-strategy.md`: inert unless a client asks for it, and
+//! Every extension is an additive feature: inert unless a client asks for it, and
 //! its "off" state is exactly the behaviour of a conformant broker that never
 //! implemented it. The extensions are therefore configured at runtime rather
 //! than gated at build time, one [`HttpFeatureMode`] field each, defaulting off.
@@ -54,9 +53,8 @@ pub enum ExtensionsConfigError {
 
 /// Runtime configuration for the opt-in extensions.
 ///
-/// Each feature is a [`HttpFeatureMode`] rather than a bare `bool`, matching the
-/// project's enums-over-bools rule and the existing HTTP-stack feature
-/// switches. Every one but [`ExtensionsConfig::cursor_pagination`] defaults to
+/// Each feature is a [`HttpFeatureMode`] rather than a bare `bool`. Every one
+/// but [`ExtensionsConfig::cursor_pagination`] defaults to
 /// [`HttpFeatureMode::Disabled`], so a broker with no `[extensions]` section is
 /// a conformant broker.
 #[derive(Deserialize, Serialize, TomlComment, Debug, Clone)]

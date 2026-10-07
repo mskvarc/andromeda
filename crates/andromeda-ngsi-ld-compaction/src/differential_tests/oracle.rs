@@ -1,4 +1,4 @@
-//! The processor's compaction, as the read path has always performed it.
+//! The processor's compaction, as the read path performs it.
 //!
 //! This is the reading the walk is held to: the stored document with its
 //! attribute-instance system times stripped when the request did not ask for

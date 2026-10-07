@@ -58,10 +58,8 @@ pub async fn stream(
     TypedPath(subscription_id): TypedPath<Identifier>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ProblemResponse> {
-    // Validate subscription exists.
     let subscription = state.subscriptions.get(&target, &subscription_id).await.with_subscription_instance(&uri)?;
 
-    // Validate subscription uses WebSocket transport via the canonical parser.
     let is_ws = parse_endpoint_transport(
         subscription.notification.endpoint.uri.url(),
         subscription.notification.endpoint.notifier_info.as_deref(),
@@ -75,12 +73,10 @@ pub async fn stream(
         ));
     }
 
-    // Get WS registry and config.
     let ws_registry = Arc::clone(&state.ws_registry);
     let ping_interval_secs = state.ws_ping_interval_secs;
     let buffer_size = state.ws_channel_buffer_size;
 
-    // Register connection.
     let (connection_id, rx, cancellation_token) = ws_registry.register(&subscription_id, buffer_size);
 
     debug!(%subscription_id, ?connection_id, "WebSocket client connected");
@@ -115,7 +111,6 @@ async fn handle_ws(
 
     loop {
         tokio::select! {
-            // Outbound: notification from registry.
             msg = rx.recv() => {
                 match msg {
                     Some(notification) => {
@@ -126,18 +121,15 @@ async fn handle_ws(
                     None => break,
                 }
             }
-            // Cancellation: subscription deleted or transport changed.
             () = cancellation_token.cancelled() => {
                 let _ = sender.send(Message::Close(None)).await;
                 break;
             }
-            // Keep-alive ping.
             _ = ping_interval.tick() => {
                 if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
                     break;
                 }
             }
-            // Inbound: client frames.
             frame = receiver.next() => {
                 match frame {
                     Some(Ok(Message::Close(_)) | Err(_)) | None => break,
@@ -163,5 +155,5 @@ async fn handle_ws(
         connection_id = ?guard.connection_id,
         "WebSocket client disconnected"
     );
-    // guard drops here -> unregister
+    // `guard` drops here and unregisters the connection.
 }

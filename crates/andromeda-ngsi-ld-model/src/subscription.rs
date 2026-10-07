@@ -71,9 +71,8 @@ pub struct EntitySelector {
     /// Type selection expression the entity's types must satisfy (required).
     ///
     /// A clause 4.17 expression rather than a single name: a selector may
-    /// alternate, as in `(Building|Tower)`, and matching used to rebuild that
-    /// into an unanchored regex under which `Building` also matched an entity
-    /// typed `MyBuilding`.
+    /// alternate, as in `(Building|Tower)`. Matching is by whole type name:
+    /// `Building` does not match an entity typed `MyBuilding`.
     #[serde(rename = "type")]
     pub type_: TypeExprRaw,
 }

@@ -1,8 +1,4 @@
-//! Version negotiation with older context sources: the broker rejects a
-//! malformed source payload, requests a target version, records the returned
-//! version, and collates payloads that omit newer members (ETSI GS CIM 009
-//! v1.9.1, clause 4.3.6.8). All `T-MOCK`/`T-MOCK-N`. The version-negotiation
-//! rows are `UNKNOWN` and classify on first run.
+//! Version negotiation with older context sources: the broker rejects a malformed source payload, requests a target version, records the returned version, and collates payloads that omit newer members (ETSI GS CIM 009 v1.9.1, clause 4.3.6.8).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -54,9 +50,7 @@ async fn register_inclusive(topology: &MultiBrokerTopology<BrokerRole>, endpoint
     );
 }
 
-/// A malformed source payload is excluded from the aggregate rather than failing
-/// the request: the response is 200 with a 111 warning (clause 4.3.6.8).
-/// Confirms REQ-FW-56.
+/// A malformed source payload is excluded from the aggregate rather than failing the request: the response is 200 with a 111 warning (clause 4.3.6.8).
 #[tokio::test]
 async fn distop_entity_bc_broker_rejects_malformed_source_payload() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -82,8 +76,7 @@ async fn distop_entity_bc_broker_rejects_malformed_source_payload() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The broker indicates a target version on the forwarded request so a source
-/// can amend its response to that version (clause 4.3.6.8). Confirms REQ-FW-57.
+/// The broker indicates a target version on the forwarded request so a source can amend its response to that version (clause 4.3.6.8).
 #[tokio::test]
 async fn distop_entity_bc_broker_requests_target_version_source_amends() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -114,8 +107,7 @@ async fn distop_entity_bc_broker_requests_target_version_source_amends() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The requested version value is in major.minor form (clause 4.3.6.8). Confirms
-/// REQ-FW-58.
+/// The requested version value is in major.minor form (clause 4.3.6.8).
 #[tokio::test]
 async fn distop_entity_bc_version_values_are_major_minor() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -145,9 +137,7 @@ async fn distop_entity_bc_version_values_are_major_minor() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The broker reads and records the version a source indicates it returned, so a
-/// source-provided entity is still integrated (clause 4.3.6.8). Confirms
-/// REQ-FW-64.
+/// The broker reads and records the version a source indicates it returned, so a source-provided entity is still integrated (clause 4.3.6.8).
 #[tokio::test]
 async fn distop_entity_bc_source_indicates_returned_version() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -179,9 +169,7 @@ async fn distop_entity_bc_source_indicates_returned_version() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// When collating results the broker uses the source's version, so a 1.3
-/// source's payload is not rejected for missing 1.9 members (clause 4.3.6.8).
-/// Confirms REQ-FW-65.
+/// When collating results the broker uses the source's version, so a 1.3 source's payload is not rejected for missing 1.9 members (clause 4.3.6.8).
 #[tokio::test]
 async fn distop_entity_bc_broker_uses_version_info_when_collating() {
     let topology = topology::single().await.expect("single-broker topology");

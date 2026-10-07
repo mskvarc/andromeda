@@ -1,16 +1,8 @@
 //! A request body whose object names one member twice is refused.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.5.4 makes data that is not syntactically
-//! correct according to the API data type definitions `BadRequestData`, and
-//! IETF RFC 8259 section 4 asks the member names within an object to be unique
-//! and gives a repeated name no defined meaning. The request path read a body in
-//! place and kept the last of two attributes of one name, so the write that
-//! passed for a client's mistake silently dropped the first of the two.
+//! ETSI GS CIM 009 v1.9.1 clause 5.5.4 makes data that is not syntactically correct according to the API data type definitions `BadRequestData`, and IETF RFC 8259 section 4 asks the member names within an object to be unique and gives a repeated name no defined meaning. Silently keeping the last of two attributes of one name would drop the first without telling the client.
 //!
-//! Needs the host broker: the case drives the HTTP API and is not run without
-//! one.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Needs the host broker.
 
 use crate::large_entity_budget::send_json;
 use andromeda_test_harness::environment::TestEnvironment;

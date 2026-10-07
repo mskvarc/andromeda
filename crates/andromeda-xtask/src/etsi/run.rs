@@ -28,9 +28,8 @@ const COMPOSE_FILE: &str = "docker/compose/dev/docker-compose.yaml";
 /// The robot artifacts cleared from the output directory before a run.
 const ROBOT_ARTIFACTS: [&str; 4] = ["output.xml", "log.html", "report.html", "errors.log"];
 /// The broker's listen port. This must equal the `localhost:1056` the infra patch
-/// (`suite-delta/infra` i01 `variables.py`) bakes into the checkout: the harness no
-/// longer rewrites the suite's configuration at runtime, so the two are only kept in
-/// step by both naming the same fixed port.
+/// bakes into the checkout: the harness does not rewrite the suite's configuration
+/// at runtime, so the two stay in step only by both naming the same fixed port.
 const BROKER_PORT: u16 = 1056;
 
 /// Arguments to `xtask etsi run`.

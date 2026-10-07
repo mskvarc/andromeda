@@ -595,8 +595,7 @@ mod tests {
     }
 
     /// Clause 4.5.23 admits any positive `joinLevel`; a six-entity chain
-    /// requested at level 7 resolves all five non-root links, which the
-    /// deleted five-level cap would have truncated.
+    /// requested at level 7 resolves all five non-root links.
     #[tokio::test]
     async fn a_join_level_beyond_the_deleted_cap_resolves_the_whole_chain() {
         let chain = [
@@ -620,7 +619,7 @@ mod tests {
 
     /// Clause 4.5.23.1: a Relationship annotated with an `objectType` declares
     /// its object an Internal Linked Entity, so an id the local store does not
-    /// hold is asked of the remainder of the system — with the levels still to
+    /// hold is asked of the remainder of the system, with the levels still to
     /// resolve, and with the already-walked identifiers so the remote side does
     /// not send back what the requester already holds.
     #[tokio::test]
@@ -643,7 +642,7 @@ mod tests {
 
     /// The flat append order of clause 6.4.3.2 is per level: whatever the local
     /// store answered for a level comes first, then what the remainder of the
-    /// system answered for the same level — here the locally held `L`, named
+    /// system answered for the same level, here the locally held `L`, named
     /// second, still precedes the remotely held `R`, named first.
     #[tokio::test]
     async fn remotely_resolved_entities_follow_the_local_ones_of_the_same_level() {

@@ -4,8 +4,7 @@
 //!
 //! Every test runs under a private tenant of its own, whose collections start
 //! empty, against the base tier's default pagination policy (cursor by
-//! default, offset on request). The suite of brokers started under other
-//! policies is `tests/pagination_policy`.
+//! default, offset on request).
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

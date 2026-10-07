@@ -23,7 +23,7 @@ const DELIVER: Duration = Duration::from_secs(10);
 const SILENCE: Duration = Duration::from_secs(3);
 
 /// A valid subscription persists and is notification-eligible: a matching entity
-/// creation delivers a notification carrying its id (clause 5.8.1). Confirms REQ-MAP-4.
+/// creation delivers a notification carrying its id (clause 5.8.1).
 #[tokio::test]
 async fn sub_create_valid_persists_and_is_notification_eligible() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -67,7 +67,7 @@ async fn sub_create_valid_persists_and_is_notification_eligible() {
 }
 
 /// The entity-type selector restricts delivery: a `Vehicle` fires, an unrelated
-/// `Device` stays silent (clause 5.8.2). Confirms REQ-MAP-10.
+/// `Device` stays silent (clause 5.8.2).
 #[tokio::test]
 async fn sub_create_entity_selector_restricts_subscription() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -128,7 +128,7 @@ async fn sub_create_entity_selector_restricts_subscription() {
 }
 
 /// Absent `watchedAttributes` watches all attributes, so any matching change
-/// fires (clause 5.8.2). Confirms REQ-MAP-12.
+/// fires (clause 5.8.2).
 #[tokio::test]
 async fn sub_create_absent_watched_attributes_watches_all() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -175,7 +175,7 @@ async fn sub_create_absent_watched_attributes_watches_all() {
 }
 
 /// A subscription with `watchedAttributes` but no `entities` spans all holders of
-/// the attribute (clause 5.8.2). Confirms REQ-MAP-13.
+/// the attribute (clause 5.8.2).
 #[tokio::test]
 async fn sub_create_watched_attributes_no_entities_spans_all_holders() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -221,7 +221,7 @@ async fn sub_create_watched_attributes_no_entities_spans_all_holders() {
 }
 
 /// A `timeInterval` subscription notifies periodically regardless of change
-/// (clause 5.8.6). Confirms REQ-MAP-19.
+/// (clause 5.8.6).
 #[tokio::test]
 async fn sub_create_time_interval_periodic_regardless_of_change() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -272,7 +272,7 @@ async fn sub_create_time_interval_periodic_regardless_of_change() {
 }
 
 /// With no `timeInterval` a subscription is change-driven: silent until a matching
-/// change, then it fires (clause 5.8.6). Confirms REQ-MAP-20.
+/// change, then it fires (clause 5.8.6).
 #[tokio::test]
 async fn sub_create_no_time_interval_change_driven() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -319,7 +319,7 @@ async fn sub_create_no_time_interval_change_driven() {
 }
 
 /// Reaching `expiresAt` sets `status` `expired` and stops notifications
-/// (clause 5.2.12). Confirms REQ-MAP-35.
+/// (clause 5.2.12).
 #[tokio::test]
 async fn sub_expiration_reached_sets_status_expired_and_stops_notifications() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -375,7 +375,7 @@ async fn sub_expiration_reached_sets_status_expired_and_stops_notifications() {
 }
 
 /// Deleting a subscription removes it and stops further notifications
-/// (clause 5.8.1). Confirms REQ-MAP-54.
+/// (clause 5.8.1).
 #[tokio::test]
 async fn sub_delete_removes_and_stops_notifications() {
     let topology = topology::single().await.expect("single-broker topology");

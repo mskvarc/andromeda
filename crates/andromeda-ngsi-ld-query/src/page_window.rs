@@ -1,15 +1,6 @@
 //! The page of an identifier-ordered collection a request asks for (clause 5.5.9).
 //!
-//! Clause 5.5.9 offers two ways of pointing at a page: the opaque pointer of
-//! clause 5.5.9.1, which Andromeda carries as a keyset [`PageCursor`], and the
-//! transparent `limit`/`offset` pair of clause 5.5.9.2. Which one a request
-//! walks by is decided once, by the pagination policy at the request boundary,
-//! and the resulting [`PageWindow`] is what every store and every in-memory
-//! cut is driven by. A store pages its own rows itself. A collection assembled
-//! in memory -- the local entities merged with what context sources
-//! contributed (clause 5.7.2.4) -- is sorted by identifier and cut here
-//! instead, so either pointer selects from it exactly the elements it would
-//! have selected from a store holding the same rows.
+//! Clause 5.5.9 offers the opaque pointer of clause 5.5.9.1, carried as a keyset [`PageCursor`], and the transparent `limit`/`offset` pair of clause 5.5.9.2. The pagination policy at the request boundary decides which one a request walks by, and the resulting [`PageWindow`] drives every store and every in-memory cut. A store pages its own rows; a collection assembled in memory (local entities merged with what context sources contributed, clause 5.7.2.4) is sorted by identifier and cut here, so either pointer selects from it exactly what it would select from a store holding the same rows.
 
 use crate::{cursor::PageCursor, page_fullness::PageFullness, read_order::ReadOrder};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -17,19 +8,14 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 /// Where a page starts in an identifier-ordered collection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PageStart {
-    /// Clause 5.5.9.2: skip this many elements of the collection.
+    /// Clause 5.5.9.2: skip this many elements.
     Offset(u32),
-    /// Clause 5.5.9.1: continue from the opaque cursor the page was fetched
-    /// under, or begin the walk when there is none.
+    /// Clause 5.5.9.1: continue from the opaque cursor, or begin the walk when there is none.
     Cursor(Option<PageCursor>),
 }
 
 impl PageStart {
-    /// The order a store reads the page this start selects in.
-    ///
-    /// A backward cursor's page ends at its boundary and the from-end page at
-    /// the end of the collection, so both are read descending from that end
-    /// and reversed for presentation; every other page is read as presented.
+    /// The order a store reads the page in. A backward cursor's page ends at its boundary and the from-end page at the end of the collection, so both are read descending from that end and reversed for presentation.
     #[must_use]
     pub const fn read_order(&self) -> ReadOrder {
         match self {
@@ -58,17 +44,13 @@ impl PageWindow {
         }
     }
 
-    /// The whole collection, for a reader that needs every match rather than
-    /// one page of them: an identifier set a map fixes, a purge, a candidate
-    /// set a later filter thins.
+    /// The whole collection, for a reader that needs every match rather than one page.
     #[must_use]
     pub const fn unbounded() -> PageWindow {
         PageWindow::offset(u32::MAX, 0)
     }
 
-    /// The `limit` elements that follow `boundary` in identifier order, the
-    /// step of an internal keyset walk that must neither skip nor repeat an
-    /// element while the collection changes under it.
+    /// The `limit` elements that follow `boundary` in identifier order, the step of an internal keyset walk that must neither skip nor repeat an element while the collection changes.
     #[must_use]
     pub const fn after(limit: u32, boundary: Identifier) -> PageWindow {
         PageWindow {
@@ -77,10 +59,7 @@ impl PageWindow {
         }
     }
 
-    /// Whether a page of `returned` elements filled this window.
-    ///
-    /// The one definition of the clause 6.3.10 page-fullness signal: a page is
-    /// full when it returned at least its limit.
+    /// Whether a page of `returned` elements filled this window; the single definition of the clause 6.3.10 page-fullness signal.
     #[must_use]
     pub fn fullness(&self, returned: usize) -> PageFullness {
         if returned >= usize::try_from(self.limit).unwrap_or(usize::MAX) {
@@ -90,18 +69,9 @@ impl PageWindow {
         }
     }
 
-    /// Cut this window from `sorted`, a collection sorted ascending by the
-    /// identifier `key` reads, compared byte-wise as the store collates
-    /// identifiers.
+    /// Cuts this window from `sorted`, ascending by the identifier `key` reads, compared byte-wise as the store collates identifiers.
     ///
-    /// An offset skips that many elements; it needs no particular order, so a
-    /// collection in a requested order is cut by it as well. A forward cursor
-    /// takes the elements past its boundary, a backward one the elements
-    /// closest before it, and the from-end cursor the final elements: at most
-    /// `limit` of them each time, in ascending order. These are the rows a
-    /// store's keyset read returns once a descending read is reversed, so a
-    /// walk moves between a stored and a merged collection without skipping or
-    /// repeating an element.
+    /// An offset needs no particular order. A forward cursor takes the elements past its boundary, a backward one the elements closest before it, and the from-end cursor the final elements: at most `limit`, ascending. These are the rows a store's keyset read returns once a descending read is reversed, so a walk moves between a stored and a merged collection without skipping or repeating an element.
     #[must_use]
     pub fn cut<T>(&self, sorted: Vec<T>, key: impl Fn(&T) -> &str) -> Vec<T> {
         let limit = usize::try_from(self.limit).unwrap_or(usize::MAX);
@@ -173,8 +143,7 @@ mod tests {
         assert_eq!(cut(3, PageStart::Cursor(Some(PageCursor::After(uri("urn:e:2"))))), ids(&[3, 4, 5]));
     }
 
-    /// A forward cursor whose boundary left the collection still resumes at the
-    /// next identifier that remains, so a deletion mid-walk skips nothing.
+    /// The boundary may have left the collection; a deletion mid-walk must skip nothing.
     #[test]
     fn a_forward_cursor_resumes_past_a_boundary_that_left_the_collection() {
         let remaining: Vec<String> = collection().into_iter().filter(|id| id != "urn:e:3").collect();
@@ -218,8 +187,7 @@ mod tests {
         assert_eq!(cut(40, PageStart::Cursor(None)), collection());
     }
 
-    /// Identifiers compare byte-wise, as the store collates them: `urn:e:10`
-    /// sorts before `urn:e:9`, and a cursor honours that order.
+    /// Identifiers compare byte-wise as the store collates them: `urn:e:10` sorts before `urn:e:9`.
     #[test]
     fn identifiers_compare_byte_wise() {
         let mut sorted = vec!["urn:e:9".to_string(), "urn:e:10".to_string(), "urn:e:1".to_string()];

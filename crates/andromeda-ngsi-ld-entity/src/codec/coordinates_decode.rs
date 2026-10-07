@@ -6,7 +6,7 @@
 //! the nesting the geometry type prescribes as the bytes stream past, building
 //! each [`Position`] through [`Position::try_new`], each line through
 //! [`LineStringCoordinates::try_new`] and each ring through
-//! [`LinearRing::try_new`] — the rules every geometry path shares — so a
+//! [`LinearRing::try_new`] (the rules every geometry path shares), so a
 //! geometry of a million positions costs its positions and nothing more.
 
 use crate::codec::{

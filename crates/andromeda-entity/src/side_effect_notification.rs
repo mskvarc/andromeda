@@ -7,8 +7,8 @@
 //! their notifications. Brokers sharing a tenant database may run different
 //! delivery modes, so the draining broker settles them by its own mode, not the
 //! producer's: a live-delivery broker hands them to its in-process notification
-//! worker, and a durable-delivery broker -- whose worker never evaluates an
-//! in-process change -- matches them against its subscription cache and queues
+//! worker, and a durable-delivery broker, whose worker never evaluates an
+//! in-process change, matches them against its subscription cache and queues
 //! the deliveries in the job's replay commit. Either way each change is notified
 //! once.
 

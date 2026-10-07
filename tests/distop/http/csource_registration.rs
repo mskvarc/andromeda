@@ -1,7 +1,4 @@
-//! Registry API response codes for `csourceRegistrations` (clause 6.8, 6.9): the
-//! `201`/`Location` create, the create `400`/`409`/`422` rejections, the array
-//! query, and the retrieve/update/delete `200`/`204`/`400`/`404` outcomes. All
-//! `T-LOCAL` (Registry-API operations are always local).
+//! Registry API response codes for `csourceRegistrations` (clause 6.8, 6.9): the `201`/`Location` create, the create `400`/`409`/`422` rejections, the array query, and the retrieve/update/delete `200`/`204`/`400`/`404` outcomes.
 
 use crate::{
     http::forwarding::{PLACEHOLDER_ENDPOINT, context_link},
@@ -12,8 +9,7 @@ use crate::{
 use andromeda_test_fixtures::problem_detail::{ALREADY_EXISTS, BAD_REQUEST_DATA};
 use serde_json::json;
 
-/// A valid registration create returns `201` with a `Location` naming the CSR
-/// (clause 6.8.3.1). Confirms REQ-HTTP-79.
+/// A valid registration create returns `201` with a `Location` naming the CSR (clause 6.8.3.1).
 #[tokio::test]
 async fn dist_http_create_csource_registration_returns_201_location() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -31,8 +27,7 @@ async fn dist_http_create_csource_registration_returns_201_location() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An invalid registration body is rejected with `400 BadRequestData`
-/// (clause 6.8.3.1). Confirms REQ-HTTP-80.
+/// An invalid registration body is rejected with `400 BadRequestData` (clause 6.8.3.1).
 #[tokio::test]
 async fn dist_http_create_csource_registration_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -48,8 +43,7 @@ async fn dist_http_create_csource_registration_invalid_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Re-creating an existing registration is rejected with `409 AlreadyExists`
-/// (clause 6.8.3.1). Confirms REQ-HTTP-80.
+/// Re-creating an existing registration is rejected with `409 AlreadyExists` (clause 6.8.3.1).
 #[tokio::test]
 async fn dist_http_create_csource_registration_duplicate_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -78,9 +72,7 @@ async fn dist_http_create_csource_registration_duplicate_returns_409() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An auxiliary registration declaring write operations violates clause
-/// 5.9.2.4, which names the error type `BadRequestData`, so the HTTP binding
-/// answers `400` (clause 6.8.3.1). Confirms REQ-HTTP-80.
+/// An auxiliary registration declaring write operations violates clause 5.9.2.4, which names the error type `BadRequestData`, so the HTTP binding answers `400` (clause 6.8.3.1).
 #[tokio::test]
 async fn dist_http_create_csource_registration_auxiliary_write_operations_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -102,9 +94,7 @@ async fn dist_http_create_csource_registration_auxiliary_write_operations_return
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration query returns `200` with an array body (clause 6.9.3.2). The
-/// query names a type: clause 5.10.2.4 rejects a discovery query that carries
-/// none of type, attrs, q or georel as too wide. Confirms REQ-HTTP-82.
+/// A registration query returns `200` with an array body (clause 6.9.3.2). The query names a type: clause 5.10.2.4 rejects a discovery query that carries none of type, attrs, q or georel as too wide.
 #[tokio::test]
 async fn dist_http_query_csource_registrations_returns_200_array() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -133,8 +123,7 @@ async fn dist_http_query_csource_registrations_returns_200_array() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Registration retrieve returns `200` for an existing id, `400` for an invalid
-/// id, and `404` for an unknown id (clause 6.9.3.1). Confirms REQ-HTTP-83.
+/// Registration retrieve returns `200` for an existing id, `400` for an invalid id, and `404` for an unknown id (clause 6.9.3.1).
 #[tokio::test]
 async fn dist_http_retrieve_csource_registration_returns_200_400_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -184,8 +173,7 @@ async fn dist_http_retrieve_csource_registration_returns_200_400_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Registration update returns `204` for a valid patch, `400` for an invalid
-/// patch, and `404` for an unknown id (clause 6.9.3.3). Confirms REQ-HTTP-84.
+/// Registration update returns `204` for a valid patch, `400` for an invalid patch, and `404` for an unknown id (clause 6.9.3.3).
 #[tokio::test]
 async fn dist_http_update_csource_registration_returns_204_400_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -239,8 +227,7 @@ async fn dist_http_update_csource_registration_returns_204_400_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Registration delete returns `204` for an existing id, `400` for an invalid id,
-/// and `404` for an unknown id (clause 6.9.3.4). Confirms REQ-HTTP-85.
+/// Registration delete returns `204` for an existing id, `400` for an invalid id, and `404` for an unknown id (clause 6.9.3.4).
 #[tokio::test]
 async fn dist_http_delete_csource_registration_returns_204_400_404() {
     let topology = topology::single().await.expect("single-broker topology");

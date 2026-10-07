@@ -6,8 +6,6 @@
 //! `LanguageProperty` of a notified entity is reduced to the language the
 //! subscription names: a Property whose value is the string of that language,
 //! carrying the `lang` it was chosen in, in place of the whole language map.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 use crate::notification_adapter::NotificationAdapter;
 use andromeda_test_harness::environment::TestEnvironment;

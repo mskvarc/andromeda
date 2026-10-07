@@ -1,4 +1,4 @@
-//! Purge forwarding — REQ-PROV-130..133 (clause 5.6.21.4).
+//! Purge forwarding (clause 5.6.21.4).
 //!
 //! Purge Entities is bound to `DELETE /entities?<query>` (clause 6.4.3.3, Table
 //! 6.4.3.3-1) and advertised by the Table 4.20-1 name `purgeEntity`. It deletes
@@ -31,7 +31,7 @@ fn context_link() -> String {
 }
 
 /// A `local=true` purge skips forwarding entirely while still deleting the
-/// locally matched entity. Confirms REQ-PROV-130 (local-scope gate).
+/// locally matched entity.
 #[tokio::test]
 async fn purge_local_scope_skips_forwarding() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -81,7 +81,7 @@ async fn purge_local_scope_skips_forwarding() {
 }
 
 /// A non-local purge forwards a purge to every matching registration that
-/// supports it. Confirms REQ-PROV-130 (support gate), 131.
+/// supports it.
 #[tokio::test]
 async fn purge_non_local_matching_csr_forwards_per_registration() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -138,7 +138,6 @@ async fn purge_non_local_matching_csr_forwards_per_registration() {
 /// `409 Conflict` (bare) or a keyed `207 Multi-Status`, with no forwarding
 /// (clause 5.6.21.4: "If the Purge Entity operation is not supported by the
 /// matched registration, this shall result in an error of type Conflict").
-/// Confirms REQ-PROV-132.
 #[tokio::test]
 async fn purge_op_unsupported_returns_conflict_or_partial() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -177,7 +176,6 @@ async fn purge_op_unsupported_returns_conflict_or_partial() {
 }
 
 /// The local purge phase queries the matched entities and then deletes them all.
-/// Confirms REQ-PROV-133.
 #[tokio::test]
 async fn purge_local_phase_queries_then_deletes() {
     let topology = topology::single().await.expect("single-broker topology");

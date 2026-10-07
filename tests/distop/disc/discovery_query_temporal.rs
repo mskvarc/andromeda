@@ -1,7 +1,4 @@
-//! Query-CSR temporal selection (clause 5.10.2 over the 5.12 temporal matching
-//! rules): latest-versus-interval partitioning, observation and management
-//! interval matching, absent-interval exclusion, and the before/after/between
-//! relations. All `T-LOCAL`.
+//! Query-CSR temporal selection (clause 5.10.2 over the 5.12 temporal matching rules): latest-versus-interval partitioning, observation and management interval matching, absent-interval exclusion, and the before/after/between relations.
 
 use crate::{
     disc::{
@@ -13,9 +10,7 @@ use crate::{
 };
 use urlencoding::encode;
 
-/// Without a temporal query the registry returns only latest-info (interval-free)
-/// registrations, excluding interval-bearing ones (clauses 5.10.2, 5.12).
-/// Confirms REQ-DISC-30.
+/// Without a temporal query the registry returns only latest-info (interval-free) registrations, excluding interval-bearing ones (clauses 5.10.2, 5.12).
 #[tokio::test]
 async fn query_csr_no_temporal_query_returns_latest_info_only() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -42,8 +37,7 @@ async fn query_csr_no_temporal_query_returns_latest_info_only() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A temporal query returns only interval-bearing registrations, excluding
-/// latest-info ones (clauses 5.10.2, 5.12). Confirms REQ-DISC-31.
+/// A temporal query returns only interval-bearing registrations, excluding latest-info ones (clauses 5.10.2, 5.12).
 #[tokio::test]
 async fn query_csr_temporal_query_returns_interval_bearing_only() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -75,9 +69,7 @@ async fn query_csr_temporal_query_returns_interval_bearing_only() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An `observedAt` temporal query is matched against a registration's
-/// `observationInterval`: an overlapping instant matches, one outside excludes
-/// (clause 5.12). Confirms REQ-DISC-32.
+/// An `observedAt` temporal query is matched against a registration's `observationInterval`: an overlapping instant matches, one outside excludes (clause 5.12).
 #[tokio::test]
 async fn query_csr_observedat_matched_against_observation_interval() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -109,8 +101,7 @@ async fn query_csr_observedat_matched_against_observation_interval() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Management time-properties (`createdAt`/`modifiedAt`) are matched against a
-/// registration's `managementInterval` (clause 5.12). Confirms REQ-DISC-33.
+/// Management time-properties (`createdAt`/`modifiedAt`) are matched against a registration's `managementInterval` (clause 5.12).
 #[tokio::test]
 async fn query_csr_management_timeproperties_matched_against_management_interval() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -131,9 +122,7 @@ async fn query_csr_management_timeproperties_matched_against_management_interval
     topology.finish().await.expect("topology cleanup");
 }
 
-/// When the interval relevant to the queried time-property is absent the
-/// registration does not match: a `createdAt` query against a CSR carrying only
-/// an `observationInterval` is excluded (clause 5.12). Confirms REQ-DISC-34.
+/// When the interval relevant to the queried time-property is absent the registration does not match: a `createdAt` query against a CSR carrying only an `observationInterval` is excluded (clause 5.12).
 #[tokio::test]
 async fn query_csr_relevant_interval_absent_no_match() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -157,9 +146,7 @@ async fn query_csr_relevant_interval_absent_no_match() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The `before` and `after` relations match a registration whose interval falls
-/// within or at the queried endpoint and exclude one entirely outside it
-/// (clause 5.12). Confirms REQ-DISC-35.
+/// The `before` and `after` relations match a registration whose interval falls within or at the queried endpoint and exclude one entirely outside it (clause 5.12).
 #[tokio::test]
 async fn query_csr_before_after_match_within_or_at_endpoint() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -191,8 +178,7 @@ async fn query_csr_before_after_match_within_or_at_endpoint() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The `between` relation matches on interval overlap and excludes a disjoint
-/// window (clause 5.12). Confirms REQ-DISC-36.
+/// The `between` relation matches on interval overlap and excludes a disjoint window (clause 5.12).
 #[tokio::test]
 async fn query_csr_between_matches_on_interval_overlap() {
     let topology = topology::single().await.expect("single-broker topology");

@@ -136,8 +136,7 @@ fn merge_patch_follows_rfc_7396() {
 
 /// Clause 5.5.12 removes the member the patch set to the NGSI-LD Null and
 /// leaves every other one alone, including a genuine JSON `null`, which is
-/// data rather than a deletion (clause 4.5.0; the fixture of ETSI test
-/// `056_10_01`).
+/// data rather than a deletion (clause 4.5.0).
 #[test]
 fn a_member_set_to_the_null_sentinel_is_removed_and_the_rest_survive() {
     let stored = literal(r#"{"id":"some-id","type":"some-type","null":null,"anythingElse":"anything-else"}"#);

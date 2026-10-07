@@ -1,5 +1,5 @@
 //! The canonical codec: the model to and from the expanded JSON-LD document
-//! the broker stores and exchanges (clause 5.5.7 expansion, unchanged).
+//! the broker stores and exchanges (clause 5.5.7 expansion).
 //!
 //! Decoding streams through serde visitors straight from bytes into the typed
 //! model, a geometry's nested `@list`s straight into its positions; encoding

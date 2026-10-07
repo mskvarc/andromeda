@@ -41,8 +41,6 @@ fn feature_for<'a>(features: &'a [Value], id: &str) -> &'a Value {
         .expect("feature for expected id must be present")
 }
 
-// --- Collection GeoJSON rendering (spec 6.4.3.2) ---
-
 #[tokio::test]
 async fn geometry_collection_custom_property_uses_specified_attribute() {
     let scope = TestEnvironment::from_suite("geometry").await.expect("isolated test environment");
@@ -125,8 +123,6 @@ async fn geometry_collection_entity_with_no_location_has_null_geometry_in_featur
     assert!(feature["geometry"].is_null(), "entity without a GeoProperty must render with null geometry");
     scope.finish().await.expect("cleanup failed");
 }
-
-// --- Single-entity GeoJSON rendering (spec 6.3.3) ---
 
 #[tokio::test]
 async fn geometry_entity_custom_geometry_property_uses_specified_attribute() {

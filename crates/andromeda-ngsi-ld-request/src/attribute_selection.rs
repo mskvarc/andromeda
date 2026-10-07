@@ -7,55 +7,14 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 /// `omit`.
 const SCOPE_MEMBER: &str = "scope";
 
-/// Which Entity members the deprecated `attrs` synonym admits beside Attribute
-/// names.
+/// Which Entity members the deprecated `attrs` synonym admits beside Attribute names.
 ///
-/// Every `attrs` row in the specification restricts the parameter the same way:
-/// "Each String is an Attribute (Property or Relationship) name." Table
-/// 6.4.3.2-1 says it of Query Entities, Table 6.5.3.1-1 of Retrieve Entity,
-/// Table 6.8.3.2-1 of Query Context Source Registrations, Table 6.18.3.2-1 of
-/// Query Temporal Evolution of Entities and Table 6.19.3.1-1 of Retrieve
-/// Temporal Evolution of an Entity. `pick` is the parameter that is not so
-/// restricted -- "Each String is an Entity member ("id", "type", "scope" or an
-/// Attribute name)" -- which is why the two differ at all.
-///
-/// The restricting sentence is therefore what decides, and not the sentence
-/// above it: the retrieval rows add "except that id, type, scope are not
-/// allowed" because they call `attrs` "a synonym for the pick parameter" with
-/// nothing else said, while the query rows call it "a synonym for a combination
-/// of the pick and q parameters" and restrict in the next breath. An omission
-/// cannot grant what the row it sits in withholds.
-///
-/// What the restriction admits is then a question about `scope` rather than
-/// about `attrs`, and clause 4.18 answers it in one sentence: "The Scope is
-/// represented as a special scope Property that is non-reified in the
-/// normalized Entity representation and reified in the temporal representation
-/// of an Entity." In an Entity representation `scope` is an Entity member and
-/// no Attribute at all, so `attrs=scope` names nothing the row admits. In a
-/// temporal representation it is a Property, so the row admits it -- and clause
-/// 4.18 points at annex C clause C.5.16 for the Temporal Evolution of a Scope,
-/// which is a `GET /temporal/entities` carrying exactly `attrs=speed,scope`.
-/// That annex is informative (clause C.1) and settles nothing on its own; it
-/// corroborates a reading the normative row already reaches.
-///
-/// Table 6.19.3.1-1 then takes it back for the temporal retrieval alone, in so
-/// many words, and an explicit prohibition beats an inference from the
-/// representation.
+/// Every `attrs` row restricts the parameter to "an Attribute (Property or Relationship) name", while `pick` admits Entity members. Clause 4.18 keeps the Scope non-reified in an Entity representation, so `scope` is no Attribute there, and reifies it in the temporal representation, where it is a Property. Table 6.19.3.1-1 nevertheless excludes it for the temporal retrieval alone, and an explicit prohibition beats an inference from the representation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AttrsAdmission {
-    /// Attribute names alone.
-    ///
-    /// Query Entities and Retrieve Entity answer in an Entity representation
-    /// where clause 4.18 leaves the Scope non-reified, so `scope` is no
-    /// Attribute name there; Retrieve Temporal Evolution of an Entity answers in
-    /// a representation where it is one, and Table 6.19.3.1-1 excludes it
-    /// anyway.
+    /// Query Entities, Retrieve Entity and Retrieve Temporal Evolution of an Entity.
     AttributeNamesOnly,
-    /// The `scope` Property beside the Attribute names.
-    ///
-    /// Query Temporal Evolution of Entities answers in the representation clause
-    /// 4.18 reifies the Scope in, so `scope` is an Attribute name there and
-    /// Table 6.18.3.2-1 excludes nothing.
+    /// Query Temporal Evolution of Entities.
     ReifiedScopeAdmitted,
 }
 

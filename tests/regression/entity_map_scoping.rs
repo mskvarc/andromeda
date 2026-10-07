@@ -24,8 +24,6 @@
 //! operation is returned in the response" -- so a purge under a map deletes the
 //! entities the map lists and leaves every other entity its query matches
 //! untouched, and answers with the map's location.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

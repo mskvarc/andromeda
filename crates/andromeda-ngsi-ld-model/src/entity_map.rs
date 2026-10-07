@@ -171,7 +171,7 @@ impl EntityMap {
     }
 
     /// Record the `EntityMap` a registration's context source used for this
-    /// query (Table 5.2.39-2 `linkedMaps`), replacing an earlier link.
+    /// query (Table 5.2.39-2 `linkedMaps`), replacing any link already recorded.
     pub fn link(&mut self, registration: Identifier, linked_map: Identifier) {
         self.linked_maps.insert(registration, linked_map);
     }

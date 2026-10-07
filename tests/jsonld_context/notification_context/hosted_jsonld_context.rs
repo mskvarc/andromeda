@@ -1,5 +1,5 @@
 //! A subscription's `jsonldContext` initialised from a context no single URL
-//! names (study D7, D8, D10 and D12).
+//! names.
 //!
 //! Clause 5.8.1.4 initialises `jsonldContext` "with the @context applicable for
 //! the Subscription", and Table 5.2.12-1 types it as one dereferenceable URI.
@@ -39,7 +39,7 @@ async fn assert_hosted(jsonld_context: &str, tenant: &PrivateTenant, expected: &
     );
 }
 
-/// Study D7 and D12: a subscription created with two contexts in its body is
+/// A subscription created with two contexts in its body is
 /// given a hosted wrapper as `jsonldContext`; an ld+json notification names that
 /// URL alone (it ends with the core `@context`) and a json one links it.
 #[tokio::test]
@@ -72,7 +72,7 @@ async fn a_subscription_with_a_context_array_is_notified_under_its_hosted_wrappe
     tenant.finish().await;
 }
 
-/// Study D8: an inline body context is hosted the same way.
+/// An inline body context is hosted the same way.
 #[tokio::test]
 async fn a_subscription_with_an_inline_context_is_given_a_hosted_wrapper() {
     let tenant = PrivateTenant::provisioned().await;
@@ -106,7 +106,7 @@ async fn a_subscription_with_one_context_url_stores_it_or_a_wrapper_ending_with_
     tenant.finish().await;
 }
 
-/// Study D10 and clause 5.11.2.4: a Context Source Registration Subscription
+/// Clause 5.11.2.4: a Context Source Registration Subscription
 /// created with a context array is given a hosted wrapper too, not the core.
 #[tokio::test]
 async fn a_csource_subscription_with_a_context_array_is_given_a_hosted_wrapper() {

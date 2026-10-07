@@ -68,7 +68,6 @@ pub(crate) async fn create(
         return Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{id}")));
     }
 
-    // Check for matching CSRs for distributed forwarding
     let entity_id = entity.id.clone(); // clone: the forwarding request and local create both need the identifier
     let entity_type = match &entity.type_ {
         EntityTypeValue::Single(name) => Some(name),

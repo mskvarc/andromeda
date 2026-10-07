@@ -15,9 +15,9 @@ use toml_comment::TomlComment;
 /// A job's lease has to last from its claim to the first statement of its
 /// replay, which removes the job and locks it for the rest of the replay. That
 /// wait is chiefly acquiring the replay transaction's connection, which the
-/// acquire deadline bounds; the margin covers the rest of it -- decoding the
+/// acquire deadline bounds; the margin covers the rest of it, decoding the
 /// claimed job, matching the notifications it still owes, and the settling
-/// statement itself -- before another worker could reclaim the job.
+/// statement itself, before another worker could reclaim the job.
 pub const PENDING_SIDE_EFFECTS_LEASE_MARGIN: Duration = Duration::from_secs(5);
 
 /// The default most JSON values one written entity may hold outside its

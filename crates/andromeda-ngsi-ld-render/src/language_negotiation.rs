@@ -61,7 +61,6 @@ fn negotiate_entry<'a, 'b>(available: &'b [AvailableLanguage<'a>], filter: &Lang
                 }
             }
             LanguageRange::Tag(_) => {
-                // Exact match.
                 if let Some(entry) = available.iter().find(|entry| entry.matches_exact(range)) {
                     return Some(entry);
                 }
@@ -240,7 +239,6 @@ mod tests {
 
     #[test]
     fn no_match_defaults_to_the_none_entry_when_only_it_is_present() {
-        // With no tagged entry, the `@none` default is the supported fallback.
         let rendered = negotiated(&json!({"@none": "untagged"}), "de");
         pretty_assertions::assert_eq!(rendered["value"], "untagged");
         pretty_assertions::assert_eq!(rendered["lang"], "@none");

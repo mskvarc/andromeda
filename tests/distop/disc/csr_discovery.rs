@@ -1,12 +1,6 @@
-//! The Query-CSR test surface: registering a context source and reading which
-//! registrations the registry returns.
+//! The Query-CSR test surface: registering a context source and reading which registrations the registry returns.
 //!
-//! `GET /csourceRegistrations` answers with a JSON-LD array of the Context
-//! Source Registrations that match the discovery query (clause 5.10.2). Because
-//! the distributed suite shares one database across concurrently running tests,
-//! DISC assertions never rely on the array's exact length: they check that the
-//! registration a test created is present or absent by its id, which is robust
-//! against unrelated registrations that happen to coexist under other prefixes.
+//! `GET /csourceRegistrations` answers with a JSON-LD array of the Context Source Registrations that match the discovery query (clause 5.10.2). Because the distributed suite shares one database across concurrently running tests, DISC assertions never rely on the array's exact length: they check that the registration a test created is present or absent by its id, which is robust against unrelated registrations that happen to coexist under other prefixes.
 
 use crate::{
     disc::PEER_ENDPOINT,
@@ -39,8 +33,7 @@ pub async fn register_located(topology: &MultiBrokerTopology<BrokerRole>, id: &s
     register(topology, &body).await;
 }
 
-/// Register a CSR of the given type carrying a temporal interval field
-/// (`observationInterval` or `managementInterval`).
+/// Register a CSR of the given type carrying a temporal interval field (`observationInterval` or `managementInterval`).
 pub async fn register_interval(topology: &MultiBrokerTopology<BrokerRole>, id: &str, entity_type: &str, field: &str, start: &str, end: &str) {
     let mut body = CsrBuilder::new(id, PEER_ENDPOINT).entity_type(entity_type).build();
     body[field] = json!({ "startAt": start, "endAt": end });

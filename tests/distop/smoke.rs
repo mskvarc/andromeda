@@ -1,5 +1,5 @@
 //! Topology smoke tests: prove the multi-broker fixture and real forwarding
-//! before the area suites build on them (plan §10.1).
+//! before the area suites build on them.
 
 use crate::{
     entity::vehicle,

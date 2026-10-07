@@ -1,5 +1,5 @@
-//! The clause 5.13 @context management operations, as the ETSI suite's 050 to
-//! 053 test purposes exercise them.
+//! The clause 5.13 @context management operations: add, list, serve, delete and
+//! reload.
 
 mod add;
 mod delete;

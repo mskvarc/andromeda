@@ -116,8 +116,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 
     /// Clause 4.3.6.8: `Prefer: ngsi-ld=1.9` names the current version, so
-    /// nothing is adapted and the response stays 200; setting the flag from the
-    /// mere presence of a requested version made this a spurious 203.
+    /// nothing is adapted and the response stays 200, not 203.
     #[test]
     fn a_conformant_target_version_yields_no_adaptation() {
         let renderer = ResponseRenderer::new(ResponseMediaType::Json, ResponseContext::Absent).with_requested_version(Some(SpecVersion::CONFORMANT));

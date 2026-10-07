@@ -1,12 +1,6 @@
-//! The value, geo and scope filters of a split temporal query, decided over the
-//! gathered parts of every entity a Context Source contributed to (clause
-//! 5.7.4.4).
+//! The value, geo and scope filters of a split temporal query, decided over the gathered parts of every entity a Context Source contributed to (clause 5.7.4.4).
 //!
-//! One broker holds part of each entity and a mock Context Source answers with
-//! the rest, so each test fixes exactly which part holds which instance. The
-//! forwarded request carries no filter, the local read keeps every filter in
-//! the store for the entities no source answered with, and an entity a source
-//! did answer with is kept when its gathered parts satisfy the filters.
+//! One broker holds part of each entity and a mock Context Source answers with the rest, so each test fixes exactly which part holds which instance. The forwarded request carries no filter, the local read keeps every filter in the store for the entities no source answered with, and an entity a source did answer with is kept when its gathered parts satisfy the filters.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -31,14 +25,12 @@ fn observed(value: i64, observed_at: &str) -> Value {
     json!({ "type": "Property", "value": value, "observedAt": observed_at })
 }
 
-/// The normalized `Property` instances a source answers with, one per
-/// observation (clause 4.5.7).
+/// The normalized `Property` instances a source answers with, one per observation (clause 4.5.7).
 fn answered_instances(pairs: &[(i64, &str)]) -> Value {
     Value::Array(pairs.iter().map(|(value, at)| observed(*value, at)).collect())
 }
 
-/// The normalized `GeoProperty` instance a source answers with, located at
-/// `coordinates` at noon (clause 4.5.7).
+/// The normalized `GeoProperty` instance a source answers with, located at `coordinates` at noon (clause 4.5.7).
 fn located(coordinates: [f64; 2]) -> Value {
     json!([{ "type": "GeoProperty", "value": { "type": "Point", "coordinates": coordinates }, "observedAt": "2020-08-01T12:00:00Z" }])
 }
@@ -120,9 +112,7 @@ async fn split_query(topology: &MultiBrokerTopology<BrokerRole>, vtype: &str, fi
     (json_body(&response), results_count_header(&response))
 }
 
-/// Clause 5.7.4.4: "If no values filter query is provided, then S5 is equal to
-/// S4". With no filter nothing is evaluated, so a `temporalValues` entity --
-/// whose plural `values` member no write would accept -- passes through.
+/// Clause 5.7.4.4: "If no values filter query is provided, then S5 is equal to S4". With no filter nothing is evaluated, so a `temporalValues` entity -- whose plural `values` member no write would accept -- passes through.
 #[tokio::test]
 async fn distop_split_temporal_query_temporal_values_without_filter_keeps_every_entity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -140,9 +130,7 @@ async fn distop_split_temporal_query_temporal_values_without_filter_keeps_every_
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Clause 4.18 reifies the Scope in the temporal representation. With no
-/// filter the entity carrying a Scope history is not re-read at all, so it
-/// stays in the answer.
+/// Clause 4.18 reifies the Scope in the temporal representation. With no filter the entity carrying a Scope history is not re-read at all, so it stays in the answer.
 #[tokio::test]
 async fn distop_split_temporal_query_scope_history_without_filter_keeps_the_entity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -172,9 +160,7 @@ async fn distop_split_temporal_query_scope_history_without_filter_keeps_the_enti
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Clause 5.7.4.4: the values filter is "checked against all the Attribute
-/// instances" of the aggregated entity, so a term no part satisfies alone
-/// holds once the source's instance joins the local one.
+/// Clause 5.7.4.4: the values filter is "checked against all the Attribute instances" of the aggregated entity, so a term no part satisfies alone holds once the source's instance joins the local one.
 #[tokio::test]
 async fn distop_split_temporal_query_q_true_only_on_the_merge_keeps_the_entity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -200,10 +186,7 @@ async fn distop_split_temporal_query_q_true_only_on_the_merge_keeps_the_entity()
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Clause 5.7.4.4 conjoins the values filter and the geoquery over the
-/// aggregated entity, so each may hold in a different part; an entity whose
-/// gathered location lies outside the geofence fails the geoquery whatever its
-/// speed.
+/// Clause 5.7.4.4 conjoins the values filter and the geoquery over the aggregated entity, so each may hold in a different part; an entity whose gathered location lies outside the geofence fails the geoquery whatever its speed.
 #[tokio::test]
 async fn distop_split_temporal_query_conjunction_across_parts_keeps_the_entity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -238,8 +221,7 @@ async fn distop_split_temporal_query_conjunction_across_parts_keeps_the_entity()
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An entity whose gathered instances satisfy no term of the values filter is
-/// dropped, while one whose gathered instances do is kept.
+/// An entity whose gathered instances satisfy no term of the values filter is dropped, while one whose gathered instances do is kept.
 #[tokio::test]
 async fn distop_split_temporal_query_failing_merge_drops_the_entity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -268,11 +250,7 @@ async fn distop_split_temporal_query_failing_merge_drops_the_entity() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The source is asked for normalized instances and answers them (clause
-/// 4.5.7): a `LanguageProperty`, `JsonProperty` and `VocabProperty` instance
-/// each holds its value in the member of its family. An existence filter on
-/// the attribute only the source holds keeps the entity, whichever family the
-/// instance belongs to.
+/// The source is asked for normalized instances and answers them (clause 4.5.7): a `LanguageProperty`, `JsonProperty` and `VocabProperty` instance each holds its value in the member of its family. An existence filter on the attribute only the source holds keeps the entity, whichever family the instance belongs to.
 #[tokio::test]
 async fn distop_split_temporal_query_normalized_answers_decide_the_filter() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -315,9 +293,7 @@ async fn distop_split_temporal_query_normalized_answers_decide_the_filter() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An entity no source answered with has no part outside this broker, so the
-/// store's own filtering decides it, and the count totals what the filters
-/// kept (clause 6.3.13).
+/// An entity no source answered with has no part outside this broker, so the store's own filtering decides it, and the count totals what the filters kept (clause 6.3.13).
 #[tokio::test]
 async fn distop_split_temporal_query_uncontributed_local_entity_is_filtered_in_sql() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -352,10 +328,7 @@ fn aggregated_filters() -> String {
     format!("&format=aggregatedValues&aggrMethods={}&q={}", encode("avg,totalCount"), encode("speed>0"))
 }
 
-/// Clause 5.7.4.4: an entity held in several parts is rendered with the
-/// "aggregated values of Attribute instances" of the aggregated entity, so the
-/// source is asked for its instances -- not for an aggregate of its own -- and
-/// the aggregate is one over the local and answered instances together.
+/// Clause 5.7.4.4: an entity held in several parts is rendered with the "aggregated values of Attribute instances" of the aggregated entity, so the source is asked for its instances -- not for an aggregate of its own -- and the aggregate is one over the local and answered instances together.
 #[tokio::test]
 async fn distop_split_temporal_query_aggregated_merges_instances_before_aggregating() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -394,9 +367,7 @@ async fn distop_split_temporal_query_aggregated_merges_instances_before_aggregat
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Clause 6.3.10: a source cuts its instances at its page size with a 206 and
-/// a `Content-Range`; the aggregate counts every instance of the window, so
-/// the source's history is read past the cut, each instance once.
+/// Clause 6.3.10: a source cuts its instances at its page size with a 206 and a `Content-Range`; the aggregate counts every instance of the window, so the source's history is read past the cut, each instance once.
 #[tokio::test]
 async fn distop_split_temporal_query_aggregated_walks_the_source_history() {
     let topology = topology::single().await.expect("single-broker topology");

@@ -30,7 +30,7 @@ impl EntityRoutes {
     /// The extension set is attached as a request extension so the single
     /// `DELETE /entities` gate reads it: the `EntityQuery` extractor has no
     /// config access, so the `purge_dataset_scope` gate is applied in the
-    /// handler off this layer (extension-strategy.md 5.2).
+    /// handler off this layer.
     pub fn new(resolver: Arc<dyn EntityStateResolver>, enabled: EnabledExtensions) -> EntityRoutes {
         let entity_routes = Router::new()
             .route("/", post(entity::create::create))

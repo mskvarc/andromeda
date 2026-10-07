@@ -1,17 +1,4 @@
-//! Clause 5.6.7's batch create must expand terms exactly as clause 5.6.1 does.
-//!
-//! A `@context` may define a term by a compact IRI whose prefix the same
-//! `@context` defines -- `{"example": "http://example.org/", "Place":
-//! "example:Place"}` -- and JSON-LD 1.1 clause 4.1.2 resolves that while the
-//! context is being processed. Clause 5.5.7 hands both write paths the same
-//! `@context`, so both have to reach the same expanded IRIs.
-//!
-//! Found while replaying annex C clause C.10, whose `Place` ontology is written
-//! that way: the batch path stored the Entity under the literal string
-//! `example:Place`, and a later request phrased in the terms that wrote it then
-//! answered `404 Not Found` for an Entity the broker had acknowledged creating.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! A `@context` may define a term by a compact IRI whose prefix the same `@context` defines -- `{"example": "http://example.org/", "Place": "example:Place"}` -- and JSON-LD 1.1 clause 4.1.2 resolves that while the context is being processed. Clause 5.5.7 hands both write paths the same `@context`, so clause 5.6.7's batch create must reach the same expanded IRIs as clause 5.6.1.
 
 use crate::hosted_context::{context_link, forget_cached, serve};
 use andromeda_test_harness::environment::TestEnvironment;
@@ -84,8 +71,7 @@ async fn regression_batch_context_expansion_resolves_prefixed_terms_like_the_sin
         .expect("batch creation request");
     assert_eq!(created.status, StatusCode::CREATED, "batch creation must succeed: {:?}", created.body);
 
-    // Retrieved with no `@context` at all, so every user term shows as the IRI
-    // it actually expanded to.
+    // Retrieved with no `@context` at all, so every user term shows as the IRI it actually expanded to.
     let single_entity = client
         .get_entity(&single, "", "application/json", None)
         .await
@@ -140,10 +126,7 @@ async fn regression_batch_context_expansion_leaves_the_entity_reachable_under_it
         .expect("batch creation request");
     assert_eq!(created.status, StatusCode::CREATED, "batch creation must succeed: {:?}", created.body);
 
-    // Clause C.7: the `@context` a client reads an Entity back with is the one
-    // it names on the retrieval. An Entity the broker acknowledged creating and
-    // then cannot find under the very `@context` that wrote it has been lost,
-    // not filtered.
+    // Clause C.7: the `@context` a client reads an Entity back with is the one it names on the retrieval. An Entity the broker acknowledged creating and then cannot find under the very `@context` that wrote it has been lost, not filtered.
     let retrieved = client
         .raw(Method::GET, &format!("entities/{identifier}"))
         .header("accept", "application/json")

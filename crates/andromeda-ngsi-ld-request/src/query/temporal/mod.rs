@@ -73,7 +73,6 @@ pub mod validation;
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TemporalQueryParameters {
-    // --- Entity filters ---
     /// Entity identifiers to select, comma-separated (clause 6.3.x `id`).
     #[serde(default, deserialize_with = "deserialize_optional_uri_csv")]
     pub id: Option<Vec<Identifier>>,
@@ -101,7 +100,6 @@ pub struct TemporalQueryParameters {
     #[serde(flatten)]
     pub geo: OptionalGeoQuery,
 
-    // --- Temporal filters ---
     /// How the window relates to the given instants (clause 4.11 `timerel`).
     #[serde(default, deserialize_with = "deserialize_option_timerel")]
     pub timerel: Option<TimeRel>,
@@ -115,7 +113,6 @@ pub struct TemporalQueryParameters {
     #[serde(default, deserialize_with = "deserialize_option_timeproperty")]
     pub timeproperty: Option<TimeProp>,
 
-    // --- Result shaping ---
     /// How many instances per attribute the response carries (`lastN`).
     #[serde(rename = "lastN")]
     pub last_n: Option<u32>,
@@ -140,7 +137,6 @@ pub struct TemporalQueryParameters {
     #[serde(rename = "aggrGroupBy")]
     pub aggr_group_by: Option<String>,
 
-    // --- Pagination ---
     /// The page of entities asked for (clauses 5.5.9 and 6.3.10 `limit`,
     /// `offset` and `cursor`), decided by the broker's pagination policy. It
     /// pages the element dimension only, never the temporal window
@@ -153,7 +149,6 @@ pub struct TemporalQueryParameters {
     #[serde(flatten)]
     pub ordering: OrderingParameters,
 
-    // --- Projection ---
     /// Members the response is narrowed to (clause 4.21 `pick`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub pick: Option<Vec<RawProjectionTerm>>,
@@ -161,7 +156,6 @@ pub struct TemporalQueryParameters {
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub omit: Option<Vec<RawProjectionTerm>>,
 
-    // --- Linked temporal entities ---
     /// Whether the response carries the temporal evolution of the entities it
     /// links to, and how (clause 4.5.23 `join`, applied to the temporal API).
     pub join: Option<JoinMode>,
@@ -178,7 +172,6 @@ pub struct TemporalQueryParameters {
     #[serde(default, deserialize_with = "deserialize_optional_uri_csv")]
     pub contained_by: Option<Vec<Identifier>>,
 
-    // --- Other ---
     /// Dataset instances to select, comma-separated (`datasetId`).
     #[serde(rename = "datasetId")]
     #[serde(default, deserialize_with = "deserialize_optional_dataset_selectors")]
@@ -301,7 +294,7 @@ mod tests {
         assert!(p.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended).is_ok());
     }
 
-    /// A valid grouped request passes (extension, study §4.9).
+    /// A valid grouped request passes.
     #[test]
     fn a_grouped_query_with_methods_and_a_group_key_is_admitted() {
         assert!(
@@ -311,7 +304,7 @@ mod tests {
         );
     }
 
-    /// Study §4.9: grouping only shapes the grouped format, so `aggrGroupBy`
+    /// Grouping only shapes the grouped format, so `aggrGroupBy`
     /// without it is refused.
     #[test]
     fn aggr_group_by_without_the_grouped_format_is_rejected() {
@@ -331,7 +324,7 @@ mod tests {
         assert!(matches!(err, ParameterError::AggrMethodsRequired), "got {err:?}");
     }
 
-    /// A malformed `aggrGroupBy` is refused with its parse error (study §4.2).
+    /// A malformed `aggrGroupBy` is refused with its parse error.
     #[test]
     fn an_unparseable_aggr_group_by_is_rejected() {
         let err = params_from_query("format=groupedValues&aggrMethods=avg&aggrGroupBy=speed%3Bbogus")
@@ -340,7 +333,7 @@ mod tests {
         assert!(matches!(err, ParameterError::AggrGroupByInvalid(_)), "got {err:?}");
     }
 
-    /// Study §4.9: grouping by an attribute the request also aggregates is
+    /// Grouping by an attribute the request also aggregates is
     /// ambiguous, so it must be spelled out.
     #[test]
     fn grouping_by_an_aggregation_target_is_rejected() {
@@ -350,7 +343,7 @@ mod tests {
         assert!(matches!(err, ParameterError::AggrGroupByOnAggregatedAttribute(_)), "got {err:?}");
     }
 
-    /// Study OQ-5: `lastN` and grouping shape the result along different axes and
+    /// `lastN` and grouping shape the result along different axes and
     /// are not combined.
     #[test]
     fn last_n_with_grouping_is_rejected() {
@@ -375,7 +368,6 @@ mod tests {
 
     /// Clause 4.21: `observation{temperature,humidity}` is one raw term
     /// naming the `observation` relationship with two linked-entity sub-terms.
-    /// Mirrors the entity-query parsing test in `entity/parameters.rs`.
     #[test]
     fn pick_with_a_linked_entity_group_parses_to_one_term_with_two_children() {
         let p = params_from_query("pick=observation%7Btemperature%2Chumidity%7D");

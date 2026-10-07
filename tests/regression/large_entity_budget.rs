@@ -1,18 +1,6 @@
 //! Large entities are budgeted, and those within the budget are served whole.
 //!
-//! A Create Entity of a one-million-vertex polygon held the broker's memory for
-//! seconds and gigabytes, and its deletion was killed for memory. ETSI GS CIM
-//! 009 v1.9.1 sets no size for an entity or a geometry; clause 6.3.2 answers a
-//! request whose "HTTP input data stream [...] was too large" with 413
-//! `RequestEntityTooLarge`, and clause 5.5.6 makes a query "so complex that
-//! cannot be resolved by an NGSI-LD system" a `TooComplexQuery`, which Table
-//! 6.3.2-1 answers 403. The broker therefore budgets the JSON values of one
-//! request (4,000,000 by default), the JSON values of one entity outside its
-//! geometries and JSON literals (1,000,000) and the positions of one geometry
-//! (100,000), refusing what exceeds them before it is expanded, while a
-//! geometry at the budget is created, read, queried and deleted intact.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 sets no size for an entity or a geometry; clause 6.3.2 answers a request whose "HTTP input data stream [...] was too large" with 413 `RequestEntityTooLarge`, and clause 5.5.6 makes a query "so complex that cannot be resolved by an NGSI-LD system" a `TooComplexQuery`, which Table 6.3.2-1 answers 403. The broker therefore budgets the JSON values of one request (4,000,000 by default), the JSON values of one entity outside its geometries and JSON literals (1,000,000) and the positions of one geometry (100,000), refusing what exceeds them before it is expanded, while a geometry at the budget is created, read, queried and deleted intact.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -58,8 +46,7 @@ pub(crate) const CORE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-c
 /// The point every ring is drawn around, inside each ring.
 const CENTRE: (f64, f64) = (14.55, 46.05);
 
-/// The closed ring of `positions` positions around [`CENTRE`]: `positions - 1`
-/// vertices on a circle and the first repeated to close it.
+/// `positions - 1` vertices on a circle and the first repeated to close the ring.
 pub(crate) fn ring(positions: usize) -> Vec<(f64, f64)> {
     let vertices = u32::try_from(positions - 1).expect("a ring of fewer than four billion vertices");
     let on_circle = |k: u32| {
@@ -200,11 +187,7 @@ fn temporal_location(geometry: &str, at: &str) -> String {
     format!(r#"{{"type":"GeoProperty","value":{geometry},"observedAt":"{at}"}}"#)
 }
 
-/// The Temporal API writes are budgeted like the Core API's (clause 6.3.2):
-/// a geometry past the position budget is refused with 413 whether it
-/// creates a Temporal Evolution (clause 5.6.11), appends to one (clause
-/// 5.6.12) or modifies one of its instances (clause 5.6.14), and nothing is
-/// written.
+/// The Temporal API writes are budgeted like the Core API's (clause 6.3.2): a geometry past the position budget is refused with 413 whether it creates a Temporal Evolution (clause 5.6.11), appends to one (5.6.12) or modifies one of its instances (5.6.14), and nothing is written.
 #[tokio::test]
 async fn regression_a_n12_every_temporal_write_of_a_geometry_over_the_budget_is_413() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -301,13 +284,7 @@ enum Calibration {
     Absent,
 }
 
-/// Clause 4.5.9: an attribute in the simplified temporal representation
-/// "shall only contain" its plural member. The unfold once copied every member
-/// beside it into every observation before any budget ran, so a body of a few
-/// megabytes -- a large sub-attribute over millions of observations --
-/// exhausted the broker's memory. A member beside the pairs is now refused with
-/// 400 before anything is copied, and nothing is written; pairs standing alone
-/// are recorded whole.
+/// Clause 4.5.9: an attribute in the simplified temporal representation "shall only contain" its plural member. A member beside the pairs is refused with 400 before anything is copied into every observation, so a body of a few megabytes (a large sub-attribute over millions of observations) cannot exhaust memory; pairs standing alone are recorded whole.
 #[tokio::test]
 async fn regression_r01_a_sub_attribute_beside_temporal_values_pairs_is_refused_before_it_is_copied() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -502,8 +479,7 @@ async fn regression_a_n12_a_geometry_at_the_budget_round_trips_and_deletes() {
 async fn regression_a_n12_a_query_reference_geometry_over_budget_is_too_complex() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let coordinates = polygon_coordinates(&ring(GEOMETRY_POSITIONS + 1));
-    // Table 5.2.13-1: the coordinates may be encoded as a string, which is
-    // counted from its text before it is parsed.
+    // Table 5.2.13-1: the coordinates may be encoded as a string, which is counted from its text before it is parsed.
     let encoded = serde_json::to_string(&coordinates).expect("a string serializes");
     for coordinates in [coordinates.as_str(), encoded.as_str()] {
         let body = format!(
@@ -518,9 +494,7 @@ async fn regression_a_n12_a_query_reference_geometry_over_budget_is_too_complex(
     scope.finish().await.expect("cleanup");
 }
 
-/// Clause 6.3.2: a subscription's `geoQ` past the position budget is a written
-/// input larger than the broker processes, refused with 413 in either encoding
-/// of its coordinates, and no subscription is created.
+/// Clause 6.3.2: a subscription's `geoQ` past the position budget is input larger than the broker processes, refused with 413 in either encoding of its coordinates, and no subscription is created.
 #[tokio::test]
 async fn regression_a_n12_a_subscription_geo_q_over_the_budget_is_413() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -555,8 +529,7 @@ async fn regression_a_n12_a_subscription_geo_q_over_the_budget_is_413() {
     scope.finish().await.expect("cleanup");
 }
 
-/// Clause 6.3.2: a registration's `location` past the position budget is
-/// refused with 413, and no registration is created.
+/// Clause 6.3.2: a registration's `location` past the position budget is refused with 413, and no registration is created.
 #[tokio::test]
 async fn regression_a_n12_a_registration_location_over_the_budget_is_413() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -585,10 +558,7 @@ async fn regression_a_n12_a_registration_location_over_the_budget_is_413() {
     scope.finish().await.expect("cleanup");
 }
 
-/// Clauses 5.8.6 and 5.2.12: a deletion's subscriptions are filtered on the
-/// state it removed. One whose `q` the removed entity passes is notified once;
-/// one whose `q` it fails is not -- which only a deletion that read the
-/// removed state can tell apart.
+/// Clauses 5.8.6 and 5.2.12: a deletion's subscriptions are filtered on the state it removed. One whose `q` the removed entity passes is notified once; one whose `q` it fails is not, which only a deletion that read the removed state can tell apart.
 #[tokio::test]
 async fn regression_a_n12_a_deletion_with_a_matching_subscription_still_notifies() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -620,9 +590,7 @@ async fn regression_a_n12_a_deletion_with_a_matching_subscription_still_notifies
     scope.finish().await.expect("cleanup");
 }
 
-/// Table 5.2.12-1: `entityUpdated` includes `attributeDeleted`, so a
-/// subscription listening for it alone is owed the deletion of the entity's
-/// attributes, filtered on the state the deletion removed.
+/// Table 5.2.12-1: `entityUpdated` includes `attributeDeleted`, so a subscription listening for it alone is owed the deletion of the entity's attributes, filtered on the state the deletion removed.
 #[tokio::test]
 async fn regression_a_n12_a_deletion_notifies_a_subscription_listening_for_entity_updated() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -630,8 +598,7 @@ async fn regression_a_n12_a_deletion_notifies_a_subscription_listening_for_entit
     let entity_type = scope.entity_type("Probe");
     let id = scope.id("Probe:updated-watcher");
     let subscription = scope.id("Subscription:a-n12-entity-updated");
-    // Created before the subscription, so the only change it is owed is the
-    // deletion's.
+    // Created before the subscription, so the only change it is owed is the deletion's.
     let created = send_json(
         scope.client(),
         Method::POST,

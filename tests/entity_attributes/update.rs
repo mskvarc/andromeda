@@ -31,10 +31,6 @@ use reqwest::{Method, StatusCode};
 use serde_json::{Number, json};
 use std::str::FromStr;
 
-// ---------------------------------------------------------------------------
-// Update attribute
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn attribute_update_no_datasetid_success() {
     let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
@@ -141,7 +137,6 @@ async fn attribute_update_change_type_success() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Change brandName from Property to Relationship
     let fragment = json!({
         "brandName": {
             "type": "Relationship",
@@ -158,10 +153,6 @@ async fn attribute_update_change_type_success() {
     assert_eq!(body["brandName"]["type"], "Relationship");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Error cases
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_update_empty_entity_id_returns_error() {
@@ -236,10 +227,6 @@ async fn attribute_update_invalid_json_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Scope handling
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn attribute_update_scope_existing_success() {
     let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
@@ -291,10 +278,6 @@ async fn attribute_update_scope_not_existing_returns_207_or_204() {
     );
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Type modification
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_update_append_single_type_success() {
@@ -378,7 +361,6 @@ async fn attribute_update_append_type_to_multi_type_success() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // First add "Car" type
     let car_fragment = json!({
         "type": ["Vehicle", "Car"],
         "@context": TEST_SUITE_CONTEXT
@@ -386,7 +368,6 @@ async fn attribute_update_append_type_to_multi_type_success() {
     let (status, _) = update_entity_attrs(&c, &id, &car_fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Then add "Building" type
     let building_fragment = json!({
         "type": "Building",
         "@context": TEST_SUITE_CONTEXT
@@ -396,10 +377,6 @@ async fn attribute_update_append_type_to_multi_type_success() {
     assert_eq!(status, StatusCode::NO_CONTENT, "append type to multi-type should return 204");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Delete via NGSI-LD null
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_update_delete_property_with_null_success() {
@@ -496,10 +473,6 @@ async fn attribute_update_delete_language_property_with_null_success() {
     assert!(body.get("street").is_none(), "street should be deleted");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Delete specific instance via NGSI-LD null
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_update_delete_property_instance_with_null_success() {
@@ -602,10 +575,6 @@ async fn attribute_update_delete_language_property_instance_with_null_success() 
     assert_eq!(status, StatusCode::NO_CONTENT, "delete LanguageProperty instance via null should return 204");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Delete default instance via NGSI-LD null
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_update_delete_default_property_instance_with_null_success() {

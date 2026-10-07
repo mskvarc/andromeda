@@ -1,4 +1,4 @@
-//! Temporal upsert and add-attributes forwarding — REQ-PROV-78..88
+//! Temporal upsert and add-attributes forwarding
 //! (clauses 5.6.11.4, 5.6.12.4).
 //!
 //! An exclusive/redirect temporal registration owns `speed` and forwards its
@@ -55,8 +55,7 @@ async fn seed_local_temporal(client: &TestClient, body: &Value) {
 }
 
 /// Exclusive temporal upsert forwards the owned `speed` instances and strips
-/// them from the local evolution, keeping `brandName` local. Confirms
-/// REQ-PROV-78, 79, 81.
+/// them from the local evolution, keeping `brandName` local.
 #[tokio::test]
 async fn temporal_upsert_exclusive_match_forwards_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -100,7 +99,7 @@ async fn temporal_upsert_exclusive_match_forwards_and_strips() {
 }
 
 /// An exclusive temporal registration without `upsertTemporal` rejects the owned
-/// upsert with a bare `409 Conflict` and no forwarding. Confirms REQ-PROV-80.
+/// upsert with a bare `409 Conflict` and no forwarding.
 #[tokio::test]
 async fn temporal_upsert_exclusive_create_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -131,7 +130,7 @@ async fn temporal_upsert_exclusive_create_unsupported_returns_409() {
 }
 
 /// A redirect temporal registration forwards the whole evolution and holds
-/// nothing locally. Confirms REQ-PROV-82, 83.
+/// nothing locally.
 #[tokio::test]
 async fn temporal_upsert_redirect_match_forwards_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -174,7 +173,7 @@ async fn temporal_upsert_redirect_match_forwards_and_strips() {
 }
 
 /// An inclusive temporal registration forwards a full copy and also writes the
-/// evolution locally. Confirms REQ-PROV-84.
+/// evolution locally.
 #[tokio::test]
 async fn temporal_upsert_inclusive_forwards_remainder_and_local() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -214,7 +213,7 @@ async fn temporal_upsert_inclusive_forwards_remainder_and_local() {
 }
 
 /// Adding temporal attributes to an absent entity with no matching registration
-/// is `404 ResourceNotFound`. Confirms REQ-PROV-85 (positive).
+/// is `404 ResourceNotFound`.
 #[tokio::test]
 async fn temporal_add_attrs_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -235,8 +234,7 @@ async fn temporal_add_attrs_absent_and_no_registration_returns_404() {
 }
 
 /// A matching exclusive registration makes add-attributes forward the owned
-/// `speed` even with no local entity, so the result is not `404`. Confirms
-/// REQ-PROV-85 (negative), 86, 87.
+/// `speed` even with no local entity, so the result is not `404`.
 #[tokio::test]
 async fn temporal_add_attrs_registration_matches_absent_not_404_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -278,7 +276,7 @@ async fn temporal_add_attrs_registration_matches_absent_not_404_and_strips() {
 }
 
 /// An inclusive registration forwards the add-attributes remainder and applies
-/// it locally. Confirms REQ-PROV-88.
+/// it locally.
 #[tokio::test]
 async fn temporal_add_attrs_inclusive_forwards_remainder_and_local() {
     let topology = topology::single().await.expect("single-broker topology");

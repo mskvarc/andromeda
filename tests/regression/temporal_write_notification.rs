@@ -11,12 +11,10 @@
 //!
 //! A Temporal API create of an unknown identifier (clause 5.6.11) brings the
 //! Entity into current state, and an append of a newer observation (clauses
-//! 5.6.11 and 5.6.12, recency per clause 4.5.5.3) advances it; both changed
-//! current state without notifying anyone. A backfill of older observations,
+//! 5.6.11 and 5.6.12, recency per clause 4.5.5.3) advances it; both change
+//! current state and owe a notification. A backfill of older observations,
 //! and every operation that only edits the Temporal Evolution (clauses 5.6.13
 //! to 5.6.16), leave current state as it was and owe nothing.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

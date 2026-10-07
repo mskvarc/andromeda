@@ -1,16 +1,6 @@
 //! A `JsonProperty` whose `json` is an array reads back as that array.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 4.5.24.2: `json` is "a raw JSON object (or
-//! array of objects) which contains data which is not available for JSON-LD
-//! interpretation. This means that the attributes within the JSON object are
-//! never subject to JSON-LD term expansion or compaction". The core context
-//! types `json` as `@json`, so the array is stored as one JSON literal, and
-//! clause 4.6.4 returns "the original content". The compaction walk added the
-//! literal's document by the JSON-LD add-value rule, element by element, so a
-//! one-element array read back as its element and a nested array was flattened
-//! into its parent, on the Core and the Temporal API alike.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 clause 4.5.24.2: `json` is "a raw JSON object (or array of objects) which contains data which is not available for JSON-LD interpretation. This means that the attributes within the JSON object are never subject to JSON-LD term expansion or compaction". The core context types `json` as `@json`, so the array is stored as one JSON literal, and clause 4.6.4 returns "the original content". Compaction must not add the literal's document by the JSON-LD add-value rule element by element, which would read a one-element array back as its element and flatten a nested array into its parent, on the Core and the Temporal API alike.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -82,17 +72,14 @@ async fn write(client: &TestClient, method: Method, path: &str, body: &Value) {
     assert_eq!(response.status, StatusCode::NO_CONTENT, "{path}: {:?}", response.body);
 }
 
-/// Clauses 4.5.24.2 and 4.5.24.3: a one-element array, an array holding an
-/// array, and a sub-attribute's one-element array read back as written in the
-/// normalized, the concise and the key-values representation.
+/// Clauses 4.5.24.2 and 4.5.24.3: a one-element array, an array holding an array, and a sub-attribute's one-element array read back as written in the normalized, the concise and the key-values representation.
 #[tokio::test]
 async fn regression_r81_a_json_array_reads_back_as_written_in_every_representation() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
     let client = scope.client();
     let id = scope.id("JsonArrayProbe:read");
     let tickets = json!([{"id": "85a6cc52-0589-45f9", "value": "Overstay 60 minutes"}]);
-    // Clause 4.5.24.2: `json` is "a raw JSON object (or array of objects)", so
-    // the array holds objects; member and element order differ from sorted order.
+    // Clause 4.5.24.2: `json` is "a raw JSON object (or array of objects)", so the array holds objects; member and element order differ from sorted order.
     let nested = json!([{"b": 2, "a": 1}, {"z": [1, 2], "y": "text"}]);
     let meta = json!([{"k": "v"}]);
     create(
@@ -120,9 +107,7 @@ async fn regression_r81_a_json_array_reads_back_as_written_in_every_representati
     assert_eq!(key_values["nested"], json!({"json": nested}), "{key_values}");
 }
 
-/// Partial Attribute Update (clause 5.6.4), Append Attributes (5.6.3), Merge
-/// Entity (5.6.17) and Replace Attribute (5.6.19) each store a one-element
-/// array that reads back as written.
+/// Partial Attribute Update (clause 5.6.4), Append Attributes (5.6.3), Merge Entity (5.6.17) and Replace Attribute (5.6.19) each store a one-element array that reads back as written.
 #[tokio::test]
 async fn regression_r81_attribute_writes_keep_a_one_element_json_array() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -170,9 +155,7 @@ async fn regression_r81_attribute_writes_keep_a_one_element_json_array() {
     assert_eq!(entity["replaced"], json_property(&replaced), "{entity}");
 }
 
-/// Clauses 5.6.11 and 5.6.12 with clause 4.5.9: a Temporal Evolution keeps a
-/// one-element array in its normalized instances and in its `jsons` pairs,
-/// whether it was written as instances or as pairs.
+/// Clauses 5.6.11 and 5.6.12 with clause 4.5.9: a Temporal Evolution keeps a one-element array in its normalized instances and in its `jsons` pairs, whether it was written as instances or as pairs.
 #[tokio::test]
 async fn regression_r81_a_temporal_evolution_keeps_a_one_element_json_array() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -223,9 +206,7 @@ async fn regression_r81_a_temporal_evolution_keeps_a_one_element_json_array() {
     );
 }
 
-/// Clause 5.8.6 with `showChanges`: a notification carries the one-element
-/// array as `json` and the one it replaced as `previousJson` (clause 4.5.24.2:
-/// "The representation is the same as that of "json"").
+/// Clause 5.8.6 with `showChanges`: a notification carries the one-element array as `json` and the one it replaced as `previousJson` (clause 4.5.24.2: "The representation is the same as that of "json"").
 #[tokio::test]
 async fn regression_r81_a_notification_keeps_a_one_element_json_array_and_its_previous_json() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

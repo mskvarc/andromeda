@@ -1,24 +1,10 @@
-//! Matching a `pick`/`omit` term list against a rendered attribute key
-//! (clause 4.21).
+//! Matching a `pick`/`omit` term list against a rendered attribute key (clause 4.21).
 //!
-//! Shared by every renderer that narrows an already-rendered `serde_json::Value`
-//! against a compiled [`ProjectionTerm`] list -- the non-temporal API's
-//! `join=inline` nesting and `join=flat` narrowing, and the temporal API's
-//! Linked Entity narrowing (clause 4.5.23) alike. Each of those walks rendered
-//! JSON rather than a typed [`Entity`], so none of them can call
-//! [`ProjectionTerm::matches_attribute`] without first resolving the key's
-//! expanded IRI, which is exactly what this function does through an
-//! [`AttributeIriIndex`].
-//!
-//! [`Entity`]: andromeda_ngsi_ld_model::entity::Entity
+//! Shared by every renderer that narrows already-rendered JSON against a compiled [`ProjectionTerm`] list: `join=inline` nesting, `join=flat` narrowing, and the temporal API's Linked Entity narrowing (clause 4.5.23). None of them walks a typed entity, so none can call [`ProjectionTerm::matches_attribute`] without first resolving the key's expanded IRI, which this function does through an [`AttributeIriIndex`].
 
 use crate::projection::{attribute_iri_index::AttributeIriIndex, term::ProjectionTerm};
 
-/// The term in `terms` naming the attribute keyed `key`, if any.
-///
-/// A key the index does not cover can still be matched when the term's own IRI
-/// is spelled exactly as the key -- an entity whose attributes are keyed by
-/// expanded IRI needs no expansion to be matched.
+/// The term in `terms` naming the attribute keyed `key`, if any. A key the index does not cover can still be matched when the term's own IRI is spelled exactly as the key, as with an entity whose attributes are keyed by expanded IRI.
 #[must_use]
 pub fn matching_term<'t>(key: &str, terms: &'t [ProjectionTerm], index: &AttributeIriIndex) -> Option<&'t ProjectionTerm> {
     terms.iter().find(|term| match index.expanded(key) {
@@ -59,8 +45,7 @@ mod tests {
         assert_eq!(matching_term("category", &terms, &index), Some(&terms[0]));
     }
 
-    /// A key the index does not cover still matches a term whose IRI is
-    /// spelled exactly as the key.
+    /// A key the index does not cover still matches a term whose IRI is spelled exactly as the key.
     #[test]
     fn an_uncovered_key_matches_a_term_spelled_as_the_expanded_iri() {
         let index = AttributeIriIndex::new();

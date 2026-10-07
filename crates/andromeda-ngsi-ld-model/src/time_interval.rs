@@ -41,11 +41,9 @@ impl TimeInterval {
     /// itself lies inside the interval" that sentence answers the wrong
     /// question: a source covering August 2020 to August 2021 plainly holds
     /// observations made after June 2020, and a query for everything after the
-    /// epoch would reach no source at all. The official test material reads it
-    /// as the overlap from both directions -- `047_10`/`047_11` expect an
-    /// `after` whose instant precedes `startAt` to match, `037_09` a `before`
-    /// whose instant follows `endAt` -- and neither is satisfiable under the
-    /// containment reading, so the overlap is what is implemented.
+    /// epoch would reach no source at all. The overlap is therefore read from
+    /// both directions: an `after` whose instant precedes `startAt` matches, and
+    /// so does a `before` whose instant follows `endAt`.
     #[must_use]
     pub fn meets(&self, window: &QueryWindow) -> bool {
         let (from, to) = match window {

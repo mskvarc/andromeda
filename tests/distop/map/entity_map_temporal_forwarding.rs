@@ -1,10 +1,4 @@
-//! Temporal `EntityMap` forwarding to supporting temporal Context Sources (clause
-//! 5.14.5): the forwarded createEntityMapQueryTemporal, filter stripping, and
-//! the remote map folded into `linkedMaps` and the `entityMap` element, plus the
-//! local success result. The source advertises `createEntityMapQueryTemporal`
-//! and `queryTemporal` explicitly: Table 4.20-2 lists no temporal operation in
-//! `federationOps`, so that group alone would never match a temporal query.
-//! Forwarding rows are `T-MOCK`; the stored/success rows are `T-LOCAL`.
+//! Temporal `EntityMap` forwarding to supporting temporal Context Sources (clause 5.14.5): the forwarded createEntityMapQueryTemporal, filter stripping, and the remote map folded into `linkedMaps` and the `entityMap` element, plus the local success result. The source advertises `createEntityMapQueryTemporal` and `queryTemporal` explicitly: Table 4.20-2 lists no temporal operation in `federationOps`, so that group alone would never match a temporal query.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -34,8 +28,7 @@ async fn seed_temporal(client: &TestClient, entity_type: &str, id: &str, speed: 
     );
 }
 
-/// Register an inclusive `Vehicle` source on the front broker and stub the
-/// temporal map and entity endpoints the forwarded query may hit.
+/// Register an inclusive `Vehicle` source on the front broker and stub the temporal map and entity endpoints the forwarded query may hit.
 async fn temporal_source(
     topology: &MultiBrokerTopology<BrokerRole>,
     entity_type: &str,
@@ -70,8 +63,7 @@ async fn temporal_source(
     mock
 }
 
-/// A non-local split builds the local candidate set by id, idPattern, type, and
-/// the temporal query only (clause 5.14.5). Confirms REQ-MAP-140.
+/// A non-local split builds the local candidate set by id, idPattern, type, and the temporal query only (clause 5.14.5).
 #[tokio::test]
 async fn emt_split_non_local_candidate_set_by_id_pattern_type_temporal() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -97,8 +89,7 @@ async fn emt_split_non_local_candidate_set_by_id_pattern_type_temporal() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A non-local temporal query forwards to the supporting temporal CSRs
-/// (clause 5.14.5). Confirms REQ-MAP-150.
+/// A non-local temporal query forwards to the supporting temporal CSRs (clause 5.14.5).
 #[tokio::test]
 async fn emt_non_local_forwards_to_supporting_temporal_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -128,11 +119,7 @@ async fn emt_non_local_forwards_to_supporting_temporal_csrs() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A forwarded temporal query under `splitEntities=true` strips the local
-/// filters (clause 5.14.5.4, which applies the clause 5.7.2.4 split-entities
-/// rule: the `q` filter is evaluated after re-assembly, not at the source). The
-/// parameter is sent explicitly because the deployment default is complete
-/// entities. Confirms REQ-MAP-151.
+/// A forwarded temporal query under `splitEntities=true` strips the local filters (clause 5.14.5.4, which applies the clause 5.7.2.4 split-entities rule: the `q` filter is evaluated after re-assembly, not at the source). The parameter is sent explicitly because the deployment default is complete entities.
 #[tokio::test]
 async fn emt_split_forward_strips_filters() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -162,8 +149,7 @@ async fn emt_split_forward_strips_filters() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The forwarded temporal query returns an `EntityMap` folded into the result
-/// (clause 5.14.5). Confirms REQ-MAP-152.
+/// The forwarded temporal query returns an `EntityMap` folded into the result (clause 5.14.5).
 #[tokio::test]
 async fn emt_forwarded_query_returns_entity_map() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -193,7 +179,7 @@ async fn emt_forwarded_query_returns_entity_map() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A remote temporal map updates `linkedMaps` (clause 5.14.5). Confirms REQ-MAP-153.
+/// A remote temporal map updates `linkedMaps` (clause 5.14.5).
 #[tokio::test]
 async fn emt_remote_map_updates_linked_maps() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -220,7 +206,6 @@ async fn emt_remote_map_updates_linked_maps() {
 }
 
 /// A remote temporal map updates the `entityMap` element (clause 5.14.5).
-/// Confirms REQ-MAP-154.
 #[tokio::test]
 async fn emt_remote_map_updates_entity_map_element() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -247,7 +232,6 @@ async fn emt_remote_map_updates_entity_map_element() {
 }
 
 /// The local temporal map is stored and retrievable (clause 5.14.5).
-/// Confirms REQ-MAP-155.
 #[tokio::test]
 async fn emt_local_map_stored_and_retrievable() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -277,8 +261,7 @@ async fn emt_local_map_stored_and_retrievable() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Success returns `201` with the `NGSILD-EntityMap` header and an `EntityMap`
-/// body (clause 5.14.5). Confirms REQ-MAP-156.
+/// Success returns `201` with the `NGSILD-EntityMap` header and an `EntityMap` body (clause 5.14.5).
 #[tokio::test]
 async fn emt_success_returns_201_location_and_body() {
     let topology = topology::single().await.expect("single-broker topology");

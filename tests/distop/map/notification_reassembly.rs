@@ -3,7 +3,7 @@
 //! every other holder except the sender, merges them with the notification's
 //! `data`, drops non-matching entities, and forwards a single re-assembled
 //! notification to the local endpoint under the local subscription id. Topology
-//! `T-SPLIT` (A -> B, C), seeded `UNKNOWN`.
+//! `T-SPLIT` (A -> B, C).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -122,7 +122,7 @@ async fn trigger_on_b(topology: &MultiBrokerTopology<BrokerRole>, entity_id: &st
 }
 
 /// A context-source filter limits re-assembly to matching origin entities
-/// (clause 5.8.6). Confirms REQ-MAP-70.
+/// (clause 5.8.6).
 #[tokio::test]
 async fn notif_csf_limits_to_matching_origin_entities() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -142,7 +142,7 @@ async fn notif_csf_limits_to_matching_origin_entities() {
 }
 
 /// An inbound notification under a mapped subscription id creates a re-assembly
-/// copy (clause 5.8.6). Confirms REQ-MAP-71.
+/// copy (clause 5.8.6).
 #[tokio::test]
 async fn reassembly_inbound_mapped_subscription_id_creates_copy() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -163,7 +163,7 @@ async fn reassembly_inbound_mapped_subscription_id_creates_copy() {
 }
 
 /// Re-assembly retrieves the local copy and every holder except the sender
-/// (clause 5.8.6). Confirms REQ-MAP-72.
+/// (clause 5.8.6).
 #[tokio::test]
 async fn reassembly_split_retrieves_local_and_all_holders_except_sender() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -189,7 +189,7 @@ async fn reassembly_split_retrieves_local_and_all_holders_except_sender() {
 }
 
 /// Re-assembly merges the retrieved holders with the notification's `data`
-/// member (clause 5.8.6). Confirms REQ-MAP-73.
+/// member (clause 5.8.6).
 #[tokio::test]
 async fn reassembly_merges_retrieved_with_data_member() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -215,7 +215,7 @@ async fn reassembly_merges_retrieved_with_data_member() {
 }
 
 /// Re-assembly removes entities that no longer match after the merge
-/// (clause 5.8.6). Confirms REQ-MAP-74.
+/// (clause 5.8.6).
 #[tokio::test]
 async fn reassembly_removes_non_matching_after_merge() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -275,9 +275,9 @@ async fn placed_copy_id(source: &ContextSourceAdapter) -> String {
 /// Clause 5.8.6: a source notifies a deleted attribute with "only the name of
 /// the attribute as key and the URI "urn:ngsi-ld:null" as value", whatever
 /// family it was, and the copy relayed to the local subscriber reports the
-/// deletion the same way. Reading the sender's entity as concise Properties
-/// turned the Null into `{"type": "Property", "value": "urn:ngsi-ld:null"}`,
-/// which names a deleted Relationship a Property.
+/// deletion the same way. The Null is never read as a concise Property
+/// `{"type": "Property", "value": "urn:ngsi-ld:null"}`, which would name a
+/// deleted Relationship a Property.
 #[tokio::test]
 async fn regression_r56_a_notified_deletion_is_relayed_as_the_bare_null() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -330,7 +330,7 @@ async fn regression_r56_a_notified_deletion_is_relayed_as_the_bare_null() {
 }
 
 /// A non-empty re-assembly copy is forwarded to the local endpoint under the
-/// local subscription id (clause 5.8.6). Confirms REQ-MAP-75.
+/// local subscription id (clause 5.8.6).
 #[tokio::test]
 async fn reassembly_non_empty_copy_forwarded_to_local_endpoint_with_local_id() {
     let topology = topology::chain().await.expect("three-broker topology");

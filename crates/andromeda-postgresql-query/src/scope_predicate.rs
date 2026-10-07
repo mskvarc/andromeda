@@ -116,8 +116,7 @@ impl ScopeTarget {
 ///
 /// The result is a disjunction of conjunctions, mirroring the grammar. A
 /// one-alternative, one-requirement query renders as a single predicate:
-/// sea-query's `Condition::any` of one term adds no nesting of its own, which
-/// is why the hand-written special case both renderers used to carry is gone.
+/// sea-query's `Condition::any` of one term adds no nesting of its own.
 #[must_use]
 pub fn condition(scope_q: &ScopeQuery, target: &ScopeTarget) -> Condition {
     let mut disjunction = Condition::any();
@@ -245,9 +244,8 @@ mod tests {
             .to_string(PostgresQueryBuilder)
     }
 
-    /// A one-term disjunction renders without nesting, so the hand-written
-    /// "if only one OR term, return it directly" special case both renderers
-    /// carried was redundant.
+    /// A one-term disjunction renders without nesting, so no special case for a
+    /// single `OR` term is needed.
     #[test]
     fn a_single_scope_term_renders_without_nesting() {
         let sql = render(condition(&scope("/A/B"), &current()));

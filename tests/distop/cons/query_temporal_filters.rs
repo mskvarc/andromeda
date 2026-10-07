@@ -1,6 +1,4 @@
-//! Query Temporal post-aggregation `datasetId` filtering, distributed pagination,
-//! csf forwarding, and local `orderBy id` (clauses 5.7.4.4/.5, 5.5.9).
-//! Forwarding-selection and merge rows live in `crate::cons::query_temporal`.
+//! Query Temporal post-aggregation `datasetId` filtering, distributed pagination, csf forwarding, and local `orderBy id` (clauses 5.7.4.4/.5, 5.5.9).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -44,9 +42,7 @@ fn attribute_instances(body: &Value, id: &str, attribute: &str) -> Vec<Value> {
 
 const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 
-/// `datasetId` filters S7 per attribute into S8: a specific id keeps matching
-/// instances, `@none` the default, and a datasetId no instance carries removes the
-/// attribute (clause 5.7.4.4). Confirms REQ-CONS-67.
+/// `datasetId` filters S7 per attribute into S8: a specific id keeps matching instances, `@none` the default, and a datasetId no instance carries removes the attribute (clause 5.7.4.4).
 #[tokio::test]
 async fn distop_query_temporal_datasetid_filters_s7_empty_removed() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -128,9 +124,7 @@ async fn distop_query_temporal_datasetid_filters_s7_empty_removed() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Without a `datasetId` parameter S8 equals S7: the aggregated result passes
-/// through unchanged, retaining every `datasetId` (clause 5.7.4.4). Confirms
-/// REQ-CONS-68.
+/// Without a `datasetId` parameter S8 equals S7: the aggregated result passes through unchanged, retaining every `datasetId` (clause 5.7.4.4).
 #[tokio::test]
 async fn distop_query_temporal_no_datasetid_s8_equals_s7() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -188,8 +182,7 @@ async fn distop_query_temporal_no_datasetid_s8_equals_s7() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Distributed temporal pagination covers every candidate across pages with no
-/// duplicate and no page exceeding the limit (clause 5.5.9). Confirms REQ-CONS-71.
+/// Distributed temporal pagination covers every candidate across pages with no duplicate and no page exceeding the limit (clause 5.5.9).
 #[tokio::test]
 async fn distop_query_temporal_pagination_over_candidates() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -236,9 +229,7 @@ async fn distop_query_temporal_pagination_over_candidates() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `csf` expression is forwarded byte-identical into the downstream discovery a
-/// chained source performs for a temporal query (clause 5.7.4.4). Confirms
-/// REQ-CONS-72.
+/// A `csf` expression is forwarded byte-identical into the downstream discovery a chained source performs for a temporal query (clause 5.7.4.4).
 #[tokio::test]
 async fn distop_query_temporal_csf_forwarded_unchanged() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -286,8 +277,7 @@ async fn distop_query_temporal_csf_forwarded_unchanged() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `local=true` temporal query with `orderBy=id` orders the result by entity id
-/// (clause 5.7.4.5). Confirms REQ-CONS-73.
+/// A `local=true` temporal query with `orderBy=id` orders the result by entity id (clause 5.7.4.5).
 #[tokio::test]
 async fn distop_query_temporal_orderby_id_local_orders_result() {
     let topology = topology::single().await.expect("single-broker topology");

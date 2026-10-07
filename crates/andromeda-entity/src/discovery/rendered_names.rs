@@ -1,7 +1,7 @@
 //! The short names a discovery answer renders its stored names as.
 //!
-//! Tables 5.2.25-1, 5.2.26-1 and 5.2.28-1 all word the rule the same way — a
-//! name is rendered as the "short name if contained in @context" — so every
+//! Tables 5.2.25-1, 5.2.26-1 and 5.2.28-1 all word the rule the same way, a
+//! name is rendered as the "short name if contained in @context", so every
 //! discovery surface takes the same compaction, and none of them may reach for
 //! a compaction of its own. The identifiers beside those names are the
 //! opposite: Table 5.2.28-1 fixes the Attribute `id` to the "Full URI of

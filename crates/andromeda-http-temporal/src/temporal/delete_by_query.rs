@@ -1,6 +1,5 @@
 //! HTTP handling for the temporal history delete-by-query (the
-//! `temporal_delete_by_query` extension; see
-//! `docs/extensions/temporal-delete-by-query.md`).
+//! `temporal_delete_by_query` extension).
 //!
 //! The route is installed only when the extension is enabled, so reaching this
 //! handler is itself the gate. The operation is local-only — never forwarded —

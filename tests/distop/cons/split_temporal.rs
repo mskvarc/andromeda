@@ -1,8 +1,4 @@
-//! Split-vs-non-split filter timing for temporal queries (clause 5.7.4.4/.5): a
-//! split temporal query strips value/geo/scope filters before forwarding (keeping
-//! the temporal query) and re-applies them after aggregation, while a non-split
-//! query stages the full local filtering. broker-b holds `speed`, broker-c holds
-//! `location` for the same entity id.
+//! Split-vs-non-split filter timing for temporal queries (clause 5.7.4.4/.5): a split temporal query strips value/geo/scope filters before forwarding (keeping the temporal query) and re-applies them after aggregation, while a non-split query stages the full local filtering. broker-b holds `speed`, broker-c holds `location` for the same entity id.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -55,9 +51,7 @@ fn rich_temporal_filters(vtype: &str) -> String {
     )
 }
 
-/// Under `splitEntities` the local temporal stage produces S1 from id/idPattern/type
-/// plus the temporal query only, so a split-holder survives to assembly
-/// (clause 5.7.4.4). Confirms REQ-CONS-56.
+/// Under `splitEntities` the local temporal stage produces S1 from id/idPattern/type plus the temporal query only, so a split-holder survives to assembly (clause 5.7.4.4).
 #[tokio::test]
 async fn distop_split_temporal_query_split_nonlocal_local_stage_id_type_temporal_only() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -126,9 +120,7 @@ async fn distop_split_temporal_query_split_nonlocal_local_stage_id_type_temporal
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A non-split temporal query stages the full local filtering, so a local candidate
-/// failing the value stage is absent from the result (clause 5.7.4.4). Confirms
-/// REQ-CONS-57.
+/// A non-split temporal query stages the full local filtering, so a local candidate failing the value stage is absent from the result (clause 5.7.4.4).
 #[tokio::test]
 async fn distop_split_temporal_query_non_split_staged_local_filtering() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -162,8 +154,7 @@ async fn distop_split_temporal_query_non_split_staged_local_filtering() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A split temporal query strips value/geo/scope filters before forwarding while
-/// retaining the temporal query (clause 5.7.4.4). Confirms REQ-CONS-62.
+/// A split temporal query strips value/geo/scope filters before forwarding while retaining the temporal query (clause 5.7.4.4).
 #[tokio::test]
 async fn distop_split_temporal_query_split_strips_then_reapplies() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -218,9 +209,7 @@ async fn distop_split_temporal_query_split_strips_then_reapplies() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A split non-local temporal query re-applies value/geo/scope on the aggregated
-/// entities, removing one whose merged value fails (clause 5.7.4.4). Confirms
-/// REQ-CONS-65.
+/// A split non-local temporal query re-applies value/geo/scope on the aggregated entities, removing one whose merged value fails (clause 5.7.4.4).
 #[tokio::test]
 async fn distop_split_temporal_query_split_nonlocal_reapplies_values_geo_scope() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -281,8 +270,7 @@ async fn distop_split_temporal_query_split_nonlocal_reapplies_values_geo_scope()
     topology.finish().await.expect("topology cleanup");
 }
 
-/// When no split re-filtering applies, S7 equals S4: the aggregated temporal result
-/// passes through unchanged (clause 5.7.4.4). Confirms REQ-CONS-66.
+/// When no split re-filtering applies, S7 equals S4: the aggregated temporal result passes through unchanged (clause 5.7.4.4).
 #[tokio::test]
 async fn distop_split_temporal_query_no_reapply_s7_equals_s4() {
     let topology = topology::chain().await.expect("three-broker topology");

@@ -1,20 +1,8 @@
-//! Operation-aware forward binding: the exact shape of the request a broker
-//! forwards when a registration advertises only some of the read operations
-//! (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.1, 6.23, Table 4.20-2).
+//! Operation-aware forward binding: the exact shape of the request a broker forwards when a registration advertises only some of the read operations (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.1, 6.23, Table 4.20-2).
 //!
-//! Clause 4.3.6.1: "registered Context Sources may indicate that they are only
-//! willing to respond to a limited subset of API operations ... Context Brokers
-//! shall respect this", and "all constraints specified in the registration shall
-//! be respected". Query Entities has two bindings of one operation (clause
-//! 6.23.1), so a query reaches a registration advertising only one of them
-//! through that one. A retrieval is not a query: clause 5.7.1.4 forwards it only
-//! to registrations that support `retrieveEntity`. These tests capture the
-//! forwarded request with the mock and assert its resource path and body/query
-//! byte-for-byte, rather than merely counting that the source was reached.
+//! Clause 4.3.6.1: "registered Context Sources may indicate that they are only willing to respond to a limited subset of API operations ... Context Brokers shall respect this", and "all constraints specified in the registration shall be respected". Query Entities has two bindings of one operation (clause 6.23.1), so a query reaches a registration advertising only one of them through that one. A retrieval is not a query: clause 5.7.1.4 forwards it only to registrations that support `retrieveEntity`. These tests capture the forwarded request with the mock and assert its resource path and body/query byte-for-byte, rather than merely counting that the source was reached.
 //!
-//! The distributed client carries the compound test `@context` as its default,
-//! so the covered type `Vehicle` is expanded against it at the broker and
-//! compacted back to `Vehicle` in the forwarded request (clause 4.3.6.1).
+//! The distributed client carries the compound test `@context` as its default, so the covered type `Vehicle` is expanded against it at the broker and compacted back to `Vehicle` in the forwarded request (clause 4.3.6.1).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -37,10 +25,7 @@ const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 /// The forwarded path of a Batch Entity Query (clause 6.23.3.1).
 const FORWARDED_BATCH_QUERY: &str = "/ngsi-ld/v1/entityOperations/query";
 
-/// A minimal NGSI-LD `Query` (clause 5.2.23) naming one entity type scoped to a
-/// per-test id prefix, carrying the compound context inline for
-/// `application/ld+json` submission. The `idPattern` keeps a bare-type query from
-/// matching another concurrent test's registrations covering the same type.
+/// A minimal NGSI-LD `Query` (clause 5.2.23) naming one entity type scoped to a per-test id prefix, carrying the compound context inline for `application/ld+json` submission. The `idPattern` keeps a bare-type query from matching another concurrent test's registrations covering the same type.
 fn type_query(entity_type: &str, id_pattern: &str) -> Value {
     json!({
         "type": "Query",
@@ -49,13 +34,7 @@ fn type_query(entity_type: &str, id_pattern: &str) -> Value {
     })
 }
 
-/// Clause 5.7.1.4: a retrieval is forwarded only to the registrations that
-/// "match and support the retrieveEntity operation", and Table 4.20-1 names
-/// `retrieveEntity`, `queryEntity` and `queryBatch` as separate operations. A
-/// registration advertising only `queryEntity` or only `queryBatch` does not
-/// apply: its source is never contacted -- neither through a retrieve-by-id nor
-/// through a query standing in for one -- and with no other holder the entity is
-/// not found.
+/// Clause 5.7.1.4: a retrieval is forwarded only to the registrations that "match and support the retrieveEntity operation", and Table 4.20-1 names `retrieveEntity`, `queryEntity` and `queryBatch` as separate operations. A registration advertising only `queryEntity` or only `queryBatch` does not apply: its source is never contacted -- neither through a retrieve-by-id nor through a query standing in for one -- and with no other holder the entity is not found.
 async fn assert_retrieve_is_not_forwarded_to(operation: &str) {
     let topology = topology::single().await.expect("single-broker topology");
     let front = topology.broker(BrokerRole::A).expect("topology broker A");
@@ -92,9 +71,7 @@ async fn a_retrieve_is_not_forwarded_to_a_query_batch_only_registration() {
     assert_retrieve_is_not_forwarded_to("queryBatch").await;
 }
 
-/// Clause 4.3.6.1 / 6.23: a GET query sent to a registration advertising only
-/// `queryBatch` is forwarded as a POST `entityOperations/query` whose `Query`
-/// body carries one selector per queried id.
+/// Clause 4.3.6.1 / 6.23: a GET query sent to a registration advertising only `queryBatch` is forwarded as a POST `entityOperations/query` whose `Query` body carries one selector per queried id.
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn forward_get_query_downgrades_to_batch_query_body() {
@@ -129,10 +106,7 @@ async fn forward_get_query_downgrades_to_batch_query_body() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Clause 4.3.6.1 / 5.7.2.4: a POST `entityOperations/query` sent to a
-/// registration advertising only `queryEntity` is downgraded to a GET query, the
-/// operation the registration actually allows, and never reaches the batch-query
-/// endpoint.
+/// Clause 4.3.6.1 / 5.7.2.4: a POST `entityOperations/query` sent to a registration advertising only `queryEntity` is downgraded to a GET query, the operation the registration actually allows, and never reaches the batch-query endpoint.
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn forward_post_query_downgrades_to_get_query() {
@@ -177,10 +151,7 @@ async fn forward_post_query_downgrades_to_get_query() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Clause 4.3.6.1 / 6.23: a POST `entityOperations/query` sent to a registration
-/// advertising `queryBatch` is forwarded as a POST batch query with a valid
-/// clause-6.23 `Query` body -- the operation the client used and the source
-/// registered.
+/// Clause 4.3.6.1 / 6.23: a POST `entityOperations/query` sent to a registration advertising `queryBatch` is forwarded as a POST batch query with a valid clause-6.23 `Query` body -- the operation the client used and the source registered.
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn forward_post_query_prefers_batch_when_advertised() {
@@ -222,9 +193,7 @@ async fn forward_post_query_prefers_batch_when_advertised() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Clause 4.3.6.3: an exclusive registration whose block names two entity ids is
-/// narrowed to that block's footprint -- a type-only query forwarded as a batch
-/// query names one selector per covered id, and no id the block does not cover.
+/// Clause 4.3.6.3: an exclusive registration whose block names two entity ids is narrowed to that block's footprint -- a type-only query forwarded as a batch query names one selector per covered id, and no id the block does not cover.
 #[tokio::test]
 async fn forward_multi_id_exclusive_block_names_each_id() {
     let topology = topology::single().await.expect("single-broker topology");

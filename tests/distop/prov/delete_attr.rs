@@ -1,4 +1,4 @@
-//! Delete Attribute forwarding — REQ-PROV-34..40 (clause 5.6.5.4).
+//! Delete Attribute forwarding (clause 5.6.5.4).
 //!
 //! An exclusive registration that owns the attribute forwards the `DELETE` and
 //! terminates without removing the local copy; an unadvertised `deleteAttrs`
@@ -47,8 +47,7 @@ async fn delete_speed(client: &TestClient, id: &str) -> TestResponse {
 /// the local copy is left in place. The registration precedes the local seed
 /// because clause 5.9.2.4 rejects an exclusive registration when "an Entity
 /// already exists for the supplied Entity ID (URI) and the existing Entity
-/// contains any of the Attributes defined in the registration". Confirms
-/// REQ-PROV-34, 35, 37.
+/// contains any of the Attributes defined in the registration".
 #[tokio::test]
 async fn delete_attr_exclusive_match_forwards_and_terminates() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -90,8 +89,7 @@ async fn delete_attr_exclusive_match_forwards_and_terminates() {
 }
 
 /// An exclusive registration that does not advertise `deleteAttrs` rejects the
-/// delete it wholly owns with a bare `409 Conflict` and no forwarding. Confirms
-/// REQ-PROV-36 (complete-fail).
+/// delete it wholly owns with a bare `409 Conflict` and no forwarding.
 #[tokio::test]
 async fn delete_attr_exclusive_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -126,7 +124,6 @@ async fn delete_attr_exclusive_op_unsupported_returns_409() {
 /// registrations are defined, operations are distributed to all registered
 /// Context Sources"; a second exclusive on the same entity and attribute is a
 /// clause 5.9.2.4 Conflict), registered before the local copy is seeded.
-/// Confirms REQ-PROV-36 (partial), 39.
 #[tokio::test]
 async fn delete_attr_op_unsupported_multi_returns_207() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -177,7 +174,7 @@ async fn delete_attr_op_unsupported_multi_returns_207() {
 }
 
 /// With neither a local entity nor a matching registration, a delete attribute is
-/// `404 ResourceNotFound`. Confirms REQ-PROV-38 (positive).
+/// `404 ResourceNotFound`.
 #[tokio::test]
 async fn delete_attr_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -192,7 +189,7 @@ async fn delete_attr_absent_and_no_registration_returns_404() {
 }
 
 /// A matching registration keeps a delete on a locally absent entity from being a
-/// `404`; the operation is forwarded. Confirms REQ-PROV-38 (negative).
+/// `404`; the operation is forwarded.
 #[tokio::test]
 async fn delete_attr_registration_matches_entity_absent_not_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -224,7 +221,7 @@ async fn delete_attr_registration_matches_entity_absent_not_404() {
 }
 
 /// An inclusive registration forwards the input and removes the attribute
-/// locally. Confirms REQ-PROV-39.
+/// locally.
 #[tokio::test]
 async fn delete_attr_inclusive_forwards_input() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -264,7 +261,7 @@ async fn delete_attr_inclusive_forwards_input() {
 }
 
 /// A locally present entity that lacks the targeted attribute is `404` for a
-/// delete attribute. Confirms REQ-PROV-40.
+/// delete attribute.
 #[tokio::test]
 async fn delete_attr_local_present_attr_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");

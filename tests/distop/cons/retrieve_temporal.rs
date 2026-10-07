@@ -1,9 +1,4 @@
-//! Retrieve Temporal Entity forwarding (clause 5.7.3.4): 404 suppression, local
-//! evolution as the base series, pre-distribution temporal filtering, capability
-//! selection, and the 4.5.5 merge of remote temporal instances into S1.
-//! Auxiliary, `datasetId`, and `lastN` rows live in
-//! `crate::cons::retrieve_temporal_filters`; map rows in
-//! `crate::cons::entity_map_temporal`.
+//! Retrieve Temporal Entity forwarding (clause 5.7.3.4): 404 suppression, local evolution as the base series, pre-distribution temporal filtering, capability selection, and the 4.5.5 merge of remote temporal instances into S1.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -25,11 +20,7 @@ fn observed(value: i64, observed_at: &str) -> Value {
 /// The whole-history temporal query window: everything before 2030.
 const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 
-/// Retrieve Temporal returns `404 ResourceNotFound` whenever the evolution is
-/// held neither locally nor by any source a matching registration forwards to:
-/// a registration that matches but whose source answers 404 does not make the
-/// broker synthesise a temporal representation, and clause 6.3.17 does not treat
-/// the source's empty answer as abnormal (clause 5.7.3.4). Confirms REQ-CONS-39.
+/// Retrieve Temporal returns `404 ResourceNotFound` whenever the evolution is held neither locally nor by any source a matching registration forwards to: a registration that matches but whose source answers 404 does not make the broker synthesise a temporal representation, and clause 6.3.17 does not treat the source's empty answer as abnormal (clause 5.7.3.4).
 #[tokio::test]
 async fn distop_retrieve_temporal_no_local_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -61,12 +52,7 @@ async fn distop_retrieve_temporal_no_local_no_registration_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An exclusive or redirect registration whose single source answers the
-/// temporal retrieve with `404` leaves the broker with nothing to serve: it does
-/// not synthesise a temporal representation from the registration, so the
-/// retrieval is `404 ResourceNotFound` in every proxied mode. Clause 6.3.17
-/// mandates "404 Not Found - if resources not found within the single registered
-/// source" (clause 5.7.3.4).
+/// An exclusive or redirect registration whose single source answers the temporal retrieve with `404` leaves the broker with nothing to serve: it does not synthesise a temporal representation from the registration, so the retrieval is `404 ResourceNotFound` in every proxied mode. Clause 6.3.17 mandates "404 Not Found - if resources not found within the single registered source" (clause 5.7.3.4).
 #[tokio::test]
 async fn distop_retrieve_temporal_exclusive_and_redirect_miss_return_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -97,8 +83,7 @@ async fn distop_retrieve_temporal_exclusive_and_redirect_miss_return_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The local temporal evolution is the base series onto which a remote attribute
-/// evolution is merged (clause 5.7.3.4). Confirms REQ-CONS-40.
+/// The local temporal evolution is the base series onto which a remote attribute evolution is merged (clause 5.7.3.4).
 #[tokio::test]
 async fn distop_retrieve_temporal_local_evolution_is_base_s() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -145,9 +130,7 @@ async fn distop_retrieve_temporal_local_evolution_is_base_s() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Local temporal filtering restricts the base series to the requested window
-/// before distribution: a `between` query excludes an out-of-window instance
-/// (clause 5.7.3.4). Confirms REQ-CONS-41.
+/// Local temporal filtering restricts the base series to the requested window before distribution: a `between` query excludes an out-of-window instance (clause 5.7.3.4).
 #[tokio::test]
 async fn distop_retrieve_temporal_local_temporal_filtering_produces_s1() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -186,9 +169,7 @@ async fn distop_retrieve_temporal_local_temporal_filtering_produces_s1() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Retrieve Temporal forwards only to `retrieveTemporal`-capable sources; a
-/// `queryTemporal`-only source is not contacted (clause 5.7.3.4). Confirms
-/// REQ-CONS-44.
+/// Retrieve Temporal forwards only to `retrieveTemporal`-capable sources; a `queryTemporal`-only source is not contacted (clause 5.7.3.4).
 #[tokio::test]
 async fn distop_retrieve_temporal_forwards_only_retrievetemporal_capable() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -228,9 +209,7 @@ async fn distop_retrieve_temporal_forwards_only_retrievetemporal_capable() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Remote temporal instances from split holders merge into S1 per clause 4.5.5,
-/// so the result carries both attribute histories (clause 5.7.3.4). Confirms
-/// REQ-CONS-46.
+/// Remote temporal instances from split holders merge into S1 per clause 4.5.5, so the result carries both attribute histories (clause 5.7.3.4).
 #[tokio::test]
 async fn distop_retrieve_temporal_merges_modes_into_s1() {
     let topology = topology::chain().await.expect("three-broker topology");

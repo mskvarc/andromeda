@@ -1,4 +1,4 @@
-//! Replace Entity forwarding — REQ-PROV-113..118 (clause 5.6.7.4).
+//! Replace Entity forwarding (clause 5.6.7.4).
 //!
 //! `PUT /entities/{id}` follows the same split as create: an exclusive
 //! registration forwards its owned `speed` and strips it from the locally stored
@@ -25,7 +25,7 @@ fn brand_and_speed(id: &str, brand: &str, speed: i64) -> Value {
 }
 
 /// Replacing an absent entity with no matching registration is a plain
-/// `404 ResourceNotFound`. Confirms REQ-PROV-113 (positive).
+/// `404 ResourceNotFound`.
 #[tokio::test]
 async fn replace_entity_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -43,7 +43,7 @@ async fn replace_entity_absent_and_no_registration_returns_404() {
 }
 
 /// A matching registration for an entity absent locally forwards the replacement
-/// rather than returning `404`. Confirms REQ-PROV-113 (negative).
+/// rather than returning `404`.
 #[tokio::test]
 async fn replace_entity_registration_matches_entity_absent_not_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -78,8 +78,7 @@ async fn replace_entity_registration_matches_entity_absent_not_404() {
 }
 
 /// An exclusive registration forwards the owned `speed` and stores a local
-/// replacement without it, keeping the unowned `brandName`. Confirms
-/// REQ-PROV-114, 116.
+/// replacement without it, keeping the unowned `brandName`.
 #[tokio::test]
 async fn replace_entity_exclusive_match_forwards_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -135,7 +134,6 @@ async fn replace_entity_exclusive_match_forwards_and_strips() {
 
 /// An exclusive registration that does not advertise `replaceEntity` rejects the
 /// wholly owned replacement with a bare `409 Conflict` and no forwarding.
-/// Confirms REQ-PROV-115.
 #[tokio::test]
 async fn replace_entity_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -179,7 +177,7 @@ async fn replace_entity_op_unsupported_returns_409() {
 }
 
 /// An inclusive registration forwards a full copy, fully replaces the local
-/// entity, and preserves its `createdAt`. Confirms REQ-PROV-117, 118.
+/// entity, and preserves its `createdAt`.
 #[tokio::test]
 async fn replace_entity_inclusive_forwards_remainder_replaces_local_preserves_createdat() {
     let topology = topology::single().await.expect("single-broker topology");

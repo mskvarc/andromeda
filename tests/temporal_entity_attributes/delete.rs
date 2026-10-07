@@ -20,10 +20,6 @@ use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
-// ---------------------------------------------------------------------------
-// Delete attribute from temporal entity
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_attrs_delete_attribute_success() {
     let scope = TestEnvironment::from_suite("temporal_entity_attributes")
@@ -40,15 +36,11 @@ async fn temporal_attrs_delete_attribute_success() {
     assert_eq!(status, StatusCode::NO_CONTENT, "delete attr should return 204");
     assert!(bytes.is_empty(), "response body should be empty");
 
-    // Verify: fuelLevel should be removed (default instance only)
     let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    // speed should still exist
     assert!(body["speed"].is_array(), "speed should still exist");
-    // fuelLevel should either be removed or have only the datasetId instance
     if let Some(fuel) = body.get("fuelLevel") {
-        // If present, should only be the datasetId instance
         let arr = fuel.as_array().expect("fuelLevel should be array if present");
         for instance in arr {
             assert!(instance.get("datasetId").is_some(), "only datasetId instances should remain");
@@ -69,16 +61,13 @@ async fn temporal_attrs_delete_with_datasetid_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Delete the fuelLevel instance with specific datasetId
     let (status, bytes, _) = delete_temporal_attr_with_params(&c, &id, "fuelLevel", "datasetId=urn:ngsi-ld:Vehicle:12345-fuel").await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete attr with datasetId should return 204");
     assert!(bytes.is_empty(), "response body should be empty");
 
-    // Verify
     let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    // fuelLevel should still have the default instances (without datasetId)
     let fuel = body["fuelLevel"].as_array().expect("fuelLevel should be array");
     for instance in fuel {
         assert!(
@@ -101,28 +90,20 @@ async fn temporal_attrs_delete_with_deleteall_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Delete all fuelLevel instances
     let (status, bytes, _) = delete_temporal_attr_with_params(&c, &id, "fuelLevel", "deleteAll=true").await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete attr with deleteAll should return 204");
     assert!(bytes.is_empty(), "response body should be empty");
 
-    // Verify
     let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    // fuelLevel should be completely removed
     assert!(
         body.get("fuelLevel").is_none() || body["fuelLevel"].is_null(),
         "fuelLevel should be removed with deleteAll"
     );
-    // speed should still exist
     assert!(body["speed"].is_array(), "speed should still exist");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Invalid entity/attribute ID
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_attrs_delete_empty_entity_id_returns_400() {
@@ -180,10 +161,6 @@ async fn temporal_attrs_delete_invalid_attribute_name_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Entity/attribute not found
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_attrs_delete_entity_not_found_returns_404() {
     let scope = TestEnvironment::from_suite("temporal_entity_attributes")
@@ -236,7 +213,6 @@ async fn temporal_attrs_delete_nonexistent_datasetid_returns_404() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Try to delete with non-existent datasetId
     let (status, _, body) = delete_temporal_attr_with_params(&c, &id, "fuelLevel", "datasetId=urn:ngsi-ld:NonExistent").await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent datasetId should return 404");
     assert!(

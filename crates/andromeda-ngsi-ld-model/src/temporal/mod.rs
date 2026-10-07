@@ -225,10 +225,10 @@ pub enum AggregationAverage {
 }
 
 /// One rendered group-key value of a grouped aggregation row (`aggrGroupBy`
-/// extension, study §4.6).
+/// extension).
 ///
 /// A grouped aggregation nests its triples under one map key per grouping term.
-/// The three shapes are the map keys the study defines: `@none` for a row whose
+/// The three shapes are the map keys of the grouping extension: `@none` for a row whose
 /// key was absent, `urn:ngsi-ld:null` for an explicit NGSI-LD Null value key,
 /// and the rendered value otherwise. The value is carried as text because it is
 /// a JSON object key, which is unstructured by construction.
@@ -243,10 +243,10 @@ pub enum GroupKeyValue {
 }
 
 impl GroupKeyValue {
-    /// The `@none` map key of an absent group value (study §4.6).
+    /// The `@none` map key of an absent group value.
     pub const NONE_KEY: &'static str = "@none";
 
-    /// The map key of an explicit NGSI-LD Null (study §4.6): the clause 4.5.0
+    /// The map key of an explicit NGSI-LD Null: the clause 4.5.0
     /// `urn:ngsi-ld:null` sentinel, taken from the validated vocabulary constant
     /// rather than spelled as a raw string.
     #[must_use]
@@ -274,7 +274,7 @@ impl GroupKeyValue {
 /// The arithmetic aggregates are carried as [`JsonNumber`] rather than as
 /// doubles: a backend computes them over an exact decimal column, and widening
 /// the result to binary floating point here would report a sum or an extremum
-/// that was never observed (`docs/exact-numeric-representation.md`).
+/// that was never observed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemporalAggregationRow {
     /// Expanded attribute IRI.

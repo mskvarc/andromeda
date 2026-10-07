@@ -1,4 +1,4 @@
-//! A wrapper that cannot be stored fails the request (study B16 and D11).
+//! A wrapper that cannot be stored fails the request.
 //!
 //! A response that names its context through a wrapper the broker could not
 //! store would link a URL nobody can dereference, and a subscription whose
@@ -44,7 +44,7 @@ fn assert_store_failure(status: StatusCode, problem: &Value) {
     }
 }
 
-/// Study B16: a json answer whose wrapper cannot be stored is a problem
+/// A json answer whose wrapper cannot be stored is a problem
 /// detail, never a 200 without its link; the same request as ld+json, which
 /// needs no wrapper, is answered.
 #[tokio::test]
@@ -85,7 +85,7 @@ async fn a_json_answer_whose_wrapper_cannot_be_stored_fails() {
     tenant.finish().await;
 }
 
-/// Study D11: a subscription whose `@context` needs a wrapper that cannot be
+/// A subscription whose `@context` needs a wrapper that cannot be
 /// stored is refused, and no subscription is stored.
 #[tokio::test]
 async fn a_subscription_whose_context_cannot_be_hosted_is_refused_and_not_stored() {

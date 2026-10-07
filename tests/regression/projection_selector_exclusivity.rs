@@ -7,16 +7,14 @@
 //! `pick`, which Tables 6.4.3.2-1 and 5.2.14.1-1 say in the same words: "A
 //! synonym for pick, except that id, type, scope are not allowed. Deprecated".
 //!
-//! The rule held on the query bindings, which stated it four separate times,
-//! and was missing entirely from Subscriptions -- where Table 5.2.14.1-1 gives
-//! `NotificationParams` the same three members, `attributes` being the
-//! deprecated synonym's name there. A subscription naming `pick` and `omit`, or
-//! either beside `attributes`, was created with `201` and then notified under
-//! whichever of the two the renderer happened to read. Clause 5.11.2.3 takes
+//! The rule holds on the query bindings, which state it four separate times, and
+//! on Subscriptions, where Table 5.2.14.1-1 gives `NotificationParams` the same
+//! three members, `attributes` being the deprecated synonym's name there. A
+//! subscription naming `pick` and `omit`, or either beside `attributes`, is
+//! refused rather than created with `201` and notified under whichever of the
+//! two the renderer happens to read. Clause 5.11.2.3 takes
 //! the clause 5.2.12 data type unchanged for a Context Source Registration
 //! Subscription, so it carries the rule too.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

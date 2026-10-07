@@ -1,19 +1,4 @@
-//! Attribute-instance `createdAt`/`modifiedAt` are broker-assigned, per
-//! instance, and only shown when the request asks for them.
-//!
-//! ETSI GS CIM 009 v1.9.1 clause 4.8 defines `createdAt` and `modifiedAt` for
-//! "the Entity, Property or Relationship", so every attribute instance carries
-//! its own pair, and Table 5.2.14-1 includes them in a representation only when
-//! `sysAttrs` is requested. Clause 4.5.5 makes the instance identity
-//! `(attribute name, datasetId)`, so the pair is per instance. Andromeda stamps
-//! them into the stored payload on a write -- a created instance takes the write
-//! instant for both, an updated one keeps its `createdAt` and moves its
-//! `modifiedAt` -- and strips them from any read that did not ask for
-//! `sysAttrs`. Case `019_19_04` orders a query by `name.createdAt`, which
-//! clause 4.23.3 EXAMPLE 5 spells as a system sub-attribute of an attribute and
-//! which only resolves once the stamp is in the stored payload.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 clause 4.8 defines `createdAt` and `modifiedAt` for "the Entity, Property or Relationship", so every attribute instance carries its own pair, and Table 5.2.14-1 includes them in a representation only when `sysAttrs` is requested. Clause 4.5.5 makes the instance identity `(attribute name, datasetId)`, so the pair is per instance. The broker stamps them into the stored payload on a write -- a created instance takes the write instant for both, an updated one keeps its `createdAt` and moves its `modifiedAt` -- and strips them from any read that did not ask for `sysAttrs`. Ordering a query by `name.createdAt` (clause 4.23.3 EXAMPLE 5) only resolves once the stamp is in the stored payload.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -26,8 +11,7 @@ use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::time::sleep;
 
-/// A pause between two writes, so a later write's stamp is unambiguously after
-/// an earlier one regardless of clock resolution.
+/// A pause between two writes, so a later write's stamp is unambiguously after an earlier one regardless of clock resolution.
 const STAMP_GAP: Duration = Duration::from_millis(1100);
 
 /// A Vehicle with one `name` Property.
@@ -98,8 +82,7 @@ async fn regression_attribute_system_timestamps_a_create_stamps_equal_created_an
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Table 5.2.14-1: a read that did not ask for `sysAttrs` carries neither
-/// attribute-level system time, even though the stored payload holds them.
+/// Table 5.2.14-1: a read that did not ask for `sysAttrs` carries neither attribute-level system time, even though the stored payload holds them.
 #[tokio::test]
 async fn regression_attribute_system_timestamps_a_plain_read_hides_them() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -123,9 +106,7 @@ async fn regression_attribute_system_timestamps_a_plain_read_hides_them() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.8: updating an instance keeps its `createdAt` and moves its
-/// `modifiedAt` to the new write instant, so `createdAt` survives the
-/// read-modify-write.
+/// Clause 4.8: updating an instance keeps its `createdAt` and moves its `modifiedAt` to the new write instant, so `createdAt` survives the read-modify-write.
 #[tokio::test]
 async fn regression_attribute_system_timestamps_an_update_keeps_created_and_moves_modified() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -192,8 +173,7 @@ async fn regression_attribute_system_timestamps_each_dataset_instance_keeps_its_
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Case `019_19_04`, clause 4.23.3 EXAMPLE 5: a query ordered by
-/// `name.createdAt` sorts entities by the stored stamp of that attribute.
+/// Clause 4.23.3 EXAMPLE 5: a query ordered by `name.createdAt` sorts entities by the stored stamp of that attribute.
 #[tokio::test]
 async fn regression_attribute_system_timestamps_order_by_created_at_uses_the_stamp() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -205,8 +185,7 @@ async fn regression_attribute_system_timestamps_order_by_created_at_uses_the_sta
     sleep(STAMP_GAP).await;
     create(client, &vehicle(&later, "l")).await;
 
-    // The two ids constrain the result to this test's own entities, so the
-    // ordering assertion does not depend on what else the suite created.
+    // The two ids constrain the result to this test's own entities, so the ordering assertion does not depend on what else the suite created.
     let query = format!("type=Vehicle&id={earlier},{later}&orderBy=name.createdAt");
     let response = client
         .query_entities(&query, "application/json", Some(CORE_CONTEXT.as_str()))
@@ -234,8 +213,7 @@ async fn regression_attribute_system_timestamps_order_by_created_at_uses_the_sta
     scope.finish().await.expect("cleanup failed");
 }
 
-/// An instant no write in this suite happens at, so a system time equal to it
-/// can only have been copied from the request.
+/// An instant no write in this suite happens at, so a system time equal to it can only have been copied from the request.
 const CLIENT_INSTANT: &str = "1900-01-01T00:00:00Z";
 
 /// A `name` Property whose `accuracy` sub-attribute claims both system times.
@@ -255,11 +233,7 @@ fn assert_accuracy_unstamped(name: &Value, scenario: &str) {
     assert!(accuracy.get("modifiedAt").is_none(), "{scenario}: no sub-attribute modifiedAt: {name}");
 }
 
-/// Clause 5.2.5: a `createdAt` or `modifiedAt` a client writes "shall" be
-/// ignored, and the broker stamps attribute instances alone (clause 4.8), so a
-/// sub-attribute reads back under `sysAttrs` with no system time at all
-/// (Table 6.3.11-1 includes them "where known"). Creating and merging used to
-/// store the client's 1900 instants on the sub-attribute.
+/// Clause 5.2.5: a `createdAt` or `modifiedAt` a client writes "shall" be ignored, and the broker stamps attribute instances alone (clause 4.8), so a sub-attribute reads back under `sysAttrs` with no system time at all (Table 6.3.11-1 includes them "where known").
 #[tokio::test]
 async fn regression_r15_a_sub_attribute_keeps_no_client_system_time() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -295,10 +269,7 @@ async fn regression_r15_a_sub_attribute_keeps_no_client_system_time() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// A `sysAttrs` read written back is a valid write: clause 5.2.5 ignores the
-/// system times it carries rather than refusing them, so Replace Entity
-/// answers 204 and adopts none of them, at the entity, the attribute or the
-/// sub-attribute.
+/// A `sysAttrs` read written back is a valid write: clause 5.2.5 ignores the system times it carries rather than refusing them, so Replace Entity answers 204 and adopts none of them, at the entity, the attribute or the sub-attribute.
 #[tokio::test]
 async fn regression_r15_a_sys_attrs_read_written_back_adopts_no_system_time() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -342,9 +313,7 @@ async fn regression_r15_a_sys_attrs_read_written_back_adopts_no_system_time() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The Temporal API records an instance's sub-attributes beside its value,
-/// and clause 5.2.5 holds there too: a sub-attribute of a recorded instance
-/// keeps no client system time. The history row's metadata used to keep it.
+/// The Temporal API records an instance's sub-attributes beside its value, and clause 5.2.5 holds there too: a sub-attribute of a recorded instance keeps no client system time.
 #[tokio::test]
 async fn regression_r15_a_temporal_instance_sub_attribute_keeps_no_client_system_time() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

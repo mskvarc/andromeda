@@ -9,18 +9,15 @@
 //! they had all arrived in separate requests" (clause 5.5.11.0), so a batch
 //! owes one notification per entity.
 //!
-//! The broker matched every subscription once per changed Attribute instance
-//! and once more per entity-level trigger, so a subscription without
-//! `watchedAttributes` received one identical notification per attribute of a
-//! single create (three for `a`, `b`, `c`; 5,397 for 1,348 real `GtfsStops` of
-//! four attributes each), and one listing both `entityCreated` and
-//! `attributeCreated` received one more. A write that updated one attribute and
-//! deleted another notified the update and the deletion separately.
+//! A subscription is matched once per write, not once per changed Attribute
+//! instance or per entity-level trigger: a subscription without
+//! `watchedAttributes` receives one notification for a create of three
+//! attributes, one listing both `entityCreated` and `attributeCreated` receives
+//! no more, and a write that updates one attribute and deletes another is
+//! notified once.
 //!
 //! Every test counts the notifications one write produces: the owed one must
 //! arrive, and no second one may follow it.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

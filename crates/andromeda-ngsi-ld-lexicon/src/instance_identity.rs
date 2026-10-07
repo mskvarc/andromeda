@@ -57,8 +57,8 @@ impl InstanceIdentity {
     /// the input exactly. That test, rather than a prefix match, is what makes
     /// the split lossless: an identifier that merely resembles the template — a
     /// non-canonical UUID spelling, a URN carrying a resolution component, a
-    /// trailing segment such as the write ordinal earlier releases appended —
-    /// is kept verbatim instead of being silently rewritten.
+    /// trailing segment such as a write ordinal — is kept verbatim instead of
+    /// being silently rewritten.
     #[must_use]
     pub fn from_identifier(identifier: Identifier, family: InstanceFamily) -> InstanceIdentity {
         match generated_uuid_of(&identifier, family) {
@@ -190,9 +190,8 @@ mod tests {
             "urn:ngsi-ld:my-own:instance:42",
             "https://example.org/instances/1",
             "urn:ngsi-ld:attribute:instance:not-a-uuid",
-            // The spelling earlier releases minted held a write identifier and
-            // an ordinal; the template holds one value, so re-rendering it
-            // would change an identifier clients already hold.
+            // A write identifier plus an ordinal: the template holds one value,
+            // so re-rendering it would change an identifier clients hold.
             "urn:ngsi-ld:attribute:instance:01942f6c-7f00-7000-8000-000000000001:0",
             "urn:ngsi-ld:attribute:instance:01942F6C-7F00-7000-8000-000000000001",
             "urn:ngsi-ld:attribute:instance:01942f6c7f0070008000000000000001",

@@ -10,8 +10,7 @@
 //!
 //! Modules are therefore named after NGSI-LD concepts, never after stages. How
 //! a compiled query is rendered as SQL is deliberately absent: that is a
-//! property of a backend, and it lives in `andromeda-postgresql-query` and the
-//! two statement crates above it. Nothing here names a database.
+//! property of a backend. Nothing here names a database.
 //!
 //! The entities the languages are evaluated against in memory are inverted the
 //! same way: an evaluator reads an entity through the traits of

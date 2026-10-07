@@ -8,7 +8,7 @@ use url::Url;
 /// Transport-level errors that prevent delivery from completing.
 ///
 /// Every variant is a failure to *reach* the endpoint. An endpoint that
-/// answers and refuses is not an error — it is
+/// answers and refuses is not an error: it is
 /// [`crate::outcome::DeliveryOutcome::Rejected`], because the difference
 /// decides whether a retry has any chance of working.
 #[derive(Debug, thiserror::Error)]

@@ -1,15 +1,4 @@
-//! Append Attributes adds the Entity Types its fragment carries.
-//!
-//! ETSI GS CIM 009 v1.9.1 clause 5.6.3.4: "If type is included in the Fragment
-//! and it includes Entity Type names that are not yet in the target Entity, add
-//! them to the list of Entity Type names of the target Entity." The rule stands
-//! beside the per-attribute rules, so it holds whether or not overwrite is
-//! allowed, and clause 5.6.9.4 runs Batch Entity Update with `noOverwrite`
-//! through the same Append Attributes. The broker read only the fragment's
-//! attributes and scope, so the request succeeded and the entity kept its old
-//! types.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 clause 5.6.3.4: "If type is included in the Fragment and it includes Entity Type names that are not yet in the target Entity, add them to the list of Entity Type names of the target Entity." The rule stands beside the per-attribute rules, so it holds whether or not overwrite is allowed, and clause 5.6.9.4 runs Batch Entity Update with `noOverwrite` through the same Append Attributes.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -115,8 +104,7 @@ async fn regression_r04_append_with_no_overwrite_adds_the_types_even_when_the_at
     scope.finish().await.expect("environment cleanup");
 }
 
-/// Clause 5.6.9.4 runs Batch Entity Update with `noOverwrite` as an Append
-/// Attributes, so the fragment's `Car` is added there too.
+/// Clause 5.6.9.4 runs Batch Entity Update with `noOverwrite` as an Append Attributes, so the fragment's `Car` is added there too.
 #[tokio::test]
 async fn regression_r04_batch_update_with_no_overwrite_adds_the_fragment_types() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

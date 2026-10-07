@@ -85,8 +85,8 @@ async fn seed_registrations(pool: &PgPool, prefix: &str) {
         .expect("the seeded relations must be analysed");
 }
 
-/// The discovery preselect for one type, exactly as `csr::projection` renders
-/// it: one overlap naming the requested type beside the wildcard sentinel.
+/// The discovery preselect for one type as the broker renders it: one overlap
+/// naming the requested type beside the wildcard sentinel.
 fn type_preselect(entity_type: &str) -> String {
     format!(
         "SELECT csr.id FROM context_source_registrations AS csr \

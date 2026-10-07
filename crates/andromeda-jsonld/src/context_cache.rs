@@ -117,7 +117,7 @@ pub trait ContextCache: Send + Sync + Debug {
     /// first load did.
     ///
     /// `lifetime` is what clause 6.3.16 derived from the response that carried
-    /// the document — its `s-maxage`, `max-age` or `Expires`, or the configured
+    /// the document: its `s-maxage`, `max-age` or `Expires`, or the configured
     /// heuristic when it stated none. Implementations must record it, and must
     /// stop reporting the entry from [`ContextCache::get`] once it has elapsed:
     /// clause 5.13.1 requires the entries flagged `"Cached"` to be invalidated

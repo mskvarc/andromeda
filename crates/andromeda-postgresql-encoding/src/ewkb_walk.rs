@@ -1,7 +1,7 @@
 //! Walking a domain geometry so a geozero writer can emit it.
 //!
 //! A [`GeometryForm`] is its own model, over [`Position`],
-//! and no longer converts to `geo::Geometry`, which has no room for the third
+//! and does not convert to `geo::Geometry`, which has no room for the third
 //! ordinate IETF RFC 7946 section 3.1.1 allows on every position. Feeding the
 //! EWKB writer therefore means driving geozero's [`GeomProcessor`] callbacks
 //! directly, which is also the only way a Z ordinate can reach the wire at all.

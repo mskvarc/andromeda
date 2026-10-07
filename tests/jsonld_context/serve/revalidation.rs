@@ -1,4 +1,4 @@
-//! Revalidating a stored `@context` across broker processes (study E10).
+//! Revalidating a stored `@context` across broker processes.
 //!
 //! A Hosted `@context` has no origin server to make it stale, but another
 //! broker process on the same database can delete it. A process that used the

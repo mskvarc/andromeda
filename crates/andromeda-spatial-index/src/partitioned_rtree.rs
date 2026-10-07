@@ -5,8 +5,7 @@
 //! back-index recording where every indexed object currently sits so a removal
 //! is a direct tree delete rather than a partition scan. The only thing the two
 //! indexes disagree on is what a candidate *means*, which is their own query
-//! method; everything structural lives here so the two can never drift apart
-//! again.
+//! method; everything structural lives here so the two cannot drift apart.
 //!
 //! Every mutation of one object is applied partition by partition, and within a
 //! partition the object's outgoing entries leave and its incoming entries arrive

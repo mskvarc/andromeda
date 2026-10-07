@@ -1,19 +1,6 @@
-//! Reading a context source's answer of entities into the model (clauses
-//! 4.3.6.6, 5.7.1.4, 5.7.2.4, 6.3.17).
+//! A source answers in compact JSON-LD spelled in the forwarding context of the request. Each page is decoded element by element, an element the model cannot hold becoming a clause 6.3.17 warning instead of failing the page. Once every page is in, each entity is expanded under the context it was written in (its own `@context` when it names one, else the forwarding context the answer is spelled in), so answers merge by expanded name and are compacted once, under the client's context.
 //!
-//! A source answers in compact JSON-LD spelled in the forwarding context of
-//! the request. Each page is decoded element by element straight from its
-//! text, an element the model cannot hold becoming a clause 6.3.17 warning
-//! instead of failing the page; once every page is in, each entity is expanded
-//! into the model under the context it was written in -- its own `@context`
-//! when it names one, else the forwarding context the answer is spelled in --
-//! so answers merge on the model by expanded name and are compacted once,
-//! under the client's context, for the response.
-//!
-//! Clauses 5.7.1.4 and 5.7.2.4: an entity whose `expiresAt` lies in the past is
-//! discarded, and so is every attribute instance whose own `expiresAt` has
-//! passed (clause 4.5.5.3), before anything is merged; an entity left with no
-//! attribute by that is discarded with it.
+//! Clauses 5.7.1.4 and 5.7.2.4: an entity whose `expiresAt` lies in the past is discarded, and so is every attribute instance whose own `expiresAt` has passed (clause 4.5.5.3), before anything is merged; an entity left with no attribute by that is discarded with it.
 
 use crate::{
     FederationService,
@@ -39,8 +26,7 @@ use tracing::{debug, warn};
 
 /// One source's answer of entities, decoded but not yet read into the model.
 pub(crate) struct ReceivedAnswer {
-    /// The registration the entities came from; `None` for the entry that
-    /// carries only the clause 6.3.17 loop warning.
+    /// `None` for the entry that carries only the clause 6.3.17 loop warning.
     pub(crate) registration_id: Option<Identifier>,
     /// The registration's forwarding mode.
     pub(crate) mode: ForwardingMode,
@@ -80,12 +66,7 @@ impl WalkedAnswer for ReceivedAnswer {
     }
 }
 
-/// Read a forwarded read into the entities it carried, with the clause 6.3.17
-/// warning for every abnormal outcome. A 404 contributes nothing.
-///
-/// A query answers with an array and a retrieval with one object, but either
-/// shape is read from either: a retrieval continuing a clause 4.5.23 flat join
-/// answers with the entity and its linked entities side by side.
+/// A query answers with an array and a retrieval with one object, but either shape is read from either: a retrieval continuing a clause 4.5.23 flat join answers with the entity and its linked entities side by side.
 pub(crate) fn received_answer(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> ReadPage<ReceivedAnswer> {
     let answer = |naming, entities, warnings, linked_map| {
         Some(ReceivedAnswer {

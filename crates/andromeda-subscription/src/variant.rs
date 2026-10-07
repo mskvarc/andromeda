@@ -26,10 +26,6 @@ pub enum DatasetIdPolicy {
     Discard,
 }
 
-// ---------------------------------------------------------------------------
-// Variant trait
-// ---------------------------------------------------------------------------
-
 /// Trait for variant-specific subscription behaviour (entity vs. CSR subscriptions).
 pub trait SubscriptionVariant: Send + Sync {
     /// The change-event type emitted over the broadcast channel.

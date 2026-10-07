@@ -7,8 +7,7 @@
 //!
 //! Invalidation has two halves, and only one of them is here: a lapsed row
 //! stops being a cache hit the instant it lapses, because the read passes over
-//! it. Reclaiming lapsed rows is the periodic pass of
-//! [`cached_context_invalidation`](crate::jsonld_context::cached_context_invalidation),
+//! it. Reclaiming lapsed rows is a separate periodic pass,
 //! which runs on a cadence of its own rather than riding on a write — a broker
 //! that has stopped downloading new `@contexts` still has to invalidate the
 //! ones it holds.

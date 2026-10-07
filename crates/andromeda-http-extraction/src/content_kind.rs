@@ -36,12 +36,10 @@ pub(crate) fn classify_content_type(raw: &str, method: &Method) -> Option<Conten
         return None;
     }
 
-    // application/ld+json
     if mt.subty() == names::LD && mt.suffix() == Some(names::JSON) {
         return Some(ContentKind::LdJson);
     }
 
-    // application/merge-patch+json
     if *method == Method::PATCH && mt.subty() == names::MERGE_PATCH && mt.suffix() == Some(names::JSON) {
         return Some(ContentKind::MergePatchJson);
     }

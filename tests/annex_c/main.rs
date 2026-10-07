@@ -53,8 +53,7 @@
 //! Expected payloads live beside this file as JSON documents under `corpus/`,
 //! transcribed from the annex rather than restated in Rust. Keeping them as
 //! data makes each one diffable against the printed example, which matters
-//! because several printed examples are not valid JSON; every editorial repair
-//! is recorded in `docs/annex-c-corpus.md`.
+//! because several printed examples are not valid JSON.
 //!
 //! Naming convention: `annex_c_<clause>_<example>`.
 
@@ -115,7 +114,7 @@ impl AnnexTenant {
         let pool = connect_pool(configuration.database()).await.expect("control database pool");
         // Reclaim tenant databases a previous suite's force-drops missed before
         // this suite adds its own, so their connection slots do not accumulate
-        // across the tier (see the harness sweep for the full rationale).
+        // across the tier.
         sweep_stale_tenant_databases_once(&pool).await;
         // A database-safe, lowercase label so the broker's tenant database is
         // `andromeda_tenant_<label>_<suffix>` and finish can find it by prefix.

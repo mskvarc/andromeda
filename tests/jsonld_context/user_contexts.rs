@@ -1,7 +1,7 @@
 //! The user `@context` documents the rendering cases name.
 //!
-//! Each shape stands for one row of the rendering rule
-//! (`docs/core-context-rendering.md`): what the last context a document leaves
+//! Each shape stands for one row of the rendering rule:
+//! what the last context a document leaves
 //! in force is decides whether a response names the v1.9 core `@context` after
 //! it (clauses 5.2.3 and 4.4) or names the document alone (Annex C.8). Every
 //! document defines, directly or through the one it references, the two terms

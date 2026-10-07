@@ -8,7 +8,7 @@
 //! knows only its own protocol.
 //!
 //! This is a capability, not a policy. Nothing here decides *whether* to
-//! notify, *what* the payload says, or *when* to retry — a
+//! notify, *what* the payload says, or *when* to retry. A
 //! [`request::DeliveryRequest`] arrives fully formed and the answer is
 //! [`dispatch::DeliveryResult`]. The one specification rule the transports do
 //! read is clause 5.5.7's: an `application/json` or `application/geo+json`

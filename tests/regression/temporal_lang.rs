@@ -6,13 +6,9 @@
 //! Properties whose `value` is the string of the requested language, naming it
 //! in a `lang` member.
 //!
-//! Before this suite existed the parameter was parsed and forwarded to sources
-//! but never applied to a local temporal read, so a client that asked for one
-//! language was answered the whole `languageMap` of every instance. Every test
-//! carries a control read that names no `lang`, so an assertion can only pass
-//! when the two answers genuinely differ.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! A local temporal read applies the parameter itself rather than only
+//! forwarding it to sources. Every test carries a control read that names no
+//! `lang`, so an assertion can only pass when the two answers genuinely differ.
 
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_harness::environment::TestEnvironment;

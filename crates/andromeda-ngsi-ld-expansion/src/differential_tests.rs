@@ -1,14 +1,13 @@
 //! Typed expansion against the processor's, over the request bodies the
-//! integration suites write (design section 11.2, clause 5.5.7).
+//! integration suites write (clause 5.5.7).
 //!
-//! `tests/fixtures/bodies/suite-bodies.json` holds every plain-JSON write body
-//! of `tests/**` and the annex C corpus entities, each with the file it came
-//! from. Every body is expanded every way a write may carry it -- as a typed
-//! entity, as a typed merge fragment, as a JSON fragment under both concise
-//! rewrites, and an attribute instance as the fragment of clauses 5.6.4 and
-//! 5.6.19 -- and wherever the walk expands it, the processor must read it as
-//! the same document, or refuse it with the same refusal. The bodies the walk
-//! declines are counted and named.
+//! The corpus holds every plain-JSON write body of the integration suites and
+//! the annex C entities, each with its source. Every body is expanded every way
+//! a write may carry it: as a typed entity, as a typed merge fragment, as a
+//! JSON fragment under both concise rewrites, and as an attribute instance in
+//! the fragment of clauses 5.6.4 and 5.6.19. Wherever the walk expands it, the
+//! processor must read it as the same document, or refuse it with the same
+//! refusal. The bodies the walk declines are counted and named.
 
 use crate::{
     expansion_fixture::{BothWays, FixtureFailure, TERMS, VOCAB_AND_LANGUAGE, attribute, decoded_both_ways, engine, entity, patch},
@@ -131,7 +130,7 @@ async fn typed_expansion_equals_processor_expansion_over_the_suite_bodies() {
 /// wherever both accept a document they read the same written document, and
 /// both refuse the same documents.
 ///
-/// Two deliberate differences are named rather than hidden. The entity's own
+/// Two differences are deliberate. The entity's own
 /// `createdAt`, `modifiedAt` and `deletedAt` are the broker's (clause 4.8): a
 /// written document that carries them carries nothing the entity keeps, so
 /// the decoding drops them where the canonical decoder of stored state refuses

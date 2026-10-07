@@ -593,7 +593,7 @@ mod tests {
         }
     }
 
-    /// Clauses 5.7.2.5 and 6.3.13 (ETSI TP `019_17_01`): a `pick` of Attributes
+    /// Clauses 5.7.2.5 and 6.3.13: a `pick` of Attributes
     /// selects the entities carrying one of them, in the page and in the count
     /// alike; a name never recorded keeps no entity.
     #[test]
@@ -1282,9 +1282,9 @@ mod tests {
         }];
         let built = build(&q, &known_types());
         assert!(built.sql.contains("ST_Distance"));
-        // Ordering geometry (Berlin) takes precedence over the geo query (Paris);
-        // since reference geometries are now bound as EWKB bytes, verify that the
-        // bind values carry exactly one raw geometry blob for the distance expression.
+        // Ordering geometry (Berlin) takes precedence over the geo query (Paris).
+        // Reference geometries are bound as EWKB bytes, so the bind values carry
+        // exactly one raw geometry blob for the distance expression.
         assert!(built.sql.contains("ST_GeomFromEWKB"));
         assert!(built.bind_values.iter().any(|b| matches!(b, Value::Bytes(_))));
     }
@@ -1469,8 +1469,6 @@ mod tests {
         assert!(built.sql.contains(" OR "), "SQL should contain OR");
         assert!(built.sql.contains("::lquery"), "SQL should cast to lquery");
     }
-
-    // -- SQL literal escaping ------------------------------------------------
 
     /// Number of `'` characters in a statement. Every literal contributes an
     /// opening and a closing quote, and a doubled apostrophe contributes two, so

@@ -18,10 +18,6 @@ use andromeda_test_harness::environment::TestEnvironment;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
-// ---------------------------------------------------------------------------
-// Valid create operations
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_create_entity_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -130,7 +126,6 @@ async fn temporal_create_entity_without_context_success() {
     let c = client();
     let id = scope.id("Vehicle:create_007_01_02");
 
-    // Entity without @context, sent as application/json with Link header
     let entity = json!({
         "id": &id,
         "type": "Vehicle",
@@ -144,17 +139,13 @@ async fn temporal_create_entity_without_context_success() {
 
     // Retrieve under the same context so speed compacts to its term; without a
     // context the core context alone applies (clause 5.5.7) and speed stays a
-    // full IRI, which tests/regression/temporal_retrieve_term_expansion.rs pins.
+    // full IRI.
     let (status, body, _) = get_temporal_entity(&c, &id, "", "application/json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     assert!(body["speed"].is_array());
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Invalid JSON
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_create_invalid_json_returns_400() {
@@ -185,10 +176,6 @@ async fn temporal_create_empty_json_returns_400() {
     assert!(body["title"].as_str().is_some(), "should contain error title");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Missing/invalid entity ID
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_create_missing_id_returns_400() {
@@ -227,10 +214,6 @@ async fn temporal_create_invalid_uri_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Duplicate entity
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_create_duplicate_returns_409() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -249,20 +232,13 @@ async fn temporal_create_duplicate_returns_409() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED, "first create should return 201");
 
-    // Second create of same entity should fail (unless it's an upsert)
     let status = create_temporal_entity(&c, &entity).await;
-    // Note: NGSI-LD spec allows POST to update/merge if entity exists
-    // 409 Conflict or 204 No Content depending on implementation
     assert!(
         status == StatusCode::CONFLICT || status == StatusCode::NO_CONTENT,
         "duplicate create should return 409 or 204, got {status}"
     );
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Missing type
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_create_missing_type_returns_400() {
@@ -282,10 +258,6 @@ async fn temporal_create_missing_type_returns_400() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "missing type should return 400");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Various attribute types
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_create_with_relationship_success() {
@@ -434,10 +406,6 @@ async fn temporal_create_with_vocab_property_success() {
     assert_eq!(body["category"][0]["type"], "VocabProperty");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Multiple instances with datasetId
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_create_with_multiple_dataset_instances_success() {

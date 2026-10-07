@@ -44,8 +44,7 @@ fn whole_text(jsonb: SimpleExpr) -> SimpleExpr {
 /// Compile an existence predicate that carries a sub-path.
 ///
 /// A sub-path existence check asks whether a nested element is present, which
-/// only the payload can answer. An earlier compiler silently dropped the
-/// sub-path here and tested the top-level attribute instead.
+/// only the payload can answer.
 #[must_use]
 pub fn fallback_exists(path: &AttrPath, document: &SimpleExpr) -> Condition {
     let jsonpath = value_extraction_jsonpath(path, VALUE.as_str());
@@ -59,13 +58,12 @@ fn payload_extraction(path: &AttrPath, terminal_iri: &str, document: &SimpleExpr
     jsonb_path_query_first(document.clone(), &jsonpath) // clone: sea-query owns every operand, and one document is read by several extractions
 }
 
-/// Build a comparison between one stored text expression and one operand, both
-/// lifted into the domain the operand's kind is ordered in.
+/// Compare a stored text expression against one scalar operand.
 ///
-/// Everything that decides that domain — the cast a number or boolean needs, the
-/// guarded `timestamptz` comparison a `DateTime` needs, the normalisation a
-/// `Time` needs — lives in [`lift_comparison`], so this fallback and the CSR
-/// renderer compare the same way.
+/// Everything that decides the comparison domain (the cast a number or boolean
+/// needs, the guarded `timestamptz` comparison a `DateTime` needs, the
+/// normalisation a `Time` needs) lives in [`lift_comparison`], so this fallback
+/// and the CSR renderer compare the same way.
 fn scalar_predicate(stored_text: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
     let lifted = lift_comparison(scalar, stored_text);
     compare(lifted.stored, op, lifted.operand)
@@ -138,8 +136,8 @@ pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &Compa
 /// A Relationship's object is not extracted at all. Clause 4.9 requires a
 /// Relationship (and a `ListRelationship`) operand to non-match every operator
 /// other than equality and inequality: a URI names a resource and carries no
-/// order a `<` or `>` could mean. `COALESCing` `hasObject` in here made
-/// `owner>"a"` select entities the standard requires it to reject.
+/// order a `<` or `>` could mean. `COALESCing` `hasObject` here would
+/// make `owner>"a"` select entities the standard requires it to reject.
 #[must_use]
 pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, document: &SimpleExpr) -> Condition {
     let extract_value = payload_extraction(path, VALUE.as_str(), document);
@@ -225,8 +223,7 @@ mod tests {
 
     /// Clause 4.9: a `q` on the system sub-attribute `observedAt` reaches its
     /// value node directly. It is stored bare (`[{"@type":…,"@value":…}]`), so
-    /// the jsonpath must terminate at `@value` with no `hasValue` carrier hop --
-    /// the hop that made this predicate resolve nothing before.
+    /// the jsonpath must terminate at `@value` with no `hasValue` carrier hop.
     #[test]
     fn sub_attribute_predicate_falls_back_to_jsonpath() {
         let sql = render("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">=\"2024-01-01T00:00:00Z\"");
@@ -316,7 +313,7 @@ mod tests {
 
     #[test]
     fn a_value_list_still_covers_relationship_objects_in_both_polarities() {
-        // Mirrors `projection.rs`'s test of the same name: every arm of a value
+        // Every arm of a value
         // list is an equality comparison, so each one may match a Relationship's
         // object, not only a Property's value. A sub-attribute path forces the
         // payload fallback rather than the projection.

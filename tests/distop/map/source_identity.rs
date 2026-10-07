@@ -12,7 +12,6 @@ use axum::http::Method;
 use pretty_assertions::assert_eq;
 
 /// Retrieving the source identity returns a `ContextSourceIdentity` (clause 5.15.1).
-/// Confirms REQ-MAP-157.
 #[tokio::test]
 async fn identity_retrieve_returns_context_source_identity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -33,7 +32,6 @@ async fn identity_retrieve_returns_context_source_identity() {
 }
 
 /// A tenant obtains a tenant-specific identity (clause 5.15.1, 4.14).
-/// Confirms REQ-MAP-158.
 #[tokio::test]
 async fn identity_per_tenant_alias_obtainable() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -55,7 +53,7 @@ async fn identity_per_tenant_alias_obtainable() {
 
 /// The identity endpoint takes no input (clause 5.15.1.3), so a query parameter
 /// is one "incompatible with the operation", answered with `InvalidRequest`
-/// (clause 6.3.20). Confirms REQ-MAP-159.
+/// (clause 6.3.20).
 #[tokio::test]
 async fn identity_input_refuses_a_parameter_it_does_not_take() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -92,7 +90,7 @@ async fn identity_unsupported_returns_501() {
 }
 
 /// The identity body conforms to the `ContextSourceIdentity` data model
-/// (clause 5.2.40). Confirms REQ-MAP-161.
+/// (clause 5.2.40).
 #[tokio::test]
 async fn identity_body_conforms_to_data_model() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -119,7 +117,7 @@ async fn identity_body_conforms_to_data_model() {
 }
 
 /// Success returns `200` as `application/ld+json` with the context embedded
-/// (clause 5.15.1, 5.5.7). Confirms REQ-MAP-162.
+/// (clause 5.15.1, 5.5.7).
 #[tokio::test]
 async fn identity_success_returns_200_jsonld() {
     let topology = topology::single().await.expect("single-broker topology");

@@ -1,9 +1,4 @@
-//! Re-run the build whenever a migration changes.
-//!
-//! `sqlx::migrate!` embeds the migration bodies at compile time but does not
-//! register the directory with cargo, so an in-place edit of a migration was
-//! not seen until the crate was otherwise rebuilt, and the stale embedded set
-//! then stamped every fresh tenant with the old digest.
+//! Re-runs the build whenever a migration changes: `sqlx::migrate!` embeds the migration bodies but does not register the directory with cargo, so an edited migration would otherwise leave a stale embedded set and stamp fresh tenants with the old digest.
 
 fn main() {
     println!("cargo:rerun-if-changed=../../migrations/platform");

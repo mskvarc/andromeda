@@ -1,8 +1,4 @@
-//! The wholesale rewrite of a registration's routing rows.
-//!
-//! [`crate::csource_registration::information_projection`] derives the rows a
-//! registration's `information` yields; this module replaces the stored set
-//! with them, inside the transaction that writes the registration payload.
+//! The wholesale rewrite of a registration's routing rows: the stored set is replaced with the rows the registration's `information` yields, inside the transaction that writes the payload.
 
 use crate::{
     csource_registration::information_projection::{RegistrationInformationRow, derive_routing, projected_attribute_names},

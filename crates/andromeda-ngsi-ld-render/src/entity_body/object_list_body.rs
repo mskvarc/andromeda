@@ -4,8 +4,7 @@
 //! object containing a single Attribute with a key called `object` and where
 //! the value is a valid URI. In the concise form, each string in the array
 //! holds a valid URI." The normalized form, with its clause 4.5.22.2 deletion
-//! encoding, is the model's own rule and is taken from there rather than
-//! restated.
+//! encoding, is the model's own rule.
 
 use crate::{
     entity_body::reified_member::Reification,

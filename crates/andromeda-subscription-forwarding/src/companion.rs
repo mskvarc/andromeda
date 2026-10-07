@@ -278,7 +278,7 @@ impl SubscriptionForwardingService {
         } else {
             // An update that first provisions the companion carries no
             // creation-time `Via` chain here; the update path forwards to
-            // every selected source as before.
+            // every selected source.
             self.create_companion(subscription, context, &[]).await?;
             return Ok(());
         };

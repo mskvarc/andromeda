@@ -1,10 +1,6 @@
 //! Write narrowing under an aliased `@context` (clauses 4.3.6.1, 5.6).
 //!
-//! The write-forwarding filter keeps a body member when its expanded IRI is one
-//! the registration declares. Under an aliased context the covered attribute
-//! `spd` must survive the filter and reach the source; the removed last-segment
-//! heuristic would have compared the declared IRI's segment `speed` against the
-//! body key `spd`, dropped it, and forwarded an empty body.
+//! The write-forwarding filter keeps a body member when its expanded IRI is one the registration declares. Under an aliased context the covered attribute `spd` must survive the filter and reach the source; comparing the declared IRI's last segment `speed` against the body key `spd` would drop it and forward an empty body.
 
 use crate::{
     compaction::{CAPTURE_TIMEOUT, FORWARDED_ENTITIES, aliased_document, registration_context, serve},
@@ -17,8 +13,7 @@ use crate::{
 use axum::http::Method;
 use serde_json::{Value, json};
 
-/// A forwarded create carries the covered aliased attribute `spd` intact, in the
-/// registration context's compact spelling, never the IRI's last segment.
+/// A forwarded create carries the covered aliased attribute `spd` intact, in the registration context's compact spelling, never the IRI's last segment.
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_forwards_a_created_aliased_attribute_intact() {

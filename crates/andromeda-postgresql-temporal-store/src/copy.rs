@@ -9,7 +9,7 @@
 //! both keep this module free of PostgreSQL's internal binary layouts for types
 //! whose layout is not part of any stable contract.
 //!
-//! Field order follows the rebuilt table's physical column order exactly, which
+//! Field order follows the table's physical column order exactly, which
 //! is the order the table was declared in for alignment reasons rather than a
 //! logical grouping.
 
@@ -313,7 +313,6 @@ mod tests {
         let write_id = Uuid::from_u128(9);
         row.identity.write_id = WriteId::from_uuid(write_id);
         let buf = encode_history_copy_stream(&[row]).expect("copy stream encodes");
-        // Header, field count, then the eight-byte partition column.
         let write_offset = HEADER_BYTES + 2 + 4 + 8;
         pretty_assertions::assert_eq!(field_length(&buf, write_offset), 16);
         pretty_assertions::assert_eq!(&buf[write_offset + 4..write_offset + 20], write_id.as_bytes());
@@ -327,7 +326,6 @@ mod tests {
         let mut row = row(1, AttributeHistoryValue::Boolean(true));
         row.attribute_kind = AttributeKind::GeoProperty;
         let buf = encode_history_copy_stream(&[row]).expect("copy stream encodes");
-        // Partition column, write identity, stream key, then the ordinal.
         let attribute_kind_offset = HEADER_BYTES + 2 + (4 + 8) + (4 + 16) + (4 + 8) + (4 + 4);
         pretty_assertions::assert_eq!(field_length(&buf, attribute_kind_offset), 2);
         pretty_assertions::assert_eq!(&buf[attribute_kind_offset + 4..attribute_kind_offset + 6], &3_i16.to_be_bytes());
@@ -350,13 +348,8 @@ mod tests {
     fn a_tombstone_writes_its_deletion_instant_and_no_typed_value() {
         let row = row(1, AttributeHistoryValue::Tombstone { deleted_at: instant() });
         let buf = encode_history_copy_stream(&[row]).expect("copy stream encodes");
-        // Partition column, write identity, stream key, ordinal, both kind
-        // codes, then the three nullable semantic axes.
         let deleted_offset = HEADER_BYTES + 2 + (4 + 8) + (4 + 16) + (4 + 8) + (4 + 4) + (4 + 2) + (4 + 2) + 3 * NULL_FIELD_BYTES;
         pretty_assertions::assert_eq!(field_length(&buf, deleted_offset), 8);
-        // Every typed value column that follows the deletion instant is NULL:
-        // value_date_time, then value_boolean, value_number, value_string,
-        // value_geometry, value_object and value_uri further along the tuple.
         pretty_assertions::assert_eq!(field_length(&buf, deleted_offset + 4 + 8), -1);
     }
 

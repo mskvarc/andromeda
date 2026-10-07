@@ -8,11 +8,6 @@
 //! reshape NGSI-LD Elements during the expansion of terms". Clauses 4.4 and
 //! 4.5.1 restate it.
 //!
-//! The broker detected a scoped context only as a fast-path de-optimisation:
-//! the batch walker demoted the request to the JSON-LD processor, which then
-//! applied the scoped context in full, and the single-entity write path never
-//! computed the flag at all.
-//!
 //! The rule addresses the *user* `@context` alone. The Core `@context` is
 //! protected and carries a scoped context of its own -- the `ngsildproof` term
 //! of clause 4.5.2.2 -- and clause 5.13 makes hosting a context a resource
@@ -22,8 +17,6 @@
 //! run, and removes the `"Cached"` row the resolver leaves behind: those rows
 //! are keyed by the origin URL rather than by the run's identifier prefix, so
 //! the environment's own cleanup cannot reach them.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -98,8 +91,7 @@ async fn send_json_with_link_context(client: &TestClient, method: Method, path: 
 }
 
 /// Clause 5.5.7: an inline user `@context` in the request body that defines a
-/// term with a scoped `@context` is refused, on the single-entity write path
-/// the fast-path flag never even reached.
+/// term with a scoped `@context` is refused on the single-entity write path.
 #[tokio::test]
 async fn regression_scoped_user_context_an_inline_body_context_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -159,9 +151,7 @@ async fn regression_scoped_user_context_a_link_header_context_is_refused() {
 }
 
 /// The refusal is a property of the whole set of contexts a request selected,
-/// so it cannot depend on the order they happen to be inspected in. The
-/// fast-path merge stopped at the first context it could not honour; this is
-/// the case that showed.
+/// so it cannot depend on the order they happen to be inspected in.
 #[tokio::test]
 async fn regression_scoped_user_context_a_scoped_context_in_the_second_of_two_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -260,8 +250,7 @@ async fn regression_scoped_user_context_a_nested_remote_reference_is_followed() 
 /// JSON-LD 1.1 section 4.1.10 merges an `@import`ed context into the
 /// definition that imports it, scoped term definitions included, so a scoped
 /// context reached through `@import` reshapes terms exactly as an inline one
-/// does. The scan skipped every keyword member of a definition and never
-/// followed the import, so both forms below used to be admitted.
+/// does, so the scan has to follow the import.
 #[tokio::test]
 async fn regression_scoped_user_context_an_imported_scoped_context_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

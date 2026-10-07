@@ -1,6 +1,6 @@
 //! `NoMultiTenantSupport` (501) Problem-Details tests (NGSI-LD 5.5.2).
 //!
-//! The broker returns this error from `src/tenancy/runtime.rs:117` when
+//! The broker returns this error when
 //! `tenancy.enabled = false` and an incoming request carries an
 //! `NGSILD-Tenant` header naming a tenant. Exercising it requires a
 //! broker build / config with multi-tenancy disabled, which the shared

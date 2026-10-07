@@ -184,8 +184,8 @@ mod tests {
             .to_owned()
             .to_string(PostgresQueryBuilder);
         let rewritten = apply_with_ordinality(source, &Alias::new("d"), &columns, &Alias::new("ordinality"));
-        // The closed TableRef's quoted alias is gone; the set-write's column list
-        // and ordinality are named.
+        // The rewritten set-write names its column list and ordinality instead
+        // of the closed TableRef's quoted alias.
         assert!(!rewritten.contains("AS \"d\""), "{rewritten}");
         assert!(
             rewritten.contains(

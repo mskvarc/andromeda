@@ -4,8 +4,8 @@
 //! and screens the written document. What it expanded is kept rather than
 //! thrown away, so the local write consumes it directly and a payload is
 //! expanded once per request. The forwarding phase reads the same document, and
-//! what it leaves to the local phase -- the document without the attributes an
-//! exclusive or redirect registration claimed (clause 4.3.6.3) -- is a part of
+//! what it leaves to the local phase, the document without the attributes an
+//! exclusive or redirect registration claimed (clause 4.3.6.3), is a part of
 //! what was admitted, so it is never admitted again.
 
 use crate::compact_geometry_admission::admit_compact_geometries;

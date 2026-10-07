@@ -1,8 +1,8 @@
 //! One tenant's name dictionaries.
 //!
-//! Every relation that records an attribute — the temporal catalogue, the
+//! Every relation that records an attribute (the temporal catalogue, the
 //! history hypertable, the `current_attribute_values` projection, the
-//! registration routing projection and the notification event queue — stores
+//! registration routing projection and the notification event queue) stores
 //! the attribute's `INTEGER` dictionary key rather than its IRI, and every
 //! relation that records an entity's types (`entities`, `temporal_entities`)
 //! stores an `INTEGER[]` of type keys. This crate owns those dictionaries: the

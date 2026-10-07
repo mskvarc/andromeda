@@ -1,6 +1,4 @@
-//! The query languages read over a decoded state answer exactly as the JSON
-//! document reading answers over the stored document the state was decoded
-//! from (clauses 4.9, 4.10, 4.19).
+//! The query languages read over a decoded state (clauses 4.9, 4.10, 4.19).
 
 use crate::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};

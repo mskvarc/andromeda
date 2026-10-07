@@ -1,9 +1,4 @@
-//! Query Temporal forwarding (clause 5.7.4.4/.5): capability selection, the 4.5.5
-//! merge of per-mode temporal arrays into S4, auxiliary supplementation, and
-//! post-aggregation `lastN`. Validation rows live in
-//! `crate::cons::query_temporal_validation`; `datasetId`, pagination, csf, and
-//! ordering in `crate::cons::query_temporal_filters`; map rows in
-//! `crate::cons::entity_map_temporal`.
+//! Query Temporal forwarding (clause 5.7.4.4/.5): capability selection, the 4.5.5 merge of per-mode temporal arrays into S4, auxiliary supplementation, and post-aggregation `lastN`.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -44,8 +39,7 @@ fn observed_ats(entity: &Value, attribute: &str) -> Vec<String> {
 
 const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 
-/// A non-local temporal query forwards only to `queryTemporal`-capable sources; a
-/// `local=true` query forwards to none (clause 5.7.4.4). Confirms REQ-CONS-60.
+/// A non-local temporal query forwards only to `queryTemporal`-capable sources; a `local=true` query forwards to none (clause 5.7.4.4).
 #[tokio::test]
 async fn distop_query_temporal_forwards_matching_querytemporal_local_none() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -98,9 +92,7 @@ async fn distop_query_temporal_forwards_matching_querytemporal_local_none() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Per-mode temporal arrays merge into S4 per clause 4.5.5, so a same-id entity
-/// carries the histories of every source and distinct-id entities coexist
-/// (clause 5.7.4.4). Confirms REQ-CONS-63.
+/// Per-mode temporal arrays merge into S4 per clause 4.5.5, so a same-id entity carries the histories of every source and distinct-id entities coexist (clause 5.7.4.4).
 #[tokio::test]
 async fn distop_query_temporal_merges_modes_into_s4() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -175,9 +167,7 @@ async fn distop_query_temporal_merges_modes_into_s4() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An auxiliary source is merged into S4 only where absent: a duplicate
-/// timeproperty instance is dropped while a new instance and a new attribute are
-/// added (clause 5.7.4.4). Confirms REQ-CONS-64.
+/// An auxiliary source is merged into S4 only where absent: a duplicate timeproperty instance is dropped while a new instance and a new attribute are added (clause 5.7.4.4).
 #[tokio::test]
 #[ignore = "SPEC-CONFLICT: clause 5.9.2.4 limits auxiliary registrations to retrieveOps, retrieveEntity and queryEntity, so an auxiliary temporal source cannot be registered"]
 async fn distop_query_temporal_auxiliary_merged_into_s4_only_if_absent() {
@@ -241,8 +231,7 @@ async fn distop_query_temporal_auxiliary_merged_into_s4_only_if_absent() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `lastN` limits the projected temporal instances per entity to the most recent
-/// across the aggregated sources (clause 5.7.4.4). Confirms REQ-CONS-69.
+/// `lastN` limits the projected temporal instances per entity to the most recent across the aggregated sources (clause 5.7.4.4).
 #[tokio::test]
 async fn distop_query_temporal_lastn_limits_projected_post_aggregation() {
     let topology = topology::chain().await.expect("three-broker topology");

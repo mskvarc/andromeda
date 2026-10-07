@@ -1,43 +1,12 @@
-//! Regular expressions carried by a query, validated once when the query is
-//! parsed.
+//! Regular expressions carried by a query, validated once when the query is parsed.
 //!
-//! NGSI-LD puts a regular expression in two places: the `idPattern` parameter,
-//! which selects entities by identifier (clause 5.7.2), and the `~=` / `!~=`
-//! operands of a `q` filter, which select them by attribute value (clause 4.9).
-//! Both are the same thing — an untrusted pattern from a request — so both use
-//! this type.
+//! NGSI-LD puts a regular expression in the `idPattern` parameter (clause 5.7.2) and in the `~=` / `!~=` operands of a `q` filter (clause 4.9). Both are an untrusted pattern from a request, so both use [`Pattern`].
 //!
-//! # Two dialects
+//! A pattern is evaluated by two engines: the `regex` crate in memory and PostgreSQL's Advanced Regular Expression operators (`~`, `!~`) in the store. Clause 4.9 and Table 5.2.8-1 mandate IEEE 1003.2, which both implement, but each extends it in its own direction. The `regex` crate therefore compiles the pattern as the client wrote it, and the store is handed a [`PortablePattern`] rendered from what the `regex` crate compiled, with every embedded option applied and every class written out. That is what lets `(?i)` fold `Č` to `č` in the store as it does in memory, where PostgreSQL's own case-insensitive option folds only ASCII.
 //!
-//! A pattern is evaluated by two engines. In memory the broker uses the `regex`
-//! crate; in the store PostgreSQL applies its Advanced Regular Expression
-//! operators (`~`, `!~`). Clause 4.9 and Table 5.2.8-1 both mandate IEEE
-//! 1003.2, which the two engines implement alike, but each extends it in its
-//! own direction and the extensions do not agree.
+//! [`check_posix_dialect`] decides which patterns are admitted: IEEE 1003.2, less the constructs the `regex` crate reads differently from POSIX.2 (accepting on the `regex` crate's terms alone would let `\b` mean a word boundary where IEEE 1003.2 gives it no meaning), plus the extensions the broker supports.
 //!
-//! The two engines therefore never read the same text. The `regex` crate
-//! compiles the pattern as the client wrote it, and the store is handed a
-//! [`PortablePattern`] rendered from what the `regex` crate compiled, with every
-//! embedded option applied and every class written out, so the store runs the
-//! reading the in-memory engine runs. That is what lets `(?i)` fold `Č` to `č`
-//! in the store as it does in memory, where PostgreSQL's own case-insensitive
-//! option folds only ASCII.
-//!
-//! [`check_posix_dialect`] decides which patterns are admitted at all: IEEE
-//! 1003.2, less the handful of its constructs the `regex` crate reads
-//! differently from POSIX.2, plus the extensions the broker supports. Accepting
-//! a pattern on the `regex` crate's terms alone would let `\b` mean a word
-//! boundary where IEEE 1003.2 gives it no meaning.
-//!
-//! One divergence is settled by configuration rather than by refusal, because
-//! the construct is POSIX.2 itself and cannot be turned away: `.` matches a
-//! newline in POSIX.2 and in PostgreSQL, whose default is newline-insensitive
-//! matching, and does not in the `regex` crate's default. The in-memory engine
-//! is therefore built with `dot_matches_new_line`, so `name~="a.b"` selects a
-//! value spelled `a\nb` on both sides.
-//!
-//! `crate::posix_dialect` names each narrowing and
-//! `docs/spec-conformance-sweep.md` records why.
+//! One divergence is settled by configuration rather than refusal, because the construct is POSIX.2 itself: `.` matches a newline in POSIX.2 and in PostgreSQL's default newline-insensitive matching, but not in the `regex` crate's default. The in-memory engine is built with `dot_matches_new_line`, so `name~="a.b"` selects a value spelled `a\nb` on both sides.
 
 use crate::{error::QueryError, portable_pattern::PortablePattern, posix_dialect::check_posix_dialect};
 use regex::{Regex, RegexBuilder};
@@ -45,16 +14,9 @@ use regex_syntax::{ast::parse::Parser, hir::translate::TranslatorBuilder};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
-/// A regular expression from a query parameter or a `q` predicate, compiled at
-/// parse time.
+/// A regular expression from a query parameter or a `q` predicate, compiled at parse time.
 ///
-/// Equality is over the source text, not over the compiled automaton: two
-/// patterns are the same predicate exactly when the client wrote the same
-/// thing.
-///
-/// The wire form is the pattern as written, so a resource that stores one — an
-/// `EntitySelector.idPattern` (clause 5.2.33), a Snapshot entity selector
-/// (5.2.23) — gives back exactly what the client sent.
+/// Equality is over the source text, not the compiled automaton: two patterns are the same predicate exactly when the client wrote the same thing. The wire form is the pattern as written, so a resource that stores one (an `EntitySelector.idPattern`, clause 5.2.33, or a Snapshot entity selector, clause 5.2.23) gives back exactly what the client sent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Pattern {
@@ -65,36 +27,23 @@ pub struct Pattern {
 }
 
 impl Pattern {
-    /// Compile and validate a pattern, rejecting one outside the admitted
-    /// dialect, and render the restatement the store evaluates.
+    /// Compiles and validates a pattern, rejecting one outside the admitted dialect, and renders the restatement the store evaluates.
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::PatternRegex`] when the `regex` crate rejects the
-    /// pattern, [`QueryError::PatternRepeatedQuantifier`] or
-    /// [`QueryError::PatternNonPosixConstruct`] when [`check_posix_dialect`]
-    /// finds a construct outside the admitted dialect, and
-    /// [`QueryError::PatternTranslation`] when the pattern cannot be translated
-    /// for rendering.
+    /// Returns [`QueryError::PatternRegex`] when the `regex` crate rejects the pattern, [`QueryError::PatternRepeatedQuantifier`] or [`QueryError::PatternNonPosixConstruct`] when [`check_posix_dialect`] finds a construct outside the admitted dialect, and [`QueryError::PatternTranslation`] when the pattern cannot be translated for rendering.
     pub fn parse(pattern: &str) -> Result<Pattern, QueryError> {
-        // `dot_matches_new_line` is PostgreSQL's default and the POSIX.2
-        // reading of `.`; the `regex` crate's default excludes a newline, which
-        // would make one filter select different values in memory than in the
-        // store.
+        // `dot_matches_new_line` is PostgreSQL's default and the POSIX.2 reading of `.`; the `regex` crate's default would make one filter select different values in memory than in the store.
         let compiled = RegexBuilder::new(pattern).dot_matches_new_line(true).build()?;
         let ast = Parser::new().parse(pattern).map_err(|_| QueryError::PatternRepeatedQuantifier)?;
         check_posix_dialect(&ast)?;
-        // The translator is configured as `compiled` was built, so the
-        // restatement is rendered from the reading the in-memory engine runs.
+        // Configured as `compiled` was built, so the restatement renders the reading the in-memory engine runs.
         let hir = TranslatorBuilder::new().dot_matches_new_line(true).build().translate(pattern, &ast)?;
         let portable = PortablePattern::render(&hir)?;
         Ok(Pattern { compiled, portable })
     }
 
-    /// The pattern as the client wrote it.
-    ///
-    /// This is the wire form: what a resource storing the pattern gives back,
-    /// and what a request forwarded to a Context Source carries.
+    /// The pattern as the client wrote it: the wire form, and what a request forwarded to a Context Source carries.
     #[must_use]
     pub fn as_str(&self) -> &str {
         self.compiled.as_str()
@@ -121,8 +70,7 @@ impl FromStr for Pattern {
     }
 }
 
-// Parsing lives in `Pattern::parse` so borrowed call sites do not allocate;
-// this adapter exists only because `#[serde(try_from = "String")]` requires it.
+// Parsing lives in `Pattern::parse` so borrowed call sites do not allocate; `#[serde(try_from = "String")]` requires this.
 impl TryFrom<String> for Pattern {
     type Error = QueryError;
 
@@ -139,7 +87,6 @@ impl fmt::Display for Pattern {
     }
 }
 
-// The wire form is the pattern as written; this exists only because
 // `#[serde(into = "String")]` demands an `Into<String>`.
 impl From<Pattern> for String {
     fn from(pattern: Pattern) -> String {
@@ -155,8 +102,6 @@ impl PartialEq for Pattern {
     }
 }
 
-// Equality over the source text is reflexive, symmetric and transitive, so
-// the `PartialEq` above is a full equivalence.
 impl Eq for Pattern {}
 
 #[cfg(test)]
@@ -172,9 +117,6 @@ mod tests {
 
     #[test]
     fn an_invalid_regex_pattern_is_rejected_when_the_filter_is_parsed() {
-        // An unterminated character class compiles in neither engine. Rejecting
-        // it here turns it into a 400; accepting it would make the filter match
-        // nothing, which reads as an empty result set.
         let error = Pattern::parse("[").expect_err("must reject");
         assert!(matches!(error, QueryError::PatternRegex(_)), "got {error:?}");
     }

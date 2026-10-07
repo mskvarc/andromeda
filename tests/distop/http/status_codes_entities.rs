@@ -1,8 +1,4 @@
-//! Response-code matrix for entity create, query and purge (clause 6.3.16,
-//! 6.4.3): local success codes and `Location`, forwarded partial failure `207`
-//! with a `BatchOperationResult`, invalid/absent/conflict codes, the
-//! unadvertised-operation `409 Conflict`, and the single-source `501` on an
-//! unsupported representation.
+//! Response-code matrix for entity create, query and purge (clause 6.3.16, 6.4.3): local success codes and `Location`, forwarded partial failure `207` with a `BatchOperationResult`, invalid/absent/conflict codes, the unadvertised-operation `409 Conflict`, and the single-source `501` on an unsupported representation.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -16,14 +12,12 @@ use andromeda_test_fixtures::problem_detail::{ALREADY_EXISTS, BAD_REQUEST_DATA, 
 use reqwest::Method;
 use serde_json::json;
 
-/// Whether the response body's JSON text mentions a substring, used to confirm a
-/// `BatchOperationResult` carries a `registrationId` for the failed endpoint.
+/// Whether the response body's JSON text mentions a substring, used to confirm a `BatchOperationResult` carries a `registrationId` for the failed endpoint.
 fn body_mentions(response: &TestResponse, needle: &str) -> bool {
     json_body(response).to_string().contains(needle)
 }
 
-/// A local create returns `201 Created` with a `Location` naming the new entity
-/// (clause 6.4.3.1). Confirms REQ-HTTP-46.
+/// A local create returns `201 Created` with a `Location` naming the new entity (clause 6.4.3.1).
 #[tokio::test]
 async fn dist_http_create_entity_local_returns_201_location() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -42,9 +36,7 @@ async fn dist_http_create_entity_local_returns_201_location() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A forwarded create where one endpoint fails is a partial failure, mapped to
-/// `207` with a `BatchOperationResult` naming the failed `registrationId`
-/// (clause 6.3.16). Confirms REQ-HTTP-47.
+/// A forwarded create where one endpoint fails is a partial failure, mapped to `207` with a `BatchOperationResult` naming the failed `registrationId` (clause 6.3.16).
 #[tokio::test]
 async fn dist_http_create_entity_forwarded_partial_failure_returns_207_batch_result() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -83,8 +75,7 @@ async fn dist_http_create_entity_forwarded_partial_failure_returns_207_batch_res
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A create with an invalid body is rejected with `400 BadRequestData`
-/// (clause 6.4.3.1). Confirms REQ-HTTP-48.
+/// A create with an invalid body is rejected with `400 BadRequestData` (clause 6.4.3.1).
 #[tokio::test]
 async fn dist_http_create_entity_invalid_body_returns_400_problem_details() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -103,8 +94,7 @@ async fn dist_http_create_entity_invalid_body_returns_400_problem_details() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Re-creating an existing local entity is rejected with `409 AlreadyExists`
-/// (clause 6.4.3.1). Confirms REQ-HTTP-49.
+/// Re-creating an existing local entity is rejected with `409 AlreadyExists` (clause 6.4.3.1).
 #[tokio::test]
 async fn dist_http_create_entity_already_exists_local_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -136,13 +126,7 @@ async fn dist_http_create_entity_already_exists_local_returns_409() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Creating an entity whose id is owned by an exclusive registration forwards
-/// the owned attributes to that registration; when that single source answers
-/// `409 AlreadyExists` the create fails with that error (clause 5.6.1.4: "If the
-/// endpoint then raises an error, this shall result in an error in case the
-/// complete create failed"; clause 6.3.17 asks unsafe-method errors to be "as
-/// informative as possible", so the source's status is relayed). Confirms
-/// REQ-HTTP-49.
+/// Creating an entity whose id is owned by an exclusive registration forwards the owned attributes to that registration; when that single source answers `409 AlreadyExists` the create fails with that error (clause 5.6.1.4: "If the endpoint then raises an error, this shall result in an error in case the complete create failed"; clause 6.3.17 asks unsafe-method errors to be "as informative as possible", so the source's status is relayed).
 #[tokio::test]
 async fn dist_http_create_entity_exclusive_registration_owns_id_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -177,11 +161,7 @@ async fn dist_http_create_entity_exclusive_registration_owns_id_returns_409() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A create whose only matching exclusive source does not advertise
-/// `createEntity` is rejected with `409 Conflict` (clause 5.6.1.4: "For matching
-/// Registrations where the Create Entity operation is not supported, this shall
-/// result in an error of type Conflict if the complete Create Entity operation
-/// failed"). Confirms REQ-HTTP-50.
+/// A create whose only matching exclusive source does not advertise `createEntity` is rejected with `409 Conflict` (clause 5.6.1.4: "For matching Registrations where the Create Entity operation is not supported, this shall result in an error of type Conflict if the complete Create Entity operation failed").
 #[tokio::test]
 async fn dist_http_create_entity_operation_unavailable_returns_409_conflict() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -224,7 +204,6 @@ async fn dist_http_create_entity_operation_unavailable_returns_409_conflict() {
 }
 
 /// An invalid query is rejected with `400 BadRequestData` (clause 6.4.3.2).
-/// Confirms REQ-HTTP-57.
 #[tokio::test]
 async fn dist_http_query_entities_invalid_returns_400_problem_details() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -240,8 +219,7 @@ async fn dist_http_query_entities_invalid_returns_400_problem_details() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A query resolving to a single source that cannot serve the representation maps
-/// to `501` (clause 6.3.16). Confirms REQ-HTTP-58.
+/// A query resolving to a single source that cannot serve the representation maps to `501` (clause 6.3.16).
 #[tokio::test]
 async fn dist_http_query_entities_source_unsupported_format_returns_501() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -275,7 +253,7 @@ async fn dist_http_query_entities_source_unsupported_format_returns_501() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A local purge returns `204 No Content` (clause 6.4.3.4). Confirms REQ-HTTP-61.
+/// A local purge returns `204 No Content` (clause 6.4.3.4).
 #[tokio::test]
 async fn dist_http_purge_entities_local_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -310,9 +288,7 @@ async fn dist_http_purge_entities_local_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A purge where a forwarded endpoint fails is a partial failure, mapped to `207`
-/// (clause 6.3.16). The registration advertises `purgeEntity`, the Table 4.20-1
-/// name of 5.6.21 Purge Entities. Confirms REQ-HTTP-61.
+/// A purge where a forwarded endpoint fails is a partial failure, mapped to `207` (clause 6.3.16). The registration advertises `purgeEntity`, the Table 4.20-1 name of 5.6.21 Purge Entities.
 #[tokio::test]
 async fn dist_http_purge_entities_partial_failure_returns_207_batch_result() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -363,7 +339,6 @@ async fn dist_http_purge_entities_partial_failure_returns_207_batch_result() {
 }
 
 /// An invalid purge query is rejected with `400` (clause 6.4.3.4).
-/// Confirms REQ-HTTP-61.
 #[tokio::test]
 async fn dist_http_purge_entities_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -378,8 +353,7 @@ async fn dist_http_purge_entities_invalid_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Retrieving an entity restricted to attributes it does not hold returns `404`
-/// (clause 6.4.3.2). Confirms REQ-HTTP-63.
+/// Retrieving an entity restricted to attributes it does not hold returns `404` (clause 6.4.3.2).
 #[tokio::test]
 async fn dist_http_retrieve_entity_attrs_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");

@@ -11,10 +11,6 @@ use uuid::Uuid;
 
 use crate::context_source_adapter::ContextSourceAdapter as MockServer;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn client() -> Client {
     Client::new()
 }
@@ -181,10 +177,6 @@ fn vehicle_registration_with_mode(reg_id: &str, entity_id: &str, endpoint: &str,
     reg
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 /// Temporal splitEntities with q filter: only matching entities remain after post-merge filtering.
 ///
 /// The source is inclusive because clause 5.7.4.4 merges the Entity Array of an
@@ -202,12 +194,10 @@ async fn distop_temporal_split_entities_q_filter_post_merge() {
     let remote_id = unique_id("urn:ngsi-ld:Vehicle:tsplit-remote");
     let reg_id = unique_id("urn:ngsi-ld:Registration:tsplit-q");
 
-    // Local temporal entity: speed=50
     let entity = temporal_vehicle_entity_with_speed(&local_id, 50, "2024-01-01T12:00:00Z");
     let (status, _) = create_temporal_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Mock returns temporal entity: speed=80
     let mock_entity = temporal_vehicle_entity_with_speed(&remote_id, 80, "2024-01-01T12:00:00Z");
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/temporal/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
@@ -216,7 +206,6 @@ async fn distop_temporal_split_entities_q_filter_post_merge() {
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Query with splitEntities=true and q filter for speed>60
     let query = "type=Vehicle&splitEntities=true&q=speed>60&timerel=before&timeAt=2030-01-01T00:00:00Z";
     let (status, _, body) = query_temporal_entities(&c, query, &jsonld_link_value()).await;
     assert!(status.is_success(), "query should succeed, got {status}");
@@ -366,15 +355,12 @@ async fn distop_temporal_query_inclusive_mode_merges_attributes() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:tq-inclusive");
     let reg_id = unique_id("urn:ngsi-ld:Registration:tq-inclusive");
 
-    // Create local temporal entity
     let entity = temporal_vehicle_entity(&entity_id);
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &entity).await.0, StatusCode::CREATED);
 
-    // Create CSR in inclusive mode (default)
     let reg = vehicle_registration_with_mode(&reg_id, &entity_id, &mock.url(""), None);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await.0, StatusCode::CREATED);
 
-    // Mock returns temporal entity with extra attribute
     let mock_entity = json!({
         "id": entity_id,
         "type": "Vehicle",
@@ -417,15 +403,12 @@ async fn distop_temporal_query_auxiliary_mode_supplements_only() {
     let remote_id = unique_id("urn:ngsi-ld:Vehicle:tq-auxiliary-remote");
     let reg_id = unique_id("urn:ngsi-ld:Registration:tq-auxiliary");
 
-    // Create local temporal entity
     let entity = temporal_vehicle_entity(&local_id);
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &entity).await.0, StatusCode::CREATED);
 
-    // Create CSR in auxiliary mode
     let reg = vehicle_registration_with_mode(&reg_id, &local_id, &mock.url(""), Some("auxiliary"));
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await.0, StatusCode::CREATED);
 
-    // Mock returns local entity supplement + remote-only entity
     let mock_entities = json!([
         {"id": local_id, "type": "Vehicle", "altitude": [{"type": "Property", "value": 200}]},
         {"id": remote_id, "type": "Vehicle", "speed": [{"type": "Property", "value": 90}]}
@@ -437,13 +420,11 @@ async fn distop_temporal_query_auxiliary_mode_supplements_only() {
 
     let entities = body.as_array().expect("response should be array");
 
-    // Remote-only entity should not be added in auxiliary mode
     assert!(
         !entities.iter().any(|e| e["id"].as_str() == Some(remote_id.as_str())),
         "auxiliary mode should not add new entities, but remote entity was found"
     );
 
-    // Local entity should have altitude supplemented
     let local = entities.iter().find(|e| e["id"].as_str() == Some(local_id.as_str()));
     assert!(local.is_some(), "local entity should be present");
     assert!(
@@ -477,7 +458,6 @@ async fn distop_temporal_query_exclusive_mode_returns_remote() {
     let reg = reg;
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await.0, StatusCode::CREATED);
 
-    // Mock returns temporal entity
     let mock_entity = json!({
         "id": entity_id,
         "type": "Vehicle",
@@ -512,7 +492,6 @@ async fn distop_temporal_query_warning_on_context_source_error() {
     let reg = vehicle_registration_with_mode(&reg_id, &entity_id, &mock.url(""), None);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await.0, StatusCode::CREATED);
 
-    // Mock returns 500 error
     mock.set_stub(Method::GET, "/ngsi-ld/v1/temporal/entities", 500).await;
 
     let (status, headers, _) = query_temporal_entities(&c, "type=Vehicle&timerel=after&timeAt=2020-01-01T00:00:00Z", &jsonld_link_value()).await;
@@ -545,7 +524,6 @@ async fn distop_temporal_query_type_star_implies_local() {
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/temporal/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    // type=* implies local=true per spec
     let (status, _, _) = query_temporal_entities(&c, "type=*&timerel=after&timeAt=2020-01-01T00:00:00Z", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -574,13 +552,11 @@ async fn distop_temporal_query_forwards_temporal_parameters() {
     let reg = vehicle_registration_with_mode(&reg_id, &entity_id, &mock.url(""), None);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await.0, StatusCode::CREATED);
 
-    // Mock returns empty array
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/temporal/entities", 200, &json!([])).await;
 
     let (status, _, _) = query_temporal_entities(&c, "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z&lastN=5", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    // Verify mock received the forwarded request
     assert!(
         mock.get_count(Method::GET, "/ngsi-ld/v1/temporal/entities") > 0,
         "mock should receive forwarded temporal query"
@@ -610,7 +586,6 @@ async fn distop_temporal_query_via_header_propagated() {
     let (status, _, _) = query_temporal_entities(&c, "type=Vehicle&timerel=after&timeAt=2020-01-01T00:00:00Z", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    // Verify mock was called (Via header is added internally by broker)
     assert!(
         mock.get_count(Method::GET, "/ngsi-ld/v1/temporal/entities") > 0,
         "mock should receive forwarded request with Via header"

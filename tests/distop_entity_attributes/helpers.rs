@@ -7,10 +7,6 @@ use reqwest::{Client, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use urlencoding::encode;
 
-// ---------------------------------------------------------------------------
-// Test utilities
-// ---------------------------------------------------------------------------
-
 pub fn client() -> Client {
     Client::new()
 }
@@ -18,10 +14,6 @@ pub fn client() -> Client {
 pub fn jsonld_link_value() -> String {
     format!("<{COMPOUND_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
 }
-
-// ---------------------------------------------------------------------------
-// Entity builders
-// ---------------------------------------------------------------------------
 
 /// Vehicle entity with brandName and isParked attributes.
 pub fn vehicle_entity(id: &str) -> Value {
@@ -83,10 +75,6 @@ pub fn vehicle_entity_two_speed_datasets(id: &str) -> Value {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Fragment builders (attribute-level payloads)
-// ---------------------------------------------------------------------------
-
 /// Fragment with speed and isParked for append operations.
 pub fn fragment_speed_isparked() -> Value {
     json!({
@@ -142,10 +130,6 @@ pub fn fragment_brandname() -> Value {
         }
     })
 }
-
-// ---------------------------------------------------------------------------
-// Registration builders
-// ---------------------------------------------------------------------------
 
 /// Vehicle registration with entity and attribute redirection operations.
 ///
@@ -253,10 +237,6 @@ pub fn vehicle_registration_auxiliary_retrieve_ops(reg_id: &str, entity_id: &str
     })
 }
 
-// ---------------------------------------------------------------------------
-// HTTP helpers - Entity operations
-// ---------------------------------------------------------------------------
-
 pub async fn create_entity(client: &Client, entity: &Value) -> (StatusCode, Option<String>) {
     let resp = client
         .post(format!("{BASE_URL}/entities"))
@@ -301,10 +281,6 @@ pub async fn get_entity(client: &Client, id: &str, query: &str, link: &str) -> (
 pub async fn delete_entity(client: &Client, id: &str) {
     let _ = client.delete(format!("{BASE_URL}/entities/{}", encode(id))).send().await;
 }
-
-// ---------------------------------------------------------------------------
-// HTTP helpers - Entity attribute operations
-// ---------------------------------------------------------------------------
 
 /// Append entity attributes (POST /entities/{entityId}/attrs).
 pub async fn append_entity_attrs(client: &Client, entity_id: &str, fragment: &Value, link: &str) -> StatusCode {
@@ -379,10 +355,6 @@ pub async fn delete_entity_attr_all(client: &Client, entity_id: &str, attr_name:
         .expect("delete_entity_attr_all request failed");
     resp.status()
 }
-
-// ---------------------------------------------------------------------------
-// HTTP helpers - Registration operations
-// ---------------------------------------------------------------------------
 
 pub async fn create_registration(client: &Client, reg: &Value) -> (StatusCode, Option<String>) {
     let resp = client

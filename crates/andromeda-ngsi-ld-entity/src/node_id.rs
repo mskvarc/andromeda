@@ -8,8 +8,8 @@
 //! A Property value is any JSON object (clauses 3.1 and 4.6.3), and the core
 //! `@context` aliases `id` to `@id`, so `{"id": "abc"}` written as a value is a
 //! node whose `@id` is `abc`. An NGSI-LD document has no base IRI, so IRI
-//! expansion leaves such a relative reference -- or any text that is no IRI at
-//! all -- exactly as written (JSON-LD 1.1 IRI expansion, document-relative with
+//! expansion leaves such a relative reference, or any text that is no IRI at
+//! all, exactly as written (JSON-LD 1.1 IRI expansion, document-relative with
 //! no base), and compaction returns it unchanged. Clause 4.6.4 requires the
 //! value back as written, so that text is an identifier too.
 

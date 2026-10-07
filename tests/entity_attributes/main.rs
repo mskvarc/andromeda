@@ -29,17 +29,9 @@ fn jsonld_link_header(context_url: &str) -> HeaderValue {
     try_jsonld_link_header(context_url).expect("valid JSON-LD Link header")
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn client() -> Client {
     Client::new()
 }
-
-// ---------------------------------------------------------------------------
-// Entity factories
-// ---------------------------------------------------------------------------
 
 fn building_minimal(id: &str) -> Value {
     json!({
@@ -414,10 +406,6 @@ fn vehicle_speed_multi_instances(id: &str) -> Value {
         "@context": [COMPOUND_CONTEXT]
     })
 }
-
-// ---------------------------------------------------------------------------
-// HTTP helpers
-// ---------------------------------------------------------------------------
 
 async fn create_entity(client: &Client, entity: &Value) -> StatusCode {
     let resp = client

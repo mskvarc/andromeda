@@ -10,8 +10,8 @@
 ///
 /// Clause 5.5.3 of ETSI GS CIM 009 v1.9.1 defines `ProblemDetails.detail`, by way
 /// of RFC 7807 section 3.1, as "a human-readable explanation specific to this
-/// occurrence"; a real operation summary honours that better than the bare token
-/// this replaced, while the clause 5.5.2 category stays `InternalError`.
+/// occurrence"; a real operation summary honours that better than a bare token,
+/// while the clause 5.5.2 category stays `InternalError`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, derive_more::Display)]
 pub struct InternalFailureSummary(&'static str);
 

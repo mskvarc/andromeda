@@ -1,8 +1,4 @@
-//! Temporal entity-map create and reuse for Retrieve/Query Temporal
-//! (clauses 5.7.3.4, 5.7.4.4, 5.5.14, 6.3.15): minting, fixing the CSR set on
-//! reuse, recreating on an expired/missing map, and returning the map location.
-//! The linked cross-instance map rows (`REQ-CONS-45/48/61`) run against the
-//! durable, shared entity-map store.
+//! Temporal entity-map create and reuse for Retrieve/Query Temporal (clauses 5.7.3.4, 5.7.4.4, 5.5.14, 6.3.15): minting, fixing the CSR set on reuse, recreating on an expired/missing map, and returning the map location.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -54,11 +50,7 @@ async fn query_temporal_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, 
         .expect("reuse temporal query")
 }
 
-/// A temporal retrieve map fixes the CSR set on reuse and is recreated on a bogus
-/// map (clause 5.5.14). Reusing the live map answers `200`; the bogus-map leg
-/// mints a replacement and answers `201` (Table 6.4.3.2-3 applies the same
-/// "201 Created (in case an `EntityMap` has been (re)created)" rule to every
-/// map-bearing read). Confirms REQ-CONS-42.
+/// A temporal retrieve map fixes the CSR set on reuse and is recreated on a bogus map (clause 5.5.14). Reusing the live map answers `200`; the bogus-map leg mints a replacement and answers `201` (Table 6.4.3.2-3 applies the same "201 Created (in case an `EntityMap` has been (re)created)" rule to every map-bearing read).
 #[tokio::test]
 async fn distop_retrieve_temporal_map_reused_or_recreated() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -139,8 +131,7 @@ async fn distop_retrieve_temporal_map_reused_or_recreated() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A temporal retrieve with the return flag and no existing map creates a new map
-/// and returns its location (clause 6.3.15). Confirms REQ-CONS-43.
+/// A temporal retrieve with the return flag and no existing map creates a new map and returns its location (clause 6.3.15).
 #[tokio::test]
 async fn distop_retrieve_temporal_return_flag_creates_new_map() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -182,8 +173,7 @@ async fn distop_retrieve_temporal_return_flag_creates_new_map() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A temporal retrieve reusing a map whose CSR entry links a downstream map forwards
-/// that linked location (clause 5.5.14). Confirms REQ-CONS-45.
+/// A temporal retrieve reusing a map whose CSR entry links a downstream map forwards that linked location (clause 5.5.14).
 #[tokio::test]
 async fn distop_retrieve_temporal_map_linked_entry_forwards_linked_location() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -233,8 +223,7 @@ async fn distop_retrieve_temporal_map_linked_entry_forwards_linked_location() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Maps returned by forwarded CSRs update a temporal map's `linkedMaps`
-/// (clause 5.5.14). Confirms REQ-CONS-48.
+/// Maps returned by forwarded CSRs update a temporal map's `linkedMaps` (clause 5.5.14).
 #[tokio::test]
 async fn distop_retrieve_temporal_map_linkedmaps_updated() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -285,10 +274,7 @@ async fn distop_retrieve_temporal_map_linkedmaps_updated() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A temporal query map fixes the CSR set on reuse and is recreated on a bogus map
-/// (clause 5.5.14). Reusing the live map answers `200`; the bogus-map leg mints
-/// a replacement and answers `201` (Table 6.4.3.2-3: "201 Created (in case an
-/// `EntityMap` has been (re)created)"). Confirms REQ-CONS-58.
+/// A temporal query map fixes the CSR set on reuse and is recreated on a bogus map (clause 5.5.14). Reusing the live map answers `200`; the bogus-map leg mints a replacement and answers `201` (Table 6.4.3.2-3: "201 Created (in case an `EntityMap` has been (re)created)").
 #[tokio::test]
 async fn distop_query_temporal_map_reused_or_recreated() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -367,8 +353,7 @@ async fn distop_query_temporal_map_reused_or_recreated() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A temporal query with the return flag and no existing map creates a new map and
-/// returns its location header (clause 6.3.15). Confirms REQ-CONS-59.
+/// A temporal query with the return flag and no existing map creates a new map and returns its location header (clause 6.3.15).
 #[tokio::test]
 async fn distop_query_temporal_return_flag_creates_new_map() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -395,8 +380,7 @@ async fn distop_query_temporal_return_flag_creates_new_map() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A temporal query reusing a map whose CSR entry links a downstream map forwards
-/// that linked location (clause 5.5.14). Confirms REQ-CONS-61.
+/// A temporal query reusing a map whose CSR entry links a downstream map forwards that linked location (clause 5.5.14).
 #[tokio::test]
 async fn distop_query_temporal_map_linked_entry_forwards_linked_location() {
     let topology = topology::single().await.expect("single-broker topology");

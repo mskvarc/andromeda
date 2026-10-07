@@ -1,4 +1,4 @@
-//! The one `Link` of an `application/json` notification (study D5).
+//! The one `Link` of an `application/json` notification.
 //!
 //! Clause 6.3.8: an `application/json` notification "shall include a Link
 //! header with a reference to the corresponding JSON-LD @context [...] (to the

@@ -25,10 +25,6 @@ use crate::{
     },
 };
 
-// ---------------------------------------------------------------------------
-// CSR alias loop detection tests
-// ---------------------------------------------------------------------------
-
 /// CSR alias in Via header causes that CSR to be skipped (prevents loop).
 #[tokio::test]
 #[serial]
@@ -48,7 +44,6 @@ async fn distop_entity_via_csr_alias_in_header_skips_csr() {
     let mock_array = Value::Array(vec![mock_entity]);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
 
-    // Query with Via header containing the CSR's alias -- should NOT forward
     let (status, _, _) = query_entities_with_via(&c, "type=Vehicle", &jsonld_link_value(), "1.1 cs-broker-A").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -78,7 +73,6 @@ async fn distop_entity_via_different_alias_allows_forwarding() {
     let mock_array = Value::Array(vec![mock_entity]);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
 
-    // Query with Via header containing a different alias -- should forward
     let (status, _, _) = query_entities_with_via(&c, "type=Vehicle", &jsonld_link_value(), "1.1 cs-broker-B").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -108,7 +102,6 @@ async fn distop_entity_via_no_header_allows_forwarding() {
     let mock_array = Value::Array(vec![mock_entity]);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
 
-    // Query without Via header
     let (status, _, _) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -160,7 +153,6 @@ async fn distop_entity_via_no_alias_always_forwards() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:via-no-alias");
     let reg_id = unique_id("urn:ngsi-ld:Registration:via-no-alias");
 
-    // No contextSourceAlias
     let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), None);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -169,7 +161,6 @@ async fn distop_entity_via_no_alias_always_forwards() {
     let mock_array = Value::Array(vec![mock_entity]);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
 
-    // Via header present but CSR has no alias -- should still forward
     let (status, _, _) = query_entities_with_via(&c, "type=Vehicle", &jsonld_link_value(), "1.1 whatever").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -179,10 +170,6 @@ async fn distop_entity_via_no_alias_always_forwards() {
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
 }
-
-// ---------------------------------------------------------------------------
-// Self-loop detection tests
-// ---------------------------------------------------------------------------
 
 /// Broker's own identity in Via header prevents all forwarding (self-loop detection).
 #[tokio::test]
@@ -196,14 +183,9 @@ async fn distop_entity_via_self_loop_prevents_forwarding() {
     let (status, _, body) = query_entities_with_via(&c, "type=Vehicle", &jsonld_link_value(), "1.1 urn:ngsi-ld:ContextSourceIdentity:andromeda").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    // The response should be an empty array (no local entities, no forwarding)
     let entries = body.as_array().expect("response should be array");
     assert!(entries.is_empty(), "self-loop should prevent all forwarding");
 }
-
-// ---------------------------------------------------------------------------
-// Additional Via header edge cases
-// ---------------------------------------------------------------------------
 
 /// Multiple aliases in Via header: CSR skipped if any match.
 #[tokio::test]
@@ -224,7 +206,6 @@ async fn distop_entity_via_multiple_aliases_any_match_skips() {
     let mock_array = Value::Array(vec![mock_entity]);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
 
-    // Via header contains multiple aliases including the CSR's alias
     let (status, _, _) = query_entities_with_via(&c, "type=Vehicle", &jsonld_link_value(), "1.1 cs-broker-A, 1.1 cs-broker-B").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -254,7 +235,6 @@ async fn distop_entity_via_http_version_prefix_parsed() {
     let mock_array = Value::Array(vec![mock_entity]);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/entities", 200, &mock_array).await;
 
-    // Via header with HTTP/2 version prefix
     let (status, _, _) = query_entities_with_via(&c, "type=Vehicle", &jsonld_link_value(), "2.0 cs-broker-A").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 

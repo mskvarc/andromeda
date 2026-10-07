@@ -1,4 +1,4 @@
-//! The `@context` of an `application/geo+json` notification (study D6).
+//! The `@context` of an `application/geo+json` notification.
 //!
 //! Table 5.3.1-1 makes a `GeoJSON` notification's `data` one `FeatureCollection`,
 //! which "will not contain an @context field" when `receiverInfo` asks for

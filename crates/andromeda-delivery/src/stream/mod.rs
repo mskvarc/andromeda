@@ -4,7 +4,7 @@
 //! the broker pushes into it, so there is no endpoint to connect to and
 //! nothing to retry. What replaces the transport is a registry of live
 //! connections keyed by subscription, and both protocols want exactly the same
-//! one — [`registry::ConnectionRegistry`], parameterised by the payload each
+//! one: [`registry::ConnectionRegistry`], parameterised by the payload each
 //! sends.
 
 pub mod registry;

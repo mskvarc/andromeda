@@ -9,10 +9,9 @@
 //! out of history, keeps current state and everything that reads it exact, and
 //! records the Temporal API exactly as before.
 //!
-//! The self-contained stack is
-//! `docker/compose/test/core-write-history/docker-compose.yaml`: one PostgreSQL
-//! and three brokers over the same database, so a test writes through one and
-//! reads the Temporal Evolution back through any of them.
+//! The self-contained `core-write-history` stack runs one PostgreSQL and three
+//! brokers over the same database, so a test writes through one and reads the
+//! Temporal Evolution back through any of them.
 //!
 //! - `core-write-history-not-recorded` (host :1101), the subject.
 //! - `core-write-history-deferred` (host :1102), the subject with
@@ -23,22 +22,6 @@
 //! ```sh
 //! cargo xtask itest --stack core-write-history
 //! ```
-//!
-//! or by hand:
-//!
-//! ```sh
-//! docker compose -f docker/compose/test/core-write-history/docker-compose.yaml up --build -d --wait
-//! ANDROMEDA_TEST_BROKER_URL=http://127.0.0.1:1101/ngsi-ld/v1/ \
-//! ANDROMEDA_TEST_DEFERRED_BROKER_URL=http://127.0.0.1:1102/ngsi-ld/v1/ \
-//! ANDROMEDA_TEST_RECORDING_BROKER_URL=http://127.0.0.1:1103/ngsi-ld/v1/ \
-//! ANDROMEDA_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5501/postgres \
-//! ANDROMEDA_TEST_CALLBACK_HOST=host.docker.internal \
-//! cargo test --test core_write_history
-//! docker compose -f docker/compose/test/core-write-history/docker-compose.yaml down -v
-//! ```
-//!
-//! Brokers run on the host instead take `docker/compose/test/core-write-history/env`
-//! and `ANDROMEDA_TEST_CALLBACK_HOST=127.0.0.1`.
 //!
 //! Naming convention: `<scenario>`, grouped by module per family of writes.
 

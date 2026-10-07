@@ -91,7 +91,7 @@ mod tests {
     }
 
     /// The derivation is a pure function of the configured alias and the
-    /// tenant, so two lookups of one tenant always agree -- the value goes into
+    /// tenant, so two lookups of one tenant always agree: the value goes into
     /// a `Via` chain on one request and is compared against a registration on
     /// the next.
     #[test]

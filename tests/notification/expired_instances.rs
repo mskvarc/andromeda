@@ -64,7 +64,6 @@ async fn notification_geoq_matching_only_an_expired_instance_does_not_fire() {
     }
     receiver.clear_notifications().await;
 
-    // An update of an attribute unrelated to the expired `location`.
     let fragment = json!({"name": {"type": "Property", "value": "Renamed hall"}, "@context": [CORE_CONTEXT]});
     let (status, _) = update_entity_attrs(&http_client, &entity_id, &fragment).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);

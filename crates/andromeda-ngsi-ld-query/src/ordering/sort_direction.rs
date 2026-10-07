@@ -4,13 +4,7 @@ use crate::ordering::term::OrderDirection;
 
 /// The two directions a sort key can run in.
 ///
-/// Clause 4.23.1 offers four sort orders, but two of them differ only in what
-/// is measured: `dist-asc` and `dist-desc` sort by distance rather than by
-/// value, ascending and descending exactly as `asc` and `desc` do. Every sort
-/// key a backend builds is built from this reduction, so no key has to
-/// re-derive which of the four term directions it is under, and an ordering
-/// that admits no distance term — the temporal one of clause 5.7.4.3 — carries
-/// this rather than the four-way direction it could not satisfy.
+/// Clause 4.23.1 offers four sort orders, but `dist-asc` and `dist-desc` differ from `asc` and `desc` only in measuring distance rather than value. Backends build every sort key from this reduction, and an ordering that admits no distance term (the temporal one of clause 5.7.4.3) carries it rather than the four-way direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SortDirection {
     /// Smallest first.

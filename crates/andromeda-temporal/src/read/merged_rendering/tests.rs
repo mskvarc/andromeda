@@ -78,7 +78,7 @@ fn aggregated_query() -> TemporalQueryParameters {
     }
 }
 
-/// Clause 5.7.4.4 (T1): two aggregates of one period are no aggregate of their
+/// Clause 5.7.4.4: two aggregates of one period are no aggregate of their
 /// union, so the instances a source answered are handed to the store, which
 /// aggregates them beside the local ones in one statement; what the entity is
 /// rendered with is what the store answered, never an aggregate this service

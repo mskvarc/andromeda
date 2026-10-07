@@ -1,8 +1,7 @@
 //! Rendering a registration's stored identifier-pattern restatements again
 //! when an older rendering produced them.
 //!
-//! [`crate::csource_registration::entity_id_pattern_forms`] stores each
-//! registration's restatements with the
+//! Each registration's restatements are stored with the
 //! [`RenderingRevision`] that produced them. Discovery and forwarding evaluate
 //! the stored text, while every other reader re-parses the registration's
 //! `information` with this build's renderer, so a row an older revision

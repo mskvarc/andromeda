@@ -1,5 +1,4 @@
-//! Retrieve-CSR (clause 5.10.1): id validation, existence, the single-object
-//! JSON-LD result, and short-hand term expansion (clause 5.5.7). All `T-LOCAL`.
+//! Retrieve-CSR (clause 5.10.1): id validation, existence, the single-object JSON-LD result, and short-hand term expansion (clause 5.5.7).
 
 use crate::{
     disc::PEER_ENDPOINT,
@@ -13,8 +12,7 @@ use andromeda_test_fixtures::{
 };
 use pretty_assertions::assert_eq;
 
-/// A malformed registration id is rejected with `400 BadRequestData` before any
-/// lookup (clause 5.10.1). Confirms REQ-DISC-13.
+/// A malformed registration id is rejected with `400 BadRequestData` before any lookup (clause 5.10.1).
 #[tokio::test]
 async fn retrieve_csr_invalid_uri_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -30,8 +28,7 @@ async fn retrieve_csr_invalid_uri_id_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A syntactically valid but unregistered id returns `404 ResourceNotFound`
-/// (clause 5.10.1). Confirms REQ-DISC-14.
+/// A syntactically valid but unregistered id returns `404 ResourceNotFound` (clause 5.10.1).
 #[tokio::test]
 async fn retrieve_csr_unknown_id_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -48,9 +45,7 @@ async fn retrieve_csr_unknown_id_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Retrieved without a context the custom terms render as fully-qualified IRIs,
-/// and with the creation context they compact back to short-hand (clause
-/// 5.5.7). Confirms REQ-DISC-15.
+/// Retrieved without a context the custom terms render as fully-qualified IRIs, and with the creation context they compact back to short-hand (clause 5.5.7).
 #[tokio::test]
 async fn retrieve_csr_expands_shorthand_terms_in_result() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -107,9 +102,7 @@ async fn retrieve_csr_expands_shorthand_terms_in_result() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An existing registration is returned as a single JSON-LD object carrying its
-/// id and `ContextSourceRegistration` type (clauses 5.10.1, 5.2.9). Confirms
-/// REQ-DISC-16.
+/// An existing registration is returned as a single JSON-LD object carrying its id and `ContextSourceRegistration` type (clauses 5.10.1, 5.2.9).
 #[tokio::test]
 async fn retrieve_csr_existing_returns_200_jsonld_object() {
     let topology = topology::single().await.expect("single-broker topology");

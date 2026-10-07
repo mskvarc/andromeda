@@ -46,11 +46,7 @@ fn is_unique_violation_of(code: Option<&str>, violated: Option<&str>, constraint
 
 /// Errors from the PostgreSQL context store.
 ///
-/// Variants that carry the PG error code directly (`UniqueViolation`,
-/// `InvalidRegex`) separate the two codes the broker's policy layer
-/// currently inspects from the generic `Database` bucket, so the
-/// `From<ContextStoreError>` impl in the binary can map them to the
-/// correct HTTP status without re-inspecting the driver error.
+/// `UniqueViolation` and `InvalidRegex` carry the PG error code directly, apart from the generic `Database` bucket, so the policy layer can map them to the correct HTTP status without re-inspecting the driver error.
 #[derive(Debug, thiserror::Error)]
 pub enum ContextStoreError {
     /// A database operation failed.
@@ -346,7 +342,6 @@ mod tests {
         let wrapped = ContextStoreError::SchemaContract(SchemaContractError::Database(sqlx::Error::PoolTimedOut));
         assert!(wrapped.is_pool_saturation());
         assert!(ContextStoreError::Saturated.is_pool_saturation());
-        // A genuine schema drift and an unrelated database fault are not saturation.
         let drift = ContextStoreError::SchemaContract(SchemaContractError::NoMigrations);
         assert!(!drift.is_pool_saturation());
         assert!(!ContextStoreError::Database(sqlx::Error::RowNotFound).is_pool_saturation());
@@ -355,9 +350,7 @@ mod tests {
     #[test]
     fn a_non_contention_failure_is_not_a_transaction_rollback() {
         // A row absence, a saturated pool and a schema drift are not deadlocks, so
-        // the branch-reaping retry does not fire for them. The 40P01/40001
-        // classification itself is exercised in andromeda-postgresql-pool, whose
-        // fake database error can carry a SQLSTATE a bare `sqlx::Error` cannot.
+        // the branch-reaping retry does not fire for them.
         assert!(!ContextStoreError::Database(sqlx::Error::RowNotFound).is_transaction_rolled_back());
         assert!(!ContextStoreError::Saturated.is_transaction_rolled_back());
         let drift = ContextStoreError::SchemaContract(SchemaContractError::NoMigrations);

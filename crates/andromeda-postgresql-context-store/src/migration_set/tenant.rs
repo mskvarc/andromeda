@@ -13,7 +13,7 @@ use std::{borrow::Cow, sync::LazyLock};
 /// The ledger the tenant migration set is recorded in.
 pub const TENANT_LEDGER: &str = "_andromeda_tenant_migrations";
 
-/// The tenant-only migrations, exactly as `migrations/tenant/` holds them.
+/// The tenant-only migrations, exactly as embedded in the binary.
 static TENANT_ONLY_MIGRATIONS: Migrator = sqlx::migrate!("../../migrations/tenant");
 
 /// The union, built once.

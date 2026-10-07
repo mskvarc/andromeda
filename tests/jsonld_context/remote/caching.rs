@@ -17,7 +17,7 @@ use crate::{
 use axum::http::header::CACHE_CONTROL;
 use reqwest::StatusCode;
 
-/// Study F9: `max-age=0` forbids reusing the download, so a second request
+/// `max-age=0` forbids reusing the download, so a second request
 /// fetches the context again.
 #[tokio::test]
 async fn a_context_served_with_max_age_zero_is_fetched_again() {
@@ -72,7 +72,7 @@ async fn a_fresh_download_is_fetched_once_for_two_requests() {
     tenant.finish().await;
 }
 
-/// Study A19: a context that was never downloaded and whose origin is gone
+/// A context that was never downloaded and whose origin is gone
 /// fails the request with 504 `LdContextNotAvailable` (Table 6.3.2-1).
 #[tokio::test]
 async fn a_context_whose_origin_is_unreachable_is_not_available() {

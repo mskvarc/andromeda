@@ -3,7 +3,7 @@
 //! ETSI GS CIM 009 v1.9.1 clause 6.3.14 defines the `NGSILD-Tenant` header and
 //! clause 4.14 says a tenant is an isolated scope: an entity created in one is
 //! invisible from another. It says nothing about how a broker achieves that,
-//! which is why nothing here is a reading of the specification —
+//! which is why nothing here is a reading of the specification:
 //! [`tenant_ref::TenantRef`] is the scope, and everything else is Andromeda's
 //! decision to give each scope its own database, its own workers and its own
 //! caches, and to hold only the recently used ones open.

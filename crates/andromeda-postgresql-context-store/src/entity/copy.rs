@@ -1,17 +1,6 @@
-//! Binary COPY path for bulk entity inserts.
+//! Binary-format `COPY` into a transaction-scoped staging table, then one `INSERT ... SELECT` into the three current-state relations that performs the geometry projection and JSONB-array decoding server-side.
 //!
-//! Drives the Postgres binary-format [`COPY`] protocol into a transaction-
-//! scoped staging table (`stage_entities`), then materialises the staged
-//! rows into the three current-state relations via one `INSERT ... SELECT`
-//! statement that performs the geometry projection and JSONB-array decoding
-//! server-side.
-//!
-//! Binary COPY avoids the jsonb-array parse + per-row deserialisation
-//! overhead of the `UNNEST($1::text[], $2::jsonb[], …)` path — the server
-//! receives pre-typed tuples and deposits them into the staging heap
-//! without any additional parsing.
-//!
-//! [`COPY`]: https://www.postgresql.org/docs/current/sql-copy.html
+//! Binary COPY avoids the per-row parse and deserialisation overhead of the `UNNEST($1::text[], $2::jsonb[], ...)` path: the server receives pre-typed tuples and deposits them into the staging heap without further parsing.
 
 use crate::{
     entity::{
@@ -207,7 +196,6 @@ fn encode_entities_copy_stream(columns: &PreparedEntityColumns) -> Result<Vec<u8
 
 /// Rough byte estimate for pre-sizing the COPY buffer.
 const fn estimated_stream_bytes(columns: &PreparedEntityColumns) -> usize {
-    // Rough guess: 1 KiB per row accounts for typical JSON payload size.
     19 + columns.ids.len() * 1024
 }
 

@@ -1,5 +1,4 @@
-//! Where a request names its `@context`, and what the broker refuses (study
-//! group C).
+//! Where a request names its `@context`, and what the broker refuses.
 //!
 //! Clause 6.3.5 reads a request's context from one `Link` header with the
 //! JSON-LD context relation, or from the body of an `application/ld+json`

@@ -133,9 +133,7 @@ fn time_interval_subscription_payload(scope: &TestEnvironment, subscription_id: 
 /// runs from its `timeAt` onwards, and the registration's interval has to
 /// share at least one instant with it. The `timeAt` below lies inside the
 /// interval the observation-interval and management-interval registration
-/// payloads declare, so it overlaps whichever way the relation is read; the
-/// cases that separate the two readings are in
-/// `tests/regression/csource_subscription_notification.rs`.
+/// payloads declare, so it overlaps whichever way the relation is read.
 fn temporal_query_subscription_payload(scope: &TestEnvironment, subscription_id: &str, endpoint_uri: &str, time_property: &str) -> Value {
     let mut payload = base_subscription_payload(scope, subscription_id, endpoint_uri);
     payload["temporalQ"] = json!({

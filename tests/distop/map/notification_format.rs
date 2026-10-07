@@ -77,7 +77,7 @@ async fn notify_with_format(
     notified_entity(&notification, &entity_id)
 }
 
-/// The `concise` format produces a concise body (clause 4.5.15). Confirms REQ-MAP-85.
+/// The `concise` format produces a concise body (clause 4.5.15).
 ///
 /// The watched Property carries a sub-Property, which is what separates the
 /// three formats: clause 4.5.2.3 renders a Property with sub-attributes as an
@@ -116,7 +116,6 @@ async fn notif_format_concise_produces_concise_body() {
 }
 
 /// The `simplified` format produces a key-values body (clause 4.5.15).
-/// Confirms REQ-MAP-86.
 #[tokio::test]
 async fn notif_format_simplified_produces_key_values_body() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -129,7 +128,7 @@ async fn notif_format_simplified_produces_key_values_body() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The default format is `normalized` (clause 4.5.15). Confirms REQ-MAP-87.
+/// The default format is `normalized` (clause 4.5.15).
 #[tokio::test]
 async fn notif_default_format_normalized() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -177,7 +176,6 @@ async fn notif_default_format_normalized() {
 }
 
 /// A `pick` reduces entities to the picked members (clause 5.8.6).
-/// Confirms REQ-MAP-88.
 #[tokio::test]
 async fn notif_pick_reduces_entities_to_picked_members() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -219,7 +217,7 @@ async fn notif_pick_reduces_entities_to_picked_members() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An `omit` removes the listed members (clause 5.8.6). Confirms REQ-MAP-89.
+/// An `omit` removes the listed members (clause 5.8.6).
 #[tokio::test]
 async fn notif_omit_removes_listed_members() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -261,7 +259,7 @@ async fn notif_omit_removes_listed_members() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `join` includes the linked entities (clause 4.5.23). Confirms REQ-MAP-90.
+/// A `join` includes the linked entities (clause 4.5.23).
 #[tokio::test]
 async fn notif_join_includes_linked_entities() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -321,7 +319,7 @@ async fn notif_join_includes_linked_entities() {
 
 /// Delivery amends the body to the NGSI-LD version the Subscription's
 /// `ngsildConformance` names (clause 5.8.6, the last step before "A
-/// Notification shall be sent"; Tables 4.3.6.8-1 and -2). Confirms REQ-MAP-91.
+/// Notification shall be sent"; Tables 4.3.6.8-1 and -2).
 #[tokio::test]
 async fn notif_ngsild_conformance_amends_body_to_version() {
     let topology = topology::single().await.expect("single-broker topology");

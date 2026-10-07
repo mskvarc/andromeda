@@ -26,10 +26,6 @@ use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use reqwest::{Method, StatusCode};
 use serde_json::json;
 
-// ---------------------------------------------------------------------------
-// 5.9.3 -- Update endpoint
-// ---------------------------------------------------------------------------
-
 /// PATCH endpoint field on existing CSR -- 204 (5.9.3).
 #[tokio::test]
 async fn update_endpoint_returns_204() {
@@ -57,10 +53,6 @@ async fn update_endpoint_returns_204() {
     cleanup_registration(&c, &id).await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.9.3 -- Update error cases
-// ---------------------------------------------------------------------------
 
 /// PATCH with invalid URI -- 400 (5.9.3).
 #[tokio::test]
@@ -167,10 +159,6 @@ async fn update_malformed_json_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 5.9.3 -- Update unknown registration
-// ---------------------------------------------------------------------------
-
 /// PATCH unknown registration -- 404 (5.9.3).
 #[tokio::test]
 async fn update_unknown_registration_returns_404() {
@@ -195,10 +183,6 @@ async fn update_unknown_registration_returns_404() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 5.9.3 -- Update to remove expiration (set to null)
-// ---------------------------------------------------------------------------
-
 /// PATCH expiresAt to null removes expiration -- 204 (5.9.3).
 #[tokio::test]
 async fn update_set_expires_at_to_null_removes_expiration() {
@@ -222,10 +206,6 @@ async fn update_set_expires_at_to_null_removes_expiration() {
     cleanup_registration(&c, &id).await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.9.3 -- Update without ID in URL
-// ---------------------------------------------------------------------------
 
 /// PATCH /csourceRegistrations/ with no ID -- 405 (5.9.3).
 #[tokio::test]
@@ -256,10 +236,6 @@ async fn update_without_id_in_url_returns_405() {
     cleanup_registration(&c, &id).await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.5.7 -- The user @context an update is written under
-// ---------------------------------------------------------------------------
 
 /// Clause 5.5.7: a user `@context` declaring a JSON-LD Scoped Context is
 /// `BadRequestData` on an update as on a create, and the registration is left

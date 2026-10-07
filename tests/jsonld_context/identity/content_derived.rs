@@ -1,5 +1,4 @@
-//! Content-derived identifiers of `ImplicitlyCreated` entries (study G2,
-//! H19 and H20).
+//! Content-derived identifiers of `ImplicitlyCreated` entries.
 //!
 //! The identifier is the version 5 UUID of the stored document's RFC 8785
 //! canonical form, so member order, whitespace and number spelling do not
@@ -44,7 +43,7 @@ fn subscription_text(context: &str) -> String {
     )
 }
 
-/// Study H19: two subscriptions with the same `@context` array notify under
+/// Two subscriptions with the same `@context` array notify under
 /// the same hosted URL, and the tenant holds that array once, under a version
 /// 5 identifier.
 #[tokio::test]
@@ -66,7 +65,7 @@ async fn subscriptions_with_the_same_context_array_share_one_implicit_context() 
     tenant.finish().await;
 }
 
-/// Study G2: the same inline definitions written with members in another
+/// The same inline definitions written with members in another
 /// order and other whitespace derive the same identifier. (Number spelling is
 /// proven on the canonical form itself, in `andromeda-context-registry`'s
 /// `canonical_document` unit tests: no NGSI-LD `@context` member takes a number
@@ -90,7 +89,7 @@ async fn formatting_and_member_order_do_not_split_an_implicit_context() {
     tenant.finish().await;
 }
 
-/// Study H20: different arrays are different documents, including the same
+/// Different arrays are different documents, including the same
 /// contexts in another order.
 #[tokio::test]
 async fn subscriptions_with_different_context_arrays_get_distinct_implicit_contexts() {

@@ -5,10 +5,6 @@ use crate::{BAD_REQUEST_DATA_TYPE, create_registration, csr_basic_jsonld, delete
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use reqwest::StatusCode;
 
-// ---------------------------------------------------------------------------
-// 5.9.4 -- Delete by ID
-// ---------------------------------------------------------------------------
-
 /// Delete existing CSR by ID -- 204, then retrieve returns 404 (5.9.4).
 #[tokio::test]
 async fn delete_existing_registration_returns_204() {
@@ -28,10 +24,6 @@ async fn delete_existing_registration_returns_204() {
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.9.4 -- Delete error cases
-// ---------------------------------------------------------------------------
 
 /// DELETE /csourceRegistrations/ with no ID (empty path) -- 405 (5.9.4).
 #[tokio::test]
@@ -56,10 +48,6 @@ async fn delete_invalid_uri_returns_400() {
     assert!(body["title"].is_string(), "response should contain title");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.9.4 -- Delete unknown registration
-// ---------------------------------------------------------------------------
 
 /// DELETE unknown registration -- 404 (5.9.4).
 #[tokio::test]

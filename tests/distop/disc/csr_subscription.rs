@@ -1,12 +1,6 @@
 //! The Context Source Subscription test surface for the DISC area.
 //!
-//! The distributed [`TestClient`] models entities, registrations and ordinary
-//! subscriptions, but not the `/csourceSubscriptions` resource (clause 5.11).
-//! This module owns both halves of driving that resource from a test: a
-//! declarative [`CsrSubscriptionBuilder`] for the request body and the raw HTTP
-//! operations that create, retrieve, update, query and delete a Context Source
-//! Subscription. Notifications it produces are captured through
-//! [`crate::notification_adapter::NotificationAdapter`].
+//! The distributed [`TestClient`] models entities, registrations and ordinary subscriptions, but not the `/csourceSubscriptions` resource (clause 5.11). This module owns both halves of driving that resource from a test: a declarative [`CsrSubscriptionBuilder`] for the request body and the raw HTTP operations that create, retrieve, update, query and delete a Context Source Subscription.
 
 use crate::{oracle::assert_status, topology::BrokerRole};
 use andromeda_test_client::{response::TestResponse, test_client::TestClient};
@@ -19,9 +13,7 @@ use urlencoding::encode;
 /// The origin-rooted Context Source Subscription collection resource.
 const RESOURCE: &str = "/ngsi-ld/v1/csourceSubscriptions";
 
-/// Build the JSON-LD `Link` header carrying the compound test context, used on
-/// the `application/json` update path so short-hand terms in a patch fragment
-/// expand exactly as they do on create (clause 5.5.7).
+/// Build the JSON-LD `Link` header carrying the compound test context, used on the `application/json` update path so short-hand terms in a patch fragment expand exactly as they do on create (clause 5.5.7).
 fn context_link() -> String {
     format!(
         "<{}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"",
@@ -47,8 +39,7 @@ pub async fn create_and_assert(topology: &MultiBrokerTopology<BrokerRole>, body:
     assert_status(&created, 201);
 }
 
-/// Retrieve one Context Source Subscription, optionally passing `options` such
-/// as `sysAttrs` to expose the notification bookkeeping fields.
+/// Retrieve one Context Source Subscription, optionally passing `options` such as `sysAttrs` to expose the notification bookkeeping fields.
 pub async fn retrieve(client: &TestClient, id: &str, options: Option<&str>) -> TestResponse {
     let query = match options {
         Some(options) => format!("?options={options}"),
@@ -74,9 +65,7 @@ pub async fn query(client: &TestClient, query: &str) -> TestResponse {
         .expect("query context source subscriptions")
 }
 
-/// Patch one Context Source Subscription with a merge fragment; the compound
-/// context travels in the `Link` header so the fragment carries only the fields
-/// it changes.
+/// Patch one Context Source Subscription with a merge fragment; the compound context travels in the `Link` header so the fragment carries only the fields it changes.
 pub async fn update(client: &TestClient, id: &str, fragment: &Value) -> TestResponse {
     client
         .raw(Method::PATCH, &format!("{RESOURCE}/{}", encode(id)))
@@ -97,11 +86,7 @@ pub async fn delete(client: &TestClient, id: &str) -> TestResponse {
         .expect("delete context source subscription")
 }
 
-/// Declarative builder for a Context Source Subscription body targeting a
-/// notification endpoint, covering the matching inputs the DISC area exercises:
-/// the watched entity type, watched and notification attributes, the temporal,
-/// geo, context-source and scope filters, a periodic time interval, the
-/// throttling, and the activation and expiry controls.
+/// Declarative builder for a Context Source Subscription body targeting a notification endpoint, covering the matching inputs the DISC area exercises: the watched entity type, watched and notification attributes, the temporal, geo, context-source and scope filters, a periodic time interval, the throttling, and the activation and expiry controls.
 pub struct CsrSubscriptionBuilder {
     id: String,
     endpoint: String,

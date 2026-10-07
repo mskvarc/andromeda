@@ -5,8 +5,8 @@ use crate::snapshot_target::SnapshotTarget;
 /// Context branch selected for one Core, Temporal, or subscription operation.
 ///
 /// `Hash`/`Eq` make the target a branch-keyed map key directly, which the
-/// subscription cache and other per-branch indices rely on now that a branch is
-/// no longer named by an integer key.
+/// subscription cache and other per-branch indices rely on, since a branch is
+/// not named by an integer key.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContextTarget {
     /// The tenant's ordinary live branch, held in the default schema.

@@ -1,8 +1,7 @@
 //! SQL-only repository for snapshot records.
 //!
-//! The `SnapshotStore` trait impl lives in the binary crate, because the trait
-//! and its associated types are defined in the binary's service layer. This
-//! module provides the struct and constructor.
+//! This module provides the struct and constructor; the `SnapshotStore` trait
+//! impl is in a separate module.
 
 use sqlx::postgres::PgPool;
 

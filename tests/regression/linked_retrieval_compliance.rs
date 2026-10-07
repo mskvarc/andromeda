@@ -1,28 +1,14 @@
-//! Linked Entity retrieval as one rule, read the same way by every operation
-//! that joins.
+//! Linked Entity retrieval as one rule, read the same way by every operation that joins.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 4.5.23 defines Linked Entity retrieval once,
-//! and clause 4.21 defines the projection that narrows it. Clauses 5.7.1.5 and
-//! 5.7.2.5 apply a restrictive or exclusionary list "to all Entities in the
-//! payload in the case of Linked Entity retrieval", and clause 5.8.6 applies
-//! `pick`, `omit` and `join` to "every Entity within the payload body" of a
-//! notification. The broker had written the rule several times over and the
-//! copies had drifted:
+//! ETSI GS CIM 009 v1.9.1 clause 4.5.23 defines Linked Entity retrieval once, and clause 4.21 defines the projection that narrows it. Clauses 5.7.1.5 and 5.7.2.5 apply a restrictive or exclusionary list "to all Entities in the payload in the case of Linked Entity retrieval", and clause 5.8.6 applies `pick`, `omit` and `join` to "every Entity within the payload body" of a notification. Consequences asserted here:
 //!
-//! - notifications dropped a nested `pick` term at compilation and narrowed no
-//!   Linked Entity at all (finding R63), and accepted a malformed term;
-//! - a plain `pick`, `omit` or `attrs` narrowed only the roots;
-//! - two Relationships reaching one flat Linked Entity merged their lists;
-//! - `containedBy` applied without `joinLevel`, which Tables 6.4.3.2-1 and
-//!   6.5.3.1-1 call "Only applicable if joinLevel is present";
-//! - the temporal operations joined unconditionally, although clauses 5.7.3.4,
-//!   5.7.4.4 and 5.14.5.4 refuse a Linked Entity reference there; the join is
-//!   an extension now, off by default.
+//! - a notification narrows a Linked Entity by a nested `pick` term and refuses a malformed term;
+//! - a plain `pick`, `omit` or `attrs` narrows Linked Entities, not only the roots;
+//! - two Relationships reaching one flat Linked Entity do not merge their lists;
+//! - `containedBy` needs `joinLevel`, which Tables 6.4.3.2-1 and 6.5.3.1-1 call "Only applicable if joinLevel is present";
+//! - the temporal operations refuse a Linked Entity reference (clauses 5.7.3.4, 5.7.4.4 and 5.14.5.4); joining there is an extension, off by default.
 //!
-//! Every case reads the same four entities: a Building owned and managed by
-//! one Person and located in a City, the Person employed by a Company.
-//!
-//! Naming convention: `regression_linked_compliance_<scenario>`.
+//! Every case reads the same four entities: a Building owned and managed by one Person and located in a City, the Person employed by a Company.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -250,8 +236,7 @@ async fn notified_data(scope: &TestEnvironment, fixture: &Fixture, label: &str, 
     data
 }
 
-/// R1. Clause 5.8.6 applies `pick` to every Entity of the payload, and clause
-/// 4.21 gives a nested term to the Linked Entity its Relationship reaches.
+/// Clause 5.8.6 applies `pick` to every Entity of the payload, and clause 4.21 gives a nested term to the Linked Entity its Relationship reaches.
 #[tokio::test]
 async fn regression_linked_compliance_a_change_notification_applies_a_nested_pick() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -264,8 +249,7 @@ async fn regression_linked_compliance_a_change_notification_applies_a_nested_pic
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R2. A plain list narrows the Linked Entities too (clause 5.8.6, "every
-/// Entity within the payload body").
+/// A plain list narrows the Linked Entities too (clause 5.8.6, "every Entity within the payload body").
 #[tokio::test]
 async fn regression_linked_compliance_a_change_notification_applies_a_plain_pick_to_linked_entities() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -281,10 +265,7 @@ async fn regression_linked_compliance_a_change_notification_applies_a_plain_pick
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R3. Inline nests a copy under each Relationship, narrowed by the group
-/// that Relationship's Linked Entity Term addresses to it (clauses 4.5.23.2
-/// and 4.21); a copy no group addresses is whole, and a copy its group
-/// empties is not written, while the Relationship keeps its `object`.
+/// Inline nests a copy under each Relationship, narrowed by the group that Relationship's Linked Entity Term addresses to it (clauses 4.5.23.2 and 4.21); a copy no group addresses is whole, and a copy its group empties is not written, while the Relationship keeps its `object`.
 #[tokio::test]
 async fn regression_linked_compliance_an_inline_notification_nests_per_relationship() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -310,8 +291,7 @@ async fn regression_linked_compliance_an_inline_notification_nests_per_relations
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R4. A periodic notification is built by the same rule as a change-driven
-/// one (clause 5.8.6 governs both).
+/// A periodic notification is built by the same rule as a change-driven one (clause 5.8.6 governs both).
 #[tokio::test]
 async fn regression_linked_compliance_a_periodic_notification_applies_the_projection() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -334,9 +314,7 @@ async fn regression_linked_compliance_a_periodic_notification_applies_the_projec
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R5. Clause 5.8.1.4 gives a Subscription no Linked Entity admission rule, so
-/// a nested term without a join is accepted and honoured: it keeps `owner` on
-/// the notified entity, and its group has no Linked Entity to apply to.
+/// Clause 5.8.1.4 gives a Subscription no Linked Entity admission rule, so a nested term without a join is accepted and honoured: it keeps `owner` on the notified entity, and its group has no Linked Entity to apply to.
 #[tokio::test]
 async fn regression_linked_compliance_a_subscription_with_a_nested_pick_and_no_join_is_honoured() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -348,8 +326,7 @@ async fn regression_linked_compliance_a_subscription_with_a_nested_pick_and_no_j
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R6. A nested `pick` reads back as the clause 4.21 text it was written as
-/// (Table 5.2.14.1-1, clause 5.5.7).
+/// A nested `pick` reads back as the clause 4.21 text it was written as (Table 5.2.14.1-1, clause 5.5.7).
 #[tokio::test]
 async fn regression_linked_compliance_a_subscription_reads_back_its_nested_pick() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -372,8 +349,7 @@ async fn regression_linked_compliance_a_subscription_reads_back_its_nested_pick(
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R7. Table 5.2.14.1-1 requires "a valid attribute projection language
-/// string as per clause 4.21"; an unbalanced group is not one.
+/// Table 5.2.14.1-1 requires "a valid attribute projection language string as per clause 4.21"; an unbalanced group is not one.
 #[tokio::test]
 async fn regression_linked_compliance_a_malformed_subscription_pick_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -388,10 +364,7 @@ async fn regression_linked_compliance_a_malformed_subscription_pick_is_refused()
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R8. With the extension off, the temporal operations take no Linked Entity
-/// input (clauses 5.7.3.3, 5.7.4.3), refuse a reference to one (clauses
-/// 5.7.3.4, 5.7.4.4), leave `join` undefined on their URI binding, and the
-/// extension is not advertised.
+/// With the extension off, the temporal operations take no Linked Entity input (clauses 5.7.3.3, 5.7.4.3), refuse a reference to one (clauses 5.7.3.4, 5.7.4.4), leave `join` undefined on their URI binding, and the extension is not advertised.
 #[tokio::test]
 async fn regression_linked_compliance_temporal_operations_refuse_linked_entity_retrieval_by_default() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -436,9 +409,7 @@ async fn regression_linked_compliance_temporal_operations_refuse_linked_entity_r
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R9. Clause 5.7.1.5: a restrictive list "applies to all Entities in the
-/// payload in the case of Linked Entity retrieval", and only returned
-/// Relationships bring their targets.
+/// Clause 5.7.1.5: a restrictive list "applies to all Entities in the payload in the case of Linked Entity retrieval", and only returned Relationships bring their targets.
 #[tokio::test]
 async fn regression_linked_compliance_a_plain_pick_reaches_flat_linked_entities() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -458,7 +429,7 @@ async fn regression_linked_compliance_a_plain_pick_reaches_flat_linked_entities(
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R10. The exclusionary list reaches the Linked Entities the same way.
+/// The exclusionary list reaches the Linked Entities the same way.
 #[tokio::test]
 async fn regression_linked_compliance_an_omit_reaches_flat_linked_entities() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -471,9 +442,7 @@ async fn regression_linked_compliance_an_omit_reaches_flat_linked_entities() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R11. Flat appends each Linked Entity once, "unless a target URI has been
-/// previously encountered" (clause 5.7.1.5): the first encounter decides its
-/// list, and lists are not merged.
+/// Flat appends each Linked Entity once, "unless a target URI has been previously encountered" (clause 5.7.1.5): the first encounter decides its list, and lists are not merged.
 #[tokio::test]
 async fn regression_linked_compliance_flat_narrows_by_the_first_encounter() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -489,8 +458,7 @@ async fn regression_linked_compliance_flat_narrows_by_the_first_encounter() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R12. Table 6.5.3.1-1: `containedBy` is "Only applicable if joinLevel is
-/// present".
+/// Table 6.5.3.1-1: `containedBy` is "Only applicable if joinLevel is present".
 #[tokio::test]
 async fn regression_linked_compliance_contained_by_needs_join_level() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -509,9 +477,7 @@ async fn regression_linked_compliance_contained_by_needs_join_level() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R13. A group addresses the one entity its Relationship reaches (clause
-/// 4.21): the entity reached from there is narrowed only by a group of its
-/// own, and is whole without one.
+/// A group addresses the one entity its Relationship reaches (clause 4.21): the entity reached from there is narrowed only by a group of its own, and is whole without one.
 #[tokio::test]
 async fn regression_linked_compliance_a_group_addresses_only_the_entity_its_relationship_reaches() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -543,8 +509,7 @@ async fn regression_linked_compliance_a_group_addresses_only_the_entity_its_rela
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R14. Table 6.5.3.1-1 makes `attrs` the `pick` synonym, so it reaches the
-/// Linked Entities as `pick` does, keeping their identity as `attrs` always does.
+/// Table 6.5.3.1-1 makes `attrs` the `pick` synonym, so it reaches the Linked Entities as `pick` does, keeping their identity as `attrs` always does.
 #[tokio::test]
 async fn regression_linked_compliance_attrs_reaches_flat_linked_entities() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -560,8 +525,7 @@ async fn regression_linked_compliance_attrs_reaches_flat_linked_entities() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R15. One rule, one answer: a notification and a query over the same data
-/// narrow the Linked Entity alike (clauses 5.7.2.5 and 5.8.6).
+/// One rule, one answer: a notification and a query over the same data narrow the Linked Entity alike (clauses 5.7.2.5 and 5.8.6).
 #[tokio::test]
 async fn regression_linked_compliance_every_consumer_narrows_alike() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -578,8 +542,7 @@ async fn regression_linked_compliance_every_consumer_narrows_alike() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R16. A Linked Entity its list empties is not written: inline writes no
-/// `entity` (the Relationship keeps its `object`), flat does not append it.
+/// A Linked Entity its list empties is not written: inline writes no `entity` (the Relationship keeps its `object`), flat does not append it.
 #[tokio::test]
 async fn regression_linked_compliance_an_emptied_linked_entity_is_not_written() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -604,8 +567,7 @@ async fn regression_linked_compliance_an_emptied_linked_entity_is_not_written() 
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R17. Clause 4.5.23.1 retrieves a Relationship "targeting a locally stored
-/// Entity" whether or not it carries an `objectType`.
+/// Clause 4.5.23.1 retrieves a Relationship "targeting a locally stored Entity" whether or not it carries an `objectType`.
 #[tokio::test]
 async fn regression_linked_compliance_a_local_target_joins_without_object_type() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

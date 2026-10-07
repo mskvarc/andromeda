@@ -26,7 +26,7 @@ use std::collections::HashMap;
 /// Clause 4.5.5.2 applies only when the value "is not duplicated across all
 /// versions of the Entity received across all registered Context Sources", so
 /// the only distinction that matters is whether every version reported the
-/// same thing -- a version reporting nothing included.
+/// same thing, a version reporting nothing included.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpiryAgreement {
     /// Every version seen so far reported this same value.
@@ -50,9 +50,9 @@ impl ExpiryAgreement {
 ///
 /// `versions` are every party to the conflict, whatever entity each is a
 /// version of: the copies this broker holds and the versions the non-auxiliary
-/// holders answered with. Clause 4.3.6.2 keeps an auxiliary holder out -- its
+/// holders answered with. Clause 4.3.6.2 keeps an auxiliary holder out (its
 /// data "is only included if it is supplementary to the context data otherwise
-/// available to the Context Broker" -- so the caller leaves its versions out.
+/// available to the Context Broker"), so the caller leaves its versions out.
 pub fn differentiate_transient_versions<'v>(versions: impl IntoIterator<Item = &'v mut EntityState>) {
     let mut versions: Vec<&'v mut EntityState> = versions.into_iter().collect();
     let mut agreement: HashMap<Identifier, ExpiryAgreement> = HashMap::new();

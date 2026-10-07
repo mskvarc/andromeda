@@ -1,12 +1,9 @@
 //! The workers turning entity changes and elapsed intervals into clause 5.8
 //! notifications.
 //!
-//! The drain delivering what the tenant database queued is registered in
-//! `crate::tenant_factory::tasks::notification_delivery`; the resident
-//! processor registered here is its transport.
+//! The resident processor registered here is also the transport of the drain delivering what the tenant database queued.
 //!
-//! Clause 5.11's context source notifications are registered separately, in
-//! `crate::tenant_factory::tasks::csource_notification`: they watch a
+//! Clause 5.11 context source notifications are registered separately: they watch a
 //! different change stream, carry registrations rather than entities, and
 //! share nothing with these beyond the schedule helper.
 
@@ -116,8 +113,7 @@ pub(super) fn compose_notification_processor(
 /// entity services' notification write configuration) and the processor
 /// evaluates no change of its own. Under either mode the processor is the
 /// drain's transport, re-evaluating and sending each queued delivery the drain
-/// claims; the drain itself runs under either mode, for the reasons
-/// `crate::tenant_factory::tasks::notification_delivery` gives.
+/// claims; the drain itself runs under either mode, for deliveries already queued.
 ///
 /// # Errors
 ///

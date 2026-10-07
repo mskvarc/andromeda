@@ -1,7 +1,4 @@
-//! The `entityMaps` resource lifecycle (clause 6.3.15, 6.31–6.35): retrieving,
-//! patching the expiry of, and deleting a map by id, plus the collection
-//! operations that create a map and return its id in the `NGSILD-EntityMap`
-//! header, for both the entity and temporal-entity variants. All `T-MOCK`.
+//! The `entityMaps` resource lifecycle (clause 6.3.15, 6.31–6.35): retrieving, patching the expiry of, and deleting a map by id, plus the collection operations that create a map and return its id in the `NGSILD-EntityMap` header, for both the entity and temporal-entity variants.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -13,8 +10,7 @@ use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use reqwest::Method;
 use serde_json::json;
 
-/// Provision an entity map by running a distributed `entityMap=true` query
-/// against a registered mock source, returning the created map id.
+/// Provision an entity map by running a distributed `entityMap=true` query against a registered mock source, returning the created map id.
 async fn provision_map(topology: &MultiBrokerTopology<BrokerRole>, mock: &ContextSourceAdapter, tag: &str) -> String {
     // A per-tag type keeps this entityMap query from discovering another
     // concurrent test's Vehicle registrations and forwarding to their sources.
@@ -46,7 +42,7 @@ async fn provision_map(topology: &MultiBrokerTopology<BrokerRole>, mock: &Contex
     entity_map_header(&response).expect("an entityMap query yields a map id")
 }
 
-/// Retrieving an entity map by id returns `200` (clause 6.31). Confirms REQ-HTTP-93.
+/// Retrieving an entity map by id returns `200` (clause 6.31).
 #[tokio::test]
 async fn dist_http_get_entity_map_by_id_returns_200() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -67,7 +63,6 @@ async fn dist_http_get_entity_map_by_id_returns_200() {
 }
 
 /// An invalid entity map id on retrieve is rejected with `400` (clause 6.31).
-/// Confirms REQ-HTTP-93.
 #[tokio::test]
 async fn dist_http_get_entity_map_by_id_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -83,7 +78,6 @@ async fn dist_http_get_entity_map_by_id_invalid_id_returns_400() {
 }
 
 /// An unknown entity map id on retrieve returns `404` (clause 6.31).
-/// Confirms REQ-HTTP-93.
 #[tokio::test]
 async fn dist_http_get_entity_map_by_id_unknown_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -99,7 +93,7 @@ async fn dist_http_get_entity_map_by_id_unknown_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Patching an entity map expiry returns `204` (clause 6.32). Confirms REQ-HTTP-94.
+/// Patching an entity map expiry returns `204` (clause 6.32).
 #[tokio::test]
 async fn dist_http_patch_entity_map_expiry_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -123,7 +117,6 @@ async fn dist_http_patch_entity_map_expiry_returns_204() {
 }
 
 /// An invalid entity map patch body is rejected with `400` (clause 6.32).
-/// Confirms REQ-HTTP-94.
 #[tokio::test]
 async fn dist_http_patch_entity_map_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -146,7 +139,7 @@ async fn dist_http_patch_entity_map_invalid_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Patching an unknown entity map returns `404` (clause 6.32). Confirms REQ-HTTP-94.
+/// Patching an unknown entity map returns `404` (clause 6.32).
 #[tokio::test]
 async fn dist_http_patch_entity_map_unknown_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -165,7 +158,7 @@ async fn dist_http_patch_entity_map_unknown_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Deleting an entity map returns `204` (clause 6.33). Confirms REQ-HTTP-95.
+/// Deleting an entity map returns `204` (clause 6.33).
 #[tokio::test]
 async fn dist_http_delete_entity_map_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -186,7 +179,6 @@ async fn dist_http_delete_entity_map_returns_204() {
 }
 
 /// An invalid entity map id on delete is rejected with `400` (clause 6.33).
-/// Confirms REQ-HTTP-95.
 #[tokio::test]
 async fn dist_http_delete_entity_map_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -202,7 +194,6 @@ async fn dist_http_delete_entity_map_invalid_returns_400() {
 }
 
 /// An unknown entity map id on delete returns `404` (clause 6.33).
-/// Confirms REQ-HTTP-95.
 #[tokio::test]
 async fn dist_http_delete_entity_map_unknown_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -218,8 +209,7 @@ async fn dist_http_delete_entity_map_unknown_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The `entityMaps` collection GET creates a map and returns its id in the header
-/// (clause 6.31). Confirms REQ-HTTP-98.
+/// The `entityMaps` collection GET creates a map and returns its id in the header (clause 6.31).
 #[tokio::test]
 async fn dist_http_get_entity_maps_create_returns_201_and_map_header() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -260,8 +250,7 @@ async fn dist_http_get_entity_maps_create_returns_201_and_map_header() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An invalid `entityMaps` collection request is rejected with `400`
-/// (clause 6.31). Confirms REQ-HTTP-100.
+/// An invalid `entityMaps` collection request is rejected with `400` (clause 6.31).
 #[tokio::test]
 async fn dist_http_get_entity_maps_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -279,8 +268,7 @@ async fn dist_http_get_entity_maps_invalid_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The `entityMaps` collection POST with a Query body creates a map and returns
-/// its id in the header (clause 6.31). Confirms REQ-HTTP-101.
+/// The `entityMaps` collection POST with a Query body creates a map and returns its id in the header (clause 6.31).
 #[tokio::test]
 async fn dist_http_post_entity_maps_query_body_returns_201_and_map_header() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -322,10 +310,7 @@ async fn dist_http_post_entity_maps_query_body_returns_201_and_map_header() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The temporal `entityMaps` collection GET creates a map and returns its id in
-/// the header (clause 6.34). The request carries a temporal query because
-/// clause 5.14.5.4 opens with "If a temporal query is not provided then an error
-/// of type `BadRequestData` shall be raised". Confirms REQ-HTTP-102.
+/// The temporal `entityMaps` collection GET creates a map and returns its id in the header (clause 6.34). The request carries a temporal query because clause 5.14.5.4 opens with "If a temporal query is not provided then an error of type `BadRequestData` shall be raised".
 #[tokio::test]
 async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -372,10 +357,7 @@ async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() 
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The temporal `entityMaps` collection POST with a Query body creates a map and
-/// returns its id in the header (clause 6.34). The Query carries a `temporalQ`
-/// because clause 5.14.5.4 opens with "If a temporal query is not provided then
-/// an error of type `BadRequestData` shall be raised". Confirms REQ-HTTP-103.
+/// The temporal `entityMaps` collection POST with a Query body creates a map and returns its id in the header (clause 6.34). The Query carries a `temporalQ` because clause 5.14.5.4 opens with "If a temporal query is not provided then an error of type `BadRequestData` shall be raised".
 #[tokio::test]
 async fn dist_http_post_temporal_entity_maps_query_body_returns_201_and_map_header() {
     let topology = topology::single().await.expect("single-broker topology");

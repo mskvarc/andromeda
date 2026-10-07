@@ -7,10 +7,7 @@
 //! as plain hypertables where it is absent: it never issues a statement the
 //! edition cannot answer. No migration touches the columnstore at all.
 //!
-//! This is a different question from the license marker
-//! `andromeda-postgresql-context-store` reports for the info endpoint: that reads
-//! the `timescaledb.license` setting to describe the build, whereas this probes
-//! one procedure's presence to decide whether a columnstore statement may run.
+//! This differs from the licence marker the info endpoint reports, which reads the `timescaledb.license` setting to describe the build, whereas this probes one procedure's presence to decide whether a columnstore statement may run.
 
 use andromeda_postgresql_seaquery::introspection::function_exists;
 use sea_query::{Alias, PostgresQueryBuilder, Query, SelectStatement};

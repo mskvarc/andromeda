@@ -4,16 +4,14 @@
 //! value as defined by IETF RFC 8259", and clause 3.1 lists "an array" among
 //! the NGSI-LD Values, so `"value": []` is a Property like any other. JSON-LD
 //! expansion keeps the member with no item, and drops the `null` of `[null]`
-//! (clause 4.5.0), so both reach the broker as the empty array. The broker read
-//! a member with no item as no member at all: a create was refused 400
-//! `MissingValue`, and an update, append, merge or batch write kept the old
-//! value and answered success.
+//! (clause 4.5.0), so both reach the broker as the empty array. A member with
+//! no item is a value, not a missing member: a create does not answer 400
+//! `MissingValue`, and an update, append, merge or batch write replaces the old
+//! value.
 //!
 //! The other value members name at least one target, term, string or
 //! geometry (clauses 4.5.3.2, 4.5.18.2, 4.5.20.2, 4.7.1), so an empty one stays
-//! refused, now in a fragment too rather than silently ignored there.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! refused, in a fragment too rather than silently ignored there.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

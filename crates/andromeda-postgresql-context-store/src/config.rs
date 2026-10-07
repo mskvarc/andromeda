@@ -47,24 +47,12 @@ pub struct PoolerConfig {
     #[toml_comment(inline)]
     pub url: Url,
 
-    /// How many connections a named tenant's serving pool opens to the pooler.
-    ///
-    /// Deliberately small: the pooler multiplexes every tenant's client
-    /// connections onto its own bounded set of PostgreSQL backends, so the broker
-    /// needs only enough per-tenant client connections for that tenant's
-    /// concurrent in-flight requests -- not the larger real backend pool a direct
-    /// deployment sizes with [`TenancyConfig::tenant_max_connections`](andromeda_tenancy::config::TenancyConfig).
-    /// Keeping it small is what stops a working set larger than the runtime cache
-    /// from churning the host's sockets: each cold load opens this many
-    /// connections rather than a full backend pool, so a thrash does not exhaust
-    /// the host's ephemeral ports.
+    /// Deliberately small: the pooler multiplexes every tenant's client connections onto its own bounded set of backends, so a tenant needs only enough connections for its concurrent in-flight requests. Keeping it small stops a working set larger than the runtime cache from exhausting the host's ephemeral ports on cold loads.
     #[serde(default = "default_pooler_tenant_max_connections")]
     pub tenant_max_connections: u32,
 }
 
-/// The default number of client connections a named tenant's serving pool opens
-/// to the pooler: two is enough to overlap a read with a write while the pooler
-/// does the real backend pooling.
+/// Two connections overlap a read with a write while the pooler does the real backend pooling.
 const fn default_pooler_tenant_max_connections() -> u32 {
     2
 }

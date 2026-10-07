@@ -51,7 +51,7 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
     }
 
     fn validate_update_extra(&self, request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
-        // Per spec 5.8.2.4: past expiresAt must be rejected for entity subscription updates
+        // Clause 5.8.2.4: an entity subscription update with a past `expiresAt` is rejected.
         request_validation::validate_expires_at_not_in_past(request)
     }
 

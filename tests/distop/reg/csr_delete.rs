@@ -1,6 +1,6 @@
 //! Registration delete lifecycle (clause 5.9.4): a missing or malformed id is
 //! rejected, an unknown id is a 404, and a known registration is removed with a
-//! 204 and no longer resolves. All `T-LOCAL`, all `IMPL`.
+//! 204 and no longer resolves. All `T-LOCAL`.
 
 use crate::{
     oracle::{assert_problem_details, assert_status},
@@ -11,7 +11,7 @@ use crate::{
 use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, RESOURCE_NOT_FOUND};
 
 /// A delete with no registration id targets the collection and is rejected with a
-/// method/format error rather than succeeding (clause 5.9.4). Confirms REQ-REG-80.
+/// method/format error rather than succeeding (clause 5.9.4).
 #[tokio::test]
 async fn delete_missing_id_returns_400_or_405() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -29,7 +29,6 @@ async fn delete_missing_id_returns_400_or_405() {
 }
 
 /// A delete against a syntactically invalid id is rejected (clause 5.9.4).
-/// Confirms REQ-REG-80.
 #[tokio::test]
 async fn delete_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -47,7 +46,7 @@ async fn delete_invalid_id_returns_400() {
 }
 
 /// A delete against a well-formed but unknown registration id is a 404 (clause
-/// 5.9.4). Confirms REQ-REG-81.
+/// 5.9.4).
 #[tokio::test]
 async fn delete_unknown_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -66,7 +65,7 @@ async fn delete_unknown_registration_returns_404() {
 }
 
 /// A known registration is deleted with a 204 and no longer resolves (clause
-/// 5.9.4). Confirms REQ-REG-79, REQ-REG-82, REQ-REG-83.
+/// 5.9.4).
 #[tokio::test]
 async fn delete_known_registration_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");

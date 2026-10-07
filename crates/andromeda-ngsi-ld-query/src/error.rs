@@ -5,10 +5,7 @@
 //! `std::num::ParseFloatError`) are chained through `#[source]` / `#[from]`
 //! so `.source()` walks the full cause chain.
 //!
-//! Rendering a compiled query as SQL can fail for reasons of its own — a bind
-//! value with no typed counterpart, a reference geometry that will not encode —
-//! and those belong to the backend that renders it, not here. See
-//! `andromeda_postgresql_query::error::RenderError`.
+//! Rendering a compiled query as SQL can fail for reasons of its own -- a bind value with no typed counterpart, a reference geometry that will not encode -- and those belong to the backend that renders it, not here.
 //!
 //! Faults of a *request* rather than of a language — a `format` value naming no
 //! rendering, `drop` and `keep` sent together — belong to the parameter model
@@ -48,9 +45,6 @@ use regex_syntax::hir;
 /// Errors raised while validating, parsing, compiling or planning a query.
 #[derive(Debug, thiserror::Error)]
 pub enum QueryError {
-    // -----------------------------------------------------------------------
-    // Q expression grammar (NGSI-LD 4.9)
-    // -----------------------------------------------------------------------
     /// The q expression was empty.
     #[error("q expression: empty input")]
     QEmpty,
@@ -135,9 +129,6 @@ pub enum QueryError {
     #[error("q expression: invalid time literal: {0}")]
     QInvalidTime(#[source] NgsiLdTimeError),
 
-    // -----------------------------------------------------------------------
-    // Type expression grammar (NGSI-LD 4.17)
-    // -----------------------------------------------------------------------
     /// The type expression string was empty.
     #[error("type expression: empty input")]
     TypeExprEmpty,
@@ -168,9 +159,6 @@ pub enum QueryError {
         source: NgsiLdReferenceError,
     },
 
-    // -----------------------------------------------------------------------
-    // Raw projection grammar (clause 4.21 `pick`/`omit` linked-entity syntax)
-    // -----------------------------------------------------------------------
     /// A `{` opened without a matching `}`, a `}` closed without a matching
     /// `{`, or content followed a complete term outside the grammar.
     #[error("projection: unbalanced brace at position {position}")]
@@ -197,9 +185,6 @@ pub enum QueryError {
         keyword: AttributeName,
     },
 
-    // -----------------------------------------------------------------------
-    // Regular expressions (clause 4.9 `q` patterns, clause 5.7.2 `idPattern`)
-    // -----------------------------------------------------------------------
     /// A pattern operand was not a valid regular expression.
     #[error("invalid regular expression: {0}")]
     PatternRegex(#[from] regex::Error),
@@ -208,11 +193,7 @@ pub enum QueryError {
     PatternRepeatedQuantifier,
     /// The pattern used a construct outside the dialect the broker admits.
     ///
-    /// Clause 4.9 mandates IEEE 1003.2. The construct named here is either an
-    /// extension the broker does not support, or one of the few IEEE 1003.2
-    /// constructs the `regex` crate reads differently from POSIX.2; admitting
-    /// it would make the filter mean something other than what IEEE 1003.2 or
-    /// the client intended. `crate::posix_dialect` names each case.
+    /// Clause 4.9 mandates IEEE 1003.2. The construct named here is either an extension the broker does not support, or one of the few IEEE 1003.2 constructs the `regex` crate reads differently from POSIX.2; admitting it would make the filter mean something other than what IEEE 1003.2 or the client intended.
     #[error("invalid POSIX regular expression: {construct} is not supported")]
     PatternNonPosixConstruct {
         /// The unsupported construct.
@@ -223,9 +204,6 @@ pub enum QueryError {
     #[error("invalid regular expression: {0}")]
     PatternTranslation(#[from] hir::Error),
 
-    // -----------------------------------------------------------------------
-    // Geo query (NGSI-LD 4.10)
-    // -----------------------------------------------------------------------
     /// The `georel` value could not be parsed.
     #[error("geo: {0}")]
     GeoRel(#[from] GeoRelParseError),
@@ -250,16 +228,10 @@ pub enum QueryError {
     #[error("geo: near georel requires maxDistance or minDistance")]
     NearWithoutDistance,
 
-    // -----------------------------------------------------------------------
-    // Ordering (NGSI-LD 4.23)
-    // -----------------------------------------------------------------------
     /// A distance ordering was requested with no geometry to measure from.
     #[error("orderBy: distance ordering requires either a geo-query or an orderFrom parameter")]
     DistanceOrderWithoutReference,
 
-    // -----------------------------------------------------------------------
-    // Term expansion
-    // -----------------------------------------------------------------------
     /// A compact term could not be expanded through the active `@context`.
     ///
     /// The expander is a [`TermExpander`](crate::term_expander::TermExpander)
@@ -275,16 +247,10 @@ pub enum QueryError {
     #[error("invalid attribute name: {0}")]
     AttributeNameInvalid(#[source] NgsiLdReferenceError),
 
-    // -----------------------------------------------------------------------
-    // ICU collation (NGSI-LD 4.23)
-    // -----------------------------------------------------------------------
     /// The `orderBy` collation identifier was invalid.
     #[error(transparent)]
     IcuCollation(#[from] IcuCollationError),
 
-    // -----------------------------------------------------------------------
-    // Temporal entity ordering (NGSI-LD 5.7.4.3, Table 6.18.3.2-1)
-    // -----------------------------------------------------------------------
     /// A temporal query's `orderBy` named an Entity member other than `id`.
     ///
     /// Clause 5.7.4.4: "If the ordering parameter is present and refers an
@@ -300,9 +266,6 @@ pub enum QueryError {
     #[error("a temporal query can only be ordered 'asc' or 'desc', not '{0}'")]
     TemporalOrderingDirection(OrderDirection),
 
-    // -----------------------------------------------------------------------
-    // Parameter values the query and projection languages above parse themselves (clauses 4.9 and 4.21)
-    // -----------------------------------------------------------------------
     /// `timerel` and `timeAt` must both be present or both absent.
     #[error("timerel and timeAt must both be present or both absent")]
     ParamTimerelTimeatPair,

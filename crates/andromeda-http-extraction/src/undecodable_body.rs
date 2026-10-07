@@ -1,7 +1,7 @@
 //! A request body that does not decode into the type its operation reads it as.
 //!
 //! A serde failure says what was wrong with a value, never which member held
-//! it: an Entity whose `id` is one octet longer than an identifier may be was
+//! it: an Entity whose `id` is one octet longer than an identifier may be is
 //! refused with "an identifier of 1025 bytes exceeds the 1024 bytes an
 //! identifier may occupy", leaving the client to find the member itself. A
 //! body that failed to decode is therefore decoded once more, on that failure

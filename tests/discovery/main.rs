@@ -1,7 +1,6 @@
 //! NGSI-LD discovery (types and attributes) integration tests for the NGSI-LD context broker.
 //!
-//! Standalone test suite using `tokio::test` and `reqwest` directly -- no dependency
-//! on the libtest-mimic harness or its fixtures module.
+//! Standalone test suite using `tokio::test` and `reqwest` directly.
 //!
 //! Tests that require a clean database state are annotated with `#[serial]` and call
 //! `clean_database()` before running. All tests create and clean up their own resources.
@@ -39,10 +38,6 @@ fn unique_id(prefix: &str) -> String {
     format!("{prefix}:{}", Uuid::new_v4())
 }
 
-// ---------------------------------------------------------------------------
-// Private-tenant isolation
-// ---------------------------------------------------------------------------
-
 /// Every discovery test runs against a private tenant (`TenantScopedEnvironment`)
 /// so its `/types` and `/attributes` assertions -- which cover collections the
 /// API cannot filter -- see only the entities it created. Requests are raw, so
@@ -78,10 +73,6 @@ async fn provision_tenant(client: &Client, tenant: &str) {
         .send()
         .await;
 }
-
-// ---------------------------------------------------------------------------
-// Inline fixtures
-// ---------------------------------------------------------------------------
 
 use serde_json::json;
 
@@ -327,10 +318,6 @@ fn expected_entity_type_info() -> Value {
         ]
     })
 }
-
-// ---------------------------------------------------------------------------
-// HTTP helpers
-// ---------------------------------------------------------------------------
 
 fn link_header(ctx_url: &str) -> String {
     format!("<{ctx_url}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")

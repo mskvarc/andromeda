@@ -4,7 +4,7 @@
 //! compares the printed response.
 //!
 //! Two of the printed exchanges cannot be replayed exactly as printed and are
-//! adjusted, with the adjustment recorded in `docs/annex-c-corpus.md`. C.5.3's
+//! adjusted. C.5.3's
 //! request carries no `attrs`, yet its answer shows only `brandName`, so the
 //! fixtures give each Vehicle only that Attribute. C.5.4 asks for the first
 //! page of two and its answer carries a `next` link, which needs a third

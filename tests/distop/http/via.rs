@@ -1,7 +1,4 @@
-//! `Via` cascade support (clause 4.3.6.4 / 6.3.18): every forwarded request
-//! carries a `Via` entry naming the forwarding broker, a second hop appends its
-//! own host alias after the first, and an incoming `Via` naming a registration's
-//! alias excludes that source from matching so a loop cannot form.
+//! `Via` cascade support (clause 4.3.6.4 / 6.3.18): every forwarded request carries a `Via` entry naming the forwarding broker, a second hop appends its own host alias after the first, and an incoming `Via` naming a registration's alias excludes that source from matching so a loop cannot form.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -16,11 +13,7 @@ use reqwest::Method;
 use serde_json::{Value, json};
 use std::time::Duration;
 
-/// A subscription over `entity_type` notifying `notify`, matching an inclusive
-/// registration of the same type so its creation drives a companion forward. The
-/// type is derived per test so the subscription cannot cross into a concurrent
-/// test. Carries its `@context` in the body, since an `ld+json` create must not
-/// also send a `Link` context header.
+/// A subscription over `entity_type` notifying `notify`, matching an inclusive registration of the same type so its creation drives a companion forward. The type is derived per test so the subscription cannot cross into a concurrent test. Carries its `@context` in the body, since an `ld+json` create must not also send a `Link` context header.
 fn vehicle_subscription(id: &str, entity_type: &str, notify: &str) -> Value {
     json!({
         "id": id,
@@ -31,8 +24,7 @@ fn vehicle_subscription(id: &str, entity_type: &str, notify: &str) -> Value {
     })
 }
 
-/// A single forwarded request to a source carries a `Via` header naming the
-/// forwarding broker (clause 6.3.18). Confirms REQ-HTTP-37.
+/// A single forwarded request to a source carries a `Via` header naming the forwarding broker (clause 6.3.18).
 #[tokio::test]
 async fn dist_http_forwarded_request_carries_via_header_on_all_distributed_resources() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -73,9 +65,7 @@ async fn dist_http_forwarded_request_carries_via_header_on_all_distributed_resou
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A two-hop forward (A -> B -> source) appends each broker's host alias in
-/// order, so the source sees both with the nearer broker last (clause 4.3.6.4).
-/// Confirms REQ-HTTP-38.
+/// A two-hop forward (A -> B -> source) appends each broker's host alias in order, so the source sees both with the nearer broker last (clause 4.3.6.4).
 #[tokio::test]
 async fn dist_http_chain_forward_appends_broker_host_alias_to_via() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -124,9 +114,7 @@ async fn dist_http_chain_forward_appends_broker_host_alias_to_via() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An incoming `Via` naming a registration's own `contextSourceAlias` excludes
-/// that source from matching, so it is not forwarded to (clause 4.3.6.4).
-/// Confirms REQ-HTTP-39.
+/// An incoming `Via` naming a registration's own `contextSourceAlias` excludes that source from matching, so it is not forwarded to (clause 4.3.6.4).
 #[tokio::test]
 async fn dist_http_incoming_via_excludes_listed_source_from_matching() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -179,12 +167,7 @@ async fn dist_http_incoming_via_excludes_listed_source_from_matching() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A created subscription must not forward a companion copy back to a context
-/// source its request already passed through: an incoming `Via` naming the
-/// registration's `contextSourceAlias` excludes that source from the initial
-/// copy placement (Table 6.3.18-2, clause 5.12). The companion forward runs
-/// inside the create call, so the source's request count is settled once the
-/// 201 returns.
+/// A created subscription must not forward a companion copy back to a context source its request already passed through: an incoming `Via` naming the registration's `contextSourceAlias` excludes that source from the initial copy placement (Table 6.3.18-2, clause 5.12). The companion forward runs inside the create call, so the source's request count is settled once the 201 returns.
 #[tokio::test]
 async fn dist_http_subscription_create_excludes_via_listed_source() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -235,8 +218,7 @@ async fn dist_http_subscription_create_excludes_via_listed_source() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Without an incoming `Via`, the same source IS selected and receives the
-/// forwarded companion copy: a guard against the exclusion firing too broadly.
+/// Without an incoming `Via`, the same source IS selected and receives the forwarded companion copy: a guard against the exclusion firing too broadly.
 #[tokio::test]
 async fn dist_http_subscription_create_without_via_forwards_to_source() {
     let topology = topology::single().await.expect("single-broker topology");

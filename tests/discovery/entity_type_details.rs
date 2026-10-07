@@ -38,10 +38,6 @@ fn sort_entity_types(val: &Value) -> Vec<Value> {
     arr
 }
 
-// ---------------------------------------------------------------------------
-// 5.5.9 -- Without Link header context
-// ---------------------------------------------------------------------------
-
 /// List entity type details without Link header -- attribute names returned as expanded IRIs (5.5.9).
 #[tokio::test]
 async fn list_entity_type_details_without_context_returns_expanded_uris() {
@@ -68,10 +64,6 @@ async fn list_entity_type_details_without_context_returns_expanded_uris() {
     delete_entity(&c, env.tenant(), &vehicle_id).await;
     env.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.5.9 -- With Link header context
-// ---------------------------------------------------------------------------
 
 /// List entity type details with compound context Link header -- attribute names compacted (5.5.9).
 #[tokio::test]

@@ -1,5 +1,4 @@
-//! Which carrier a request's context may take for its media type (study C6
-//! and C10).
+//! Which carrier a request's context may take for its media type.
 
 use crate::{
     broker_endpoints::broker_url,
@@ -17,7 +16,7 @@ fn ld_vehicle(id: &str) -> Value {
     json!({ "id": id, "type": "Vehicle", "@context": core() })
 }
 
-/// Study C6: an `application/ld+json` body beside a context `Link` is refused,
+/// An `application/ld+json` body beside a context `Link` is refused,
 /// for a single entity and for a batch, and nothing is created; beside a
 /// `profile` link alone it is admitted.
 #[tokio::test]
@@ -61,7 +60,7 @@ async fn an_ld_json_body_refuses_a_context_link_and_admits_a_profile_link() {
     tenant.finish().await;
 }
 
-/// Study C10: clause 6.3.5 refuses an `application/json` body carrying
+/// Clause 6.3.5 refuses an `application/json` body carrying
 /// `@context` and an `application/ld+json` body carrying none.
 #[tokio::test]
 async fn a_context_in_the_wrong_body_or_none_in_the_right_one_is_refused() {

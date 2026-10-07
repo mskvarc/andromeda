@@ -1,14 +1,6 @@
 //! The two list attribute families, end to end.
 //!
-//! Clauses 4.5.21 and 4.5.22 give a `ListProperty` and a `ListRelationship`
-//! their own value members, `valueList` and `objectList`, and prohibit the
-//! `value` / `object` those specialize. Clause 4.5.0 spells a deletion of one
-//! as an array holding a single NGSI-LD Null, and clause 4.5.9 collapses them
-//! into `valueLists` and `objectLists` in the simplified temporal
-//! representation. Every test here asserts what those clauses require.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
-
+//! Clauses 4.5.21 and 4.5.22 give a `ListProperty` and a `ListRelationship` their own value members, `valueList` and `objectList`, and prohibit the `value` / `object` those specialize. Clause 4.5.0 spells a deletion of one as an array holding a single NGSI-LD Null, and clause 4.5.9 collapses them into `valueLists` and `objectLists` in the simplified temporal representation.
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_client::{entity_attribute::DatasetSelection, test_client::TestClient};
@@ -26,9 +18,7 @@ const NULL_URI: &str = "urn:ngsi-ld:null";
 /// How long one notification is waited for.
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// How many deliveries are read before giving up on the one under test: an
-/// entity creation and the change being tested can both match a subscription,
-/// and only the second carries what is asserted.
+/// Entity creation and the change under test can both match a subscription, and only the second carries what is asserted, so several deliveries are read.
 const DELIVERIES_READ: usize = 4;
 
 /// Create a subscription over `Building` entities delivering to `receiver`.
@@ -51,9 +41,7 @@ async fn create_subscription(scope: &TestEnvironment, receiver: &NotificationSer
     assert_eq!(created.status, StatusCode::CREATED, "subscription create: {:?}", created.body);
 }
 
-/// The first delivered notification whose entity carries `member` inside
-/// `attribute`, so an earlier delivery for the same subscription cannot be
-/// mistaken for the change under test.
+/// Skips earlier deliveries for the same subscription so they cannot be mistaken for the change under test.
 async fn notification_carrying(receiver: &NotificationServer, attribute: &str, member: &str) -> Value {
     let mut carrying = None;
     for _ in 0..DELIVERIES_READ {
@@ -85,11 +73,7 @@ fn building_with_list_attributes(id: &str) -> Value {
     })
 }
 
-/// Clause 4.5.21.2: `previousValueList` "represents the previous `ListProperty`
-/// `valueList`, before the triggering change. The representation is the same as
-/// that of `valueList`" — the previous ordered array itself, not the previous
-/// instance that held it. The same clause prohibits `value` and
-/// `previousValue` on the family, "as value is a generalization of `valueList`".
+/// Clause 4.5.21.2: `previousValueList` "represents the previous `ListProperty` `valueList`, before the triggering change. The representation is the same as that of `valueList`", so it is the previous ordered array itself, not the previous instance that held it. The same clause prohibits `value` and `previousValue` on the family, "as value is a generalization of `valueList`".
 #[tokio::test]
 async fn regression_show_changes_on_a_list_property_carries_the_previous_value_list_array() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -126,15 +110,7 @@ async fn regression_show_changes_on_a_list_property_carries_the_previous_value_l
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.22.2: `previousObjectList` "represents the previous
-/// `ListRelationship` `objectList`, before the triggering change. The
-/// representation is the same as that of `objectList`", and `object` /
-/// `previousObject` "shall never be present as object is a generalization of
-/// `objectList`". The subscription names no `notification.format`, so the
-/// delivery is normalized, and the same clause makes a normalized `objectList`
-/// "an ordered array of Relationship Objects each consisting of a JSON object
-/// containing a single Attribute with a key called `object`" — Table 5.2.37-1
-/// confines the bare-string array to the concise form.
+/// Clause 4.5.22.2: `previousObjectList` "represents the previous `ListRelationship` `objectList`, before the triggering change. The representation is the same as that of `objectList`", and `object` / `previousObject` "shall never be present as object is a generalization of `objectList`". The subscription names no `notification.format`, so the delivery is normalized, and the same clause makes a normalized `objectList` "an ordered array of Relationship Objects each consisting of a JSON object containing a single Attribute with a key called `object`"; Table 5.2.37-1 confines the bare-string array to the concise form.
 #[tokio::test]
 async fn regression_show_changes_on_a_list_relationship_carries_the_previous_object_list_array() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -171,11 +147,7 @@ async fn regression_show_changes_on_a_list_relationship_carries_the_previous_obj
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.21.2: "An array consisting of a single NGSI-LD Null ... can be
-/// used as the right-hand side of the `valueList` during partial update patch
-/// and merge patch (see clauses 5.5.8 and 5.5.12) to indicate a deletion of the
-/// `ListProperty`". Clause 4.5.0 fixes that spelling: where an array is required,
-/// it is an array with one single NGSI-LD Null.
+/// Clause 4.5.21.2: "An array consisting of a single NGSI-LD Null ... can be used as the right-hand side of the `valueList` during partial update patch and merge patch (see clauses 5.5.8 and 5.5.12) to indicate a deletion of the `ListProperty`". Clause 4.5.0 fixes that spelling: where an array is required, it is an array with one single NGSI-LD Null.
 #[tokio::test]
 async fn regression_a_null_value_list_partial_update_deletes_the_list_property() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -213,8 +185,7 @@ async fn regression_a_null_value_list_partial_update_deletes_the_list_property()
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.22.2: the same single-null array on the right-hand side of
-/// `objectList` "indicate[s] a deletion of the `ListRelationship`".
+/// Clause 4.5.22.2: the same single-null array on the right-hand side of `objectList` "indicate[s] a deletion of the `ListRelationship`".
 #[tokio::test]
 async fn regression_a_null_object_list_partial_update_deletes_the_list_relationship() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -252,10 +223,7 @@ async fn regression_a_null_object_list_partial_update_deletes_the_list_relations
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clauses 4.5.0 and 4.5.21.2: a deleted `ListProperty` is encoded in
-/// notifications by an array holding one single NGSI-LD Null under its own
-/// `valueList`. The `value` clause 4.5.21.2 prohibits must not appear, and the
-/// list it replaces must not survive beside it.
+/// Clauses 4.5.0 and 4.5.21.2: a deleted `ListProperty` is encoded in notifications by an array holding one single NGSI-LD Null under its own `valueList`. The prohibited `value` must not appear, and the list it replaces must not survive beside it.
 #[tokio::test]
 async fn regression_a_deleted_list_property_notification_carries_no_prohibited_value_member() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -288,9 +256,7 @@ async fn regression_a_deleted_list_property_notification_carries_no_prohibited_v
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clauses 4.5.7, 4.5.8 and 4.5.21.2: the temporal evolution encodes a deleted
-/// `ListProperty` instance the same way — the single-null array in `valueList`
-/// beside its `deletedAt` — and never the prohibited `value`.
+/// Clauses 4.5.7, 4.5.8 and 4.5.21.2: the temporal evolution encodes a deleted `ListProperty` instance the same way, the single-null array in `valueList` beside its `deletedAt`, and never the prohibited `value`.
 #[tokio::test]
 async fn regression_a_deleted_list_property_temporal_evolution_carries_no_prohibited_value_member() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -333,11 +299,7 @@ async fn regression_a_deleted_list_property_temporal_evolution_carries_no_prohib
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.9: "For each `ListProperty` ... Such JSON-LD object shall only
-/// contain a member whose key shall be `valueLists` ... Each array element
-/// shall be another array containing exactly two elements: the first element
-/// shall be an ordered array of Property values, and the second element shall
-/// correspond to the associated Temporal Property".
+/// Clause 4.5.9: "For each `ListProperty` ... Such JSON-LD object shall only contain a member whose key shall be `valueLists` ... Each array element shall be another array containing exactly two elements: the first element shall be an ordered array of Property values, and the second element shall correspond to the associated Temporal Property".
 #[tokio::test]
 async fn regression_temporal_values_render_a_list_property_as_value_lists() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -385,10 +347,7 @@ async fn regression_temporal_values_render_a_list_property_as_value_lists() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.9: "For each `ListRelationship` ... Such JSON-LD object shall only
-/// contain a member whose key shall be `objectLists` ... the first element
-/// shall be an ordered array of Relationship objects (URIs) and the second
-/// element shall correspond to the associated Temporal Property".
+/// Clause 4.5.9: "For each `ListRelationship` ... Such JSON-LD object shall only contain a member whose key shall be `objectLists` ... the first element shall be an ordered array of Relationship objects (URIs) and the second element shall correspond to the associated Temporal Property".
 #[tokio::test]
 async fn regression_temporal_values_render_a_list_relationship_as_object_lists() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

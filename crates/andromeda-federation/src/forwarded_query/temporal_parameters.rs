@@ -45,10 +45,7 @@ impl ForwardedQuery {
         let format = params.selected_format();
         self.push_optional(ForwardedParameter::LastN, params.last_n.map(|last_n| last_n.to_string()));
         match format {
-            // The grouped extension format is never forwarded (study section
-            // 4.10): grouping is applied by this broker after the merge, so a
-            // source is asked for the plain aggregated representation and
-            // `aggrGroupBy` stays local.
+            // The grouped extension format is never forwarded: grouping is applied by this broker after the merge, so a source is asked for the plain aggregated representation and `aggrGroupBy` stays local.
             TemporalFormat::AggregatedValues | TemporalFormat::GroupedValues => {
                 self.push(ForwardedParameter::Format, TemporalFormat::AggregatedValues.to_string());
                 self.push_optional(

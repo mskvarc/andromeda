@@ -172,7 +172,7 @@ mod tests {
         pretty_assertions::assert_eq!(forwardable.document().attributes().len(), 1);
     }
 
-    /// A Scope written as paths stays on the document, as before, and no
+    /// A Scope written as paths stays on the document, and no
     /// history is carried.
     #[tokio::test]
     async fn a_scope_of_paths_stays_on_the_forwarded_document() {

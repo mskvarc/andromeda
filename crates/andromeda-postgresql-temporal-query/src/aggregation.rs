@@ -8,10 +8,9 @@
 //! is a shape the aggregated representation has no place to put.
 //!
 //! What the rows disagreed about is still a fact the reader needs. An aggregate
-//! is also a statement about a unit — clause 4.5.2 lets every Property instance
+//! is also a statement about a unit: clause 4.5.2 lets every Property instance
 //! carry its own `unitCode`, and nothing in the specification says what the mean
-//! of a kilogram and a pound is, while Andromeda never converts
-//! (`docs/unit-handling.md`). The unit identity and the two registry codes are
+//! of a kilogram and a pound is, while Andromeda never converts. The unit identity and the two registry codes are
 //! therefore projected as their own extrema over the group, and
 //! [`crate::aggregation_group`] decides from that span whether the group is
 //! answerable at all.
@@ -93,8 +92,8 @@ fn project_group_span(select: &mut SelectStatement) {
 /// `stddev`, which that table marks N/A for a JSON Array, fold the narrower
 /// operand that never reaches the JSONB column. Every one of those operands is
 /// gated on the attribute family, so a Relationship, `ListRelationship` or
-/// `VocabProperty` — for which Table 4.5.19.1-3 and the "URI" column of Table
-/// 4.5.19.1-2 mark all six N/A — contributes to none of them. Only the two
+/// `VocabProperty` (Table 4.5.19.1-3 and the "URI" column of Table 4.5.19.1-2
+/// mark all six N/A for them) contributes to none of them. Only the two
 /// counting methods read such a row.
 fn aggregate_columns(methods: &[AggrMethod]) -> Vec<(SimpleExpr, &'static str)> {
     let mut columns: Vec<(SimpleExpr, &'static str)> = Vec::new();
@@ -215,7 +214,7 @@ pub fn build_aggregation_query(schema: Option<&DynIden>, compiled: &CompiledTemp
 
     // Clause 4.5.19: the fixed key is the attribute and `datasetId`. The
     // `aggrGroupBy` extension inserts its own keys between that fixed key and
-    // the period, and an absent period is the whole range — one bucket rather
+    // the period, and an absent period is the whole range: one bucket rather
     // than no grouping at all.
     select.add_group_by([
         SimpleExpr::from(Expr::col((An, AttributeNames::Name))),
@@ -284,8 +283,8 @@ mod tests {
             .build()
     }
 
-    /// The entity predicate stage 2 threads into the aggregation, standing in
-    /// for the `te.id = <uri>` the history builder computes.
+    /// The entity predicate threaded into the aggregation, standing in for the
+    /// `te.id = <uri>` the history builder computes.
     fn entity_filter() -> Condition {
         Condition::all().add(Expr::col((Te, TemporalEntities::Id)).eq("urn:ngsi-ld:Vehicle:1"))
     }
@@ -371,9 +370,9 @@ mod tests {
         pretty_assertions::assert_eq!(group_by, "\"an\".\"name\", \"s\".\"dataset_id\"", "{sql}");
     }
 
-    /// The unit, the attribute family and the value shape all used to key the
-    /// group, which silently split a period whenever one of them flipped inside
-    /// it. None of them may appear in the key again.
+    /// Keying the group on the unit, the attribute family or the value shape
+    /// would silently split a period whenever one of them flipped inside it, so
+    /// none of them may appear in the key.
     #[test]
     fn no_unit_or_registry_code_keys_the_group() {
         for period in [Some("PT1H"), None] {
@@ -387,7 +386,7 @@ mod tests {
 
     /// The family is a fact of the row rather than of the mutable catalogue, so
     /// it is read from the hypertable - as the span of the group's rows, since it
-    /// no longer keys them. The value shape is spanned at the grain Tables
+    /// does not key them. The value shape is spanned at the grain Tables
     /// 4.5.19.1-1 and 4.5.19.1-2 distinguish, which the stored `value_kind`
     /// code alone is too coarse to give.
     #[test]
@@ -493,7 +492,7 @@ mod tests {
 
     /// `aggrGroupBy=unitCode` promotes the unit to a group key: `ah.unit_code_id`
     /// joins the `GROUP BY`, while the span projection that decides a mixed group
-    /// is unchanged (study G2).
+    /// is unchanged.
     #[test]
     fn grouping_by_unit_code_adds_the_unit_column_to_the_group_by() {
         let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "unitCode"));
@@ -505,8 +504,8 @@ mod tests {
     }
 
     /// `aggrGroupBy=observedAt;month` truncates the observation axis to a calendar
-    /// month — the calendar bucketing clause 4.5.19's fixed-width period cannot
-    /// express (study G1).
+    /// month, the calendar bucketing clause 4.5.19's fixed-width period cannot
+    /// express.
     #[test]
     fn a_calendar_bucket_truncates_the_axis_in_the_group_by() {
         let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "observedAt;month"));
@@ -515,8 +514,8 @@ mod tests {
         assert!(group_by.contains("date_trunc('month'"), "the bucket keys the group: {sql}");
     }
 
-    /// `aggrGroupBy=observedAt;hourOfDay` folds the axis onto the hour of day —
-    /// the non-contiguous cyclic bucketing (study G1).
+    /// `aggrGroupBy=observedAt;hourOfDay` folds the axis onto the hour of day,
+    /// the non-contiguous cyclic bucketing.
     #[test]
     fn a_cyclic_bucket_extracts_the_axis_field_in_the_group_by() {
         let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "observedAt;hourOfDay"));
@@ -524,8 +523,7 @@ mod tests {
     }
 
     /// A value-in-effect key correlates the attribute's value at each instant
-    /// through a lateral join selecting the latest instance not after the row
-    /// (study §4.4).
+    /// through a lateral join selecting the latest instance not after the row.
     #[test]
     fn a_value_key_joins_the_value_in_effect_through_a_lateral() {
         let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "category"));
@@ -535,7 +533,7 @@ mod tests {
     }
 
     /// Grouping combines with `aggrPeriodDuration`: the period column stays, and
-    /// the group key sits before it in the `GROUP BY` (study §4.3).
+    /// the group key sits before it in the `GROUP BY`.
     #[test]
     fn grouping_combines_with_the_aggregation_period() {
         let sql = sql_of(&grouped(vec![AggrMethod::Avg], Some("PT1H"), "unitCode"));

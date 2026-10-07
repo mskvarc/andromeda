@@ -10,13 +10,9 @@
 //! 4.5.22.2 and 4.5.24.2 each name `unitCode` under Prohibited, so the other
 //! five refuse one.
 //!
-//! Found while replaying annex C clause C.2.2, whose printed normalized Vehicle
-//! carries `unitCode` on a `ListProperty`: the member was not reserved on the
-//! two specialized families, so normalization reified it into
-//! `{"type": "Property", "value": "MMT"}` and the write was refused with a
-//! storage-layer message.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Annex C clause C.2.2 prints a normalized Vehicle that carries `unitCode` on a
+//! `ListProperty`: the member is reserved on the two specialized families, so
+//! normalization does not reify it into `{"type": "Property", "value": "MMT"}`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -211,8 +207,8 @@ async fn regression_unit_code_family_admission_round_trips_a_list_property_unit_
 
 /// Clause 4.5.2.2 draws the unit from the UN/CEFACT common codes, so one outside
 /// that list is refused on a `ListProperty` exactly as on a Property -- the
-/// admission fixed here widens which families may carry a unit, not which codes
-/// are units.
+/// admission concerns which families may carry a unit, not which codes are
+/// units.
 #[tokio::test]
 async fn regression_unit_code_family_admission_still_refuses_an_unregistered_code() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

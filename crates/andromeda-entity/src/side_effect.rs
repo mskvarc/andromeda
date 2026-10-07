@@ -54,8 +54,7 @@ pub enum AsyncPreference {
 /// [`EntityService::side_effect_placement`](crate::EntityService::side_effect_placement).
 ///
 /// Split from the method so the decision table can be unit-tested without
-/// constructing a full service. See that method's doc comment for the semantic
-/// contract.
+/// constructing a full service.
 pub(crate) const fn resolve_side_effect_placement(
     target: &ContextTarget,
     async_threshold: Option<usize>,

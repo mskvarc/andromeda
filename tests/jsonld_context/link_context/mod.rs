@@ -1,5 +1,4 @@
-//! The one context `Link` an `application/json` response carries (study group
-//! B).
+//! The one context `Link` an `application/json` response carries.
 //!
 //! Clause 6.3.6: an `application/json` response "shall include a Link to the
 //! associated JSON-LD @context"; JSON-LD 1.1 section 6.1: "A response MUST NOT

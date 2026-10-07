@@ -11,8 +11,7 @@
 //! Entity written that its list empties.
 //!
 //! Runs against a broker started with
-//! `ANDROMEDA__EXTENSIONS__TEMPORAL_LINKED_RETRIEVAL=enabled` (see
-//! `docker/compose/test/extensions/env`).
+//! `ANDROMEDA__EXTENSIONS__TEMPORAL_LINKED_RETRIEVAL=enabled`.
 
 use andromeda_test_client::{header::jsonld_link_header, response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
@@ -161,7 +160,7 @@ async fn flat_query(scope: &TestEnvironment, fixture: &Fixture, parameters: &str
     .await
 }
 
-/// T1. Every enabled extension is advertised in `contextSourceExtras`.
+/// Every enabled extension is advertised in `contextSourceExtras`.
 #[tokio::test]
 async fn temporal_linked_retrieval_is_advertised() {
     let scope = TestEnvironment::from_suite("extensions").await.expect("isolated environment");
@@ -172,7 +171,7 @@ async fn temporal_linked_retrieval_is_advertised() {
     scope.finish().await.expect("cleanup");
 }
 
-/// T2. A nested group narrows the Linked Entity's history exactly as it
+/// A nested group narrows the Linked Entity's history exactly as it
 /// narrows a Core Linked Entity, identity included.
 #[tokio::test]
 async fn temporal_linked_retrieval_a_flat_join_narrows_by_the_core_rules() {
@@ -186,7 +185,7 @@ async fn temporal_linked_retrieval_a_flat_join_narrows_by_the_core_rules() {
     scope.finish().await.expect("cleanup");
 }
 
-/// T3. Inline nests a copy under every in-window instance of each
+/// Inline nests a copy under every in-window instance of each
 /// Relationship, narrowed by the group addressed to it and whole without one;
 /// a copy its group empties is not written.
 #[tokio::test]
@@ -217,7 +216,7 @@ async fn temporal_linked_retrieval_an_inline_join_nests_per_relationship() {
     scope.finish().await.expect("cleanup");
 }
 
-/// T4. A group addresses the one entity its Relationship reaches, so the
+/// A group addresses the one entity its Relationship reaches, so the
 /// entity reached from there is whole.
 #[tokio::test]
 async fn temporal_linked_retrieval_a_group_addresses_only_the_entity_its_relationship_reaches() {
@@ -231,7 +230,7 @@ async fn temporal_linked_retrieval_a_group_addresses_only_the_entity_its_relatio
     scope.finish().await.expect("cleanup");
 }
 
-/// T5. Only returned Relationships bring their targets, at every level.
+/// Only returned Relationships bring their targets, at every level.
 #[tokio::test]
 async fn temporal_linked_retrieval_flat_drops_what_the_narrowing_left_unnamed() {
     let scope = TestEnvironment::from_suite("extensions").await.expect("isolated environment");
@@ -250,7 +249,7 @@ async fn temporal_linked_retrieval_flat_drops_what_the_narrowing_left_unnamed() 
     scope.finish().await.expect("cleanup");
 }
 
-/// T6. The extension applies the Retrieve Entity admission row: a projection
+/// The extension applies the Retrieve Entity admission row: a projection
 /// deeper than `joinLevel` is refused (clause 5.7.1.4).
 #[tokio::test]
 async fn temporal_linked_retrieval_still_bounds_the_depth() {
@@ -272,7 +271,7 @@ async fn temporal_linked_retrieval_still_bounds_the_depth() {
     scope.finish().await.expect("cleanup");
 }
 
-/// T7. Clause 5.5.14 over the Temporal API: the map a joined temporal query
+/// Clause 5.5.14 over the Temporal API: the map a joined temporal query
 /// creates records the Linked Entities as well as the roots.
 #[tokio::test]
 async fn temporal_linked_retrieval_the_entity_map_records_linked_entities() {
@@ -314,7 +313,7 @@ async fn temporal_linked_retrieval_the_entity_map_records_linked_entities() {
     scope.finish().await.expect("cleanup");
 }
 
-/// T8. Which entities are Linked Entities of a temporal read is the temporal
+/// Which entities are Linked Entities of a temporal read is the temporal
 /// catalogue's, not current state's: a Person whose current state a clause
 /// 5.6.6 deletion removed still has a history in the window, so the Building's
 /// join still nests it (clauses 4.5.23, 5.6.6).

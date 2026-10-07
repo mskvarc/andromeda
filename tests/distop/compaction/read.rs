@@ -1,11 +1,6 @@
-//! Current-entity query narrowing under an aliased `@context` (clauses 4.3.6.1,
-//! 4.3.6.3, 5.7.2.4).
+//! Current-entity query narrowing under an aliased `@context` (clauses 4.3.6.1, 4.3.6.3, 5.7.2.4).
 //!
-//! Both narrowing directions are exercised: a client attribute kept in the
-//! client's own spelling (direction A), and a block's declared attribute
-//! supplied when the client named none (direction B). A coinciding-segment case
-//! proves coverage is decided by the IRI, not the last segment, and a
-//! core-context case proves the engine path is behaviourally identical there.
+//! Both narrowing directions are exercised: a client attribute kept in the client's own spelling (direction A), and a block's declared attribute supplied when the client named none (direction B). A coinciding-segment case proves coverage is decided by the IRI, not the last segment, and a core-context case proves the engine path is behaviourally identical there.
 
 use crate::{
     compaction::{
@@ -28,9 +23,7 @@ use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-/// Direction A: a client attribute whose expanded IRI matches a declared IRI is
-/// forwarded in the client's own aliased spelling `spd`, never the IRI's last
-/// segment `speed` (clause 4.3.6.1).
+/// Direction A: a client attribute whose expanded IRI matches a declared IRI is forwarded in the client's own aliased spelling `spd`, never the IRI's last segment `speed` (clause 4.3.6.1).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_forwards_an_aliased_client_attribute_under_its_alias() {
@@ -70,9 +63,7 @@ async fn distop_compaction_forwards_an_aliased_client_attribute_under_its_alias(
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Direction B: an exclusive block names one entity and its attributes, so a
-/// client asking only for the type has the block's id, type and attribute added
-/// to the forwarded request, each in the context's aliased spelling.
+/// Direction B: an exclusive block names one entity and its attributes, so a client asking only for the type has the block's id, type and attribute added to the forwarded request, each in the context's aliased spelling.
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_supplies_an_exclusive_blocks_aliased_names_for_a_type_only_query() {
@@ -115,11 +106,7 @@ async fn distop_compaction_supplies_an_exclusive_blocks_aliased_names_for_a_type
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A requested attribute that expands to an IRI the block does not cover is
-/// dropped even though its term shares a last segment with a covered attribute's
-/// IRI: coverage is by IRI, not by string coincidence. The block declares
-/// `spd` (`.../vocab/speed`); the client asks `speed` (`.../other/speed`). The
-/// block then covers nothing requested and forwards no query.
+/// A requested attribute that expands to an IRI the block does not cover is dropped even though its term shares a last segment with a covered attribute's IRI: coverage is by IRI, not by string coincidence. The block declares `spd` (`.../vocab/speed`); the client asks `speed` (`.../other/speed`). The block then covers nothing requested and forwards no query.
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_drops_an_uncovered_attribute_despite_a_coinciding_iri_segment() {
@@ -158,9 +145,7 @@ async fn distop_compaction_drops_an_uncovered_attribute_despite_a_coinciding_iri
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The core context is the ETSI conformance case: every term equals its IRI's
-/// last segment, so the engine forwards the same plain compact terms the old
-/// heuristic did -- `Vehicle` and `speed`, unchanged.
+/// The core context is the ETSI conformance case: every term equals its IRI's last segment, so the forwarded plain compact terms are `Vehicle` and `speed`, unchanged.
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_keeps_the_core_context_forwarding_plain_compact_terms() {

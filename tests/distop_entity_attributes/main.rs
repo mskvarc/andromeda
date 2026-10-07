@@ -12,8 +12,6 @@
 //! - Redirect: forwards to one or more remote context sources, no local storage
 //! - Auxiliary: local-only updates, no forwarding (retrieval mode only)
 //!
-//! Standalone test suite using `tokio::test` and `reqwest` directly.
-//!
 //! Naming convention: `distop_entity_attrs_<operation>_<mode>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]

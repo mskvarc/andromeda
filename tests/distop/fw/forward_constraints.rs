@@ -1,7 +1,4 @@
-//! Broker-side enforcement of registration constraints on forwarded requests
-//! and the mode/distribution basis (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.3,
-//! 4.5.4-4.5.5, 5.7). All `T-MOCK`/`T-MOCK-N`: the mock captures the exact
-//! forwarded request so the broker's narrowing is asserted byte-for-byte.
+//! Broker-side enforcement of registration constraints on forwarded requests and the mode/distribution basis (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.3, 4.5.4-4.5.5, 5.7).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -19,8 +16,7 @@ use urlencoding::encode;
 /// Budget for a forwarded request to reach the mock context source.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The path a broker appends to a registration `endpoint` when forwarding an
-/// entity query or create (clause 4.3.6.3).
+/// The path a broker appends to a registration `endpoint` when forwarding an entity query or create (clause 4.3.6.3).
 const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 
 /// Locate the entity with the given id inside an entity-array response body.
@@ -28,9 +24,7 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
     body.as_array()?.iter().find(|entity| entity["id"].as_str() == Some(id))
 }
 
-/// A registered `type` constraint narrows a multi-type query to the covered type
-/// only: a `Device` the registration does not cover is stripped before the
-/// request is forwarded (clause 4.3.6.3). Confirms REQ-FW-1, REQ-FW-6.
+/// A registered `type` constraint narrows a multi-type query to the covered type only: a `Device` the registration does not cover is stripped before the request is forwarded (clause 4.3.6.3).
 #[tokio::test]
 async fn forward_scopes_request_to_registered_type_only() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -82,9 +76,7 @@ async fn forward_scopes_request_to_registered_type_only() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration constrained by id and attribute narrows the forwarded request
-/// to its covered id and attribute: a second id and an uncovered attribute in
-/// the client query never reach the source (clause 4.3.6.3). Confirms REQ-FW-2.
+/// A registration constrained by id and attribute narrows the forwarded request to its covered id and attribute: a second id and an uncovered attribute in the client query never reach the source (clause 4.3.6.3).
 #[tokio::test]
 async fn forward_narrows_to_registered_ids_attrs_geofence() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -134,12 +126,7 @@ async fn forward_narrows_to_registered_ids_attrs_geofence() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration constrained by a relationship name narrows the forwarded
-/// request to that relationship: a client `attrs` naming the covered
-/// relationship and an uncovered property forwards only the covered one, the
-/// `relationshipNames` mirror of `forward_narrows_to_registered_ids_attrs_geofence`
-/// (clause 4.3.6.3). `isParked` is a Relationship term of the compound test
-/// context, so its narrowed name round-trips through compaction.
+/// A registration constrained by a relationship name narrows the forwarded request to that relationship: a client `attrs` naming the covered relationship and an uncovered property forwards only the covered one, the `relationshipNames` mirror of `forward_narrows_to_registered_ids_attrs_geofence` (clause 4.3.6.3). `isParked` is a Relationship term of the compound test context, so its narrowed name round-trips through compaction.
 #[tokio::test]
 async fn forward_narrows_to_registered_relationship_names() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -189,11 +176,7 @@ async fn forward_narrows_to_registered_relationship_names() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Clause 4.3.6.3: an exclusive registration names one entity and its
-/// attributes, so a client query naming only the type still has the block's id
-/// and attribute added to the forwarded request -- the source is asked for
-/// exactly what the registration covers, never the broad `type=Vehicle` alone.
-/// Confirms REQ-FW-2.
+/// Clause 4.3.6.3: an exclusive registration names one entity and its attributes, so a client query naming only the type still has the block's id and attribute added to the forwarded request -- the source is asked for exactly what the registration covers, never the broad `type=Vehicle` alone.
 #[tokio::test]
 async fn forward_exclusive_block_names_its_id_and_attribute_for_a_type_only_query() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -249,10 +232,7 @@ async fn forward_exclusive_block_names_its_id_and_attribute_for_a_type_only_quer
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Constraint enforcement happens at the broker, not the source: the request the
-/// source receives through the broker is already narrowed to the covered type,
-/// so the source is never asked for data outside the registration (clause
-/// 4.3.6.3). Confirms REQ-FW-3.
+/// Constraint enforcement happens at the broker, not the source: the request the source receives through the broker is already narrowed to the covered type, so the source is never asked for data outside the registration (clause 4.3.6.3).
 #[tokio::test]
 async fn forward_constraint_enforced_at_broker_not_source() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -297,9 +277,7 @@ async fn forward_constraint_enforced_at_broker_not_source() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The registration mode governs distribution: an inclusive write is forwarded
-/// and held locally, while an auxiliary write is held locally and never
-/// forwarded (clause 4.3.6.3, 5.7). Confirms REQ-FW-4.
+/// The registration mode governs distribution: an inclusive write is forwarded and held locally, while an auxiliary write is held locally and never forwarded (clause 4.3.6.3, 5.7).
 #[tokio::test]
 async fn forward_mode_governs_distribution_and_local_hold() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -400,9 +378,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The same attribute served by two sources with distinct `datasetId` values is
-/// merged into two instances, neither overwriting the other (clause 4.5.5).
-/// Confirms REQ-FW-5.
+/// The same attribute served by two sources with distinct `datasetId` values is merged into two instances, neither overwriting the other (clause 4.5.5).
 #[tokio::test]
 async fn forward_same_attribute_two_sources_distinguished_by_dataset_id() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -464,8 +440,7 @@ async fn forward_same_attribute_two_sources_distinguished_by_dataset_id() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A query is not forwarded to a source whose registration does not advertise
-/// the `queryEntity` operation (clause 4.3.6.3). Confirms REQ-FW-7.
+/// A query is not forwarded to a source whose registration does not advertise the `queryEntity` operation (clause 4.3.6.3).
 #[tokio::test]
 async fn forward_omits_operation_not_supported_by_source() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -507,9 +482,7 @@ async fn forward_omits_operation_not_supported_by_source() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// With no representation option in the client request, the forwarded request
-/// carries no `keyValues`/`concise`/`simplified` option: the default normalized
-/// form is requested from the source (clause 4.3.6.3). Confirms REQ-FW-8.
+/// With no representation option in the client request, the forwarded request carries no `keyValues`/`concise`/`simplified` option: the default normalized form is requested from the source (clause 4.3.6.3).
 #[tokio::test]
 async fn forward_default_representation_is_normalized() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -562,9 +535,7 @@ async fn forward_default_representation_is_normalized() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A non-normalized representation is optional at the source: a source declining
-/// `keyValues` with 501 does not fail the client request with a 5xx (clause
-/// 4.3.6.3). Confirms REQ-FW-9.
+/// A non-normalized representation is optional at the source: a source declining `keyValues` with 501 does not fail the client request with a 5xx (clause 4.3.6.3).
 #[tokio::test]
 async fn forward_non_normalized_format_optional_no_failure() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -606,9 +577,7 @@ async fn forward_non_normalized_format_optional_no_failure() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A source that returns entities without `createdAt`/`modifiedAt` under
-/// `sysAttrs` does not cause an error: the system attributes are simply absent
-/// (clause 4.3.6.3). Confirms REQ-FW-10.
+/// A source that returns entities without `createdAt`/`modifiedAt` under `sysAttrs` does not cause an error: the system attributes are simply absent (clause 4.3.6.3).
 #[tokio::test]
 async fn forward_system_attrs_absent_without_error() {
     let topology = topology::single().await.expect("single-broker topology");

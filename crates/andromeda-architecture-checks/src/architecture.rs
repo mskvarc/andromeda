@@ -11,7 +11,7 @@ use syn::{
     visit::{Visit, visit_ident, visit_item, visit_item_impl, visit_lit_str},
 };
 
-/// Assert the structural invariants retired by the seventh architecture pass.
+/// Assert the structural invariants production sources must keep.
 ///
 /// The scan covers production Rust below `src/`, `crates/`, and `lib/`. It
 /// rejects public re-exports, then verifies that the retired composition and

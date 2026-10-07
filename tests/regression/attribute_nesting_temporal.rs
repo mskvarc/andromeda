@@ -1,14 +1,4 @@
-//! An attribute nesting deeper than the broker reads back what it stores, on
-//! every Temporal write (R60).
-//!
-//! A Temporal Evolution records each observation's value and metadata in its
-//! history and its last state in the entity it extends (clauses 5.6.11,
-//! 5.6.12, 5.6.14), so a Temporal write is held to the same nesting limit as a
-//! Core write. Before, an observation of 61 levels answered 201 and its entity
-//! then answered 500 on every Core read, and from 63 levels on every temporal
-//! read too.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! A Temporal Evolution records each observation's value and metadata in its history and its last state in the entity it extends (clauses 5.6.11, 5.6.12, 5.6.14), so a Temporal write is held to the same nesting limit as a Core write.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -75,8 +65,8 @@ async fn regression_r60_every_shape_at_the_limit_is_recorded_and_reads_back() {
     scope.finish().await.expect("environment cleanup");
 }
 
-/// An observation of 61 levels was recorded, and its entity could never be
-/// read again. It is refused, and nothing is recorded.
+/// An observation of 61 levels would leave an entity nested past the reader,
+/// so it is refused and nothing is recorded.
 #[tokio::test]
 async fn regression_r60_an_observation_past_the_old_read_bound_is_refused_not_recorded() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

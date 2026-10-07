@@ -108,8 +108,6 @@ impl ChunkRewrite for UpdateRewrite<'_> {
             return Err(Box::new((entry.id, EntityError::from(error))));
         }
 
-        // Batch update mirrors the single attribute update (clause 5.6.9):
-        // the per-attribute triggers, partitioned from the before/after diff.
         let write = self.service.chunk_fragment_update(
             self.target,
             entry.id.clone(), // clone: the entry is kept to rebuild the write if the store refuses it
@@ -138,8 +136,8 @@ impl EntityService {
         // merge operations" from its NGSI-LD Null prohibitions, and clause 5.2.1
         // makes every other placement of the sentinel `BadRequestData`. A batch
         // update is neither: clause 5.6.9.4's local phase names "the behaviour
-        // defined by clause 5.6.3" -- Append Attributes, which carries no
-        // NGSI-LD Null support of its own -- and clause 5.6.9 does not carry the
+        // defined by clause 5.6.3", Append Attributes, which carries no
+        // NGSI-LD Null support of its own, and clause 5.6.9 does not carry the
         // "NGSI-LD Nulls should be supported by this operation" sentence that
         // clauses 5.6.2, 5.6.4 and 5.6.17 do. The sentinel therefore has no
         // deletion semantics to be given here, and storing it would put
@@ -148,8 +146,7 @@ impl EntityService {
         // What the code below runs is not clause 5.6.3 for the overwriting
         // default of clause 5.6.9.3: an overwriting update applies the clause
         // 5.6.2 patch first and appends what it left, and only `noOverwrite`
-        // appends alone. That deviation is recorded in
-        // `docs/spec-conformance-sweep.md`; it does not move the admission,
+        // appends alone. That deviation does not move the admission,
         // because clause 5.6.2's NGSI-LD Null support is a statement about the
         // Update Attributes operation and its Entity Fragment, not about a
         // whole Entity submitted to a batch.
@@ -214,16 +211,12 @@ mod tests {
     fn a_no_overwrite_fragment_appends_nothing_only_when_every_named_attribute_is_present() {
         let stored = stored();
 
-        // Every named attribute already present -> appends nothing (207 path).
         assert!(appends_nothing(&stored, &fragment(&[(IS_PARKED, relationship())])));
         assert!(appends_nothing(&stored, &fragment(&[(BRAND_NAME, property("y")), (IS_PARKED, relationship())])));
 
-        // At least one named attribute is new -> appends something (S / 204 path).
         assert!(!appends_nothing(&stored, &fragment(&[(SPEED, property("1"))])));
         assert!(!appends_nothing(&stored, &fragment(&[(IS_PARKED, relationship()), (SPEED, property("1"))])));
 
-        // A fragment naming no member appends nothing new but is not a
-        // noOverwrite conflict either.
         assert!(!appends_nothing(&stored, &fragment(&[])));
     }
 

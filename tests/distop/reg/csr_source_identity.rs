@@ -17,8 +17,7 @@ use serde_json::{Value, json};
 
 /// The broker's own `GET /info/sourceIdentity` returns a conformant
 /// `ContextSourceIdentity` with all mandatory members present and well-formed
-/// (clause 5.2.40). Confirms REQ-REG-43, REQ-REG-44, REQ-REG-45, REQ-REG-46,
-/// REQ-REG-47.
+/// (clause 5.2.40).
 #[tokio::test]
 async fn source_identity_returns_conformant_identity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -58,7 +57,7 @@ async fn source_identity_returns_conformant_identity() {
 /// shall not be interpreted as JSON-LD using the supplied @context"). The
 /// compose stack configures `{"deployment":"distop"}` on broker A; the enabled
 /// extensions are advertised beside it under `extensions`, which by default
-/// names cursor pagination alone. Confirms REQ-REG-48.
+/// names cursor pagination alone.
 #[tokio::test]
 async fn source_identity_preserves_extras_verbatim() {
     let topology = topology::single().await.expect("single-broker topology");

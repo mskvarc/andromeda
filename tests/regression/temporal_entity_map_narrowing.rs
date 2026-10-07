@@ -1,17 +1,14 @@
 //! Whether a temporal `EntityMap` creation is held to the "too wide query"
-//! narrowing rule the current-entity `EntityMap` creation already enforces.
+//! narrowing rule the current-entity `EntityMap` creation enforces.
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 5.14.5.4 creates the map from a Query
 //! Temporal Evolution request and so inherits that operation's parameter
 //! validation, which clause 5.7.4.4 states as the clause 5.7.2.4 rule verbatim:
 //! a query is too wide, and rejected with `BadRequestData`, unless it names a
 //! type, an identifier, an identifier pattern, an attribute, a `q`, a geoquery
-//! or the local scope. The current-entity map validator ran this rule; the
-//! temporal one only checked the join and Linked-Entity constraints, so a
-//! temporal map creation whose only input was the temporal window was accepted
-//! where a temporal query would have been refused.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! or the local scope. The temporal map validator applies this rule as well as
+//! the join and Linked-Entity constraints, so a temporal map creation whose only
+//! input is the temporal window is refused, as a temporal query is.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

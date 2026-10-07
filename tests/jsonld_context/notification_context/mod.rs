@@ -1,4 +1,4 @@
-//! The `@context` a notification names (study group D).
+//! The `@context` a notification names.
 //!
 //! Clauses 5.8.1.4 and 5.8.6 make the notification context "the one specified
 //! in the jsonldContext field", initialised from the context of the request

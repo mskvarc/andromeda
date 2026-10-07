@@ -1,9 +1,4 @@
-//! Retrieve Entity forwarding (clause 5.7.1.4): 404 suppression, local-as-base
-//! merge, capability and mode selection, expired-attribute discard, and the
-//! per-attribute / per-`datasetId` merge of clause 4.5.5. `datasetId` selection,
-//! auxiliary supplementation, and term expansion live in
-//! `crate::cons::retrieve_entity_projection`; entity-map rows in
-//! `crate::cons::entity_map_reuse`.
+//! Retrieve Entity forwarding (clause 5.7.1.4): 404 suppression, local-as-base merge, capability and mode selection, expired-attribute discard, and the per-attribute / per-`datasetId` merge of clause 4.5.5.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -27,11 +22,7 @@ fn observed_dataset(value: i64, observed_at: &str, dataset_id: &str) -> Value {
     json!({ "type": "Property", "value": value, "observedAt": observed_at, "datasetId": dataset_id })
 }
 
-/// Retrieval returns `404 ResourceNotFound` whenever the target Entity is held
-/// neither locally nor by any source a matching registration forwards to: a
-/// registration that matches but whose source answers 404 does not make the
-/// broker synthesise an `{id, type}` Entity, and clause 6.3.17 does not treat
-/// the source's empty answer as abnormal (clause 5.7.1.4). Confirms REQ-CONS-1.
+/// Retrieval returns `404 ResourceNotFound` whenever the target Entity is held neither locally nor by any source a matching registration forwards to: a registration that matches but whose source answers 404 does not make the broker synthesise an `{id, type}` Entity, and clause 6.3.17 does not treat the source's empty answer as abnormal (clause 5.7.1.4).
 #[tokio::test]
 async fn distop_retrieve_entity_no_local_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -63,12 +54,7 @@ async fn distop_retrieve_entity_no_local_no_registration_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An exclusive or redirect registration whose single source answers the
-/// retrieve with `404` leaves the broker with nothing to serve: it does not
-/// synthesise an `{id, type}` entity from the registration, so the retrieval is
-/// `404 ResourceNotFound` in every proxied mode, not just inclusive. Clause
-/// 6.3.17 mandates "404 Not Found - if resources not found within the single
-/// registered source" (clause 5.7.1.4).
+/// An exclusive or redirect registration whose single source answers the retrieve with `404` leaves the broker with nothing to serve: it does not synthesise an `{id, type}` entity from the registration, so the retrieval is `404 ResourceNotFound` in every proxied mode, not just inclusive. Clause 6.3.17 mandates "404 Not Found - if resources not found within the single registered source" (clause 5.7.1.4).
 #[tokio::test]
 async fn distop_retrieve_entity_exclusive_and_redirect_miss_return_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -99,8 +85,7 @@ async fn distop_retrieve_entity_exclusive_and_redirect_miss_return_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Local data is the merge base: a local attribute is served unmodified and
-/// remote attributes are merged on top (clause 5.7.1.4). Confirms REQ-CONS-2.
+/// Local data is the merge base: a local attribute is served unmodified and remote attributes are merged on top (clause 5.7.1.4).
 #[tokio::test]
 async fn distop_retrieve_entity_local_data_is_merge_base() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -140,9 +125,7 @@ async fn distop_retrieve_entity_local_data_is_merge_base() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Only registrations advertising `retrieveEntity` are forwarded a Retrieve
-/// Entity; a `queryEntity`-only source is never contacted (clause 5.7.1.4).
-/// Confirms REQ-CONS-7.
+/// Only registrations advertising `retrieveEntity` are forwarded a Retrieve Entity; a `queryEntity`-only source is never contacted (clause 5.7.1.4).
 #[tokio::test]
 async fn distop_retrieve_entity_forwards_only_retrieveentity_capable_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -194,9 +177,7 @@ async fn distop_retrieve_entity_forwards_only_retrieveentity_capable_csrs() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Exclusive, redirect, and inclusive registrations each forward the retrieve and
-/// contribute the remote attribute to the merged result (clause 5.7.1.4).
-/// Confirms REQ-CONS-9.
+/// Exclusive, redirect, and inclusive registrations each forward the retrieve and contribute the remote attribute to the merged result (clause 5.7.1.4).
 #[tokio::test]
 async fn distop_retrieve_entity_forwards_exclusive_redirect_inclusive() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -234,8 +215,7 @@ async fn distop_retrieve_entity_forwards_exclusive_redirect_inclusive() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A remote attribute whose `expiresAt` is in the past is discarded before the
-/// merge; a non-expired attribute survives (clause 5.7.1.4). Confirms REQ-CONS-10.
+/// A remote attribute whose `expiresAt` is in the past is discarded before the merge; a non-expired attribute survives (clause 5.7.1.4).
 #[tokio::test]
 async fn distop_retrieve_entity_discards_expired_remote_attribute() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -272,10 +252,7 @@ async fn distop_retrieve_entity_discards_expired_remote_attribute() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A source whose answer is an Entity the broker cannot read (a Property member
-/// without its `value`) contributes nothing: the retrieval answers `200` with
-/// the local data and reports the refusal as a clause 6.3.17
-/// `RevalidationFailed` warning (code 111), never failing the answer.
+/// A source whose answer is an Entity the broker cannot read (a Property member without its `value`) contributes nothing: the retrieval answers `200` with the local data and reports the refusal as a clause 6.3.17 `RevalidationFailed` warning (code 111), never failing the answer.
 #[tokio::test]
 async fn distop_retrieve_entity_an_invalid_remote_entity_is_refused_with_a_warning() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -316,9 +293,7 @@ async fn distop_retrieve_entity_an_invalid_remote_entity_is_refused_with_a_warni
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Per clause 4.5.5 the same attribute merges per `datasetId`: the default
-/// instance takes the most-recent `observedAt` across local and remote, and a
-/// distinct `datasetId` instance coexists alongside it. Confirms REQ-CONS-11.
+/// Per clause 4.5.5 the same attribute merges per `datasetId`: the default instance takes the most-recent `observedAt` across local and remote, and a distinct `datasetId` instance coexists alongside it.
 #[tokio::test]
 async fn distop_retrieve_entity_merges_per_4_5_5() {
     let topology = topology::chain().await.expect("three-broker topology");

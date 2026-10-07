@@ -8,8 +8,7 @@
 //!
 //! The printed answer for the abbreviated retrieval renders `name` as a short
 //! name although the abbreviated vocabulary defines no `name` term. The corpus
-//! prints the Fully Qualified Name the clause's own rule produces, and the
-//! divergence is recorded in `docs/annex-c-corpus.md`.
+//! prints the Fully Qualified Name the clause's own rule produces.
 
 use crate::{
     clean_tenant,

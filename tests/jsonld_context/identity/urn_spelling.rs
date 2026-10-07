@@ -1,5 +1,5 @@
 //! How an identifier may be spelled when addressing a stored `@context`
-//! (study G3 and G4).
+//!.
 //!
 //! IETF RFC 8141 section 3.1 compares the `urn` scheme and the namespace
 //! identifier case-insensitively and the namespace-specific string
@@ -14,7 +14,7 @@ use crate::{
 use reqwest::StatusCode;
 use serde_json::json;
 
-/// Study G3: an uppercase `urn` and namespace identifier address the entry
+/// An uppercase `urn` and namespace identifier address the entry
 /// stored under the lowercase spelling.
 #[tokio::test]
 async fn an_uppercase_urn_prefix_addresses_the_stored_entry() {
@@ -30,7 +30,7 @@ async fn an_uppercase_urn_prefix_addresses_the_stored_entry() {
     tenant.finish().await;
 }
 
-/// Study G4: the kind is part of the case-sensitive namespace-specific string,
+/// The kind is part of the case-sensitive namespace-specific string,
 /// so a lowercase kind names no entry.
 #[tokio::test]
 async fn a_lowercase_kind_names_no_stored_entry() {

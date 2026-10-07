@@ -1,11 +1,6 @@
-//! Decoding one grouped aggregation row's group-key values (the `aggrGroupBy`
-//! extension, study §4.6).
+//! Decoding one grouped aggregation row's group-key values (the `aggrGroupBy` extension).
 //!
-//! Every grouping term contributes one [`GroupKeyValue`] to the row, in order.
-//! Most keys are derived from data the row already carries — the `datasetId` it
-//! decoded, the family and unit its span reported, the entity it belongs to —
-//! so only the bucket and value-in-effect keys read a projected `group_key_N`
-//! column. A column that is SQL NULL is the absent key (`@none`).
+//! Each grouping term contributes one [`GroupKeyValue`], in order. Most keys derive from data the row already carries, so only the bucket and value-in-effect keys read a projected `group_key_N` column. A SQL NULL column is the absent key (`@none`).
 
 use crate::{aggregation_row_decode::projected_column, error::TemporalStoreError, stored_aggregation_error::StoredAggregationError};
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier, rfc3339::sub_second};

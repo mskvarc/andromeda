@@ -4,9 +4,9 @@
 //! Clauses 5.7.2.5 and 5.7.4.5 reduce "every Entity within the payload body"
 //! down to the Entity members the projection defines. An Entity the projection
 //! would reduce to no member at all is not answered with an empty object: the
-//! ETSI conformance test `019_17_01` queries `type=Building,Vehicle&pick=name`
-//! over a Vehicle that has no `name` and expects the Buildings alone, and
-//! clause 5.7.1.4 answers the same case on a retrieval with `ResourceNotFound`.
+//! query `type=Building,Vehicle&pick=name` over a Vehicle that has no `name`
+//! answers the Buildings alone, and clause 5.7.1.4 answers the same case on a
+//! retrieval with `ResourceNotFound`.
 //! Such an Entity is therefore not selected. That has to be decided where the
 //! other selection criteria are, before the page is cut and before
 //! `NGSILD-Results-Count` is taken: clause 6.3.13 makes the count "the total
@@ -192,7 +192,7 @@ mod tests {
         }
     }
 
-    /// ETSI TP `019_17_01`: `pick=name` keeps an Entity only through `name`.
+    /// `pick=name` keeps an Entity only through `name`.
     #[test]
     fn a_pick_of_attributes_selects_the_entities_carrying_one_of_them() {
         let projection = Projection::builder().pick(vec![attribute("name"), linked("owner", "name")]).build();

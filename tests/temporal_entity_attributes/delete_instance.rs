@@ -19,10 +19,6 @@ use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
-// ---------------------------------------------------------------------------
-// Setup helper
-// ---------------------------------------------------------------------------
-
 async fn setup_entity_with_instance_id(scope: &TestEnvironment, local: &str) -> (reqwest::Client, String, String) {
     let c = client();
     let id = scope.id(local);
@@ -31,17 +27,12 @@ async fn setup_entity_with_instance_id(scope: &TestEnvironment, local: &str) -> 
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Get the entity to extract instanceId
     let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     let instance_id = extract_instance_id(&body, "speed");
 
     (c, id, instance_id)
 }
-
-// ---------------------------------------------------------------------------
-// Delete attribute instance
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_attrs_delete_instance_success() {
@@ -61,20 +52,13 @@ async fn temporal_attrs_delete_instance_success() {
         "repeating the same instance deletion must observe the first deletion"
     );
 
-    // Verify
     let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    // speed should still exist but with one fewer instance
     let speed = body["speed"].as_array().expect("speed should be array");
-    // Original had 2 instances, now should have 1
     assert_eq!(speed.len(), 1, "should have 1 speed instance after deletion");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Invalid entity/attribute/instance IDs
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_attrs_delete_instance_invalid_entity_id_returns_400() {
@@ -153,10 +137,6 @@ async fn temporal_attrs_delete_instance_empty_attribute_name_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Entity/attribute/instance not found
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_attrs_delete_instance_entity_not_found_returns_404() {
     let scope = TestEnvironment::from_suite("temporal_entity_attributes")
@@ -182,7 +162,6 @@ async fn temporal_attrs_delete_instance_attribute_not_found_returns_404() {
         .expect("isolated test environment");
     let (c, id, instance_id) = setup_entity_with_instance_id(&scope, "Vehicle:delete_inst_017_03_02").await;
 
-    // Try to delete instance of non-existent attribute
     let (status, _, body) = delete_temporal_attr_instance(&c, &id, "nonExistentAttr", &instance_id).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent attr should return 404");
     assert!(
@@ -200,7 +179,6 @@ async fn temporal_attrs_delete_instance_instance_not_found_returns_404() {
         .expect("isolated test environment");
     let (c, id, _) = setup_entity_with_instance_id(&scope, "Vehicle:delete_inst_017_03_03").await;
 
-    // Try to delete non-existent instance (valid URN format but doesn't exist)
     let (status, _, body) = delete_temporal_attr_instance(&c, &id, "speed", "urn:ngsi-ld:01234567890123456789").await;
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent instance should return 404");
     assert!(

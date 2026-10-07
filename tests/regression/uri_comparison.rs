@@ -6,14 +6,11 @@
 //! so that the number of false negatives is minimized, as recommended by IETF
 //! RFC 3986 section 6".
 //!
-//! The false negatives the broker had were its own doing: a Relationship object
-//! is normalised by the RFC 3986 section 6.2.2 and 6.2.3 rules when it is
-//! parsed for storage, while a `q` operand was compared as the bytes the client
-//! typed. An entity created with `HTTP://Example.com/a` was stored as
-//! `http://example.com/a` and could not be found by the very URI that created
-//! it.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! A Relationship object is normalised by the RFC 3986 section 6.2.2 and 6.2.3
+//! rules when it is parsed for storage, so a `q` operand has to be compared in
+//! the same normalised form, not as the bytes the client typed: an entity
+//! created with `HTTP://Example.com/a` is stored as `http://example.com/a` and
+//! has to be found by the very URI that created it.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -77,9 +74,8 @@ fn object_filter(ids: &[&str], object: &str) -> String {
     )
 }
 
-/// The defect: an entity could not be found by the exact URI that created it,
-/// because the broker normalised the object on the way in and compared the
-/// operand as written.
+/// An entity is found by the exact URI that created it, although the object is
+/// normalised on the way in.
 #[tokio::test]
 async fn regression_uri_comparison_an_entity_is_found_by_the_uri_that_created_it() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -154,7 +150,7 @@ async fn regression_uri_comparison_a_uri_rfc3986_does_not_make_equivalent_still_
 
 /// Clause 4.9 EXAMPLE 3, `?q=isParked=="urn:ngsi-ld:OffStreetParking:Downtown1"`.
 /// A URN has no scheme-based normalisation beyond its case-insensitive prefix,
-/// so it compares exactly as it always did.
+/// so it compares exactly.
 #[tokio::test]
 async fn regression_uri_comparison_a_urn_object_compares_as_the_clause_4_9_example_writes_it() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

@@ -5,10 +5,8 @@
 //! with no restriction on the string. Annex C clause C.2.2 writes the
 //! `category` of a Vehicle as `"vocab": "non-commercial"`, a term whose `-` the
 //! clause 4.6.2 short-name grammar does not admit. Reading the compact body
-//! typed before expansion held `vocab` to that grammar, so the entity was
-//! refused with `400 BadRequestData`.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! typed before expansion must not hold `vocab` to that grammar and refuse the
+//! entity with `400 BadRequestData`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

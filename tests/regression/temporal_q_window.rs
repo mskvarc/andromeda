@@ -5,19 +5,15 @@
 //! the "Attribute instances (during the interval defined by the temporal
 //! query)", which clause 4.11 makes the values "valid within the specified
 //! timeframe": the instances observed inside it, and the one still in effect
-//! when it opens (Annex C clause C.5.5 relies on the latter). The broker compiled a temporal `q` against
-//! the entity's current state instead, so an entity whose in-window history held
-//! a matching instance was missed whenever its latest written value did not
-//! match (`TQ:1` with instances 10, 200, 50: `q=v>100` answered nothing), and one
-//! whose current value matched was returned although no in-window instance did.
-//! Real impact: "storms with maxSustainedWind>100 in the Gulf in 2005" answered
-//! an empty set.
+//! when it opens (Annex C clause C.5.5 relies on the latter). Compiling a
+//! temporal `q` against the entity's current state would miss an entity whose
+//! in-window history held a matching instance whenever its latest written value
+//! did not match (instances 10, 200, 50 under `q=v>100`), and would return one
+//! whose current value matched although no in-window instance did.
 //!
 //! Each Query Term is its own existential over the window's instances of its
 //! attribute on the query's `timeproperty`, of every `datasetId`, and the
 //! AND/OR tree combines them.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -62,8 +58,7 @@ async fn matched(client: &TestClient, entity_type: &str, query: &str) -> Vec<Str
     ids
 }
 
-/// The campaign's minimal repro: instances 10, 200 and 50 of `v`, 50 written
-/// last.
+/// Instances 10, 200 and 50 of `v`, 50 written last.
 async fn three_instances(scope: &TestEnvironment, entity_type: &str) -> String {
     let id = scope.id(&format!("{entity_type}:1"));
     create(
@@ -384,7 +379,7 @@ async fn regression_temporal_q_window_a_relationship_term_reads_the_in_window_ob
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The E8 shape from the campaign: a temporal `q` and a temporal geoquery
+/// A temporal `q` and a temporal geoquery
 /// together select a storm whose strong-wind instance and in-area instance both
 /// lie inside the window, though its last observation is weak and elsewhere.
 #[tokio::test]

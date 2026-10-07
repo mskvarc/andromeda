@@ -39,8 +39,8 @@ pub(crate) fn preload_query<N: DictionaryRelation>(rows: u64) -> SelectStatement
 /// write, and a transaction that has written nothing cannot have inserted an
 /// uncommitted dictionary row, so when the flag is true every row this read
 /// returns is committed and may be published to the cache. Once the
-/// transaction has written, the flag is false and the rows are withheld
-/// exactly as before, because one of them may be this transaction's own.
+/// transaction has written, the flag is false and the rows are withheld,
+/// because one of them may be this transaction's own.
 pub(crate) fn held_select_query<N: DictionaryRelation>(names: &[&str]) -> SelectStatement {
     let mut query = name_select_query::<N>(names);
     query.expr_as(transaction_has_not_written(), Alias::new(SNAPSHOT_IS_COMMITTED_COLUMN));

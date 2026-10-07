@@ -196,7 +196,6 @@ impl SnapshotService {
             return Err(SnapshotError::not_found(id));
         }
 
-        // Touch last_used_at
         if let Err(e) = self.repo.touch_last_used(id).await {
             tracing::warn!(error = %e, snapshot_id = %id, "Failed to update snapshot last_used_at");
         }
@@ -235,7 +234,6 @@ impl SnapshotService {
             MergePatchValue::Value(receiver_info) => Some(Some(receiver_info)),
         };
 
-        // Recalculate expiresAt from patch time and persist the capped effective lifetime.
         let effective_lifetime = patch
             .snapshot_lifetime
             .as_ref()

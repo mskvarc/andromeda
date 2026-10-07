@@ -7,12 +7,11 @@
 //! been set until the time it has been explicitly removed by an update or
 //! delete operation (for an example see annex C, clause C.5.16)."
 //!
-//! Two defects sat behind that sentence. The reified Scope never reached a
-//! temporal representation at all — scope observations were written and never
-//! read back — and the temporal `scopeQ` tested the instant a Scope was set for
-//! membership of the query window rather than testing the interval the Scope
-//! was valid over, so annex C clause C.5.16's Vehicle B9211, scoped at 11:00
-//! and queried between 12:00 and 13:00, matched nothing.
+//! Two things follow from that sentence. The reified Scope appears in a
+//! temporal representation, and the temporal `scopeQ` tests the interval the
+//! Scope was valid over rather than the instant it was set for membership of
+//! the query window, so annex C clause C.5.16's Vehicle B9211, scoped at 11:00
+//! and queried between 12:00 and 13:00, matches.
 //!
 //! Clause 4.5.6 settles what the reified form carries: the Scope "shall be
 //! represented as a temporal representation of a Property (clause 4.5.7) that
@@ -21,8 +20,6 @@
 //! Evolution of the Scope is updated as the result of a change from the Core
 //! API, the observedAt sub-Property should be set as a copy of the modifiedAt
 //! sub-Property."
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -131,10 +128,6 @@ fn instances(entity: &Value, member: &str) -> Vec<Value> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Annex C, clause C.5.16
-// ---------------------------------------------------------------------------
-
 /// Annex C, clause C.5.16, reproduced: "Give back the speed of all the Entities
 /// of type "Vehicle" that have been within the Scope /Madrid/Centro between the
 /// 1st of August 2018 at noon and the 1st of August 2018 at 01 PM. Note that
@@ -229,15 +222,10 @@ async fn regression_temporal_scope_annex_c_5_16_carries_the_scope_forward_and_cl
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// The clause 4.18 validity interval a temporal scopeQ tests
-// ---------------------------------------------------------------------------
-
 /// Clause 4.18: a Scope "is considered valid from the time it has been set
 /// until the time it has been explicitly removed". A Scope set before the
-/// window and never removed is therefore valid throughout it, which is the core
-/// of the defect: the probe tested the event instant for membership of the
-/// window and answered with nothing.
+/// window and never removed is therefore valid throughout it, so the probe tests
+/// the interval, not the event instant for membership of the window.
 #[tokio::test]
 async fn regression_temporal_scope_set_before_the_window_and_never_removed_matches_it() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -351,14 +339,10 @@ async fn regression_temporal_scope_set_after_the_window_does_not_match_it() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// The reified representation of clause 4.5.6
-// ---------------------------------------------------------------------------
-
 /// Clause 4.18 reifies the Scope in the temporal representation, and clause
 /// 4.5.6 gives that reified form the four non-reified Temporal Properties
-/// `createdAt`, `modifiedAt`, `deletedAt` and `observedAt`. The defect left the
-/// member out of the representation altogether.
+/// `createdAt`, `modifiedAt`, `deletedAt` and `observedAt`, so the member is part
+/// of the representation.
 #[tokio::test]
 async fn regression_temporal_scope_renders_reified_with_its_temporal_properties() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -514,14 +498,10 @@ async fn regression_temporal_scope_several_scopes_render_as_one_instance_holding
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Table 6.18.3.2-1: the `attrs` synonym
-// ---------------------------------------------------------------------------
-
 /// Table 6.18.3.2-1 makes `attrs` on a temporal query "a synonym for a
 /// combination of the pick and q parameters", and `pick` names Entity members —
 /// "id", "type", "scope" or an Attribute name. Annex C clause C.5.16 queries
-/// with `attrs=speed,scope`, which the broker refused outright.
+/// with `attrs=speed,scope`, which is accepted.
 #[tokio::test]
 async fn regression_temporal_scope_attrs_selects_the_scope_beside_an_attribute() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -571,15 +551,11 @@ async fn regression_temporal_scope_attrs_without_the_scope_member_leaves_it_out(
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Clause 4.18: the operations that end a Scope's validity
-// ---------------------------------------------------------------------------
-
 /// Clause 5.6.18.4 replaces an Entity "with the new Entity content provided",
 /// so a replacement that omits `scope` leaves the Entity with none — and clause
 /// 4.18 ends the Scope's validity at that "update or delete operation". Without
-/// a recorded removal the reconstructed interval stayed open for ever and a
-/// later window still reported the Scope.
+/// a recorded removal the reconstructed interval would stay open for ever and a
+/// later window would still report the Scope.
 #[tokio::test]
 async fn regression_temporal_scope_replace_omitting_the_member_closes_the_interval() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

@@ -1,14 +1,13 @@
 //! Cold attribute-name dictionary integration tests.
 //!
-//! Two properties the memory note conflated are pinned down here. The first is
-//! that the *live* cold-mint path is race-free: many transactions first
-//! populating the dictionary with an overlapping set of never-seen attribute
-//! names all commit, and every committed `temporal_attribute_streams` row
-//! references a committed `attribute_names` row -- no
-//! `fk_temporal_attribute_streams_attribute_name`. The second is that the
-//! foreign-key 500 seen in the benchmark was an operational artifact: a stale
-//! in-memory `NameCache` surviving an out-of-band tenant schema drop and
-//! recreate, which the schema-epoch check now detects and repairs.
+//! Two properties are pinned down here. The first is that the *live* cold-mint
+//! path is race-free: many transactions first populating the dictionary with an
+//! overlapping set of never-seen attribute names all commit, and every
+//! committed `temporal_attribute_streams` row references a committed
+//! `attribute_names` row -- no `fk_temporal_attribute_streams_attribute_name`
+//! violation. The second is that a stale in-memory `NameCache` surviving an
+//! out-of-band tenant schema drop and recreate is detected and repaired by the
+//! schema-epoch check, so it never serves keys of the previous generation.
 //!
 //! Naming convention: `cold_dictionary_<scenario>_<expected_outcome>`.
 
@@ -67,8 +66,8 @@ fn with_database(base: &str, database: &str) -> String {
 
 /// N concurrent transactions each first minting an overlapping set of cold
 /// attribute names all commit, and every committed stream references a
-/// committed dictionary row. The foreign-key 500 the memory note feared would
-/// surface here as a non-created status or an orphaned stream.
+/// committed dictionary row. A foreign-key failure would surface here as a
+/// non-created status or an orphaned stream.
 #[tokio::test]
 async fn cold_dictionary_concurrent_cold_mints_commit_without_a_foreign_key_violation() {
     const WORKERS: usize = 8;

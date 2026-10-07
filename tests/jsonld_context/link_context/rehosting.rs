@@ -1,4 +1,4 @@
-//! A deleted wrapper is hosted again under the same identifier (study B15).
+//! A deleted wrapper is hosted again under the same identifier.
 //!
 //! Clause 5.13.5 lets a client delete an `ImplicitlyCreated` @context. Its
 //! identifier is derived from its content, so the next response that needs it

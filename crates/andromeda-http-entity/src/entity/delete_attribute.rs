@@ -62,7 +62,6 @@ pub(crate) async fn delete_attr(
         }
     };
 
-    // Forward to matching context sources
     let path_suffix = format!("/attrs/{attr_id}");
 
     let selector = service
@@ -71,7 +70,6 @@ pub(crate) async fn delete_attr(
         .with_entity_instance(&uri)?;
     let entity = WriteTarget::new(&id, selector.as_ref());
 
-    // Build query string for forwarding
     let qs = forwarded_write_query([
         delete_all.then(|| ("deleteAll", "true".to_owned())),
         params.dataset_id.as_ref().map(|dataset_id| ("datasetId", dataset_id.to_string())),

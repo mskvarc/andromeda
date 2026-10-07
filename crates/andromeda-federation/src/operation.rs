@@ -196,12 +196,7 @@ impl ForwardingOperation {
         }
     }
 
-    /// Whether a registration advertises this operation, by name or through a
-    /// Table 4.20-2 group containing it.
-    ///
-    /// A registration that names no operations advertises `federationOps`
-    /// (clause 4.20); the store materialises that default on write, so the
-    /// fallback only serves rows written before it did.
+    /// Whether a registration advertises this operation, by name or through a Table 4.20-2 group containing it. A registration that names no operations advertises `federationOps` (clause 4.20).
     pub(crate) fn matches(self, csr: &ContextSourceRegistration) -> bool {
         let advertised = self.advertised_by();
         match &csr.access.operations {

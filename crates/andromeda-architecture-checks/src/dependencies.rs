@@ -323,10 +323,9 @@ fn declarations(manifest: &str) -> Vec<(DependencyKind, &str)> {
             // `[dependencies]`
             (Some(kind), []) => section = Some(kind),
             // A dotted table. `[target.'cfg(unix)'.dependencies]` opens a
-            // dependency table — its last segment is the kind. The same shape
-            // with a trailing name — `[target.'cfg(unix)'.dependencies.sqlx]` —
-            // names one dependency whose kind is the penultimate segment; the
-            // reader used to fall through this and record nothing at all.
+            // dependency table, its last segment is the kind. The same shape
+            // with a trailing name, `[target.'cfg(unix)'.dependencies.sqlx]`,
+            // names one dependency whose kind is the penultimate segment.
             (_, segments) => match segments {
                 [.., last] if DependencyKind::of_table(last).is_some() => section = DependencyKind::of_table(last),
                 [.., penultimate, name] => {
@@ -380,8 +379,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "andromeda-ngsi-ld-model is not an edge")]
     fn an_in_workspace_edge_declared_only_for_tests_is_still_an_edge() {
-        // The half the previous reader could not see: the model/query inversion
-        // held one end of itself in a `[dev-dependencies]` table.
+        // An edge held only in a `[dev-dependencies]` table still counts.
         assert_permitted(&[(DependencyKind::Development, "andromeda-ngsi-ld-model")], FORBIDDEN, &[], ALLOWED);
     }
 
@@ -424,8 +422,8 @@ workspace = true
 
     #[test]
     fn a_dependency_declared_as_its_own_table_is_read() {
-        // The shape that used to slip past entirely: the reader split on the
-        // literal `[dependencies]`, which `[dependencies.sqlx]` is not.
+        // `[dependencies.sqlx]` is a dependency table of its own, distinct from
+        // the literal `[dependencies]`.
         let manifest = "[dependencies.sqlx]\nversion = \"0.8.6\"\n";
         assert_eq!(declarations(manifest), vec![(DependencyKind::Normal, "sqlx")]);
     }
@@ -438,9 +436,8 @@ workspace = true
 
     #[test]
     fn a_target_qualified_single_dependency_table_is_read() {
-        // The shape the reader used to drop on the floor: a single dependency
-        // named as its own target-qualified table, where the kind is the
-        // penultimate segment rather than the last.
+        // A single dependency named as its own target-qualified table: the kind
+        // is the penultimate segment rather than the last.
         let manifest = "[target.'cfg(unix)'.dependencies.sqlx]\nversion = \"0.8.6\"\n";
         assert_eq!(declarations(manifest), vec![(DependencyKind::Normal, "sqlx")]);
     }
@@ -453,9 +450,8 @@ workspace = true
 
     #[test]
     fn a_test_only_runtime_is_not_a_layering_violation_but_a_test_only_edge_is() {
-        // Both halves of the rule the previous reader could not express: a
-        // grammar crate whose tests are async legitimately declares `tokio`,
-        // and a dev-dependency on another workspace crate is still an edge.
+        // A grammar crate whose tests are async legitimately declares `tokio`,
+        // while a dev-dependency on another workspace crate is still an edge.
         let declared = declarations("[dev-dependencies]\ntokio = \"1.0.0\"\nandromeda-ngsi-ld-model.workspace = true\n");
         assert_eq!(
             declared,
@@ -466,8 +462,8 @@ workspace = true
 
     #[test]
     fn the_baseline_forbids_the_runtime_transport_dialect_and_allocator_gaps() {
-        // The four the per-crate template omitted, which is what let an async
-        // runtime into a passive crate and a dialect binder past every guard.
+        // A passive crate admits no async runtime, transport, dialect binder or
+        // allocator by default.
         for gap in ["anyhow", "rumqttc", "sea-query-sqlx", "sonic-rs", "mimalloc"] {
             assert!(FORBIDDEN_PRODUCTION_DEPENDENCIES.contains(&gap), "{gap} must be forbidden by default");
         }

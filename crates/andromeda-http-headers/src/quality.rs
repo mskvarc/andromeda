@@ -8,8 +8,7 @@
 //! This file, including local modifications, is distributed under the MIT License.
 //!
 //! Implements quality factors as defined in
-//! [RFC 9110 Section 12.4.2](https://www.rfc-editor.org/rfc/rfc9110#section-12.4.2)
-//! (formerly [RFC 7231 Section 5.3.1](https://tools.ietf.org/html/rfc7231#section-5.3.1)).
+//! [RFC 9110 Section 12.4.2](https://www.rfc-editor.org/rfc/rfc9110#section-12.4.2).
 
 use std::{cmp::Ordering, fmt, num::ParseIntError};
 use thiserror::Error;

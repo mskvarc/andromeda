@@ -24,10 +24,6 @@ use serde_json::{Number, json};
 use std::{str::FromStr, time::Duration};
 use tokio::time::sleep;
 
-// ---------------------------------------------------------------------------
-// Setup helper
-// ---------------------------------------------------------------------------
-
 async fn setup_entity_with_instance_id(scope: &TestEnvironment, local: &str) -> (reqwest::Client, String, String) {
     let c = client();
     let id = scope.id(local);
@@ -36,17 +32,12 @@ async fn setup_entity_with_instance_id(scope: &TestEnvironment, local: &str) -> 
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Get the entity to extract instanceId
     let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     let instance_id = extract_instance_id(&body, "speed");
 
     (c, id, instance_id)
 }
-
-// ---------------------------------------------------------------------------
-// Modify attribute instance
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_attrs_modify_instance_success() {
@@ -70,13 +61,10 @@ async fn temporal_attrs_modify_instance_success() {
     assert_eq!(status, StatusCode::NO_CONTENT, "modify should return 204");
     assert!(bytes.is_empty(), "response body should be empty");
 
-    // Verify
     let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    // speed should still exist
     let speed = body["speed"].as_array().expect("speed should be array");
-    // Should have one instance with modified value 129
     let has_modified = speed.iter().any(|inst| inst["value"] == 129);
     assert!(has_modified, "should have instance with modified value 129");
 
@@ -109,10 +97,6 @@ async fn temporal_attrs_modify_instance_preserves_an_exact_decimal() {
     assert!(serde_json::to_string(&body).expect("temporal entity JSON").contains("0.170000000000000005"));
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Invalid entity/attribute/instance IDs
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_attrs_modify_instance_invalid_entity_id_returns_400() {
@@ -208,10 +192,6 @@ async fn temporal_attrs_modify_instance_empty_attribute_name_returns_400() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "empty attr name should return 400");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Entity/attribute/instance not found
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_attrs_modify_instance_entity_not_found_returns_404() {

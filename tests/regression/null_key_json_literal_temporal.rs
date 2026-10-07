@@ -1,17 +1,13 @@
-//! A Temporal write holding the NGSI-LD Null under a key of a Property value
-//! (R03).
+//! A Temporal write holding the NGSI-LD Null under a key of a Property value.
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 5.5.4 excepts "the representation of deleted
 //! Properties, Relationships or Language Properties in [...] the temporal
 //! evolution" from its second NGSI-LD Null prohibition, and nothing but a
 //! merge fragment from its third: the Null as "the value of a key value pair
 //! within a JSON object, which is the right-hand side of the value of a
-//! Property". Before, a Temporal create, add attributes or instance
-//! modification ran no Null placement rule at all and recorded the Null under
-//! the key as data, in a structured value, a JSON literal and a
-//! `JsonProperty` alike.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Property". A Temporal create, add attributes or instance modification
+//! therefore refuses the Null under a key, in a structured value, a JSON literal
+//! and a `JsonProperty` alike.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

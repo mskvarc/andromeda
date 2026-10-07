@@ -8,13 +8,9 @@
 //! expanded IRIs -- an Entity stored under a different one answers 404 to a
 //! retrieval phrased in the very terms that wrote it.
 //!
-//! `batch_context_expansion` covers the same finding for a `@context` the
-//! request names by URL in a `Link` header. This module covers the `@context`
-//! carried inline in the payload, and the three neighbouring declaration shapes
-//! that must keep behaving as they did: a prefix chain, an `@id` that is already
-//! absolute, and a prefix no context declares.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! This module covers the `@context` carried inline in the payload, and the
+//! three neighbouring declaration shapes: a prefix chain, an `@id` that is
+//! already absolute, and a prefix no context declares.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -96,8 +92,8 @@ async fn regression_term_declaration_prefix_resolution_agrees_across_every_write
     assert_eq!(response.status, StatusCode::CREATED, "batch upsert: {:?}", response.body);
 
     // Update and merge modify an Entity that already exists, so each is seeded
-    // through the single path -- the one this finding proved correct -- and
-    // then writes the Attribute whose name is under test.
+    // through the single path and then writes the Attribute whose name is under
+    // test.
     let updated = scope.id("Place:prefix-updated");
     create_one(client, &bare_place(&updated, &prefixed_context())).await;
     let response = client
@@ -211,8 +207,8 @@ async fn regression_term_declaration_prefix_resolution_keeps_an_absolute_id_verb
 
 /// Clause 4.1.3: with no term definition for the prefix, a `prefix:suffix`
 /// declaration is already an absolute IRI and stands exactly as written. Both
-/// paths keep it, so the resolution added for a declared prefix does not invent
-/// one for an undeclared prefix.
+/// paths keep it, so resolving a declared prefix does not invent one for an
+/// undeclared prefix.
 #[tokio::test]
 async fn regression_term_declaration_prefix_resolution_keeps_an_undeclared_prefix_verbatim() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

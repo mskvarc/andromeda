@@ -1,8 +1,8 @@
 //! The [`EntityQueryService`] the read-path unit tests are built on.
 //!
 //! Several read-path modules exercise service methods that touch only the
-//! JSON-LD engine — term expansion, projection compilation, nested-projection
-//! derivation — and never read a row. They all need the same service wired to
+//! JSON-LD engine, term expansion, projection compilation, nested-projection
+//! derivation, and never read a row. They all need the same service wired to
 //! a store that is never called, so that store lives here once instead of
 //! being restated in each test module.
 

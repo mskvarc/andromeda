@@ -1,6 +1,4 @@
-//! Entity and attribute JSON builders shared across the distributed-operations
-//! areas, so provision and consumption tests describe payloads by intent rather
-//! than by hand-assembled JSON.
+//! Entity and attribute JSON builders shared across the distributed-operations areas, so provision and consumption tests describe payloads by intent rather than by hand-assembled JSON.
 
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use serde_json::{Map, Value, json};
@@ -27,15 +25,12 @@ pub fn property_with_dataset(value: Value, dataset_id: &str) -> Value {
     Value::Object(node)
 }
 
-/// A minimal `Vehicle` entity holding a single `speed` property, with the
-/// compound context inline for `application/ld+json` submission.
+/// A minimal `Vehicle` entity holding a single `speed` property, with the compound context inline for `application/ld+json` submission.
 pub fn vehicle(id: &str, speed: i64) -> Value {
     entity(id, "Vehicle", &[("speed", property(json!(speed)))])
 }
 
-/// A minimal single-`speed` entity of an explicit type, for suites that derive a
-/// per-test type from the topology prefix so a bare `type=` selector cannot see
-/// another concurrent test's entities.
+/// A minimal single-`speed` entity of an explicit type, for suites that derive a per-test type from the topology prefix so a bare `type=` selector cannot see another concurrent test's entities.
 pub fn typed_vehicle(id: &str, entity_type: &str, speed: i64) -> Value {
     entity(id, entity_type, &[("speed", property(json!(speed)))])
 }
@@ -52,8 +47,7 @@ pub fn entity(id: &str, entity_type: &str, attributes: &[(&str, Value)]) -> Valu
     Value::Object(body)
 }
 
-/// An attribute fragment (no `id`/`type`/`@context` envelope besides context),
-/// for append/update operations on an existing entity.
+/// An attribute fragment (no `id`/`type`/`@context` envelope besides context), for append/update operations on an existing entity.
 pub fn attribute_fragment(attributes: &[(&str, Value)]) -> Value {
     let mut body = Map::new();
     for (name, node) in attributes {

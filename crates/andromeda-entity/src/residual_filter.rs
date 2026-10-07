@@ -53,8 +53,8 @@ trait SelectedEntity<'a>: QueriedEntity<'a> + LocatedEntity<'a> + ScopedEntity<'
     fn identifier(self) -> Option<&'a Identifier>;
     /// The entity's types, by expanded name.
     fn type_names(self) -> Vec<&'a str>;
-    /// Whether the entity carries a member -- an attribute, `scope` or its
-    /// `expiresAt`, by expanded name -- that `admits` accepts.
+    /// Whether the entity carries a member, an attribute, `scope` or its
+    /// `expiresAt`, by expanded name, that `admits` accepts.
     fn carries_member(self, admits: impl Fn(&str) -> bool) -> bool;
     /// Whether the entity carries a `scope`.
     fn holds_scope(self) -> bool;
@@ -122,7 +122,7 @@ fn matches_selected<'a, E: SelectedEntity<'a>>(residual: &ResidualFilter, entity
 }
 
 /// Clause 5.5.14: a request narrowed to an empty identifier set considers no
-/// entity, so nothing satisfies it — the same reading the SQL renderer gives it
+/// entity, so nothing satisfies it, the same reading the SQL renderer gives it
 /// as a constant `FALSE`, kept here so an entity a context source returned
 /// cannot enter a page the store would never have answered with.
 const fn considers_any_entity(considered: ConsideredEntities) -> bool {
@@ -660,7 +660,7 @@ mod tests {
     }
 
     /// The clause 4.21 projection read as a selection (clauses 5.7.2.5 and
-    /// 5.7.4.5, ETSI TP `019_17_01`).
+    /// 5.7.4.5).
     fn projected_member_cases() -> Vec<ConformanceCase> {
         vec![
             (
@@ -713,11 +713,9 @@ mod tests {
     #[test]
     fn every_predicate_kind_reads_its_clause_the_way_the_specification_states_it() {
         // One table over every predicate an `EntitySelection` can carry,
-        // including the five no `StorageProfile` axis can produce today. The expected
+        // including the five no `StorageProfile` axis can produce. The expected
         // verdicts are read off the specification rather than off the
-        // implementation, which is what makes this a check and not a restatement
-        // -- an earlier reading of `attrs` as a conjunction passed every test
-        // that restated it.
+        // implementation, which is what makes this a check and not a restatement.
         let entity = conformance_entity();
         let cases = identifier_selection_cases()
             .into_iter()

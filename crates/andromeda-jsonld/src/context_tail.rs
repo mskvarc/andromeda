@@ -9,7 +9,7 @@
 //! still owes the core context therefore needs one fact about each context a
 //! client names: what the last context it processes is.
 //!
-//! [`ContextTail`] is that fact, read from a document as written — before the
+//! [`ContextTail`] is that fact, read from a document as written, before the
 //! broker drops the document's own core reference for processing
 //! ([`crate::core_context_precedence`]), since that reference is exactly what
 //! the fact records. A relative reference is kept as written until the URL the
@@ -83,7 +83,7 @@ impl ContextTail {
     ///
     /// A relative reference to one of the tenant's own stored `@context`s is
     /// read as the identifier `hosted` recognises it by, exactly as processing
-    /// reads it (`document_context`), so the tail follows the stored document.
+    /// reads it, so the tail follows the stored document.
     /// Any other relative reference cannot be followed. Any other context is
     /// read as [`Self::of_context`] reads it; an absolute reference to a stored
     /// context is the loader's to recognise when it is followed.

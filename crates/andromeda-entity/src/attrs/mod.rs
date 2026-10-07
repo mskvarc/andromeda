@@ -5,7 +5,7 @@
 //! leaves alone, and the whole state is written back with whatever the
 //! mutation implies for the Temporal Evolution. None of
 //! them holds a transaction across the read, so each states the `modifiedAt` its
-//! result was computed from — see [`read_modify_write`] for why that matters and
+//! result was computed from, see [`read_modify_write`] for why that matters and
 //! what the alternative costs.
 //!
 //! [`read_modify_write`]: crate::read_modify_write

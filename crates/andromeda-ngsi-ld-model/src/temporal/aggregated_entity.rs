@@ -183,7 +183,7 @@ impl AggregatedTemporalEntity {
 }
 
 /// The values of one method over a set of rows, nested under one map key per
-/// grouping term (study §4.6).
+/// grouping term.
 ///
 /// At each level the rows are partitioned by their group-key value at that
 /// level, preserving the order the store returned them in (clause 4.23.2 plus

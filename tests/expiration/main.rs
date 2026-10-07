@@ -43,8 +43,6 @@ async fn query(client: &TestClient, query_str: &str) -> Value {
     response.json_value().expect("response body must be valid JSON")
 }
 
-// --- expiresAt preservation on create/retrieve (NGSI-LD 4.22) ---
-
 #[tokio::test]
 async fn expiration_property_expires_at_preserved_on_create_retrieve() {
     let scope = TestEnvironment::from_suite("expiration").await.expect("isolated test environment");
@@ -229,8 +227,6 @@ async fn expiration_list_relationship_expires_at_preserved_on_create_retrieve() 
     scope.finish().await.expect("cleanup failed");
 }
 
-// --- Independence and edge cases ---
-
 #[tokio::test]
 async fn expiration_attribute_independent_of_entity_level_expires_at() {
     let scope = TestEnvironment::from_suite("expiration").await.expect("isolated test environment");
@@ -370,8 +366,6 @@ async fn expiration_expires_at_updatable_via_merge_patch() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// --- Worker-driven expiration tests ---
-//
 // The base stack runs the expiry sweep every second (EXPIRY_SWEEP_INTERVAL), so
 // these tests poll for the swept state rather than sleeping a fixed cycle. Rows
 // are scoped by id prefix so the worker's actions on other tests' rows do not
@@ -387,11 +381,9 @@ const EXPIRY_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 ///
 /// The worker runs on `expiration_check_interval` (one second in the base test
 /// stack). Polling for the swept state, rather than sleeping a fixed cycle,
-/// keeps the test fast and immune to landing early or late in the interval: a
-/// fixed twelve-second sleep once raced the sweep and failed one test per run
-/// under an alternating name. The deadline is a generous multiple of the sweep
-/// interval, enough to absorb a loaded broker without the old twenty-second
-/// ceiling that only ever masked a misconfigured sweep.
+/// keeps the test fast and immune to landing early or late in the interval, where
+/// a fixed sleep can race the sweep. The deadline is a generous multiple of the
+/// sweep interval, enough to absorb a loaded broker.
 async fn wait_for_expiry_sweep<F, Fut>(what: &str, mut settled: F)
 where
     F: FnMut() -> Fut,
@@ -587,12 +579,10 @@ async fn expiration_worker_attribute_expiry_does_not_affect_entity_level_expires
 }
 
 /// Clause 4.22 lets final deletion "lag the expiresAt timestamp to a certain
-/// extent" -- the clean-up cadence, not an unbounded wait. A batch write once
-/// suspended the entity expiry sweep for ten seconds after every batch
-/// operation in the tenant, so an attribute that expired alongside batch
-/// traffic outlived the sweep's bound. The entity here is itself written by a
-/// batch, immediately before the sweep is awaited, and its expired attribute
-/// must still be purged within the ordinary sweep bound. The purge is observed
+/// extent" -- the clean-up cadence, not an unbounded wait. A batch write must
+/// not defer the entity expiry sweep, so an attribute that expires alongside
+/// batch traffic is still purged within the sweep's bound. The entity here is
+/// itself written by a batch, immediately before the sweep is awaited. The purge is observed
 /// through the entity row's recorded minimum expiry, which only the sweep
 /// changes (the read path filters an expired instance on its own).
 #[tokio::test]

@@ -3,7 +3,7 @@
 //! Not part of delivery: the broker publishes these and Andromeda subscribes
 //! to them so that `/health` can say something about the far end of the
 //! connection rather than only about its own socket. Subscribing is
-//! fire-and-forget — a broker that does not publish `$SYS`, or does not allow
+//! fire-and-forget: a broker that does not publish `$SYS`, or does not allow
 //! subscribing to it, simply reports nothing.
 
 use strum::EnumIter;
@@ -50,8 +50,8 @@ impl SysTopic {
 
 /// Broker metadata collected from `$SYS` topics.
 ///
-/// The values are free-form telemetry text as the broker publishes them — a
-/// human-readable uptime, a version banner, a client count — so they stay
+/// The values are free-form telemetry text as the broker publishes them (a
+/// human-readable uptime, a version banner, a client count) so they stay
 /// `String` rather than being parsed into a shape this broker never reasons
 /// about.
 #[derive(Debug, Default)]

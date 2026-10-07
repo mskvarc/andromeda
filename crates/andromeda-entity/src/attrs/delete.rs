@@ -70,8 +70,8 @@ impl EntityService {
                 delete_member(&mut remaining, &attribute, selection)?;
 
                 // Clause 5.6.5.4 handles the Scope before the `deleteAll` and
-                // `datasetId` bullets — "If the target Attribute is scope,
-                // remove the scope Attribute from the target Entity" — so the
+                // `datasetId` bullets, "If the target Attribute is scope,
+                // remove the scope Attribute from the target Entity", so the
                 // removal is unconditional, and clause 4.18 ends the Scope's
                 // validity at that delete operation. The Scope has no attribute
                 // stream to tombstone: clause 4.5.4 gives it no dataset

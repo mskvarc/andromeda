@@ -14,7 +14,7 @@
 //! alternatives either wrap GEOS (which is likewise planar for these
 //! predicates) or address rendering rather than geography. Rather than
 //! reimplement a geometry kernel, altitude is modelled in this crate's own
-//! types and evaluation stays on the projection — which is what the
+//! types and evaluation stays on the projection, which is what the
 //! specification asks for anyway.
 //!
 //! A projection is computed when a spatial operation asks for one and is not

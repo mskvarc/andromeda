@@ -28,8 +28,7 @@ use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
 /// The structured value of one observation, by what its family holds.
 #[derive(Clone, Debug, PartialEq)]
 pub enum StructuredValue {
-    /// The value of a Property (or of a `GeoProperty` recorded before its
-    /// value had to be a geometry) that no typed column holds: the value node
+    /// The value of a Property that no typed column holds: the value node
     /// of an object-valued one, or the values of an array-valued one, whose
     /// target value clause 4.9 makes the whole array. No value is the empty
     /// array (clause 3.1).

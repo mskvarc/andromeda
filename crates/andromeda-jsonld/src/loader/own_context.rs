@@ -251,7 +251,7 @@ mod tests {
                 .load_document(&iri(format!("{origin}{CONTEXTS_PATH}{HELD}")))
                 .await
                 .expect("the held entry resolves from storage");
-            pretty_assertions::assert_eq!(document_value(&value), terms()); // clone: the entry is shared with the cache
+            pretty_assertions::assert_eq!(document_value(&value), terms());
         }
         pretty_assertions::assert_eq!(rows.reads.load(Ordering::SeqCst), 1, "both spellings share one in-process entry");
         assert!(rows.puts().is_empty(), "no Cached row is recorded for the broker's own document");

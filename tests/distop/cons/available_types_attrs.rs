@@ -1,8 +1,4 @@
-//! System-wide available types and attributes (clauses 5.7.5–5.7.11): a
-//! registration makes a type/attribute possibly-available even with no local data,
-//! detail arrays and counts may be empty or estimates (`MAY` rows assert
-//! *permitted*, never *required*), and `/types` may be answered from the local
-//! datastore and Context Registry alone.
+//! System-wide available types and attributes (clauses 5.7.5–5.7.11): a registration makes a type/attribute possibly-available even with no local data, detail arrays and counts may be empty or estimates (`MAY` rows assert *permitted*, never *required*), and `/types` may be answered from the local datastore and Context Registry alone.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -50,9 +46,7 @@ async fn get_detail(topology: &MultiBrokerTopology<BrokerRole>, path: &str) -> T
         .expect("detail request")
 }
 
-/// A registration for a type not held locally makes that type appear system-wide in
-/// `/types` as possibly-available (clauses 5.7.5, 5.7.6). Confirms REQ-CONS-74,
-/// REQ-CONS-81.
+/// A registration for a type not held locally makes that type appear system-wide in `/types` as possibly-available (clauses 5.7.5, 5.7.6).
 #[tokio::test]
 async fn distop_available_types_reflects_registrations_system_wide() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -88,9 +82,7 @@ async fn distop_available_types_reflects_registrations_system_wide() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// System-wide type details are returned, and `attributeDetails`/`attributeNames`
-/// may be an empty array when the registration lacks that detail (clauses 5.7.7,
-/// 5.7.6). Confirms REQ-CONS-75, REQ-CONS-82.
+/// System-wide type details are returned, and `attributeDetails`/`attributeNames` may be an empty array when the registration lacks that detail (clauses 5.7.7, 5.7.6).
 #[tokio::test]
 async fn distop_entity_type_details_system_wide_attribute_details_may_be_empty() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -127,8 +119,7 @@ async fn distop_entity_type_details_system_wide_attribute_details_may_be_empty()
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `/types/{type}` returns an `entityCount`; the value may be an estimate over the
-/// distributed sources (clauses 5.7.7). Confirms REQ-CONS-76, REQ-CONS-83.
+/// `/types/{type}` returns an `entityCount`; the value may be an estimate over the distributed sources (clauses 5.7.7).
 #[tokio::test]
 async fn distop_entity_type_info_count_may_be_estimate() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -168,9 +159,7 @@ async fn distop_entity_type_info_count_may_be_estimate() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration's `propertyNames` makes an attribute appear system-wide in
-/// `/attributes` even with no local data (clauses 5.7.9). Confirms REQ-CONS-77,
-/// REQ-CONS-81.
+/// A registration's `propertyNames` makes an attribute appear system-wide in `/attributes` even with no local data (clauses 5.7.9).
 #[tokio::test]
 async fn distop_available_attributes_system_wide() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -208,9 +197,7 @@ async fn distop_available_attributes_system_wide() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// System-wide attribute details are returned, and `typeNames` may be an empty array
-/// when the registration lacks type detail (clauses 5.7.11). Confirms REQ-CONS-78,
-/// REQ-CONS-82.
+/// System-wide attribute details are returned, and `typeNames` may be an empty array when the registration lacks type detail (clauses 5.7.11).
 #[tokio::test]
 async fn distop_attribute_details_system_wide_may_be_empty() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -249,7 +236,6 @@ async fn distop_attribute_details_system_wide_may_be_empty() {
 }
 
 /// `/attributes/{attr}` returns counts; the values may be estimates (clauses 5.7.11).
-/// Confirms REQ-CONS-79, REQ-CONS-83.
 #[tokio::test]
 async fn distop_attribute_info_count_may_be_estimate() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -293,9 +279,7 @@ async fn distop_attribute_info_count_may_be_estimate() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `/types` lists a registered type; whether the sources are contacted is a `MAY`,
-/// so the type must be present and the source-contact is only a classifying
-/// observation (clauses 5.7.5). Confirms REQ-CONS-80.
+/// `/types` lists a registered type; whether the sources are contacted is a `MAY`, so the type must be present and the source-contact is only a classifying observation (clauses 5.7.5).
 #[tokio::test]
 async fn distop_available_types_answered_from_local_and_registry_without_contacting_sources() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -338,9 +322,7 @@ async fn distop_available_types_answered_from_local_and_registry_without_contact
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration whose remote holder has zero matching entities still lists the
-/// type: registration-derived results are possibly-available (clauses 5.7.5).
-/// Confirms REQ-CONS-81.
+/// A registration whose remote holder has zero matching entities still lists the type: registration-derived results are possibly-available (clauses 5.7.5).
 #[tokio::test]
 async fn distop_available_types_possibly_available_semantics() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -376,9 +358,7 @@ async fn distop_available_types_possibly_available_semantics() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration with an entity type but no attribute names permits empty
-/// `attributeDetails`/`attributeTypes` arrays in the type details (clauses 5.7.7).
-/// Confirms REQ-CONS-82.
+/// A registration with an entity type but no attribute names permits empty `attributeDetails`/`attributeTypes` arrays in the type details (clauses 5.7.7).
 #[tokio::test]
 async fn distop_available_types_empty_arrays_permitted_when_registration_lacks_detail() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -414,9 +394,7 @@ async fn distop_available_types_empty_arrays_permitted_when_registration_lacks_d
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Two sources reporting overlapping counts yield a non-negative aggregate; an
-/// estimate that may double-count is permitted (clauses 5.7.7). Confirms
-/// REQ-CONS-83.
+/// Two sources reporting overlapping counts yield a non-negative aggregate; an estimate that may double-count is permitted (clauses 5.7.7).
 #[tokio::test]
 async fn distop_available_counts_estimate_permitted() {
     let topology = topology::single().await.expect("single-broker topology");

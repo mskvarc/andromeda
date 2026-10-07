@@ -14,7 +14,7 @@
 //!
 //! A member is one instance, the instances of a multi-attribute, or the bare
 //! NGSI-LD Null a notification reports a deleted member by (clause 5.8.6); each
-//! instance is written by [`crate::entity_body::reified_instance`]. A version
+//! instance is written by the reified instance writer. A version
 //! fallback below 1.3 writes a multi-attribute as the one instance Table
 //! 4.3.6.8-1 notes 2 and 3 keep, standing alone.
 

@@ -223,8 +223,8 @@ async fn a_type_page_walks_the_membership_key_in_identifier_order() {
 /// Clause 5.7.2.4 lets any `location` instance match, so a `location`
 /// geo-query is a semi-join over two arms: the hoisted default instance and
 /// every instance row carrying a `datasetId`. Each arm must reach its own `GiST`
-/// index, or the common single-instance query would lose the hoisted path it
-/// had before the instance rows joined it. The seeded `entrance` rows stand in
+/// index, or the common single-instance query would lose the hoisted path. The
+/// seeded `entrance` rows stand in
 /// for the `location` instance rows: the arm reads them by the same key and
 /// columns.
 #[tokio::test]

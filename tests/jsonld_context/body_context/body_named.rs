@@ -1,5 +1,4 @@
-//! Request contexts only an `application/ld+json` body can name (study A5 to
-//! A7, A10 and A11).
+//! Request contexts only an `application/ld+json` body can name.
 //!
 //! A `Link` names one URL; an array of contexts, an inline definition or an
 //! `@import` can only travel in a body. The POST query operations (clause 5.7.2
@@ -70,35 +69,35 @@ async fn assert_rendered(context: fn(&UserContexts) -> Value, expected: fn(&User
     tenant.finish().await;
 }
 
-/// Study A5: an inline definition without the core `@context` is followed by
+/// An inline definition without the core `@context` is followed by
 /// it.
 #[tokio::test]
 async fn an_inline_definition_without_the_core_context_is_followed_by_it() {
     assert_rendered(|_| term_definitions(), |_| json!([term_definitions(), core()])).await;
 }
 
-/// Study A6: an older core release named after a user context is removed, and
+/// An older core release named after a user context is removed, and
 /// v1.9 is named last.
 #[tokio::test]
 async fn an_older_core_release_after_a_user_context_is_replaced_by_the_current_one_last() {
     assert_rendered(|contexts| json!([contexts.terms, CORE_V16]), |contexts| json!([contexts.terms, core()])).await;
 }
 
-/// Study A7: an older core release named before a user context is removed,
+/// An older core release named before a user context is removed,
 /// and v1.9 is named last.
 #[tokio::test]
 async fn an_older_core_release_before_a_user_context_is_moved_last_as_the_current_one() {
     assert_rendered(|contexts| json!([CORE_V18, contexts.terms]), |contexts| json!([contexts.terms, core()])).await;
 }
 
-/// Study A10: a context that ends with the core `@context`, followed by the
+/// A context that ends with the core `@context`, followed by the
 /// core `@context` itself, keeps the core `@context` named last once.
 #[tokio::test]
 async fn a_compound_context_followed_by_the_core_context_keeps_it_last() {
     assert_rendered(|contexts| json!([contexts.wrapper, core()]), |contexts| json!([contexts.wrapper, core()])).await;
 }
 
-/// Study A11 and JSON-LD 1.1 section 4.1.10: an inline definition importing
+/// JSON-LD 1.1 section 4.1.10: an inline definition importing
 /// the protected v1.8 core release beside its own terms is processed without a
 /// protected term redefinition, and renders its own terms followed by v1.9.
 #[tokio::test]
@@ -114,7 +113,7 @@ async fn an_inline_import_of_an_older_core_release_is_replaced_by_the_current_on
     .await;
 }
 
-/// Study A11: an inline definition that only imports an older core release
+/// An inline definition that only imports an older core release
 /// leaves nothing of its own, so the answer names v1.9 alone.
 #[tokio::test]
 async fn an_inline_import_of_an_older_core_release_alone_is_answered_as_the_current_one() {

@@ -3,7 +3,7 @@
 //! The residual machinery exists so a store that cannot push a predicate down
 //! returns the same entities as one that can. With a single adapter whose every
 //! axis is at its full value, nothing in production ever takes the deferred
-//! branch, so that equality is asserted here instead — against an in-memory
+//! branch, so that equality is asserted here instead, against an in-memory
 //! store whose [`StorageProfile`] is a test parameter.
 //!
 //! The store applies the predicates it kept using a reference reading of the
@@ -99,11 +99,7 @@ mod tests {
     /// An entity store that holds its rows in memory and answers exactly as much
     /// of a query as its profile allows.
     ///
-    /// The planning here is the same shape `src/repository/entity/pushdown.rs`
-    /// uses, expressed against the public policy API: ask the profile what it
-    /// cannot apply, strip that from the query it runs, and hand it back. A
-    /// store that leaves a residual takes no window either, because a window over
-    /// rows a later filter will thin is wrong (clause 5.5.9).
+    /// The store asks the profile what it cannot apply, strips that from the query it runs, and hands it back. A store that leaves a residual takes no window either, because a window over rows a later filter will thin is wrong (clause 5.5.9).
     struct ProfiledEntityStore {
         entities: Vec<Arc<EntityState>>,
         profile: StorageProfile,

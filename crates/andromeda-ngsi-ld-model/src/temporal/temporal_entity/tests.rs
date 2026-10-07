@@ -130,7 +130,7 @@ fn an_entity_without_a_type_is_refused() {
 }
 
 /// An instance without the member its family holds its value in is refused,
-/// where it used to render as a Property with a null value.
+/// not rendered as a Property with a null value.
 #[test]
 fn an_instance_without_a_family_member_is_refused() {
     let refused = read(&vehicle(json!({"speed": [{"type": "Property", "observedAt": "2020-01-01T00:00:00Z"}]})));

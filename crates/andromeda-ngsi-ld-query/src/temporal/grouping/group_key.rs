@@ -76,7 +76,7 @@ mod tests {
         assert!(matches!(key, GroupKey::Path(path) if path.attr.as_str() == "speed"));
     }
 
-    /// Clause 4.9 forms (study §4.2): a bracketed and a dotted value path.
+    /// Clause 4.9 forms: a bracketed and a dotted value path.
     #[test]
     fn compound_and_dotted_value_paths_parse_as_paths() {
         for text in ["address[city]", "refDevice.category"] {

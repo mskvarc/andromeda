@@ -1,4 +1,4 @@
-//! The admission rules, with the cases the expanded-JSON admission pinned.
+//! The admission rules of a written entity document and of a bare attribute fragment.
 
 use crate::{
     admission::{instance_completeness::InstanceCompleteness, null_sentinel_admission::NullSentinelAdmission},

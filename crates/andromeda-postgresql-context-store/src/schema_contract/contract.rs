@@ -63,9 +63,8 @@ impl SchemaContract {
     }
 }
 
-/// Return the tenant schema contract embedded in the running broker binary:
-/// the tenant migration set, `migrations/tenant/` together with
-/// `migrations/branch/`.
+/// Return the tenant schema contract embedded in the running broker binary: the tenant migration
+/// set together with the branch migration set.
 ///
 /// # Errors
 ///

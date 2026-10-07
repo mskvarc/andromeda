@@ -1,8 +1,4 @@
-//! `CSourceNotification` dispatch binding (clause 6.3.9): a matching Context Source
-//! Registration triggers a `ContextSourceNotification` `POSTed` to the csource
-//! subscription's `endpoint.uri`, with the MIME type driven by `endpoint.accept`
-//! (`application/json` default, `application/ld+json` opt-in), a JSON-LD `Link`
-//! header on the JSON target, and one custom header per `receiverInfo` entry.
+//! `CSourceNotification` dispatch binding (clause 6.3.9): a matching Context Source Registration triggers a `ContextSourceNotification` `POSTed` to the csource subscription's `endpoint.uri`, with the MIME type driven by `endpoint.accept` (`application/json` default, `application/ld+json` opt-in), a JSON-LD `Link` header on the JSON target, and one custom header per `receiverInfo` entry.
 
 use crate::{
     http::forwarding::{PLACEHOLDER_ENDPOINT, context_link},
@@ -32,10 +28,7 @@ async fn create_csource_subscription(topology: &MultiBrokerTopology<BrokerRole>,
         .expect("create csource subscription")
 }
 
-/// A csource subscription over the given entity type's registrations delivering
-/// to `endpoint`, with the given notification endpoint object spliced in. The
-/// type is derived per test so the subscription only matches this test's own
-/// registration, never a concurrent test's.
+/// A csource subscription over the given entity type's registrations delivering to `endpoint`, with the given notification endpoint object spliced in. The type is derived per test so the subscription only matches this test's own registration, never a concurrent test's.
 fn csource_subscription(id: &str, entity_type: &str, notification_endpoint: &Value) -> Value {
     json!({
         "id": id,
@@ -46,14 +39,12 @@ fn csource_subscription(id: &str, entity_type: &str, notification_endpoint: &Val
     })
 }
 
-/// A registration covering `entity_type` at the placeholder endpoint, so a
-/// matching csource subscription over that same type is triggered.
+/// A registration covering `entity_type` at the placeholder endpoint, so a matching csource subscription over that same type is triggered.
 fn typed_registration(id: &str, entity_type: &str) -> Value {
     csr_basic_typed(id, PLACEHOLDER_ENDPOINT, entity_type)
 }
 
-/// A `CSourceNotification` is `POSTed` to the subscription's `endpoint.uri`
-/// (clause 6.3.9). Confirms REQ-HTTP-4.
+/// A `CSourceNotification` is `POSTed` to the subscription's `endpoint.uri` (clause 6.3.9).
 #[tokio::test]
 async fn dist_http_csource_notification_posted_to_endpoint_uri() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -91,9 +82,7 @@ async fn dist_http_csource_notification_posted_to_endpoint_uri() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The notification MIME defaults to `application/json` and becomes
-/// `application/ld+json` when `endpoint.accept` requests it (clause 6.3.9).
-/// Confirms REQ-HTTP-5.
+/// The notification MIME defaults to `application/json` and becomes `application/ld+json` when `endpoint.accept` requests it (clause 6.3.9).
 #[tokio::test]
 async fn dist_http_csource_notification_mime_defaults_json_and_ld_json_via_accept() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -155,8 +144,7 @@ async fn dist_http_csource_notification_mime_defaults_json_and_ld_json_via_accep
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A JSON (non-LD) notification target carries the JSON-LD `@context` in a `Link`
-/// header (clause 6.3.9). Confirms REQ-HTTP-6.
+/// A JSON (non-LD) notification target carries the JSON-LD `@context` in a `Link` header (clause 6.3.9).
 #[tokio::test]
 async fn dist_http_csource_notification_json_target_carries_link_context() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -194,8 +182,7 @@ async fn dist_http_csource_notification_json_target_carries_link_context() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Each `receiverInfo` entry becomes one custom HTTP header on the notification
-/// (clause 6.3.9). Confirms REQ-HTTP-7.
+/// Each `receiverInfo` entry becomes one custom HTTP header on the notification (clause 6.3.9).
 #[tokio::test]
 async fn dist_http_csource_notification_receiver_info_becomes_custom_headers() {
     let topology = topology::single().await.expect("single-broker topology");

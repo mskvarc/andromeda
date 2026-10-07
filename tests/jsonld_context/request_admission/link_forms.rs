@@ -1,4 +1,4 @@
-//! The forms a single context `Link` may take (study C4, C5 and C7 to C9).
+//! The forms a single context `Link` may take.
 
 use crate::{
     broker_endpoints::broker_url,
@@ -14,7 +14,7 @@ use crate::{
 use reqwest::{StatusCode, header::HeaderValue};
 use serde_json::{Value, json};
 
-/// Study C4: a `profile` link beside the one context link is not a context,
+/// A `profile` link beside the one context link is not a context,
 /// and the request is answered with one context link.
 #[tokio::test]
 async fn a_context_link_beside_a_profile_link_is_admitted() {
@@ -36,7 +36,7 @@ async fn a_context_link_beside_a_profile_link_is_admitted() {
     tenant.finish().await;
 }
 
-/// Study C5: the relation is compared case-insensitively, so a capitalised
+/// The relation is compared case-insensitively, so a capitalised
 /// context relation names the context the body is expanded through, and it
 /// counts toward the one-link limit.
 #[tokio::test]
@@ -74,7 +74,7 @@ async fn a_capitalised_context_relation_names_the_context_and_counts() {
     tenant.finish().await;
 }
 
-/// Study C7: a malformed `Link` and a `Link` that is not visible ASCII are
+/// A malformed `Link` and a `Link` that is not visible ASCII are
 /// refused, on a body-less request and on a body-carrying one.
 #[tokio::test]
 async fn a_malformed_or_non_ascii_link_is_refused_with_or_without_a_body() {
@@ -97,7 +97,7 @@ async fn a_malformed_or_non_ascii_link_is_refused_with_or_without_a_body() {
     tenant.finish().await;
 }
 
-/// Study C8: a single `Link` naming any core release, or the versionless
+/// A single `Link` naming any core release, or the versionless
 /// alias, is admitted and answered under the v1.9 core context (clause 4.4),
 /// which is the only one a response names.
 #[tokio::test]
@@ -132,7 +132,7 @@ async fn a_single_link_to_any_core_release_is_answered_under_the_current_one() {
     tenant.finish().await;
 }
 
-/// Study C9: a relative context `Link` is resolved against the request's own
+/// A relative context `Link` is resolved against the request's own
 /// URI (IETF RFC 8288 section 3.1): a root-relative reference to a context the
 /// tenant stores, the `Location` Add @context answers, expands the request's
 /// terms.

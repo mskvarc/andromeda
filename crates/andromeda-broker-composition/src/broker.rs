@@ -321,8 +321,6 @@ async fn construct(
     }
     let component_reports = collect_component_reports(registry.main_pool()).await?;
 
-    // Resolve the enabled extensions once, folding in the conformance override,
-    // and log loudly if that override disabled a feature the operator turned on.
     let enabled_extensions = config.extensions.resolve();
     log_conformance_override(&config.extensions);
     let pagination = resolve_pagination(&config.extensions, config.pagination)?;

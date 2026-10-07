@@ -5,15 +5,13 @@
 //! `observedAt` and `unitCode`. These are stored as bare value nodes
 //! (`[{"@type":…,"@value":…}]`) rather than as attributes with a `hasValue`
 //! carrier, so the payload jsonpath that answers an ordinary (non-local) query
-//! has to terminate at their `@value` directly. It used to insert a `hasValue`
-//! hop for every sub-attribute alike, so `q=<attr>.observedAt>…` reached nothing
-//! and selected no entity.
+//! has to terminate at their `@value` directly. It must not insert a `hasValue`
+//! hop for every sub-attribute alike, or `q=<attr>.observedAt>…` would reach
+//! nothing and select no entity.
 //!
 //! Every query below is an ordinary `GET /entities` with `q`, which is the
 //! request the PostgreSQL pushdown answers, and each names the entity by `id` so
 //! the answer is about the seeded entities alone.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -166,7 +164,7 @@ async fn regression_q_system_sub_attribute_expires_at_selects_by_its_datetime_va
 }
 
 /// The control: a user-defined sub-attribute is still reached through its
-/// `hasValue` carrier, so the fix does not regress the ordinary case.
+/// `hasValue` carrier, so the ordinary case is unaffected.
 #[tokio::test]
 async fn regression_q_system_sub_attribute_a_user_defined_sub_attribute_still_matches() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

@@ -45,8 +45,8 @@ mod tests {
         pretty_assertions::assert_eq!(delivery_deadline(None, system), system);
     }
 
-    /// Table 5.2.15-1: "the NGSI-LD system can override this value" — the
-    /// system overriding the endpoint, not the other way round. An endpoint
+    /// Table 5.2.15-1: "the NGSI-LD system can override this value", meaning the
+    /// system overrides the endpoint, not the other way round. An endpoint
     /// that asks for longer than the system bound gets the system bound.
     #[test]
     fn an_endpoint_timeout_cannot_lengthen_the_system_bound() {

@@ -1,25 +1,4 @@
-//! A batch create whose shared `@context` cannot be retrieved reports the
-//! failure per entity, not as a top-level error.
-//!
-//! ETSI GS CIM 009 v1.9.1 clause 5.5.6 makes an unretrievable remote JSON-LD
-//! `@context` an error of type `LdContextNotAvailable`, which Table 6.3.2-1 maps
-//! to HTTP 504. Clause 5.6.7.5 states that batch entity creation returns "207
-//! Multi-Status ... where a `BatchOperationResult` ... is returned", with a
-//! `BatchEntityError` per entity that failed. The two clauses together settle
-//! the batch case: the unretrievable `@context` is the same failure for every
-//! entity in the array, so it is reported once per entity inside a 207, not as
-//! one 504 for the whole request.
-//!
-//! The broker screened the shared `@context` first and aborted the whole batch
-//! with a top-level 504 the moment it could not be resolved, so the per-entity
-//! error array clause 5.6.7.5 mandates was never produced. It now projects the
-//! one refusal onto every submitted entity and answers 207. A single-entity
-//! create with the same `@context` still answers a top-level 504, which is
-//! clause 5.6.1's behaviour and is unchanged.
-//!
-//! Corresponds to the official suite case `043_01_04`.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 clause 5.5.6 makes an unretrievable remote JSON-LD `@context` an error of type `LdContextNotAvailable`, which Table 6.3.2-1 maps to HTTP 504. Clause 5.6.7.5 states that batch entity creation returns "207 Multi-Status ... where a `BatchOperationResult` ... is returned", with a `BatchEntityError` per entity that failed. The unretrievable `@context` is the same failure for every entity in the array, so it is reported once per entity inside a 207, not as one 504 for the whole request. A single-entity create with the same `@context` answers a top-level 504 (clause 5.6.1).
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -31,14 +10,11 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
-/// A `Link` header naming a remote `@context` at an address nothing answers on,
-/// so its resolution fails with a connection refusal rather than a slow
-/// timeout (clause 5.5.6).
+/// A `Link` header naming a remote `@context` at an address nothing answers on, so its resolution fails with a connection refusal rather than a slow timeout (clause 5.5.6).
 const UNREACHABLE_CONTEXT_LINK: &str =
     r#"<http://127.0.0.1:19998/unreachable-context.jsonld>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json""#;
 
-/// One Building entity carrying no inline `@context`, so the sole context is the
-/// unreachable one named in the `Link` header.
+/// One Building entity carrying no inline `@context`, so the sole context is the unreachable one named in the `Link` header.
 fn building(identifier: &str) -> Value {
     json!({
         "id": identifier,
@@ -95,7 +71,7 @@ async fn regression_batch_context_unavailable_reports_a_per_entity_error_in_a_20
 
 /// Clause 5.6.1: a single-entity create against the same unretrievable
 /// `@context` still fails the operation as a whole, with the Table 6.3.2-1
-/// status 504 for `LdContextNotAvailable`. The batch fix does not touch it.
+/// status 504 for `LdContextNotAvailable`.
 #[tokio::test]
 async fn regression_batch_context_unavailable_single_create_stays_a_top_level_504() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -128,10 +104,7 @@ async fn regression_batch_context_unavailable_single_create_stays_a_top_level_50
     scope.finish().await.expect("environment cleanup");
 }
 
-/// Clause 5.5.4 judges a payload "syntactically correct, according to the
-/// @context", so a single-entity create whose `@context` cannot be retrieved is
-/// `LdContextNotAvailable` even when its payload would also be refused: the
-/// context is admitted before anything is read under it.
+/// Clause 5.5.4 judges a payload "syntactically correct, according to the @context", so a single-entity create whose `@context` cannot be retrieved is `LdContextNotAvailable` even when its payload would also be refused: the context is admitted before anything is read under it.
 #[tokio::test]
 async fn regression_batch_context_unavailable_an_unreachable_context_outranks_a_refused_payload() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

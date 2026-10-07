@@ -1,7 +1,4 @@
-//! Inclusive mode: a source supplements the broker's own data, both the local
-//! copy and every matching source contributing to the result, all sources of
-//! equal priority (ETSI GS CIM 009 v1.9.1, clause 4.3.6.3, 5.7). Real-peer
-//! integration on `T-PAIR`; forwarded-request capture on `T-MOCK`/`T-MOCK-N`.
+//! Inclusive mode: a source supplements the broker's own data, both the local copy and every matching source contributing to the result, all sources of equal priority (ETSI GS CIM 009 v1.9.1, clause 4.3.6.3, 5.7).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -24,9 +21,7 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
     body.as_array()?.iter().find(|entity| entity["id"].as_str() == Some(id))
 }
 
-/// An inclusive registration distributes a retrieve to the source even when the
-/// broker already holds part of the entity, integrating the local attribute and
-/// the source attribute into one entity (clause 4.3.6.3). Confirms REQ-FW-12.
+/// An inclusive registration distributes a retrieve to the source even when the broker already holds part of the entity, integrating the local attribute and the source attribute into one entity (clause 4.3.6.3).
 #[tokio::test]
 async fn distop_entity_inclusive_distributes_despite_local_data_and_integrates() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -61,9 +56,7 @@ async fn distop_entity_inclusive_distributes_despite_local_data_and_integrates()
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An inclusive additive provision is serviced locally and distributed to the
-/// source: the append reaches the source and the new attribute is also held
-/// locally (clause 4.3.6.3). Confirms REQ-FW-11.
+/// An inclusive additive provision is serviced locally and distributed to the source: the append reaches the source and the new attribute is also held locally (clause 4.3.6.3).
 #[tokio::test]
 async fn distop_entity_inclusive_additive_provision_serviced_locally_and_distributed() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -132,9 +125,7 @@ async fn distop_entity_inclusive_additive_provision_serviced_locally_and_distrib
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Two inclusive sources covering overlapping data each receive one forwarded
-/// query and both contribute to the integrated result, of equal priority
-/// (clause 4.3.6.3). Confirms REQ-FW-13, REQ-FW-46.
+/// Two inclusive sources covering overlapping data each receive one forwarded query and both contribute to the integrated result, of equal priority (clause 4.3.6.3).
 #[tokio::test]
 async fn distop_entity_inclusive_multiple_sources_equal_priority() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -210,9 +201,7 @@ async fn distop_entity_inclusive_multiple_sources_equal_priority() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration with `mode` omitted behaves as inclusive: the source is
-/// queried and the local data is returned alongside it (clause 5.2.9 default,
-/// 4.3.6.3). Confirms REQ-FW-14.
+/// A registration with `mode` omitted behaves as inclusive: the source is queried and the local data is returned alongside it (clause 5.2.9 default, 4.3.6.3).
 #[tokio::test]
 async fn distop_entity_inclusive_is_default_mode_when_unspecified() {
     let topology = topology::single().await.expect("single-broker topology");

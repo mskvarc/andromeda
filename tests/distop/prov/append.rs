@@ -1,4 +1,4 @@
-//! Append Attributes forwarding — REQ-PROV-20..26 (clause 5.6.3.4).
+//! Append Attributes forwarding (clause 5.6.3.4).
 //!
 //! An append to `POST /entities/{id}/attrs` returns `404` only when no local
 //! entity and no matching registration exists; an exclusive registration
@@ -26,7 +26,7 @@ fn brand_only(id: &str) -> Value {
 }
 
 /// An append on an absent entity with no matching registration is `404
-/// ResourceNotFound`. Confirms REQ-PROV-20 (positive).
+/// ResourceNotFound`.
 #[tokio::test]
 async fn append_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -42,7 +42,7 @@ async fn append_absent_and_no_registration_returns_404() {
 }
 
 /// A matching registration means an absent local entity does not force `404`:
-/// the append forwards once. Confirms REQ-PROV-20 (negative).
+/// the append forwards once.
 #[tokio::test]
 async fn append_registration_matches_entity_absent_not_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -75,7 +75,7 @@ async fn append_registration_matches_entity_absent_not_404() {
 }
 
 /// An exclusive append forwards the owned `speed`, strips it from the local
-/// fragment, and appends the remainder locally. Confirms REQ-PROV-21, 22, 24.
+/// fragment, and appends the remainder locally.
 #[tokio::test]
 async fn append_exclusive_match_forwards_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -133,8 +133,7 @@ async fn append_exclusive_match_forwards_and_strips() {
 }
 
 /// An exclusive registration without `appendAttrs` rejects an owned-only append
-/// with a bare `409 Conflict` and no forwarding. Confirms REQ-PROV-23
-/// (complete-fail).
+/// with a bare `409 Conflict` and no forwarding.
 #[tokio::test]
 async fn append_exclusive_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -173,7 +172,7 @@ async fn append_exclusive_op_unsupported_returns_409() {
 
 /// The same unsupported `appendAttrs`, but with a local remainder, degrades to
 /// `207 Multi-Status` carrying the `409` keyed by `registrationId`; the
-/// remainder is appended locally. Confirms REQ-PROV-23 (partial), 26.
+/// remainder is appended locally.
 #[tokio::test]
 async fn append_op_unsupported_with_remainder_returns_207() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -221,7 +220,6 @@ async fn append_op_unsupported_with_remainder_returns_207() {
 }
 
 /// An inclusive append forwards the full input and also appends locally.
-/// Confirms REQ-PROV-25, 26.
 #[tokio::test]
 async fn append_inclusive_forwards_remainder_and_appends_local() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -276,7 +274,7 @@ async fn append_inclusive_forwards_remainder_and_appends_local() {
 }
 
 /// End-to-end against real broker B: an inclusive append reaches both the local
-/// broker A copy and the peer broker B. Confirms REQ-PROV-25, 26.
+/// broker A copy and the peer broker B.
 #[tokio::test]
 async fn append_pair_inclusive_end_to_end() {
     let topology = topology::pair().await.expect("two-broker topology");

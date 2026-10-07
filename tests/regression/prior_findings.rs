@@ -1,6 +1,4 @@
-//! Regression tests for review findings predating the spec-conformance sweep.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Regression tests for notification, query, `@context` and identifier behaviours that belong to no single feature suite.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -13,11 +11,10 @@ use reqwest::{Method, StatusCode};
 use serde_json::json;
 use std::time::Duration;
 
-/// R2-50: a `receiverInfo` header that is a valid HTTP header must reach the
-/// notification endpoint. The delivery path applies each `receiverInfo` entry;
-/// the fix additionally surfaces (rather than silently drops) any entry that
-/// cannot become a header, so an `Authorization` token is never quietly lost,
-/// which would deliver the notification unauthenticated.
+/// A `receiverInfo` header that is a valid HTTP header must reach the
+/// notification endpoint. An entry that cannot become a header is surfaced
+/// rather than silently dropped, so an `Authorization` token is never quietly
+/// lost, which would deliver the notification unauthenticated.
 #[tokio::test]
 async fn regression_r2_50_receiver_info_authorization_header_reaches_the_endpoint() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -64,11 +61,11 @@ async fn regression_r2_50_receiver_info_authorization_header_reaches_the_endpoin
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R2-113: a JSON-LD context `Link` header whose parameters carry an escaped
-/// quote (RFC 8288 quoted-pair) and a semicolon inside the quotes must still be
-/// parsed correctly, so the context is applied and the entity's compact `type`
-/// resolves. A parser that toggled quote state on the escaped quote severed the
-/// value and could shadow the real `rel`, losing the context.
+/// A JSON-LD context `Link` header whose parameters carry an escaped quote
+/// (RFC 8288 quoted-pair) and a semicolon inside the quotes must still be parsed
+/// correctly, so the context is applied and the entity's compact `type`
+/// resolves. Toggling quote state on the escaped quote would sever the value and
+/// could shadow the real `rel`, losing the context.
 #[tokio::test]
 async fn regression_r2_113_context_link_with_an_escaped_quote_still_resolves_the_context() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -118,11 +115,11 @@ async fn regression_r2_113_context_link_with_an_escaped_quote_still_resolves_the
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R2-24: a POST query body's `entities[]` is a union of independent selectors
+/// A POST query body's `entities[]` is a union of independent selectors
 /// (clause 5.2.11), not a flattened cross product. `{id:A,type:T1}` OR
 /// `{id:B,type:T2}` must not match an entity `(id:A, type:T2)` that pairs one
-/// selector's id with another's type -- the pairing the old flattened
-/// `id IN (A,B) AND type IN (T1,T2)` form wrongly admitted.
+/// selector's id with another's type -- the pairing a flattened
+/// `id IN (A,B) AND type IN (T1,T2)` form would wrongly admit.
 #[tokio::test]
 async fn regression_r2_24_post_query_selectors_are_a_union_not_a_cross_product() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -172,11 +169,10 @@ async fn regression_r2_24_post_query_selectors_are_a_union_not_a_cross_product()
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R2-55: clause 4.19 admits a conjunction only parenthesised
+/// Clause 4.19 admits a conjunction only parenthesised
 /// (`OrScopeQ = "(" ScopeQ *(andOp ScopeQ) ")" / ScopeQ`). A subscription that
 /// stores a `scopeQ` conjunction `/A;/B` must render it back as `(/A;/B)` -- text
-/// a conforming peer broker accepts -- not the bare `/A;/B` the renderer used to
-/// emit.
+/// a conforming peer broker accepts -- not the bare `/A;/B`.
 #[tokio::test]
 async fn regression_r2_55_stored_scope_query_conjunction_renders_parenthesised() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -211,7 +207,7 @@ async fn regression_r2_55_stored_scope_query_conjunction_renders_parenthesised()
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R2-73: a response advertises the versioned core `@context` clause 4.4 and
+/// A response advertises the versioned core `@context` clause 4.4 and
 /// Annex C name (`...ngsi-ld-core-context-v1.9.jsonld`), so a client sees the
 /// precise core context version its response was produced against. The
 /// versionless alias stays accepted on inbound documents.
@@ -236,7 +232,7 @@ async fn regression_r2_73_response_advertises_the_versioned_core_context() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R2-71: clause 5.2.23 fixes a POST query body's `type` as `Query`; a body that
+/// Clause 5.2.23 fixes a POST query body's `type` as `Query`; a body that
 /// names a different resource type is rejected, not accepted and ignored.
 #[tokio::test]
 async fn regression_r2_71_post_query_body_typed_other_than_query_is_rejected() {
@@ -258,10 +254,10 @@ async fn regression_r2_71_post_query_body_typed_other_than_query_is_rejected() {
     );
 }
 
-/// R2-92: percent-decoding at the presentation boundary is targeted -- a
+/// Percent-decoding at the presentation boundary is targeted -- a
 /// Relationship's `object` (a percent-encoded entity id) is decoded, while a
 /// Property value carrying a literal `%` is left untouched. The notification
-/// worker now shares this one walk, so a notification decodes as a GET does.
+/// worker shares this one walk, so a notification decodes as a GET does.
 #[tokio::test]
 async fn regression_r2_92_relationship_object_decodes_but_property_percent_survives() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -289,8 +285,8 @@ async fn regression_r2_92_relationship_object_decodes_but_property_percent_survi
     scope.finish().await.expect("cleanup failed");
 }
 
-/// R2-136: a `type` selector that is not a clause 4.6.2 name is rejected at the
-/// query seam. The leaf of a type expression is now an `EntityTypeName`, so a
+/// A `type` selector that is not a clause 4.6.2 name is rejected at the query
+/// seam. The leaf of a type expression is an `EntityTypeName`, so a
 /// value like `42bad` is a `BadRequestData` rather than a leaf parsed to match
 /// nothing.
 #[tokio::test]
@@ -309,8 +305,8 @@ async fn regression_r2_136_a_malformed_type_selector_is_rejected() {
     );
 }
 
-/// R2-144: every identifier is admitted through the one lexicon `Uri` parser
-/// (a URN or a URL), so a malformed registration id is rejected while a
+/// Every identifier is admitted through one URI parser (a URN or a URL), so a
+/// malformed registration id is rejected while a
 /// well-formed URN parses and is merely absent.
 #[tokio::test]
 async fn regression_r2_144_a_malformed_id_is_rejected_and_a_bare_urn_parses() {
@@ -345,9 +341,9 @@ async fn regression_r2_144_a_malformed_id_is_rejected_and_a_bare_urn_parses() {
     );
 }
 
-/// R2-74: with the doubled-prefix rewrite shim gone, a hosted `@context`
-/// registered under its canonical `/ngsi-ld/v1/jsonldContexts/{id}` URL still
-/// resolves through the registry — registration and retrieval round-trip.
+/// A hosted `@context` registered under its canonical
+/// `/ngsi-ld/v1/jsonldContexts/{id}` URL resolves through the registry:
+/// registration and retrieval round-trip.
 #[tokio::test]
 async fn regression_r2_74_a_hosted_context_resolves_via_its_canonical_registry_key() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

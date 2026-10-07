@@ -1,15 +1,6 @@
 //! The identifier a Replace Entity stores (clause 5.6.18).
 //!
-//! Clause 5.6.18.4 replaces the target "with the same Entity ID with the new
-//! Entity content provided", and the target is the one the request URL names.
-//! A replacement that left its `id` out was stored without one: retrieving the
-//! entity by its URL still worked, because that read supplies the id from the
-//! URL, but every query that returned it failed with `entity is missing an id`,
-//! so one replace broke every query over its type. A replacement naming another
-//! entity was stored under that other id. The stored replacement now always
-//! carries the target's id, and a payload naming another entity is refused.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Clause 5.6.18.4 replaces the target "with the same Entity ID with the new Entity content provided", and the target is the one the request URL names. A replacement that leaves its `id` out is therefore stored with the target's id, since a stored entity without one would make every query returning it fail, and a payload naming another entity is refused.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

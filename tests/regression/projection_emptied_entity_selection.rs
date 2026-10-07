@@ -3,17 +3,14 @@
 //!
 //! ETSI GS CIM 009 v1.9.1 clauses 5.7.2.5 and 5.7.4.5 reduce "every Entity
 //! within the payload body" to the Entity members a `pick` / `omit` projection
-//! defines, and an Entity reduced to no member at all is not answered: the ETSI
-//! conformance test `019_17_01` queries `type=Building,Vehicle&pick=name` over a
-//! Vehicle that has no `name` and expects the Buildings alone. The broker used
-//! to drop such an Entity after the page had been cut and counted, so
-//! `NGSILD-Results-Count` (clause 6.3.13, "the total number of matching
-//! results") counted an Entity no page would ever carry, and a page fell short
-//! of its `limit` for a reason clause 5.5.9.1 does not admit. The Entity is now
-//! not selected, on the Core and the Temporal query alike, so the count and
-//! every page agree with the Entities returned.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! defines, and an Entity reduced to no member at all is not answered: a query
+//! for `type=Building,Vehicle&pick=name` over a Vehicle that has no `name`
+//! answers the Buildings alone. Dropping such an Entity after the page has been
+//! cut and counted would make `NGSILD-Results-Count` (clause 6.3.13, "the total
+//! number of matching results") count an Entity no page will ever carry, and a
+//! page would fall short of its `limit` for a reason clause 5.5.9.1 does not
+//! admit. The Entity is therefore not selected, on the Core and the Temporal
+//! query alike, so the count and every page agree with the Entities returned.
 
 use andromeda_test_client::{entity::results_count, header::jsonld_link_header, response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;

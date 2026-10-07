@@ -99,7 +99,7 @@ impl EntityQueryService {
             // Tables 6.4.3.2-1 and 5.2.14.1-1 make `attrs` "a synonym for
             // pick", so the clause 5.7.1.4 rule `attrs` obeys is the same rule here,
             // and clause 5.7.1.5 reduces the Entity "down to only contain the
-            // defined Entity members" -- an Entity left with none of them is an
+            // defined Entity members", an Entity left with none of them is an
             // Entity the retrieval cannot answer with.
             if let Some(projection) = narrowing.projection
                 && state_remainder(&state, projection, now).is_nothing()

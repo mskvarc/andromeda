@@ -7,8 +7,7 @@ use pretty_assertions::assert_eq;
 /// The queue column must carry the same `write_id` name every runtime
 /// statement that inserts, acknowledges and retries an intent uses, and the
 /// three-part idempotency constraint must be attached to that identity. The
-/// column was once created as `intent_id` and renamed by a later migration;
-/// with the schema edited in place that name must not exist at all. The queue
+/// name `intent_id` must not exist at all. The queue
 /// has no dead-letter state -- an intent is the durable record of accepted
 /// history and stays claimable however often it fails -- so no terminal
 /// column is expected here either; the failure summary it keeps is bounded by

@@ -31,7 +31,7 @@ pub trait TenantDatabase: Send + Sync + 'static {
     ///
     /// Carries both where the tenant's data lives and its administrative status,
     /// so a cold admission learns in one read whether the tenant may be served
-    /// at all — a suspended tenant is refused rather than provisioned or woken.
+    /// at all: a suspended tenant is refused rather than provisioned or woken.
     #[must_use = "tenant lookups must be awaited"]
     async fn tenant_record(&self, name: &TenantName) -> Result<Option<TenantRecord>, TenancyError>;
 

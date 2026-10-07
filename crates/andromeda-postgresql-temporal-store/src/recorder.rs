@@ -23,26 +23,11 @@ impl TemporalRecorder {
 
     /// Record typed append intents inside the caller's anchor transaction.
     ///
-    /// `record` is the write identity every intent in `intents` shares. The
-    /// caller states it explicitly rather than this method inferring it from
-    /// `intents.first()`, and every intent is checked against it before
-    /// anything is written: the history rows are stamped from each intent's
-    /// own record, `write_records` has no foreign key from `attribute_history`
-    /// or `scope_history` to catch a disagreement, and the release of a write
-    /// record seeks its history rows by the persisted `recorded_at` -- so a row
-    /// stamped with another instant would protect nothing and survive its
-    /// record. It is persisted once rather than once per intent. Idempotency of the rows themselves is
-    /// row-level: each entry insert carries `ON CONFLICT ... DO NOTHING` on its
-    /// stream's write identity, so a commit retried after the transaction was
-    /// already durable appends every intent again and lands nothing a second
-    /// time, without this method needing to know which of the intents, if any,
-    /// were already written.
+    /// `record` is the write identity every intent in `intents` shares, persisted once rather than once per intent. The caller states it explicitly rather than this method inferring it from `intents.first()`, and every intent is checked against it before anything is written: history rows are stamped from each intent's own record, `write_records` has no foreign key from `attribute_history` or `scope_history` to catch a disagreement, and the release of a write record seeks its history rows by the persisted `recorded_at`, so a row stamped with another instant would protect nothing and survive its record.
     ///
-    /// History only. The `current_attribute_values` projection is written by
-    /// the same transaction from the same intents, but by the crate that owns
-    /// the commit rather than from here: the projection is current entity
-    /// state, and the temporal catalogue (migration 0020) keeps Temporal
-    /// Evolution independent of it in both directions.
+    /// Idempotency of the rows themselves is row-level: each entry insert carries `ON CONFLICT ... DO NOTHING` on its stream's write identity, so a commit retried after the transaction was already durable appends every intent again and lands nothing a second time.
+    ///
+    /// History only. The `current_attribute_values` projection is written by the same transaction from the same intents, but by the crate that owns the commit rather than from here: the projection is current entity state, and the temporal catalogue keeps Temporal Evolution independent of it in both directions.
     ///
     /// # Errors
     ///

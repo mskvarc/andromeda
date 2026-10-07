@@ -200,9 +200,8 @@ mod tests {
         assert_eq!(attribute_trigger(AttributeChangeKind::Deleted), NotificationTrigger::AttributeDeleted);
     }
 
-    /// The deferred-change queues persist the transition kind; its spelling is
-    /// the one the model type it replaced persisted (`created`, `updated`,
-    /// `deleted`), and the lifecycle keeps its own.
+    /// The deferred-change queues persist the transition kind as `created`,
+    /// `updated` or `deleted`; the lifecycle keeps its own spellings.
     #[test]
     fn the_persisted_spellings_of_a_change_are_unchanged() {
         for (kind, spelling) in [

@@ -1,9 +1,8 @@
 //! Migration reconciliation: the backfilled schema is internally consistent.
 //!
-//! The rebuild moved every temporal and current-state relation to new shapes
-//! and then dropped the relations it read from, so the old representation is no
-//! longer there to be compared against. What remains checkable, and what
-//! matters, is that the backfilled result is internally consistent: every
+//! The rebuild dropped the relations it read from, so there is no earlier
+//! representation to compare against. What is checkable, and what matters, is
+//! that the backfilled result is internally consistent: every
 //! child row still names a parent that exists, every dictionary and catalogue
 //! reference resolves, and no relation the rebuild replaced was left behind as
 //! a second authority.

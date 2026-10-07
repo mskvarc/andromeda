@@ -18,8 +18,8 @@ use uuid::Uuid;
 
 /// Names interned before the write under test.
 ///
-/// Past the 10,000-entry cap the broker used to enforce per dictionary, so the
-/// check fails if any such cap comes back.
+/// Past 10,000 entries, so the check fails if a per-dictionary cap of that size
+/// is ever enforced.
 const NAMES_INTERNED_FIRST: i32 = 11_000;
 
 /// An entity carrying one attribute under the core context's default vocabulary.

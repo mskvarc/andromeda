@@ -2,7 +2,7 @@
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 6.2 requires that "the API shall support HTTP
 //! over TLS (also known as HTTPS)". A deployment may meet that by terminating
-//! TLS at a reverse proxy (see `docs/tls-deployment.md`), which leaves the
+//! TLS at a reverse proxy, which leaves the
 //! broker serving plaintext HTTP behind it. The same clause makes the `apiRoot`
 //! include "the scheme ("http" or "https")", so a broker that ignored the
 //! terminator would advertise `http://` URLs for an `https://` deployment --

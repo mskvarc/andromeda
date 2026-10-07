@@ -2,9 +2,9 @@
 //!
 //! Clause 4.5.19 gives one aggregate value per attribute, `datasetId` and
 //! period, so [`crate::aggregation`] groups on exactly those three. Everything
-//! else the rows of a group may disagree about — the `unitCode` of clause
+//! else the rows of a group may disagree about (the `unitCode` of clause
 //! 4.5.2, the attribute family of clause 5.2.4, the shape the value was
-//! recorded in — is projected as the span of the group instead of keying it.
+//! recorded in) is projected as the span of the group instead of keying it.
 //!
 //! A span that is not a single value is not automatically a refusal. `avg` over
 //! a kilogram and a pound is a number nobody can interpret, and `min` over a
@@ -148,8 +148,8 @@ pub enum MixedAggregationGroup {
 /// The facets an `aggrGroupBy` promoted from a spanned property to a group key.
 ///
 /// A facet used as a grouping key splits the groups rather than contradicting
-/// them: `aggrGroupBy=unitCode` makes a formerly-refused mixed-unit request
-/// succeed as one group per unit, and grouping by the attribute family
+/// them: `aggrGroupBy=unitCode` makes a mixed-unit request that would otherwise
+/// be refused succeed as one group per unit, and grouping by the attribute family
 /// (`type`) does the same for a family that changed within a period. A promoted
 /// facet is therefore skipped by [`ensure_uniform_aggregation_groups`], because
 /// the SQL `GROUP BY` has already made it uniform within each group.
@@ -165,8 +165,8 @@ pub struct PromotedGroupFacets {
 ///
 /// `groups` is the statement's output, one entry per attribute, dataset, period
 /// and grouping key. Methods that only count are unaffected, so a request made
-/// up entirely of `totalCount` and `distinctCount` — including the empty method
-/// list, which counts by default — is answered over any span unchanged. A facet
+/// up entirely of `totalCount` and `distinctCount` (including the empty method
+/// list, which counts by default) is answered over any span unchanged. A facet
 /// named in `promoted` is a grouping key rather than a spanned property, so its
 /// uniformity is not a precondition but a consequence of the grouping, and its
 /// check is skipped.
@@ -371,7 +371,7 @@ mod tests {
     }
 
     /// Counting instances says nothing about the scale they were measured on or
-    /// the shape they were recorded in, so every span stays answerable — and an
+    /// the shape they were recorded in, so every span stays answerable, and an
     /// empty method list counts by default.
     #[test]
     fn counting_aggregates_survive_every_kind_of_mixing() {
@@ -449,7 +449,7 @@ mod tests {
 
     /// `aggrGroupBy=unitCode` promotes the unit to a key, so a span that would
     /// be refused as `ConflictingUnits` is accepted: the SQL splits it into one
-    /// group per unit and the guard no longer checks the facet.
+    /// group per unit and the guard does not check the facet.
     #[test]
     fn promoting_the_unit_to_a_key_accepts_a_formerly_conflicting_unit_span() {
         let groups = [uniform_group(

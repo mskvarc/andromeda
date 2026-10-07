@@ -7,7 +7,7 @@
 //! Nothing of that depends on the document, so [`ExpansionContext`] does it
 //! once and keeps the result: a typed expansion of the request decides every
 //! term against [`ExpansionContext::active`], a single term is expanded
-//! against it (`engine::term_lookup`), and the processor, when a document
+//! against it, and the processor, when a document
 //! needs it, starts from the same active context instead of processing the
 //! `@context` again ([`ExpansionContext::expand_text`]).
 //!
@@ -159,8 +159,7 @@ impl JsonLdEngine {
     ///
     /// A context built only from documents the broker embeds is kept for the
     /// whole process; any other is kept on this engine while every document
-    /// it was processed from stays what the loader resolves
-    /// (`engine::processed_context_cache`).
+    /// it was processed from stays what the loader resolves.
     ///
     /// # Errors
     ///

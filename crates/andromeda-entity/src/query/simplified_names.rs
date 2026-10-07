@@ -3,9 +3,9 @@
 //! Every representation but the simplified one is written from the compaction
 //! of the whole expanded Entity, and that compaction is what decides an
 //! Attribute's rendered name. Clause C.6 states the one case where the two
-//! differ: a `@context` that coerces a datatype onto a term — "`"testedAt":
+//! differ: a `@context` that coerces a datatype onto a term, "`"testedAt":
 //! {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@id":
-//! "http://example.org/test/testedAt"}`" — cannot name a reified Property,
+//! "http://example.org/test/testedAt"}`", cannot name a reified Property,
 //! "because in this case testedAt is a complex JSON object, which cannot be
 //! compacted to a DateTime type as the @context specifies. Thus, the full URI
 //! http://example.org/test/testedAt is kept, instead of the short name

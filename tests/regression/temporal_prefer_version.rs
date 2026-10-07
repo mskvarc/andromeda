@@ -2,18 +2,16 @@
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 6.3.6 makes the `Preference-Applied` echo
 //! mandatory on any response carrying a payload body once the client expressed
-//! the preference, and Table 6.18.3.2-2 (line 20250 of the specification) and
-//! Table 6.19.3.1-2 (line 20387) each carry the row that turns an amended
+//! the preference, and Tables 6.18.3.2-2 and 6.19.3.1-2 each carry the row that
+//! turns an amended
 //! answer into "203 Non-Authoritative Information ... amended to conform to a
 //! specific version of the NGSI-LD specification as mandated in clause
 //! 4.3.6.8". The `-1` table of each pair is the URL-parameter table and names no
 //! `Prefer`, because `Prefer` is a header rather than a parameter.
 //!
-//! Before this suite existed the temporal bindings discarded the header before
-//! rendering: `GET /entities` answered 203 with `Preference-Applied` while
-//! `GET /temporal/entities` answered 200 with neither, so the clause 4.3.6.8
-//! adaptation never ran on a temporal answer and the client was never told its
-//! preference had been declined.
+//! The temporal bindings must honour the header as `GET /entities` does,
+//! answering 203 with `Preference-Applied` after the clause 4.3.6.8 adaptation
+//! rather than 200 with neither.
 //!
 //! Clause 4.5.6 makes the Temporal Evolution of an Entity the Entity of clause
 //! 4.5.1 with each Attribute replaced by its temporal representation, and that
@@ -26,8 +24,6 @@
 //! would leave a payload that is no version of a temporal representation rather
 //! than an older one. Both are asserted here, because a naive threading of the
 //! header truncates a history to one point and strips its timestamps.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

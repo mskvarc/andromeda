@@ -357,9 +357,7 @@ mod tests {
         JsonLdEngine::builder().allow_remote(false).build().expect("engine builds")
     }
 
-    /// Narrow `client` under the core context, the case the ETSI conformance
-    /// suite exercises: every term equals the last segment of its IRI, so the
-    /// engine and the old last-segment heuristic agree.
+    /// Narrow `client` under the core context, where every term equals the last segment of its IRI.
     async fn narrow(client: ClientQuery<'_>, registration: &ContextSourceRegistration, split: SplitEntities) -> Vec<ForwardedQuery> {
         let engine = offline_engine();
         let context = ContextSpec::none();
@@ -385,8 +383,7 @@ mod tests {
             .expect("narrowing succeeds")
     }
 
-    /// Narrow `client` under an inline `@context` that aliases its terms to
-    /// unrelated IRIs, so the compact term differs from the IRI's last segment.
+    /// Narrow `client` under an inline `@context` that aliases its terms to unrelated IRIs, so the compact term differs from the IRI's last segment.
     async fn narrow_aliased(
         client: ClientQuery<'_>,
         registration: &ContextSourceRegistration,
@@ -415,8 +412,7 @@ mod tests {
     const ALIASED_SPEED: &str = "https://example.org/vocab/speed";
     const ALIASED_VEHICLE: &str = "https://example.org/vocab/Vehicle";
 
-    /// The `@context` body that spells the aliased IRIs `spd` and `Veh`, whose
-    /// last segments (`speed`, `Vehicle`) the old heuristic would have produced.
+    /// The `@context` body that spells the aliased IRIs `spd` and `Veh`.
     fn aliased_context() -> JsonLiteral {
         JsonLiteral::admit(&json!({ "spd": ALIASED_SPEED, "Veh": ALIASED_VEHICLE }).to_string()).expect("an admissible literal")
     }
@@ -709,10 +705,7 @@ mod tests {
         pretty_assertions::assert_eq!(types, vec!["Vehicle", "Car"]);
     }
 
-    /// Direction A (client narrowing): a client attribute is kept in its own
-    /// spelling when its expanded IRI matches a declared attribute IRI. Under an
-    /// aliased `@context` the forwarded term is the alias `spd`, not the IRI's
-    /// last segment `speed` the old heuristic produced.
+    /// A client attribute is kept in its own spelling when its expanded IRI matches a declared attribute IRI: under an aliased `@context` the forwarded term is the alias `spd`, not the IRI's last segment `speed`.
     #[tokio::test]
     async fn an_aliased_client_attribute_is_forwarded_under_its_alias_not_the_iri_segment() {
         let block = registration(&json!([{"entities": [{"type": ALIASED_VEHICLE}], "propertyNames": [ALIASED_SPEED]}]));
@@ -721,7 +714,6 @@ mod tests {
         pretty_assertions::assert_eq!(forwarded.len(), 1);
         pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Type), Some("Veh"));
         pretty_assertions::assert_eq!(forwarded[0].value_of(ForwardedParameter::Attrs), Some("spd"));
-        // The last-segment heuristic would have matched and forwarded `speed`.
         assert!(
             !forwarded[0].to_query_string().contains("speed"),
             "the IRI's last segment must not leak: {}",
@@ -729,9 +721,7 @@ mod tests {
         );
     }
 
-    /// Direction B (block supplying): a client asking only for the type has the
-    /// exclusive block's declared attribute added, compacted through the request
-    /// context to the alias `spd` rather than the last segment `speed`.
+    /// A client asking only for the type has the exclusive block's declared attribute added, compacted through the request context to the alias `spd` rather than the last segment `speed`.
     #[tokio::test]
     async fn an_aliased_block_attribute_is_supplied_under_its_alias_not_the_iri_segment() {
         let block = registration(&json!([{"entities": [{"type": ALIASED_VEHICLE}], "propertyNames": [ALIASED_SPEED]}]));

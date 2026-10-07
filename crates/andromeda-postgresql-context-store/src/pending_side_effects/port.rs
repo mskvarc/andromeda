@@ -190,9 +190,7 @@ fn persistence(error: &sqlx::Error) -> EntityError {
 
 /// Claim a batch of due jobs for `owner`, returning each claimed row's payload.
 ///
-/// The original single data-modifying CTE (`WITH claimable AS (SELECT … FOR
-/// UPDATE SKIP LOCKED) UPDATE … RETURNING`) is rebuilt as one `UPDATE` whose
-/// `WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)` both selects and claims the
+/// One `UPDATE` whose `WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)` both selects and claims the
 /// batch atomically. The candidate predicate is the queue's claim index: not
 /// dead, due, and either unleased or held under an expired lease.
 ///

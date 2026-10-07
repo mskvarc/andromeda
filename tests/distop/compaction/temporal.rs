@@ -1,8 +1,6 @@
 //! Temporal query narrowing under an aliased `@context` (clause 5.7.4.4).
 //!
-//! A temporal query is narrowed the same way a current-entity query is, so the
-//! covered aliased type and attribute must reach a `queryTemporal` source in the
-//! context's compact spelling.
+//! A temporal query is narrowed the same way a current-entity query is, so the covered aliased type and attribute must reach a `queryTemporal` source in the context's compact spelling.
 
 use crate::{
     compaction::{CAPTURE_TIMEOUT, FORWARDED_TEMPORAL, aliased_document, assert_no_last_segment, registration_context, serve},
@@ -15,8 +13,7 @@ use crate::{
 use axum::http::Method;
 use serde_json::json;
 
-/// A temporal query forwards the client's aliased type and attribute under their
-/// aliases, never the IRIs' last segments.
+/// A temporal query forwards the client's aliased type and attribute under their aliases, never the IRIs' last segments.
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_forwards_a_temporal_query_under_the_alias() {

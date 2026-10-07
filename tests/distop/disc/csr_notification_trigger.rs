@@ -1,7 +1,4 @@
-//! Context Source Notification structure and trigger reasons (clauses 5.3.2,
-//! 5.3.3, 5.11.7): the required notification fields and the newlyMatching /
-//! updated / noLongerMatching transitions. `T-LOCAL` plus the notification
-//! adapter.
+//! Context Source Notification structure and trigger reasons (clauses 5.3.2, 5.3.3, 5.11.7): the required notification fields and the newlyMatching / updated / noLongerMatching transitions.
 
 use crate::{
     disc::{
@@ -27,11 +24,7 @@ fn subscription(id: &str, endpoint: &str, entity_type: &str) -> serde_json::Valu
     CsrSubscriptionBuilder::new(id, endpoint, entity_type).build()
 }
 
-/// The notification carries every required Context Source Notification field: a
-/// URI id, the `ContextSourceNotification` type, the subscription id, a
-/// timestamp, a trigger reason, and a non-empty data array (clause 5.3.2).
-/// Confirms REQ-DISC-1, REQ-DISC-2, REQ-DISC-3, REQ-DISC-4, REQ-DISC-5,
-/// REQ-DISC-6, REQ-DISC-86.
+/// The notification carries every required Context Source Notification field: a URI id, the `ContextSourceNotification` type, the subscription id, a timestamp, a trigger reason, and a non-empty data array (clause 5.3.2).
 #[tokio::test]
 async fn csr_notification_has_required_csource_notification_structure() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -70,8 +63,7 @@ async fn csr_notification_has_required_csource_notification_structure() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The initial notification for a subscription over an already-registered
-/// context source is `newlyMatching` (clause 5.11.7). Confirms REQ-DISC-7.
+/// The initial notification for a subscription over an already-registered context source is `newlyMatching` (clause 5.11.7).
 #[tokio::test]
 async fn csr_notification_initial_notification_is_newly_matching() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -95,8 +87,7 @@ async fn csr_notification_initial_notification_is_newly_matching() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Registering a new matching context source drives a `newlyMatching`
-/// notification (clause 5.11.7). Confirms REQ-DISC-8, REQ-DISC-83, REQ-DISC-84.
+/// Registering a new matching context source drives a `newlyMatching` notification (clause 5.11.7).
 #[tokio::test]
 async fn csr_notification_new_matching_csr_registration_is_newly_matching() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -122,8 +113,7 @@ async fn csr_notification_new_matching_csr_registration_is_newly_matching() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A previously non-matching registration updated so it matches drives a
-/// `newlyMatching` notification (clause 5.11.7). Confirms REQ-DISC-9.
+/// A previously non-matching registration updated so it matches drives a `newlyMatching` notification (clause 5.11.7).
 #[tokio::test]
 async fn csr_notification_non_matching_csr_updated_to_match_is_newly_matching() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -156,8 +146,7 @@ async fn csr_notification_non_matching_csr_updated_to_match_is_newly_matching() 
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A matching registration updated while still matching drives an `updated`
-/// notification (clause 5.11.7). Confirms REQ-DISC-10, REQ-DISC-83.
+/// A matching registration updated while still matching drives an `updated` notification (clause 5.11.7).
 #[tokio::test]
 async fn csr_notification_matching_csr_updated_still_matching_is_updated() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -189,8 +178,7 @@ async fn csr_notification_matching_csr_updated_still_matching_is_updated() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A matching registration updated so it no longer matches drives a
-/// `noLongerMatching` notification (clause 5.11.7). Confirms REQ-DISC-11.
+/// A matching registration updated so it no longer matches drives a `noLongerMatching` notification (clause 5.11.7).
 #[tokio::test]
 async fn csr_notification_update_makes_csr_no_longer_match_is_no_longer_matching() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -223,8 +211,7 @@ async fn csr_notification_update_makes_csr_no_longer_match_is_no_longer_matching
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Deleting a matching registration drives a `noLongerMatching` notification
-/// (clause 5.11.7). Confirms REQ-DISC-12, REQ-DISC-83.
+/// Deleting a matching registration drives a `noLongerMatching` notification (clause 5.11.7).
 #[tokio::test]
 async fn csr_notification_matching_csr_deletion_is_no_longer_matching() {
     let topology = topology::single().await.expect("single-broker topology");

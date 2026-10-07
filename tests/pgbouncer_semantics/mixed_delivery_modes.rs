@@ -10,13 +10,7 @@
 //! does queues the deliveries the changes owe rather than publishing them to an
 //! in-process channel its notification worker never reads.
 //!
-//! The mirror case -- a durable-delivery broker's job drained by a live-delivery
-//! broker -- is not driven here: a broker's own commit wakes its own drain, so
-//! no request can hand the job to another broker, and whichever broker drains
-//! it the job carries no change, because the durable broker recorded the match
-//! with the write. That producer invariant is guarded by
-//! `batch_create_records_the_match_and_defers_no_event_when_enqueued` in
-//! `andromeda-entity`.
+//! The mirror case -- a durable-delivery broker's job drained by a live-delivery broker -- is not driven here: a broker's own commit wakes its own drain, so no request can hand the job to another broker, and whichever broker drains it the job carries no change, because the durable broker recorded the match with the write.
 
 use crate::{client, control_pool, reset};
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};

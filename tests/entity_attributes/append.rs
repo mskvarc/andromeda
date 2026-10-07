@@ -30,10 +30,6 @@ use reqwest::{Method, StatusCode};
 use serde_json::{Number, json};
 use std::str::FromStr;
 
-// ---------------------------------------------------------------------------
-// Append new attribute
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn attribute_append_new_attribute_success() {
     let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
@@ -107,10 +103,6 @@ async fn attribute_append_with_different_datasetid_success() {
     assert!(body.get("speed").is_some());
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Error cases
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_append_empty_entity_id_returns_error() {
@@ -187,10 +179,6 @@ async fn attribute_append_invalid_json_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// noOverwrite option
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn attribute_append_no_overwrite_existing_returns_207() {
     let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
@@ -201,7 +189,6 @@ async fn attribute_append_no_overwrite_existing_returns_207() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Try to overwrite existing speed attribute with noOverwrite
     let fragment = json!({
         "speed": {
             "type": "Property",
@@ -227,7 +214,6 @@ async fn attribute_append_no_overwrite_new_instance_returns_204() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Append new instance with different datasetId using noOverwrite
     let fragment = json!({
         "speed": {
             "type": "Property",
@@ -241,10 +227,6 @@ async fn attribute_append_no_overwrite_new_instance_returns_204() {
     assert_eq!(status, StatusCode::NO_CONTENT, "noOverwrite with new instance should return 204");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// LanguageProperty
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_append_language_property_success() {
@@ -276,10 +258,6 @@ async fn attribute_append_language_property_success() {
     assert_eq!(body["street"]["languageMap"]["fr"], "Grand Place");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Scope handling
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_append_scope_with_overwrite_success() {
@@ -334,10 +312,6 @@ async fn attribute_append_scope_with_no_overwrite_returns_multi_status_or_204() 
     );
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// observationSpace / operationSpace
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_append_observation_space_success() {
@@ -397,10 +371,6 @@ async fn attribute_append_operation_space_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// JsonProperty
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn attribute_append_json_property_success() {
     let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
@@ -431,10 +401,6 @@ async fn attribute_append_json_property_success() {
     assert!(body["jsonProperty"]["json"].is_object());
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// VocabProperty
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_append_vocab_property_success() {

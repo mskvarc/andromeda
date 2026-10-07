@@ -107,7 +107,7 @@ pub struct CsrQueryParameters {
     /// `cursor`), decided by the broker's pagination policy.
     #[serde(flatten)]
     pub page: PageParameters,
-    /// The legacy representation selector, comma-separated (`options`).
+    /// The deprecated representation selector, comma-separated (`options`).
     pub options: Option<WrittenValue<SysAttrsOptions>>,
 }
 

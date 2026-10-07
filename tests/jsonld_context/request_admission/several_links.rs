@@ -1,4 +1,4 @@
-//! A request naming more than one context link is refused (study C1 to C3).
+//! A request naming more than one context link is refused.
 
 use crate::{
     broker_endpoints::broker_url,
@@ -11,7 +11,7 @@ use crate::{
 use reqwest::StatusCode;
 use serde_json::json;
 
-/// Study C1: two `Link` lines each naming a context are refused on every verb,
+/// Two `Link` lines each naming a context are refused on every verb,
 /// and nothing is written, changed or deleted.
 #[tokio::test]
 async fn two_context_link_lines_are_refused_on_every_verb() {
@@ -32,7 +32,7 @@ async fn two_context_link_lines_are_refused_on_every_verb() {
     tenant.finish().await;
 }
 
-/// Study C2: one `Link` line carrying two context values is two links (IETF
+/// One `Link` line carrying two context values is two links (IETF
 /// RFC 8288 section 3).
 #[tokio::test]
 async fn one_link_line_carrying_two_context_values_is_refused() {
@@ -46,7 +46,7 @@ async fn one_link_line_carrying_two_context_values_is_refused() {
     tenant.finish().await;
 }
 
-/// Study C3: JSON-LD counts context links, not distinct targets, so the same
+/// JSON-LD counts context links, not distinct targets, so the same
 /// link twice is refused too, in two lines and in one.
 #[tokio::test]
 async fn the_same_context_link_twice_is_refused() {

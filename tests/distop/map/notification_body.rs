@@ -1,7 +1,4 @@
-//! Notification body shape: the `Notification` structure, the context source,
-//! attribute projection, system attributes, and the null-URI rendering of
-//! deleted members (clauses 5.8.6, 5.2.25, 4.5.6). All `T-LOCAL` against a live
-//! receiver.
+//! Notification body shape: the `Notification` structure, the context source, attribute projection, system attributes, and the null-URI rendering of deleted members (clauses 5.8.6, 5.2.25, 4.5.6).
 
 use crate::{
     entity::{entity, property, typed_vehicle},
@@ -34,7 +31,6 @@ fn notified_entity(notification: &CapturedNotification, entity_id: &str) -> Valu
 }
 
 /// The notification body conforms to the `Notification` structure (clause 5.2.25).
-/// Confirms REQ-MAP-76.
 #[tokio::test]
 async fn notif_body_conforms_to_notification_structure() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -74,8 +70,7 @@ async fn notif_body_conforms_to_notification_structure() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The notification body carries the context from the subscription's context
-/// when delivered as `application/ld+json` (clause 5.8.6). Confirms REQ-MAP-77.
+/// The notification body carries the context from the subscription's context when delivered as `application/ld+json` (clause 5.8.6).
 #[tokio::test]
 async fn notif_context_from_subscription_jsonld_context() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -118,7 +113,6 @@ async fn notif_context_from_subscription_jsonld_context() {
 }
 
 /// The notification limits attributes to `notification.attributes` (clause 5.8.6).
-/// Confirms REQ-MAP-78.
 #[tokio::test]
 async fn notif_attributes_limited_to_notification_attributes() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -161,7 +155,6 @@ async fn notif_attributes_limited_to_notification_attributes() {
 }
 
 /// Absent `notification.attributes` includes all attributes (clause 5.8.6).
-/// Confirms REQ-MAP-79.
 #[tokio::test]
 async fn notif_absent_notification_attributes_includes_all() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -204,8 +197,7 @@ async fn notif_absent_notification_attributes_includes_all() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// With `showChanges` off, a deletion notification carries only `deletedAt`
-/// (clause 5.8.6). Confirms REQ-MAP-80.
+/// With `showChanges` off, a deletion notification carries only `deletedAt` (clause 5.8.6).
 #[tokio::test]
 async fn notif_deletion_show_changes_off_only_deleted_at() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -259,7 +251,6 @@ async fn notif_deletion_show_changes_off_only_deleted_at() {
 }
 
 /// `sysAttrs` true includes `createdAt` and `modifiedAt` (clause 5.8.6).
-/// Confirms REQ-MAP-81.
 #[tokio::test]
 async fn notif_sys_attrs_true_includes_created_and_modified() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -300,8 +291,7 @@ async fn notif_sys_attrs_true_includes_created_and_modified() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A deleted attribute is rendered with the null URI when `showChanges` is on
-/// (clause 4.5.6). Confirms REQ-MAP-82.
+/// A deleted attribute is rendered with the null URI when `showChanges` is on (clause 4.5.6).
 #[tokio::test]
 async fn notif_deleted_attribute_rendered_as_null_uri() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -356,8 +346,7 @@ async fn notif_deleted_attribute_rendered_as_null_uri() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A deleted attribute renders as a full object with the null URI when more
-/// information is needed (clause 4.5.6). Confirms REQ-MAP-83.
+/// A deleted attribute renders as a full object with the null URI when more information is needed (clause 4.5.6).
 #[tokio::test]
 async fn notif_deleted_attribute_full_object_null_uri_when_more_info_needed() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -413,8 +402,7 @@ async fn notif_deleted_attribute_full_object_null_uri_when_more_info_needed() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A deleted language property renders its language map with the null URI
-/// (clause 4.5.6). Confirms REQ-MAP-84.
+/// A deleted language property renders its language map with the null URI (clause 4.5.6).
 #[tokio::test]
 async fn notif_deleted_language_property_language_map_null_uri() {
     let topology = topology::single().await.expect("single-broker topology");

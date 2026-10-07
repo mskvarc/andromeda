@@ -144,8 +144,8 @@ impl MqttTransportHandle {
 
         // QoS 0 is fire-and-forget: the packet is on its way and there is no
         // acknowledgement to await. Enqueue is deliberately not a health signal
-        // — the event loop reports health from real broker traffic — so a queued
-        // publish no longer masks a degraded connection.
+        // (the event loop reports health from real broker traffic), so a queued
+        // publish cannot mask a degraded connection.
         let Some(ack_receiver) = ack_receiver else {
             return Ok(self.succeeded(start));
         };
@@ -156,7 +156,7 @@ impl MqttTransportHandle {
         //
         // Table 5.2.15-1 confines the endpoint's `timeout` to a binding whose
         // "protocol always returns a response". This is the branch where MQTT
-        // is one -- the acknowledgement above is that response -- so the
+        // is one (the acknowledgement above is that response), so the
         // endpoint's deadline is honoured here, under the same rule the HTTP
         // binding follows: "the NGSI-LD system can override this value", and
         // the pool's acknowledgement window is that system value. The QoS 0

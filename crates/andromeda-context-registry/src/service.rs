@@ -314,9 +314,9 @@ impl ContextRegistryService {
         // to its `@context` subtree (clause 5.13.2.3), which is exactly the
         // shape a stored Context has, so it is stored as it stands, together
         // with the URL it was finally read from: the source may redirect
-        // elsewhere now than it did at the first download. Wrapping it in a
-        // second `@context` produced a document no expansion can use, and
-        // clause 5.13.5 offers no operation that could undo that.
+        // elsewhere than it did at the first download. Wrapping it in a second
+        // `@context` would give a document no expansion can use, and clause
+        // 5.13.5 offers no operation that could undo that.
         if self.store.replace_download(&stored.identifier, &downloaded).await? == ContextMutation::Missing {
             return Err(ContextRegistryError::NotFound {
                 identifier: ContextIdentifier::from(stored.identifier),

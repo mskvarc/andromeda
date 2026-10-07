@@ -5,7 +5,7 @@
 //! how terms are expanded and compacted against an `@context`, clause 4.4 says
 //! which released core context a versionless reference means, and clause 5.13 makes
 //! the contexts a broker has resolved a resource of their own. Everything that
-//! follows from those three is here — which contexts apply to one operation
+//! follows from those three is here: which contexts apply to one operation
 //! ([`context_spec`]), where a context comes from ([`loader`],
 //! [`context_registry`], [`core_context`]), and what expanding or compacting a
 //! document against it produces ([`engine`]). Where a request named its
@@ -40,11 +40,10 @@
 //! the store a compound request `@context` is hosted in so one `Link` header can
 //! name it; [`hosted_context_recognizer::HostedContextRecognizer`], which tells
 //! the loader which references name one of the tenant's own stored `@context`s;
-//! and `andromeda_ngsi_ld_query::term_expander::TermExpander`, which
-//! this crate implements in [`term_expansion`] so the query language never
-//! names JSON-LD. Its inverse, `andromeda_ngsi_ld_query::term_compactor::TermCompactor`,
-//! is implemented by `andromeda-ngsi-ld-compaction`, which compacts names
-//! against a processed context.
+//! and the query language's term expander, which this crate implements in
+//! [`term_expansion`] so the query language never names JSON-LD. Its inverse,
+//! the term compactor, is implemented by the compaction crate, which compacts
+//! names against a processed context.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]

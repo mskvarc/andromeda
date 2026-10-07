@@ -1,20 +1,4 @@
-//! An attribute nesting deeper than the broker reads back what it stores, on
-//! every Core write (R60).
-//!
-//! ETSI GS CIM 009 v1.9.1 bounds no nesting. The broker stores an attribute as
-//! its JSON-LD expansion, about two containers per level, and reads every
-//! stored document back with a reader that refuses 128. It admitted every
-//! attribute the request reader took, about 125 levels, so an attribute of 61
-//! levels answered 201 and the entity then answered 500 on every read, PATCH
-//! and merge for good. A chain of 33 sub-attributes overflowed the native stack
-//! on the read and one of 40 on the write itself, aborting the broker.
-//!
-//! Each attribute is now held to a nesting limit (32 by default) at admission
-//! and refused with `BadRequestData`: clause 6.3.2 keeps 413 for too many
-//! bytes, and clauses 5.7.1 and 5.7.2 answer a too deep query with
-//! `BadRequestData`. Every attribute at the limit round-trips.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 bounds no nesting, but the broker stores an attribute as its JSON-LD expansion, about two containers per level, and reads every stored document back with a reader that refuses 128. Each attribute is therefore held to a nesting limit (32 by default) at admission and refused with `BadRequestData`: clause 6.3.2 keeps 413 for too many bytes, and clauses 5.7.1 and 5.7.2 answer a too deep query with `BadRequestData`. Every attribute at the limit round-trips.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -84,9 +68,8 @@ async fn regression_r60_every_shape_at_the_limit_is_created_and_reads_back() {
     scope.finish().await.expect("environment cleanup");
 }
 
-/// An attribute of 61 levels was admitted, and its entity could never be read
-/// again: its stored expansion nests past the reader. It is refused, and
-/// nothing is stored.
+/// An attribute of 61 levels would store an expansion nested past the reader,
+/// so it is refused and nothing is stored.
 #[tokio::test]
 async fn regression_r60_an_attribute_past_the_old_read_bound_is_refused_not_stored() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -303,10 +286,7 @@ async fn regression_r60_an_entity_at_the_limit_is_served_by_every_read() {
     scope.finish().await.expect("environment cleanup");
 }
 
-/// A chain of 124 sub-attributes, the longest the request reader admits in
-/// one attribute, overflowed the stack of the request's worker and aborted the
-/// broker. It is refused like any attribute past the limit, and the broker
-/// answers on.
+/// 124 sub-attributes is the longest chain the request reader admits in one attribute; it is refused like any attribute past the limit.
 #[tokio::test]
 async fn regression_r60_a_chain_of_sub_attributes_as_long_as_the_reader_admits_is_refused_without_aborting() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -325,8 +305,7 @@ async fn regression_r60_a_chain_of_sub_attributes_as_long_as_the_reader_admits_i
     scope.finish().await.expect("environment cleanup");
 }
 
-/// A text nesting past the request reader's 127 containers is no JSON the
-/// reader takes, and stays the reader's `InvalidRequest`.
+/// A text nesting past the request reader's 127 containers is no JSON the reader takes, and stays the reader's `InvalidRequest`.
 #[tokio::test]
 async fn regression_r60_a_text_past_the_request_reader_is_an_invalid_request() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

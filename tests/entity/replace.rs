@@ -26,10 +26,6 @@ use reqwest::{Method, StatusCode};
 use serde_json::{Number, json};
 use std::str::FromStr;
 
-// ---------------------------------------------------------------------------
-// 054_01: Replace existing entity
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_replace_success_createdat_preserved() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -40,17 +36,14 @@ async fn entity_replace_success_createdat_preserved() {
     let status = create_entity_json(&c, &entity, COMPOUND_CONTEXT).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Get createdAt before replacement
     let (status, before) = get_entity(&c, &id, "options=sysAttrs", "application/json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     let created_at = before["createdAt"].as_str().unwrap().to_string();
 
-    // Replace entity
     let replacement = building_locatedat_and_name(&id);
     let (status, _) = replace_entity(&c, &id, &replacement, "application/json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "replace should return 204");
 
-    // Verify replacement
     let (status, after) = get_entity(&c, &id, "options=sysAttrs", "application/json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(after["name"]["value"], "Pisa Tower", "name should be updated");
@@ -79,10 +72,6 @@ async fn entity_replace_preserves_an_exact_decimal() {
     assert!(serde_json::to_string(&body).expect("entity JSON").contains("0.120000000000000005"));
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 054_02: Error cases
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_replace_invalid_id_returns_400() {
@@ -119,7 +108,6 @@ async fn entity_replace_missing_id_returns_error() {
     });
 
     let (status, _) = request_method_on_collection(&c, Method::PUT, Some(&replacement)).await;
-    // PUT on /entities (collection) without an ID
     assert!(
         status == StatusCode::BAD_REQUEST || status == StatusCode::METHOD_NOT_ALLOWED,
         "missing ID should return 400 or 405, got {status}",
@@ -148,10 +136,6 @@ async fn entity_replace_not_found_returns_404() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 054_03: Replace with scopes
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_replace_with_scopes_success() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -162,12 +146,10 @@ async fn entity_replace_with_scopes_success() {
     let status = create_entity_json(&c, &entity, TEST_SUITE_CONTEXT).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Replace with multiple scopes
     let replacement = building_with_many_scopes(&id);
     let (status, _) = replace_entity(&c, &id, &replacement, "application/json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "replace should return 204");
 
-    // Verify scopes replaced
     let (status, body) = get_entity(&c, &id, "", "application/json", None).await;
     assert_eq!(status, StatusCode::OK);
     let scopes = body["scope"].as_array().expect("scope should be an array");

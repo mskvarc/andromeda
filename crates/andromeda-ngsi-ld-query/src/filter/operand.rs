@@ -62,15 +62,7 @@ pub fn parse_compare_value(cursor: &mut TokenCursor<'_>) -> Result<CompareValue,
 /// that the number of false negatives is minimized, as recommended by IETF
 /// RFC 3986 section 6".
 ///
-/// The false negatives the broker had were its own doing. A Relationship object
-/// is parsed as a [`Identifier`] before it is stored, and that parse applies the
-/// RFC 3986 section 6.2.2 syntax-based normalisation and section 6.2.3
-/// scheme-based normalisation for the schemes that define one — case
-/// normalisation of scheme and host, removal of a default port, `.`/`..`
-/// resolution, an empty path becoming `/`. A query operand was compared as the
-/// bytes the client typed. So an entity written with `HTTP://Example.com/a` was
-/// stored as `http://example.com/a` and could not be found by the very URI that
-/// created it.
+/// A Relationship object is parsed as an [`Identifier`] before it is stored, and that parse applies the RFC 3986 section 6.2.2 syntax-based normalisation and section 6.2.3 scheme-based normalisation for the schemes that define one -- case normalisation of scheme and host, removal of a default port, `.`/`..` resolution, an empty path becoming `/`. A query operand is the bytes the client typed, so an entity written with `HTTP://Example.com/a` is stored as `http://example.com/a` and would not be found by the very URI that created it.
 ///
 /// Both spellings are therefore compared, which is what makes the two sides
 /// symmetric: the written one still matches a Property whose string value

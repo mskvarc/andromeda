@@ -14,10 +14,6 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 
-// ---------------------------------------------------------------------------
-// Delete by type
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_delete_by_query_by_type_success() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -41,21 +37,15 @@ async fn entity_delete_by_query_by_type_success() {
     let (status, _) = delete_entities_by_query(&c, &scope, "type=Building&local=true", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete by type should return 204");
 
-    // Verify buildings are gone
     for id in [&id1, &id2, &id3] {
         let (status, _) = get_entity(&c, id, "", "application/json", None).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "building {id} should be deleted");
     }
 
-    // Verify vehicle remains
     let (status, _) = get_entity(&c, &id_vehicle, "", "application/json", None).await;
     assert_eq!(status, StatusCode::OK, "vehicle should still exist");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Delete by ID
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_delete_by_query_by_id_success() {
@@ -82,10 +72,6 @@ async fn entity_delete_by_query_by_id_success() {
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Delete by ID pattern
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_delete_by_query_by_id_pattern_success() {
@@ -116,10 +102,6 @@ async fn entity_delete_by_query_by_id_pattern_success() {
     assert_eq!(status, StatusCode::OK, "unmatched entity should remain");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Delete by q filter
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_delete_by_query_by_q_filter_success() {
@@ -152,10 +134,6 @@ async fn entity_delete_by_query_by_q_filter_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Linked Entity references are refused outright
-// ---------------------------------------------------------------------------
-
 /// Clause 5.6.21.4 defines no `join` for delete by query: the operation renders
 /// nothing and retrieves nothing, so a `q` hop into a Linked Entity and a nested
 /// `pick` term both name something the operation can never reach, whatever else
@@ -182,10 +160,6 @@ async fn entity_delete_by_query_rejects_linked_entity_references() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Empty result returns 204
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_delete_by_query_empty_result_returns_204() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -195,10 +169,6 @@ async fn entity_delete_by_query_empty_result_returns_204() {
     assert_eq!(status, StatusCode::NO_CONTENT, "empty result should return 204");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// No filters returns 400
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_delete_by_query_no_filters_returns_400() {

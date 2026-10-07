@@ -1,14 +1,4 @@
-//! HTTP binding details that diverged from ETSI GS CIM 009 v1.9.1.
-//!
-//! Five defects, each asserted against the clause that fixes its behaviour:
-//! the clause 6.3.10 temporal `Content-Range` (its range unit, its size under
-//! `lastN`, and its forwards `range-start`), the clause 5.6.2.5 list of
-//! attributes actually updated, the clause 6.3.8 placement of a `GeoJSON`
-//! notification's `@context`, Table 6.23.3.1-1's `EntityMap` answer on
-//! `POST /entityOperations/query`, which clause 6.23.1 makes a second decoder
-//! of the clause 6.4.3.2 operation rather than a second implementation of it,
-//! and the error type clause 6.3.5 gives a request that names its `@context`
-//! twice.
+//! HTTP binding details asserted against the clause that fixes each behaviour: the clause 6.3.10 temporal `Content-Range` (range unit, size under `lastN`, forwards `range-start`), the clause 5.6.2.5 list of attributes actually updated, the clause 6.3.8 placement of a `GeoJSON` notification's `@context`, Table 6.23.3.1-1's `EntityMap` answer on `POST /entityOperations/query` (which clause 6.23.1 makes a second decoder of the clause 6.4.3.2 operation, not a second implementation), and the error type clause 6.3.5 gives a request that names its `@context` twice.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -55,9 +45,7 @@ fn content_range(headers: &HeaderMap) -> Option<String> {
     headers.get("content-range").and_then(|value| value.to_str().ok()).map(str::to_owned)
 }
 
-/// The broker's `temporal.default_last_n` safety cap. A page is only a 206 --
-/// and only then carries a `Content-Range` -- when the result is actually cut,
-/// which needs more observations than this and a `lastN` above it.
+/// The broker's `temporal.default_last_n` safety cap. A page is only a 206, and only then carries a `Content-Range`, when the result is actually cut, which needs more observations than this and a `lastN` above it.
 const SYSTEM_LAST_N_CAP: u32 = 19;
 
 /// A temporal entity carrying `count` observations of `speed`, one per minute
@@ -80,9 +68,7 @@ fn temporal_vehicle(id: &str, count: u32) -> Value {
     })
 }
 
-/// Clause 6.3.10: `"unit" shall be equal to "DateTime"`. The broker previously
-/// emitted the kebab-cased `date-time`, which is not the token the clause names
-/// and which an RFC 7233 client keyed on the unit would not recognise.
+/// Clause 6.3.10: `"unit" shall be equal to "DateTime"`, not a kebab-cased token an RFC 7233 client keyed on the unit would not recognise.
 #[tokio::test]
 async fn regression_content_range_uses_the_datetime_range_unit() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -95,9 +81,7 @@ async fn regression_content_range_uses_the_datetime_range_unit() {
         .expect("create temporal entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    // A `lastN` above the safety cap over more observations than the cap is
-    // what truncates the result, and only a truncated page is a 206 carrying a
-    // `Content-Range`.
+    // A `lastN` above the safety cap over more observations than the cap truncates the result, and only a truncated page is a 206 carrying a `Content-Range`.
     let response = client
         .get_temporal_entity(&id, "timerel=after&timeAt=2019-12-31T00:00:00Z&lastN=25", None)
         .await
@@ -110,10 +94,7 @@ async fn regression_content_range_uses_the_datetime_range_unit() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 6.3.10: with `lastN` present, `"size" shall be equal to the requested
-/// lastN`. The broker previously reported the number of stored instances it
-/// happened to find, so a client could not tell how large a page it had asked
-/// for.
+/// Clause 6.3.10: with `lastN` present, `"size" shall be equal to the requested lastN`, not the number of stored instances found.
 #[tokio::test]
 async fn regression_content_range_size_is_the_requested_last_n() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -126,8 +107,7 @@ async fn regression_content_range_size_is_the_requested_last_n() {
         .expect("create temporal entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    // The client asks for 25 and the broker's cap narrows the page to 19. The
-    // clause reports the number the client asked for, not the number found.
+    // The client asks for 25 and the cap narrows the page to 19; the clause reports the number asked for.
     let response = client
         .get_temporal_entity(&id, "timerel=after&timeAt=2019-12-31T00:00:00Z&lastN=25", None)
         .await
@@ -141,11 +121,7 @@ async fn regression_content_range_size_is_the_requested_last_n() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 6.3.10, forwards pagination: without `lastN`, `"range-start" shall be
-/// equal to timeAt for requests with timerel=after or timerel=between, or the
-/// least recent timestamp in the range of the response, for requests with
-/// timerel=before`. The broker previously used the request's `timeAt` for
-/// `timerel=before` too, reporting a bound the page does not begin at.
+/// Clause 6.3.10, forwards pagination: without `lastN`, `"range-start" shall be equal to timeAt for requests with timerel=after or timerel=between, or the least recent timestamp in the range of the response, for requests with timerel=before`.
 #[tokio::test]
 async fn regression_content_range_start_for_timerel_before_is_the_least_recent_timestamp() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -158,8 +134,7 @@ async fn regression_content_range_start_for_timerel_before_is_the_least_recent_t
         .expect("create temporal entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    // `timeAt` is far later than any observation, so a range-start taken from
-    // the request would be 2021, while the response itself begins in 2020.
+    // `timeAt` is far later than any observation, so a range-start taken from the request would be 2021 while the response begins in 2020.
     let response = client
         .get_temporal_entity(&id, "timerel=before&timeAt=2021-01-01T00:00:00Z", None)
         .await
@@ -180,14 +155,7 @@ async fn regression_content_range_start_for_timerel_before_is_the_least_recent_t
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.6.2.4 defines Update Attributes as a partial update patch: an
-/// attribute the target entity already carries is replaced, and one it does not
-/// carry "shall be appended to the target Entity". Every named attribute is
-/// therefore written, which clause 5.6.2.5 and Table 6.6.3.2-2 answer with 204
-/// -- "All the Attributes were updated successfully". The 207 `UpdateResult`
-/// is reserved for the case where some part could not be written, which locally
-/// cannot arise and distributedly is a forwarded failure carrying a
-/// `registrationId` (clause 5.2.19).
+/// Clause 5.6.2.4 defines Update Attributes as a partial update patch: an attribute the target already carries is replaced, and one it does not carry "shall be appended to the target Entity". Every named attribute is therefore written, which clause 5.6.2.5 and Table 6.6.3.2-2 answer with 204 ("All the Attributes were updated successfully"). The 207 `UpdateResult` is reserved for a part that could not be written, which locally cannot arise and distributedly is a forwarded failure carrying a `registrationId` (clause 5.2.19).
 #[tokio::test]
 async fn regression_update_attributes_appends_an_attribute_the_entity_did_not_carry() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -233,8 +201,7 @@ async fn regression_update_attributes_appends_an_attribute_the_entity_did_not_ca
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.6.2.5: when every attribute named is written, the operation answers
-/// 204 and carries no `UpdateResult` at all.
+/// Clause 5.6.2.5: when every attribute named is written, the operation answers 204 and carries no `UpdateResult`.
 #[tokio::test]
 async fn regression_update_attributes_answers_no_content_when_every_attribute_is_updated() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -266,10 +233,7 @@ async fn regression_update_attributes_answers_no_content_when_every_attribute_is
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.6.3.5: an append reports the attributes it actually appended, which
-/// is the set the request named -- not every attribute the merged entity ends
-/// up carrying. The broker previously reported the whole entity, so an append
-/// of one attribute to an entity holding ten claimed to have appended eleven.
+/// Clause 5.6.3.5: an append reports the attributes it actually appended, which is the set the request named, not every attribute the merged entity ends up carrying.
 #[tokio::test]
 async fn regression_append_attributes_reports_only_the_attributes_the_request_named() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -286,9 +250,7 @@ async fn regression_append_attributes_reports_only_the_attributes_the_request_na
     let created = client.post_entity(&entity).send().await.expect("create entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    // `speed` already exists, so under `noOverwrite` it is refused; `colour` is
-    // new and is appended. The pre-existing `brandName` is named by neither and
-    // must appear in neither list.
+    // `speed` already exists, so under `noOverwrite` it is refused; `colour` is new and is appended. The pre-existing `brandName` is named by neither and must appear in neither list.
     let fragment = json!({
         "speed": {"type": "Property", "value": 99},
         "colour": {"type": "Property", "value": "red"},
@@ -324,13 +286,7 @@ async fn regression_append_attributes_reports_only_the_attributes_the_request_na
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 6.3.8: "If the target MIME type is `application/geo+json` and the
-/// `notification.endpoint.receiverInfo` contains a key `Prefer` whose value is
-/// set to `body=ld+json` or the `Prefer` key is omitted or
-/// `notification.endpoint.receiverInfo` does not exist, then the HTTP
-/// notification request includes an `@context` element in the payload body."
-/// The broker previously always used a `Link` header for `GeoJSON`, which is the
-/// clause 6.3.7 rule for responses, not the clause 6.3.8 rule for notifications.
+/// Clause 6.3.8: "If the target MIME type is `application/geo+json` and the `notification.endpoint.receiverInfo` contains a key `Prefer` whose value is set to `body=ld+json` or the `Prefer` key is omitted or `notification.endpoint.receiverInfo` does not exist, then the HTTP notification request includes an `@context` element in the payload body." This is the notification rule, distinct from the clause 6.3.7 `Link` header rule for responses.
 #[tokio::test]
 async fn regression_geo_json_notification_carries_its_context_in_the_body_by_default() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -379,10 +335,7 @@ async fn regression_geo_json_notification_carries_its_context_in_the_body_by_def
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 6.3.8: "If the target MIME type is `application/geo+json` and the
-/// `notification.endpoint.receiverInfo` member contains a key `Prefer` whose
-/// value is set to `body=json` then the HTTP notification request shall include
-/// a Link header with a reference to the corresponding JSON-LD `@context`."
+/// Clause 6.3.8: "If the target MIME type is `application/geo+json` and the `notification.endpoint.receiverInfo` member contains a key `Prefer` whose value is set to `body=json` then the HTTP notification request shall include a Link header with a reference to the corresponding JSON-LD `@context`."
 #[tokio::test]
 async fn regression_geo_json_notification_preferring_json_carries_its_context_in_a_link_header() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -436,16 +389,7 @@ async fn regression_geo_json_notification_preferring_json_carries_its_context_in
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Table 6.23.3.1-1 answers `POST /entityOperations/query` with "200 OK / 201
-/// Created (in case an `EntityMap` has been (re)created)" and requires that
-/// "the HTTP response shall include an 'NGSILD-EntityMap' HTTP header that
-/// contains the resource URI of the `EntityMap` resource created in the
-/// operation"; clause 6.23.1 adds that "the behaviour of this clause mirrors
-/// the one in clause 6.4.3.2".
-///
-/// The binding was a second implementation that hard-coded "no map in use": it
-/// minted none, reported none, and answered 200 to a request that asked for
-/// one. It now decodes and delegates to the run the GET binding calls.
+/// Table 6.23.3.1-1 answers `POST /entityOperations/query` with "200 OK / 201 Created (in case an `EntityMap` has been (re)created)" and requires that "the HTTP response shall include an 'NGSILD-EntityMap' HTTP header that contains the resource URI of the `EntityMap` resource created in the operation"; clause 6.23.1 adds that "the behaviour of this clause mirrors the one in clause 6.4.3.2". The POST binding therefore decodes its body and delegates to the run the GET binding calls.
 #[tokio::test]
 async fn regression_entity_query_post_binding_creates_and_reports_its_map() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -511,16 +455,7 @@ async fn regression_entity_query_post_binding_creates_and_reports_its_map() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 6.3.10 asks a pagination pointer to be "a URI-reference that could be
-/// dereferenced by an NGSI-LD Client to retrieve the next page of NGSI-LD
-/// Elements", and clause 5.5.9.1 that the pointers carry "all the parameters
-/// needed to allow NGSI-LD Clients to retrieve the next and previous page,
-/// without further interactions with the API".
-///
-/// `POST /entityOperations/query` carries its query in a clause 5.2.23 body, so
-/// no URI-reference can satisfy either sentence and the binding emits no
-/// pointer; the clause 6.4.3.2 GET binding, whose whole query is in the request
-/// URI, emits one that a client can follow.
+/// Clause 6.3.10 asks a pagination pointer to be "a URI-reference that could be dereferenced by an NGSI-LD Client to retrieve the next page of NGSI-LD Elements", and clause 5.5.9.1 that the pointers carry "all the parameters needed to allow NGSI-LD Clients to retrieve the next and previous page, without further interactions with the API". `POST /entityOperations/query` carries its query in a clause 5.2.23 body, so no URI-reference can satisfy either sentence and the binding emits no pointer; the clause 6.4.3.2 GET binding, whose whole query is in the request URI, emits one a client can follow.
 #[tokio::test]
 async fn regression_entity_query_post_binding_points_at_no_page_it_cannot_serve() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -538,11 +473,7 @@ async fn regression_entity_query_post_binding_points_at_no_page_it_cannot_serve(
     }
     let selection = ids.iter().map(|id| urlencoding::encode(id).into_owned()).collect::<Vec<_>>().join(",");
 
-    // Clauses 6.3.10 and 6.3.13 apply to "HTTP operations corresponding to the
-    // operations listed in clause 4.12", and Table 6.2-1 lists this binding
-    // among the HTTP operations of clause 5.7.2, so `limit`, `offset` and
-    // `count` reach it through the URL that Table 5.2.23-1 gives the body no
-    // member for.
+    // Clauses 6.3.10 and 6.3.13 apply to "HTTP operations corresponding to the operations listed in clause 4.12", and Table 6.2-1 lists this binding among the HTTP operations of clause 5.7.2, so `limit`, `offset` and `count` reach it through the URL that Table 5.2.23-1 gives the body no member for.
     let body = json!({"type": "Query", "entities": [{"type": "Building", "id": ids}]});
     let posted = post_entity_query(client, "limit=2&offset=0&count=true", &body).await;
     assert_eq!(posted.status, StatusCode::OK, "{:?}", posted.body);
@@ -588,12 +519,7 @@ async fn regression_entity_query_post_binding_points_at_no_page_it_cannot_serve(
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 6.3.5: "the presence of a JSON-LD Link header in the incoming HTTP
-/// request when the Content-Type header is 'application/ld+json' shall result
-/// in an HTTP error response of type `BadRequestData`". The batch bindings
-/// answered `InvalidRequest`, which is the type clause 5.5.4 reserves for a
-/// payload body that is not a valid JSON document; a body that is valid JSON
-/// and names its `@context` in both admitted places is the other failure.
+/// Clause 6.3.5: "the presence of a JSON-LD Link header in the incoming HTTP request when the Content-Type header is 'application/ld+json' shall result in an HTTP error response of type `BadRequestData`". `InvalidRequest` is the type clause 5.5.4 reserves for a payload body that is not a valid JSON document; a body that is valid JSON and names its `@context` in both admitted places is the other failure.
 #[tokio::test]
 async fn regression_context_resolution_ld_json_with_a_link_header_is_bad_request_data() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

@@ -206,7 +206,7 @@ fn decode_exact_aggregate(row: &PgRow, column: AggregationColumn) -> Result<Opti
 ///
 /// Every arithmetic aggregate PostgreSQL computes over `value_number` is
 /// `NUMERIC`, so it is converted directly into the JSON numeric model the value
-/// arrived in (`docs/exact-numeric-representation.md`): an integer beyond 2^53
+/// arrived in: an integer beyond 2^53
 /// comes back as that integer, and a literal the model cannot carry fails the
 /// decode instead of becoming a rounded value or a null. The failure names the
 /// column because one row carries several decimal aggregates and the literal

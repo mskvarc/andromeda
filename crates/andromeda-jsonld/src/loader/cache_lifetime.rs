@@ -17,7 +17,7 @@
 //!
 //! The heuristic applies only where the origin server genuinely stated nothing.
 //! A field that is present but cannot be read in full, and a date that is
-//! present but will not parse, both state something — and neither states that
+//! present but will not parse, both state something, and neither states that
 //! the document may be kept for an hour.
 
 use andromeda_configuration_scalars::human_duration::HumanDuration;
@@ -184,8 +184,8 @@ fn cache_control_freshness(headers: &HeaderMap) -> Option<ContextFreshness> {
                 return Some(ContextFreshness::Uncacheable);
             }
             // RFC 7234 section 5.2.2.9: `s-maxage` overrides `max-age` for a
-            // shared cache, which a broker's `@context` store is — in both
-            // directions, whichever of the two spans is the longer.
+            // shared cache, which a broker's `@context` store is, in both
+            // directions: whichever of the two spans is the longer.
             control.s_max_age().or_else(|| control.max_age()).map(granted)
         }
     }
@@ -196,8 +196,8 @@ fn cache_control_freshness(headers: &HeaderMap) -> Option<ContextFreshness> {
 /// RFC 7234 section 5.3 requires a cache recipient to "interpret invalid date
 /// formats, especially the value `0`, as representing a time in the past (i.e.
 /// 'already expired')", so a field that will not parse is a stale document
-/// rather than a silent one — the distinction clause 6.3.16 rests on, since
-/// only a silent origin server earns the heuristic expiration time.
+/// rather than a silent one. Clause 6.3.16 rests on that distinction: only a
+/// silent origin server earns the heuristic expiration time.
 fn expires_freshness(headers: &HeaderMap, default: CacheLifetime) -> ContextFreshness {
     if !headers.contains_key(EXPIRES) {
         return ContextFreshness::Fresh(default);
@@ -226,7 +226,7 @@ enum ResponseCacheControl {
 ///
 /// IETF RFC 9111 section 5.2 makes directive names case-insensitive, while
 /// `headers::CacheControl` recognises them only in lower case, so the field is
-/// case-folded before it is parsed — an origin server answering `No-Store` must
+/// case-folded before it is parsed: an origin server answering `No-Store` must
 /// be obeyed as surely as one answering `no-store`. Every directive this module
 /// reads takes a numeric argument or none at all, so folding the whole field
 /// value cannot alter one.
@@ -266,7 +266,7 @@ fn case_folded(value: &HeaderValue) -> Option<HeaderValue> {
 /// RFC 7234 section 4.2.1 measures it from the response `Date`; a response that
 /// omits `Date` is measured from the moment it arrived instead. An `Expires`
 /// that has already passed leaves nothing, which reads as a zero span rather
-/// than as a failure — a stale document is a cache decision, not an error.
+/// than as a failure: a stale document is a cache decision, not an error.
 fn remaining_until(headers: &HeaderMap, expires: Expires) -> Duration {
     let issued = headers.typed_get::<Date>().map_or_else(SystemTime::now, SystemTime::from);
     SystemTime::from(expires).duration_since(issued).unwrap_or(Duration::ZERO)
@@ -453,8 +453,8 @@ mod tests {
 
     /// Clause 6.3.16 binds the whole `Cache-Control` field, not the values of
     /// it that happen to be readable. A `no-store` beside a value carrying
-    /// bytes that are not text used to be discarded along with it, and the
-    /// response then earned the heuristic lifetime — caching, for an hour, a
+    /// bytes that are not text still binds the cache: discarding it with that
+    /// value would earn the heuristic lifetime and cache, for an hour, a
     /// document the origin server forbade storing at all.
     #[test]
     fn an_unreadable_value_does_not_discard_a_readable_no_store_beside_it() {
@@ -468,7 +468,7 @@ mod tests {
     /// A `Cache-Control` field that was sent but cannot be read in full states
     /// something; it just cannot be shown to permit storage. RFC 7234 section 3
     /// stores only what a cache was permitted to store, so the document is not
-    /// kept — the heuristic of clause 6.3.16 is for an origin server that
+    /// kept; the heuristic of clause 6.3.16 is for an origin server that
     /// stated nothing.
     #[test]
     fn a_cache_control_that_cannot_be_read_forbids_storing_the_document() {

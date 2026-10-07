@@ -22,7 +22,7 @@ const SNAPSHOT_KEY: &str = "NGSILD-Snapshot";
 /// Read once for both protocol versions. `Content-Type` is deliberately absent:
 /// MQTT 5 has a native content-type property and the envelope has a named
 /// member for it, so each spells that one in its own idiom. Everything here has
-/// no protocol slot at all — the clause 5.5.7 `@context` link, the
+/// no protocol slot at all: the clause 5.5.7 `@context` link, the
 /// subscription's `receiverInfo`, and the tenant.
 ///
 /// The `@context` link and every `receiverInfo` entry named `Link` (in any

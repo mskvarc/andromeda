@@ -24,10 +24,6 @@ use uuid::Uuid;
 pub mod context_source_adapter;
 use context_source_adapter::ContextSourceAdapter as MockServer;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// A reqwest client that carries `NGSILD-Tenant` on every request, so a test's
 /// batch entities and forwarding registry live in its own private tenant and
 /// stay isolated from concurrent tests.
@@ -258,10 +254,6 @@ async fn delete_registration(client: &Client, id: &str) {
     let _ = client.delete(format!("{BASE_URL}/csourceRegistrations/{}", encode(id))).send().await;
 }
 
-// ---------------------------------------------------------------------------
-// Batch Create Tests
-// ---------------------------------------------------------------------------
-
 /// Batch create with an exclusive CSR forwards the operation to the CSR endpoint.
 #[tokio::test]
 async fn distop_batch_create_exclusive_forwards_to_csr() {
@@ -277,14 +269,12 @@ async fn distop_batch_create_exclusive_forwards_to_csr() {
     // identifier an `AlreadyExists` error and the batch a 207, and the batch
     // payload's unregistered `isParked2` is exactly the part that would land
     // locally and collide. Forwarding is decided by the registration matching
-    // the input data (clause 5.11), not by what the broker already holds, so
-    // the seed proved nothing and only cost the 201 this test is about.
+    // the input data (clause 5.11), not by what the broker already holds.
     let reg = batch_ops_exclusive_speed_registration(&reg_id, &mock.url("/broker1"), &entity_id1, &entity_id2);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/create", 201).await;
 
-    // Batch create entities with speed attribute (matches exclusive CSR scope)
     let batch = json!([vehicle_entity_speed_different(&entity_id1), vehicle_entity_speed_different(&entity_id2)]);
     pretty_assertions::assert_eq!(batch_create(&c, &batch).await, StatusCode::CREATED);
 
@@ -384,10 +374,6 @@ async fn distop_batch_create_redirect_forwards_to_both_csrs() {
     env.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Batch Upsert (replace) Tests
-// ---------------------------------------------------------------------------
-
 /// Batch upsert replace with an exclusive CSR forwards the operation to the CSR endpoint.
 #[tokio::test]
 async fn distop_batch_upsert_replace_exclusive_forwards_to_csr() {
@@ -407,7 +393,6 @@ async fn distop_batch_upsert_replace_exclusive_forwards_to_csr() {
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entityOperations/upsert", 204).await;
 
-    // Upsert with speed entities (matches exclusive CSR propertyNames scope)
     let batch = json!([vehicle_entity_speed_different(&entity_id1), vehicle_entity_speed_different(&entity_id2)]);
     pretty_assertions::assert_eq!(batch_upsert_replace(&c, &batch).await, StatusCode::NO_CONTENT);
 
@@ -503,10 +488,6 @@ async fn distop_batch_upsert_replace_redirect_forwards_to_both_csrs() {
     mock.shutdown().await;
     env.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Batch Upsert (update) Tests
-// ---------------------------------------------------------------------------
 
 /// Batch upsert update with an exclusive CSR forwards the operation to the CSR endpoint.
 #[tokio::test]
@@ -622,10 +603,6 @@ async fn distop_batch_upsert_update_redirect_forwards_to_both_csrs() {
     mock.shutdown().await;
     env.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Batch Delete Tests
-// ---------------------------------------------------------------------------
 
 /// Batch delete with an inclusive CSR deletes entities locally and forwards to the CSR.
 #[tokio::test]

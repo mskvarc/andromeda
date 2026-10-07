@@ -1,15 +1,6 @@
 //! References of any length, and identifiers held to their bound, end to end.
 //!
-//! Clause 4.6.2 sets no length on a URI, and a Relationship's `object` (Table
-//! 5.2.6-1, "Valid URI or an Array of Valid URIs") and every member of a
-//! `ListRelationship`'s `objectList` (Table 5.2.37-1) is typed as nothing more.
-//! The broker refused every URI longer than 1024 octets, so a producer whose
-//! references ran to several kilobytes had whole entities refused although the
-//! only thing wrong with them was their length. A reference is now bounded
-//! only by the request-body limit; an identifier -- the Entity `id` among
-//! them -- keeps its documented 1024-octet bound, because it is an index key.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Clause 4.6.2 sets no length on a URI, and a Relationship's `object` (Table 5.2.6-1, "Valid URI or an Array of Valid URIs") and every member of a `ListRelationship`'s `objectList` (Table 5.2.37-1) is typed as nothing more, so a reference is bounded only by the request-body limit. An identifier, the Entity `id` among them, keeps its documented 1024-octet bound because it is an index key.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -27,8 +18,7 @@ const FIXTURE_TYPE: &str = "LongReference";
 /// The identifier bound, in octets, that every Entity id is held to.
 const IDENTIFIER_BOUND: usize = 1024;
 
-/// A URN of exactly `length` octets whose tail varies with `seed`, so two
-/// references of one length are distinct and neither compresses to nothing.
+/// A URN of exactly `length` octets whose tail varies with `seed`, so two references of one length are distinct and neither compresses to nothing.
 fn reference_of_length(prefix: &str, seed: u64, length: usize) -> String {
     let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
     let tail: String = (prefix.len()..length)
@@ -118,9 +108,7 @@ fn assert_bad_request_data(response: &TestResponse, operation: &str) -> Value {
     problem
 }
 
-/// Clause 4.6.2 and Table 5.2.37-1: a 6000-octet `objectList` member is a URI.
-/// The Entity is created, its representation returns the member byte for
-/// byte, and a clause 4.9 equality on the `ListRelationship` finds it.
+/// Clause 4.6.2 and Table 5.2.37-1: a 6000-octet `objectList` member is a URI. The Entity is created, its representation returns the member byte for byte, and a clause 4.9 equality on the `ListRelationship` finds it.
 #[tokio::test]
 async fn regression_long_uri_references_a_list_relationship_member_of_six_thousand_octets_round_trips() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -156,10 +144,7 @@ async fn regression_long_uri_references_a_list_relationship_member_of_six_thousa
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Table 5.2.6-1: a single Relationship `object` of 6000 octets is a URI. It
-/// is projected into the overflow column, a clause 4.9 equality selects it and
-/// an inequality excludes it, and a traversal through it matches nothing,
-/// without an error, because no local entity can be named by it.
+/// Table 5.2.6-1: a single Relationship `object` of 6000 octets is a URI. It is projected into the overflow column, a clause 4.9 equality selects it and an inequality excludes it, and a traversal through it matches nothing, without an error, because no local entity can be named by it.
 #[tokio::test]
 async fn regression_long_uri_references_a_single_relationship_object_of_six_thousand_octets_is_compared_and_not_traversed() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -221,8 +206,7 @@ async fn regression_long_uri_references_a_single_relationship_object_of_six_thou
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.6.8: a batch upsert carrying long references succeeds for every
-/// entity, rather than failing the batch on a reference's length.
+/// Clause 5.6.8: a batch upsert carrying long references succeeds for every entity, rather than failing the batch on a reference's length.
 #[tokio::test]
 async fn regression_long_uri_references_a_batch_upsert_carrying_long_references_succeeds() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -253,8 +237,7 @@ async fn regression_long_uri_references_a_batch_upsert_carrying_long_references_
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.6.11: the temporal evolution of a Relationship records its object
-/// as given, however long, and returns it.
+/// Clause 5.6.11: the temporal evolution of a Relationship records its object as given, however long, and returns it.
 #[tokio::test]
 async fn regression_long_uri_references_temporal_history_records_and_returns_a_long_object() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -297,11 +280,7 @@ async fn regression_long_uri_references_temporal_history_records_and_returns_a_l
     scope.finish().await.expect("cleanup failed");
 }
 
-/// An Entity id is an index key and keeps its documented bound: one octet
-/// past it is refused as `BadRequestData`, whose detail names the member and
-/// the bound, and nothing is stored. A batch reports it against the entity
-/// rather than failing the request: Table 5.2.17-1 types `entityId` as any
-/// valid URI, so the over-long `id` is what the error names (clause 5.6.8.4).
+/// An Entity id is an index key and keeps its documented bound: one octet past it is refused as `BadRequestData`, whose detail names the member and the bound, and nothing is stored. A batch reports it against the entity rather than failing the request: Table 5.2.17-1 types `entityId` as any valid URI, so the over-long `id` is what the error names (clause 5.6.8.4).
 #[tokio::test]
 async fn regression_long_uri_references_an_entity_id_one_octet_past_the_bound_is_refused_by_name() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -343,11 +322,7 @@ async fn regression_long_uri_references_an_entity_id_one_octet_past_the_bound_is
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The shape a GTFS-Realtime producer emitted (campaign producer finding
-/// P-03): a trip update whose `stopTimeUpdates` and an alert whose
-/// `informedEntities` hold references of 1047 to 5763 octets. Both are valid
-/// URIs, so the batch that carries them, and the valid neighbour beside them,
-/// is stored whole.
+/// A trip update whose `stopTimeUpdates` and an alert whose `informedEntities` hold references of 1047 to 5763 octets. Both are valid URIs, so the batch that carries them, and the valid neighbour beside them, is stored whole.
 #[tokio::test]
 async fn regression_long_uri_references_a_realtime_feed_with_kilobyte_references_is_stored_whole() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

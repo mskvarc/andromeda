@@ -3,13 +3,11 @@
 //! ETSI GS CIM 009 v1.9.1 clause 5.2.1 makes an NGSI-LD Null outside the update
 //! clauses 5.5.8 and 5.5.12 `BadRequestData`, and clause 4.5.0 spells that Null
 //! `urn:ngsi-ld:null` in the places URI strings are valid, `jsonldContext`
-//! among them. A create has no member to delete, but the broker read the URI as
-//! an absent member and created the subscription.
+//! among them. A create has no member to delete, so the URI is refused rather
+//! than read as an absent member.
 //!
 //! Needs the host broker: the case drives the HTTP API and is not run without
 //! one.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;

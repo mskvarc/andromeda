@@ -103,9 +103,7 @@ pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedCompar
 /// The member hops come *before* the `@value` selector, not after it. JSON-LD
 /// expansion of a structured Property value produces a node whose members are
 /// themselves IRI-keyed arrays of value nodes — `hasValue[0].<city IRI>[0].@value`
-/// — rather than one `@value` holding a raw JSON object. Selecting `@value`
-/// first and then indexing into it addressed a member of a node that does not
-/// exist, so every compound-value predicate resolved nothing.
+/// — rather than one `@value` holding a raw JSON object.
 #[must_use]
 pub fn attribute_value_jsonpath(attr_iri: &str, sub_attrs: &[&str], value_path: &[&str], terminal_iri: &str) -> String {
     let mut jsonpath = String::from("$[0].\"");
@@ -151,7 +149,7 @@ pub fn attribute_value_jsonpath(attr_iri: &str, sub_attrs: &[&str], value_path: 
 /// Whether an expanded IRI names a system sub-attribute stored as a bare value
 /// node rather than as an attribute with a `hasValue`/`hasObject` carrier.
 ///
-/// These are the members `andromeda_entity::sys_attrs` injects and the client's
+/// These are the members the entity layer injects and the client's
 /// own `observedAt`, `unitCode` and `expiresAt`: each is written as
 /// `[{"@type":…,"@value":…}]` (clauses 4.5.1, 4.8 and 4.5.2), so a clause 4.9 `q`
 /// over one reaches its value at `@value` directly. The set is enumerated
@@ -301,7 +299,7 @@ mod tests {
         );
     }
 
-    /// The defect this construction exists to fix: JSON-LD expansion of a
+    /// JSON-LD expansion of a
     /// structured Property value produces IRI-keyed member nodes hanging off
     /// `hasValue`, so the member hop precedes the `@value` selector rather than
     /// indexing into it.
@@ -342,9 +340,8 @@ mod tests {
     }
 
     /// Clause 4.9: a `q` on a system sub-attribute reaches its value directly,
-    /// because it is stored as a bare value node with no `hasValue` carrier.
-    /// Before this, the inserted `hasValue` hop meant `q=temperature.observedAt`
-    /// resolved nothing.
+    /// because it is stored as a bare value node with no `hasValue` carrier, so
+    /// `q=temperature.observedAt` must not insert a `hasValue` hop.
     #[test]
     fn a_system_sub_attribute_terminates_at_its_value_with_no_carrier_hop() {
         for system in [
@@ -363,7 +360,7 @@ mod tests {
         }
     }
 
-    /// The regression guard: a user-defined sub-attribute is not a system value
+    /// A user-defined sub-attribute is not a system value
     /// node, so its value still lives behind the `hasValue` carrier.
     #[test]
     fn a_user_defined_sub_attribute_still_hops_through_its_carrier() {

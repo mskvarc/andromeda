@@ -7,7 +7,7 @@
 //! no longer the collection being paged: the local query then reads every
 //! local match up to the source budget, and the window is cut from the merged
 //! collection instead. Either way the page points at its neighbours by the
-//! pointer family its window carries. See `docs/conformance/stable-pagination.md`.
+//! pointer family its window carries.
 
 use crate::entity::query_forwarding::ForwardedQueryResults;
 use andromeda_http_headers::media_type::ResponseMediaType;

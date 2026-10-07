@@ -5,9 +5,9 @@
 //! `timeInterval` that elapsed -- and clause 5.11.7 describes one sending for
 //! all of them: the structure of clause 5.3.2, the endpoint, then
 //! `timesSent`, `lastNotification` and the success or failure stamp. Keeping
-//! that in one type is what stops the periodic sender and the change-driven
-//! one from drifting apart, which is how the periodic one came to omit the
-//! `triggerReason` Table 5.3.2-1 makes mandatory.
+//! that in one type keeps the periodic sender and the change-driven one from
+//! drifting apart, for instance on the `triggerReason` Table 5.3.2-1 makes
+//! mandatory.
 
 use crate::{claimed_notification_context::claimed_notification_context, error::NotificationError};
 use andromeda_context_space::context_target::ContextTarget;

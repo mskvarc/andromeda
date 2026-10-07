@@ -1,25 +1,8 @@
-//! A Polygon ring or `LineString` that RFC 7946 does not admit is refused
-//! wherever a client sends one.
+//! A Polygon ring or `LineString` that RFC 7946 does not admit is refused wherever a client sends one.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 4.7 makes a `GeoProperty` value an IETF RFC 7946
-//! geometry, clause 4.7.2 accepts one only when it represents "a valid Geometry",
-//! and clause 4.10 requires a reference geometry's coordinates "as mandated by
-//! IETF RFC 7946 [8], section 3.1.1". RFC 7946 section 3.1.4 gives a
-//! `LineString` two or more positions, and section 3.1.6 makes every Polygon
-//! ring "a closed `LineString` with four or more positions" whose first and last
-//! positions "MUST contain identical values". The broker accepted an open ring,
-//! kept it open in what it answered, and closed its own copy for `PostGIS` and
-//! for the in-memory matcher, so a client read back a geometry no other
-//! `GeoJSON` consumer is required to accept; a one-position `LineString` was
-//! accepted as well.
+//! ETSI GS CIM 009 v1.9.1 clause 4.7.2 accepts a `GeoProperty` value only when it is "a valid Geometry", and clause 4.10 requires a reference geometry's coordinates "as mandated by IETF RFC 7946 [8], section 3.1.1". RFC 7946 section 3.1.4 gives a `LineString` two or more positions, and section 3.1.6 makes every Polygon ring "a closed `LineString` with four or more positions" whose first and last positions "MUST contain identical values". Storing an open ring would hand clients a geometry no other `GeoJSON` consumer is required to accept.
 //!
-//! Every client-facing surface now answers `BadRequestData` (clause 5.5.4, and
-//! clause 4.10's syntactic validity for geoqueries) whose detail names the rule
-//! and where in `coordinates` the refused ring or line sits. The winding order
-//! of a ring is not checked: section 3.1.6 says parsers "SHOULD NOT reject
-//! Polygons that do not follow the right-hand rule".
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Every client-facing surface answers `BadRequestData` (clause 5.5.4, and clause 4.10's syntactic validity for geoqueries) whose detail names the rule and where in `coordinates` the refused ring or line sits. Winding order is not checked: section 3.1.6 says parsers "SHOULD NOT reject Polygons that do not follow the right-hand rule".
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -88,8 +71,7 @@ fn assert_refused(response: &TestResponse, scenario: &str, details: &[&str]) {
     }
 }
 
-/// Every number of `value` as an `f64`, so an integral ordinate the rendering
-/// spells `1.0` compares equal to the `1` a fixture wrote.
+/// Integral ordinates are rendered as `1.0`; comparing as `f64` makes them equal to the `1` a fixture wrote.
 fn as_f64(value: &Value) -> Value {
     match value {
         Value::Number(number) => number.as_f64().map_or(Value::Null, |ordinate| json!(ordinate)),
@@ -98,9 +80,7 @@ fn as_f64(value: &Value) -> Value {
     }
 }
 
-/// RFC 7946 sections 3.1.4 and 3.1.6: an entity carrying an open ring, a ring
-/// of three positions, an open hole of a later polygon or a one-position line
-/// is refused, naming the rule and the ring or line, and is not created.
+/// RFC 7946 sections 3.1.4 and 3.1.6: an open ring, a ring of three positions, an open hole of a later polygon or a one-position line is refused, naming the rule and the ring or line, and nothing is created.
 #[tokio::test]
 async fn regression_ring_structure_an_entity_with_an_inadmissible_ring_or_line_is_refused_and_not_created() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -158,8 +138,7 @@ async fn regression_ring_structure_an_entity_with_an_inadmissible_ring_or_line_i
     }
 }
 
-/// A closed ring is stored and read back exactly as sent, however it winds,
-/// and so is a two-position line and a polygon with a hole.
+/// A closed ring is stored and read back exactly as sent, however it winds, as are a two-position line and a polygon with a hole.
 #[tokio::test]
 async fn regression_ring_structure_closed_rings_and_two_position_lines_are_stored_as_sent() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -194,9 +173,7 @@ async fn regression_ring_structure_closed_rings_and_two_position_lines_are_store
     }
 }
 
-/// Clause 5.6.11: a Temporal Evolution one of whose instances holds an open
-/// ring is refused before anything is stored, with the same detail as the
-/// Core API.
+/// Clause 5.6.11: a Temporal Evolution whose instance holds an open ring is refused before anything is stored, with the same detail as the Core API.
 #[tokio::test]
 async fn regression_ring_structure_a_temporal_evolution_with_an_open_ring_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -219,9 +196,7 @@ async fn regression_ring_structure_a_temporal_evolution_with_an_open_ring_is_ref
     assert_eq!(retrieved, StatusCode::NOT_FOUND, "the refused evolution was not stored");
 }
 
-/// Clause 4.10: an open reference ring makes the geoquery syntactically
-/// invalid on every query surface, and clauses 5.8.1 and 5.9.2 refuse it in a
-/// subscription's `geoQ` and in a registration's `location` alike.
+/// Clause 4.10: an open reference ring makes the geoquery syntactically invalid on every query surface, and clauses 5.8.1 and 5.9.2 refuse it in a subscription's `geoQ` and a registration's `location` alike.
 #[tokio::test]
 async fn regression_ring_structure_an_open_reference_ring_is_refused_on_every_surface() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

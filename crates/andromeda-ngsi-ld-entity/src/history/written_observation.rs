@@ -542,8 +542,8 @@ mod tests {
     }
 
     /// Clauses 5.6.8 (replace mode) and 5.6.18: a replacement addressed every
-    /// instance it holds, so each is observed as the stored entity holds it --
-    /// with the `instanceId` the replacement carried -- together with its
+    /// instance it holds, so each is observed as the stored entity holds it
+    /// (with the `instanceId` the replacement carried), together with its
     /// scope, and shared rather than copied. The entity's own `expiresAt` is
     /// not an attribute and is not observed.
     #[test]

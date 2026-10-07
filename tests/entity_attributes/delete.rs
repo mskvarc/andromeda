@@ -28,10 +28,6 @@ use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
-// ---------------------------------------------------------------------------
-// Delete attribute instances
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn attribute_delete_default_instance_success() {
     let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
@@ -48,7 +44,6 @@ async fn attribute_delete_default_instance_success() {
 
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
-    // Other instances with datasetId should remain
     assert!(body.get("speed").is_some(), "speed instances with datasetId should remain");
     scope.finish().await.expect("cleanup failed");
 }
@@ -68,7 +63,6 @@ async fn attribute_delete_with_datasetid_success() {
 
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
-    // Other instance should remain
     assert!(body.get("speed").is_some(), "speed instance with other datasetId should remain");
     scope.finish().await.expect("cleanup failed");
 }
@@ -91,10 +85,6 @@ async fn attribute_delete_all_instances_success() {
     assert!(body.get("speed").is_none(), "all speed instances should be deleted");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Error cases
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_delete_empty_entity_id_returns_error() {
@@ -174,10 +164,6 @@ async fn attribute_delete_nonexistent_datasetid_returns_404() {
     assert_eq!(status, StatusCode::NOT_FOUND, "non-existent datasetId should return 404");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Special attributes
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_delete_scope_success() {

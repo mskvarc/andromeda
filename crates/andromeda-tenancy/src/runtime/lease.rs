@@ -15,9 +15,8 @@ use tokio::sync::Notify;
 /// it. Eviction spares a leased runtime, so the suspend cannot release it at
 /// once; retiring it instead makes admission refuse it and makes the last lease
 /// to drop wake the janitor, which then releases it. Without that, a suspended
-/// tenant's runtime would stay cached -- and keep running its background work --
-/// until it next idled out, contradicting the promise in
-/// `docs/tenant-management.md` that the runtime drops when the request's hold
+/// tenant's runtime would stay cached, and keep running its background work,
+/// until it next idled out, instead of dropping when the request's hold
 /// releases.
 pub(super) struct LeaseOrigin {
     /// Set once the runtime's tenant is suspended while the runtime is leased.
@@ -67,9 +66,9 @@ impl LeaseOrigin {
 /// A hold on a cached tenant runtime that spares it from eviction.
 ///
 /// While at least one lease on a runtime is alive, that runtime's eviction
-/// origin has a strong count above one, and every eviction path -- the idle
+/// origin has a strong count above one, and every eviction path (the idle
 /// sweep, the excess trim on the janitor tick, and the synchronous trim a cold
-/// build runs on insert -- skips it. A lease is taken under the cache shard
+/// build runs on insert) skips it. A lease is taken under the cache shard
 /// guard at resolve time and rides inside the per-request capability set to the
 /// end of the request, so a request holding a runtime's state is never handed a
 /// connection pool that eviction closed underneath it.

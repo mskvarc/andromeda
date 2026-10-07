@@ -9,16 +9,13 @@
 //! exception at all: "A `datasetId` cannot be deleted by setting it to the value
 //! `urn:ngsi-ld:null`."
 //!
-//! The defects these cover: a `datasetId` set to the sentinel was stored and
-//! served back (and a merge silently deleted the member, moving the instance
-//! onto the default one); the batch operations ran no null validation at all,
-//! so a payload `POST /entities` refused was created verbatim by
-//! `POST /entityOperations/create`; and a null nested inside a Property value
-//! object was accepted on every write path rather than on merge alone; and a
-//! Null standing beside data in one member was stored as a value the broker
-//! then failed to read back.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! These cover: a `datasetId` set to the sentinel is refused, not stored and
+//! served back (nor, on a merge, silently deleted, which would move the instance
+//! onto the default one); the batch operations validate nulls like the
+//! single-entity operations, so a payload `POST /entities` refuses is not created
+//! by `POST /entityOperations/create`; a null nested inside a Property value
+//! object is accepted on merge alone; and a Null standing beside data in one
+//! member is refused rather than stored as a value that cannot be read back.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -128,9 +125,9 @@ async fn assert_none_stored(client: &TestClient, ids: &[String], scenario: &str)
 }
 
 /// Clause 5.5.12: "A `datasetId` cannot be deleted by setting it to the value
-/// `urn:ngsi-ld:null`." The merge stored the sentinel as a second instance's
-/// `datasetId` and served it back, which clause 5.5.4 forbids as a first level
-/// member value.
+/// `urn:ngsi-ld:null`." Storing the sentinel as a second instance's
+/// `datasetId` and serving it back would violate clause 5.5.4, which forbids it
+/// as a first level member value.
 #[tokio::test]
 async fn regression_null_sentinel_a_merge_cannot_delete_a_dataset_id() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -194,7 +191,7 @@ async fn regression_null_sentinel_a_partial_update_cannot_delete_a_dataset_id() 
 /// Clause 5.6.7.4 opens Batch Entity Creation with "execute the behaviour
 /// defined in clause 5.5.4 on JSON-LD validation", and clause 5.5.4 excepts
 /// only the Fragments of a partial update or a merge. The batch endpoint
-/// created verbatim what `POST /entities` refused.
+/// refuses what `POST /entities` refuses.
 #[tokio::test]
 async fn regression_null_sentinel_batch_create_refuses_every_prohibited_form() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -233,8 +230,8 @@ async fn regression_null_sentinel_batch_upsert_refuses_every_prohibited_form() {
 /// 5.6.4 and 5.6.17 carry, and clause 5.5.4 excepts only Fragments "used in
 /// partial update and merge operations (as mandated by clause 5.5.8 and clause
 /// 5.5.12)". A batch update therefore has no deletion semantics to give the
-/// sentinel: admitting it stored the literal `urn:ngsi-ld:null` as an attribute
-/// value, which the broker then served back to clients.
+/// sentinel: admitting it would store the literal `urn:ngsi-ld:null` as an attribute
+/// value and serve it back to clients.
 #[tokio::test]
 async fn regression_null_sentinel_batch_update_refuses_the_deletion_sentinel() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -507,11 +504,11 @@ fn exclusive_registration(id: &str, endpoint: &str, entity_type: &str, covered: 
 
 /// Clause 5.6.1.4 lists "Execute the behaviour defined in clause 5.5.4 on
 /// JSON-LD validation" as its first bullet, and the exclusive, redirect and
-/// inclusive forwarding bullets follow it. Two things follow from that order,
-/// and the broker did neither: it forwarded a payload it was going to refuse,
-/// and -- when an exclusive registration claimed every attribute, leaving the
-/// local phase nothing to do -- it answered 201 having run no validation at
-/// all. The control at the end proves the registration really does claim this
+/// inclusive forwarding bullets follow it. Two things follow from that order:
+/// a payload that is to be refused is not forwarded, and when an exclusive
+/// registration claims every attribute, leaving the local phase nothing to do,
+/// validation still runs rather than the create answering 201 unvalidated. The
+/// control at the end proves the registration really does claim this
 /// entity, so the "nothing was forwarded" assertion is not vacuous.
 #[tokio::test]
 async fn regression_null_sentinel_a_fully_proxied_create_is_refused_before_forwarding() {
@@ -651,8 +648,8 @@ async fn regression_null_sentinel_batch_upsert_update_mode_deletes_with_the_sent
 /// The create branch of an update-mode upsert refuses an NGSI-LD Null wherever
 /// it stands, not only as a whole member: clause 5.6.1 supports none, and
 /// clause 5.2.1 answers `BadRequestData` for every Null outside a partial update
-/// or merge. The broker dropped a Null whole member and refused the rest, so
-/// what a create did with a Null depended on how deep it was written.
+/// or merge. What a create does with a Null cannot depend on how deep it is
+/// written.
 #[tokio::test]
 async fn regression_null_sentinel_batch_upsert_update_mode_refuses_a_null_at_any_depth_on_create() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -721,10 +718,10 @@ async fn regression_null_sentinel_batch_upsert_replace_mode_still_refuses_the_se
 
 /// The members that hold the Null beside data: neither the deletion encoding
 /// of clause 4.5.0 ("an array with one single NGSI-LD Null") nor data, since
-/// "null cannot be used as a value in NGSI-LD". The broker created such an
-/// entity with 201 and then could not read it back: every retrieval answered
-/// an internal error, because the stored-document decoder refuses the Null
-/// beside data.
+/// "null cannot be used as a value in NGSI-LD". Creating such an
+/// entity with 201 would leave it unreadable: every retrieval would answer an
+/// internal error, because the stored-document decoder refuses the Null beside
+/// data.
 fn nodes_holding_the_null_beside_data() -> [(&'static str, Value); 5] {
     [
         ("tags", json!({"type": "Property", "value": ["a", NULL_URI]})),

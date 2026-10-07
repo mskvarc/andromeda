@@ -1,23 +1,10 @@
-//! The comparison the typed-model round-trip regressions share: a resource read
-//! back is the resource that was written, once the members the broker owns are
-//! set aside.
+//! The comparison the typed-model round-trip tests share: a resource read back is the resource that was written, once the members the broker owns are set aside.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.2.2 makes the members a client supplies ones
-//! the broker stores and serves back, and Tables 5.2.12-1, 5.2.9-2 and 5.2.14.2-1
-//! name the read-only members the broker adds itself (`createdAt`, `modifiedAt`,
-//! `status`, `isActive`, the delivery counters and timestamps). Those are
-//! system-generated, so a round trip ignores them and compares everything else
-//! as parsed JSON.
-//!
-//! This module needs no broker; the modules that use it do.
+//! ETSI GS CIM 009 v1.9.1 clause 5.2.2 makes the members a client supplies ones the broker stores and serves back, and Tables 5.2.12-1, 5.2.9-2 and 5.2.14.2-1 name the read-only members the broker adds itself (`createdAt`, `modifiedAt`, `status`, `isActive`, the delivery counters and timestamps). Those are system-generated, so a round trip ignores them and compares everything else as parsed JSON.
 
 use serde_json::Value;
 
-/// The members the broker generates on a top-level resource.
-///
-/// `jsonldContext` is here because clause 5.8.1.4 has the broker initialise it
-/// from "the @context applicable for the Subscription" when the client omits it,
-/// so the value read back is the broker's choice of spelling.
+/// `jsonldContext` is here because clause 5.8.1.4 has the broker initialise it from "the @context applicable for the Subscription" when the client omits it, so the value read back is the broker's choice of spelling.
 const SYSTEM_MEMBERS: [&str; 11] = [
     "@context",
     "jsonldContext",

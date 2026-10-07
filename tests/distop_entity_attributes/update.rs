@@ -27,10 +27,6 @@ use crate::{
 };
 use andromeda_test_harness::environment::TestEnvironment;
 
-// ---------------------------------------------------------------------------
-// Update entity attributes - exclusive mode
-// ---------------------------------------------------------------------------
-
 /// Update with exclusive registration: forwards exclusive attributes to context source.
 #[tokio::test]
 async fn distop_entity_attrs_update_exclusive_forwards_to_context_source() {
@@ -43,12 +39,10 @@ async fn distop_entity_attrs_update_exclusive_forwards_to_context_source() {
     let entity_id = scope.id("Vehicle:update-exc");
     let reg_id = scope.id("Registration:update-exc");
 
-    // Create entity locally
     let entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity_local(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create exclusive registration for speed
     let reg = vehicle_registration_speed_redirection_ops(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -56,12 +50,10 @@ async fn distop_entity_attrs_update_exclusive_forwards_to_context_source() {
     let stub_path = format!("/broker1/ngsi-ld/v1/entities/{entity_id}/attrs");
     mock.set_stub(Method::PATCH, &stub_path, 204).await;
 
-    // Update entity attributes
     let fragment = fragment_speed_different();
     let status = update_entity_attrs(&c, &entity_id, &fragment, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Verify forwarding happened
     let count = mock.get_count(Method::PATCH, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
@@ -70,10 +62,6 @@ async fn distop_entity_attrs_update_exclusive_forwards_to_context_source() {
     mock.shutdown().await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Update entity attributes - inclusive mode
-// ---------------------------------------------------------------------------
 
 /// Update attributes with no local instance: the inclusive registration's
 /// source applies the update and answers 204, so with no error from any
@@ -91,7 +79,6 @@ async fn distop_entity_attrs_update_local_absent_remote_success_returns_204() {
     let entity_id = scope.id("Vehicle:update-inc");
     let reg_id = scope.id("Registration:update-inc");
 
-    // No local entity -- only registration
     let reg = vehicle_registration_redirection_ops(&reg_id, Some(&entity_id), &mock.url(""), None);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -99,12 +86,10 @@ async fn distop_entity_attrs_update_local_absent_remote_success_returns_204() {
     let stub_path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs");
     mock.set_stub(Method::PATCH, &stub_path, 204).await;
 
-    // Update entity attributes -- no local entity, the source succeeds -> 204
     let fragment = fragment_brandname();
     let status = update_entity_attrs(&c, &entity_id, &fragment, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Verify forwarding happened
     let count = mock.get_count(Method::PATCH, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
@@ -125,12 +110,10 @@ async fn distop_entity_attrs_update_inclusive_both_succeed() {
     let entity_id = scope.id("Vehicle:update-inc-both");
     let reg_id = scope.id("Registration:update-inc-both");
 
-    // Create entity locally
     let entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create inclusive registration
     let reg = vehicle_registration_redirection_ops(&reg_id, Some(&entity_id), &mock.url(""), Some("inclusive"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -138,16 +121,13 @@ async fn distop_entity_attrs_update_inclusive_both_succeed() {
     let stub_path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs");
     mock.set_stub(Method::PATCH, &stub_path, 204).await;
 
-    // Update brandName (exists locally)
     let fragment = fragment_brandname();
     let status = update_entity_attrs(&c, &entity_id, &fragment, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Verify forwarding happened
     let count = mock.get_count(Method::PATCH, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
-    // Verify local entity was updated
     let (status, _, body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["brandName"]["value"], "BMW");
@@ -157,10 +137,6 @@ async fn distop_entity_attrs_update_inclusive_both_succeed() {
     mock.shutdown().await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Update entity attributes - redirect mode
-// ---------------------------------------------------------------------------
 
 /// Update with redirect registrations: forwards to multiple context sources.
 #[tokio::test]
@@ -175,7 +151,6 @@ async fn distop_entity_attrs_update_redirect_forwards_to_multiple() {
     let reg_id1 = scope.id("Registration:update-red-1");
     let reg_id2 = scope.id("Registration:update-red-2");
 
-    // Create two redirect registrations
     let reg1 = vehicle_registration_redirection_ops(&reg_id1, Some(&entity_id), &mock.url("/broker1"), Some("redirect"));
     let (status, _) = create_registration(&c, &reg1).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -189,12 +164,10 @@ async fn distop_entity_attrs_update_redirect_forwards_to_multiple() {
     mock.set_stub(Method::PATCH, &stub_path1, 204).await;
     mock.set_stub(Method::PATCH, &stub_path2, 204).await;
 
-    // Update entity attributes
     let fragment = fragment_brandname();
     let status = update_entity_attrs(&c, &entity_id, &fragment, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Verify both stubs called
     assert!(mock.get_count(Method::PATCH, &stub_path1) > 0);
     assert!(mock.get_count(Method::PATCH, &stub_path2) > 0);
 
@@ -203,10 +176,6 @@ async fn distop_entity_attrs_update_redirect_forwards_to_multiple() {
     mock.shutdown().await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Additional update tests
-// ---------------------------------------------------------------------------
 
 /// Update non-existent entity returns 404.
 #[tokio::test]
@@ -235,12 +204,10 @@ async fn distop_entity_attrs_update_auxiliary_no_forwarding() {
     let entity_id = scope.id("Vehicle:update-aux");
     let reg_id = scope.id("Registration:update-aux");
 
-    // Create entity locally
     let entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create auxiliary registration (retrieval only)
     let reg = vehicle_registration_auxiliary_retrieve_ops(&reg_id, &entity_id, &mock.url(""));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -248,16 +215,13 @@ async fn distop_entity_attrs_update_auxiliary_no_forwarding() {
     let stub_path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs");
     mock.set_stub(Method::PATCH, &stub_path, 204).await;
 
-    // Update entity attributes
     let fragment = fragment_brandname();
     let status = update_entity_attrs(&c, &entity_id, &fragment, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Verify no forwarding happened
     let count = mock.get_count(Method::PATCH, &stub_path);
     pretty_assertions::assert_eq!(count, 0, "auxiliary registration should not trigger forwarding");
 
-    // Verify local entity was updated
     let (status, _, body) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["brandName"]["value"], "BMW");

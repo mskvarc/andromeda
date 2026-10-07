@@ -2,22 +2,19 @@
 //! Temporal Evolution of Entities" (ETSI GS CIM 009 v1.9.1 clauses 4.23.1,
 //! 5.7.4.3, 5.7.4.4, 5.7.4.5 and Table 6.18.3.2-1).
 //!
-//! Both parameters were accepted and validated on the temporal bindings and
-//! then dropped: the compiled temporal query carried no ordering at all and the
-//! statement hard-coded `ORDER BY id ASC` under the column's own byte-wise
-//! `COLLATE "C"`. Table 6.18.3.2-1 says of `collation` that "the Entities
-//! returned in the payload shall be ordered according to the collation given",
-//! and clause 5.7.4.5 that "if Entity ordering is specified (see clause 4.23),
-//! then the JSON-LD array returned shall be ordered according to the member
-//! names specified", so neither could be answered by ignoring it.
+//! Both parameters must reach the statement: `ORDER BY id ASC` under the
+//! column's own byte-wise `COLLATE "C"` is not an answer to them. Table
+//! 6.18.3.2-1 says of `collation` that "the Entities returned in the payload
+//! shall be ordered according to the collation given", and clause 5.7.4.5 that
+//! "if Entity ordering is specified (see clause 4.23), then the JSON-LD array
+//! returned shall be ordered according to the member names specified", so
+//! neither can be answered by ignoring it.
 //!
 //! Every ordering query here carries local scope, which keeps each assertion
 //! about the collation alone. Clause 5.7.4.4 raises `BadRequestData` when "the
 //! ordering parameter is present and the execution of the operation is not
 //! limited to the local scope (see clause 5.5.13)"; that condition is decided by
-//! whether a registered Context Source takes part in the answer, which
-//! `tests/regression/ordering_local_scope.rs` covers and
-//! `docs/entity-ordering-local-scope.md` records.
+//! whether a registered Context Source takes part in the answer.
 //!
 //! The discriminating collation here is numeric ordering (`und-u-kn-true`,
 //! RFC 6067 keyword `kn`) rather than the German phonebook order the entity
@@ -28,8 +25,6 @@
 //! `collation2` before `collation10` is an order that no byte-wise comparison
 //! and no ICU root collation produces, so each assertion below fails unless the
 //! collation genuinely reached the statement.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -161,10 +156,9 @@ fn assert_bad_request_data(status: StatusCode, body: &Value, context: &str) {
 /// When defined, the Entities returned in the payload shall be ordered
 /// according to the collation given."
 ///
-/// Without the fix the statement ordered by the raw `temporal_entities.id`
-/// column, which is declared `COLLATE "C"`; that comparison puts `collation10`
-/// first, so this sequence is unreachable unless the collation reached the
-/// `ORDER BY`.
+/// Ordering by the raw `temporal_entities.id` column, which is declared
+/// `COLLATE "C"`, puts `collation10` first, so this sequence is unreachable
+/// unless the collation reaches the `ORDER BY`.
 #[tokio::test]
 async fn regression_temporal_collation_a_get_query_orders_identifiers_under_the_collation() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

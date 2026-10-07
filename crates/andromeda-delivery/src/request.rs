@@ -24,8 +24,8 @@ use url::Url;
 /// Assembled once by [`NotificationDelivery::assemble`] and then read-only: the
 /// media type is already resolved, the `@context` decision already made and
 /// the notification already written, so each transport sends the one text in
-/// the shape it needs -- the HTTP body as it is, the MQTT `{metadata, body}`
-/// envelope around it -- and none writes the document again.
+/// the shape it needs (the HTTP body as it is, the MQTT `{metadata, body}`
+/// envelope around it) and none writes the document again.
 #[derive(Debug, Clone)]
 pub struct DeliveryRequest {
     /// The written notification, shared by every transport that delivers it.
@@ -51,9 +51,9 @@ pub struct DeliveryRequest {
     /// The endpoint's own delivery deadline (Table 5.2.15-1 `timeout`), when it
     /// named one.
     ///
-    /// Only a binding whose protocol "always returns a response" honours it,
-    /// which is the HTTP binding; every other transport ignores it and keeps
-    /// its own bound.
+    /// Only a binding whose protocol "always returns a response" honours it:
+    /// the HTTP binding, and an MQTT publish at a `QoS` the broker acknowledges.
+    /// Every other transport ignores it and keeps its own bound.
     pub timeout: Option<PositiveMilliseconds>,
     /// Subscription identifier, for logging and stream routing.
     pub subscription_id: Identifier,
@@ -66,9 +66,9 @@ impl DeliveryRequest {
     /// `application/json` always uses the header, `application/ld+json` always
     /// uses the body, and `application/geo+json` uses the body unless the
     /// subscription's `receiverInfo` asks for `Prefer: body=json`. Every
-    /// transport asks this rather than deciding for itself, because three
-    /// transports deciding independently is how `application/geo+json` came to
-    /// carry no `@context` at all in either place.
+    /// transport asks this rather than deciding for itself, because transports
+    /// deciding independently could leave an `application/geo+json` notification
+    /// with no `@context` in either place.
     #[must_use]
     pub fn context_link(&self) -> Option<Link> {
         match self.context_placement {

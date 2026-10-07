@@ -3,7 +3,7 @@
 //! Clause 4.5.23.1 makes a Relationship's `objectType` annotation the statement
 //! that its object is an Internal Linked Entity: an entity of the declared type
 //! that exists somewhere in the distributed system, not necessarily in the
-//! store the request reached. The traversal therefore has two halves — the
+//! store the request reached. The traversal therefore has two halves, the
 //! local store answers for what it holds, and whatever holds the rest answers
 //! through this port.
 //!
@@ -41,8 +41,8 @@ pub struct RemoteLinkedEntities {
 /// entities it resolved for the depth that remains beyond it, so one round trip
 /// answers for a whole remote sub-graph rather than one hop of it.
 ///
-/// The signature is spelled in its desugared form — the same shape
-/// `#[async_trait::async_trait]` expands to — because this crate carries
+/// The signature is spelled in its desugared form, the same shape
+/// `#[async_trait::async_trait]` expands to, because this crate carries
 /// `async-trait` only as a development dependency, exactly as the store ports
 /// in [`crate::port`] do. Implementors are free to write `#[async_trait]`.
 pub trait RemoteLinkedEntitySource: fmt::Debug + Send + Sync + 'static {

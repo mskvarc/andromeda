@@ -7,7 +7,7 @@
 //! existing Snapshot through the upgrade path. A Snapshot whose upgrade fails
 //! is refused for scoping as an internal error naming it while the tenant and
 //! every other Snapshot keep serving, and a re-run after the cause is removed
-//! lifts the quarantine (`docs/schema-migration-policy.md`).
+//! lifts the quarantine.
 
 use crate::support::{
     assert_problem_details,
@@ -37,7 +37,7 @@ use std::{borrow::Cow, env, time::Duration};
 use tokio::time::timeout;
 
 /// The foreign keys from live branch relations into the tenant-global
-/// dictionaries, which the live-only tenant migration 0030 declares and no
+/// dictionaries, which the live-only tenant migration declares and no
 /// Snapshot branch carries.
 const LIVE_ONLY_DICTIONARY_REFERENCES: [&str; 5] = [
     "fk_attribute_history_instance_claims_attribute_name",

@@ -1,5 +1,5 @@
-//! The comment rules of `docs/database-schema-conventions.md`, checked against
-//! the text of every embedded migration.
+//! The comment rules for migration files, checked against every embedded
+//! migration.
 //!
 //! A migration is frozen once released, so its comments must stay true for as
 //! long as the file exists: they open with one header shape, cite nothing that

@@ -25,10 +25,6 @@ use uuid::Uuid;
 pub mod context_source_adapter;
 use context_source_adapter::ContextSourceAdapter as MockServer;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// A reqwest client that carries `NGSILD-Tenant` on every request, so a test's
 /// entire forwarding registry and `/attributes` collection live in its own
 /// private tenant and stay isolated from concurrent tests.
@@ -138,10 +134,6 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 /// `list_attributes` with local=true does not forward to CSR endpoints.
 #[tokio::test]
 async fn distop_attributes_local_skips_forwarding() {
@@ -195,7 +187,6 @@ async fn distop_attributes_merges_remote_attributes() {
     let reg = vehicle_registration(&reg_id, &mock.url(""));
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Remote returns an attribute not present locally
     let mock_attrs = json!({
         "id": "urn:ngsi-ld:AttributeList:mock",
         "type": "AttributeList",
@@ -239,7 +230,6 @@ async fn distop_attributes_deduplicates_attribute_list() {
     let reg = vehicle_registration(&reg_id, &mock.url(""));
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Remote also returns brandName which already exists locally
     let mock_attrs = json!({
         "id": "urn:ngsi-ld:AttributeList:mock",
         "type": "AttributeList",
@@ -282,7 +272,6 @@ async fn distop_attributes_details_merges_remote_attribute_objects() {
     let reg = vehicle_registration(&reg_id, &mock.url(""));
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Remote returns a detailed attribute not present locally
     let mock_details = json!([
         {
             // Table 5.2.28-1: `id` is the Valid URI that is the attribute's FQN.
@@ -358,11 +347,9 @@ async fn distop_attributes_attribute_info_merges_remote_type_names() {
     let reg = vehicle_registration(&reg_id, &mock.url(""));
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Verify the attribute exists locally first
     let (local_status, _, _) = get_attribute(&c, "brandName", "local=true", Some(COMPOUND_CONTEXT)).await;
     pretty_assertions::assert_eq!(local_status, StatusCode::OK);
 
-    // Remote returns attribute info with additional type names
     let mock_attr_info = json!({
         "id": "brandName",
         "type": "Attribute",
@@ -463,7 +450,6 @@ async fn distop_attributes_warning_on_csr_unreachable() {
     let reg = vehicle_registration(&reg_id, &endpoint);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Stop mock to simulate unreachable CSR
     mock.shutdown().await;
 
     let (status, headers, _) = list_attributes(&c, "").await;

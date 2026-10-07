@@ -36,7 +36,7 @@ pub struct TemporalRepository {
 }
 
 impl TemporalRepository {
-    /// Create a new repository backed by the given connection pool.
+    /// Wraps `pool` and the shared dictionary caches; the provisioned-collation set starts empty.
     pub fn new(
         pool: &PgPool,
         bulk_write_mode: BulkWriteMode,

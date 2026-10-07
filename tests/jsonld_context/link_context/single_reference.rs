@@ -1,4 +1,4 @@
-//! A context `Link` naming one URL itself (study B1, B2 and B4).
+//! A context `Link` naming one URL itself.
 
 use crate::{
     broker_endpoints::broker_url,
@@ -13,7 +13,7 @@ use crate::{
 use reqwest::StatusCode;
 use serde_json::json;
 
-/// Study B1: with no request context, and with only an older core release,
+/// With no request context, and with only an older core release,
 /// the one link names the v1.9 core `@context`, typed `application/ld+json`.
 #[tokio::test]
 async fn with_no_user_context_the_one_link_names_the_core_context() {
@@ -39,7 +39,7 @@ async fn with_no_user_context_the_one_link_names_the_core_context() {
     tenant.finish().await;
 }
 
-/// Study B2 and ETSI `040_01`: a context that ends with the core `@context` is
+/// A context that ends with the core `@context` is
 /// linked as itself, on a single retrieval and on a query, and no wrapper is
 /// hosted for it.
 #[tokio::test]
@@ -64,7 +64,7 @@ async fn a_context_ending_with_the_core_context_is_linked_as_itself() {
     tenant.finish().await;
 }
 
-/// Study B4: an `application/ld+json` POST query whose body context is one URL
+/// An `application/ld+json` POST query whose body context is one URL
 /// ending with the core `@context`, answered as `application/json`, links that
 /// URL; one whose body context is the core `@context` links the core.
 #[tokio::test]

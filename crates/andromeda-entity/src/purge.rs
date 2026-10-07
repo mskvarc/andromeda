@@ -1,6 +1,5 @@
 //! Purging attributes from a set of entities (clause 5.6.21), whole or
-//! scoped to a `datasetId` (the Andromeda `purge_dataset_scope` extension; see
-//! `docs/extensions/purge-dataset-scope.md`).
+//! scoped to a `datasetId` (the Andromeda `purge_dataset_scope` extension).
 //!
 //! Each entity is its own atomic write: the state rewrite and the tombstones
 //! for the purged instances commit together, and one entity failing must not

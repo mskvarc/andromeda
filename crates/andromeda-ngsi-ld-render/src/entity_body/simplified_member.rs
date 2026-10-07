@@ -16,7 +16,7 @@
 //! it is reformatted as. The list families keep their arrays: clause 4.5.4
 //! writes a `ListProperty` as a Property value and a `ListRelationship` as the
 //! URIs a Relationship's simplified rendering is, so the reformat leaves both
-//! as they are (see [`crate::version::fallback`]).
+//! as they are.
 
 use crate::{
     entity_body::{

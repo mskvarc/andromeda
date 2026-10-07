@@ -1,5 +1,5 @@
 //! What a response names does not depend on which cache tier holds a
-//! document (study A18).
+//! document.
 //!
 //! Whether a request context ends with the core `@context` is read by loading
 //! the documents it references through the one pipeline processing uses

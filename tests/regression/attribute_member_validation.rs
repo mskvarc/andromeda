@@ -1,14 +1,4 @@
-//! Members an attribute family may not carry, and members it must ignore.
-//!
-//! ETSI GS CIM 009 v1.9.1 closes each family's representation clause with a
-//! list of members that "shall never" appear on it, and closes each family's
-//! data type definition with the output-only member a Context Producer "shall
-//! not" provide. The broker accepted both: a Relationship could be stored with
-//! a Property's `value`, and a client could plant a `previousValue` that a
-//! later `showChanges` notification would present to subscribers as a state
-//! the broker never held.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 closes each family's representation clause with a list of members that "shall never" appear on it, and closes each family's data type definition with the output-only member a Context Producer "shall not" provide.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -52,9 +42,7 @@ fn plain_building(id: &str) -> Value {
     building_with(id, "temperature", &json!({"type": "Property", "value": 21.5}))
 }
 
-/// One `Building` whose Property carries the `ngsildproof` sub-Property clause
-/// 4.5.2.2 defines the two seals for. This is the positive control: the same
-/// members the Relationship clauses prohibit are the intended shape here.
+/// The positive control: clause 4.5.2.2 defines the seals for the `ngsildproof` sub-Property, so the members the Relationship clauses prohibit are the intended shape here.
 fn proof_sealed_building(id: &str) -> Value {
     building_with(
         id,
@@ -72,10 +60,7 @@ fn proof_sealed_building(id: &str) -> Value {
     )
 }
 
-/// The four prohibited spellings, each on its own `Building`: both members of
-/// the clause 4.5.3.2 and 4.5.3.3 "Prohibited" lists, on a Relationship that
-/// declares its `type` (normalized, clause 4.5.3.2) and on one that leaves
-/// `object` to imply it (concise, clause 4.5.3.3).
+/// Both members of the clause 4.5.3.2 and 4.5.3.3 "Prohibited" lists, on a normalized Relationship (declares its `type`) and on a concise one (`object` implies it).
 fn sealed_relationship_entities(scope: &TestEnvironment, label: &str) -> Vec<(String, Value)> {
     let mut entities = Vec::new();
     for (member, sealed) in [("entityIdSealed", "urn:ngsi-ld:Building:sealed"), ("entityTypeSealed", "Building")] {
@@ -91,9 +76,7 @@ fn sealed_relationship_entities(scope: &TestEnvironment, label: &str) -> Vec<(St
     entities
 }
 
-/// The batch operations whose input array carries entity representations
-/// (clause 5.6.7.3, 5.6.8.3, 5.6.9.3 and 5.6.20.3). Batch Entity Delete
-/// (clause 5.6.10.3) takes identifiers alone and is therefore not one of them.
+/// Batch Entity Delete (clause 5.6.10.3) takes identifiers alone and so is not among the batch operations carrying entity representations (clauses 5.6.7.3, 5.6.8.3, 5.6.9.3 and 5.6.20.3).
 #[derive(Clone, Copy, Debug)]
 enum BatchWrite {
     /// Batch Entity Creation (clause 5.6.7).
@@ -152,13 +135,7 @@ fn assert_batch_refusals(response: &TestResponse, refused: &[String], admitted: 
     );
 }
 
-/// Send the four prohibited spellings plus the admitted `ngsildproof` control
-/// through one batch operation and assert exactly the four are refused.
-///
-/// One request carries all five so the assertion covers the per-entity
-/// reporting clauses 5.6.7.4 to 5.6.9.4 and 5.6.20.4 require as well as the
-/// refusal itself: an entity the validation refuses contributes a
-/// `BatchEntityError` of its own, leaving the rest of the batch to be applied.
+/// One request carries all five so the assertion covers the per-entity reporting clauses 5.6.7.4 to 5.6.9.4 and 5.6.20.4 require: an entity the validation refuses contributes a `BatchEntityError` of its own, leaving the rest of the batch to be applied.
 async fn assert_batch_refuses_relationship_seals(scope: &TestEnvironment, operation: BatchWrite, label: &str) {
     let client = scope.client();
     let (refused_ids, mut items): (Vec<String>, Vec<Value>) = sealed_relationship_entities(scope, label).into_iter().unzip();
@@ -176,11 +153,7 @@ async fn assert_batch_refuses_relationship_seals(scope: &TestEnvironment, operat
     assert_batch_refusals(&response, &refused_ids, &admitted, label);
 }
 
-/// Clause 4.5.3.2: an NGSI-LD Relationship "shall never include" `value`,
-/// "as they define a Property value". Storing one would leave the entity
-/// naming two families at once, and the rendering of clause 4.5.1 reads only
-/// the Relationship's `object`, so the value a client wrote could never be
-/// read back.
+/// Clause 4.5.3.2: an NGSI-LD Relationship "shall never include" `value`, "as they define a Property value". Storing one would leave the entity naming two families at once, and the rendering of clause 4.5.1 reads only the Relationship's `object`, so the value a client wrote could never be read back.
 #[tokio::test]
 async fn regression_attribute_member_a_relationship_carrying_a_property_value_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -196,10 +169,7 @@ async fn regression_attribute_member_a_relationship_carrying_a_property_value_is
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.2.2: an NGSI-LD Property "shall never include" `object`, "as
-/// they define a Relationship's object URI". The same clause prohibits
-/// `objectList`, `languageMap`, `vocab`, `json`, `valueList`, `entity` and
-/// `entityList` on a Property for the same reason.
+/// Clause 4.5.2.2: an NGSI-LD Property "shall never include" `object`, "as they define a Relationship's object URI". The same clause prohibits `objectList`, `languageMap`, `vocab`, `json`, `valueList`, `entity` and `entityList` on a Property for the same reason.
 #[tokio::test]
 async fn regression_attribute_member_a_property_carrying_a_relationship_object_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -215,8 +185,7 @@ async fn regression_attribute_member_a_property_carrying_a_relationship_object_i
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.18.2: a `LanguageProperty` "shall never include" `value`, "as
-/// value is a generalization of languageMap".
+/// Clause 4.5.18.2: a `LanguageProperty` "shall never include" `value`, "as value is a generalization of languageMap".
 #[tokio::test]
 async fn regression_attribute_member_a_language_property_carrying_a_value_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -232,8 +201,7 @@ async fn regression_attribute_member_a_language_property_carrying_a_value_is_ref
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.21.2: a `ListProperty` "shall never include" `value`, "as value
-/// is a generalization of valueList".
+/// Clause 4.5.21.2: a `ListProperty` "shall never include" `value`, "as value is a generalization of valueList".
 #[tokio::test]
 async fn regression_attribute_member_a_list_property_carrying_a_value_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -249,8 +217,7 @@ async fn regression_attribute_member_a_list_property_carrying_a_value_is_refused
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.20.2: a `VocabProperty` "shall never include" `value`, "as value
-/// is a generalization of vocab".
+/// Clause 4.5.20.2: a `VocabProperty` "shall never include" `value`, "as value is a generalization of vocab".
 #[tokio::test]
 async fn regression_attribute_member_a_vocab_property_carrying_a_value_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -266,8 +233,7 @@ async fn regression_attribute_member_a_vocab_property_carrying_a_value_is_refuse
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.22.2: a `ListRelationship` "shall never include" `object`, "as
-/// object is a generalization of objectList".
+/// Clause 4.5.22.2: a `ListRelationship` "shall never include" `object`, "as object is a generalization of objectList".
 #[tokio::test]
 async fn regression_attribute_member_a_list_relationship_carrying_an_object_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -283,10 +249,7 @@ async fn regression_attribute_member_a_list_relationship_carrying_an_object_is_r
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.3.2: `unitCode` "shall never be present" on a Relationship, "as
-/// Relationships are unitless". Clauses 4.5.18.2, 4.5.20.2 and 4.5.24.2 say
-/// the same of the `LanguageProperty`, `VocabProperty` and `JsonProperty`
-/// families.
+/// Clause 4.5.3.2: `unitCode` "shall never be present" on a Relationship, "as Relationships are unitless". Clauses 4.5.18.2, 4.5.20.2 and 4.5.24.2 say the same of the `LanguageProperty`, `VocabProperty` and `JsonProperty` families.
 #[tokio::test]
 async fn regression_attribute_member_a_relationship_carrying_a_unit_code_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -302,15 +265,9 @@ async fn regression_attribute_member_a_relationship_carrying_a_unit_code_is_refu
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.2.2: `entityIdSealed` and `entityTypeSealed` "shall never be
-/// present, unless the Property name is `ngsildproof`". The same clause
-/// defines `ngsildproof` as the Property that carries them, so the pair is
-/// refused anywhere else and accepted there.
+/// Clause 4.5.2.2: `entityIdSealed` and `entityTypeSealed` "shall never be present, unless the Property name is `ngsildproof`". The same clause defines `ngsildproof` as the Property that carries them, so the pair is refused anywhere else and accepted there.
 ///
-/// Exercised through the merge of clause 5.6.17, which validates the fragment
-/// a client wrote before it is expanded: the seals are declared only inside
-/// `ngsildproof`'s own scoped `@context` (clause 4.4), so after expansion a
-/// forged one is no longer distinguishable from an ordinary sub-attribute.
+/// Exercised through the merge of clause 5.6.17, which validates the fragment a client wrote before it is expanded: the seals are declared only inside `ngsildproof`'s own scoped `@context` (clause 4.4), so after expansion a forged one is no longer distinguishable from an ordinary sub-attribute.
 #[tokio::test]
 async fn regression_attribute_member_a_data_integrity_seal_is_refused_outside_ngsildproof() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -358,17 +315,9 @@ async fn regression_attribute_member_a_data_integrity_seal_is_refused_outside_ng
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clauses 4.5.3.2 and 4.5.3.3 close the Relationship's "Prohibited" list with
-/// the same sentence in both representations: "'entityIdSealed' and
-/// 'entityTypeSealed' shall never be present". No `ngsildproof` exception
-/// applies, because clause 4.5.2.2 grants that one to a Property.
+/// Clauses 4.5.3.2 and 4.5.3.3 close the Relationship's "Prohibited" list with the same sentence in both representations: "'entityIdSealed' and 'entityTypeSealed' shall never be present". No `ngsildproof` exception applies, because clause 4.5.2.2 grants that one to a Property.
 ///
-/// Create Entity (clause 5.6.1) was the one entity-shaped write path that
-/// never ran the pre-expansion check, so a seal forged on a Relationship was
-/// created with a 201 and reified into a Property on the way in. The seals are
-/// declared only inside `ngsildproof`'s own scoped `@context` (clause 4.4), so
-/// after expansion nothing downstream can still tell one from an ordinary
-/// sub-attribute.
+/// The seals are declared only inside `ngsildproof`'s own scoped `@context` (clause 4.4), so after expansion nothing downstream can tell a forged one from an ordinary sub-attribute.
 #[tokio::test]
 async fn regression_attribute_member_a_seal_on_a_relationship_is_refused_on_entity_creation() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -395,9 +344,7 @@ async fn regression_attribute_member_a_seal_on_a_relationship_is_refused_on_enti
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.6.7.4: Batch Entity Creation runs clause 5.6.1 "for each of the
-/// NGSI-LD Entities included in the input Array", so the prohibition of
-/// clauses 4.5.3.2 and 4.5.3.3 holds there too, reported per entity.
+/// Clause 5.6.7.4: Batch Entity Creation runs clause 5.6.1 "for each of the NGSI-LD Entities included in the input Array", so the prohibition of clauses 4.5.3.2 and 4.5.3.3 holds there too, reported per entity.
 #[tokio::test]
 async fn regression_attribute_member_a_seal_on_a_relationship_is_refused_by_batch_creation() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -441,12 +388,7 @@ async fn regression_attribute_member_a_seal_on_a_relationship_is_refused_by_batc
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.2.5: `previousValue` is an output-only member that is "read-only
-/// and shall be generated by NGSI-LD implementations; they shall not be
-/// provided by Context Producers, and if provided in update or create
-/// operations shall be ignored". Ignored, not refused: the create succeeds and
-/// the entity is stored without the member, so no later notification can
-/// present a client-supplied value as the state that preceded a change.
+/// Clause 5.2.5: `previousValue` is an output-only member that is "read-only and shall be generated by NGSI-LD implementations; they shall not be provided by Context Producers, and if provided in update or create operations shall be ignored". Ignored, not refused: the create succeeds and the entity is stored without the member, so no later notification can present a client-supplied value as the state that preceded a change.
 #[tokio::test]
 async fn regression_attribute_member_a_supplied_previous_value_is_ignored_rather_than_stored() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -477,9 +419,7 @@ async fn regression_attribute_member_a_supplied_previous_value_is_ignored_rather
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.2.12: "At least one of (a) entities or (b) watchedAttributes shall
-/// be present, unless the member localOnly is set to true, in which case the
-/// execution of the request is limited to local scope (see clause 5.5.13)".
+/// Clause 5.2.12: "At least one of (a) entities or (b) watchedAttributes shall be present, unless the member localOnly is set to true, in which case the execution of the request is limited to local scope (see clause 5.5.13)".
 #[tokio::test]
 async fn regression_attribute_member_a_subscription_naming_neither_entities_nor_watched_attributes_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -497,10 +437,7 @@ async fn regression_attribute_member_a_subscription_naming_neither_entities_nor_
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.2.12, Table 5.2.12-1: `entities` is "Mandatory if timeInterval is
-/// present, unless the execution of the request is limited to local scope (see
-/// clause 5.5.13)". A periodic subscription with nothing to select would fire
-/// on a schedule against an unbounded set.
+/// Clause 5.2.12, Table 5.2.12-1: `entities` is "Mandatory if timeInterval is present, unless the execution of the request is limited to local scope (see clause 5.5.13)". A periodic subscription with nothing to select would fire on a schedule against an unbounded set.
 #[tokio::test]
 async fn regression_attribute_member_a_periodic_subscription_without_entities_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -519,12 +456,7 @@ async fn regression_attribute_member_a_periodic_subscription_without_entities_is
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.2.14.1, Table 5.2.14.1-1: "showChanges cannot be true in case
-/// format is `keyValues`". The simplified rendering of clause 4.5.4 reduces an
-/// attribute to its value alone, so it has nowhere to carry the
-/// `previousValue` the option exists to deliver; accepting the combination
-/// would leave the client holding a subscription whose defining option
-/// silently does nothing.
+/// Clause 5.2.14.1, Table 5.2.14.1-1: "showChanges cannot be true in case format is `keyValues`". The simplified rendering of clause 4.5.4 reduces an attribute to its value alone, so it has nowhere to carry the `previousValue` the option exists to deliver; accepting the combination would leave the client holding a subscription whose defining option silently does nothing.
 #[tokio::test]
 async fn regression_attribute_member_a_subscription_asking_for_show_changes_under_key_values_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -547,13 +479,7 @@ async fn regression_attribute_member_a_subscription_asking_for_show_changes_unde
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clauses 5.6.11.4 and 5.6.12.4 both open with "Execute the behaviour defined
-/// in clause 5.5.4 on JSON-LD validation", and clauses 4.5.3.2 and 4.5.3.3
-/// prohibit `entityIdSealed` and `entityTypeSealed` on a Relationship in every
-/// representation with no exception at all -- the `ngsildproof` exception of
-/// clause 4.5.2.2 is a Property's. The temporal write verbs ran no such
-/// validation, so a forged seal could be written through
-/// `POST /temporal/entities` and through its `/attrs` sibling.
+/// Clauses 5.6.11.4 and 5.6.12.4 both open with "Execute the behaviour defined in clause 5.5.4 on JSON-LD validation", and clauses 4.5.3.2 and 4.5.3.3 prohibit `entityIdSealed` and `entityTypeSealed` on a Relationship in every representation with no exception at all -- the `ngsildproof` exception of clause 4.5.2.2 is a Property's.
 #[tokio::test]
 async fn regression_attribute_member_a_temporal_write_refuses_a_relationship_seal() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -591,8 +517,6 @@ async fn regression_attribute_member_a_temporal_write_refuses_a_relationship_sea
         retrieved.body
     );
 
-    // The same seal through the add-attributes verb of clause 5.6.12, on an
-    // evolution that does exist.
     let target = scope.id("Building:temporal-sealed-target");
     let seeded = client
         .create_temporal_entity(&json!({

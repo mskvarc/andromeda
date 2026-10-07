@@ -1,5 +1,5 @@
 //! Which responses carry the context link, and which never host a wrapper
-//! (study B8 to B10, B12, and the temporal and batch answers).
+//!.
 //!
 //! Clause 6.3.6: "Operations where the response payload body is not present
 //! such as successful HTTP POST, PATCH, PUT or DELETE operations and all error
@@ -20,7 +20,7 @@ use crate::{
 use reqwest::StatusCode;
 use serde_json::json;
 
-/// Study B8: a paginated json query names exactly one context link across
+/// A paginated json query names exactly one context link across
 /// every `Link` line, beside its pagination links.
 #[tokio::test]
 async fn a_paginated_json_query_names_one_context_link_beside_its_pagination_links() {
@@ -49,7 +49,7 @@ async fn a_paginated_json_query_names_one_context_link_beside_its_pagination_lin
     tenant.finish().await;
 }
 
-/// Study B9: body-less 201 and 204 answers name no context and host nothing,
+/// Body-less 201 and 204 answers name no context and host nothing,
 /// whatever context the request named.
 #[tokio::test]
 async fn body_less_answers_name_no_context_and_host_nothing() {
@@ -96,7 +96,7 @@ async fn body_less_answers_name_no_context_and_host_nothing() {
     tenant.finish().await;
 }
 
-/// Study B10: a 207 and an error name no context and host nothing.
+/// A 207 and an error name no context and host nothing.
 #[tokio::test]
 async fn partial_successes_and_errors_name_no_context_and_host_nothing() {
     let tenant = PrivateTenant::provisioned().await;
@@ -134,7 +134,7 @@ async fn partial_successes_and_errors_name_no_context_and_host_nothing() {
     tenant.finish().await;
 }
 
-/// Study B12: an `application/ld+json` answer carries its context in the body
+/// An `application/ld+json` answer carries its context in the body
 /// and never hosts a wrapper, whatever context the request named.
 #[tokio::test]
 async fn an_ld_json_answer_never_hosts_a_wrapper() {

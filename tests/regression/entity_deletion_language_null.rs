@@ -6,12 +6,10 @@
 //! also used to indicate a deletion in notifications". Clause 5.8.6: when a
 //! deleted Attribute is notified as an object because `showChanges` asks for
 //! its previous value, "the languageMap is set to {"@none":
-//! "urn:ngsi-ld:null"}". An entity deletion wrote the bare Null into the
-//! `languageMap` of a single-instance `LanguageProperty`, in the normalized
-//! and the concise representation alike; the simplified one cannot carry
-//! `showChanges` (Table 5.2.14.1-1).
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! "urn:ngsi-ld:null"}". An entity deletion writes that object, not the bare
+//! Null, into the `languageMap` of a single-instance `LanguageProperty`, in the
+//! normalized and the concise representation alike; the simplified one cannot
+//! carry `showChanges` (Table 5.2.14.1-1).
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

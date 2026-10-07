@@ -1,32 +1,10 @@
 //! The "too wide query" rule, and the inputs that narrow one.
 //!
-//! ETSI GS CIM 009 v1.9.1 states the rule four times in the same words. Clauses
-//! 5.6.21.4 (Purge Entities), 5.7.2.4 (Query Entities), 5.7.4.4 (Query Temporal
-//! Evolution of Entities) and 5.14.4.4 (Create EntityMap): "At least one of the
-//! following input data shall be provided: a) selector of Entity Types; b) list
-//! of Attribute names, including at least one non-system Attribute; c) NGSI-LD
-//! Query, including at least one non-system Attribute; d) NGSI-LD `GeoQuery`;
-//! e) local scope (see clause 5.5.13). If none of the above is provided, then
-//! an error of type `BadRequestData` shall be raised (too wide query)."
+//! ETSI GS CIM 009 v1.9.1 states the rule four times in the same words. Clauses 5.6.21.4 (Purge Entities), 5.7.2.4 (Query Entities), 5.7.4.4 (Query Temporal Evolution of Entities) and 5.14.4.4 (Create EntityMap): "At least one of the following input data shall be provided: a) selector of Entity Types; b) list of Attribute names, including at least one non-system Attribute; c) NGSI-LD Query, including at least one non-system Attribute; d) NGSI-LD `GeoQuery`; e) local scope (see clause 5.5.13). If none of the above is provided, then an error of type `BadRequestData` shall be raised (too wide query)."
 //!
-//! What the list leaves out decides as much as what it holds, and the prose
-//! above each behaviour clause says why: "it is not possible to retrieve a set
-//! of entities by only specifying desired Entity identifiers, without further
-//! specifying restrictions on the entities' types or attributes". `id`,
-//! `idPattern` and `scopeQ` are therefore not narrowings.
+//! What the list leaves out decides as much as what it holds, and the prose above each behaviour clause says why: "it is not possible to retrieve a set of entities by only specifying desired Entity identifiers, without further specifying restrictions on the entities' types or attributes". `id`, `idPattern` and `scopeQ` are therefore not narrowings.
 //!
-//! Clause 5.10.2.4 states the same rule for Query Context Source Registrations
-//! with two differences: it lists only the four content narrowings, because a
-//! registration discovery has no execution to limit to the local scope, and it
-//! drops the "non-system Attribute" qualification.
-//!
-//! Three of the five implementations disagreed with the clause and with each
-//! other. The entity query counted `id`, `idPattern` and `scopeQ` as
-//! narrowings; the temporal query counted `id` and `idPattern` and had no
-//! local-scope exemption at all; the Entity Map creation had the local scope
-//! *refuse* a creation the clause admits. They are one rule now.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Clause 5.10.2.4 states the same rule for Query Context Source Registrations with two differences: it lists only the four content narrowings, because a registration discovery has no execution to limit to the local scope, and it drops the "non-system Attribute" qualification.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -98,8 +76,7 @@ fn assert_too_wide(response: &TestResponse, scenario: &str) {
     assert!(problem["title"].is_string(), "{scenario}: a problem carries a title: {problem}");
 }
 
-/// Clause 5.7.2.4 (a) to (e): each listed input narrows a query on its own, and
-/// `local=true` is one of them.
+/// Clause 5.7.2.4 (a) to (e): each listed input narrows a query on its own, and `local=true` is one of them.
 #[tokio::test]
 async fn regression_too_wide_query_each_listed_input_narrows_an_entity_query() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -116,9 +93,7 @@ async fn regression_too_wide_query_each_listed_input_narrows_an_entity_query() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.7.2.4 lists no identifier among the narrowings, and clause 5.7.2.3
-/// says why: identifiers alone do not restrict "the entities' types or
-/// attributes". `scopeQ` is not listed either.
+/// Clause 5.7.2.4 lists no identifier among the narrowings, and clause 5.7.2.3 says why: identifiers alone do not restrict "the entities' types or attributes". `scopeQ` is not listed either.
 #[tokio::test]
 async fn regression_too_wide_query_identifiers_and_scope_do_not_narrow_an_entity_query() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -134,9 +109,7 @@ async fn regression_too_wide_query_identifiers_and_scope_do_not_narrow_an_entity
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.7.4.4 restates the rule for the temporal query, local-scope
-/// exemption included -- which the broker did not have, so a query limited to
-/// this broker was refused where the clause admits it.
+/// Clause 5.7.4.4 restates the rule for the temporal query, local-scope exemption included, so a query limited to this broker is admitted.
 #[tokio::test]
 async fn regression_too_wide_query_the_temporal_query_carries_the_same_rule() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -156,8 +129,7 @@ async fn regression_too_wide_query_the_temporal_query_carries_the_same_rule() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.10.2.4 lists only the four content narrowings for a registration
-/// discovery: it has no execution to limit, so `local` narrows nothing there.
+/// Clause 5.10.2.4 lists only the four content narrowings for a registration discovery: it has no execution to limit, so `local` narrows nothing there.
 #[tokio::test]
 async fn regression_too_wide_query_registration_discovery_has_no_local_scope_exemption() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -174,10 +146,7 @@ async fn regression_too_wide_query_registration_discovery_has_no_local_scope_exe
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Inputs (b) and (c) are qualified with "including at least one non-system
-/// Attribute" wherever an entity is being selected, so an `attrs` or `q` that
-/// names only the clause 4.8 temporal properties narrows nothing. Clause
-/// 5.10.2.4 carries no such qualification.
+/// Inputs (b) and (c) are qualified with "including at least one non-system Attribute" wherever an entity is being selected, so an `attrs` or `q` that names only the clause 4.8 temporal properties narrows nothing. Clause 5.10.2.4 carries no such qualification.
 #[tokio::test]
 async fn regression_too_wide_query_a_system_attribute_narrows_only_a_registration_discovery() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -196,8 +165,7 @@ async fn regression_too_wide_query_a_system_attribute_narrows_only_a_registratio
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.6.21.3 gives Purge Entities no `attrs`: its lists of Attribute
-/// names are `drop` and `keep`, so those are what input (b) names there.
+/// Clause 5.6.21.3 gives Purge Entities no `attrs`: its lists of Attribute names are `drop` and `keep`, so those are what input (b) names there.
 #[tokio::test]
 async fn regression_too_wide_query_a_purge_narrows_by_the_attributes_it_names() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -224,9 +192,7 @@ async fn regression_too_wide_query_a_purge_narrows_by_the_attributes_it_names() 
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.14.4.4 restates the clause 5.7.2.4 rule for Entity Map creation,
-/// local scope included; the broker had the exemption refuse the creation it
-/// admits, and counted identifiers the clause does not list.
+/// Clause 5.14.4.4 restates the clause 5.7.2.4 rule for Entity Map creation: local scope narrows, and identifiers do not.
 #[tokio::test]
 async fn regression_too_wide_query_entity_map_creation_carries_the_same_rule() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

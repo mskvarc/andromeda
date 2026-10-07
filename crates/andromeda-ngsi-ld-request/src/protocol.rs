@@ -110,7 +110,7 @@ impl ProtocolExtensions<'_> {
 
     /// Apply `NGSILD-Response-Format`, unless the query already chose a rendering.
     ///
-    /// `format` and the legacy `options` are two spellings of the same choice,
+    /// `format` and the deprecated `options` are two spellings of the same choice,
     /// so a rendering named in either one silences the header.
     fn apply_format(
         &self,

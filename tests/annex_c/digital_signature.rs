@@ -7,8 +7,7 @@
 //! proof that no longer verifies.
 //!
 //! The printed example is not valid JSON: the comma after the `address`
-//! Property's `value` object is missing. The corpus repairs it, and the repair
-//! is recorded in `docs/annex-c-corpus.md`.
+//! Property's `value` object is missing. The corpus repairs it.
 
 use crate::{
     clean_tenant,

@@ -1,7 +1,4 @@
-//! `NGSILD-Tenant` scoping and the `count` / `NGSILD-Results-Count` / `limit=0`
-//! interaction (clause 6.3.4, 6.3.10, 6.3.13): a non-default tenant is echoed on
-//! responses and notifications and omitted for the default tenant, while
-//! `count=true` reports the unpaginated total and `limit=0` requires `count`.
+//! `NGSILD-Tenant` scoping and the `count` / `NGSILD-Results-Count` / `limit=0` interaction (clause 6.3.4, 6.3.10, 6.3.13): a non-default tenant is echoed on responses and notifications and omitted for the default tenant, while `count=true` reports the unpaginated total and `limit=0` requires `count`.
 
 use crate::{
     entity::{typed_vehicle, vehicle},
@@ -20,8 +17,7 @@ fn tenant_header(response: &TestResponse) -> Option<String> {
     response.headers.get("ngsild-tenant").and_then(|value| value.to_str().ok()).map(str::to_owned)
 }
 
-/// A response under a non-default tenant carries the `NGSILD-Tenant` header
-/// (clause 6.3.4). Confirms REQ-HTTP-12.
+/// A response under a non-default tenant carries the `NGSILD-Tenant` header (clause 6.3.4).
 #[tokio::test]
 async fn dist_http_non_default_tenant_response_carries_tenant_header() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -48,8 +44,7 @@ async fn dist_http_non_default_tenant_response_carries_tenant_header() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A response under the default tenant omits the `NGSILD-Tenant` header
-/// (clause 6.3.4). Confirms REQ-HTTP-13.
+/// A response under the default tenant omits the `NGSILD-Tenant` header (clause 6.3.4).
 #[tokio::test]
 async fn dist_http_default_tenant_response_omits_tenant_header() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -80,8 +75,7 @@ async fn dist_http_default_tenant_response_omits_tenant_header() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The tenant carried on a request is echoed unchanged on its response
-/// (clause 6.3.4). Confirms REQ-HTTP-14.
+/// The tenant carried on a request is echoed unchanged on its response (clause 6.3.4).
 #[tokio::test]
 async fn dist_http_tenant_header_echoed_in_response() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -101,8 +95,7 @@ async fn dist_http_tenant_header_echoed_in_response() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A notification dispatched for a tenant-scoped subscription carries the
-/// `NGSILD-Tenant` header (clause 6.3.4). Confirms REQ-HTTP-15.
+/// A notification dispatched for a tenant-scoped subscription carries the `NGSILD-Tenant` header (clause 6.3.4).
 #[tokio::test]
 async fn dist_http_tenant_scoped_notification_carries_tenant_header() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -140,8 +133,7 @@ async fn dist_http_tenant_scoped_notification_carries_tenant_header() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `count=true` is honoured on a query, adding the `NGSILD-Results-Count` header
-/// (clause 6.3.13). Confirms REQ-HTTP-8.
+/// `count=true` is honoured on a query, adding the `NGSILD-Results-Count` header (clause 6.3.13).
 #[tokio::test]
 async fn dist_http_count_param_honoured_on_query() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -176,8 +168,7 @@ async fn dist_http_count_param_honoured_on_query() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `count=true` reports the unpaginated total even under a `limit` (clause
-/// 6.3.13). Confirms REQ-HTTP-9.
+/// `count=true` reports the unpaginated total even under a `limit` (clause 6.3.13).
 #[tokio::test]
 async fn dist_http_count_true_returns_results_count_header_total() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -213,8 +204,7 @@ async fn dist_http_count_true_returns_results_count_header_total() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `limit=0` with `count=true` returns an empty array and the total count
-/// (clause 6.3.13). Confirms REQ-HTTP-10.
+/// `limit=0` with `count=true` returns an empty array and the total count (clause 6.3.13).
 #[tokio::test]
 async fn dist_http_limit_zero_with_count_returns_empty_array_and_count() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -251,7 +241,6 @@ async fn dist_http_limit_zero_with_count_returns_empty_array_and_count() {
 }
 
 /// `limit=0` without `count` is rejected with `400` (clause 6.3.13).
-/// Confirms REQ-HTTP-11.
 #[tokio::test]
 async fn dist_http_limit_zero_without_count_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");

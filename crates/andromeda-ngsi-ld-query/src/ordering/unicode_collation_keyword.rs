@@ -1,36 +1,18 @@
-//! The collation keywords of the Unicode locale extension (IETF RFC 6067).
+//! The collation keywords of the Unicode locale extension (RFC 6067).
 //!
-//! Clause 4.23.1 lets an `orderBy` name a preferred collation, and clauses
-//! 5.7.2.4 and 5.7.4.4 both say that one which "does not conform to a valid ICU
-//! collation (see IETF RFC 6067)" is `BadRequestData`. RFC 6067 defines the
-//! `-u-` extension as a sequence of attributes followed by keywords, each
-//! keyword a two-character key and the types that follow it, and registers both
-//! in the Unicode CLDR registry: "the keys and types are those registered in
-//! the Unicode locale extension registry". A key or a type outside that
-//! registry therefore states no collation preference, which is what this module
-//! decides.
+//! Clauses 5.7.2.4 and 5.7.4.4 make a preferred collation that "does not conform to a valid ICU collation (see IETF RFC 6067)" `BadRequestData`. RFC 6067 defines the `-u-` extension as attributes followed by keywords (a two-character key and the types after it), both registered in the Unicode locale extension registry, so a key or type outside that registry states no collation preference.
 //!
-//! Only the keys whose registered types are a closed list are decided here. The
-//! reordering key `kr` and the deprecated `vt` take open-ended sequences — a
-//! run of script and category codes, a run of code points — and ICU refuses an
-//! unusable one outright rather than ignoring it, so nothing is gained by
-//! restating those two sets and a stale copy would refuse a valid request.
+//! Only keys whose registered types are a closed list are decided here. The reordering key `kr` and the deprecated `vt` take open-ended sequences that ICU refuses outright when unusable, so restating those sets would only risk a stale copy refusing a valid request.
 
 use strum::{Display, IntoStaticStr};
 
-/// The BCP47 singleton that introduces the Unicode locale extension, `u`.
-///
-/// IETF RFC 6067 defines this extension, and clause 4.23.3 spells its examples
-/// (`und-u-ks-identic`, `de-u-co-phonebk`) with it.
+/// The BCP 47 singleton introducing the Unicode locale extension (RFC 6067); clause 4.23.3's examples (`und-u-ks-identic`, `de-u-co-phonebk`) use it.
 const UNICODE_EXTENSION_SINGLETON: &str = "u";
 
 /// The length of a BCP47 singleton subtag, which introduces an extension.
 const SINGLETON_LENGTH: usize = 1;
 
-/// The subtag length that distinguishes a Unicode keyword *key* from a value.
-///
-/// RFC 6067 fixes keys at two characters and keyword types and attributes at
-/// three or more, so the length alone decides which of the two a subtag is.
+/// RFC 6067 fixes keys at two characters and keyword types and attributes at three or more, so length alone tells a key from a value.
 const KEYWORD_KEY_LENGTH: usize = 2;
 
 /// The types RFC 6067 registers for the boolean collation keys.
@@ -76,22 +58,13 @@ pub enum CollationKeyword {
 struct CollationKey {
     /// The two-character key.
     key: CollationKeyword,
-    /// The types registered for the key, or `None` where the registry admits an
-    /// open-ended sequence that ICU itself refuses when it cannot be used.
+    /// The registered types, or `None` where the registry admits an open-ended sequence that ICU itself refuses when unusable.
     types: Option<&'static [&'static str]>,
 }
 
-/// The collation keys of the Unicode BCP47 extension registry RFC 6067 governs:
-/// collation type, alternate handling, backward second level, case level, case
-/// first, hiragana quaternary, normalisation, numeric ordering, reordering,
-/// strength, maximum variable and variable top.
+/// The collation keys of the Unicode extension registry that RFC 6067 governs.
 ///
-/// The type lists carry the registry's aliases beside its canonical names —
-/// `ks` accepts `primary` for `level1` and `tertiary` for `level3` — because a
-/// client may spell either and ICU canonicalises one to the other. Aliases the
-/// registry spells with more than eight characters (`secondary`, `quaternary`,
-/// `identical`) are absent: BCP47 caps a subtag at eight characters, so such a
-/// tag never parses in the first place.
+/// The type lists carry the registry's aliases beside its canonical names (`ks` accepts `primary` for `level1`) because a client may spell either and ICU canonicalises one to the other. Aliases longer than eight characters (`secondary`, `quaternary`, `identical`) are absent: BCP 47 caps a subtag at eight, so such a tag never parses.
 const COLLATION_KEYS: [CollationKey; 12] = [
     CollationKey {
         key: CollationKeyword::Co,
@@ -146,10 +119,7 @@ const COLLATION_KEYS: [CollationKey; 12] = [
     },
 ];
 
-/// The registry entry for `key`, if it names a collation setting.
-///
-/// BCP47 subtags are case-insensitive, so a client that spells its keyword key
-/// in upper case names the same setting.
+/// The registry entry for `key`, if it names a collation setting. BCP 47 subtags are case-insensitive.
 fn collation_key(key: &str) -> Option<&'static CollationKey> {
     COLLATION_KEYS.iter().find(|entry| key.eq_ignore_ascii_case(<&'static str>::from(entry.key)))
 }
@@ -157,12 +127,9 @@ fn collation_key(key: &str) -> Option<&'static CollationKey> {
 /// What the Unicode extension of a tag says that RFC 6067 does not register.
 #[derive(Debug, PartialEq, Eq)]
 pub enum UnregisteredKeyword<'a> {
-    /// A keyword key that names no collation setting at all — a numbering
-    /// system or a calendar, say, which expresses no collation preference.
+    /// A keyword key that names no collation setting (a numbering system or calendar, say).
     Key(&'a str),
-    /// A collation key carrying a type the registry does not list for it. ICU
-    /// silently falls back to the key's default for such a type, so a request
-    /// naming one would otherwise be answered with an order it did not ask for.
+    /// A collation key carrying a type the registry does not list. ICU silently falls back to the key's default for it, so the request would be answered in an order it did not ask for.
     Type {
         /// The collation key the type was written under.
         key: CollationKeyword,
@@ -171,19 +138,9 @@ pub enum UnregisteredKeyword<'a> {
     },
 }
 
-/// The first thing `tag`'s Unicode extension declares that RFC 6067 does not
-/// register, if it declares one.
+/// The first thing `tag`'s Unicode extension declares that RFC 6067 does not register, if any.
 ///
-/// The already-validated tag text is walked subtag by subtag rather than
-/// through the language-tag crate's extension accessor, which indexes one byte
-/// past the end of any tag that carries no extension at all — `de-DE` among
-/// them — and so cannot be asked whether an extension is present.
-///
-/// A singleton opens an extension and closes the previous one, so the keywords
-/// are exactly the subtags between the `u` singleton and the next singleton. A
-/// two-character subtag there opens a keyword and the longer subtags that
-/// follow it are its types; longer subtags seen before any key are the
-/// extension's attributes, which carry no collation setting of their own.
+/// The tag text is walked subtag by subtag because the language-tag crate's extension accessor indexes one byte past the end of a tag with no extension (`de-DE`, for one). A singleton closes the previous extension, so the keywords are the subtags between the `u` singleton and the next singleton: a two-character subtag opens a keyword and the longer subtags after it are its types, while longer subtags before any key are extension attributes, which carry no collation setting.
 #[must_use]
 pub fn unregistered_collation_keyword(tag: &str) -> Option<UnregisteredKeyword<'_>> {
     let mut in_unicode_extension = false;
@@ -221,17 +178,14 @@ mod tests {
         }
     }
 
-    /// A keyword key selecting a numbering system or a calendar states no
-    /// collation preference, so the tag names no collation.
+    /// A numbering system or calendar key states no collation preference.
     #[test]
     fn a_keyword_key_that_is_not_a_collation_setting_is_reported() {
         pretty_assertions::assert_eq!(unregistered_collation_keyword("de-u-nu-latn"), Some(UnregisteredKeyword::Key("nu")));
         pretty_assertions::assert_eq!(unregistered_collation_keyword("de-u-ca-buddhist"), Some(UnregisteredKeyword::Key("ca")));
     }
 
-    /// RFC 6067 registers the types as well as the keys, and ICU silently
-    /// substitutes the key's default for an unregistered one, so the tag has to
-    /// be refused here or the request is answered with the wrong order.
+    /// ICU silently substitutes the key's default for an unregistered type, so the tag has to be refused here.
     #[test]
     fn a_collation_key_carrying_an_unregistered_type_is_reported() {
         pretty_assertions::assert_eq!(
@@ -250,8 +204,7 @@ mod tests {
         );
     }
 
-    /// The registry's own aliases are types too: `primary` names `level1` and
-    /// `yes` names `true`, and ICU canonicalises both.
+    /// The registry's aliases are types too: `primary` names `level1` and `yes` names `true`.
     #[test]
     fn the_registry_aliases_are_admitted_beside_the_canonical_type_names() {
         for accepted in ["de-u-ks-primary", "de-u-ks-tertiary", "de-u-kn-yes", "de-u-kn-true", "de-u-kf-false"] {
@@ -259,10 +212,7 @@ mod tests {
         }
     }
 
-    /// RFC 6067 fixes a keyword type at three to eight characters, so the
-    /// registry's two-character `no` alias for `false` cannot be spelled as one:
-    /// a tag that writes it declares a second keyword key, and that key names no
-    /// collation setting.
+    /// RFC 6067 fixes a type at three to eight characters, so the two-character `no` alias for `false` cannot be spelled as one and reads as a second key.
     #[test]
     fn a_two_character_alias_is_read_as_a_key_because_no_type_is_that_short() {
         pretty_assertions::assert_eq!(unregistered_collation_keyword("de-u-kf-no"), Some(UnregisteredKeyword::Key("no")));
@@ -275,9 +225,7 @@ mod tests {
         pretty_assertions::assert_eq!(unregistered_collation_keyword("de-u-kn"), None);
     }
 
-    /// `kr` reorders by a run of script and category codes and `vt` names a run
-    /// of code points; neither is a closed list, and ICU refuses an unusable
-    /// one rather than ignoring it.
+    /// `kr` and `vt` are open-ended sequences, not closed lists.
     #[test]
     fn the_open_ended_keys_admit_their_sequences() {
         for accepted in ["de-u-kr-latn-digit", "de-u-kr-grek", "de-u-vt-0020"] {
@@ -285,22 +233,19 @@ mod tests {
         }
     }
 
-    /// BCP47 subtags are case-insensitive, so neither the key nor the type may
-    /// depend on the casing a client happened to send.
+    /// BCP 47 subtags are case-insensitive.
     #[test]
     fn keys_and_types_are_recognised_whatever_case_they_are_written_in() {
         pretty_assertions::assert_eq!(unregistered_collation_keyword("de-U-CO-PHONEBK"), None);
     }
 
-    /// A subtag before the first key is an extension attribute, not a type, and
-    /// carries no collation setting of its own.
+    /// A subtag before the first key is an extension attribute, not a type.
     #[test]
     fn an_extension_attribute_before_the_first_key_is_not_read_as_a_type() {
         pretty_assertions::assert_eq!(unregistered_collation_keyword("de-u-attr-co-phonebk"), None);
     }
 
-    /// A singleton closes the extension before it, so a subtag under a
-    /// different extension is not read as a collation type.
+    /// A singleton closes the extension before it.
     #[test]
     fn a_later_extension_closes_the_unicode_one() {
         pretty_assertions::assert_eq!(unregistered_collation_keyword("de-u-co-phonebk-x-private"), None);

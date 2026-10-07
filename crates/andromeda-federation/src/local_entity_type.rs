@@ -1,17 +1,4 @@
-//! Resolving a locally-held entity's type for federated-write coverage.
-//!
-//! A single-entity provision operation that carries no `type` in its request --
-//! an attribute-level write such as `DELETE /entities/{id}/attrs/{attr}` or
-//! `POST /entities/{id}/attrs` -- still has to be matched against registrations
-//! by the entity's actual type. Without it,
-//! [`crate::registration_information::information_matches_entity`] treats an absent
-//! type as satisfying every selector's type axis (`entity_type.is_none_or(..)`),
-//! so a registration scoped to an unrelated type is wrongly taken to cover the
-//! write and, being proxied and not advertising the operation, refuses it with a
-//! 409 (clause 5.9.2.4). This port lets the write path read the local entity's
-//! expanded type so coverage is decided by the type the entity actually has. An
-//! entity this broker does not hold locally resolves to `None`, and matching then
-//! falls back to the entity identifier exactly as before.
+//! A single-entity provision operation that carries no `type` in its request -- an attribute-level write such as `DELETE /entities/{id}/attrs/{attr}` or `POST /entities/{id}/attrs` -- still has to be matched against registrations by the entity's actual type. Without it, an absent type satisfies every selector's type axis, so a registration scoped to an unrelated type is wrongly taken to cover the write and, being proxied and not advertising the operation, refuses it with a 409 (clause 5.9.2.4). This port lets the write path read the local entity's expanded type so coverage is decided by the type the entity actually has. An entity this broker does not hold locally resolves to `None`, and matching then falls back to the entity identifier.
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;

@@ -153,7 +153,7 @@ impl ContextSpec {
 
     /// The key one engine keeps the context this spec processes to under, for
     /// as long as the documents it was processed from stay what the loader
-    /// resolves (`engine::processed_context_cache`).
+    /// resolves.
     ///
     /// The key is the resolved `@context` text, which is exactly what gets
     /// processed, so two specs share a key only when they would process the

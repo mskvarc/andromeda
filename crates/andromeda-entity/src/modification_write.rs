@@ -1,8 +1,8 @@
 //! The write that stores a modified entity, and the notifications it owes.
 //!
-//! Every read-modify-write that neither creates nor deletes an entity --
-//! merge, replace, the five attribute-level operations and the clause 5.6.21
-//! purge -- ends the same way: the state it computed is stored whole, its
+//! Every read-modify-write that neither creates nor deletes an entity
+//! (merge, replace, the five attribute-level operations and the clause 5.6.21
+//! purge) ends the same way: the state it computed is stored whole, its
 //! change against the state it read is classified, and both notification
 //! channels are planned from that one change (clause 5.2.12).
 

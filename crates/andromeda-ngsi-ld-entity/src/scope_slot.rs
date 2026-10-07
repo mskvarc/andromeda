@@ -6,8 +6,8 @@
 //! Scope instance of a Temporal Evolution (clause 4.5.6). Each item is a scope
 //! path, or the NGSI-LD Null that clause 4.18 admits "only in case of deleted
 //! scopes", so the Null stands alone or not at all. Every reader of a `scope`
-//! member -- the expanded document, the stored entity, a reified Scope, the
-//! compact request model -- hands its items here, so the rule is read once.
+//! member (the expanded document, the stored entity, a reified Scope, the
+//! compact request model) hands its items here, so the rule is read once.
 
 use crate::{document::slot::Slot, scope_refusal::ScopeRefusal, scopes::Scopes};
 use andromeda_ngsi_ld_lexicon::scope::path::{ScopePath, ScopePathError};

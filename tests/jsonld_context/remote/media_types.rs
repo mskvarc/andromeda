@@ -2,7 +2,7 @@
 //!
 //! Andromeda reads `application/json`, `application/ld+json`, any `+json`
 //! type, `text/plain` (every raw GitHub-hosted data-model context) and a
-//! response without `Content-Type` (the ETSI suite's own context server) as
+//! response without `Content-Type` as
 //! JSON. Any other media type, without a JSON-LD alternate, is a context that
 //! could not be obtained: `LdContextNotAvailable` (clause 5.5.6). A JSON body
 //! without a top-level `@context` is an invalid one: `BadRequestData`.
@@ -18,7 +18,7 @@ use crate::{
 use reqwest::StatusCode;
 use serde_json::json;
 
-/// Study F1 and F2, and every JSON-shaped media type: the context is read, its
+/// Every JSON-shaped media type: the context is read, its
 /// term expands, and the download is recorded as Cached.
 #[tokio::test]
 async fn a_context_served_as_any_json_shaped_type_or_without_a_content_type_is_read() {
@@ -53,7 +53,7 @@ async fn a_context_served_as_any_json_shaped_type_or_without_a_content_type_is_r
     tenant.finish().await;
 }
 
-/// Study F3: a media type no context is read from, with no alternate, is a
+/// A media type no context is read from, with no alternate, is a
 /// context that could not be obtained, and nothing is recorded.
 #[tokio::test]
 async fn a_context_served_as_a_non_json_type_without_an_alternate_is_not_available() {
@@ -71,7 +71,7 @@ async fn a_context_served_as_a_non_json_type_without_an_alternate_is_not_availab
     tenant.finish().await;
 }
 
-/// Study F8: a JSON body without a top-level `@context` is an invalid context,
+/// A JSON body without a top-level `@context` is an invalid context,
 /// and a body that is not JSON under a JSON media type is one too.
 #[tokio::test]
 async fn a_json_body_without_a_context_or_a_body_that_is_not_json_is_bad_request_data() {

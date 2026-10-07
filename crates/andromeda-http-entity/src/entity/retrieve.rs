@@ -116,9 +116,8 @@ pub(crate) async fn get(
     let prefer = protocol.prefer;
     let entity_map_header = protocol.entity_map;
 
-    // Validate the representation parameters before entity lookup so an invalid
-    // `format` or `options` returns 400, not 404 (clause 5.5.4 general
-    // NGSI-LD request-parameter validation).
+    // Validated before the entity lookup so an invalid `format` or `options`
+    // answers 400, not 404 (clause 5.5.4).
     params.validate().with_entity_instance(&uri)?;
     require_geojson_for_geometry_property(params.geometry_property.as_ref(), accept.media_type()).with_entity_instance(&uri)?;
 
@@ -144,7 +143,6 @@ pub(crate) async fn get(
     let referenced = entity_map_header.as_ref().map(NgsiLdEntityMap::as_inner);
     let map_use = resolve_retrieval_map_use(&state.entity_maps, &target, &params, referenced, &uri).await?;
 
-    // If local=true, skip distributed forwarding
     let (mut held, warnings, entity_map_uri) = if is_local {
         (local_result.with_entity_instance(&uri)?, Vec::new(), None)
     } else {

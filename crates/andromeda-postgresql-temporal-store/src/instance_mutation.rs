@@ -1,8 +1,4 @@
-//! Mutation and retrieval of individual temporal attribute instances.
-//!
-//! Clause 5.6.15 addresses one instance of one temporal attribute by its
-//! `instanceId`; the statements doing so, one per identifier column, live in
-//! [`crate::instance_statements`].
+//! Clause 5.6.15 addresses one instance of one temporal attribute by its `instanceId`, so each operation here runs a statement per identifier column.
 
 use crate::{
     attribute_history_value::AttributeHistoryValue,
@@ -50,18 +46,7 @@ impl TemporalRepository {
     /// written: a tombstone would keep answering temporal queries for an
     /// instance the client asked to have removed.
     ///
-    /// Deliberate retention asymmetry: unlike whole-entity temporal deletion,
-    /// this single-instance path does not read the removed row's `write_id`
-    /// and does not release the write record it belongs to. Every other row
-    /// of that write (other instances, other attributes, current state,
-    /// notifications, side effects) may still exist, so this statement cannot
-    /// know from a single deleted row whether the write record it belonged to
-    /// has become unreferenced. Leaving the write record retained is the safe
-    /// direction: retention's own periodic sweep is what actually knows the
-    /// full set of referents and reaps a write record once none of them
-    /// remain, so retaining here costs one write record's worth of storage
-    /// until that sweep runs, whereas guessing wrong and releasing early would
-    /// corrupt replay identity for every sibling row still pointing at it.
+    /// Deliberate retention asymmetry: unlike whole-entity temporal deletion, this path does not read the removed row's `write_id` and does not release its write record. Other rows of that write may still exist, and a single deleted row cannot show whether the record became unreferenced. Retaining it costs one record's storage until the retention sweep, which knows the full set of referents, reaps it; releasing early would corrupt replay identity for sibling rows.
     pub(crate) async fn delete_instance(
         &self,
         target: &ContextTarget,
@@ -240,10 +225,7 @@ mod tests {
         UpdateInstanceState::of_replacement(&replacement).expect("the replacement encodes")
     }
 
-    /// The clause 5.6.15 replacement is read by the same decoder an append is,
-    /// so an array-valued Property replaced in place keeps every element, as
-    /// the structured column stores it, where the store's own reader kept the
-    /// first element and dropped the rest.
+    /// The clause 5.6.15 replacement is read by the same decoder an append is, so an array-valued Property replaced in place keeps every element, as the structured column stores it.
     #[test]
     fn a_replaced_array_valued_property_stores_every_element() {
         let update = update_of(&json!({
@@ -255,10 +237,7 @@ mod tests {
         assert_eq!(stored, json!([1, 2, 3]));
     }
 
-    /// The replacement's metadata holds its sub-attributes and companions
-    /// alone: the value, the plural and list members, and the clause 4.8 times
-    /// the store's own reader used to keep there, where they overrode the
-    /// rendered value, are not metadata; the unit moves to its column.
+    /// The replacement's metadata holds its sub-attributes and companions alone: the value, the plural and list members and the clause 4.8 times are not metadata, and the unit moves to its column.
     #[test]
     fn a_replacement_stores_only_its_metadata_in_the_metadata_column() {
         let accuracy = json!([{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 0.5}]}]);

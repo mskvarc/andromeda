@@ -11,8 +11,6 @@
 //!
 //! Needs the host broker: the cases drive the HTTP API and a callback receiver,
 //! and are not run without one.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -103,13 +101,13 @@ async fn assert_chain_is_delivered_inline(depth: usize) {
     scope.finish().await.expect("environment cleanup");
 }
 
-/// Follow-up 50: a 1,000-level inline join is delivered whole.
+/// A 1,000-level inline join is delivered whole.
 #[tokio::test]
 async fn regression_a_1000_level_inline_join_notification_is_delivered() {
     assert_chain_is_delivered_inline(1000).await;
 }
 
-/// Follow-up 50: a 2,000-level inline join is delivered whole.
+/// A 2,000-level inline join is delivered whole.
 #[tokio::test]
 async fn regression_a_2000_level_inline_join_notification_is_delivered() {
     assert_chain_is_delivered_inline(2000).await;

@@ -130,7 +130,8 @@ pub struct ProblemDetail {
     ///
     /// Boxed because a `Uri` is 88 bytes against the 32 the rest of the detail
     /// occupies, and this type is the `Err` of nearly every handler's `Result`:
-    /// carrying it inline made every success path pay for the failure's width.
+    /// carrying it inline would make every success path pay for the failure's
+    /// width.
     instance: Option<Box<Uri>>,
 }
 
@@ -281,7 +282,7 @@ impl<'de> Deserialize<'de> for ProblemDetail {
         // a peer broker's 508/504/502 document round-trips into its own
         // classification rather than the InternalError category.
         // `expected_title` is the title of the type IRI actually named on the
-        // wire, not of the resolved classification: a legacy peer stamps a
+        // wire, not of the resolved classification: an older peer stamps a
         // distributed failure as `InternalError` plus the clause 6.3.17 status,
         // and its "Internal error" title must still be accepted even though the
         // pair resolves to a distinct distributed classification.

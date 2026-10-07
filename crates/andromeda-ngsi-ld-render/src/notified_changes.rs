@@ -15,8 +15,8 @@
 //!   4.5.3.2, 4.5.18.2, 4.5.20.2, 4.5.21.2, 4.5.22.2 and 4.5.24.2).
 //!
 //! [`NotifiedChanges`] holds the typed renderings those reports are read from,
-//! and the walk of [`crate::entity_body`] writes them as it writes each member:
-//! nothing is copied out of the entity or rewritten as a document.
+//! and the entity walk writes them as it writes each member: nothing is copied
+//! out of the entity or rewritten as a document.
 
 use andromeda_ngsi_ld_model::entity::Entity;
 use chrono::{DateTime, Utc};

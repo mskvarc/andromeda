@@ -31,8 +31,6 @@
 //! permission the broker needs, and permission cannot be inferred from an empty
 //! registry. The ordering rule protects the answer's correctness instead, and
 //! is satisfied by the fact of no distribution however that fact arose.
-//!
-//! `docs/entity-ordering-local-scope.md` records the decision in full.
 
 use crate::{
     FederationService,

@@ -304,8 +304,6 @@ fn csr_subscription(id: &str, endpoint_url: &str) -> Value {
     })
 }
 
-// --- Tests ---
-
 #[serial_test::serial]
 #[tokio::test]
 async fn multitenancy_unnamed_and_named_default_tenants_are_isolated() {
@@ -333,12 +331,10 @@ async fn multitenancy_unnamed_and_named_default_tenants_are_isolated() {
         "named default tenant response must include NGSILD-Tenant header"
     );
 
-    // Retrieve from unnamed default → should see unnamed version
     let (status, _, body) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id}"), None, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["name"]["value"], "unnamed-default");
 
-    // Retrieve from named "default" tenant → should see named version
     let (status, _, body) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id}"), None, "default", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["name"]["value"], "named-default");
@@ -458,18 +454,15 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     let http_client = client();
     let environment = reset_broker_state().await;
 
-    // 1. Create Entity
     let tenant_1 = format!("tenant-create-entity-{}", Uuid::new_v4());
     let id_1 = unique_entity_id("urn:ngsi-ld:Vehicle:create-entity");
     let (status, headers, _) = ngsi_request(&http_client, Method::POST, "/entities", Some(&vehicle_entity(&id_1, "v1")), &tenant_1, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     pretty_assertions::assert_eq!(headers.get("NGSILD-Tenant").and_then(|v| v.to_str().ok()), Some(tenant_1.as_str()));
     assert_tenant_serves(&http_client, &format!("/entities/{id_1}"), &tenant_1).await;
-    // Entity not visible in unnamed default tenant
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id_1}"), None, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // 2. Batch Entity Creation
     let tenant_2 = format!("tenant-batch-create-{}", Uuid::new_v4());
     let id_2 = unique_entity_id("urn:ngsi-ld:Vehicle:batch-create");
     let batch = json!([vehicle_entity(&id_2, "v2")]);
@@ -480,7 +473,6 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id_2}"), None, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // 3. Create Temporal Entity
     let tenant_3 = format!("tenant-temporal-create-{}", Uuid::new_v4());
     let id_3 = unique_entity_id("urn:ngsi-ld:Vehicle:temporal-create");
     let (status, headers, _) = ngsi_request(
@@ -498,7 +490,6 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/temporal/entities/{id_3}"), None, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // 4. Create Subscription
     let tenant_4 = format!("tenant-sub-create-{}", Uuid::new_v4());
     let id_4 = unique_subscription_id("sub-create");
     let (status, headers, _) = ngsi_request(
@@ -516,7 +507,6 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/subscriptions/{id_4}"), None, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // 5. Register Context Source
     let tenant_5 = format!("tenant-csr-create-{}", Uuid::new_v4());
     let id_5 = unique_entity_id("urn:ngsi-ld:ContextSourceRegistration:create");
     let (status, headers, _) = ngsi_request(
@@ -534,7 +524,6 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/csourceRegistrations/{id_5}"), None, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // 6. Create Context Source Subscription
     let tenant_6 = format!("tenant-csr-sub-create-{}", Uuid::new_v4());
     let id_6 = unique_subscription_id("csr-sub-create");
     let (status, headers, _) = ngsi_request(
@@ -784,8 +773,6 @@ async fn multitenancy_tenants_endpoint_returns_a_tenant_array() {
     let (status, body) = list_tenants(&http_client).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
-    // The collection is now an array of `Tenant` resources, not the retired
-    // `TenantList` wrapper object.
     let tenants = body.as_array().cloned().unwrap_or_default();
     let tenant_names: Vec<&str> = tenants.iter().filter_map(|tenant| tenant["tenantName"].as_str()).collect();
     assert!(

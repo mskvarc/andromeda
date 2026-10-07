@@ -9,11 +9,9 @@
 //! precedence is `jsonldContext` member, then the creation `@context`, then the
 //! core context; a subscription created with a `Link`-header `@context` and no
 //! `jsonldContext` member must notify under that creation context, not core.
-//! Andromeda read the field only from an explicit `jsonldContext` member and
-//! fell straight to the core context, so its notifications advertised the wrong
-//! `@context` and expanded terms.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Reading the field only from an explicit `jsonldContext` member and falling
+//! straight to the core context would advertise the wrong `@context` and expanded
+//! terms in notifications.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

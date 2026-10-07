@@ -134,8 +134,8 @@ mod tests {
         assert_eq!(rendered(&compiled(&Projection::default())), None);
     }
 
-    /// Clause 5.7.4.5 (ETSI TP `019_17_01` for the non-temporal twin): a `pick`
-    /// keeps an entity only through an in-window instance of a picked Attribute.
+    /// Clause 5.7.4.5: a `pick` keeps an entity only through an in-window
+    /// instance of a picked Attribute.
     #[test]
     fn a_pick_probes_the_represented_instances_of_the_picked_attributes() {
         let sql = rendered(&compiled(&Projection::builder().pick(vec![speed()]).build())).expect("a condition");

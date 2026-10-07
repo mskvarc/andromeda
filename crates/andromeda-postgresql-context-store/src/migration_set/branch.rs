@@ -17,7 +17,7 @@ use std::borrow::Cow;
 /// The name of the ledger each Snapshot schema records its branch migrations in.
 pub const BRANCH_LEDGER: &str = "_andromeda_branch_migrations";
 
-/// The branch migrations, exactly as `migrations/branch/` holds them.
+/// The branch migrations, exactly as embedded in the binary.
 static BRANCH_MIGRATIONS: Migrator = sqlx::migrate!("../../migrations/branch");
 
 /// The branch migrations, in version order.

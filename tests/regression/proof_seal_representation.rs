@@ -7,13 +7,13 @@
 //! Clauses 4.5.2.3, 4.5.18, 4.5.20, 4.5.21, 4.5.22 and 4.5.24 repeat the same
 //! member on every other attribute family, and clause C.11 prints the shape.
 //!
-//! *Non-reified* is the whole of the requirement the broker got wrong. The
-//! concise-to-normalized rewrite of clause 4.5.2.3 wraps every member of an
-//! instance that is not one of the family's own into `{"type": "Property",
-//! "value": …}`, and it wrapped the two seals as well: a proof written as
-//! clause C.11 prints it read back with each seal reified as a Property of its
-//! own, and `entityTypeSealed` — declared `"@type": "@vocab"` inside
-//! `ngsildproof`'s scoped `@context` — compacted to the prefixed IRI
+//! *Non-reified* is the whole of the requirement. The concise-to-normalized
+//! rewrite of clause 4.5.2.3 wraps every member of an instance that is not one of
+//! the family's own into `{"type": "Property", "value": …}`, and must not wrap
+//! the two seals: a proof written as clause C.11 prints it reads back with each
+//! seal bare, whereas a reified seal would be a Property of its own, and
+//! `entityTypeSealed` -- declared `"@type": "@vocab"` inside `ngsildproof`'s
+//! scoped `@context` -- would compact to the prefixed IRI
 //! `ngsi-ld:entityTypeSealed` rather than to its term, because a reified node
 //! object does not match that term definition.
 //!
@@ -22,8 +22,6 @@
 //! the document names sits in the informative Annex C. The broker's obligation
 //! is to accept, store and hand back the member exactly as written, which is
 //! what these tests assert.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -149,9 +147,9 @@ async fn replace_attribute(client: &TestClient, id: &str, attribute: &str, fragm
 /// bare, and the Data Integrity structure intact.
 ///
 /// A bare seal is asserted as a JSON string rather than merely as "not the
-/// value that was written": the reification the defect produced put that same
-/// value inside `{"type": "Property", "value": …}`, so only the JSON kind tells
-/// the two apart.
+/// value that was written": a reified seal puts that same value inside
+/// `{"type": "Property", "value": …}`, so only the JSON kind tells the two
+/// apart.
 fn assert_seals_are_bare(proof: &Value, entity_id: &str, scenario: &str) {
     assert!(
         proof["entityIdSealed"].is_string(),
@@ -244,9 +242,9 @@ async fn regression_seal_reification_every_family_carries_a_bare_seal_pair_when_
 /// Clause 4.4 declares `entityTypeSealed` as `{"@id": "ngsi-ld:entityTypeSealed",
 /// "@type": "@vocab"}` inside `ngsildproof`'s scoped `@context`. The `@vocab`
 /// coercion is what makes the stored value an IRI node, and it is what a
-/// compaction has to match to answer the term: a seal the write path reified
-/// into a Property node no longer matches it, and the rendering falls back to
-/// the compact IRI.
+/// compaction has to match to answer the term: a seal reified into a
+/// Property node would not match it, and the rendering would fall back to the
+/// compact IRI.
 #[tokio::test]
 async fn regression_seal_reification_entity_type_sealed_compacts_to_its_term_not_a_prefixed_iri() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -555,8 +553,8 @@ async fn regression_seal_reification_the_temporal_write_path_keeps_the_seals_bar
 /// other narrowing (input e), and clause 5.7.4.3 says that then "no further
 /// restrictions have to be provided". A sealed instance is compacted through
 /// the JSON-LD processor rather than the term walk, and the processor's
-/// recursion once overflowed a Tokio worker's stack and aborted the broker on
-/// exactly this query, taking every tenant down.
+/// recursion must not overflow a Tokio worker's stack, which would abort the
+/// broker and take every tenant down.
 #[tokio::test]
 async fn regression_r58_a_local_temporal_query_renders_a_sealed_instance() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

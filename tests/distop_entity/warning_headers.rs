@@ -27,10 +27,6 @@ use crate::{
     },
 };
 
-// ---------------------------------------------------------------------------
-// Query warning tests
-// ---------------------------------------------------------------------------
-
 /// Query: context source returns HTTP 500 generates warning code 299.
 #[tokio::test]
 #[serial]
@@ -70,7 +66,6 @@ async fn distop_entity_query_context_source_unreachable_returns_warning_199() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:warn-unreachable");
     let reg_id = unique_id("urn:ngsi-ld:Registration:warn-unreachable");
 
-    // Use the mock's URL but stop it so it's unreachable
     let endpoint = mock.url("");
     mock.shutdown().await;
 
@@ -189,14 +184,12 @@ async fn distop_entity_query_multiple_sources_mixed_results_multiple_warnings() 
     let reg_id1 = unique_id("urn:ngsi-ld:Registration:warn-multi-1");
     let reg_id2 = unique_id("urn:ngsi-ld:Registration:warn-multi-2");
 
-    // First CSR: mock returns 500
     let reg1 = vehicle_registration(&reg_id1, Some(&entity_id), &mock1.url(""), None);
     let (status, _) = create_registration(&c, &reg1).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     mock1.set_stub(Method::GET, "/ngsi-ld/v1/entities", 500).await;
 
-    // Second CSR: mock stopped (unreachable)
     let endpoint2 = mock2.url("");
     mock2.shutdown().await;
 
@@ -230,7 +223,6 @@ async fn distop_entity_query_local_true_no_warnings() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:warn-local");
     let reg_id = unique_id("urn:ngsi-ld:Registration:warn-local");
 
-    // Create local entity
     let entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity_local(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -252,10 +244,6 @@ async fn distop_entity_query_local_true_no_warnings() {
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
 }
-
-// ---------------------------------------------------------------------------
-// Retrieve warning tests
-// ---------------------------------------------------------------------------
 
 /// Retrieve: context source returns HTTP 403 generates warning code 299.
 #[tokio::test]
@@ -341,7 +329,6 @@ async fn distop_entity_retrieve_context_source_unreachable_returns_warning_199()
     let (status, _) = create_entity_local(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Use the mock's URL but stop it so it's unreachable
     let endpoint = mock.url("");
     mock.shutdown().await;
 

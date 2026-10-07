@@ -26,8 +26,7 @@ const PLACES: &str = include_str!("corpus/c-10-places.json");
 /// The two Entities are written one at a time rather than as a batch: clause
 /// 5.6.7's batch path does not resolve the compact IRIs this ontology's term
 /// definitions are written with, which would store them under a different set
-/// of IRIs than clause 5.6.1's path does. That divergence has its own test in
-/// `tests/regression/batch_context_expansion.rs`.
+/// of IRIs than clause 5.6.1's path does.
 async fn seed_places(http: &Client) -> String {
     let link = context_link(hosted_contexts().url("place-context.jsonld").as_str());
     for place in corpus(PLACES).as_array().expect("the printed C.10 payload is an array") {

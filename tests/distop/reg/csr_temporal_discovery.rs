@@ -42,8 +42,7 @@ fn temporal_query(entity_id: &str, from: &str, to: &str, timeproperty: Option<&s
 }
 
 /// A `managementInterval` matches a `modifiedAt`-scoped temporal discovery whose
-/// window overlaps it, and not one that is disjoint (clause 5.9.1). Confirms
-/// REQ-REG-18.
+/// window overlaps it, and not one that is disjoint (clause 5.9.1).
 #[tokio::test]
 async fn reg_managementinterval_overlap_matched_on_temporal_query() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -99,7 +98,6 @@ async fn reg_managementinterval_overlap_matched_on_temporal_query() {
 
 /// An `observationInterval` matches an `observedAt`-scoped temporal discovery
 /// whose window overlaps it, and not one that is disjoint (clause 5.9.1).
-/// Confirms REQ-REG-21.
 #[tokio::test]
 async fn reg_observationinterval_overlap_matched_on_observedat_query() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -154,7 +152,7 @@ async fn reg_observationinterval_overlap_matched_on_observedat_query() {
 }
 
 /// A non-temporal discovery returns latest-info registrations and excludes ones
-/// declaring only a temporal interval (clause 5.9.1). Confirms REQ-REG-50.
+/// declaring only a temporal interval (clause 5.9.1).
 #[tokio::test]
 async fn reg_no_temporal_query_returns_only_latest_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -202,7 +200,7 @@ async fn reg_no_temporal_query_returns_only_latest_csrs() {
 }
 
 /// A temporal discovery returns overlapping-interval registrations and excludes
-/// latest-only ones (clause 5.9.1). Confirms REQ-REG-51.
+/// latest-only ones (clause 5.9.1).
 #[tokio::test]
 async fn reg_temporal_query_returns_only_interval_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -257,7 +255,7 @@ async fn reg_temporal_query_returns_only_interval_csrs() {
 
 /// A registration carrying both latest info and a `managementInterval` is treated
 /// as a single purpose, appearing in exactly one of the non-temporal / temporal
-/// discovery modes (clause 5.9.1). Confirms REQ-REG-49.
+/// discovery modes (clause 5.9.1).
 #[tokio::test]
 async fn reg_csr_combining_latest_and_temporal_single_purpose() {
     let topology = topology::single().await.expect("single-broker topology");

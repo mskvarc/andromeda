@@ -19,7 +19,7 @@
 //! from any of the key-value pairs held within the languageMap", "the valueList
 //! array associated to such a `ListProperty`", "the array of objects associated
 //! to such `ListRelationship`" — so a Query Term compared only against the scalar
-//! columns silently matched none of them.
+//! columns would match none of them.
 //!
 //! # How the comparison is expressed
 //!
@@ -41,8 +41,7 @@
 //! A temporal operand is compared as its canonical clause 4.9 text, because a
 //! value inside a structure is stored as the client wrote it and JSON has no
 //! instant type: an operand written with another offset does not match, in
-//! keeping with the byte-wise comparison invariant the schema fixes elsewhere
-//! (`docs/text-collation-invariant.md`).
+//! keeping with the byte-wise comparison invariant the schema fixes elsewhere.
 
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;

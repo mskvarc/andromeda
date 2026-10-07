@@ -84,8 +84,8 @@ impl ChangeNotifier {
     /// notifications its commit does not queue itself.
     ///
     /// A broker recording durable deliveries commits every match with the write,
-    /// so its job carries none: whichever broker drains the job -- possibly one
-    /// delivering live, sharing the tenant database -- would otherwise notify
+    /// so its job carries none: whichever broker drains the job, possibly one
+    /// delivering live, sharing the tenant database, would otherwise notify
     /// them a second time. A live-delivery broker records none at commit, so its
     /// job carries every change and the draining broker notifies them.
     pub(crate) fn owed_change_events(&self, events: Vec<ChangeEvent>) -> Vec<ChangeEvent> {

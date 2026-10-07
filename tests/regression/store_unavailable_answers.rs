@@ -9,11 +9,7 @@
 //!
 //! Each test holds an exclusive lock on the relation the statement under test
 //! reads or writes, waits until the broker's backend queues behind it, and
-//! terminates that backend. The registration lookup every batch write starts
-//! with was answered as a context source failure (500); a write lost inside
-//! the commit was answered with the pool-saturation detail.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! terminates that backend.
 
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;

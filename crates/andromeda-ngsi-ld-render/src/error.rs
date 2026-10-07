@@ -1,9 +1,9 @@
 //! What a rendering can fail at.
 //!
-//! Almost nothing. A rendering reads values that are already valid — the
-//! resource was parsed on the way in and the representation options are typed
-//! — so the only failure any of them can reach is `serde_json` refusing to
-//! build a value, which is why this enum has one cause and names the rendering
+//! Almost nothing. A rendering reads values that are already valid (the
+//! resource was parsed on the way in and the representation options are typed),
+//! so the only failure any of them can reach is `serde_json` refusing to
+//! build a value. That is why this enum has one cause and names the rendering
 //! it happened under rather than inventing categories nothing produces.
 
 use strum::Display;

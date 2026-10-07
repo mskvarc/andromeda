@@ -11,8 +11,7 @@
 //! names in order and knows nothing of the NGSI-LD precedence rule, so the core
 //! context has to be the last context that value leaves in force. Annex C.8
 //! answers a client whose wrapper `@context` already ends with the core context
-//! with that wrapper alone, and the ETSI suite's own compound context is such a
-//! wrapper.
+//! with that wrapper alone.
 //!
 //! [`PresentedContext`] applies all of that once, for every rendering: the
 //! request's contexts in order, repeats included, every core reference the
@@ -277,7 +276,7 @@ mod tests {
         sync::atomic::{AtomicUsize, Ordering},
     };
 
-    /// The suite-shaped compound context: a user context ending with v1.9.
+    /// A compound context: a user context ending with v1.9.
     const COMPOUND: &str = "https://example.com/compound.jsonld";
     /// A user context that names no core context.
     const USER: &str = "https://example.com/user.jsonld";
@@ -676,7 +675,7 @@ mod tests {
 
     /// A definition that imported the core and set only `@version` defined
     /// nothing of its own, so the request is answered under the core context
-    /// alone, as one string (review test A11).
+    /// alone, as one string.
     #[tokio::test]
     async fn a_definition_holding_only_a_core_import_and_version_is_answered_under_the_core_alone() {
         let presented = presented(&ContextSpec::from_body(literal(

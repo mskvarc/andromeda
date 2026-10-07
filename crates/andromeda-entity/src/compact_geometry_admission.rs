@@ -22,8 +22,8 @@ use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBud
 use std::str::FromStr;
 
 /// Admit the typed attribute members of a compact write whose `GeoProperty`
-/// geometries -- values, previous values, and those of sub-attributes at any
-/// depth -- each hold no more positions than `limit`.
+/// geometries, values, previous values, and those of sub-attributes at any
+/// depth, each hold no more positions than `limit`.
 ///
 /// # Errors
 ///

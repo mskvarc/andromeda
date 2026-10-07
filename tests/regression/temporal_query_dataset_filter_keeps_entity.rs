@@ -10,11 +10,9 @@
 //! so the Entity is counted and paged, and the values filter (S2) and the
 //! geoquery (S3) that precede S8 read the instances of every dataset.
 //!
-//! The broker narrowed its entity selection by dataset, so such an Entity
-//! vanished from the answer and from `NGSILD-Results-Count`. The retrieval twin
-//! (clause 5.7.3.4) is `temporal_dataset_filter_keeps_entity`.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Narrowing the entity selection by dataset would make such an Entity vanish
+//! from the answer and from `NGSILD-Results-Count`. The retrieval counterpart is
+//! clause 5.7.3.4.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -172,8 +170,7 @@ async fn regression_temporal_query_dataset_filter_an_emptied_entity_is_counted_a
 /// Clause 5.7.4.3 makes `attrs` a list "of which at least one shall exist in
 /// order for an Entity to be selected, and also used as query projection
 /// attributes": `speed` exists in the window, so the Entity is selected, and
-/// S8 then removes it for carrying no instance of the named dataset. ETSI
-/// `021_18_07` expects an empty array here, against the clause.
+/// S8 then removes it for carrying no instance of the named dataset.
 #[tokio::test]
 async fn regression_temporal_query_dataset_filter_attrs_of_another_dataset_keep_the_entity() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

@@ -1,8 +1,8 @@
 //! Turning a read plus a computation into an optimistic write.
 //!
-//! Every entity mutation that is a function of the entity's current state —
-//! merge, replace, all five attribute-level operations, the clause 5.6.21 purge
-//! and the clause 4.22 sweep — reads the state outside the writing
+//! Every entity mutation that is a function of the entity's current state
+//! (merge, replace, all five attribute-level operations, the clause 5.6.21 purge
+//! and the clause 4.22 sweep) reads the state outside the writing
 //! transaction. The write it produces is therefore only meaningful against the
 //! state it was computed from, so it states that state's clause 4.8
 //! `modifiedAt` and the store refuses it if the entity has moved on.
@@ -57,7 +57,7 @@ impl EntityService {
     ///
     /// Requests that target the same entity take the same broker-side guard, so
     /// the compare-and-set only ever loses to a writer this process does not
-    /// own — another broker instance, or a batch chunk holding the guard for a
+    /// own, another broker instance, or a batch chunk holding the guard for a
     /// set of identifiers. Those losses are absorbed by re-reading behind the
     /// [`backoff_after_lost_attempts`] wait, which separates writers that
     /// collided rather than restarting them together.
@@ -107,8 +107,8 @@ impl EntityService {
     /// produced besides the write.
     ///
     /// The notification a mutation raises is a function of the same merge that
-    /// produced the write — which attributes it dropped, what the entity looked
-    /// like before it, what it looks like after — and that merge runs again on
+    /// produced the write, which attributes it dropped, what the entity looked
+    /// like before it, what it looks like after, and that merge runs again on
     /// every attempt. Reading those values off the attempt that actually landed
     /// is what keeps the notification describing the change the store accepted
     /// rather than one an earlier attempt computed and lost.

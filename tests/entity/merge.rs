@@ -32,10 +32,6 @@ use reqwest::{Method, StatusCode};
 use serde_json::{Number, json};
 use std::str::FromStr;
 
-// ---------------------------------------------------------------------------
-// 056_01: Merge entity scenarios
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_merge_empty_fragment_unchanged() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -50,7 +46,6 @@ async fn entity_merge_empty_fragment_unchanged() {
     let (status, _) = merge_entity(&c, &id, &fragment, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "merge should return 204");
 
-    // Verify entity unchanged
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["name"]["value"], "Eiffel Tower");
@@ -115,7 +110,6 @@ async fn entity_merge_new_relationship_added() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["locatedAt"]["type"], "Relationship");
     assert_eq!(body["locatedAt"]["object"], "urn:ngsi-ld:City:Paris");
-    // Original properties should still be present
     assert_eq!(body["name"]["value"], "Eiffel Tower");
     scope.finish().await.expect("cleanup failed");
 }
@@ -139,16 +133,10 @@ async fn entity_merge_partial_properties_preserved() {
     assert_eq!(body["airQualityLevel"]["value"], 1);
     let observed = body["airQualityLevel"]["observedAt"].as_str().unwrap();
     assert!(observed.starts_with("2024-01-01T00:00:00"), "observedAt should match: {observed}");
-    // unitCode should be preserved from original
     assert_eq!(body["airQualityLevel"]["unitCode"], "C62");
-    // Other properties unchanged
     assert_eq!(body["name"]["value"], "Eiffel Tower");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 056_02: Merge entity error cases
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_merge_invalid_id_returns_400() {
@@ -212,10 +200,6 @@ async fn entity_merge_not_found_returns_404() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 056_03: Delete attributes via NGSI-LD null
-// ---------------------------------------------------------------------------
-
 fn null_property() -> serde_json::Value {
     json!({
         "name": "urn:ngsi-ld:null",
@@ -261,7 +245,6 @@ async fn entity_merge_delete_property_via_null() {
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.get("name").is_none(), "name should be deleted");
-    // Other attributes should remain
     assert!(body.get("locatedAt").is_some(), "locatedAt should remain");
     assert!(body.get("location").is_some(), "location should remain");
     assert!(body.get("street").is_some(), "street should remain");
@@ -331,10 +314,6 @@ async fn entity_merge_delete_languageproperty_via_null() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 056_04: Delete specific attribute instance via NGSI-LD null
-// ---------------------------------------------------------------------------
-
 fn null_property_instance() -> serde_json::Value {
     json!({
         "name": {
@@ -395,7 +374,6 @@ async fn entity_merge_delete_property_instance_by_datasetid() {
 
     let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
-    // Dataset:01 instance should be gone, Dataset:02 should remain
     let name = &body["name"];
     if name.is_array() {
         let names = name.as_array().unwrap();
@@ -487,11 +465,6 @@ async fn entity_merge_delete_languageproperty_instance_by_datasetid() {
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 056_05: Delete all attribute instances via NGSI-LD null (entity with defaults)
-// Per NGSI-LD 5.6.1: null sentinel without datasetId removes ALL instances
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_merge_delete_all_property_instances_via_null() {

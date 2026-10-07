@@ -22,14 +22,14 @@ use sea_query::{Alias, Expr as SeaExpr, ExprTrait, Query, SelectStatement, Simpl
 /// subquery; each caller passes its own so two correlated subqueries nested in
 /// one statement cannot capture each other's rows.
 ///
-/// Both of the equality columns and the `value_geometry IS NOT NULL` restriction are
+/// Both equality columns and the `value_geometry IS NOT NULL` restriction are
 /// covered by the partial btree index `idx_cav_entity_geometry
 /// (attribute_name_key, entity_key)`, so the scan is an index probe rather than a
 /// scan of every instance of the attribute.
 ///
 /// The correlation reads the outer row's `entity_key`: the projection is owned
-/// by the `entities` row through the surrogate key, and the entity URI it used
-/// to carry is not a column of this relation at all.
+/// by the `entities` row through the surrogate key, and the entity URI is not a
+/// column of this relation at all.
 #[must_use]
 pub fn geometry_instances_of(outer: &EntityRowRefs, subquery_alias: &str, attribute_name_key: AttributeNameKey) -> SelectStatement {
     let alias = Alias::new(subquery_alias);

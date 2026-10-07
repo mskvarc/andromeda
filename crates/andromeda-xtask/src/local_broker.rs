@@ -22,8 +22,8 @@ const DEFAULT_LAST_N: &str = "19";
 /// backwards as the base-tier regressions expect.
 const MAX_LAST_N: &str = "19";
 /// The settings every base-tier broker runs with beside its ports, identical to
-/// the containerized `broker` profile in `docker/compose/test/base/docker-compose.yaml`,
-/// which documents why each one is needed: a 1s expiry sweep for the expiration
+/// the containerized `broker` profile of the base compose stack, each needed
+/// for its own reason: a 1s expiry sweep for the expiration
 /// suite, pool bounds that keep two brokers under PostgreSQL's connection limit,
 /// the tenant-management extension the tenant suites and cleanup rely on, and a
 /// short stored-`@context` revalidation span for the `jsonld_context` suite.

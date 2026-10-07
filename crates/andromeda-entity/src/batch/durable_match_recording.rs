@@ -5,12 +5,11 @@
 //! (clauses 5.5.11.0 and 5.8.6).
 //!
 //! These tests commit each batch operation against the shared recording harness
-//! and read the matches — and, on the asynchronous path, the deferred change
-//! events — off the [`AtomicWrite`] the committer captured. They guard two
-//! defects the schema overhaul left open: a batch write that recorded no durable
-//! match at all, and one that collapsed every trigger to `entityUpdated` -- and
-//! a third: a write that recorded one match per raised trigger, notifying the
-//! same subscription several times for one change.
+//! and read the matches, and, on the asynchronous path, the deferred change
+//! events, off the [`AtomicWrite`] the committer captured. They hold three
+//! properties: a batch write records a durable match, it keeps the precise
+//! trigger rather than collapsing it to `entityUpdated`, and it records one
+//! match per subscription rather than one per raised trigger.
 
 use crate::{
     admission_fixture::admitted_batch,
@@ -149,7 +148,7 @@ async fn batch_update_records_an_attribute_updated_match() {
 
     let write = single_recorded_write(&recorded);
     // The overwritten attribute already existed, so the batch update raises
-    // attributeUpdated, not the coarse entityUpdated the defect produced.
+    // attributeUpdated, not the coarse entityUpdated.
     assert_match(&write, &[NotificationTrigger::AttributeUpdated], CATEGORY_IRI);
 }
 

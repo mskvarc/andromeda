@@ -5,7 +5,7 @@
 //! changes are marked `#[ignore]` with a follow-up note; the scaffolding
 //! exists so future work can flip them on without re-authoring.
 //!
-//! `OperationNotSupported` has no file: its only emitter was the `/i18n/*` handler, which no longer exists, so no request can reach the error. The framework-independent category remains covered by `andromeda-ngsi-ld-problem-details`, while HTTP encoding is covered by `andromeda-http-response`.
+//! `OperationNotSupported` has no file: no handler emits it, so no request can reach the error. The framework-independent category remains covered by `andromeda-ngsi-ld-problem-details`, while HTTP encoding is covered by `andromeda-http-response`.
 
 mod internal_error;
 mod no_multi_tenant_support;

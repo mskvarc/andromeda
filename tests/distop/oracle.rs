@@ -1,5 +1,5 @@
 //! Shared assertion oracles for the distributed-operations suite, so a test's
-//! expectations read the same as the conformance register: a status code, a
+//! expectations read uniformly: a status code, a
 //! Problem Details type, a warning code, an echoed entity-map, a `Via` chain,
 //! or a forwarded-request shape.
 

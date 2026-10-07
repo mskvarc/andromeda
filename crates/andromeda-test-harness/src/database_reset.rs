@@ -102,10 +102,9 @@ fn is_lock_not_available(error: &sqlx::Error) -> bool {
 /// Every prefix-scoped delete a cleanup runs, in dependency order.
 ///
 /// Temporal Evolution is reached through `temporal_entities`, not through
-/// `entities`: the rebuild removed the foreign key that once made deleting an
-/// entity cascade into its history, so an entity delete now reclaims nothing
-/// temporal. `temporal_attribute_streams` cascades from `temporal_entities`,
-/// while `attribute_history` and `scope_history` carry no foreign key at all —
+/// `entities`: no foreign key makes deleting an entity cascade into its
+/// history, so an entity delete reclaims nothing temporal.
+/// `temporal_attribute_streams` cascades from `temporal_entities`, while `attribute_history` and `scope_history` carry no foreign key at all —
 /// hypertables cannot — so each is deleted through the streams and the
 /// catalogue that name it, before the rows those names live on are removed.
 ///
@@ -272,7 +271,7 @@ mod tests {
         assert!(!truncated_relations().contains("entity_type_names"));
     }
 
-    /// The rebuild detached Temporal Evolution from current entity state, so
+    /// Temporal Evolution is detached from current entity state, so
     /// prefix cleanup has to name every temporal relation itself; relying on a
     /// cascade from `entities` would leak history across runs.
     #[test]
@@ -320,7 +319,7 @@ mod tests {
     #[test]
     fn reset_script_drops_every_snapshot_branch_schema_and_keeps_the_live_default_schema() {
         // Each Snapshot branch is a `snap_<key>` schema; the reset drops them all
-        // and never references the removed `context_spaces` table.
+        // and has no `context_spaces` table to name.
         assert!(RESET_TENANT_SQL.contains("DROP SCHEMA"));
         assert!(RESET_TENANT_SQL.contains(r"snap\_%"));
         assert!(!RESET_TENANT_SQL.contains("context_spaces"));

@@ -11,9 +11,7 @@
 //! the stream down closes only its write side, which delivers the response and
 //! a FIN, then waits the configured delay before the connection is closed. The
 //! client reads the response in that time and stops sending. The delay reads
-//! nothing, so the refused content is never received into the broker. This is
-//! the staged close Go's `net/http` performs for a request whose body it did
-//! not read.
+//! nothing, so the refused content is never received into the broker.
 
 use crate::announced_close::AnnouncedClose;
 use std::{

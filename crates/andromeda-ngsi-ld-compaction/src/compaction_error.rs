@@ -6,8 +6,7 @@ use thiserror::Error;
 
 /// A compaction that produced no compact entity.
 ///
-/// The variants are the outcomes reading an entity through the processor has
-/// always had, so a caller maps them as it mapped those.
+/// The variants are the outcomes of reading an entity through the processor.
 #[derive(Debug, Error)]
 pub enum CompactionError {
     /// The request context did not resolve or process, or the processor

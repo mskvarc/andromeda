@@ -3,18 +3,16 @@
 //! ETSI GS CIM 009 v1.9.1 clause 3.1 and Table 5.2.5-1 make a Property value
 //! any JSON value, and clause 4.6.3 obliges a broker to support every JSON
 //! native type; the name grammar of clause 4.6.2 restricts Entity Type,
-//! Property and Relationship names only. The broker held the keys inside a
-//! value to that grammar, so `{"opening hours": "9-5"}`, `{"id": "abc"}` (the
-//! core context aliases `id` to `@id`) and `{"type": "Postal Address"}` were
-//! refused with 400. They are stored and read back as written.
+//! Property and Relationship names only. Keys inside a value are not held to
+//! that grammar, so `{"opening hours": "9-5"}`, `{"id": "abc"}` (the core
+//! context aliases `id` to `@id`) and `{"type": "Postal Address"}` are stored
+//! and read back as written.
 //!
 //! Clause 4.6.4 requires the content of a value back as written. Two keys
-//! JSON-LD expansion cannot keep were accepted and silently changed: a key
-//! that has the form of a keyword without being one (`@foo`) was dropped, and
-//! an empty key or `type` came back as `ngsi-ld:default-context/`. Both are
-//! refused as `BadRequestData`.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! JSON-LD expansion cannot keep are refused as `BadRequestData` instead of
+//! being silently changed: a key that has the form of a keyword without being
+//! one (`@foo`) would be dropped, and an empty key or `type` would come back as
+//! `ngsi-ld:default-context/`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

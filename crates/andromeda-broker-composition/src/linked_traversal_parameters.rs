@@ -69,7 +69,7 @@ mod tests {
         assert!(contained_by.is_none());
     }
 
-    /// Clause 4.5.23 (D5): `containedBy` applies only beside a `joinLevel`, so
+    /// Clause 4.5.23: `containedBy` applies only beside a `joinLevel`, so
     /// the entity alone is asked for without it, however much was visited.
     #[test]
     fn the_last_level_carries_no_contained_by_whatever_was_visited() {

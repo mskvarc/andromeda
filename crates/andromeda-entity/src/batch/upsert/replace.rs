@@ -93,7 +93,7 @@ impl EntityService {
         // sentinel: an Entity that does not exist is created by "the behaviour
         // defined by clause 5.6.1", and one that does "shall be completely
         // replaced by the new Entity content provided", which is the Replace
-        // Entity of clause 5.6.18 -- whose clause 5.6.18.4 states outright that
+        // Entity of clause 5.6.18, whose clause 5.6.18.4 states outright that
         // NGSI-LD Nulls are not supported. Clause 5.5.4 excepts only partial
         // update and merge fragments, and a replacement is neither.
         let prepared = prepared_chunk(chunk);

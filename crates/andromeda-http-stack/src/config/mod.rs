@@ -94,8 +94,7 @@ pub struct HttpStackConfig {
     /// believing them without a reverse proxy that overwrites them lets any
     /// client choose the scheme of a `Location` field, a pagination `Link`, and
     /// the durably stored `@context` URL of clause 5.13. Turn it on only
-    /// together with the proxy configuration `docs/tls-deployment.md`
-    /// describes.
+    /// together with a reverse proxy that overwrites both fields.
     #[toml_comment(inline)]
     pub forwarded_headers: ForwardedHeaderTrust,
     /// How the link-values of a response or an HTTP notification are laid out

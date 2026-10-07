@@ -1,25 +1,8 @@
-//! The portable restatement of every `idPattern` a registration declares,
-//! stored beside the `information` that declares it.
+//! The portable restatement of every `idPattern` a registration declares, stored beside the `information` that declares it.
 //!
-//! A request's own pattern reaches PostgreSQL as a bind value, so the broker
-//! hands over the
-//! [`PortablePattern`](andromeda_ngsi_ld_query::portable_pattern::PortablePattern)
-//! in place of the client's text. A registration's `idPattern` does not:
-//! whether the registration covers a concrete entity (clause 5.10.2) and
-//! whether a discovery request's identifiers match it (clause 5.12) are both
-//! decided inside one statement that reads the pattern out of the stored
-//! `information`, entry by entry. The restatement is therefore persisted as a
-//! JSON object keyed by the pattern as written, which is what that statement
-//! reads out of the entry it is testing, so the lookup names exactly the
-//! restatement of that entry's pattern.
+//! A request's own pattern reaches PostgreSQL as a bind value, but whether a registration covers a concrete entity (clause 5.10.2) and whether a discovery request's identifiers match it (clause 5.12) are decided inside one statement that reads the pattern out of the stored `information`. The restatement is therefore persisted as a JSON object keyed by the pattern as written, which is what that statement reads out of the entry it is testing.
 //!
-//! Like the routing projection it is derived from the typed `information` and
-//! written in the same statement as the document, and nothing in the database
-//! derives it. It is stored with the [`RenderingRevision`] that produced it, so
-//! a broker whose rendering differs -- a fix to the renderer, or a
-//! `regex-syntax` upgrade with other case-fold tables -- renders it again when
-//! it opens the tenant
-//! ([`crate::csource_registration::pattern_forms_refresh`]).
+//! It is derived from the typed `information` and written in the same statement as the document; nothing in the database derives it. It is stored with the [`RenderingRevision`] that produced it, so a broker whose rendering differs renders it again when it opens the tenant.
 
 use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
 use andromeda_ngsi_ld_query::portable_pattern::{PortablePattern, RenderingRevision};

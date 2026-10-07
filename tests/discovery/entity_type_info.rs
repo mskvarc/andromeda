@@ -21,10 +21,6 @@ fn sort_attribute_details(details: &mut [Value]) {
     details.sort_by(|a, b| a["attributeName"].as_str().unwrap().cmp(b["attributeName"].as_str().unwrap()));
 }
 
-// ---------------------------------------------------------------------------
-// 5.5.10 -- Unknown type
-// ---------------------------------------------------------------------------
-
 /// Retrieve type info for a compacted name with no context -- 404 because the name cannot be resolved (5.5.10).
 #[tokio::test]
 async fn retrieve_entity_type_info_unknown_type_returns_404() {
@@ -45,10 +41,6 @@ async fn retrieve_entity_type_info_unknown_type_returns_404() {
     delete_entity(&c, env.tenant(), &id).await;
     env.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.5.10, 6.3.5 -- Compacted type name
-// ---------------------------------------------------------------------------
 
 /// Retrieve entity type info by compacted name with context Link header -- returns `EntityTypeInfo` (5.5.10, 6.3.5).
 #[tokio::test]
@@ -84,10 +76,6 @@ async fn retrieve_entity_type_info_with_compacted_name_returns_type_info() {
     delete_entity(&c, env.tenant(), &id2).await;
     env.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.5.10, 6.3.5 -- Expanded (URL-encoded) type name
-// ---------------------------------------------------------------------------
 
 /// Retrieve entity type info by URL-encoded expanded IRI -- returns same `EntityTypeInfo` as compacted (5.5.10, 6.3.5).
 #[tokio::test]

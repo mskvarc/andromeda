@@ -7,9 +7,9 @@
 //! clause 4.8 `modifiedAt` of that state, exactly as the single-entity
 //! operation does (see [`crate::read_modify_write`]). The store refuses a write
 //! whose entity moved on since, and an insert of an entity that appeared since;
-//! only those entities are read again and rebuilt. A concurrent writer --
-//! another broker replica, or a Create Entity, which takes no per-identifier
-//! guard -- is therefore never overwritten, and no entity is answered as
+//! only those entities are read again and rebuilt. A concurrent writer
+//! (another broker replica, or a Create Entity, which takes no per-identifier
+//! guard) is therefore never overwritten, and no entity is answered as
 //! processed when its write did not land.
 //!
 //! The preconditions are stated here and not by the paths, so a path cannot

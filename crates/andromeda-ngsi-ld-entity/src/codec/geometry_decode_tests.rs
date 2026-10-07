@@ -1,5 +1,5 @@
 //! The strict geometry reading of a `GeoProperty` value (clause 4.7, IETF RFC
-//! 7946 section 3.1), with the cases the expanded-JSON walker pinned.
+//! 7946 section 3.1).
 
 use crate::{entity_state::EntityState, geo_value::GeoValue, refusal::EntityRefusal};
 use andromeda_ngsi_ld_geometry::{

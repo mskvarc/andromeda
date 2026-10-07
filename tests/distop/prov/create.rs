@@ -1,4 +1,4 @@
-//! Create Entity forwarding — REQ-PROV-1..12 (clause 5.6.1.4).
+//! Create Entity forwarding (clause 5.6.1.4).
 //!
 //! Exclusive/redirect registrations own `speed` and forward it while the local
 //! fragment keeps the remainder (`brandName`); an unadvertised `createEntity`
@@ -25,7 +25,7 @@ fn brand_and_speed(id: &str) -> Value {
 }
 
 /// Exclusive create forwards the owned `speed`, strips it from the local
-/// fragment, and keeps the unowned `brandName` locally. Confirms REQ-PROV-1, 2, 5.
+/// fragment, and keeps the unowned `brandName` locally.
 #[tokio::test]
 async fn create_exclusive_match_forwards_speed_and_strips_from_fragment() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -78,7 +78,6 @@ async fn create_exclusive_match_forwards_speed_and_strips_from_fragment() {
 
 /// A create endpoint error on an exclusive forward yields `207 Multi-Status`
 /// keyed by `registrationId`, while the unowned remainder is created locally.
-/// Confirms REQ-PROV-3.
 #[tokio::test]
 async fn create_exclusive_endpoint_error_returns_partial() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -126,7 +125,6 @@ async fn create_exclusive_endpoint_error_returns_partial() {
 
 /// An exclusive registration that does not advertise `createEntity` rejects a
 /// create it wholly owns with a bare `409 Conflict` and no forwarding.
-/// Confirms REQ-PROV-4 (complete-fail).
 #[tokio::test]
 async fn create_exclusive_createentity_unsupported_returns_409_conflict() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -165,7 +163,7 @@ async fn create_exclusive_createentity_unsupported_returns_409_conflict() {
 
 /// The same unsupported `createEntity`, but with a local remainder, degrades to
 /// `207 Multi-Status` carrying the `409` keyed by `registrationId`; the
-/// remainder is created locally. Confirms REQ-PROV-4 (partial), 5, 12.
+/// remainder is created locally.
 #[tokio::test]
 async fn create_exclusive_createentity_unsupported_with_local_remainder_returns_207() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -213,7 +211,6 @@ async fn create_exclusive_createentity_unsupported_with_local_remainder_returns_
 }
 
 /// A redirect registration forwards the whole input and holds nothing locally.
-/// Confirms REQ-PROV-6, 7, 9.
 #[tokio::test]
 async fn create_redirect_match_forwards_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -258,7 +255,6 @@ async fn create_redirect_match_forwards_and_strips() {
 
 /// A redirect create endpoint error yields `207 Multi-Status` keyed by
 /// `registrationId`, and the unowned remainder is created locally.
-/// Confirms REQ-PROV-7.
 #[tokio::test]
 async fn create_redirect_endpoint_error_returns_partial() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -303,7 +299,7 @@ async fn create_redirect_endpoint_error_returns_partial() {
 }
 
 /// A redirect registration that does not advertise `createEntity` rejects the
-/// create with a bare `409 Conflict` and no forwarding. Confirms REQ-PROV-8.
+/// create with a bare `409 Conflict` and no forwarding.
 #[tokio::test]
 async fn create_redirect_createentity_unsupported_returns_409_conflict() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -338,7 +334,7 @@ async fn create_redirect_createentity_unsupported_returns_409_conflict() {
 }
 
 /// An inclusive registration forwards a full copy and also creates the entity
-/// locally. Confirms REQ-PROV-10, 12.
+/// locally.
 #[tokio::test]
 async fn create_inclusive_forwards_remainder_and_creates_local() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -386,7 +382,7 @@ async fn create_inclusive_forwards_remainder_and_creates_local() {
 
 /// An entity already present locally under an inclusive registration surfaces a
 /// keyed `409 AlreadyExists` in `207 Multi-Status`, while the forward still
-/// occurs. Confirms REQ-PROV-11.
+/// occurs.
 #[tokio::test]
 async fn create_existing_locally_returns_already_exists() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -429,8 +425,7 @@ async fn create_existing_locally_returns_already_exists() {
 }
 
 /// End-to-end against real broker B: the owned `speed` lands on B, the remainder
-/// stays on A, and a merged retrieve on A reunites them. Confirms REQ-PROV-1, 2,
-/// 5, 12.
+/// stays on A, and a merged retrieve on A reunites them.
 #[tokio::test]
 async fn create_pair_exclusive_end_to_end() {
     let topology = topology::pair().await.expect("two-broker topology");

@@ -1,31 +1,9 @@
-//! What one `RegistrationInfo` block covers of a client's query (clauses
-//! 4.3.6.1, 4.3.6.3 and 5.2.10).
+//! Clause 4.3.6.1 makes the broker respect every constraint a registration declares when it forwards a request, and clause 4.3.6.3 makes each information block a self-contained coverage statement -- an exclusive block names a single entity and its attributes, and a registration may carry several such blocks. A forwarded request therefore respects one block at a time, naming that block's entities, type and attributes, rather than the union of every block, which would ask a source for a cross-product of entities and attributes it never registered together.
 //!
-//! Clause 4.3.6.1 makes the broker respect every constraint a registration
-//! declares when it forwards a request, and clause 4.3.6.3 makes each
-//! information block a self-contained coverage statement -- an exclusive block
-//! names a single entity and its attributes, and a registration may carry
-//! several such blocks. A forwarded request therefore respects one block at a
-//! time, naming that block's entities, type and attributes, rather than the
-//! union of every block, which would ask a source for a cross-product of
-//! entities and attributes it never registered together.
+//! Registered type and attribute names are stored expanded (as IRIs). Two decisions turn on those names, and both go through the JSON-LD engine so they agree with the registration selection that reached here:
 //!
-//! Registered type and attribute names are stored expanded (as IRIs). Two
-//! decisions turn on those names, and both go through the JSON-LD engine so
-//! they agree with the registration selection that reached here:
-//!
-//! - Coverage: a client's term is kept when its expanded IRI equals a block
-//!   selector's stored type IRI or a declared attribute IRI. This is the same
-//!   comparison `crate::registration_information::information_matches_entity`
-//!   makes when it selects the registration, so a block that was selected is
-//!   narrowed consistently rather than discarded by a divergent string guess.
-//! - Spelling: every name the forwarded request carries is written in the
-//!   registration's forwarding context ([`crate::forwarding_context`]) -- the
-//!   client's own terms reworded when that context is another one (clause
-//!   4.3.6.6), and a block's stored IRIs compacted to the term that context
-//!   spells them with. A name the context abbreviates none of is forwarded as
-//!   its full IRI, which a source still resolves (clause 4.5.1), rather than a
-//!   wrong last-segment token it could not.
+//! - Coverage: a client's term is kept when its expanded IRI equals a block selector's stored type IRI or a declared attribute IRI, the same comparison the registration selection makes, so a selected block is narrowed consistently.
+//! - Spelling: every name the forwarded request carries is written in the registration's forwarding context -- the client's own terms reworded when that context is another one (clause 4.3.6.6), and a block's stored IRIs compacted to the term that context spells them with. A name the context abbreviates none of is forwarded as its full IRI, which a source still resolves (clause 4.5.1).
 
 use crate::{error::FederationError, forwarded_names::ForwardedNames};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
@@ -218,7 +196,6 @@ pub(super) async fn covered_type(
     names: &ForwardedNames<'_>,
 ) -> Result<Option<TypeExprRaw>, FederationError> {
     let Some(selectors) = block.entities.as_deref().filter(|selectors| !selectors.is_empty()) else {
-        // An unrestricted block forwards the client's whole selector.
         return Ok(Some(names.type_expr(entity_type).await?));
     };
     let leaves = match entity_type {

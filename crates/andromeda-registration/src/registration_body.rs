@@ -98,8 +98,8 @@ pub struct RegistrationBody {
     pub(crate) additional_properties: IndexMap<AttributeName, JsonLiteral>,
 }
 
-// Decoded straight from the request text by the body's own reading (see
-// `registration_body_reading`), which skips the top-level `@context`.
+// Decoded straight from the request text by the body's own reading, which
+// skips the top-level `@context`.
 impl RequestBody for RegistrationBody {}
 
 /// Table 5.2.9-1: `information` is an array of at least one block; an empty

@@ -10,14 +10,12 @@
 //! type and attribute discovery by the same rule, so the two agree: no context
 //! means full IRIs, a context that declares the term means the short term.
 //!
-//! The temporal read path used to run a second pass over the compacted document
-//! whenever no explicit context was supplied, collapsing every leftover full
-//! IRI to its `#fragment` or last path segment. That produced `speed` and
-//! `Vehicle` for an entity created under the test-suite context but retrieved
-//! without one, where clause 5.7.3 requires the full IRIs, and it produced a
-//! bare fragment the client could not expand back into the IRI it named.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! The temporal read path runs no second pass over the compacted document that
+//! collapses leftover full IRIs to their `#fragment` or last path segment. That
+//! would produce `speed` and `Vehicle` for an entity created under the
+//! test-suite context but retrieved without one, where clause 5.7.3 requires
+//! the full IRIs, and a bare fragment the client could not expand back into the
+//! IRI it named.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

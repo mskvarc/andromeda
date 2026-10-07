@@ -81,9 +81,9 @@ impl BatchEntityError {
 /// The `type` of a batch problem detail.
 ///
 /// A known NGSI-LD classification carries its title and status; RFC 7807
-/// clause 3 also permits any other type URI — which a peer broker (Scorpio,
-/// Orion-LD) may report on a forwarded batch — so an unrecognised one is kept
-/// verbatim rather than rejected.
+/// clause 3 also permits any other type URI, which a peer broker may report on
+/// a forwarded batch, so an unrecognised one is kept verbatim rather than
+/// rejected.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BatchErrorKind {
     /// One of the twelve ETSI error categories (clause 5.5.2), or one of the
@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn an_extension_member_and_a_non_etsi_type_deserialise_rather_than_poisoning_the_batch() {
         // RFC 7807 clause 3: consumers ignore extension members and accept any
-        // type URI, so a Scorpio/Orion-LD response cannot fail the whole batch.
+        // type URI, so a peer broker's response cannot fail the whole batch.
         let rendered = json!({
             "type": "https://scorpio.example/errors/Custom",
             "title": "Something",

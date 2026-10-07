@@ -1,20 +1,8 @@
 //! A payload over the size limit is refused with a problem detail.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 6.3.2 requires "Request Entity too large"
-//! (413) "when the HTTP input data stream provided by a client was too large
-//! i.e. too many bytes", and clause 5.5.3 makes every error body a problem
-//! detail. A 65.7 MiB batch upsert was answered 413 with the framework's plain
-//! text "Failed to buffer the request body: length limit exceeded"; the same
-//! body sent to Create Entity was answered 400 `InvalidRequest`.
+//! ETSI GS CIM 009 v1.9.1 clause 6.3.2 requires "Request Entity too large" (413) "when the HTTP input data stream provided by a client was too large i.e. too many bytes", and clause 5.5.3 makes every error body a problem detail.
 //!
-//! The refusal is answered before the upload is read. Over HTTP/1.1 the broker
-//! then closed the connection at once, the unread upload made its TCP stack
-//! reset the connection, and a hyper-based client still writing reported the
-//! reset instead of the 413 it had already received. The refusal now announces
-//! `Connection: close` (RFC 9110 clause 10.1.1) and the connection closes in
-//! stages (RFC 9112 clause 9.6).
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! The refusal is answered before the upload is read. Closing the connection at once would make the TCP stack reset it over the unread upload, and a hyper-based client still writing would report the reset instead of the 413 it already received. The refusal therefore announces `Connection: close` (RFC 9110 clause 10.1.1) and the connection closes in stages (RFC 9112 clause 9.6).
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -45,8 +33,7 @@ const MAX_REQUEST_BODY: usize = 64 * 1024 * 1024;
 /// How long one oversized exchange may take before the test gives up on it.
 const EXCHANGE_DEADLINE: Duration = Duration::from_secs(60);
 
-/// How many oversized uploads the hyper-based client sends in a row; before the
-/// staged close, most of them were reset on a host broker.
+/// How many oversized uploads the hyper-based client sends in a row.
 const HYPER_CLIENT_UPLOADS: usize = 20;
 
 /// One body-taking operation and the media type its payload announces.

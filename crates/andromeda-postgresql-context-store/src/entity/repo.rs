@@ -36,11 +36,7 @@ pub struct EntityRepository {
 impl EntityRepository {
     /// What this store can be asked to do with a compiled query.
     ///
-    /// A constant rather than a probe: `migrations/tenant/` creates the `PostGIS`
-    /// geometry columns and the `ltree` scope columns, so a pool that migrated
-    /// has them and one that could not migrate never becomes a store. That is
-    /// the difference between these axes and the `TimescaleDB` edition, which is
-    /// genuinely per-pool runtime state.
+    /// A constant rather than a probe: the tenant migrations create the `PostGIS` geometry columns and the `ltree` scope columns, so a pool that migrated has them and one that could not migrate never becomes a store. That is the difference between these axes and the `TimescaleDB` edition, which is genuinely per-pool runtime state.
     pub const PROFILE: StorageProfile = StorageProfile::POSTGIS_LTREE;
 
     /// Create a new entity repository backed by the given connection pool.

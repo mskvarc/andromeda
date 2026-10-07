@@ -1,8 +1,8 @@
 //! The pure timing policy a dormant-tenant wake pass follows.
 //!
-//! Separated from the wake loop so the arithmetic -- when a tenant next becomes
+//! Separated from the wake loop so the arithmetic (when a tenant next becomes
 //! due, how a just-evicted tenant is held off, how a woken runtime is aged so
-//! it never displaces a request-touched one -- is decided without a clock, a
+//! it never displaces a request-touched one) is decided without a clock, a
 //! database or a cache, and can be tested as plain values. The loop that owns
 //! the cache and the schedule applies these decisions.
 
@@ -86,7 +86,7 @@ impl WakerPolicy {
     /// A woken runtime exists only to drain the work the probe found, and must
     /// never displace a tenant a request touched. Backdating its last use to
     /// `now - (idle_ttl - wake_residency)` leaves it exactly `wake_residency`
-    /// of idle life -- long enough to work, short enough that any
+    /// of idle life: long enough to work, short enough that any
     /// request-touched runtime (last used at `now`) outranks it and is evicted
     /// later.
     #[must_use]

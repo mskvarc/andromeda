@@ -56,10 +56,6 @@ async fn query_with_context(client: &TestClient, qs: &str) -> (StatusCode, Value
     query_registrations(client, qs, Some("application/ld+json"), Some(TEST_SUITE_CONTEXT_URL)).await
 }
 
-// ---------------------------------------------------------------------------
-// 5.10.2 -- Query with entity types or attribute names
-// ---------------------------------------------------------------------------
-
 /// Query by type=Building -- returns matching registrations (5.10.2).
 #[tokio::test]
 async fn query_by_entity_type_returns_matching() {
@@ -116,10 +112,6 @@ async fn query_by_attribute_name_returns_matching() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 5.10.2 -- Query without entity types or attribute names
-// ---------------------------------------------------------------------------
-
 /// Query with no type or attrs -- 400 (5.10.2).
 #[tokio::test]
 async fn query_without_type_or_attrs_returns_400() {
@@ -131,10 +123,6 @@ async fn query_without_type_or_attrs_returns_400() {
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.10.2 -- Query with invalid query parameters
-// ---------------------------------------------------------------------------
 
 /// Query with invalid id parameter -- 400 (5.10.2).
 #[tokio::test]
@@ -184,10 +172,6 @@ async fn query_invalid_temporal_query_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 5.10.2 -- Query without context (fully qualified type)
-// ---------------------------------------------------------------------------
-
 /// Query with FQ type URI, no Link context -- 200 (5.10.2).
 #[tokio::test]
 async fn query_fully_qualified_type_without_context_returns_200() {
@@ -211,10 +195,6 @@ async fn query_fully_qualified_type_without_context_returns_200() {
     pretty_assertions::assert_eq!(expected, actual);
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.10.2 -- Query matching EntityInfo of RegistrationInfo
-// ---------------------------------------------------------------------------
 
 /// Query with type+idPattern matching `EntityInfo` -- 200, trimmed to the
 /// matching `RegistrationInfo` (5.10.2, 5.10.2.5).
@@ -265,10 +245,6 @@ async fn query_registration_without_entity_info_returns_matching() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 5.10.2 -- Query matching properties/relationships
-// ---------------------------------------------------------------------------
-
 /// Query with type+attrs -- returns matching (5.10.2).
 #[tokio::test]
 async fn query_by_type_and_attrs_returns_matching() {
@@ -314,10 +290,6 @@ async fn query_by_type_without_attrs_returns_matching() {
     pretty_assertions::assert_eq!(expected, actual);
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.10.2 -- Query matching geoquery
-// ---------------------------------------------------------------------------
 
 /// Geoquery near point -- returns matching (5.10.2).
 #[tokio::test]
@@ -374,10 +346,6 @@ async fn query_geoquery_within_polygon_returns_matching() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 5.10.2 -- Query without temporal query
-// ---------------------------------------------------------------------------
-
 /// Query with type=Vehicle, no temporal filter -- returns matching (5.10.2).
 #[tokio::test]
 async fn query_without_temporal_query_returns_matching() {
@@ -400,10 +368,6 @@ async fn query_without_temporal_query_returns_matching() {
     pretty_assertions::assert_eq!(expected, actual);
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.10.2 -- Query with temporal queries
-// ---------------------------------------------------------------------------
 
 /// observationInterval with observedAt timeproperty -- returns matching (5.10.2).
 #[tokio::test]
@@ -510,10 +474,6 @@ async fn query_management_interval_with_modified_at_returns_matching() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 5.10.2 -- Query with entity IDs
-// ---------------------------------------------------------------------------
-
 /// Query filtering by entity id -- returns the registrations that can serve
 /// that entity, not the others (5.10.2, 5.12).
 ///
@@ -596,10 +556,6 @@ async fn query_by_q_condition_returns_matching() {
     pretty_assertions::assert_eq!(expected, actual);
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.10.2, 5.5.9 -- Query with pagination
-// ---------------------------------------------------------------------------
 
 /// Pagination: limit=1, offset=1 -- returns second result (5.10.2, 5.5.9).
 #[tokio::test]
@@ -685,10 +641,6 @@ async fn query_pagination_returns_all_matching_within_limit() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 4.19 -- scopeQ over registration scopes
-// ---------------------------------------------------------------------------
-
 /// A registration of one scoped entity type, under `scope`.
 fn scoped_registration(id: &str, entity_type: &str, scope: &str) -> Value {
     json!({
@@ -753,10 +705,6 @@ async fn query_by_scope_matches_the_scope_query_language_over_registration_scope
     );
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 4.9 -- csf over a compound Context Source Property
-// ---------------------------------------------------------------------------
 
 /// Clause 4.9: a `csf` targets "the name of a Context Source Property member
 /// of the `CSourceRegistration`", and a trailing path is evaluated "as a

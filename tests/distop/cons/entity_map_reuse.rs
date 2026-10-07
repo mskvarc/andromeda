@@ -1,10 +1,4 @@
-//! Retrieve Entity entity-map create and reuse (clauses 5.7.1.4, 5.5.14, 6.3.15):
-//! minting a map, reusing a supplied map so only its recorded CSRs are consulted,
-//! recreating on an unreachable/expired map, and echoing the in-use map. Linked
-//! cross-instance maps (`REQ-CONS-8/13`) run against the durable, shared
-//! entity-map store. Query-entity map rows live in
-//! `crate::cons::entity_map_query`; temporal map rows in
-//! `crate::cons::entity_map_temporal`.
+//! Retrieve Entity entity-map create and reuse (clauses 5.7.1.4, 5.5.14, 6.3.15): minting a map, reusing a supplied map so only its recorded CSRs are consulted, recreating on an unreachable/expired map, and echoing the in-use map.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -34,9 +28,7 @@ async fn retrieve_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, entity
         .expect("reuse retrieve")
 }
 
-/// A retrieve minting a map records the consulted CSRs; a later reuse of that map
-/// consults exactly those CSRs and not one added afterward (clause 6.3.15).
-/// Confirms REQ-CONS-3.
+/// A retrieve minting a map records the consulted CSRs; a later reuse of that map consults exactly those CSRs and not one added afterward (clause 6.3.15).
 #[tokio::test]
 async fn distop_retrieve_entity_map_location_present_retrieves_map() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -103,8 +95,7 @@ async fn distop_retrieve_entity_map_location_present_retrieves_map() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An unreachable or expired supplied map triggers fresh discovery and a new map,
-/// and the request still succeeds (clause 5.5.14). Confirms REQ-CONS-4.
+/// An unreachable or expired supplied map triggers fresh discovery and a new map, and the request still succeeds (clause 5.5.14).
 #[tokio::test]
 async fn distop_retrieve_entity_map_unreachable_or_expired_creates_new() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -142,8 +133,7 @@ async fn distop_retrieve_entity_map_unreachable_or_expired_creates_new() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A valid map fixes the CSR set: reusing it consults only the mapped source, never
-/// a matching source registered afterward (clause 5.5.14). Confirms REQ-CONS-5.
+/// A valid map fixes the CSR set: reusing it consults only the mapped source, never a matching source registered afterward (clause 5.5.14).
 #[tokio::test]
 async fn distop_retrieve_entity_valid_map_uses_only_mapped_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -207,9 +197,7 @@ async fn distop_retrieve_entity_valid_map_uses_only_mapped_csrs() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A retrieve with the return flag and no prior map creates a new map and returns
-/// its location in `NGSILD-EntityMap` (clauses 5.7.1.4, 6.3.15). Confirms
-/// REQ-CONS-6, REQ-CONS-18.
+/// A retrieve with the return flag and no prior map creates a new map and returns its location in `NGSILD-EntityMap` (clauses 5.7.1.4, 6.3.15).
 #[tokio::test]
 async fn distop_retrieve_entity_return_flag_no_existing_map_creates_new() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -246,8 +234,7 @@ async fn distop_retrieve_entity_return_flag_no_existing_map_creates_new() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A retrieve supplying an existing map echoes that in-use map in the response
-/// `NGSILD-EntityMap` (clause 6.3.15). Confirms REQ-CONS-18 (supplied-location half).
+/// A retrieve supplying an existing map echoes that in-use map in the response `NGSILD-EntityMap` (clause 6.3.15).
 #[tokio::test]
 async fn distop_retrieve_entity_map_location_returned_when_supplied() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -293,8 +280,7 @@ async fn distop_retrieve_entity_map_location_returned_when_supplied() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A linked map entry forwards the linked downstream map location on the forwarded
-/// retrieve (clause 5.5.14). Confirms REQ-CONS-8.
+/// A linked map entry forwards the linked downstream map location on the forwarded retrieve (clause 5.5.14).
 #[tokio::test]
 async fn distop_retrieve_entity_map_linked_entry_forwards_linked_location() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -340,8 +326,7 @@ async fn distop_retrieve_entity_map_linked_entry_forwards_linked_location() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Maps returned by forwarded CSRs update the in-use map's `linkedMaps`
-/// (clause 5.5.14). Confirms REQ-CONS-13.
+/// Maps returned by forwarded CSRs update the in-use map's `linkedMaps` (clause 5.5.14).
 #[tokio::test]
 async fn distop_retrieve_entity_map_linkedmaps_updated() {
     let topology = topology::single().await.expect("single-broker topology");

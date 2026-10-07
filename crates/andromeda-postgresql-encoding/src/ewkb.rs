@@ -300,7 +300,7 @@ mod tests {
         // ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes the GeometryCollection
         // from GeoProperty geometries, so a column holding one is a row no write
         // of this broker produced. A hand-built EWKB buffer stands in for it,
-        // because the encoder can no longer produce one: SRID-flagged type word
+        // because the encoder cannot produce one: SRID-flagged type word
         // 7, SRID 4326, one member Point at (1, 2).
         let mut bytes = vec![BYTE_ORDER_LITTLE_ENDIAN];
         bytes.extend_from_slice(&(7_u32 | EWKB_SRID_FLAG).to_le_bytes());

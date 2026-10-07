@@ -1,8 +1,8 @@
 //! The term walk held to the processor.
 //!
 //! Every stored document of the corpus is compacted under every test context,
-//! with and without `sysAttrs`, once by the walk and once as the read path has
-//! always compacted it; the two compact entities must render to the same JSON,
+//! with and without `sysAttrs`, once by the walk and once as the read path
+//! compacts it; the two compact entities must render to the same JSON,
 //! and a document the processor refuses must be refused alike. The written
 //! documents of the temporal and assembled paths are held to the processor the
 //! same way, and single names to the terms their contexts spell them with.

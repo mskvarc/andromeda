@@ -7,9 +7,8 @@
 //! and clause 4.23.1 says the same thing from the other side: "Sort ordering is
 //! never applied to distributed operations". That condition is decided by
 //! whether a registered Context Source takes part in the answer rather than by
-//! the `local` parameter alone -- `tests/regression/ordering_local_scope.rs`
-//! covers it and `docs/entity-ordering-local-scope.md` records the reading --
-//! and `local=true` settles it here whatever the Context Registry holds.
+//! the `local` parameter alone, and `local=true` settles it here whatever the
+//! Context Registry holds.
 //!
 //! Naming convention: `entity_order_<scenario>_<expected_outcome>`.
 

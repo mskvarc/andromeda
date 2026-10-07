@@ -2,9 +2,7 @@
 //!
 //! RFC 8259 section 4 gives the members of a JSON object no order, so the order
 //! a compacted document is written in is the broker's to choose. The engine
-//! writes every object with its members in key order, at every level: the
-//! order the broker has always answered compacted documents in, and the one the
-//! term walk reproduces, so an entity reads the same whether the walk or the
+//! writes every object with its members in key order, at every level: the order the term walk reproduces, so an entity reads the same whether the walk or the
 //! processor compacted it.
 
 use jstrict::Value;

@@ -1,8 +1,4 @@
-//! Split-vs-non-split filter timing for entity queries (clause 5.7.2.4): a split
-//! query strips value/geo/scope/attr filters before forwarding and re-applies them
-//! after aggregation, while a non-split query applies the full filter locally and
-//! forwards it to sources. broker-b holds `speed`, broker-c holds `location` for
-//! the same entity id. Temporal split timing lives in `crate::cons::split_temporal`.
+//! Split-vs-non-split filter timing for entity queries (clause 5.7.2.4): a split query strips value/geo/scope/attr filters before forwarding and re-applies them after aggregation, while a non-split query applies the full filter locally and forwards it to sources. broker-b holds `speed`, broker-c holds `location` for the same entity id.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -40,9 +36,7 @@ fn location_node() -> Value {
     json!({ "type": "GeoProperty", "value": { "type": "Point", "coordinates": [8.0, 44.0] } })
 }
 
-/// Under `splitEntities` the local query stage matches on id/type/idPattern only,
-/// so a split-holder whose local view lacks the filtered attribute is not
-/// pre-excluded and survives to assembly (clause 5.7.2.4). Confirms REQ-CONS-21.
+/// Under `splitEntities` the local query stage matches on id/type/idPattern only, so a split-holder whose local view lacks the filtered attribute is not pre-excluded and survives to assembly (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -117,9 +111,7 @@ async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A non-split query applies the full filter set locally, so a local-only candidate
-/// lacking the filtered attribute is filtered out locally (clause 5.7.2.4).
-/// Confirms REQ-CONS-22.
+/// A non-split query applies the full filter set locally, so a local-only candidate lacking the filtered attribute is filtered out locally (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_split_entity_query_non_split_applies_full_local_filter() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -156,8 +148,7 @@ async fn distop_split_entity_query_non_split_applies_full_local_filter() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A split query strips value/geo/scope/attr filters before forwarding, leaving
-/// only id/type on the forwarded request (clause 5.7.2.4). Confirms REQ-CONS-27.
+/// A split query strips value/geo/scope/attr filters before forwarding, leaving only id/type on the forwarded request (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_split_entity_query_split_strips_filters_before_forward() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -209,9 +200,7 @@ async fn distop_split_entity_query_split_strips_filters_before_forward() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A split query re-applies the stripped filters after aggregation: an entity
-/// assembled to `speed>50` is returned while one below the threshold is excluded
-/// (clause 5.7.2.4). Confirms REQ-CONS-28.
+/// A split query re-applies the stripped filters after aggregation: an entity assembled to `speed>50` is returned while one below the threshold is excluded (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -289,9 +278,7 @@ async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A split non-local query re-checks value/geo/scope/attr filters on the aggregated
-/// entities and removes one whose merged value fails (clause 5.7.2.4). Confirms
-/// REQ-CONS-33.
+/// A split non-local query re-checks value/geo/scope/attr filters on the aggregated entities and removes one whose merged value fails (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_split_entity_query_split_nonlocal_removes_non_matching_after_recheck() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -366,9 +353,7 @@ async fn distop_split_entity_query_split_nonlocal_removes_non_matching_after_rec
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A non-split query forwards the value/geo/scope/attr filters to each source for
-/// remote application (clause 5.7.2.4). Confirms REQ-CONS-22 remote-apply half and
-/// reinforces REQ-CONS-27 by contrast.
+/// A non-split query forwards the value/geo/scope/attr filters to each source for remote application (clause 5.7.2.4).
 #[tokio::test]
 async fn distop_split_entity_query_non_split_forwards_filters_remotely() {
     let topology = topology::single().await.expect("single-broker topology");

@@ -1,7 +1,4 @@
-//! Context Source Subscription lifecycle (clauses 5.11.2-5.11.6): create,
-//! local-case validation, update-and-merge, retrieve, query with pagination,
-//! and delete. Change-driven rows capture notifications through the in-process
-//! adapter; the rest are `T-LOCAL`.
+//! Context Source Subscription lifecycle (clauses 5.11.2-5.11.6): create, local-case validation, update-and-merge, retrieve, query with pagination, and delete.
 
 use crate::{
     disc::{
@@ -31,9 +28,7 @@ fn subscription(id: &str, entity_type: &str) -> Value {
     CsrSubscriptionBuilder::new(id, INERT_ENDPOINT, entity_type).build()
 }
 
-/// A valid subscription with an explicit id returns `201` with a `Location`
-/// carrying that id, and one without an id returns `201` with a generated id
-/// (clauses 5.11.2, 5.9.2). Confirms REQ-DISC-45, REQ-DISC-47, REQ-DISC-63.
+/// A valid subscription with an explicit id returns `201` with a `Location` carrying that id, and one without an id returns `201` with a generated id (clauses 5.11.2, 5.9.2).
 #[tokio::test]
 async fn csr_subscription_create_valid_returns_201_and_location() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -53,10 +48,7 @@ async fn csr_subscription_create_valid_returns_201_and_location() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Create applies the local validation cases: a missing notification, an
-/// invalid type, a malformed `q`, empty watched attributes, and a past
-/// `expiresAt` are each rejected with `400 BadRequestData` (clause 5.11.2).
-/// Confirms REQ-DISC-46.
+/// Create applies the local validation cases: a missing notification, an invalid type, a malformed `q`, empty watched attributes, and a past `expiresAt` are each rejected with `400 BadRequestData` (clause 5.11.2).
 #[tokio::test]
 async fn csr_subscription_create_applies_local_case_validation() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -82,9 +74,7 @@ async fn csr_subscription_create_applies_local_case_validation() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A subscription with no temporal query gates matching to latest-info
-/// registrations: an interval-bearing registration stays silent while a latest
-/// one notifies (clause 5.12). Confirms REQ-DISC-52.
+/// A subscription with no temporal query gates matching to latest-info registrations: an interval-bearing registration stays silent while a latest one notifies (clause 5.12).
 #[tokio::test]
 async fn csr_subscription_create_no_temporaliq_gates_to_latest_info() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -115,8 +105,7 @@ async fn csr_subscription_create_no_temporaliq_gates_to_latest_info() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A valid update returns `204` and merges the fragment into the stored
-/// subscription (clauses 5.11.3, 5.5.8). Confirms REQ-DISC-66, REQ-DISC-68.
+/// A valid update returns `204` and merges the fragment into the stored subscription (clauses 5.11.3, 5.5.8).
 #[tokio::test]
 async fn csr_subscription_update_valid_returns_204_and_merges() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -141,8 +130,7 @@ async fn csr_subscription_update_valid_returns_204_and_merges() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A malformed id or a malformed fragment is rejected with `400 BadRequestData`
-/// (clause 5.11.3). Confirms REQ-DISC-64, REQ-DISC-65.
+/// A malformed id or a malformed fragment is rejected with `400 BadRequestData` (clause 5.11.3).
 #[tokio::test]
 async fn csr_subscription_update_invalid_id_or_fragment_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -171,8 +159,7 @@ async fn csr_subscription_update_invalid_id_or_fragment_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An update to an unknown subscription id returns `404 ResourceNotFound`
-/// (clause 5.11.3). Confirms REQ-DISC-64.
+/// An update to an unknown subscription id returns `404 ResourceNotFound` (clause 5.11.3).
 #[tokio::test]
 async fn csr_subscription_update_unknown_id_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -188,8 +175,7 @@ async fn csr_subscription_update_unknown_id_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Updating a subscription re-notifies with every currently matching
-/// registration (clause 5.11.7). Confirms REQ-DISC-67.
+/// Updating a subscription re-notifies with every currently matching registration (clause 5.11.7).
 #[tokio::test]
 async fn csr_subscription_update_emits_notification_with_all_matching_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -238,8 +224,7 @@ async fn csr_subscription_update_emits_notification_with_all_matching_csrs() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An existing subscription is retrieved as a `200` Subscription object (clause
-/// 5.11.4). Confirms REQ-DISC-71.
+/// An existing subscription is retrieved as a `200` Subscription object (clause 5.11.4).
 #[tokio::test]
 async fn csr_subscription_retrieve_existing_returns_200() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -258,8 +243,7 @@ async fn csr_subscription_retrieve_existing_returns_200() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A malformed id returns `400` and an unknown id returns `404` on retrieve
-/// (clause 5.11.4). Confirms REQ-DISC-69, REQ-DISC-70.
+/// A malformed id returns `400` and an unknown id returns `404` on retrieve (clause 5.11.4).
 #[tokio::test]
 async fn csr_subscription_retrieve_invalid_or_unknown_id() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -278,9 +262,7 @@ async fn csr_subscription_retrieve_invalid_or_unknown_id() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Query lists subscriptions as a `200` array, honours pagination, and rejects
-/// an invalid limit with `400` (clauses 5.11.5, 5.5.9). Confirms REQ-DISC-72,
-/// REQ-DISC-73, REQ-DISC-74.
+/// Query lists subscriptions as a `200` array, honours pagination, and rejects an invalid limit with `400` (clauses 5.11.5, 5.5.9).
 #[tokio::test]
 async fn csr_subscription_query_lists_all_with_pagination() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -303,8 +285,7 @@ async fn csr_subscription_query_lists_all_with_pagination() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Deleting a subscription returns `204`, makes it unretrievable, and stops
-/// further notifications (clause 5.11.6). Confirms REQ-DISC-77.
+/// Deleting a subscription returns `204`, makes it unretrievable, and stops further notifications (clause 5.11.6).
 #[tokio::test]
 async fn csr_subscription_delete_existing_returns_204_and_stops_notifications() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -335,8 +316,7 @@ async fn csr_subscription_delete_existing_returns_204_and_stops_notifications() 
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A malformed id returns `400` and an unknown id returns `404` on delete
-/// (clause 5.11.6). Confirms REQ-DISC-75, REQ-DISC-76.
+/// A malformed id returns `400` and an unknown id returns `404` on delete (clause 5.11.6).
 #[tokio::test]
 async fn csr_subscription_delete_invalid_or_unknown_id() {
     let topology = topology::single().await.expect("single-broker topology");

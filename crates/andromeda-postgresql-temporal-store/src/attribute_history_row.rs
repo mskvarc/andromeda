@@ -1,4 +1,4 @@
-//! One row of the rebuilt `attribute_history` hypertable.
+//! One row of the `attribute_history` hypertable.
 
 use crate::{attribute_history_value::AttributeHistoryValue, error::TemporalStoreError, semantic_time_axes::SemanticTimeAxes};
 use andromeda_ngsi_ld_lexicon::instance_identity::InstanceIdentity;
@@ -9,10 +9,7 @@ use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
 use uuid::Uuid;
 
-/// One attribute-history observation as the hypertable stores it.
-///
-/// The row is keyed on the stream — one entity, one attribute name, one dataset
-/// — and on the identity of the atomic write that produced it. That write
+/// A row is keyed on its stream (one entity, one attribute name, one dataset) and on the identity of the atomic write that produced it. That write
 /// identity together with `recorded_at` is the table's unique key, which is what
 /// makes a replayed write collide with the rows it already produced instead of
 /// duplicating them; `recorded_at` is therefore taken from the write's own
@@ -23,39 +20,36 @@ use uuid::Uuid;
 /// live in [`SemanticTimeAxes`] and in the tombstone's deletion instant.
 #[derive(Clone, Debug)]
 pub struct AttributeHistoryRow {
-    /// The instant the broker durably accepted the write this row belongs to.
+    /// Instant the broker durably accepted the write; the hypertable's partition column.
     pub recorded_at: DateTime<Utc>,
-    /// The atomic write that produced this row, and this row's place in it.
+    /// The atomic write that produced the row and the row's place in it.
     pub identity: TemporalObservationIdentity,
-    /// The stream this observation extends.
+    /// Stream the observation extends.
     pub stream_key: StreamKey,
-    /// The attribute family the row was written as.
-    ///
-    /// Recorded per row rather than per stream so that an attribute whose type
+    /// Attribute family the row was written as. Recorded per row rather than per stream so that an attribute whose type
     /// later changes does not retroactively change the shape of what was
     /// already recorded.
     pub attribute_kind: AttributeKind,
     /// What the row records.
     pub value: AttributeHistoryValue,
-    /// The NGSI-LD time axes a temporal query may select on this row.
+    /// NGSI-LD time axes a temporal query may select on this row.
     pub axes: SemanticTimeAxes,
-    /// The identifier this instance is published to clients under.
+    /// Identifier the instance is published to clients under.
     pub instance: InstanceIdentity,
     /// Catalog identity of the instance's `unitCode`, absent when it declares none.
     pub unit_code_id: Option<UnitCodeId>,
-    /// The stored JSON of the instance's metadata, with `unitCode` already
-    /// lifted into its column.
+    /// Stored JSON of the instance's metadata, with `unitCode` already lifted into its column.
     pub metadata: Option<Box<RawValue>>,
 }
 
 impl AttributeHistoryRow {
-    /// The UUID of the atomic write that produced this row.
+    /// UUID of the atomic write that produced the row.
     #[must_use]
     pub const fn write_id(&self) -> Uuid {
         self.identity.write_id.as_uuid()
     }
 
-    /// This row's position within its atomic write, in the column's width.
+    /// Position within the atomic write, in the column's width.
     ///
     /// # Errors
     ///

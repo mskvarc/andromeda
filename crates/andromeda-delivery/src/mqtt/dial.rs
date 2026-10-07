@@ -3,7 +3,7 @@
 //! The two halves of this module are the same sequence written against two
 //! `rumqttc` APIs: build options, connect with a timeout, subscribe to `$SYS`,
 //! spawn the event loop. They are not deduplicated because nothing they touch
-//! is the same type — options, client, event, packet, and quality of service
+//! is the same type: options, client, event, packet, and quality of service
 //! are all distinct between MQTT 5 and MQTT 3.1.1, and a macro that papered
 //! over that would hide which protocol a line belongs to.
 
@@ -97,7 +97,7 @@ struct BrokerLabel {
 ///
 /// Returns [`TransportError::Timeout`] when the broker does not complete the
 /// connect handshake within the pool's connect timeout, and
-/// [`TransportError::ConnectionFailed`] when the handshake itself fails — the
+/// [`TransportError::ConnectionFailed`] when the handshake itself fails: the
 /// socket is refused, TLS is rejected, or the broker denies the credentials.
 /// Failing to subscribe to a `$SYS` topic is not an error: the connection is
 /// usable without the health telemetry those topics carry.

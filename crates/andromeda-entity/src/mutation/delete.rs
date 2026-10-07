@@ -1,7 +1,7 @@
 //! Delete Entity (clause 5.6.6).
 //!
 //! A deletion removes current state; its own effect and the tombstones its
-//! Temporal Evolution records need only the entity's outline -- its types, the
+//! Temporal Evolution records need only the entity's outline, its types, the
 //! identity and family of each attribute instance it held, whether it held a
 //! Scope (see [`crate::deletion_outline`]). The removed state is read only
 //! when a subscription may be owed the deletion's notification, which renders
@@ -201,7 +201,7 @@ impl EntityService {
             previous: Some(&removed),
         };
         // Clause 5.8.6: one deletion is one change, owed once to every
-        // subscription it matches -- through `entityDeleted` or through the
+        // subscription it matches, through `entityDeleted` or through the
         // `attributeDeleted` of every instance the entity took with it.
         let subscription_matches = self.notifier.subscription_matches(deleted, &change, snapshots);
 

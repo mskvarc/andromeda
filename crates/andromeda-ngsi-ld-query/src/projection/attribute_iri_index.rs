@@ -1,13 +1,6 @@
 //! The expanded IRI of each attribute key a projection may be matched against.
 //!
-//! [`ProjectionTerm::matches_attribute`] needs an attribute key's expanded
-//! IRI, and expanding a key needs the request `@context`. Anything that
-//! applies a projection outside the layer that owns the JSON-LD engine — the
-//! renderer applying a clause 4.21 nested projection while it nests linked
-//! entities, above all — therefore needs that expansion handed to it already
-//! resolved. This index is that hand-over, and the one place that expands the
-//! keys: each distinct key once per request, through the expander the
-//! consumer binds to the request `@context`.
+//! [`ProjectionTerm::matches_attribute`] needs an attribute key's expanded IRI, and expanding a key needs the request `@context`. Anything applying a projection outside the layer that owns the JSON-LD engine (the renderer applying a clause 4.21 nested projection while it nests linked entities, above all) therefore needs that expansion handed to it already resolved. This index is that hand-over and the one place that expands the keys: each distinct key once per request, through the expander the consumer binds to the request `@context`.
 //!
 //! [`ProjectionTerm::matches_attribute`]: crate::projection::term::ProjectionTerm::matches_attribute
 
@@ -16,12 +9,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::IriBuf;
 use std::{collections::HashMap, future::Future};
 
-/// Attribute keys mapped to the IRI they expand to under one request
-/// `@context`.
-///
-/// A key absent from the index simply does not match any projection term: the
-/// index is built from the keys the payload actually carries, so an absent key
-/// is one no entity in the response holds.
+/// Attribute keys mapped to the IRI they expand to under one request `@context`. The index is built from the keys the payload carries, so an absent key is one no entity in the response holds and simply matches no projection term.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AttributeIriIndex {
     /// Each recorded attribute key and the IRI it expands to.
@@ -53,11 +41,7 @@ impl AttributeIriIndex {
         }
     }
 
-    /// Expand into the index every key of `keys` it does not cover yet.
-    ///
-    /// A key that is no attribute name -- one of the clause 4.21 keyword
-    /// members, or a spelling the clause 4.6.2 grammar refuses -- is left
-    /// out, which only means no term can match it.
+    /// Expands into the index every key of `keys` it does not cover yet. A key that is no attribute name (a clause 4.21 keyword member, or a spelling the clause 4.6.2 grammar refuses) is left out, which only means no term can match it.
     ///
     /// # Errors
     ///
@@ -129,8 +113,7 @@ mod tests {
         value.parse().expect("valid attribute name")
     }
 
-    /// A recorded key resolves to the IRI it was recorded with, looked up by
-    /// the plain key text a rendered value carries.
+    /// A recorded key is looked up by the plain key text a rendered value carries.
     #[test]
     fn a_recorded_key_resolves_to_its_expansion() {
         let mut index = AttributeIriIndex::new();

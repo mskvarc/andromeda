@@ -28,10 +28,6 @@ fn jsonld_link_header(context_url: &str) -> HeaderValue {
     try_jsonld_link_header(context_url).expect("valid JSON-LD Link header")
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn client() -> Client {
     Client::new()
 }
@@ -40,10 +36,6 @@ fn client() -> Client {
 fn extract_instance_id(entity: &Value, attr: &str) -> String {
     entity[attr][0]["instanceId"].as_str().expect("instanceId not found").to_string()
 }
-
-// ---------------------------------------------------------------------------
-// Temporal entity factories
-// ---------------------------------------------------------------------------
 
 /// Vehicle with temporal speed and fuelLevel attributes (standard test entity).
 fn vehicle_temporal_representation(id: &str) -> Value {
@@ -84,10 +76,6 @@ fn modify_instance_fragment() -> Value {
         "@context": [COMPOUND_CONTEXT]
     })
 }
-
-// ---------------------------------------------------------------------------
-// HTTP helpers
-// ---------------------------------------------------------------------------
 
 async fn create_temporal_entity(c: &Client, entity: &Value) -> StatusCode {
     let resp = c

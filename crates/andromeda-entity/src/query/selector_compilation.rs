@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
 
 /// Compile a query's entity selectors against `context`.
 ///
-/// A GET request — or any whose selection arrived as protocol headers — carries
+/// A GET request, or any whose selection arrived as protocol headers, carries
 /// no structured `entity_selectors`, so its flat `id`/`type`/`idPattern`
 /// describe one implicit selector. A POST `entities[]` body carries one selector
 /// per array entry, each compiled independently so their union is not flattened

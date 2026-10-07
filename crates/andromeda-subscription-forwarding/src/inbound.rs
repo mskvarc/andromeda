@@ -245,7 +245,7 @@ mod tests {
         ));
     }
 
-    /// N-D1: an entity carrying its own `@context`, as an `application/ld+json`
+    /// An entity carrying its own `@context`, as an `application/ld+json`
     /// notification writes it, is read with its context kept beside it.
     #[test]
     fn an_entity_context_is_kept() {

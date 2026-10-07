@@ -1,9 +1,4 @@
-//! Distributed query and mutation URL parameters (clause 6.3.7–6.3.14, Table
-//! 6.4.3.2-1): `local` bypasses forwarding, Registry-API operations are always
-//! local, `type=*` implies local and rejects `local=false`, incompatible
-//! parameters are `InvalidRequest`, and the standard query/retrieve/merge/purge
-//! parameters and `csf` / `splitEntities` / `containedBy` / `entityMap` families
-//! are honoured.
+//! Distributed query and mutation URL parameters (clause 6.3.7–6.3.14, Table 6.4.3.2-1): `local` bypasses forwarding, Registry-API operations are always local, `type=*` implies local and rejects `local=false`, incompatible parameters are `InvalidRequest`, and the standard query/retrieve/merge/purge parameters and `csf` / `splitEntities` / `containedBy` / `entityMap` families are honoured.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -20,8 +15,7 @@ use reqwest::Method;
 use serde_json::json;
 use std::time::Duration;
 
-/// `local=true` is honoured on both a query and a retrieve, bypassing forwarding
-/// so the registered source is never contacted (clause 6.3.9). Confirms REQ-HTTP-33.
+/// `local=true` is honoured on both a query and a retrieve, bypassing forwarding so the registered source is never contacted (clause 6.3.9).
 #[tokio::test]
 async fn dist_http_local_param_honoured_on_all_listed_resources() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -85,8 +79,7 @@ async fn dist_http_local_param_honoured_on_all_listed_resources() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `local=true` bypasses every matching registration, not just the first
-/// (clause 6.3.9). Confirms REQ-HTTP-34.
+/// `local=true` bypasses every matching registration, not just the first (clause 6.3.9).
 #[tokio::test]
 async fn dist_http_local_true_bypasses_all_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -152,8 +145,7 @@ async fn dist_http_local_true_bypasses_all_csrs() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Registry-API operations are always local and never forwarded to a registered
-/// source (clause 6.3.9). Confirms REQ-HTTP-35.
+/// Registry-API operations are always local and never forwarded to a registered source (clause 6.3.9).
 #[tokio::test]
 async fn dist_http_registry_api_operations_always_local() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -189,13 +181,7 @@ async fn dist_http_registry_api_operations_always_local() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A batch query scoped to a snapshot runs locally even with `local=false`:
-/// snapshot operations are implicitly local (clause 6.3.18), so the scoped
-/// query itself never contacts the registered source and still succeeds.
-/// Preparing the snapshot legitimately does contact it (clause 5.16.1.4 runs
-/// `snapshotQueries` as ordinary clause 5.7.2.4 distributed queries), so the
-/// assertion measures the requests the scoped query adds, not the total.
-/// Confirms REQ-HTTP-36.
+/// A batch query scoped to a snapshot runs locally even with `local=false`: snapshot operations are implicitly local (clause 6.3.18), so the scoped query itself never contacts the registered source and still succeeds. Preparing the snapshot legitimately does contact it (clause 5.16.1.4 runs `snapshotQueries` as ordinary clause 5.7.2.4 distributed queries), so the assertion measures the requests the scoped query adds, not the total.
 #[tokio::test]
 async fn dist_http_snapshot_op_ignores_local_false() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -260,17 +246,9 @@ async fn dist_http_snapshot_op_ignores_local_false() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A half-specified geoquery (a geo relation with no reference geometry) is
-/// rejected with `BadRequestData` (clause 5.7.2.4). Confirms REQ-HTTP-44.
+/// A half-specified geoquery (a geo relation with no reference geometry) is rejected with `BadRequestData` (clause 5.7.2.4).
 ///
-/// Clause 4.10 names `georel`, `geometry` and `coordinates` as the three
-/// parameters that "are defined in order to fully specify an NGSI-LD
-/// Geoquery", and clause 5.7.2.4 rules that when "the query, geoquery or
-/// context source filter are not syntactically valid (as per the referred
-/// clauses 4.9 and 4.10) an error of type `BadRequestData` shall be raised".
-/// Clause 6.3.20's `InvalidRequest` covers parameters the operation cannot use
-/// at all; `georel` is a parameter Query Entities accepts, merely incomplete
-/// here.
+/// Clause 4.10 names `georel`, `geometry` and `coordinates` as the three parameters that "are defined in order to fully specify an NGSI-LD Geoquery", and clause 5.7.2.4 rules that when "the query, geoquery or context source filter are not syntactically valid (as per the referred clauses 4.9 and 4.10) an error of type `BadRequestData` shall be raised". Clause 6.3.20's `InvalidRequest` covers parameters the operation cannot use at all; `georel` is a parameter Query Entities accepts, merely incomplete here.
 #[tokio::test]
 async fn dist_http_incomplete_geoquery_returns_bad_request_data() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -291,8 +269,7 @@ async fn dist_http_incomplete_geoquery_returns_bad_request_data() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The standard entity query parameters of Table 6.4.3.2-1 (`type`, `q`) filter
-/// the result set (clause 6.4.3.2). Confirms REQ-HTTP-51.
+/// The standard entity query parameters of Table 6.4.3.2-1 (`type`, `q`) filter the result set (clause 6.4.3.2).
 #[tokio::test]
 async fn dist_http_query_entities_supports_query_url_params() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -348,8 +325,7 @@ async fn dist_http_query_entities_supports_query_url_params() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `type=*` implies local execution (no source is contacted) and `type=*` with
-/// `local=false` is rejected as `InvalidRequest` (clause 6.3.9). Confirms REQ-HTTP-52.
+/// `type=*` implies local execution (no source is contacted) and `type=*` with `local=false` is rejected as `InvalidRequest` (clause 6.3.9).
 #[tokio::test]
 async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -407,8 +383,7 @@ async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `splitEntities=true` forwards to each source and re-applies the local filters
-/// to the reassembled entities (clause 6.3.13). Confirms REQ-HTTP-51 (splitEntities).
+/// `splitEntities=true` forwards to each source and re-applies the local filters to the reassembled entities (clause 6.3.13).
 #[tokio::test]
 async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -466,8 +441,7 @@ async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The `csf` context-source filter is forwarded unchanged to a matched source
-/// (clause 6.3.12). Confirms REQ-HTTP-51 (csf).
+/// The `csf` context-source filter is forwarded unchanged to a matched source (clause 6.3.12).
 #[tokio::test]
 async fn dist_http_query_csf_param_forwarded_unchanged() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -511,8 +485,7 @@ async fn dist_http_query_csf_param_forwarded_unchanged() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The `containedBy` parameter is accepted and constrains a local query
-/// (clause 6.3.14). Confirms REQ-HTTP-51 (containedBy).
+/// The `containedBy` parameter is accepted and constrains a local query (clause 6.3.14).
 #[tokio::test]
 async fn dist_http_query_contained_by_param_honoured() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -544,10 +517,7 @@ async fn dist_http_query_contained_by_param_honoured() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `entityMap=true` returns an `NGSILD-EntityMap` header whose lifetime is set by
-/// `entityMapLifetime` (clause 6.3.15). With no map referenced in the request a
-/// new map is minted, so the query answers `201` (Table 6.4.3.2-3: "201 Created"
-/// when an `EntityMap` is "(re)created"). Confirms REQ-HTTP-51 (entityMap).
+/// `entityMap=true` returns an `NGSILD-EntityMap` header whose lifetime is set by `entityMapLifetime` (clause 6.3.15). With no map referenced in the request a new map is minted, so the query answers `201` (Table 6.4.3.2-3: "201 Created" when an `EntityMap` is "(re)created").
 #[tokio::test]
 async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -589,8 +559,7 @@ async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Purge supports the Table 6.4.3.2-1 parameters and `type=*` implies local, so
-/// a registered source is not contacted (clause 6.3.9). Confirms REQ-HTTP-59.
+/// Purge supports the Table 6.4.3.2-1 parameters and `type=*` implies local, so a registered source is not contacted (clause 6.3.9).
 #[tokio::test]
 async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -629,8 +598,7 @@ async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Retrieve supports the Table 6.4.3.2-1 parameters (`attrs`, `options`)
-/// (clause 6.4.3.2). Confirms REQ-HTTP-62.
+/// Retrieve supports the Table 6.4.3.2-1 parameters (`attrs`, `options`) (clause 6.4.3.2).
 #[tokio::test]
 async fn dist_http_retrieve_entity_supports_table_params() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -666,10 +634,7 @@ async fn dist_http_retrieve_entity_supports_table_params() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Merge supports its format/lang/observedAt/options/type parameters
-/// (clause 6.5.3.4). The `application/ld+json` body carries its own `@context`
-/// and no `Link`, since clause 6.3.5 rejects a JSON-LD Link alongside that
-/// media type. Confirms REQ-HTTP-71.
+/// Merge supports its format/lang/observedAt/options/type parameters (clause 6.5.3.4). The `application/ld+json` body carries its own `@context` and no `Link`, since clause 6.3.5 rejects a JSON-LD Link alongside that media type.
 #[tokio::test]
 async fn dist_http_merge_entity_supports_format_lang_observedat_options_type_params() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -728,7 +693,6 @@ async fn dist_http_merge_entity_supports_format_lang_observedat_options_type_par
 }
 
 /// Registration query supports the Table 6.4.3.2-1 parameters (clause 6.9.3.2).
-/// Confirms REQ-HTTP-81.
 #[tokio::test]
 async fn dist_http_query_csource_registrations_supports_table_params() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -762,7 +726,6 @@ async fn dist_http_query_csource_registrations_supports_table_params() {
 }
 
 /// The `entityMaps` collection supports query URL parameters (clause 6.3.15).
-/// Confirms REQ-HTTP-97.
 #[tokio::test]
 async fn dist_http_get_entity_maps_supports_query_url_params() {
     let topology = topology::single().await.expect("single-broker topology");

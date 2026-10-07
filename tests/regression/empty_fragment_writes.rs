@@ -7,12 +7,9 @@
 //! 5.6.3.4, 5.6.4.4 and 5.6.17.4 lists an empty Fragment among its errors. The
 //! broker therefore answers `{}` with the operation's success status (204) and
 //! changes, notifies and records nothing; a missing entity or attribute is still
-//! the `ResourceNotFound` those clauses raise. The rule is recorded in
-//! `docs/empty-fragment-writes.md` (option A), and the batch operations that run
+//! the `ResourceNotFound` those clauses raise. The batch operations that run
 //! those fragment writes per entity (clauses 5.6.8.4, 5.6.9.4 and 5.6.20.4)
 //! follow it for an entity whose fragment names no member.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

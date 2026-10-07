@@ -178,10 +178,6 @@ async fn raw_request(
     (status, headers, body)
 }
 
-// ---------------------------------------------------------------------------
-// Smoke: entity lifecycle
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn smoke_create_retrieve_delete_full_lifecycle() {
     let c = client();
@@ -192,30 +188,21 @@ async fn smoke_create_retrieve_delete_full_lifecycle() {
         "@context": CORE_CONTEXT
     });
 
-    // Create
     let (status, location) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED, "create should return 201");
     assert!(location.is_some(), "create should return Location header");
 
-    // Retrieve
     let (status, body) = get_entity(&c, &id).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK, "get should return 200");
     pretty_assertions::assert_eq!(body["id"], id);
     pretty_assertions::assert_eq!(body["type"], "Vehicle");
 
-    // Delete
     let status = delete_entity(&c, &id).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT, "delete should return 204");
 
-    // Retrieve after delete
     let (status, _) = get_entity(&c, &id).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND, "get after delete should return 404");
 }
-
-// ---------------------------------------------------------------------------
-// Invalid parameters: unrecognised query params must be rejected with 400
-// NGSI-LD 6.3.5 -- all API operations shall reject unknown query parameters
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn invalid_parameters_post_entities_returns_400() {
@@ -336,11 +323,6 @@ async fn invalid_parameters_get_subscriptions_returns_400() {
     pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
-// ---------------------------------------------------------------------------
-// Unsupported media type: Content-Type application/xml must be rejected with 415
-// NGSI-LD 6.3.4
-// ---------------------------------------------------------------------------
-
 const XML_DUMMY_BODY: &[u8] = b"<entity/>";
 
 #[tokio::test]
@@ -408,11 +390,6 @@ async fn unsupported_media_type_post_temporal_entities_returns_415() {
     let (status, _, _) = raw_request(&c, Method::POST, "/temporal/entities", Some(XML_DUMMY_BODY), Some("application/xml"), None).await;
     pretty_assertions::assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
 }
-
-// ---------------------------------------------------------------------------
-// Not acceptable media type: Accept application/xml must be rejected with 406
-// NGSI-LD 6.3.4
-// ---------------------------------------------------------------------------
 
 // Clause 6.3.4: a 406 "shall result in a 406 HTTP status code and the body of
 // the message shall contain the list of the available representations of the
@@ -522,11 +499,6 @@ async fn not_acceptable_get_registrations_geojson_returns_406() {
     assert_available_representations(&body, &JSON_REPRESENTATIONS);
 }
 
-// ---------------------------------------------------------------------------
-// Merge-patch JSON: application/merge-patch+json accepted for partial updates
-// NGSI-LD 6.3.3 / 5.6.3
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn merge_patch_partial_update_entity_attr_returns_204() {
     let c = client();
@@ -557,7 +529,6 @@ async fn merge_patch_partial_update_entity_attr_returns_204() {
         .expect("patch request failed");
     pretty_assertions::assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-    // Cleanup
     delete_entity(&c, &id).await;
 }
 
@@ -596,14 +567,8 @@ async fn merge_patch_update_subscription_returns_204() {
         .expect("patch subscription failed");
     pretty_assertions::assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-    // Cleanup
     delete_subscription(&c, &sub_id).await;
 }
-
-// ---------------------------------------------------------------------------
-// LD context not available: unretrievable @context must yield 504
-// NGSI-LD 6.3.2 Table 6.3.2-1
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn ld_context_not_available_create_entity_returns_504() {
@@ -730,11 +695,6 @@ async fn ld_context_not_available_create_registration_returns_504() {
     pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
     pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE.as_str());
 }
-
-// ---------------------------------------------------------------------------
-// GET without Accept (or Accept: */*): must return application/json + Link header
-// NGSI-LD 6.3.4 clause 3
-// ---------------------------------------------------------------------------
 
 fn assert_json_content_type(headers: &HeaderMap) {
     let ct = headers
@@ -874,10 +834,6 @@ async fn get_without_accept_temporal_entities_returns_json_with_link() {
     delete_temporal_entity(&c, &id).await;
 }
 
-// ---------------------------------------------------------------------------
-// Additional tests not in original suite but warranted by NGSI-LD common behaviour
-// ---------------------------------------------------------------------------
-
 // NGSI-LD 6.3.4: POST with no Content-Type should be rejected
 #[tokio::test]
 async fn unsupported_media_type_post_entities_no_content_type_returns_415() {
@@ -888,7 +844,6 @@ async fn unsupported_media_type_post_entities_no_content_type_returns_415() {
         .send()
         .await
         .expect("request failed");
-    // Without Content-Type, broker should reject as unsupported
     let status = resp.status();
     assert!(
         status == StatusCode::UNSUPPORTED_MEDIA_TYPE || status == StatusCode::BAD_REQUEST,
@@ -973,7 +928,6 @@ async fn not_acceptable_get_attributes_xml_returns_406() {
     assert_available_representations(&body, &JSON_REPRESENTATIONS);
 }
 
-// Smoke: creating duplicate entity -> 409 Conflict
 #[tokio::test]
 async fn smoke_create_duplicate_entity_returns_409() {
     let c = client();
@@ -993,7 +947,6 @@ async fn smoke_create_duplicate_entity_returns_409() {
     delete_entity(&c, &id).await;
 }
 
-// Smoke: GET non-existent entity -> 404
 #[tokio::test]
 async fn smoke_get_nonexistent_entity_returns_404() {
     let c = client();
@@ -1001,7 +954,6 @@ async fn smoke_get_nonexistent_entity_returns_404() {
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-// Smoke: DELETE non-existent entity -> 404
 #[tokio::test]
 async fn smoke_delete_nonexistent_entity_returns_404() {
     let c = client();

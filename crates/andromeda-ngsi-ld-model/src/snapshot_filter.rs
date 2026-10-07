@@ -190,7 +190,6 @@ pub fn parse_snapshot_q(input: &str) -> Result<SnapshotPurgeFilter, SnapshotQPar
 /// The scan is quote-aware: a `;` or `|` inside a double-quoted value (e.g.
 /// `endpoint=="https://sink/a;b"`) is a literal character, not a conjunction,
 /// so both the detection and the split ignore separators inside quotes.
-/// Without this a quoted URL carrying either character was severed mid-value.
 fn split_top_level(input: &str) -> Result<(Vec<&str>, Conjunction), SnapshotQParseError> {
     let has_semi = contains_unquoted(input, ';');
     let has_pipe = contains_unquoted(input, '|');
@@ -240,9 +239,8 @@ fn split_unquoted(input: &str, sep: char) -> Vec<&str> {
 
 /// Parses one `<field><op><value>` term.
 fn parse_term(input: &str) -> Result<SnapshotPurgeTerm, SnapshotQParseError> {
-    // Longest operators first so `<=` matches before `<`. The token strings
-    // have one owner in andromeda-ngsi-ld-query (clause 4.9); the snapshot
-    // purge filter is a restricted subset over the same operators.
+    // Longest operators first so `<=` matches before `<`. The purge filter is a
+    // restricted subset of the clause 4.9 operators.
     let ops: [(&str, SnapshotOp); 6] = [
         (token::EQUAL, SnapshotOp::Eq),
         (token::UNEQUAL, SnapshotOp::Neq),
@@ -328,8 +326,8 @@ mod tests {
 
     /// Clause 4.9: the snapshot purge filter is a restricted subset of the
     /// NGSI-LD query language, so its operator and conjunction spellings must be
-    /// exactly those the query crate owns. This pins the strum `Display` tokens
-    /// to that single owner, so the two cannot drift.
+    /// exactly those of the query language. This pins the strum `Display` tokens
+    /// to the shared ones.
     #[test]
     fn snapshot_operator_and_conjunction_tokens_match_the_shared_query_tokens() {
         pretty_assertions::assert_eq!(SnapshotOp::Eq.to_string(), token::EQUAL);
@@ -344,9 +342,8 @@ mod tests {
 
     /// Clause 5.16.7: a purge `q` may compare `endpoint` against a quoted URL
     /// that itself contains `;` or `|`. The top-level split must treat those as
-    /// literal characters inside the quotes, not as conjunctions -- otherwise
-    /// one term is severed into two malformed ones, and a value carrying both is
-    /// wrongly rejected as mixing conjunctions.
+    /// literal characters inside the quotes, not as conjunctions: a value
+    /// carrying both is one term, not a mix of conjunctions.
     #[test]
     fn a_conjunction_character_inside_a_quoted_value_does_not_split_the_term() {
         let (segments, conjunction) = split_top_level(r#"endpoint=="https://sink/a;b""#).expect("a quoted semicolon parses");

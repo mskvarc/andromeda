@@ -54,8 +54,8 @@ fn a_flat_plan_lists_each_reachable_entity_once_in_encounter_order() {
     assert_eq!(flat_ids(&plan), vec!["urn:ngsi-ld:T:P", "urn:ngsi-ld:T:C"]);
 }
 
-/// Decision A: each Relationship nests its own copy, narrowed by its own
-/// group (clause 4.21).
+/// Each Relationship nests its own copy, narrowed by its own group (clause
+/// 4.21).
 #[test]
 fn an_inline_plan_nests_a_copy_per_relationship() {
     let (graph, index) = (building(1), keys());

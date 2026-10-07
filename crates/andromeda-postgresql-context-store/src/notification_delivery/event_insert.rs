@@ -37,8 +37,8 @@ use uuid::Uuid;
 /// Two statements, however many events and subscribers the write has: the
 /// events are inserted in one statement and their surrogate keys read back,
 /// then every `(event, subscription)` pair the write owes is inserted in one
-/// set-write from a pair of parallel arrays. sea-query cannot express the
-/// original single data-modifying CTE (`WITH inserted AS (INSERT … RETURNING)
+/// set-write from a pair of parallel arrays. sea-query cannot express a
+/// single data-modifying CTE (`WITH inserted AS (INSERT … RETURNING)
 /// INSERT …`), and the two statements inside the one transaction are
 /// equivalent: the second names only the event keys the first returned.
 ///

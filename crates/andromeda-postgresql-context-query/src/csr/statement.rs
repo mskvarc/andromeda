@@ -72,7 +72,6 @@ pub fn build_csr_query(query: &CompiledCsrQuery, window: &PageWindow) -> Result<
     // order its first page was read in.
     let read_order = apply_identifier_window(&mut select, SeaExpr::col(Csr::Id), window);
 
-    // Count query always generated for CSR
     let mut count = Query::select();
     count.expr(count_all()).from(Csr::Table).cond_where(condition);
 

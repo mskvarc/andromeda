@@ -1,13 +1,12 @@
 //! The triggering entity's just-appended value survives concurrent load
 //! (NGSI-LD 5.2.14.1, 6.4.3.2).
 //!
+//! The delivered `data[0]["name"]["value"]` must carry the value the append
+//! just wrote, never `null`, however the notification worker is scheduled.
 //! `order::notification_join_flat_order_is_deterministic` asserts the same
-//! invariant once, and fails only under full-suite concurrent scheduling: the
-//! delivered `data[0]["name"]["value"]` arrives `null` instead of the value the
-//! append just wrote. This case manufactures that concurrency in isolation, so
-//! the reproducer does not depend on cross-suite scheduling and, on the first
-//! failing run, prints the delivered body rather than only the failed
-//! assertion.
+//! invariant once; this case drives the concurrency itself in isolation, so it
+//! does not depend on cross-suite scheduling, and on failure prints the
+//! delivered body rather than only the failed assertion.
 
 use crate::{append_attrs, create, create_subscription, subscription_with_flat_join, trigger_fragment};
 use andromeda_test_client::test_client::TestClient;

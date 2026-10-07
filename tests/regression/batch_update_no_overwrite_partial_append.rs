@@ -10,8 +10,6 @@
 //! attribute already present) leaves the entity out of S, so it is reported in
 //! the error set E and the batch is 207. This pins both the per-entity split and
 //! the exact `BadRequestData` the skipped entity carries.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

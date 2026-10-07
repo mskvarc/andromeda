@@ -1,10 +1,11 @@
 //! The clause 5.2.9 gate shared by registration creation and update.
 //!
-//! Member shapes are enforced by the types the payload is read into
-//! (`payload.rs`); what remains here are the rules that span members or need
-//! the current time: `expiresAt` in the future (clauses 5.9.2.4 and 5.9.3.4),
-//! the clause 4.3.6.6 restrictions on `contextSourceInfo`, and the mode rules of
-//! `mode_rules.rs` that need nothing beyond the registration itself.
+//! Member shapes are enforced by the types the registration
+//! payload is read into; what remains here are the rules that
+//! span members or need the current time: `expiresAt` in the future (clauses
+//! 5.9.2.4 and 5.9.3.4), the clause 4.3.6.6 restrictions on
+//! `contextSourceInfo`, and the mode rules that need nothing beyond the
+//! registration itself.
 
 use crate::{error::RegistrationError, mode_rules::validate_structure, registration_validation_reason::RegistrationValidationReason};
 use andromeda_ngsi_ld_model::{

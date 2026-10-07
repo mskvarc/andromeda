@@ -160,7 +160,7 @@ impl WrittenEvolution {
 
 /// Expand each reified Scope instance as the attribute instance it is, into a
 /// document holding them under the scope IRI alone, refusing an instance that
-/// states no Scope (`crate::reified_scope`).
+/// states no Scope.
 pub(crate) async fn expand_reified_scope(expansion: &EntityExpansion<'_>, instances: Vec<Attribute>) -> Result<EntityDocument, TemporalError> {
     let written_name = compact_properties::SCOPE
         .parse::<AttributeName>()

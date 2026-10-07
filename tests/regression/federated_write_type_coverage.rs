@@ -5,21 +5,17 @@
 //! when its type selector matches the entity's types. An attribute-level operation
 //! -- append, update or delete of attributes, a merge, a replace, or a delete of
 //! the entity -- carries no `type` in its request, so the broker reads the local
-//! entity's own types to decide coverage. It once treated the absent type as
-//! satisfying every registration's type selector, so a `redirect` registration
-//! scoped to an unrelated type was taken to cover the write and, advertising only
-//! a read operation, refused it with a 409 Conflict. Under concurrency this
-//! surfaced as an intermittent failure of any test whose write happened to run
-//! while another test's type-scoped registration was live.
+//! entity's own types to decide coverage. An absent type must not satisfy every
+//! registration's type selector: a `redirect` registration scoped to an
+//! unrelated type would otherwise be taken to cover the write and, advertising
+//! only a read operation, refuse it with a 409 Conflict.
 //!
-//! These tests pin the fix: a write to a locally-held entity is unaffected by a
+//! These tests pin that a write to a locally-held entity is unaffected by a
 //! registration covering none of its types, and an entity carrying several types
 //! is matched by a registration covering any one of them (clause 5.12, "the type
 //! selector matches the entity types"). Both the entity types and the
 //! registrations' covered types are per-test unique, so the suite is safe to run
 //! in parallel.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

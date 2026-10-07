@@ -1,22 +1,6 @@
-//! The two representations clause 4.5.22 gives a `ListRelationship`'s
-//! `objectList`, end to end.
+//! The two representations clause 4.5.22 gives a `ListRelationship`'s `objectList`, end to end.
 //!
-//! Clause 4.5.22.2, Mandatory: "`objectList`: a JSON representation of an
-//! ordered array of Relationship Objects each consisting of a JSON object
-//! containing a single Attribute with a key called `object` and its value
-//! holding the Relationship's object represented by a URI." Table 5.2.37-1
-//! splits the two forms explicitly: "In the normalized form, each array element
-//! holds a JSON object containing a single Attribute with a key called `object`
-//! and where the value is a valid URI. In the concise form, each string in the
-//! array holds a valid URI." Clause 4.5.4 gives the simplified rendering "an
-//! ordered array holding the `ListRelationship`'s Objects (represented as
-//! URIs)".
-//!
-//! The broker used to answer every representation with the concise array, so a
-//! normalized retrieval, a normalized notification and a normalized temporal
-//! evolution of the same list disagreed with each other and with the clause.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Clause 4.5.22.2, Mandatory: "`objectList`: a JSON representation of an ordered array of Relationship Objects each consisting of a JSON object containing a single Attribute with a key called `object` and its value holding the Relationship's object represented by a URI." Table 5.2.37-1 splits the two forms: "In the normalized form, each array element holds a JSON object containing a single Attribute with a key called `object` and where the value is a valid URI. In the concise form, each string in the array holds a valid URI." Clause 4.5.4 gives the simplified rendering "an ordered array holding the `ListRelationship`'s Objects (represented as URIs)". A normalized retrieval, a normalized notification and a normalized temporal evolution of one list must therefore agree with each other and with the clause.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -38,9 +22,7 @@ const REPLACEMENT_TARGET: &str = "urn:ngsi-ld:Room:3";
 /// How long one notification is waited for.
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// How many deliveries are read before giving up on the one under test: an
-/// entity creation and the change being tested can both match a subscription,
-/// and only the second carries what is asserted.
+/// Entity creation and the change under test can both match a subscription, and only the second carries what is asserted, so several deliveries are read.
 const DELIVERIES_READ: usize = 4;
 
 /// The clause 4.5.22.2 normalized array for `targets`.
@@ -101,9 +83,7 @@ async fn create_show_changes_subscription(scope: &TestEnvironment, receiver: &No
     assert_eq!(created.status, StatusCode::CREATED, "subscription create: {:?}", created.body);
 }
 
-/// The first delivered notification whose entity carries `member` inside
-/// `attribute`, so an earlier delivery for the same subscription cannot be
-/// mistaken for the change under test.
+/// Skips earlier deliveries for the same subscription so they cannot be mistaken for the change under test.
 async fn notification_carrying(receiver: &NotificationServer, attribute: &str, member: &str) -> Value {
     let mut carrying = None;
     for _ in 0..DELIVERIES_READ {
@@ -132,9 +112,7 @@ async fn replace_the_list(client: &TestClient, id: &str) {
     assert_eq!(updated.status, StatusCode::NO_CONTENT, "partial update: {:?}", updated.body);
 }
 
-/// Assert the members clause 4.5.22.2 and clause 4.5.22.3 both prohibit are
-/// absent: "`object` and `previousObject`: shall never be present as object is
-/// a generalization of `objectList`".
+/// Clauses 4.5.22.2 and 4.5.22.3 prohibit `object` and `previousObject`: "shall never be present as object is a generalization of `objectList`".
 fn assert_prohibited_members_absent(attribute: &Value, scenario: &str) {
     assert!(attribute.get("object").is_none(), "{scenario}: clause 4.5.22.2 prohibits object: {attribute}");
     assert!(
@@ -143,13 +121,7 @@ fn assert_prohibited_members_absent(attribute: &Value, scenario: &str) {
     );
 }
 
-/// Table 5.2.37-1: "In the normalized form, each array element holds a JSON
-/// object containing a single Attribute with a key called `object` and where
-/// the value is a valid URI. In the concise form, each string in the array
-/// holds a valid URI." Clause 4.5.4 gives the simplified rendering "an ordered
-/// array holding the `ListRelationship`'s Objects (represented as URIs)". The
-/// three renderings are therefore not interchangeable, and the normalized one
-/// is the one the broker answered with the concise array.
+/// Table 5.2.37-1: "In the normalized form, each array element holds a JSON object containing a single Attribute with a key called `object` and where the value is a valid URI. In the concise form, each string in the array holds a valid URI." Clause 4.5.4 gives the simplified rendering "an ordered array holding the `ListRelationship`'s Objects (represented as URIs)", so the three renderings are not interchangeable.
 #[tokio::test]
 async fn regression_list_relationship_representation_each_format_renders_its_own_object_list_form() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -187,11 +159,7 @@ async fn regression_list_relationship_representation_each_format_renders_its_own
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.22.3 lets a Context Producer write the concise array and clause
-/// 4.5.22.2 the normalized one, and Table 5.2.37-1 makes them the same ordered
-/// array of targets. Which spelling was written therefore cannot decide which
-/// spelling is read back: both round-trip to the representation the request
-/// asked for.
+/// Clause 4.5.22.3 lets a Context Producer write the concise array and clause 4.5.22.2 the normalized one, and Table 5.2.37-1 makes them the same ordered array of targets. Which spelling was written therefore cannot decide which spelling is read back: both round-trip to the representation the request asked for.
 #[tokio::test]
 async fn regression_list_relationship_representation_both_written_forms_round_trip_to_the_same_renderings() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -226,12 +194,7 @@ async fn regression_list_relationship_representation_both_written_forms_round_tr
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.22.2, Output Only: "`previousObjectList`: only provided in the
-/// case of notifications and only if the `showChanges` option is explicitly
-/// requested. It represents the previous `ListRelationship` `objectList`,
-/// before the triggering change. The representation is the same as that of
-/// `objectList`" — so in a normalized notification both members hold the
-/// `object`-keyed Relationship Objects of the same clause.
+/// Clause 4.5.22.2, Output Only: "`previousObjectList`: only provided in the case of notifications and only if the `showChanges` option is explicitly requested. It represents the previous `ListRelationship` `objectList`, before the triggering change. The representation is the same as that of `objectList`", so in a normalized notification both members hold the `object`-keyed Relationship Objects.
 #[tokio::test]
 async fn regression_list_relationship_representation_a_normalized_notification_carries_object_keyed_members() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -262,9 +225,7 @@ async fn regression_list_relationship_representation_a_normalized_notification_c
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Table 5.2.37-1, concise form: "each string in the array holds a valid URI".
-/// Clause 4.5.22.3 gives `previousObjectList` the same representation as
-/// `objectList`, so a concise notification carries both as bare URI arrays.
+/// Table 5.2.37-1, concise form: "each string in the array holds a valid URI". Clause 4.5.22.3 gives `previousObjectList` the same representation as `objectList`, so a concise notification carries both as bare URI arrays.
 #[tokio::test]
 async fn regression_list_relationship_representation_a_concise_notification_carries_bare_uris() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -295,11 +256,7 @@ async fn regression_list_relationship_representation_a_concise_notification_carr
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.22.2 governs the temporal evolution as well: a temporal
-/// retrieval answers in the normalized representation, so each `objectList`
-/// element is "a JSON object containing a single Attribute with a key called
-/// `object`". The current-state fix must not disturb the path that already
-/// answered this way.
+/// Clause 4.5.22.2 governs the temporal evolution as well: a temporal retrieval answers in the normalized representation, so each `objectList` element is "a JSON object containing a single Attribute with a key called `object`".
 #[tokio::test]
 async fn regression_list_relationship_representation_a_temporal_evolution_keeps_object_keyed_members() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -340,21 +297,9 @@ async fn regression_list_relationship_representation_a_temporal_evolution_keeps_
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.22.2, the sentence that follows the `objectList` definition: "An
-/// array consisting of a single NGSI-LD Null … can be used as the right-hand
-/// side of the `objectList` … as well as in notifications and in temporal
-/// evolutions (for encoding a deleted `ListRelationship`)."
+/// Clause 4.5.22.2: "An array consisting of a single NGSI-LD Null ... can be used as the right-hand side of the `objectList` ... as well as in notifications and in temporal evolutions (for encoding a deleted `ListRelationship`)."
 ///
-/// The deletion encoding is the one `objectList` array whose element is not a
-/// Relationship Object, so it must stay a bare `urn:ngsi-ld:null` rather than
-/// being wrapped as `{"object": …}` by the normalized rendering this module
-/// otherwise pins. The wrapping and the guard now live in one function, and
-/// this is the end-to-end proof of the guard: without it the tombstone reads
-/// back as `[{"object": "urn:ngsi-ld:null"}]`, which no clause admits.
-///
-/// The tombstone carries no `observedAt`, so it is reachable only through
-/// `timeproperty=deletedAt` (clause 4.8) -- querying the default time property
-/// selects the observation and never the deletion.
+/// The deletion encoding is the one `objectList` array whose element is not a Relationship Object, so it must stay a bare `urn:ngsi-ld:null` rather than being wrapped as `{"object": ...}` by the normalized rendering; otherwise the tombstone reads back as `[{"object": "urn:ngsi-ld:null"}]`, which no clause admits. The tombstone carries no `observedAt`, so it is reachable only through `timeproperty=deletedAt` (clause 4.8): querying the default time property selects the observation and never the deletion.
 #[tokio::test]
 async fn regression_list_relationship_representation_a_deleted_list_is_encoded_as_a_bare_null() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

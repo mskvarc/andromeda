@@ -1,4 +1,4 @@
-//! Bulk inserts into the rebuilt `attribute_history` hypertable.
+//! Bulk inserts into the `attribute_history` hypertable.
 
 use crate::{
     attribute_history_row::AttributeHistoryRow,
@@ -39,8 +39,7 @@ const HISTORY_INSERT: StatementName = StatementName("attribute-history-insert");
 #[iden = "d"]
 struct D;
 
-/// The staging columns of an attribute-history row, named as the `AS d(…)` alias
-/// spells them rather than as the `attribute_history` columns they land in.
+/// The staging columns of an attribute-history row, named as the `AS d(…)` alias spells them.
 #[derive(Iden, Clone, Copy)]
 enum HistoryStaged {
     /// Write clock of the row.
@@ -256,11 +255,7 @@ fn staged(column: HistoryStaged) -> SimpleExpr {
 
 /// The bulk attribute-history insert into `table`.
 ///
-/// The value number reaches the arbitrary-precision column through a native
-/// `numeric[]` bind, never widened to a double; the geometry is
-/// validated from its embedded-SRID EWKB, with a NULL EWKB projecting to a NULL
-/// geometry. The conflict target names the columns `uq_attribute_history_write_identity`
-/// covers, so a row replayed under its original write identity is a no-op.
+/// The value number reaches the arbitrary-precision column through a native `numeric[]` bind, never widened to a double; the geometry is validated from its embedded-SRID EWKB, with a NULL EWKB projecting to a NULL geometry. The conflict target names the columns `uq_attribute_history_write_identity` covers, so a row replayed under its original write identity is a no-op.
 fn attribute_history_insert_sql(table: TableRef) -> Result<String, TemporalStoreError> {
     let columns = history_staging_columns();
     let call = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))));

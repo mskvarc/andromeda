@@ -187,7 +187,7 @@ pub struct GetEntityParams {
 impl GetEntityParams {
     /// Determine the [`ResponseFormat`] from the `format` and `options` query parameters.
     ///
-    /// `format` takes precedence over the legacy `options` (clause 4.5.1). The
+    /// `format` takes precedence over the deprecated `options` (clause 4.5.1). The
     /// resolution is shared with the GET-query parameter set so the two paths
     /// cannot disagree; see [`resolve_representation`].
     ///
@@ -229,7 +229,7 @@ impl GetEntityParams {
     pub fn validate(&self) -> Result<(), ParameterError> {
         // Clause 6.3.20: a `format` or `options` value Table 6.3.7-1 does not
         // define is refused here rather than during deserialisation, where the
-        // error type would have been lost (see `crate::representation_parameter`).
+        // error type would have been lost.
         self.resolve_render_mode()?;
         // Table 6.5.3.1-1 restricts `attrs` to "an Attribute (Property or
         // Relationship) name" and says outright that "id, type, scope are not
@@ -370,7 +370,7 @@ mod tests {
     #[test]
     fn resolve_render_mode_format_takes_precedence_over_options() {
         // Clause 4.5.1: `format` is the current representation selector and
-        // `options` its legacy predecessor, so an explicit `format` wins over a
+        // `options` its deprecated predecessor, so an explicit `format` wins over a
         // conflicting `options`. The revealing case is one where the two
         // disagree: `format=normalized` with `options=keyValues` must render
         // normalized, not simplified.

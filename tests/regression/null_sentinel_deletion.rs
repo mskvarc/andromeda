@@ -2,15 +2,14 @@
 //!
 //! [`crate::null_sentinel_admission`] covers the other half of clause 5.5.4:
 //! which operations may carry `urn:ngsi-ld:null` at all. This module assumes
-//! admission and asserts the effect, which is where the broker diverged: a
-//! partial update answered 204 and then stored the sentinel verbatim, so the
-//! entity served back carried `"observedAt": "urn:ngsi-ld:null"` instead of
-//! having lost the member; a merge that removed one sub-attribute left a
-//! valueless instance behind; a merge that removed only `unitCode` was refused
-//! 400 because the deletion instruction reached the unit catalog as if it were
-//! a code; and a fragment whose `datasetId` named the instance to act on was
-//! ignored entirely, so no instance was deleted and a partial update targeting
-//! a named instance answered 404.
+//! admission and asserts the effect: a partial update answers 204 and removes
+//! the member rather than storing the sentinel verbatim, so the entity served
+//! back no longer carries `"observedAt": "urn:ngsi-ld:null"`; a merge that
+//! removes one sub-attribute leaves no valueless instance behind; a merge that
+//! removes only `unitCode` is not refused 400, because the deletion instruction
+//! never reaches the unit catalog as if it were a code; and a fragment whose
+//! `datasetId` names the instance to act on deletes that instance, so a partial
+//! update targeting a named instance does not answer 404.
 //!
 //! The governing clauses:
 //!
@@ -47,8 +46,6 @@
 //! broker follows clause 5.5.8, and
 //! `regression_null_sentinel_deletion_partial_update_of_the_last_instance_removes_the_attribute`
 //! records that reading.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -205,8 +202,8 @@ fn in_dataset(node: &Value, dataset_id: &str) -> Value {
 }
 
 /// Clause 5.5.8: a sub-attribute set to the NGSI-LD Null in a Partial Attribute
-/// update is deleted, and nothing else is. The broker answered 204 and stored
-/// the sentinel, so the member was served back holding `urn:ngsi-ld:null`.
+/// update is deleted, and nothing else is: the member is not served back holding
+/// `urn:ngsi-ld:null`.
 #[tokio::test]
 async fn regression_null_sentinel_deletion_partial_update_removes_one_sub_attribute_at_a_time() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -243,9 +240,10 @@ async fn regression_null_sentinel_deletion_partial_update_removes_one_sub_attrib
 }
 
 /// Clause 5.5.12 applies the same deletion rule to Merge Entity. Removing only
-/// `unitCode` was refused 400, because the deletion instruction reached the
-/// unit catalog as if it were a UN/CEFACT common code; removing a reified
-/// sub-attribute stripped its `object` and left the Relationship behind.
+/// `unitCode` is not refused, since the deletion instruction is no UN/CEFACT
+/// common code to check against the unit catalog; removing a reified
+/// sub-attribute removes it whole rather than stripping its `object` and leaving
+/// the Relationship behind.
 #[tokio::test]
 async fn regression_null_sentinel_deletion_merge_removes_one_sub_attribute_at_a_time() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -299,9 +297,10 @@ async fn regression_null_sentinel_deletion_batch_merge_removes_a_sub_attribute()
 
 /// Clause 5.5.8 selects the instance to act on by the `datasetId` carried in
 /// the Fragment, because Table 6.7.3.1-1 gives Partial Attribute update no
-/// `datasetId` URL parameter. The broker read only the parameter, so a Fragment
-/// naming an instance deleted nothing — and, when the attribute held no default
-/// instance, answered 404 to a request that should have succeeded.
+/// `datasetId` URL parameter. The `datasetId` is read from the Fragment, not only from a
+/// URL parameter, so a Fragment naming an instance deletes it, and a request
+/// naming an instance of an attribute that holds no default instance succeeds
+/// rather than answering 404.
 ///
 /// Clause 4.5.5 then renders what is left: one surviving instance is "a single
 /// Attribute element", not a one-element array.
@@ -434,8 +433,8 @@ async fn regression_null_sentinel_deletion_partial_update_of_the_last_instance_r
 
 /// Clause 5.6.4.4: if the target Entity does not contain the target Attribute
 /// "as an instance with the specified `datasetId` if present, then an error of
-/// type `ResourceNotFound` shall be raised". A deletion Fragment is no exception —
-/// the broker answered 204 to a `datasetId` that named nothing.
+/// type `ResourceNotFound` shall be raised". A deletion Fragment is no exception:
+/// a `datasetId` that names nothing is not answered 204.
 #[tokio::test]
 async fn regression_null_sentinel_deletion_partial_update_of_an_absent_instance_is_not_found() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -604,9 +603,7 @@ async fn regression_null_sentinel_deletion_records_a_tombstone_and_no_sentinel_o
 ///
 /// A genuine JSON `null` in the stored object is data, not a deletion: clause
 /// 4.5.0 introduces the URI precisely because "null cannot be used as a value
-/// in NGSI-LD", and inside a JSON literal it survives expansion untouched. The
-/// broker replaced the whole `json` member with the patch instead of merging
-/// into it.
+/// in NGSI-LD", and inside a JSON literal it survives expansion untouched.
 #[tokio::test]
 async fn regression_null_sentinel_deletion_merge_removes_a_key_inside_a_json_property() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

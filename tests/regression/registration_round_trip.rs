@@ -1,19 +1,8 @@
-//! A Context Source Registration reads back as it was written, through its
-//! typed model, including a `location` geometry and an additional member.
+//! A Context Source Registration reads back as it was written, through its typed model, including a `location` geometry and an additional member.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.9.2 (Register Context Source) stores the
-//! members of Table 5.2.9-1 and clause 5.9.3 (Retrieve Context Source
-//! Registration) serves them back. Clause 5.2.2 makes the members a Context
-//! Producer supplies, additional ones included, members the broker stores and
-//! serves, so a POST followed by a GET answers the same members with the same
-//! values, apart from the read-only ones of Table 5.2.9-2 (`status`,
-//! `timesSent`, `timesFailed`, `lastSuccess`, `lastFailure`) and the timestamps
-//! the broker generates.
+//! ETSI GS CIM 009 v1.9.1 clause 5.9.2 (Register Context Source) stores the members of Table 5.2.9-1 and clause 5.9.3 (Retrieve Context Source Registration) serves them back. Clause 5.2.2 makes the members a Context Producer supplies, additional ones included, members the broker stores and serves, so a POST followed by a GET answers the same members with the same values, apart from the read-only ones of Table 5.2.9-2 and the timestamps the broker generates.
 //!
-//! Needs the host broker: the case drives the HTTP API and is not run without
-//! one.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Needs the host broker.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

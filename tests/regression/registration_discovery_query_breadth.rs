@@ -1,21 +1,6 @@
 //! Context Source Registration discovery needs a narrowing condition.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.10.2.4 rejects a discovery query that is
-//! "too wide" -- one carrying no condition the broker can narrow the candidate
-//! registrations by. An entity-`id` list is not such a condition: clause 5.10.2
-//! discovery narrows by the entity *type*, attribute names, `q`, or geometry a
-//! registration advertises, so a query that names only entity identifiers still
-//! asks the broker to scan every registration. It is a `BadRequestData`, the
-//! category clause 5.5.2 gives to input that does not meet the requirements of
-//! the operation.
-//!
-//! Adding any admitted narrowing condition -- an entity type -- makes the same
-//! id list a valid discovery query answered with 200.
-//!
-//! Corresponds to the official suite case `037_10_01`. This pins the broker's
-//! refusal of the too-wide query and its acceptance of the narrowed one.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 clause 5.10.2.4 rejects a discovery query that is "too wide" -- one carrying no condition the broker can narrow the candidate registrations by. An entity-`id` list is not such a condition: clause 5.10.2 discovery narrows by the entity *type*, attribute names, `q`, or geometry a registration advertises, so a query naming only entity identifiers still asks the broker to scan every registration. It is a `BadRequestData`, the category clause 5.5.2 gives to input that does not meet the requirements of the operation. Adding any admitted narrowing condition, such as an entity type, makes the same id list a valid discovery query answered with 200.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

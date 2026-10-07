@@ -92,7 +92,7 @@ impl EntityQueryParameters {
     pub fn validate(&self, operation: EntityQueryOperation) -> Result<(), ParameterError> {
         // Clause 6.3.20: a `format` or `options` value Table 6.3.7-1 does not
         // define is refused here rather than during deserialisation, where the
-        // error type would have been lost (see `crate::representation_parameter`).
+        // error type would have been lost.
         self.parse_options()?;
         // Clause 5.7.2.4: a query naming no type, attribute, filter, geoquery
         // or local scope asks for everything the broker holds.

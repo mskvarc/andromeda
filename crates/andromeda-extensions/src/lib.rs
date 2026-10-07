@@ -1,7 +1,7 @@
 //! Runtime configuration and advertisement for Andromeda's opt-in extensions.
 //!
 //! Andromeda ships a handful of capabilities the NGSI-LD specification does not
-//! define. `docs/studies/extension-strategy.md` sets the rules they follow:
+//! define. The rules they follow are:
 //! runtime configuration rather than build features, off by default, reversible,
 //! advertised under a vendor namespace, and never forwarded to a Context Source
 //! that has not advertised support. This crate owns the machinery shared by

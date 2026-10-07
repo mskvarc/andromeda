@@ -1,11 +1,11 @@
-//! Batch Merge forwarding — REQ-PROV-125..129 (clause 5.6.20.4).
+//! Batch Merge forwarding (clause 5.6.20.4).
 //!
 //! Merge forwards each registration only the entities carrying an attribute it
 //! owns (attribute-less entities are dropped); a source advertising the batch
 //! operation is handed the whole batch and its result merged keyed by
 //! `registrationId`; otherwise the broker drives per-entity Merge Entity. An
 //! redirect registration advertising no viable operation fails each owned entity
-//! with `409 Conflict`. This whole family is first-run classification (UNKNOWN).
+//! with `409 Conflict`.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -34,7 +34,7 @@ fn error_keyed(body: &Value, registration: &str, status: u64) -> bool {
 }
 
 /// A registration owning `speed` receives only the entities that carry `speed`;
-/// an attribute-less entity is dropped from its copy. Confirms REQ-PROV-125.
+/// an attribute-less entity is dropped from its copy.
 #[tokio::test]
 async fn batch_merge_per_csr_filtering_drops_attrless() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -89,7 +89,7 @@ async fn batch_merge_per_csr_filtering_drops_attrless() {
 }
 
 /// A source advertising the batch operation is handed the whole batch and its
-/// result merged keyed by `registrationId`. Confirms REQ-PROV-126.
+/// result merged keyed by `registrationId`.
 #[tokio::test]
 async fn batch_merge_supported_forwards_and_merges() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -130,7 +130,7 @@ async fn batch_merge_supported_forwards_and_merges() {
 }
 
 /// Without the batch operation, a merge-capable source is driven per entity via
-/// Merge Entity. Confirms REQ-PROV-127.
+/// Merge Entity.
 #[tokio::test]
 async fn batch_merge_fallback_per_entity_merge() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -171,7 +171,7 @@ async fn batch_merge_fallback_per_entity_merge() {
 }
 
 /// A redirect registration advertising no viable operation fails every owned
-/// entity with a `409 Conflict` keyed by `registrationId`. Confirms REQ-PROV-128.
+/// entity with a `409 Conflict` keyed by `registrationId`.
 #[tokio::test]
 async fn batch_merge_redirect_neither_op_conflict_per_entity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -213,7 +213,7 @@ async fn batch_merge_redirect_neither_op_conflict_per_entity() {
 /// The local phase merges into a locally held entity and, since every entity
 /// existed and was merged, answers with no content (clause 5.6.20.5: "none (if
 /// all Entities already existed and are successfully merged)"), while an
-/// auxiliary registration suppresses forwarding. Confirms REQ-PROV-129.
+/// auxiliary registration suppresses forwarding.
 #[tokio::test]
 async fn batch_merge_local_phase_populates_results() {
     let topology = topology::single().await.expect("single-broker topology");

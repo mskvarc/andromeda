@@ -29,10 +29,6 @@ use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::json;
 
-// ---------------------------------------------------------------------------
-// Partial update attribute
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn attribute_partial_update_no_datasetid_success() {
     let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
@@ -43,7 +39,6 @@ async fn attribute_partial_update_no_datasetid_success() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Update the isParked relationship's sub-attribute
     let fragment = json!({
         "providedBy": {
             "type": "Relationship",
@@ -81,10 +76,6 @@ async fn attribute_partial_update_with_datasetid_success() {
     assert_eq!(status, StatusCode::NO_CONTENT, "partial update with datasetId should return 204");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Error cases
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_partial_update_empty_entity_id_returns_error() {
@@ -129,7 +120,6 @@ async fn attribute_partial_update_mismatched_type_returns_400() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Try to update Property with Relationship type
     let fragment = json!({
         "type": "Relationship",
         "object": "urn:ngsi-ld:Something:else",
@@ -235,10 +225,6 @@ async fn attribute_partial_update_nonexistent_attribute_returns_404() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// LanguageProperty
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn attribute_partial_update_language_property_success() {
     let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
@@ -265,10 +251,6 @@ async fn attribute_partial_update_language_property_success() {
     assert_eq!(body["street"]["languageMap"]["es"], "Gran Lugar");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Delete via NGSI-LD null in partial update
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_partial_update_delete_property_with_null_success() {
@@ -372,10 +354,6 @@ async fn attribute_partial_update_delete_language_property_with_null_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Delete specific instance via NGSI-LD null in partial update
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn attribute_partial_update_delete_property_instance_with_null_success() {
     let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
@@ -465,10 +443,6 @@ async fn attribute_partial_update_delete_language_property_instance_with_null_su
     assert_eq!(status, StatusCode::NO_CONTENT, "delete LanguageProperty instance via null should return 204");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Delete default instance via NGSI-LD null in partial update
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_partial_update_delete_default_property_instance_with_null_success() {
@@ -560,10 +534,6 @@ async fn attribute_partial_update_delete_default_language_property_instance_with
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// JsonProperty
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn attribute_partial_update_json_property_success() {
     let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
@@ -590,10 +560,6 @@ async fn attribute_partial_update_json_property_success() {
     assert_eq!(body["jsonProperty"]["json"]["id"], "another-id");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// VocabProperty
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_partial_update_vocab_property_success() {

@@ -1,9 +1,4 @@
-//! Representation and format negotiation (clause 6.3.7, 6.3.8, 4.5.16): the
-//! simplified `keyValues` form, the normalized default forwarded to sources, the
-//! `GeoJSON` `Feature`/`FeatureCollection` forms, the `501` on an unsupported
-//! forwarded representation, the `203 Preference-Applied` version-amendment
-//! responses driven by a `Prefer: ngsi-ld=<version>` request header, and the
-//! profile `Link` version hint of clause 6.3.21.
+//! Representation and format negotiation (clause 6.3.7, 6.3.8, 4.5.16): the simplified `keyValues` form, the normalized default forwarded to sources, the `GeoJSON` `Feature`/`FeatureCollection` forms, the `501` on an unsupported forwarded representation, the `203 Preference-Applied` version-amendment responses driven by a `Prefer: ngsi-ld=<version>` request header, and the profile `Link` version hint of clause 6.3.21.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -17,17 +12,13 @@ use reqwest::Method;
 use serde_json::json;
 use std::time::Duration;
 
-/// The `Prefer` header asking for the previous NGSI-LD version (clause 4.3.6.8
-/// names versions as `major.minor`), so the broker has a fallback to apply.
+/// The `Prefer` header asking for the previous NGSI-LD version (clause 4.3.6.8 names versions as `major.minor`), so the broker has a fallback to apply.
 const PREFER_PREVIOUS_VERSION: &str = "ngsi-ld=1.8";
 
-/// The RFC 6906 profile `Link` naming the previous NGSI-LD version in the
-/// `<https://uri.etsi.org/ngsi-ld/profile/version>` form of clause 6.3.21.
+/// The RFC 6906 profile `Link` naming the previous NGSI-LD version in the `<https://uri.etsi.org/ngsi-ld/profile/version>` form of clause 6.3.21.
 const PROFILE_LINK_PREVIOUS_VERSION: &str = "<https://uri.etsi.org/ngsi-ld/profile/1.8>; rel=\"profile\"";
 
-/// A located entity of `entity_type` holding a `GeoProperty`, so `GeoJSON`
-/// rendering has a geometry to project. The type is derived per test so a bare
-/// `type=` selector stays within the test.
+/// A located entity of `entity_type` holding a `GeoProperty`, so `GeoJSON` rendering has a geometry to project. The type is derived per test so a bare `type=` selector stays within the test.
 fn located_vehicle(id: &str, entity_type: &str) -> serde_json::Value {
     entity(
         id,
@@ -42,8 +33,7 @@ fn located_vehicle(id: &str, entity_type: &str) -> serde_json::Value {
     )
 }
 
-/// `options=keyValues` returns the simplified representation, collapsing each
-/// attribute to its value (clause 4.5.16). Confirms REQ-HTTP-1.
+/// `options=keyValues` returns the simplified representation, collapsing each attribute to its value (clause 4.5.16).
 #[tokio::test]
 async fn dist_http_query_format_key_values_returns_simplified_representation() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -86,9 +76,7 @@ async fn dist_http_query_format_key_values_returns_simplified_representation() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A forwarded query defaults to the normalized representation so results remain
-/// mergeable, even when the client asked for `keyValues` (clause 6.3.8).
-/// Confirms REQ-HTTP-2.
+/// A forwarded query defaults to the normalized representation so results remain mergeable, even when the client asked for `keyValues` (clause 6.3.8).
 #[tokio::test]
 async fn dist_http_forwarded_query_defaults_to_normalized_representation() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -134,8 +122,7 @@ async fn dist_http_forwarded_query_defaults_to_normalized_representation() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A single source that cannot serve the requested representation maps to
-/// `501 Not Implemented` (clause 6.3.16). Confirms REQ-HTTP-3.
+/// A single source that cannot serve the requested representation maps to `501 Not Implemented` (clause 6.3.16).
 #[tokio::test]
 async fn dist_http_forwarded_query_unsupported_representation_returns_501() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -170,7 +157,6 @@ async fn dist_http_forwarded_query_unsupported_representation_returns_501() {
 }
 
 /// A `GeoJSON` `Accept` on a query returns a `FeatureCollection` (clause 6.3.7).
-/// Confirms REQ-HTTP-56.
 #[tokio::test]
 async fn dist_http_query_geojson_accept_returns_feature_collection() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -207,7 +193,6 @@ async fn dist_http_query_geojson_accept_returns_feature_collection() {
 }
 
 /// A `GeoJSON` `Accept` on a retrieve returns a `Feature` (clause 6.3.7).
-/// Confirms REQ-HTTP-67.
 #[tokio::test]
 async fn dist_http_retrieve_geojson_accept_returns_feature() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -239,14 +224,7 @@ async fn dist_http_retrieve_geojson_accept_returns_feature() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A query carrying `Prefer: ngsi-ld=1.8` is amended to that version and answers
-/// `203` with `Preference-Applied` (Table 6.4.3.2-3: "203 Non-Authoritative
-/// Information ... returning an altered response body, amended to conform to a
-/// specific version of the NGSI-LD specification as mandated in clause 4.3.6.8.
-/// The response shall also include a "Preference-Applied" HTTP header set to
-/// "ngsi-ld=<conformant-version>""). Without the `Prefer` header there is
-/// nothing to amend, so the header is what turns a `200` into a `203`.
-/// Confirms REQ-HTTP-55.
+/// A query carrying `Prefer: ngsi-ld=1.8` is amended to that version and answers `203` with `Preference-Applied` (Table 6.4.3.2-3: "203 Non-Authoritative Information ... returning an altered response body, amended to conform to a specific version of the NGSI-LD specification as mandated in clause 4.3.6.8. The response shall also include a "Preference-Applied" HTTP header set to "ngsi-ld=<conformant-version>""). Without the `Prefer` header there is nothing to amend, so the header is what turns a `200` into a `203`.
 #[tokio::test]
 async fn dist_http_query_version_amended_returns_203_preference_applied() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -287,13 +265,7 @@ async fn dist_http_query_version_amended_returns_203_preference_applied() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A retrieve carrying `Prefer: ngsi-ld=1.8` is amended to that version and
-/// answers `203` with `Preference-Applied` (clause 5.7.1.4: "If the Prefer
-/// Header [26] is set to "ngsi-ld=<version>" then the `ContextBroker` shall
-/// endeavour to amend the JSON-LD object to conform to the specified version of
-/// the NGSI-LD specification as mandated in clause 4.3.6.8, and return a
-/// Preference-Applied Header set to "ngsi-ld=<conformant-version>" in the
-/// response"). Confirms REQ-HTTP-66.
+/// A retrieve carrying `Prefer: ngsi-ld=1.8` is amended to that version and answers `203` with `Preference-Applied` (clause 5.7.1.4: "If the Prefer Header [26] is set to "ngsi-ld=<version>" then the `ContextBroker` shall endeavour to amend the JSON-LD object to conform to the specified version of the NGSI-LD specification as mandated in clause 4.3.6.8, and return a Preference-Applied Header set to "ngsi-ld=<conformant-version>" in the response").
 #[tokio::test]
 async fn dist_http_retrieve_version_amended_returns_203_preference_applied() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -335,11 +307,7 @@ async fn dist_http_retrieve_version_amended_returns_203_preference_applied() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An `entityMaps` request carrying `Prefer: ngsi-ld=1.8` is amended to that
-/// version and answers `203` with `Preference-Applied` (clause 6.3.6: "If the
-/// Prefer Header [26] is set to "ngsi-ld=<version>" then implementations shall
-/// set Preference-Applied header to "ngsi-ld=<conformant-version>" in the
-/// returned response"). Confirms REQ-HTTP-99.
+/// An `entityMaps` request carrying `Prefer: ngsi-ld=1.8` is amended to that version and answers `203` with `Preference-Applied` (clause 6.3.6: "If the Prefer Header [26] is set to "ngsi-ld=<version>" then implementations shall set Preference-Applied header to "ngsi-ld=<conformant-version>" in the returned response").
 #[tokio::test]
 async fn dist_http_entity_maps_version_amended_returns_203_preference_applied() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -363,16 +331,7 @@ async fn dist_http_entity_maps_version_amended_returns_203_preference_applied() 
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A profile `Link` header naming an earlier NGSI-LD version is accepted
-/// alongside the context `Link`, and the request still succeeds (clause 6.3.21:
-/// "if an HTTP Link header with a profile parameter in accordance with IETF RFC
-/// 6906 [33], is found set to <https://uri.etsi.org/ngsi-ld/profile/version>
-/// then implementations that are only partially capable of interpreting the
-/// datatypes conformant to the supplied NGSI-LD version may use this
-/// information to allow the payload to be accepted within the constraints of
-/// the current implementation (see clause 5.5.4) through amending the payload
-/// body and applying the fallbacks defined within clause 4.3.6.8").
-/// Confirms REQ-HTTP-45.
+/// A profile `Link` header naming an earlier NGSI-LD version is accepted alongside the context `Link`, and the request still succeeds (clause 6.3.21: "if an HTTP Link header with a profile parameter in accordance with IETF RFC 6906 [33], is found set to <https://uri.etsi.org/ngsi-ld/profile/version> then implementations that are only partially capable of interpreting the datatypes conformant to the supplied NGSI-LD version may use this information to allow the payload to be accepted within the constraints of the current implementation (see clause 5.5.4) through amending the payload body and applying the fallbacks defined within clause 4.3.6.8").
 #[tokio::test]
 async fn dist_http_profile_link_header_version_accepted_with_fallbacks() {
     let topology = topology::single().await.expect("single-broker topology");

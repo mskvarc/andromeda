@@ -4,8 +4,7 @@
 //! Runs against a base-tier broker with `ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT=enabled`.
 //! Covers the suspend/resume lifecycle, the 404 a suspended tenant answers on the
 //! data path, the `status` residency values, the `options` blocks, the paginated
-//! collection, tenant isolation, and that the retired `evictOrphans` route is
-//! gone.
+//! collection, tenant isolation, and that no `evictOrphans` route exists.
 //!
 //! Naming convention: `tenant_management_<scenario>_<expected_outcome>`.
 
@@ -196,7 +195,6 @@ async fn tenant_management_suspend_resume_round_trips_through_a_404() {
     let (status, _) = create_entity(&http, &tenant, id).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // The tenant appears in the collection and reads as in service.
     let (status, _, body) = list_tenants(&http, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     let names: Vec<&str> = body.as_array().into_iter().flatten().filter_map(|value| value["tenantName"].as_str()).collect();
@@ -243,25 +241,21 @@ async fn tenant_management_options_add_sys_attrs_and_usage() {
     let http = client();
     let tenant = unique_tenant("tmopts");
 
-    // Two entities so entityCount is a nonzero, known value.
     for index in 0..2 {
         let (status, _) = create_entity(&http, &tenant, &format!("urn:ngsi-ld:Device:tm-opts-{index}")).await;
         pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     }
 
-    // Default: no timestamps, no usage.
     let (status, body) = get_tenant(&http, &tenant, None).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("createdAt").is_none(), "default read omits createdAt, got {body}");
     assert!(body.get("databaseSize").is_none(), "default read omits usage, got {body}");
 
-    // sysAttrs surfaces the timestamps.
     let (status, body) = get_tenant(&http, &tenant, Some("sysAttrs")).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body["createdAt"].as_str().is_some(), "sysAttrs adds createdAt, got {body}");
     assert!(body["modifiedAt"].as_str().is_some(), "sysAttrs adds modifiedAt, got {body}");
 
-    // usage surfaces the operational block.
     let (status, body) = get_tenant(&http, &tenant, Some("usage")).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(
@@ -293,7 +287,6 @@ async fn tenant_management_collection_paginates_by_cursor() {
         created.push(tenant);
     }
 
-    // Walk the collection two at a time, following the next cursor.
     let mut seen: Vec<String> = Vec::new();
     let mut query = "?limit=2".to_owned();
     // The loop body runs before any break, so this is always assigned before it
@@ -320,7 +313,6 @@ async fn tenant_management_collection_paginates_by_cursor() {
     for tenant in &created {
         assert!(seen.contains(tenant), "walking next must visit {tenant}, saw {seen:?}");
     }
-    // Each tenant is visited exactly once.
     let mut unique = seen.clone();
     unique.sort();
     unique.dedup();
@@ -370,9 +362,9 @@ async fn tenant_management_collection_paginates_by_offset() {
 async fn tenant_management_evict_orphans_route_is_retired() {
     let environment = reset().await;
     let http = client();
-    // `POST /tenants/evictOrphans` now falls under the `/tenants/{tenantName}`
+    // `POST /tenants/evictOrphans` falls under the `/tenants/{tenantName}`
     // resource (tenant name `evictOrphans`), which serves only GET and PATCH, so
-    // the retired POST reaches no handler and is answered 405.
+    // the POST reaches no handler and is answered 405.
     let response = http.post(format!("{BASE_URL}/tenants/evictOrphans")).send().await.expect("request");
     pretty_assertions::assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     environment.finish().await;
@@ -391,7 +383,6 @@ async fn tenant_management_suspending_one_tenant_leaves_another_serving() {
     pretty_assertions::assert_eq!(create_entity(&http, &acme, acme_id).await.0, StatusCode::CREATED);
     pretty_assertions::assert_eq!(create_entity(&http, &beta, beta_id).await.0, StatusCode::CREATED);
 
-    // Suspend acme.
     pretty_assertions::assert_eq!(patch_active(&http, &acme, false).await, StatusCode::NO_CONTENT);
     pretty_assertions::assert_eq!(retrieve_entity(&http, &acme, acme_id).await.0, StatusCode::NOT_FOUND);
 
@@ -403,12 +394,10 @@ async fn tenant_management_suspending_one_tenant_leaves_another_serving() {
     environment.finish().await;
 }
 
-/// Clause 5.5.10 with the suspension contract of `docs/tenant-management.md`:
-/// a suspended tenant answers every data-path request `404 NonexistentTenant`,
-/// even while a request admitted before the suspension still holds the
-/// tenant's runtime. That in-flight request once kept the runtime cached and
-/// serving after the suspension, because eviction spared a runtime in use and
-/// nothing evicted it when the request finished.
+/// Clause 5.5.10: a suspended tenant answers every data-path request
+/// `404 NonexistentTenant`, even while a request admitted before the suspension
+/// still holds the tenant's runtime. Eviction spares a runtime in use, so the
+/// runtime must still be evicted when that in-flight request finishes.
 ///
 /// The in-flight request is held open deterministically: it is a retrieval
 /// forwarded to a registered Context Source whose answer waits at a closed

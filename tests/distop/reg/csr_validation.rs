@@ -1,7 +1,7 @@
 //! Mandatory/format validation matrix over a valid baseline CSR (clause 5.2.9).
 //!
 //! Each row mutates exactly one field of the baseline so a `400 BadRequestData`
-//! isolates a single constraint. All `T-LOCAL`, all `IMPL`.
+//! isolates a single constraint. All `T-LOCAL`.
 
 use crate::{
     oracle::{assert_problem_details, assert_status, json_body},
@@ -80,7 +80,7 @@ rejection_cases! {
 }
 
 /// `EntityInfo.type` may be an array of types; the CSR is accepted and both
-/// types round-trip (clause 5.2.9, 4.5.4). Confirms REQ-REG-1.
+/// types round-trip (clause 5.2.9, 4.5.4).
 #[tokio::test]
 async fn reg_entityinfo_type_as_array_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -121,7 +121,7 @@ async fn reg_entityinfo_type_as_array_accepted() {
 /// When both `id` and `idPattern` are present the exact `id` wins and the
 /// pattern is ignored (clause 5.2.9). The discovery queries name `type=Vehicle`
 /// because clause 5.10.2.4 rejects a query carrying only entity identifiers as
-/// too wide. Confirms REQ-REG-5.
+/// too wide.
 #[tokio::test]
 async fn reg_entityinfo_id_and_idpattern_prefers_id() {
     let topology = topology::single().await.expect("single-broker topology");

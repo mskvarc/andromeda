@@ -1,12 +1,6 @@
 //! The regular-expression constructs the broker refuses in a pattern.
 //!
-//! Clause 4.9 mandates IEEE 1003.2 for a `q` pattern and clause 5.7.2 for an
-//! `idPattern`. Each variant is either an extension the broker does not
-//! support, one of the few IEEE 1003.2 constructs the `regex` crate reads
-//! differently from POSIX.2, or a node with no spelling both of the broker's
-//! engines read alike. The rendering is what the client is told, so it names
-//! the construct the way a client writes it and, where one exists, the
-//! spelling to use instead.
+//! Clause 4.9 mandates IEEE 1003.2 for a `q` pattern and clause 5.7.2 for an `idPattern`. Each variant is an extension the broker does not support, an IEEE 1003.2 construct the `regex` crate reads differently from POSIX.2, or a node with no spelling both of the broker's engines read alike. The rendering is what the client is told, so it names the construct as a client writes it and, where one exists, the spelling to use instead.
 
 use derive_more::Display;
 

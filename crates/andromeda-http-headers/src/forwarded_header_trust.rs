@@ -15,8 +15,7 @@ use strum::{Display, EnumString};
 ///
 /// So the default is [`ForwardedHeaderTrust::Untrusted`], and an operator opts
 /// in only once a reverse proxy in front of the broker sets these fields and
-/// strips whatever the client sent. `docs/tls-deployment.md` states that
-/// requirement and shows a terminator configured to meet it.
+/// strips whatever the client sent.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Display, EnumString, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]

@@ -13,8 +13,7 @@
 //! timeout closes it. A handful of independent clocks per tenant therefore keep
 //! a server attached to every cached tenant, a few hundred cached tenants pin
 //! the pooler's global cap, and a tenant loaded next queues behind them until
-//! its acquire deadline sheds it -- the opposite of what
-//! `docs/pgbouncer-deployment.md` promises: that the fleet's backend count
+//! its acquire deadline sheds it -- the opposite of the intent that the fleet's backend count
 //! tracks active tenants, not cached ones.
 //!
 //! The pacer lets a timer tick run only when something is due. The tenant's

@@ -2,7 +2,7 @@
 //! that keeps the writes it saw and a reader that always serves one Building
 //! snapshot, with one matching Building subscription in its cache.
 //!
-//! It proves — without a live broker — that an operation records the durable
+//! It proves, without a live broker, that an operation records the durable
 //! subscription matches its own live notification would produce (clause 5.8):
 //! a test commits an operation, reads the `subscription_matches` off the
 //! [`AtomicWrite`] the committer captured, and asserts the change and snapshot a matching subscription is owed. The single

@@ -1,5 +1,4 @@
-//! A context no single URL names is linked through a hosted wrapper (study
-//! B3, B5 to B7, B11 and B17).
+//! A context no single URL names is linked through a hosted wrapper.
 
 use crate::{
     broker_endpoints::broker_url,
@@ -38,7 +37,7 @@ async fn post_query_as_json(client: &Client, device: &str, context: &Value) -> R
         .expect("POST query failed")
 }
 
-/// Study B3: a user context without the core `@context` is linked through one
+/// A user context without the core `@context` is linked through one
 /// hosted wrapper holding exactly the body's value; a caller sending the
 /// tenant's header dereferences it, it is listed `ImplicitlyCreated`, and a
 /// processor following the link on the tenant's behalf reads the body as the
@@ -79,7 +78,7 @@ async fn a_user_context_without_the_core_is_linked_through_one_hosted_wrapper() 
     tenant.finish().await;
 }
 
-/// Study B5: a POST query naming two contexts, or an inline definition, and
+/// A POST query naming two contexts, or an inline definition, and
 /// answered as `application/json`, links one wrapper holding exactly the value
 /// an `application/ld+json` body would carry.
 #[tokio::test]
@@ -108,7 +107,7 @@ async fn a_compound_or_inline_body_context_is_linked_through_a_wrapper_of_the_bo
     tenant.finish().await;
 }
 
-/// Study B6: the same compound request twice links the same wrapper, and the
+/// The same compound request twice links the same wrapper, and the
 /// tenant holds one entry for it.
 #[tokio::test]
 async fn the_same_compound_request_twice_links_one_wrapper() {
@@ -145,7 +144,7 @@ async fn the_same_compound_request_twice_links_one_wrapper() {
     tenant.finish().await;
 }
 
-/// Study B7: inline definitions differing only in member order and whitespace
+/// Inline definitions differing only in member order and whitespace
 /// link the same wrapper; the same URLs in another array order link another.
 #[tokio::test]
 async fn formatting_does_not_split_a_wrapper_and_array_order_does() {
@@ -184,7 +183,7 @@ async fn formatting_does_not_split_a_wrapper_and_array_order_does() {
     tenant.finish().await;
 }
 
-/// Study B11: `GeoJSON` with `Prefer: body=json` names its context in the one
+/// `GeoJSON` with `Prefer: body=json` names its context in the one
 /// link, a wrapper for a user context without the core, and none in the body
 /// (clause 6.3.6).
 #[tokio::test]
@@ -214,7 +213,7 @@ async fn geojson_with_prefer_body_json_links_the_wrapper_and_carries_no_body_con
     tenant.finish().await;
 }
 
-/// Study B17: `/info/sourceIdentity` is answered with the default tenant's
+/// `/info/sourceIdentity` is answered with the default tenant's
 /// loader and store: a json request naming a user context links one wrapper
 /// hosted in the default tenant, and an ld+json one names
 /// the context followed by the core.

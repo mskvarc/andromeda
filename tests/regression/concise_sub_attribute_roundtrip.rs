@@ -3,13 +3,11 @@
 //! ETSI GS CIM 009 v1.9.1 clause 4.5.2.3 lets a client write an attribute
 //! concisely: `{"value": 42, "accuracy": 0.5}` is a Property whose value is `42`
 //! and whose `accuracy` is a sub-attribute, and a reserved member such as
-//! `unitCode` stays in the envelope. The normalizer used to wrap the whole
-//! typeless object as one opaque Property value, burying the sub-attribute (and
-//! `unitCode`) inside `value`. This suite proves the concise shape survives a
-//! create-then-read round trip, in both the normalized and the concise
-//! representation.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! `unitCode` stays in the envelope. The normalizer must not wrap the whole
+//! typeless object as one opaque Property value, which would bury the
+//! sub-attribute (and `unitCode`) inside `value`. This suite checks that the
+//! concise shape survives a create-then-read round trip, in both the normalized
+//! and the concise representation.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

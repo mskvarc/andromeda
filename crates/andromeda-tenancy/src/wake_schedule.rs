@@ -34,7 +34,7 @@ pub enum WakeScheduleError {
 #[async_trait]
 pub trait TenantWakeSchedule: Send + Sync + 'static {
     /// Record that `tenant` was probed at `probed_at`, and that its next
-    /// obligation -- if any -- falls due at `wake_at`.
+    /// obligation, if any, falls due at `wake_at`.
     ///
     /// `wake_at` of `None` means the tenant had nothing due and should not be
     /// woken until a later probe finds work. Upserts the row so a re-probe

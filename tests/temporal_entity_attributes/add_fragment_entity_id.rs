@@ -7,12 +7,12 @@
 //! Clause 5.6.12.3 names the target by the request path, and clause 5.6.12.4
 //! runs the clause 5.5.4 validation, whose failures are `BadRequestData`.
 //!
-//! The broker let the Fragment's `id` win over the path. Once the Entity had
-//! been deleted through the Core API (clause 5.6.6 leaves its Temporal
-//! Evolution standing), the added instances brought current state back into
-//! being under the path's key but with the Fragment's `id`: retrieving
-//! `/entities/A` answered `"id": A`, while a query matching it answered the
-//! same Entity as `"id": B`.
+//! The Fragment's `id` must never win over the path. Once the Entity has been
+//! deleted through the Core API (clause 5.6.6 leaves its Temporal Evolution
+//! standing), added instances bring current state back into being under the
+//! path's key; were they to carry the Fragment's `id`, retrieving `/entities/A`
+//! would answer `"id": A` while a query matching it would answer the same
+//! Entity as `"id": B`.
 
 use crate::{
     COMPOUND_CONTEXT,
@@ -124,8 +124,7 @@ async fn temporal_attrs_add_naming_another_entity_returns_400() {
 
 /// Clause 5.4, after a Core delete (clause 5.6.6): the refusal keeps the
 /// Fragment's `id` from bringing current state back into being under the
-/// path. Before the fix this answered 204, and a query answered the restored
-/// Entity under the other `id`.
+/// path, so no query can answer the restored Entity under the other `id`.
 #[tokio::test]
 async fn temporal_attrs_add_naming_another_entity_after_core_delete_returns_400() {
     let scope = TestEnvironment::from_suite("temporal_entity_attributes")

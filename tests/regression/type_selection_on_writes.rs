@@ -6,10 +6,7 @@
 //! supported", and clauses 5.6.6.4, 5.6.18.4, 5.6.3.4, 5.6.2.4, 5.6.4.4,
 //! 5.6.5.4 and 5.6.19.4 know the target as the entity whose "id (URI), and where
 //! specified type, is equivalent": an entity outside the selector is a
-//! `ResourceNotFound`. The broker answered `InvalidRequest` for the parameter
-//! as an unknown one.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! `ResourceNotFound`, and the parameter is not an unknown one.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

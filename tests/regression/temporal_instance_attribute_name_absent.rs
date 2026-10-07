@@ -11,12 +11,6 @@
 //!   the problem.
 //! - A well-formed name that the entity does not carry is `ResourceNotFound`
 //!   (404): clause 5.6.14.4 raises it "if the Attribute ... does not exist".
-//!
-//! Corresponds to the official suite case `016_02_06`, which sends an empty
-//! attribute-name segment and whose 405 expectation clause 5.6.14.4 does not
-//! support.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

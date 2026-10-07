@@ -1,8 +1,8 @@
 //! Clause 5.6.3 retrieval and clause 5.7.2 query over a store holding one
 //! entity.
 //!
-//! The store answers the one read a retrieval or a query page makes -- the
-//! state together with its system times -- and refuses every other, so a read
+//! The store answers the one read a retrieval or a query page makes, the
+//! state together with its system times, and refuses every other, so a read
 //! path that reached for a second read fails here.
 
 use crate::{

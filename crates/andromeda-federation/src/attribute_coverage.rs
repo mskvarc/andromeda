@@ -1,17 +1,4 @@
-//! Which attributes of a forwarded write a registration covers, and the
-//! narrowing of the write to them (clauses 5.6.1.4 and following).
-//!
-//! A registration stores the attribute names it covers expanded, and the
-//! admitted content of a write names its attributes expanded too, so deciding
-//! whether a registration covers an attribute compares two IRIs: what the name
-//! means decides, even under a `@context` that aliases a term to an unrelated
-//! IRI. A write body may carry no `@context` at all (clause 6.3.5 makes
-//! `application/json` without a context `Link` legal, resolving against the
-//! core context) while the registration's declared names were expanded under a
-//! different one that the registration does not retain. The two then cannot
-//! meet on an IRI, and then the registration does not cover the attribute:
-//! clause 5.12 matches expanded names only, so two different IRIs never match,
-//! whatever they share at their tail.
+//! A registration stores the attribute names it covers expanded, and the admitted content of a write names its attributes expanded too, so deciding whether a registration covers an attribute compares two IRIs: what the name means decides, even under a `@context` that aliases a term to an unrelated IRI. A write body may carry no `@context` at all (clause 6.3.5 makes `application/json` without a context `Link` legal, resolving against the core context) while the registration's declared names were expanded under a different one that the registration does not retain. The two then cannot meet on an IRI and the registration does not cover the attribute: clause 5.12 matches expanded names only, so two different IRIs never match, whatever they share at their tail.
 
 use crate::registration_information::information_matches_entity;
 use andromeda_ngsi_ld_entity::document::EntityDocument;

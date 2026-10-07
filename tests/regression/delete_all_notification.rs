@@ -13,10 +13,7 @@
 //! default instance was deleted, and a Subscription `datasetId` would filter it
 //! away. The notification therefore carries each deleted instance, nullified,
 //! with its own `datasetId`, and a Subscription `datasetId` narrows those
-//! instances like any others. ETSI `046_22_08` asserted the collapsed object; the
-//! suite delta corrects it (`0070`).
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! instances like any others.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

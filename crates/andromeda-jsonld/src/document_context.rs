@@ -36,7 +36,7 @@ pub struct ResolvedContext {
     text: Arc<str>,
     /// The absolute references among its entries and the context each
     /// definition imports, in order: where the walk of its reference graph
-    /// starts (`context_graph`).
+    /// starts.
     references: Vec<IriBuf>,
 }
 
@@ -63,11 +63,7 @@ impl ResolvedContext {
     }
 }
 
-/// The `@context` a document is processed under for `spec`.
-///
-/// The one place the request named its context (clause 6.3.5: a `Link`
-/// header or the body, never both) comes first, its core references removed,
-/// and the core context last. Repeats are kept: JSON-LD processes an
+/// The context the request named (clause 6.3.5: a `Link` header or the body, never both) comes first, its core references removed, and the core context last. Repeats are kept: JSON-LD processes an
 /// `@context` array in order, so `[A, B, A]` leaves A's definitions in force
 /// where `[A, B]` leaves B's, and clause 5.5.7 processes the context the call
 /// provided.

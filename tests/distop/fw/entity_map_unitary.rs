@@ -1,7 +1,4 @@
-//! Linked `EntityMap` creation, reuse, pinning, and lifecycle for a single broker
-//! instance (ETSI GS CIM 009 v1.9.1, clauses 5.5.9.3, 5.7.2, 5.14). Multi-source
-//! fan-out on `T-MOCK-N`; map mechanics on `T-MOCK`; cross-instance reuse is a
-//! tracked gap.
+//! Linked `EntityMap` creation, reuse, pinning, and lifecycle for a single broker instance (ETSI GS CIM 009 v1.9.1, clauses 5.5.9.3, 5.7.2, 5.14).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -44,8 +41,7 @@ async fn register_inclusive_query(topology: &MultiBrokerTopology<BrokerRole>, en
     );
 }
 
-/// A request that asks for an entity map issues one broad query to each matching
-/// source (clause 5.7.2). Confirms REQ-FW-46.
+/// A request that asks for an entity map issues one broad query to each matching source (clause 5.7.2).
 #[tokio::test]
 async fn distop_entity_map_broad_request_to_each_matching_source() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -99,8 +95,7 @@ async fn distop_entity_map_broad_request_to_each_matching_source() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The response carries an `NGSILD-EntityMap` and, across paginated pages, only
-/// ids from the mapped set are returned (clause 5.5.9.3). Confirms REQ-FW-47.
+/// The response carries an `NGSILD-EntityMap` and, across paginated pages, only ids from the mapped set are returned (clause 5.5.9.3).
 #[tokio::test]
 async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -161,8 +156,7 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A candidate that does not match the map's filter is excluded from the mapped
-/// set (clause 5.5.9.3, 5.14). Confirms REQ-FW-48, REQ-FW-55, REQ-FW-78.
+/// A candidate that does not match the map's filter is excluded from the mapped set (clause 5.5.9.3, 5.14).
 #[tokio::test]
 async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -230,9 +224,7 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The `NGSILD-EntityMap` location is returned when a map is requested and the
-/// map resource is retrievable there (clause 5.14). Confirms REQ-FW-50,
-/// REQ-FW-72.
+/// The `NGSILD-EntityMap` location is returned when a map is requested and the map resource is retrievable there (clause 5.14).
 #[tokio::test]
 async fn distop_entity_map_location_returned_when_requested() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -273,8 +265,7 @@ async fn distop_entity_map_location_returned_when_requested() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A retrieval over a stored map contacts only the source recorded as holding
-/// the entity, not every source (clause 5.7.2). Confirms REQ-FW-49.
+/// A retrieval over a stored map contacts only the source recorded as holding the entity, not every source (clause 5.7.2).
 #[tokio::test]
 async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -328,11 +319,7 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A map minted on broker A is unknown to peer B, which therefore (re)creates
-/// one and answers `201` with a fresh map id (Table 6.4.3.2-3: "201 Created (in
-/// case an `EntityMap` has been (re)created)"; clause 5.7.2.4: "If the resource
-/// cannot be found, or the data has expired, a new `EntityMap` shall be created").
-/// Confirms REQ-FW-49, REQ-FW-51.
+/// A map minted on broker A is unknown to peer B, which therefore (re)creates one and answers `201` with a fresh map id (Table 6.4.3.2-3: "201 Created (in case an `EntityMap` has been (re)created)"; clause 5.7.2.4: "If the resource cannot be found, or the data has expired, a new `EntityMap` shall be created").
 #[tokio::test]
 async fn distop_entity_map_retrieve_cross_instance_reuse() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -374,14 +361,7 @@ async fn distop_entity_map_retrieve_cross_instance_reuse() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Passing the map field back reuses the existing map: no new map is minted
-/// (`200`, same id) and the mapped source is still consulted under the map, the
-/// forwarded request carrying the linked map id (clause 4.3.6.7: "Only the
-/// Entities whose identifiers are contained in the Entity map are considered
-/// when rendering the result pages"; clause 5.7.2.4: "If an `EntityMap` is in use
-/// for this operation, and an `EntityMap` entry linked to a Context Source
-/// Registration is found, the location of the linked `EntityMap` shall be passed
-/// as part of any forwarded request"). Confirms REQ-FW-51, REQ-FW-75.
+/// Passing the map field back reuses the existing map: no new map is minted (`200`, same id) and the mapped source is still consulted under the map, the forwarded request carrying the linked map id (clause 4.3.6.7: "Only the Entities whose identifiers are contained in the Entity map are considered when rendering the result pages"; clause 5.7.2.4: "If an `EntityMap` is in use for this operation, and an `EntityMap` entry linked to a Context Source Registration is found, the location of the linked `EntityMap` shall be passed as part of any forwarded request").
 #[tokio::test]
 async fn distop_entity_map_reused_when_field_passed_back() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -429,9 +409,7 @@ async fn distop_entity_map_reused_when_field_passed_back() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A subsequent request over a map returns only the listed entities: a source
-/// entity added after the map was pinned is excluded (clause 5.7.2). Confirms
-/// REQ-FW-75.
+/// A subsequent request over a map returns only the listed entities: a source entity added after the map was pinned is excluded (clause 5.7.2).
 #[tokio::test]
 async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -497,8 +475,7 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A subsequent request that changes a non-id, non-pagination filter parameter
-/// is rejected with 400 `InvalidRequest` (clause 5.5.9.3). Confirms REQ-FW-76.
+/// A subsequent request that changes a non-id, non-pagination filter parameter is rejected with 400 `InvalidRequest` (clause 5.5.9.3).
 #[tokio::test]
 async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -543,8 +520,7 @@ async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A reuse against an expired or unknown map creates a fresh map and re-issues
-/// the broad request (clause 5.7.2). Confirms REQ-FW-77.
+/// A reuse against an expired or unknown map creates a fresh map and re-issues the broad request (clause 5.7.2).
 #[tokio::test]
 async fn distop_entity_map_expired_or_inaccessible_creates_new() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -579,9 +555,7 @@ async fn distop_entity_map_expired_or_inaccessible_creates_new() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Only the expiry of a map may be updated by other components; the update is
-/// accepted while the entity list stays intact (clause 5.14). Confirms
-/// REQ-FW-79.
+/// Only the expiry of a map may be updated by other components; the update is accepted while the entity list stays intact (clause 5.14).
 #[tokio::test]
 async fn distop_entity_map_only_expiry_updatable_by_other_components() {
     let topology = topology::single().await.expect("single-broker topology");

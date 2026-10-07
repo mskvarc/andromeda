@@ -10,24 +10,11 @@ use std::{fmt, str::FromStr};
 use strum::{Display, EnumString};
 use thiserror::Error;
 
-/// A single parsed ordering term from the `orderBy` parameter.
-///
-/// `attr` is the raw request text, before it is classified and expanded into a
-/// [`CompiledOrderTerm`]: at this point its names are whatever the client
-/// wrote.
+/// A parsed `orderBy` term. `attr` is the raw request text, before it is classified and expanded into a [`CompiledOrderTerm`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct OrderTerm {
-    /// The attribute path or clause 4.23 keyword to sort by, as written.
-    ///
-    /// Clause 4.23.3 gives `OrderingTerm = AttrName *1(DirectionTerm)
-    /// *(thenOp OrderingTerm)` and says "See clause 4.9 for the definition of
-    /// `AttrName`". Its own examples settle what that reaches: EXAMPLE 4
-    /// `?orderBy=address[city]` navigates "a sub-item within a Property Value
-    /// defined as a complex JSON object", and EXAMPLE 5 `?orderBy=name.observedAt`
-    /// is "an attribute path that is defined by the production rule Attribute,
-    /// as a dot-separated list of names". Both are the clause 4.9 `ValuePath`
-    /// production, which is why this is a whole path rather than one name.
+    /// The attribute path or clause 4.23 keyword to sort by, as written. Clause 4.23.3 delegates `AttrName` to clause 4.9, and its examples (`address[city]`, `name.observedAt`) are both the clause 4.9 `ValuePath` production, which is why this is a whole path rather than one name.
     pub attr: AttrPath,
     /// The sort direction.
     pub direction: OrderDirection,
@@ -51,16 +38,11 @@ pub enum OrderTarget {
     /// The instant the entity's payload was last modified (clause 4.8
     /// `modifiedAt`).
     ModifiedAt,
-    /// One attribute's value, addressed by a path whose every name is an
-    /// expanded IRI (clause 5.2.4).
+    /// One attribute's value, addressed by a path whose every name is an expanded IRI (clause 5.2.4).
     Attribute(AttrPath),
 }
 
-/// A raw `orderBy` path, classified but not yet expanded.
-///
-/// Classification is separated from expansion so the clause 4.23 keyword set is
-/// stated once, while the caller — which needs a JSON-LD lookup, and therefore
-/// an `await`, only for the attribute arm — decides how the expansion happens.
+/// A raw `orderBy` path, classified but not yet expanded. Classification is separate from expansion so the clause 4.23 keyword set is stated once, while the caller decides how the expansion (a JSON-LD lookup, needed only for the attribute arm) happens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawOrderTarget<'a> {
     /// The `id` keyword.
@@ -89,14 +71,7 @@ impl<'a> RawOrderTarget<'a> {
     /// The `modifiedAt` system timestamp keyword (clause 4.8).
     pub const MODIFIED_AT_KEYWORD: &'static str = "modifiedAt";
 
-    /// Classify a raw `orderBy` path.
-    ///
-    /// A keyword is only a keyword when the path names it and nothing else.
-    /// Clause 4.23.3 spells each as a bare `AttrName`, so `id.foo` descends
-    /// into an attribute that happens to be spelled `id` rather than naming the
-    /// entity identifier — which carries no sub-attribute to descend into. The
-    /// same reading keeps `name.createdAt` an attribute path into a temporal
-    /// sub-member rather than the entity's own `createdAt` column.
+    /// Classifies a raw `orderBy` path. A keyword is only a keyword when the path names it and nothing else: clause 4.23.3 spells each as a bare `AttrName`, so `id.foo` descends into an attribute spelled `id`, and `name.createdAt` is an attribute path into a temporal sub-member rather than the entity's own `createdAt` column.
     #[must_use]
     pub fn classify(raw: &'a AttrPath) -> RawOrderTarget<'a> {
         if !raw.is_simple() {
@@ -108,9 +83,7 @@ impl<'a> RawOrderTarget<'a> {
             RawOrderTarget::SCOPE_KEYWORD => RawOrderTarget::Scope,
             RawOrderTarget::CREATED_AT_KEYWORD => RawOrderTarget::CreatedAt,
             RawOrderTarget::MODIFIED_AT_KEYWORD => RawOrderTarget::ModifiedAt,
-            // `&str` is unbounded, so a catch-all is the only way to close this
-            // match; anything that is not one of the keywords is an attribute
-            // name.
+            // `&str` is unbounded; any name that is not a keyword is an attribute name.
             _other => RawOrderTarget::Attribute(raw),
         }
     }
@@ -151,14 +124,7 @@ pub enum OrderTermError {
     /// The term used an unsupported direction.
     #[error("invalid orderBy direction: {0}")]
     Direction(#[source] strum::ParseError),
-    /// The term carried the `[*]` language-suppression marker.
-    ///
-    /// Clause 4.9 gives `[*]` to a `q` predicate, where it matches a
-    /// `LanguageProperty` against every language rather than the one `lang`
-    /// selects. Clause 4.23.3 has no such marker: its grammar is `AttrName`
-    /// based and its prose names only the dotted and bracketed paths, so an
-    /// ordering that suppressed language selection would be ordering by a value
-    /// the clause never says how to choose.
+    /// The term carried the `[*]` language-suppression marker. Clause 4.9 gives `[*]` to a `q` predicate; clause 4.23.3 has no such marker, so an ordering that suppressed language selection would order by a value the clause never says how to choose.
     #[error("invalid orderBy member: the [*] language marker belongs to the q filter grammar, not to orderBy")]
     LanguageSuppression,
 }
@@ -243,10 +209,7 @@ mod tests {
         }
     }
 
-    /// Clause 4.8: `createdAt` and `modifiedAt` are sortable system timestamps
-    /// of the entity, read from their own columns like `id`, `type` and
-    /// `scope`, so a bare keyword classifies as the member rather than as an
-    /// attribute path.
+    /// Clause 4.8: `createdAt` and `modifiedAt` are sortable system timestamps read from their own columns, like `id`, `type` and `scope`.
     #[test]
     fn the_system_timestamp_keywords_classify_as_their_members() {
         for (text, expected) in [("createdAt", RawOrderTarget::CreatedAt), ("modifiedAt", RawOrderTarget::ModifiedAt)] {
@@ -255,9 +218,7 @@ mod tests {
         }
     }
 
-    /// A dotted path whose head is `createdAt`/`modifiedAt` descends into an
-    /// attribute spelled that way, not the entity's own timestamp column, so it
-    /// stays an attribute path exactly as `id.foo` does.
+    /// A path headed by `createdAt`/`modifiedAt` descends into an attribute spelled that way, exactly as `id.foo` does.
     #[test]
     fn a_system_timestamp_keyword_carrying_a_path_is_an_attribute() {
         for text in ["createdAt.foo", "modifiedAt[a]", "name.createdAt", "name.modifiedAt"] {
@@ -275,9 +236,7 @@ mod tests {
         assert_eq!(RawOrderTarget::classify(&speed.attr), RawOrderTarget::Attribute(&speed.attr));
     }
 
-    /// A keyword only names a structural member when the path stops there. The
-    /// entity identifier has no sub-attribute, so `id.foo` is an attribute
-    /// path.
+    /// A keyword only names a structural member when the path stops there; the entity identifier has no sub-attribute.
     #[test]
     fn a_keyword_carrying_a_path_is_an_attribute_rather_than_the_member() {
         for text in ["id.foo", "type[a]", "scope.a"] {
@@ -318,9 +277,7 @@ mod tests {
         assert_eq!(parsed.attr.value_path.len(), 2);
     }
 
-    /// Clause 4.23.3's grammar is `AttrName`-based and its prose names only the
-    /// dotted and bracketed paths, so the clause 4.9 linked-entity axis is not
-    /// an ordering member.
+    /// Clause 4.23.3's grammar is `AttrName`-based, so the clause 4.9 linked-entity axis is not an ordering member.
     #[test]
     fn a_linked_entity_traversal_is_not_an_ordering_member() {
         for rejected in ["rel{attr}", "rel{Building,Store:attr}"] {

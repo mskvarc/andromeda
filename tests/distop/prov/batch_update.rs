@@ -1,4 +1,4 @@
-//! Batch Update forwarding — REQ-PROV-67..72 (clause 5.6.9.4).
+//! Batch Update forwarding (clause 5.6.9.4).
 //!
 //! Update forwards each registration only the entities that actually carry an
 //! attribute it owns (attribute-less entities are dropped); a source advertising
@@ -41,7 +41,7 @@ fn error_keyed(body: &Value, registration: &str, status: u64) -> bool {
 }
 
 /// A registration owning `speed` receives only the entities that carry `speed`;
-/// an attribute-less entity is dropped from its copy. Confirms REQ-PROV-67.
+/// an attribute-less entity is dropped from its copy.
 #[tokio::test]
 async fn batch_update_per_csr_filtering_drops_attrless_entities() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -97,7 +97,7 @@ async fn batch_update_per_csr_filtering_drops_attrless_entities() {
 }
 
 /// A source advertising the batch operation is handed the whole batch and its
-/// result merged keyed by `registrationId`. Confirms REQ-PROV-68.
+/// result merged keyed by `registrationId`.
 #[tokio::test]
 async fn batch_update_supported_forwards_and_merges() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -138,7 +138,7 @@ async fn batch_update_supported_forwards_and_merges() {
 }
 
 /// Without the batch operation, an update-capable source is driven per entity via
-/// Update Attributes. Confirms REQ-PROV-69.
+/// Update Attributes.
 #[tokio::test]
 async fn batch_update_fallback_per_entity_update_overwrite() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -181,7 +181,7 @@ async fn batch_update_fallback_per_entity_update_overwrite() {
 /// With `options=noOverwrite`, an append-capable source is driven per entity via
 /// Append Attributes with overwrite disabled rather than Update (clause 5.6.9.4:
 /// "if the Append Attributes operation (clause 5.6.3) is supported by CSR and
-/// Attribute overwrite is not permitted"). Confirms REQ-PROV-70.
+/// Attribute overwrite is not permitted").
 #[tokio::test]
 async fn batch_update_fallback_per_entity_append_no_overwrite() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -225,7 +225,7 @@ async fn batch_update_fallback_per_entity_append_no_overwrite() {
 }
 
 /// A redirect registration advertising no viable operation fails every owned
-/// entity with a `409 Conflict` keyed by `registrationId`. Confirms REQ-PROV-71.
+/// entity with a `409 Conflict` keyed by `registrationId`.
 #[tokio::test]
 async fn batch_update_redirect_no_viable_op_conflict_per_entity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -266,7 +266,6 @@ async fn batch_update_redirect_no_viable_op_conflict_per_entity() {
 
 /// The local phase applies to a locally held entity and reports the absent one
 /// as `404`, while an auxiliary registration suppresses forwarding.
-/// Confirms REQ-PROV-72.
 #[tokio::test]
 async fn batch_update_local_phase_populates_results() {
     let topology = topology::single().await.expect("single-broker topology");

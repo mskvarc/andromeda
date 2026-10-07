@@ -1,7 +1,4 @@
-//! `contextSourceInfo` JSON-LD context handling and NGSI-LD conformance version
-//! negotiation on forwarded requests (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.6,
-//! 4.3.6.8). All `T-MOCK` for byte-level oracles, except registration-validation
-//! rows (`T-LOCAL`).
+//! `contextSourceInfo` JSON-LD context handling and NGSI-LD conformance version negotiation on forwarded requests (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.6, 4.3.6.8).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -24,13 +21,10 @@ const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
 /// or create.
 const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 
-/// A distinctive fragment of the compound test-suite context URL, used to prove
-/// that context governs a forwarded request's `Link`.
+/// A distinctive fragment of the compound test-suite context URL, used to prove that context governs a forwarded request's `Link`.
 const COMPOUND_CONTEXT_MARKER: &str = "ngsi-ld-test-suite-compound";
 
-/// With a JSON `contentType`, the `@context` is provided as a `Link` header
-/// rather than inline, matching the forwarded MIME type (clause 4.3.6.6).
-/// Confirms REQ-FW-40.
+/// With a JSON `contentType`, the `@context` is provided as a `Link` header rather than inline, matching the forwarded MIME type (clause 4.3.6.6).
 #[tokio::test]
 async fn distop_entity_csi_context_provided_per_mime_requirement() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -82,9 +76,7 @@ async fn distop_entity_csi_context_provided_per_mime_requirement() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `jsonldContext` value must be a valid URL: a malformed value is rejected at
-/// registration with 400, a valid one is accepted (clause 4.3.6.6, 5.2.9).
-/// Confirms REQ-FW-41.
+/// A `jsonldContext` value must be a valid URL: a malformed value is rejected at registration with 400, a valid one is accepted (clause 4.3.6.6, 5.2.9).
 #[tokio::test]
 async fn distop_entity_csi_jsonld_context_must_be_url_validated() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -124,9 +116,7 @@ async fn distop_entity_csi_jsonld_context_must_be_url_validated() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A custom `jsonldContext` governs the forwarded request: it is carried as the
-/// context that compacts the forwarded payload and parameters (clause 4.3.6.6).
-/// Confirms REQ-FW-42.
+/// A custom `jsonldContext` governs the forwarded request: it is carried as the context that compacts the forwarded payload and parameters (clause 4.3.6.6).
 #[tokio::test]
 async fn distop_entity_csi_jsonld_context_compacts_payload_and_params() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -172,9 +162,7 @@ async fn distop_entity_csi_jsonld_context_compacts_payload_and_params() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `jsonldContext` with a payload forwards `application/json`, strips the
-/// inline `@context`, and conveys the context via a `Link` header (clause
-/// 4.3.6.6). Confirms REQ-FW-43.
+/// A `jsonldContext` with a payload forwards `application/json`, strips the inline `@context`, and conveys the context via a `Link` header (clause 4.3.6.6).
 #[tokio::test]
 async fn distop_entity_csi_jsonld_context_with_payload_sets_json_and_strips_context() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -227,9 +215,7 @@ async fn distop_entity_csi_jsonld_context_with_payload_sets_json_and_strips_cont
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The NGSI-LD conformance value form is major.minor: `1.5` is accepted while
-/// `1` and `1.5.0` are rejected at registration (clause 4.3.6.8). Confirms
-/// REQ-FW-44.
+/// The NGSI-LD conformance value form is major.minor: `1.5` is accepted while `1` and `1.5.0` are rejected at registration (clause 4.3.6.8).
 #[tokio::test]
 async fn distop_entity_csi_ngsild_conformance_value_form_major_minor() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -269,9 +255,7 @@ async fn distop_entity_csi_ngsild_conformance_value_form_major_minor() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration declaring a `1.3` source conformance triggers the clause
-/// 4.3.6.8 backwards-compatible transform on the forwarded payload, so a `scope`
-/// is removed (clause 4.3.6.8). Confirms REQ-FW-45.
+/// A registration declaring a `1.3` source conformance triggers the clause 4.3.6.8 backwards-compatible transform on the forwarded payload, so a `scope` is removed (clause 4.3.6.8).
 #[tokio::test]
 async fn distop_entity_csi_ngsild_conformance_triggers_backwards_compat_transform() {
     let topology = topology::single().await.expect("single-broker topology");

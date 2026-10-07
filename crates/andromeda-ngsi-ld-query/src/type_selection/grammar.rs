@@ -38,9 +38,8 @@ pub enum TypeExprRaw {
 impl TypeExprRaw {
     /// Whether a set of entity type names satisfies this expression.
     ///
-    /// Names are compared whole. Subscription matching used to turn an
-    /// alternation into an unanchored regex, under which the selector `Building`
-    /// also matched an entity typed `MyBuilding`.
+    /// Names are compared whole, so the selector `Building` does not match an
+    /// entity typed `MyBuilding`.
     pub fn matches<S: AsRef<str>>(&self, types: &[S]) -> bool {
         match self {
             TypeExprRaw::Wildcard => true,
@@ -105,7 +104,7 @@ enum Nesting {
 // / EntityType`: a conjunction is legal *only* parenthesised, with no
 // unparenthesised form and no precedence that would let one be inferred. So an
 // `And` group is always wrapped — a bare `Home;Vehicle` is text outside the
-// grammar that a conforming peer broker rejects, where `(Home;Vehicle)` is not.
+// grammar that a conforming parser rejects, where `(Home;Vehicle)` is not.
 impl fmt::Display for TypeExprRaw {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         render(self, formatter, Nesting::Top)
@@ -249,8 +248,7 @@ mod tests {
 
     #[test]
     fn an_alternation_matches_whole_names_only() {
-        // The regex reading this replaces was unanchored, so `Building` also
-        // matched an entity typed `MyBuilding`.
+        // Names are compared whole: `Building` does not match `MyBuilding`.
         let expr: TypeExprRaw = "(Building|Tower)".parse().expect("valid type expression");
         assert!(expr.matches(&["Building"]));
         assert!(expr.matches(&["Tower"]));
@@ -262,7 +260,7 @@ mod tests {
     /// read back, and clause 4.17 admits a conjunction only in parentheses:
     /// `OrEntityType = "(" EntityType *(";" EntityType) ")" / EntityType`. So a
     /// conjunction always renders parenthesised — a bare `Home;Vehicle` is
-    /// outside the grammar a conforming peer broker accepts — while a top-level
+    /// outside the grammar a conforming parser accepts — while a top-level
     /// disjunction, which the grammar admits unparenthesised, stays bare.
     #[test]
     fn a_conjunction_always_renders_parenthesised_per_clause_4_17() {

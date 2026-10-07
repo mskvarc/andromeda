@@ -15,8 +15,8 @@ use std::{collections::HashMap, sync::Arc};
 /// due.
 ///
 /// A commit names each entity once, so an owed match joins its entity's
-/// observation write, and an entity with no observation to record -- a deleted
-/// one -- gets a write of its own. Neither changes the entity row. Observation
+/// observation write, and an entity with no observation to record, a deleted
+/// one, gets a write of its own. Neither changes the entity row. Observation
 /// writes keep their stored order and the matches keep theirs, which is what
 /// numbers the replay's rows the same way on every attempt.
 pub(crate) fn replay_writes(temporal_entities: Vec<(Arc<Identifier>, Arc<EntityState>)>, owed: Vec<SubscriptionMatch>) -> Vec<AtomicWrite> {

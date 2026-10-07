@@ -1,11 +1,4 @@
-//! The body a context source answered a forwarded write with (clauses 5.2.16,
-//! 5.2.18, 6.3.17).
-//!
-//! The body is kept as the text the source wrote, and each reader decodes the
-//! typed resource it expects from it: a batch result, a problem detail, the
-//! identifier a created resource answers with. A 207 `UpdateResult` of a
-//! single-entity write is read once, its names expanded into the Fully
-//! Qualified Names clause 6.3.6 asks for, and held typed.
+//! The body is kept as the text the source wrote, and each reader decodes the typed resource it expects from it. A 207 `UpdateResult` of a single-entity write is read once, its names expanded into the Fully Qualified Names clause 6.3.6 asks for.
 
 use andromeda_ngsi_ld_model::update_result::UpdateResult;
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchProblemDetail;

@@ -8,12 +8,9 @@
 //!
 //! This pins the broker's `Link` output by its RFC 8288 semantics -- the `rel`
 //! of each link, the page it points at, and the query parameters it preserves --
-//! rather than by an exact byte string. The official suite case `031_02_02`
-//! compares the single-link case as an exact string and so is sensitive to
+//! rather than by an exact byte string, which would be sensitive to
 //! insignificant whitespace the broker is free to emit; the meaning asserted
-//! here is what clause 5.5.9 actually mandates.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! here is what clause 5.5.9 mandates.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

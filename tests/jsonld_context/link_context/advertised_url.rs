@@ -1,4 +1,4 @@
-//! Where minted URLs point (study B13).
+//! Where minted URLs point.
 //!
 //! Every URL the broker mints for a stored `@context` is absolute and built on
 //! one apiRoot: the configured `[identity] advertised_url`, path prefix

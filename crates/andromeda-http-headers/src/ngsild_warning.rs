@@ -53,7 +53,6 @@ fn parse_warning(s: &str) -> Option<NgsiLdWarning> {
     let (code_str, rest) = trimmed.split_once(char::is_whitespace)?;
     let code: u16 = code_str.parse().ok()?;
 
-    // Extract quoted text: find first `"` and last `"`
     let start = rest.find('"')? + 1;
     let end = rest.rfind('"')?;
     if start >= end {
@@ -246,9 +245,8 @@ mod tests {
     fn decode_warning_with_an_escaped_quote_before_a_comma_is_not_split() {
         // RFC 9110 warn-text is a quoted-string admitting quoted-pairs, so an
         // escaped quote (`\"`) must not end the quoted run and let the following
-        // comma split the value into two malformed warnings. The old comma
-        // splitter had no escape handling and split this in two; routing through
-        // `SplitAsciiUnquoted` fixes it.
+        // comma split the value into two malformed warnings; splitting goes
+        // through `SplitAsciiUnquoted`, which honours the escape.
         let raw = r#"110 - "a\", b""#;
         let val = HeaderValue::from_str(raw).expect("valid header value");
         let mut iter = iter::once(&val);

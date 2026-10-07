@@ -1,5 +1,5 @@
 //! PROV area — provision forwarding across Context Source Registrations
-//! (ETSI GS CIM 009 v1.9.1, clauses 5.6.1–5.6.21, REQ-PROV-1..133).
+//! (ETSI GS CIM 009 v1.9.1, clauses 5.6.1–5.6.21).
 //!
 //! Every provision operation issued to broker A that matches a registration is
 //! split into a locally handled remainder and one forwarded copy per matching

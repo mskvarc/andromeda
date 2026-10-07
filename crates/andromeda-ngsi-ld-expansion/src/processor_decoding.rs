@@ -1,13 +1,13 @@
 //! Reading the JSON-LD processor's expanded document as the written document.
 //!
 //! When the typed walk declines a request, the processor expands it, and its
-//! typed output -- objects, nodes, value objects with each number's exact
-//! text, list objects and JSON literals -- is read straight into the expanded
+//! typed output (objects, nodes, value objects with each number's exact
+//! text, list objects and JSON literals) is read straight into the expanded
 //! tree the walk would have produced, then through the same assembly. Nothing
 //! passes through a JSON tree on the way; a JSON literal is printed from the
-//! processor's own JSON and admitted as the model carries it. The reading recurses once
-//! per level of the document, which a nested value or sub-attribute deepens,
-//! so every level runs on sufficient stack.
+//! processor's own JSON and admitted as the model carries it. The reading
+//! recurses once per level of the document, which a nested value or
+//! sub-attribute deepens, so every level runs on sufficient stack.
 
 use crate::{
     assembly::{attribute_fragment, entity_document, member_value::malformed, temporal_document::temporal_document},

@@ -13,7 +13,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         // InvalidRequest, beside the clause 6.3.20 parameter incompatibilities,
         // of which `type=*` contradicted by `local=false` is one.
         // The grouping-extension parameter incompatibilities are clause 6.3.20
-        // InvalidRequest failures, beside the standard ones (study §4.9).
+        // InvalidRequest failures, beside the standard ones.
         ParameterError::OptionsInvalid(_)
         | ParameterError::FormatInvalid(_)
         | ParameterError::MergeFormatInvalid(_)

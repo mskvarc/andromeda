@@ -1,17 +1,6 @@
 //! `join=inline` over a Relationship whose `object` names several targets.
 //!
-//! Clause 4.5.3.2 defines `object` as "the Relationship's object represented by
-//! a URI or array of URIs", and clause 4.5.23.2 nests what each URI names under
-//! the Relationship's `entity` member. Clause 4.5.23.3 renders the same
-//! traversal as a flat collection, so the two modes retrieve the same Linked
-//! Entities and only present them differently.
-//!
-//! Found while replaying annex C clause C.2.2, whose Vehicle carries a
-//! `passengers` Relationship with two targets: `join=flat` returned both
-//! Entities while `join=inline` added no `entity` member at all, because the
-//! inline rendering read `object` only as a bare string.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Clause 4.5.3.2 defines `object` as "the Relationship's object represented by a URI or array of URIs", and clause 4.5.23.2 nests what each URI names under the Relationship's `entity` member. Clause 4.5.23.3 renders the same traversal as a flat collection, so the two modes retrieve the same Linked Entities and only present them differently (see annex C clause C.2.2, whose Vehicle carries a `passengers` Relationship with two targets).
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -58,8 +47,7 @@ async fn retrieve(client: &TestClient, identifier: &str, query: &str) -> Value {
     retrieved.json_value().expect("an Entity body")
 }
 
-/// The identifiers a `join=flat` answer holds, sorted so the comparison does not
-/// depend on an order clause 5.7.2 leaves unspecified.
+/// Sorted so the comparison does not depend on an order clause 5.7.2 leaves unspecified.
 async fn flat_identifiers(client: &TestClient, identifier: &str, query: &str) -> Vec<String> {
     let answer = retrieve(client, identifier, query).await;
     let mut identifiers: Vec<String> = answer
@@ -72,8 +60,7 @@ async fn flat_identifiers(client: &TestClient, identifier: &str, query: &str) ->
     identifiers
 }
 
-/// The identifiers nested under one Relationship of a `join=inline` answer,
-/// sorted for the same reason.
+/// Sorted for the same reason.
 fn inline_identifiers(entity: &Value, relationship: &str) -> Vec<String> {
     let nested = &entity[relationship]["entity"];
     let mut identifiers: Vec<String> = match nested {
@@ -85,8 +72,7 @@ fn inline_identifiers(entity: &Value, relationship: &str) -> Vec<String> {
     identifiers
 }
 
-/// One target, written as the bare URI of clause 4.5.3.2: `inline` nests one
-/// Entity object and `flat` returns the linking Entity beside it.
+/// One target, written as the bare URI of clause 4.5.3.2: `inline` nests one Entity object and `flat` returns the linking Entity beside it.
 #[tokio::test]
 async fn regression_inline_join_multi_target_relationship_agrees_with_flat_for_one_target() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -108,8 +94,7 @@ async fn regression_inline_join_multi_target_relationship_agrees_with_flat_for_o
     scope.finish().await.expect("environment cleanup");
 }
 
-/// Two targets, written as the array of URIs of clause 4.5.3.2: `inline` nests
-/// both in the order `object` named them, and `flat` finds the same two.
+/// Two targets, written as the array of URIs of clause 4.5.3.2: `inline` nests both in the order `object` named them, and `flat` finds the same two.
 #[tokio::test]
 async fn regression_inline_join_multi_target_relationship_agrees_with_flat_for_two_targets() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -136,8 +121,7 @@ async fn regression_inline_join_multi_target_relationship_agrees_with_flat_for_t
     scope.finish().await.expect("environment cleanup");
 }
 
-/// One Entity carrying both spellings at once: each Relationship nests the shape
-/// its own `object` was written in, and `flat` returns the union of the two.
+/// One Entity carrying both spellings at once: each Relationship nests the shape its own `object` was written in, and `flat` returns the union.
 #[tokio::test]
 async fn regression_inline_join_multi_target_relationship_agrees_with_flat_for_a_mixture() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -170,9 +154,7 @@ async fn regression_inline_join_multi_target_relationship_agrees_with_flat_for_a
     scope.finish().await.expect("environment cleanup");
 }
 
-/// Clause 4.5.23 bounds a traversal by `joinLevel`, and a multi-target
-/// Relationship is descended through exactly as a single-target one is: a second
-/// hop nests under every target of the first.
+/// Clause 4.5.23 bounds a traversal by `joinLevel`, and a multi-target Relationship is descended through exactly as a single-target one: a second hop nests under every target of the first.
 #[tokio::test]
 async fn regression_inline_join_multi_target_relationship_descends_a_second_join_level() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -215,9 +197,7 @@ async fn regression_inline_join_multi_target_relationship_descends_a_second_join
     scope.finish().await.expect("environment cleanup");
 }
 
-/// Clause 4.5.4, inline Linked Entity retrieval, EXAMPLE 10: a multi-target
-/// Relationship answers with the ordered array of Linked Entities in key-value
-/// form, each simplified in its own right.
+/// Clause 4.5.4, inline Linked Entity retrieval, EXAMPLE 10: a multi-target Relationship answers with the ordered array of Linked Entities in key-value form, each simplified in its own right.
 #[tokio::test]
 async fn regression_inline_join_multi_target_relationship_simplifies_to_an_array_of_key_value_entities() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -243,10 +223,7 @@ async fn regression_inline_join_multi_target_relationship_simplifies_to_an_array
     scope.finish().await.expect("environment cleanup");
 }
 
-/// Clause 4.5.23.1 retrieves only Relationships targeting a locally stored
-/// Entity, so a target that resolves to nothing drops out of the nesting while
-/// its siblings still appear, and a Relationship none of whose targets resolve
-/// gains no `entity` member at all.
+/// Clause 4.5.23.1 retrieves only Relationships targeting a locally stored Entity, so a target that resolves to nothing drops out of the nesting while its siblings still appear, and a Relationship none of whose targets resolve gains no `entity` member.
 #[tokio::test]
 async fn regression_inline_join_multi_target_relationship_nests_only_the_targets_that_resolve() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -271,10 +248,7 @@ async fn regression_inline_join_multi_target_relationship_nests_only_the_targets
         inline["hasNeighbours"].get("entity").is_none(),
         "a Relationship whose targets all resolve to nothing gains no member: {inline}"
     );
-    // The stored Relationship keeps naming its target. Clause 4.5.3.2 admits
-    // both spellings for one target and the write path collapses a one-element
-    // array to the bare URI, so the assertion is on the target rather than on
-    // which of the two spellings came back.
+    // The stored Relationship keeps naming its target. Clause 4.5.3.2 admits both spellings for one target and the write path collapses a one-element array to the bare URI, so the assertion is on the target, not on which spelling came back.
     let unresolved = &inline["hasNeighbours"]["object"];
     let named: Vec<&str> = match unresolved {
         Value::Array(uris) => uris.iter().filter_map(Value::as_str).collect(),

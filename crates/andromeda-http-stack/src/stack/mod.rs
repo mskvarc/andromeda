@@ -174,7 +174,7 @@ impl HttpStack {
     /// the bare management stack build on this one core rather than duplicating
     /// it. The request-metric layer is intentionally excluded: only the process
     /// stack instruments requests, and it adds the metric layer outside this
-    /// core so the metric spans the same requests it did before the split.
+    /// core so the metric spans every request.
     fn apply_diagnostic_layers(&self, router: Router) -> Router {
         let sensitive_request_headers = Arc::<[_]>::from([header::AUTHORIZATION, header::COOKIE, header::PROXY_AUTHORIZATION]);
         let sensitive_response_headers = Arc::<[_]>::from([header::SET_COOKIE]);

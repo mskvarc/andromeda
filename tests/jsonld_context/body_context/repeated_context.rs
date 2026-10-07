@@ -1,4 +1,4 @@
-//! A context the request names twice (study A17).
+//! A context the request names twice.
 //!
 //! JSON-LD processes an `@context` array in order, and a top-level context
 //! named again is processed again (JSON-LD 1.1 API section 4.1.2 step 5.2.2

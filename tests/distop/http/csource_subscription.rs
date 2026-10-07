@@ -1,8 +1,4 @@
-//! Registry API response codes for `csourceSubscriptions` and the source-identity
-//! resource (clause 6.11, 6.33): the `201`/`Location` create, the `400`/`409`
-//! create rejections, the array query, the retrieve/update/delete
-//! `200`/`204`/`400`/`404` outcomes, and the `200`/`501` source identity. All
-//! `T-LOCAL`.
+//! Registry API response codes for `csourceSubscriptions` and the source-identity resource (clause 6.11, 6.33): the `201`/`Location` create, the `400`/`409` create rejections, the array query, the retrieve/update/delete `200`/`204`/`400`/`404` outcomes, and the `200`/`501` source identity.
 
 use crate::{
     http::forwarding::{PLACEHOLDER_ENDPOINT, context_link, context_link_header},
@@ -14,10 +10,7 @@ use andromeda_test_harness::multi_broker::MultiBrokerTopology;
 use reqwest::Method;
 use serde_json::{Value, json};
 
-/// A csource subscription over the given entity type's registrations delivering
-/// to a placeholder endpoint (never contacted by these lifecycle assertions).
-/// The type is derived per test so this subscription cannot match a concurrent
-/// test's registration.
+/// A csource subscription over the given entity type's registrations delivering to a placeholder endpoint (never contacted by these lifecycle assertions). The type is derived per test so this subscription cannot match a concurrent test's registration.
 fn subscription_body(id: &str, entity_type: &str) -> Value {
     json!({
         "id": id,
@@ -83,8 +76,7 @@ async fn delete_sub(topology: &MultiBrokerTopology<BrokerRole>, id: &str) -> Tes
         .expect("delete csource subscription")
 }
 
-/// A valid csource subscription create returns `201` with a `Location`
-/// (clause 6.11.3.1). Confirms REQ-HTTP-86.
+/// A valid csource subscription create returns `201` with a `Location` (clause 6.11.3.1).
 #[tokio::test]
 async fn dist_http_create_csource_subscription_returns_201_location() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -98,7 +90,6 @@ async fn dist_http_create_csource_subscription_returns_201_location() {
 }
 
 /// An invalid csource subscription body is rejected with `400` (clause 6.11.3.1).
-/// Confirms REQ-HTTP-87.
 #[tokio::test]
 async fn dist_http_create_csource_subscription_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -107,8 +98,7 @@ async fn dist_http_create_csource_subscription_invalid_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Re-creating an existing csource subscription is rejected with `409`
-/// (clause 6.11.3.1). Confirms REQ-HTTP-87.
+/// Re-creating an existing csource subscription is rejected with `409` (clause 6.11.3.1).
 #[tokio::test]
 async fn dist_http_create_csource_subscription_duplicate_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -120,8 +110,7 @@ async fn dist_http_create_csource_subscription_duplicate_returns_409() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A csource subscription query returns `200` with an array body (clause
-/// 6.11.3.2). Confirms REQ-HTTP-88.
+/// A csource subscription query returns `200` with an array body (clause 6.11.3.2).
 #[tokio::test]
 async fn dist_http_query_csource_subscriptions_returns_200_array() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -146,7 +135,6 @@ async fn dist_http_query_csource_subscriptions_returns_200_array() {
 }
 
 /// Csource subscription retrieve returns `200`/`400`/`404` (clause 6.11.3.1).
-/// Confirms REQ-HTTP-89.
 #[tokio::test]
 async fn dist_http_retrieve_csource_subscription_returns_200_400_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -162,7 +150,6 @@ async fn dist_http_retrieve_csource_subscription_returns_200_400_404() {
 }
 
 /// Csource subscription update returns `204`/`400`/`404` (clause 6.11.3.3).
-/// Confirms REQ-HTTP-90.
 #[tokio::test]
 async fn dist_http_update_csource_subscription_returns_204_400_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -181,7 +168,6 @@ async fn dist_http_update_csource_subscription_returns_204_400_404() {
 }
 
 /// Csource subscription delete returns `204`/`400`/`404` (clause 6.11.3.4).
-/// Confirms REQ-HTTP-91.
 #[tokio::test]
 async fn dist_http_delete_csource_subscription_returns_204_400_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -195,9 +181,7 @@ async fn dist_http_delete_csource_subscription_returns_204_400_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The source-identity resource returns `200` with a `ContextSourceIdentity`
-/// (Andromeda's genuine branch) or `501` where unsupported (clause 6.33.3.1).
-/// Confirms REQ-HTTP-96.
+/// The source-identity resource returns `200` with a `ContextSourceIdentity` (Andromeda's genuine branch) or `501` where unsupported (clause 6.33.3.1).
 #[tokio::test]
 async fn dist_http_source_identity_returns_200_or_501() {
     let topology = topology::single().await.expect("single-broker topology");

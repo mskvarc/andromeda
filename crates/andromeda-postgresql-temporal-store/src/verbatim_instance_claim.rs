@@ -106,21 +106,12 @@ pub(crate) fn verbatim_instance_targets(rows: &[AttributeHistoryRow]) -> Verbati
 /// claim it is about to re-stake, or [`claim_verbatim_instances`] would refuse
 /// its own replacement as a conflict with itself.
 ///
-/// There used to be a second pass here deleting every row on the stream that
-/// shared an incoming row's `observedAt`, on the theory that a re-sent
-/// observation at the same instant is an update rather than a duplicate. That
-/// reasoning depended on the append being reached only once per write, which a
-/// claim gate on the write record used to guarantee. Now that idempotency is
-/// row-level (`uq_attribute_history_write_identity` plus the verbatim-instance pass
-/// above), the append is reached again on every replay of a durable intent,
-/// and an `observedAt`-keyed delete cannot distinguish "this is my own row
-/// from a previous attempt" from "this is a different write's row that
-/// happens to share an instant" -- a retried intent append or a crash-retried
-/// side-effect replay would delete a later, unrelated write's history row.
-/// The pass is removed rather than scoped, because scoping it to the current
-/// write would silently drop the replace-on-resend behaviour it existed for
-/// while keeping the same footgun for any two writes that legitimately share
-/// an `observedAt` on one stream.
+/// No pass deletes rows that share an incoming row's `observedAt`. Idempotency
+/// is row-level (`uq_attribute_history_write_identity` plus the verbatim pass
+/// above), so the append is reached again on every replay of a durable intent,
+/// and an `observedAt`-keyed delete cannot tell a replayed row of the same write
+/// from another write's row that happens to share an instant: a retried append
+/// would delete a later, unrelated write's history row.
 pub(crate) async fn run_history_dedup_deletes(
     tx: &mut Transaction<'_, Postgres>,
     target: &ContextTarget,
@@ -147,7 +138,7 @@ pub(crate) async fn run_history_dedup_deletes(
 /// Stake this batch's claim on every `(entity, attribute, verbatim
 /// instanceId)` triple it carries.
 ///
-/// This is what turns the race the review found into a refusal. Two rows in
+/// The primary key turns a race into a refusal. Two rows in
 /// one batch that resolve to the same triple -- whether they name the same
 /// stream or sibling `datasetId` streams of the same attribute -- both appear
 /// in this statement's `SELECT`, and `attribute_history_instance_claims`'s

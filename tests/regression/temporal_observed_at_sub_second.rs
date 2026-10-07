@@ -10,11 +10,6 @@
 //! write of `...:00.123Z` reads back `...:00.123Z`, so a returned `observedAt`
 //! can be reused as an exact bound in a later temporal query and two instances
 //! less than a second apart stay distinct.
-//!
-//! The defect truncated every temporal `observedAt` to whole seconds, dropping
-//! the sub-second precision entirely.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

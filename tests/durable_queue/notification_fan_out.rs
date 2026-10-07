@@ -247,8 +247,8 @@ async fn durable_queue_a_batch_write_numbers_its_events_uniquely_and_absorbs_a_r
     assert_eq!(ordinals, vec![0, 1, 2], "the ordinals are unique and deterministic across the batch");
 
     // A commit replayed after a crash re-runs the same statement under the
-    // write identity it was durably enqueued with. The replay has to succeed —
-    // a refusal would strand the crashed write's queue entry forever — and it
+    // write identity it was durably enqueued with. The replay has to succeed,
+    // since a refusal would strand the crashed write's queue entry forever, and it
     // has to announce nothing a second time, which the write identity's own
     // uniqueness constraint is what settles.
     record_events(&pool, &record, &events).await.expect("a replayed write is accepted");

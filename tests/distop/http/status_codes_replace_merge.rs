@@ -1,6 +1,4 @@
-//! Response-code matrix for entity replace and merge (clause 6.3.16, 6.5.3.3,
-//! 6.5.3.4): local `204`, forwarded partial-failure `207`, invalid `400`,
-//! unknown `404`, and the merge that adds a new Entity Type name (`204`).
+//! Response-code matrix for entity replace and merge (clause 6.3.16, 6.5.3.3, 6.5.3.4): local `204`, forwarded partial-failure `207`, invalid `400`, unknown `404`, and the merge that adds a new Entity Type name (`204`).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -12,7 +10,7 @@ use crate::{
 use reqwest::Method;
 use serde_json::{Value, json};
 
-/// A local replace returns `204` (clause 6.4.3.3). Confirms REQ-HTTP-70.
+/// A local replace returns `204` (clause 6.4.3.3).
 #[tokio::test]
 async fn dist_http_replace_entity_local_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -41,8 +39,7 @@ async fn dist_http_replace_entity_local_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A replace where a forwarded endpoint fails is a partial failure, mapped to
-/// `207` (clause 6.3.16). Confirms REQ-HTTP-70.
+/// A replace where a forwarded endpoint fails is a partial failure, mapped to `207` (clause 6.3.16).
 #[tokio::test]
 async fn dist_http_replace_entity_partial_failure_returns_207_batch_result() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -95,7 +92,6 @@ async fn dist_http_replace_entity_partial_failure_returns_207_batch_result() {
 }
 
 /// A replace with an invalid body is rejected with `400` (clause 6.4.3.3).
-/// Confirms REQ-HTTP-70.
 #[tokio::test]
 async fn dist_http_replace_entity_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -124,7 +120,7 @@ async fn dist_http_replace_entity_invalid_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Replacing an unknown entity returns `404` (clause 6.4.3.3). Confirms REQ-HTTP-70.
+/// Replacing an unknown entity returns `404` (clause 6.4.3.3).
 #[tokio::test]
 async fn dist_http_replace_entity_unknown_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -140,11 +136,7 @@ async fn dist_http_replace_entity_unknown_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A merge whose fragment names an Entity Type not yet held by the target adds
-/// it to the target's type list and succeeds with `204` (clause 5.6.17.4: "If
-/// type is included in the Fragment and it includes Entity Type names that are
-/// not yet in the target Entity, add them to the list of Entity Type names of
-/// the target Entity"). Confirms REQ-HTTP-72.
+/// A merge whose fragment names an Entity Type not yet held by the target adds it to the target's type list and succeeds with `204` (clause 5.6.17.4: "If type is included in the Fragment and it includes Entity Type names that are not yet in the target Entity, add them to the list of Entity Type names of the target Entity").
 #[tokio::test]
 async fn dist_http_merge_entity_new_type_name_added_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -193,7 +185,7 @@ async fn dist_http_merge_entity_new_type_name_added_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A local merge returns `204` (clause 6.4.3.3). Confirms REQ-HTTP-73.
+/// A local merge returns `204` (clause 6.4.3.3).
 #[tokio::test]
 async fn dist_http_merge_entity_local_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -223,8 +215,7 @@ async fn dist_http_merge_entity_local_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A merge where a forwarded endpoint fails is a partial failure, mapped to `207`
-/// (clause 6.3.16). Confirms REQ-HTTP-73.
+/// A merge where a forwarded endpoint fails is a partial failure, mapped to `207` (clause 6.3.16).
 #[tokio::test]
 async fn dist_http_merge_entity_partial_failure_returns_207_batch_result() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -271,7 +262,6 @@ async fn dist_http_merge_entity_partial_failure_returns_207_batch_result() {
 }
 
 /// A merge with an invalid fragment is rejected with `400` (clause 6.4.3.3).
-/// Confirms REQ-HTTP-73.
 #[tokio::test]
 async fn dist_http_merge_entity_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -304,7 +294,7 @@ async fn dist_http_merge_entity_invalid_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Merging an unknown entity returns `404` (clause 6.4.3.3). Confirms REQ-HTTP-73.
+/// Merging an unknown entity returns `404` (clause 6.4.3.3).
 #[tokio::test]
 async fn dist_http_merge_entity_unknown_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");

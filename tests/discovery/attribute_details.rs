@@ -24,10 +24,6 @@ fn sort_attributes(val: &Value) -> Vec<Value> {
     arr
 }
 
-// ---------------------------------------------------------------------------
-// 5.5.11 -- Without Link header context
-// ---------------------------------------------------------------------------
-
 /// List attribute details without Link header -- attribute names returned as expanded IRIs (5.5.11).
 #[tokio::test]
 async fn list_attribute_details_without_context_returns_expanded_uris() {
@@ -48,10 +44,6 @@ async fn list_attribute_details_without_context_returns_expanded_uris() {
     delete_entity(&c, env.tenant(), &id).await;
     env.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.5.11 -- With Link header context
-// ---------------------------------------------------------------------------
 
 /// List attribute details with compound context Link header -- attribute names compacted (5.5.11).
 #[tokio::test]

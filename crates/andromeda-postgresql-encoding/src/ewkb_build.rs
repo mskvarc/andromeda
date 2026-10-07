@@ -38,13 +38,13 @@ use thiserror::Error;
 pub enum GeometryBuildError {
     /// A coordinate that is no RFC 7946 position: off the CRS84 axes of
     /// section 4, or with a non-finite altitude. Every geometry the broker
-    /// writes was built from checked positions, so such a row predates that
-    /// check or was not written by the broker.
+    /// writes was built from checked positions, so such a row was not written
+    /// by the broker.
     #[error("the buffer holds a coordinate that is no GeoJSON position: {0}")]
     Position(#[from] PositionError),
     /// A line string of fewer than the two positions RFC 7946 section 3.1.4
     /// requires. Every line the broker writes was built checked, so such a row
-    /// predates that check or was not written by the broker.
+    /// was not written by the broker.
     #[error("the buffer holds a line that is no GeoJSON LineString: {0}")]
     LineString(#[from] LineStringError),
     /// A polygon ring that is open or holds fewer than the four positions RFC
@@ -182,7 +182,7 @@ impl GeometryBuilder {
     /// Keep a finished geometry as the top-level result, which is the only place
     /// one can stand.
     ///
-    /// Nothing may enclose a finished geometry now that clause 4.7.1 rules out
+    /// Nothing may enclose a finished geometry because clause 4.7.1 rules out
     /// the `GeometryCollection`: a ring inside a Polygon, a line inside a
     /// `MultiLineString` and a polygon inside a `MultiPolygon` are all folded by
     /// their own end callbacks, before they ever become a [`GeometryForm`].
@@ -495,7 +495,7 @@ mod tests {
 
     #[test]
     fn a_stored_coordinate_past_a_pole_is_refused_rather_than_decoded() {
-        // No write builds such a position any more, so a row holding one is
+        // No write builds such a position, so a row holding one is
         // reported, never turned into a geometry the broker then matches on.
         let mut builder = GeometryBuilder::new();
         builder.point_begin(0).expect("a Point may begin");
@@ -555,7 +555,7 @@ mod tests {
 
     #[test]
     fn a_stored_open_ring_is_refused_rather_than_decoded() {
-        // No write builds an open ring any more, so a row holding one is
+        // No write builds an open ring, so a row holding one is
         // reported rather than turned into a polygon the broker matches on.
         let mut builder = GeometryBuilder::new();
         let error = feed_polygon(&mut builder, &[(1.0, 2.0), (5.0, 2.0), (5.0, 8.0), (1.0, 8.0)]).expect_err("the ring is open");

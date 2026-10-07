@@ -34,7 +34,7 @@ const DATA_INTEGRITY_STUB: &str = r#"{"@context":{}}"#;
 /// Configuration for one [`JsonLdEngine`].
 ///
 /// Values arrive one method at a time rather than as a struct so the crate's
-/// construction path does not depend on a configuration framework — the
+/// construction path does not depend on a configuration framework. The
 /// [`crate::config::JsonLdConfig`] that reads them from the environment is a
 /// separate concern.
 #[derive(Debug)]
@@ -418,8 +418,8 @@ mod tests {
         // Clause 5.5.7: the Core @context "shall always [have] absolute
         // precedence, regardless of the position of the Core @context in the
         // @context array". A user context that redefines the core term
-        // `location` therefore expands to the Core's IRI, not the user's — the
-        // Core wins — and the request is not rejected.
+        // `location` therefore expands to the Core's IRI, not the user's:
+        // the Core wins, and the request is not rejected.
         let path = preloaded_file(
             "location-redefining",
             r#"{"@context":["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld",

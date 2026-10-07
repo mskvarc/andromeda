@@ -8,10 +8,7 @@ use std::{fmt, str::FromStr};
 
 /// One `datasetId`, naming either a specific dataset or the default instance.
 ///
-/// Used both as a filter entry on a temporal query and as a member of an
-/// `EntityMap` (clause 5.2.39), which records which instances of an entity a
-/// distributed query resolved. Both are the same clause 4.5.5 value, and the
-/// `EntityMap` resource used to carry a second type spelling it differently.
+/// Used both as a filter entry on a temporal query and as a member of an `EntityMap` (clause 5.2.39); both are the same clause 4.5.5 value.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum DatasetSelector {
@@ -96,11 +93,7 @@ impl From<DatasetSelector> for String {
 
 /// A `datasetId` filter reduced to the three cases a store has to tell apart.
 ///
-/// The default instance has no `datasetId`, so it cannot be selected the same
-/// way a named one is (clause 4.5.5). Splitting the selector list into the three
-/// cases that follow from that — unfiltered, the default only, or a set of named
-/// ids — is done here, once, rather than in each store backend where it used to
-/// live twice.
+/// The default instance has no `datasetId`, so it cannot be selected the same way a named one is (clause 4.5.5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DatasetFilter {
     /// No filter: every instance qualifies.

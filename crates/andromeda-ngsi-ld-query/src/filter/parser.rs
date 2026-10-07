@@ -1,10 +1,6 @@
 //! Recursive-descent parser for the NGSI-LD Query Language (clause 4.9).
 //!
-//! The grammar this parser implements is reproduced verbatim in
-//! `grammar/query.abnf` at the root of this crate. Nothing derives from that
-//! file — the language needs operator precedence and value typing that a pure
-//! ABNF recogniser does not express — so it is the reference this parser is
-//! checked against, and the two are kept in step by hand.
+//! The grammar this parser implements is reproduced verbatim as ABNF at the root of this crate. Nothing derives from it -- the language needs operator precedence and value typing that a pure ABNF recogniser does not express -- so it is the reference this parser is checked against, and the two are kept in step by hand.
 //!
 //! This module owns the expression grammar: the boolean structure of a `Query`,
 //! and the `QueryTerm` that combines an attribute axis with an operator and an
@@ -28,11 +24,7 @@ use crate::{
     },
 };
 
-/// Parses an NGSI-LD `q` filter expression string into an AST.
-///
-/// The grammar follows NGSI-LD 4.9, supporting boolean combinators (`;` for AND,
-/// `|` for OR), comparison operators, range/list values, regex patterns, and
-/// nested attribute paths.
+/// Parses an NGSI-LD `q` filter expression string into an AST (clause 4.9).
 ///
 /// # Errors
 ///
@@ -412,8 +404,7 @@ mod tests {
     /// Clause 4.9's `quotedStr` is the IETF RFC 8259 `String` production
     /// *including its quotes*, so the quoted spelling of the same literal is a
     /// well-formed Query Term whatever it contains, and the value compares as
-    /// the text the write path stored for it. Refusing it made a stored value
-    /// impossible to find in either spelling.
+    /// the text the write path stored for it.
     #[test]
     fn a_quoted_operand_that_satisfies_no_temporal_form_compares_as_text() {
         match parse("observed>=\"2017-12-24T99:00:00Z\"").expect("a quotedStr is always derivable") {
@@ -606,8 +597,6 @@ mod tests {
         let result = parse("==");
         assert!(result.is_err());
     }
-
-    // -- linked-entity traversal (clause 4.9 `LinkedEntityRelation`) ---------
 
     /// The hop this axis descends: its Relationship, its type guard, and the
     /// inner axis, so a test states the shape it expects without matching a

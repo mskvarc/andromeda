@@ -2,9 +2,9 @@
 //!
 //! A remote fetch that resolves but whose durable write fails must not cost the
 //! request its `@context`: the document is served from the in-process cache and
-//! the write is retried on the next access. Everything that retry needs — the
+//! the write is retried on the next access. Everything that retry needs (the
 //! payload, where it was read from, the lifetime clause 6.3.16 derived for it,
-//! and the hits that accrued meanwhile — is held here until it lands.
+//! and the hits that accrued meanwhile) is held here until it lands.
 
 use crate::loader::cache_lifetime::CacheLifetime;
 use andromeda_json_literal::JsonLiteral;

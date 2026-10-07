@@ -7,8 +7,8 @@
 //! `ListRelationship`'s `objectList` targets under its `entityList` member, each
 //! written in the representation of the entity that carries it (clauses
 //! 4.5.3.3, 4.5.22.3 and 4.5.4). Which copy is nested under which Relationship
-//! instance, under which rule, and where nesting stops is the Linked Entity
-//! plan's decision; this walk spells what the plan's cursor answers.
+//! instance, under which rule, and where nesting stops is decided by the join
+//! plan; this walk only spells what the plan's cursor answers.
 //!
 //! An entity that already carries nested entities -- a Context Source answered
 //! with them -- has them written in the same representation, as they were

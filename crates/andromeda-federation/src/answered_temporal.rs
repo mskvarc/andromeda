@@ -1,18 +1,6 @@
-//! Reading every source's answer of Temporal Evolutions into the model
-//! (clauses 5.7.3.4, 5.7.4.4 and 6.3.17).
+//! Each entity is expanded under the context it was written in (its own `@context` when it names one, else the forwarding context the answer is spelled in), so the histories of every holder merge by expanded name and are compacted once, under the client's context. The pages a source answered an entity in are put together here: a resumed walk answers the same entity again for the instants it did not reach, and an instance answered twice is the same instance, which the merge recognises by its `instanceId`.
 //!
-//! Each entity is expanded under the context it was written in -- its own
-//! `@context` when it names one, else the forwarding context the answer is
-//! spelled in -- so the histories of every holder merge by expanded name and
-//! are compacted once, under the client's context, for the response. The pages
-//! a source answered an entity in are put together here: a resumed walk
-//! answers the same entity again for the instants it did not reach, and an
-//! instance answered twice is the same instance, which the merge recognises by
-//! its `instanceId`.
-//!
-//! An aggregate carries no IRI to expand, so it is respelled instead: each
-//! name is expanded under the context the source spelled it in and compacted
-//! under the client's.
+//! An aggregate carries no IRI to expand, so it is respelled instead: each name is expanded under the context the source spelled it in and compacted under the client's.
 
 use crate::{
     FederationService,
@@ -50,12 +38,7 @@ enum EntityReading {
 }
 
 impl FederationService {
-    /// Read every answer of a forwarded temporal read into the model, the
-    /// entities of each gathered by identifier.
-    ///
-    /// `context` is the client's, which an aggregate is respelled in, and
-    /// `timeproperty` the Temporal Property the instances of one entity are
-    /// ordered by when the pages of its history are put together.
+    /// `context` is the client's, which an aggregate is respelled in, and `timeproperty` the Temporal Property the instances of one entity are ordered by when the pages of its history are put together.
     pub(crate) async fn answered_temporal(
         &self,
         outcome: ForwardReadOutcome<ReceivedTemporalAnswer>,
@@ -154,9 +137,7 @@ impl FederationService {
         }
     }
 
-    /// The aggregates `entity` a source spelled under `naming`, spelled in the
-    /// client's terms. A name that does not expand stays as the source spelled
-    /// it.
+    /// A name that does not expand stays as the source spelled it.
     async fn respelled_aggregates(&self, entity: AggregatedTemporalEntity, naming: &ContextSpec, names: &NameCompaction) -> AggregatedTemporalEntity {
         let AggregatedTemporalEntity { id, type_, attrs } = entity;
         let type_ = match type_ {

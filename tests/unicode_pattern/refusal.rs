@@ -36,15 +36,15 @@ async fn unicode_pattern_refusal_scoping_or_clearing_another_option_is_a_bad_req
 }
 
 /// IEEE 1003.2 guarantees repetition counts up to 255, and PostgreSQL refuses
-/// larger ones with "invalid repetition count(s)", which reached the client as
-/// `500 InternalError`. The restatement carries the count unchanged, so the
-/// broker refuses it as client input.
+/// larger ones with "invalid repetition count(s)". The restatement carries the
+/// count unchanged, so the broker refuses it as client input instead of
+/// answering `500 InternalError`.
 #[tokio::test]
 async fn unicode_pattern_refusal_a_repetition_count_past_the_posix_bound_is_a_bad_request_not_an_internal_error() {
     let scope = TestEnvironment::from_suite("unicode_pattern").await.expect("isolated test environment");
     let entity_type = scope.entity_type("CountedBee");
     // A query over a type with no Entity never reaches the pattern, so one
-    // Entity has to exist for the pre-fix broker to fail inside SQL.
+    // Entity has to exist for the pattern to be evaluated in SQL at all.
     let entity = json!({"id": scope.id("Counted:1"), "type": entity_type, "name": {"type": "Property", "value": "a"}, "@context": [TEST_SUITE_CONTEXT]});
     let created = scope.client().post_entity(&entity).send().await.expect("create entity request");
     assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);

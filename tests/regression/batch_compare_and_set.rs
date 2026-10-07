@@ -1,31 +1,6 @@
-//! Batch writes never erase a concurrent write, nor answer success for a write
-//! that did not happen.
+//! ETSI GS CIM 009 v1.9.1 clause 5.5.11.0: "Implementations shall treat the entity instances as if they had all arrived in separate requests", and clauses 5.6.8.4, 5.6.9.4 and 5.6.20.4 run the single-entity behaviour of Upsert, Update and Merge for each entity of a batch. A batch entry is therefore exactly as safe beside a concurrent request as the single-entity operation it runs, and several broker replicas sharing one database are a supported deployment.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.5.11.0: "Implementations shall treat the
-//! entity instances as if they had all arrived in separate requests", and
-//! clauses 5.6.8.4, 5.6.9.4 and 5.6.20.4 run the single-entity behaviour of
-//! Upsert, Update and Merge for each entity of a batch. S lists "one for each
-//! NGSI-LD Entity which was successfully processed". A batch entry is
-//! therefore exactly as safe beside a concurrent request as the single-entity
-//! operation it runs, and several broker replicas sharing one database are a
-//! supported deployment.
-//!
-//! The batch paths read the entities, computed each write in memory and
-//! committed it on the sole condition that the entity existed. A write another
-//! replica committed in between was overwritten while both requests answered
-//! 204. An update-mode upsert that found its entity absent inserted it
-//! unconditionally, and when a Create Entity landed first, the insert was
-//! skipped and the upsert still answered success with its content dropped --
-//! even on one broker, since Create Entity takes no per-identifier guard.
-//!
-//! The races are probabilistic before the fix and deterministic after it:
-//! nothing acknowledged may be missing. A write that loses its compare-and-set
-//! on every attempt the broker makes is answered as a conflict and leaves
-//! nothing behind, which a sustained race on one entity across two replicas
-//! occasionally produces, on the single-entity paths as much as on the batch
-//! ones.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Nothing acknowledged may be missing: a write that loses its compare-and-set on every attempt the broker makes is answered as a conflict and leaves nothing behind, which a sustained race on one entity across two replicas occasionally produces, on the single-entity paths as much as on the batch ones.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -45,8 +20,7 @@ const WRITES_PER_SIDE: usize = 150;
 const CREATE_RACES: usize = 60;
 /// How many requests are in flight at once.
 const IN_FLIGHT: usize = 64;
-/// The share of a race's writes, one in this many, that may at most be
-/// answered as a conflict.
+/// The share of a race's writes, one in this many, that may at most be answered as a conflict.
 const MAX_CONFLICT_SHARE: usize = 10;
 /// The problem type of a write that conflicts with the current state.
 const CONFLICT: &str = "https://uri.etsi.org/ngsi-ld/errors/Conflict";
@@ -113,10 +87,7 @@ async fn stored_members(client: &TestClient, id: &str) -> Map<String, Value> {
     serde_json::from_value(read.json_value().expect("the entity is JSON")).expect("an entity is an object")
 }
 
-/// Whether `response` answers a write that lost to concurrent writers on every
-/// attempt the broker made: `409 Conflict` for a single-entity write, and a
-/// `207` whose one error is that Conflict for a single-entry batch (Table
-/// 6.3.2-1, "The operation conflicts with the current state of the system").
+/// Whether `response` answers a write that lost to concurrent writers on every attempt the broker made: `409 Conflict` for a single-entity write, and a `207` whose one error is that Conflict for a single-entry batch (Table 6.3.2-1, "The operation conflicts with the current state of the system").
 fn is_conflict(response: &TestResponse) -> bool {
     let Ok(body) = response.json_value() else {
         return false;
@@ -133,13 +104,9 @@ fn is_conflict(response: &TestResponse) -> bool {
     }
 }
 
-/// Assert no write was lost: every request was either acknowledged with 204,
-/// and then the attribute it wrote is held by the entity `id`, or answered as
-/// a conflict, and then nothing of it landed.
+/// Assert no write was lost: every request was either acknowledged with 204, and then the attribute it wrote is held by the entity `id`, or answered as a conflict, and then nothing of it landed.
 ///
-/// A conflict is the broker's designed answer once a write lost its
-/// compare-and-set on every attempt; it is only allowed to stay rare, which
-/// is what keeps this test from passing on a broker that refuses everything.
+/// A conflict is the broker's designed answer once a write lost its compare-and-set on every attempt; it is only allowed to stay rare, which is what keeps this test from passing on a broker that refuses everything.
 async fn assert_no_write_is_lost(client: &TestClient, id: &str, answered: &[(String, TestResponse)]) {
     let unexpected: Vec<String> = answered
         .iter()
@@ -200,9 +167,7 @@ fn batches_through<'a>(client: &'a TestClient, id: &'a str, path: &'static str) 
         .collect()
 }
 
-/// Clause 5.6.20.4: each Batch Entity Merge entry runs Merge Entity, so a
-/// Merge Entity another replica commits meanwhile is kept, and so is the
-/// batch's.
+/// Clause 5.6.20.4: each Batch Entity Merge entry runs Merge Entity, so a Merge Entity another replica commits meanwhile is kept, and so is the batch's.
 #[tokio::test]
 async fn regression_batch_cas_batch_merge_keeps_a_concurrent_merge_from_the_other_replica() {
     let scope = TenantScopedEnvironment::from_suite("regression").await.expect("private tenant environment");
@@ -217,9 +182,7 @@ async fn regression_batch_cas_batch_merge_keeps_a_concurrent_merge_from_the_othe
     scope.finish().await.expect("cleanup");
 }
 
-/// Clause 5.6.9.4: each Batch Entity Update entry runs the attribute update
-/// of its entity, so an Append Attributes another replica commits meanwhile is
-/// kept.
+/// Clause 5.6.9.4: each Batch Entity Update entry runs the attribute update of its entity, so an Append Attributes another replica commits meanwhile is kept.
 #[tokio::test]
 async fn regression_batch_cas_batch_update_keeps_a_concurrent_append_from_the_other_replica() {
     let scope = TenantScopedEnvironment::from_suite("regression").await.expect("private tenant environment");
@@ -251,9 +214,7 @@ async fn regression_batch_cas_batch_update_keeps_a_concurrent_append_from_the_ot
     scope.finish().await.expect("cleanup");
 }
 
-/// Clause 5.6.8.4: an update-mode Batch Entity Upsert entry runs clause 5.6.2
-/// on an entity that exists, so a Merge Entity another replica commits
-/// meanwhile is kept.
+/// Clause 5.6.8.4: an update-mode Batch Entity Upsert entry runs clause 5.6.2 on an entity that exists, so a Merge Entity another replica commits meanwhile is kept.
 #[tokio::test]
 async fn regression_batch_cas_upsert_update_keeps_a_concurrent_merge_from_the_other_replica() {
     let scope = TenantScopedEnvironment::from_suite("regression").await.expect("private tenant environment");
@@ -272,10 +233,7 @@ async fn regression_batch_cas_upsert_update_keeps_a_concurrent_merge_from_the_ot
     scope.finish().await.expect("cleanup");
 }
 
-/// Race, per identifier, an update-mode upsert of `u` through `upserting`
-/// against a Create Entity of `c` through `creating`, and assert each pair
-/// ends as one of the two serial orders would: the create first leaves `c`
-/// and `u`, the upsert first leaves `u` and answers the create 409.
+/// Race, per identifier, an update-mode upsert of `u` through `upserting` against a Create Entity of `c` through `creating`, and assert each pair ends as one of the two serial orders would: the create first leaves `c` and `u`, the upsert first leaves `u` and answers the create 409.
 async fn assert_upsert_and_create_both_take_effect(scope: &TenantScopedEnvironment, upserting: &TestClient, creating: &TestClient, label: &str) {
     create_probe(upserting, &scope.id(&format!("Probe:{label}-tenant"))).await;
     let ids: Vec<String> = (0..CREATE_RACES).map(|index| scope.id(&format!("Probe:{label}-{index}"))).collect();
@@ -337,9 +295,7 @@ async fn assert_upsert_and_create_both_take_effect(scope: &TenantScopedEnvironme
     assert_eq!(wrong, Vec::<String>::new(), "no serial order of the two requests leaves these");
 }
 
-/// Clause 5.6.8.4: an update-mode upsert creates an Entity that does not exist
-/// and updates one that does. Losing the race to a create on the other
-/// replica makes it the second case, not a success that stored nothing.
+/// Clause 5.6.8.4: an update-mode upsert creates an Entity that does not exist and updates one that does. Losing the race to a create on the other replica makes it the second case, not a success that stored nothing.
 #[tokio::test]
 async fn regression_batch_cas_upsert_update_racing_a_create_keeps_both() {
     let scope = TenantScopedEnvironment::from_suite("regression").await.expect("private tenant environment");
@@ -349,8 +305,7 @@ async fn regression_batch_cas_upsert_update_racing_a_create_keeps_both() {
     scope.finish().await.expect("cleanup");
 }
 
-/// The same race on one broker: Create Entity takes no per-identifier guard,
-/// so the store's own condition is all that orders the two.
+/// The same race on one broker: Create Entity takes no per-identifier guard, so the store's own condition is all that orders the two.
 #[tokio::test]
 async fn regression_batch_cas_upsert_update_racing_a_create_on_one_broker_keeps_both() {
     let scope = TenantScopedEnvironment::from_suite("regression").await.expect("private tenant environment");

@@ -1,16 +1,4 @@
-//! Batch Entity Merge reading the NGSI-LD Null as Merge Entity does (R06).
-//!
-//! ETSI GS CIM 009 v1.9.1 clause 5.6.20.4: "For each of the NGSI-LD Entities
-//! included in the input Array execute the behaviour defined by clause 5.6.17,
-//! but limited to a local operation". Clause 5.5.12: "For each member of the
-//! Fragment, whose value is an NGSI-LD Null, contained by the target, the
-//! target member is removed." A first-level `"speed": "urn:ngsi-ld:null"`
-//! removes the whole attribute, every instance and every `datasetId` with it,
-//! through `PATCH /entities/{id}`. Batch Entity Merge read the same member as
-//! a concise Property whose value is the Null, which deletes the default
-//! instance only (clause 5.6.17.4), and left the named instances behind.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 clause 5.6.20.4: "For each of the NGSI-LD Entities included in the input Array execute the behaviour defined by clause 5.6.17, but limited to a local operation". Clause 5.5.12: "For each member of the Fragment, whose value is an NGSI-LD Null, contained by the target, the target member is removed." A first-level `"speed": "urn:ngsi-ld:null"` therefore removes the whole attribute, every instance and every `datasetId` with it, through `PATCH /entities/{id}` and Batch Entity Merge alike. A concise Property whose value is the Null, by contrast, deletes the default instance only (clause 5.6.17.4).
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -32,8 +20,7 @@ const DATASET_A: &str = "urn:ngsi-ld:Dataset:A";
 /// The second named dataset `speed` is held in.
 const DATASET_B: &str = "urn:ngsi-ld:Dataset:B";
 
-/// The expanded name of the `settings` term the request context coerces to
-/// `@json`.
+/// The expanded name of the `settings` term the request context coerces to `@json`.
 const SETTINGS: &str = "https://example.org/settings";
 
 /// How long the owed notification is waited for.
@@ -106,8 +93,7 @@ async fn served(client: &TestClient, id: &str) -> Value {
     entity
 }
 
-/// Clause 5.5.12: the bare Null removes the target member, so both merges
-/// leave the entity without any instance of `speed` and with `brand`.
+/// Clause 5.5.12: the bare Null removes the target member, so both merges leave the entity without any instance of `speed` and with `brand`.
 #[tokio::test]
 async fn regression_r06_a_batch_merge_removes_every_instance_of_a_member_set_to_the_null() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -128,8 +114,7 @@ async fn regression_r06_a_batch_merge_removes_every_instance_of_a_member_set_to_
     scope.finish().await.expect("environment cleanup");
 }
 
-/// Clause 5.6.17.4: a reified instance without a `datasetId` targets the
-/// default instance, so its Null deletes that one alone, through either merge.
+/// Clause 5.6.17.4: a reified instance without a `datasetId` targets the default instance, so its Null deletes that one alone, through either merge.
 #[tokio::test]
 async fn regression_r06_a_batch_merge_of_a_reified_null_deletes_only_the_default_instance() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -156,8 +141,7 @@ async fn regression_r06_a_batch_merge_of_a_reified_null_deletes_only_the_default
     scope.finish().await.expect("environment cleanup");
 }
 
-/// Clause 5.5.12 merges to arbitrary depth: a key of a structured value, a key
-/// of a JSON literal and one language are deleted by both merges alike.
+/// Clause 5.5.12 merges to arbitrary depth: a key of a structured value, a key of a JSON literal and one language are deleted by both merges alike.
 #[tokio::test]
 async fn regression_r06_a_batch_merge_deletes_a_value_key_a_literal_key_and_a_language_as_merge_entity_does() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -189,9 +173,7 @@ async fn regression_r06_a_batch_merge_deletes_a_value_key_a_literal_key_and_a_la
     scope.finish().await.expect("environment cleanup");
 }
 
-/// Clause 5.8.6 notifies a deleted Attribute as NGSI-LD Null, each deleted
-/// instance with its own `datasetId`: the batch merge removing `speed` owes
-/// one notification carrying all three.
+/// Clause 5.8.6 notifies a deleted Attribute as NGSI-LD Null, each deleted instance with its own `datasetId`: the batch merge removing `speed` owes one notification carrying all three.
 #[tokio::test]
 async fn regression_r06_a_batch_merge_notifies_every_removed_instance() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

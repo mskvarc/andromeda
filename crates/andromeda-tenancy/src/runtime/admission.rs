@@ -38,7 +38,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// addressed on a deployment that serves only the unnamed default, and
     /// [`TenancyError::UnknownTenant`] when the tenant is not registered and
     /// `policy` is [`TenantCreationPolicy::MustExist`], or when it is suspended
-    /// -- including a cached runtime a suspend retired while a request held it.
+    /// (including a cached runtime a suspend retired while a request held it).
     /// Returns [`TenancyError::Saturated`] when the request cannot be admitted
     /// to a cold build within `build_admission_timeout`. Reading the registry,
     /// provisioning the tenant and building its runtime each surface the
@@ -52,8 +52,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             return Ok(leased);
         }
 
-        // Every wait ahead of the build -- the single-flight lock, the build
-        // permit and a teardown slot to make room -- answers to one deadline, so
+        // Every wait ahead of the build (the single-flight lock, the build
+        // permit and a teardown slot to make room) answers to one deadline, so
         // an overloaded broker sheds the request as retryable backpressure before
         // the HTTP request deadline instead of stalling into it.
         let deadline = Instant::now() + self.config.build_admission_timeout.duration();
@@ -112,8 +112,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         }
 
         // Admission: only a genuine cold build past the second cache check waits
-        // here, so the number of runtimes being built at once -- and with it the
-        // direct migrator connections and pools they open -- is bounded.
+        // here, so the number of runtimes being built at once, and with it the
+        // direct migrator connections and pools they open, is bounded.
         let admission_started = StdInstant::now();
         let permit = timeout_at(deadline, self.build_permits.acquire()).await;
         record_build_admission_wait(admission_started.elapsed().as_secs_f64());
@@ -145,7 +145,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// The build lock for a tenant, creating it on the first request.
     fn build_lock_for(&self, tenant: &TenantRef) -> Arc<Mutex<()>> {
         // clone: hand back an owned Arc so the DashMap shard guard is released
-        // before the caller awaits on the lock -- holding a shard guard across
+        // before the caller awaits on the lock: holding a shard guard across
         // an await deadlocks.
         Arc::clone(self.build_locks.entry(tenant.clone()).or_insert_with(|| Arc::new(Mutex::new(()))).value())
     }
@@ -186,8 +186,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             }
             Entry::Vacant(vacant) => {
                 // The runtime is leased before it enters the cache, so the trim
-                // any concurrent cold build runs -- which sees this entry the
-                // instant it is inserted -- observes the lease and spares it.
+                // any concurrent cold build runs, which sees this entry the
+                // instant it is inserted, observes the lease and spares it.
                 let (cached, leased) = {
                     let origin = self.new_origin(&runtime);
                     CachedRuntime::newly_leased(Arc::clone(&state), runtime, database, origin)
@@ -206,8 +206,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// `runtime_max_cached`, before it is built.
     ///
     /// Each release takes a teardown slot first, so when every slot is busy
-    /// with a slow teardown the cold build waits for one -- up to `deadline`,
-    /// then it is refused as saturated -- rather than adding a runtime while the
+    /// with a slow teardown the cold build waits for one, up to `deadline`
+    /// and then is refused as saturated, rather than adding a runtime while the
     /// evicted ones pile up alive behind their teardowns. Only unleased named
     /// runtimes are released; when every cached runtime is leased the build
     /// proceeds and the cache overshoots by at most the requests in flight, as

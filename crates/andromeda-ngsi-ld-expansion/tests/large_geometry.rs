@@ -1,6 +1,6 @@
 //! A `GeoProperty` of a million positions expands from the positions the
-//! transport read it into, without a JSON tree of its coordinates (clause 4.7,
-//! design section 4.2): the expansion's peak heap stays below 100 MiB above
+//! transport read it into, without a JSON tree of its coordinates (clause 4.7):
+//! the expansion's peak heap stays below 100 MiB above
 //! the input, where the one copy of 1,000,000 positions of 32 bytes the
 //! written document owns is about 32 MB, and it takes well under a second.
 //!

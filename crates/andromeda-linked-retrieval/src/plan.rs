@@ -4,10 +4,9 @@
 //! A flat join (clause 4.5.23.3) appends each reachable Linked Entity once, in
 //! first-encounter order, narrowed by the list its first encounter decided. An
 //! inline join (clause 4.5.23.2) nests a copy of the target under every
-//! Relationship instance naming it, each narrowed by its own path's list: the
-//! three peer brokers all do so, and it is the reading of "unless a URI has
-//! been previously encountered" (clauses 5.7.1.5 and 5.7.2.5) that loses no
-//! data. A target already open on the path from the root stays a plain URI,
+//! Relationship instance naming it, each narrowed by its own path's list. That
+//! is the reading of "unless a URI has been previously encountered" (clauses
+//! 5.7.1.5 and 5.7.2.5) that loses no data. A target already open on the path from the root stays a plain URI,
 //! since following it would loop (clause 4.5.23.1). In both shapes a Linked
 //! Entity its list leaves no member is not written, and its Relationship keeps
 //! the `object` that names it.

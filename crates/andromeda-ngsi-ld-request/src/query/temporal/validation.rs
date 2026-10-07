@@ -52,7 +52,6 @@ impl TemporalQueryParameters {
         if self.local == Some(true) {
             return true;
         }
-        // type=* implies local=true per spec Table 6.18.3.2-1
         matches!(self.entity_type, Some(TypeExprRaw::Wildcard))
     }
 
@@ -151,7 +150,7 @@ impl TemporalQueryParameters {
     pub fn validate(&self, operation: TemporalQueryOperation, linked_retrieval: TemporalJoin) -> Result<(), ParameterError> {
         // Clause 6.3.20: a `format` or `options` value Table 6.3.12-1 does not
         // define is refused here rather than during deserialisation, where the
-        // error type would have been lost (see `crate::representation_parameter`).
+        // error type would have been lost.
         self.parse_format()?;
         validate_attrs(self.attrs.as_deref(), attrs_admission(operation))?;
         // Clause 4.21: the temporal API carries the same three selectors and
@@ -215,7 +214,7 @@ impl TemporalQueryParameters {
         self.validate_grouping()
     }
 
-    /// Validate the `aggrGroupBy` grouping extension parameter (study §4.9).
+    /// Validate the `aggrGroupBy` grouping extension parameter.
     ///
     /// The parameter is inert unless present, so a broker with the extension
     /// disabled — where the HTTP gate has already refused a non-empty value —

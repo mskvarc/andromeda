@@ -93,8 +93,6 @@ fn id_filter(ids: &[&str]) -> String {
     ids.iter().map(|id| urlencoding::encode(id).into_owned()).collect::<Vec<_>>().join(",")
 }
 
-// --- within (NGSI-LD 4.10.2) ---
-
 #[tokio::test]
 async fn spatial_within_point_in_polygon_returns_entity() {
     let scope = TestEnvironment::from_suite("spatial").await.expect("isolated test environment");
@@ -139,8 +137,6 @@ async fn spatial_within_no_match_returns_empty() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// --- contains ---
-
 #[tokio::test]
 async fn spatial_contains_polygon_contains_point_returns_entity() {
     let scope = TestEnvironment::from_suite("spatial").await.expect("isolated test environment");
@@ -161,8 +157,6 @@ async fn spatial_contains_polygon_contains_point_returns_entity() {
     assert!(ids_of(&body).contains(&hall));
     scope.finish().await.expect("cleanup failed");
 }
-
-// --- intersects ---
 
 #[tokio::test]
 async fn spatial_intersects_overlapping_polygons_returns_entity() {
@@ -186,8 +180,6 @@ async fn spatial_intersects_overlapping_polygons_returns_entity() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// --- disjoint ---
-
 #[tokio::test]
 async fn spatial_disjoint_excludes_overlapping() {
     let scope = TestEnvironment::from_suite("spatial").await.expect("isolated test environment");
@@ -210,8 +202,6 @@ async fn spatial_disjoint_excludes_overlapping() {
     assert!(got.contains(&far));
     scope.finish().await.expect("cleanup failed");
 }
-
-// --- equals ---
 
 #[tokio::test]
 async fn spatial_equals_same_coords_matches() {
@@ -253,8 +243,6 @@ async fn spatial_equals_different_coords_does_not_match() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// --- overlaps ---
-
 #[tokio::test]
 async fn spatial_overlaps_partial_intersection_matches() {
     let scope = TestEnvironment::from_suite("spatial").await.expect("isolated test environment");
@@ -276,8 +264,6 @@ async fn spatial_overlaps_partial_intersection_matches() {
     assert!(ids_of(&body).contains(&id));
     scope.finish().await.expect("cleanup failed");
 }
-
-// --- near (maxDistance / minDistance) ---
 
 #[tokio::test]
 async fn spatial_near_max_distance_includes_within_radius() {
@@ -347,8 +333,6 @@ async fn spatial_near_band_min_and_max() {
     assert!(!got.contains(&too_far));
     scope.finish().await.expect("cleanup failed");
 }
-
-// --- Combined filters ---
 
 #[tokio::test]
 async fn spatial_georel_with_type_filter_restricts_by_type() {
@@ -457,8 +441,6 @@ async fn spatial_georel_unknown_custom_geoproperty_returns_empty() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// --- Invalidation — updates & deletes ---
-
 #[tokio::test]
 async fn spatial_georel_updated_entity_moves_between_partitions() {
     let scope = TestEnvironment::from_suite("spatial").await.expect("isolated test environment");
@@ -525,8 +507,6 @@ async fn spatial_georel_deleted_entity_is_excluded() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// --- Count & pagination with georel ---
-
 #[tokio::test]
 async fn spatial_georel_count_header_is_populated() {
     let scope = TestEnvironment::from_suite("spatial").await.expect("isolated test environment");
@@ -576,8 +556,6 @@ async fn spatial_georel_limit_caps_result_set() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// --- Error handling ---
-
 #[tokio::test]
 async fn spatial_georel_invalid_georel_returns_400() {
     let scope = TestEnvironment::from_suite("spatial").await.expect("isolated test environment");
@@ -601,8 +579,6 @@ async fn spatial_georel_near_without_distance_returns_400() {
     let (status, _, _) = query(client, "type=Building&georel=near&geometry=Point&coordinates=%5B0.0,0.0%5D").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
-
-// --- Concurrency / consistency ---
 
 #[tokio::test]
 async fn spatial_georel_rapid_updates_are_reflected() {

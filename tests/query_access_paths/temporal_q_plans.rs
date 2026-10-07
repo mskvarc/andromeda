@@ -279,7 +279,7 @@ async fn temporal_plans_the_generic_plan_keeps_each_placement_probe_on_its_index
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The regression guard for the complexity class: with four times the history
+/// The probe's cost does not depend on history length: with four times the history
 /// before the window, the statement touches barely more buffers, where a
 /// per-instance aggregate over the stream grows with the square of it.
 #[tokio::test]

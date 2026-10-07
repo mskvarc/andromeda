@@ -100,19 +100,17 @@ fn csr_pattern_condition(path: &AttrPath, pattern: &str, polarity: PatternPolari
 /// sub-attribute level and then stepping into any compound value members.
 ///
 /// Each sub-attribute level references the prior expression exactly once,
-/// aliased inside a scalar subquery. Inlining the `CASE` directly embedded the
-/// prior expression three times per level, so the SQL grew as `~3^depth` — a
-/// handful of sub-attributes produced a statement megabytes wide. The subquery
-/// makes the growth linear in the sub-attribute depth (which the `q` parser
-/// also bounds).
+/// aliased inside a scalar subquery. Inlining the `CASE` would embed the prior
+/// expression three times per level, growing the SQL as `~3^depth`; the
+/// subquery keeps growth linear in the sub-attribute depth (which the `q`
+/// parser also bounds).
 ///
 /// `value_path` is stepped afterwards, and without `unwrap_property`: a
 /// compound member (`address[city]`) is an ordinary JSON object key inside the
 /// already-unwrapped value, not a `Property` node in its own right, so wrapping
 /// it in the same `CASE` would test a `type` member the member's own value
-/// never carries. An earlier renderer dropped `value_path` here entirely,
-/// comparing the whole compound value's JSON text instead of the addressed
-/// member.
+/// never carries. Dropping `value_path` would compare the whole compound
+/// value's JSON text instead of the addressed member.
 fn csr_value_extract(path: &AttrPath) -> SimpleExpr {
     let mut json_path = unwrap_property(additional_properties().json_get(text_literal(path.attr.as_str())));
 
@@ -245,9 +243,8 @@ mod tests {
     #[test]
     fn a_deep_sub_attribute_path_extracts_through_nested_subqueries_not_exponentially() {
         // Each level references the prior expression once, via an aliased
-        // scalar subquery, so the SQL grows linearly with depth. Inlining the
-        // CASE embedded the prior expression three times per level, so a handful
-        // of sub-attributes produced a statement megabytes wide (~3^depth).
+        // scalar subquery, so the SQL grows linearly with depth rather than as
+        // ~3^depth.
         let shallow = render("a.b>1");
         let deeper = render("a.b.c.d.e>1");
         assert!(deeper.contains("AS \"j\""), "uses the aliased subquery form: {deeper}");
@@ -276,9 +273,8 @@ mod tests {
     }
 
     /// Clause 4.9: `notPatternOp` requires the entity to contain the target
-    /// element. This renderer used to disjoin the presence test, so a
-    /// registration that simply did not declare the property satisfied every
-    /// negated pattern over it.
+    /// element, so a registration that does not declare the property satisfies
+    /// no negated pattern over it.
     #[test]
     fn a_negated_csr_pattern_requires_the_property_to_be_present() {
         let sql = render("name!~=\"^A.*\"");
@@ -319,8 +315,7 @@ mod tests {
         );
     }
 
-    /// The same rule for `!=` over a range and over a value list, which had the
-    /// same defect.
+    /// The same rule for `!=` over a range and over a value list.
     #[test]
     fn a_negated_csr_comparison_requires_the_property_to_be_present() {
         for expression in ["speed!=10..20", "color!=\"red\",\"blue\"", "speed!=10"] {
@@ -329,8 +324,6 @@ mod tests {
             assert!(!sql.contains("IS NULL OR"), "{expression}: {sql}");
         }
     }
-
-    // -- one reading of clause 4.9, three renderings ------------------------
 
     /// An attribute IRI used by the conformance fixtures.
     const SPEED: &str = "https://example.com/speed";

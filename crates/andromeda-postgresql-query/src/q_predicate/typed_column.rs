@@ -126,7 +126,7 @@ enum RelationshipObjects {
 ///
 /// A URI names a resource; it carries no order a `<` or `>` could mean, and the
 /// pattern operators are defined over String targets. Probing `value_uri` under
-/// an ordering operator therefore made `owner>"a"` select entities the standard
+/// an ordering operator would make `owner>"a"` select entities the standard
 /// requires it to reject.
 ///
 /// A `ListRelationship`'s objects are not here at all: they are projected into

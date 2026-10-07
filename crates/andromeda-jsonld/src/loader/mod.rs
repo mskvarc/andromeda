@@ -1,21 +1,20 @@
 //! Resolving a context URL to a context document.
 //!
 //! [`http::HttpContextLoader`] is what the JSON-LD processor calls whenever a
-//! document names a context it has not seen. It resolves in four steps — the
+//! document names a context it has not seen. It resolves in four steps: the
 //! in-process moka cache, the [`crate::context_registry::ContextRegistry`] of
 //! embedded and preloaded documents, the
 //! [`crate::context_cache::ContextCache`] the broker attaches, and finally an
 //! HTTP fetch when one is permitted.
 //!
-//! The steps are split by what they own rather than kept in one file: what a
-//! response grants a cache ([`cache_lifetime`]), how a document is downloaded
-//! and validated ([`remote_document`]), against which URL its relative
-//! durable tier is read and
-//! written ([`durable_cache`]), what an in-process entry is and how long it
-//! lives ([`loaded_context`]), what a context owes when its durable write
-//! failed ([`pending_persistence`]), how a reference to one of the tenant's
-//! own stored `@context`s is resolved (`own_context`), and which
-//! resolutions count as clause 5.13.3.5 hits (`access_accounting`).
+//! The steps are split by what they own: what a response grants a cache
+//! ([`cache_lifetime`]), how a document is downloaded and validated
+//! ([`remote_document`]), how the durable tier is read and written
+//! ([`durable_cache`]), what an in-process entry is and how long it lives
+//! ([`loaded_context`]), what a context owes when its durable write failed
+//! ([`pending_persistence`]), how a reference to one of the tenant's own
+//! stored `@context`s is resolved, and which resolutions count as clause
+//! 5.13.3.5 hits.
 
 /// Counting the accesses clause 5.13.3.5 reports as `numberOfHits`.
 mod access_accounting;

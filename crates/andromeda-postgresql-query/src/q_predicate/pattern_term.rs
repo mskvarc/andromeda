@@ -28,8 +28,8 @@ use sea_query::{Condition, Expr as SeaExpr};
 ///
 /// Both polarities compile *inside* the `EXISTS`, so both require the attribute
 /// to be present. Clause 4.9 is explicit that the entity "shall contain the
-/// target element" for `notPatternOp`; an earlier compiler wrapped the whole
-/// existence test in `NOT (...)`, which matched entities that simply lacked the
+/// target element" for `notPatternOp`, so the existence test is not wrapped in
+/// `NOT (...)`, which would match entities that simply lacked the
 /// attribute.
 ///
 /// A regex is not a containment test, so a trailing member's two readings are
@@ -75,8 +75,8 @@ pub(crate) fn compile_pattern(
 /// it. Clause 4.9 requires a Relationship operand to non-match every operator
 /// other than equality and inequality, and the pattern operators are defined
 /// over String targets — so a Relationship's object, which is the whole content
-/// of `value_uri`, is never a pattern target. Probing it made
-/// `owner~="urn:Person:.*"` select entities the standard requires it to reject.
+/// of `value_uri`, is never a pattern target. Probing it would
+/// make `owner~="urn:Person:.*"` select entities the standard requires it to reject.
 ///
 /// A `LanguageProperty` row holds its strings in `value_object` instead, and
 /// clause 4.9 makes each of them a String target value when no target language

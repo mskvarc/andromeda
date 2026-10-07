@@ -24,10 +24,6 @@ fn sorted_strings(val: &Value) -> Vec<String> {
     v
 }
 
-// ---------------------------------------------------------------------------
-// 5.5.11 -- Empty database
-// ---------------------------------------------------------------------------
-
 /// List attributes on empty database -- returns `AttributeList` with empty attributeList (5.5.11).
 #[tokio::test]
 async fn list_attributes_empty_database_returns_empty_list() {
@@ -42,10 +38,6 @@ async fn list_attributes_empty_database_returns_empty_list() {
     assert!(attrs.is_empty(), "expected empty attributeList on clean database, got: {attrs:?}");
     env.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.5.11, 6.3.5 -- Without Link header context
-// ---------------------------------------------------------------------------
 
 /// List attributes without Link header -- attribute URIs returned as expanded (absolute) IRIs (5.5.11, 6.3.5).
 #[tokio::test]
@@ -68,10 +60,6 @@ async fn list_attributes_without_context_returns_expanded_uris() {
     delete_entity(&c, env.tenant(), &id).await;
     env.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.5.11, 6.3.5 -- With Link header context
-// ---------------------------------------------------------------------------
 
 /// List attributes with compound context Link header -- attribute names compacted to short names (5.5.11, 6.3.5).
 #[tokio::test]

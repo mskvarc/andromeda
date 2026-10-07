@@ -90,8 +90,6 @@ mod tests {
         http::{Request, header::ACCEPT},
     };
 
-    // --- Unit tests for format matching ---
-
     fn parse_format(accept: &str, geo_json: GeoJsonSupport) -> Result<ResponseMediaType, ()> {
         let req = Request::builder().uri("/test").header(ACCEPT, accept).body(()).expect("valid request");
         let (parts, ()) = req.into_parts();
@@ -157,8 +155,6 @@ mod tests {
     fn rejects_xml() {
         assert!(parse_format("application/xml", GeoJsonSupport::Allowed).is_err());
     }
-
-    // --- Extractor integration tests ---
 
     /// The representations a rejection published, or a description of what it
     /// was instead.

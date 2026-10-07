@@ -3,14 +3,10 @@
 //!
 //! ETSI GS CIM 009 v1.9.1 Table 5.2.21-1: `endTimeAt` "Cardinality shall be 1 if
 //! timerel is equal to between". Clause 5.8.1.4 answers a create whose members
-//! break their data type definition with `BadRequestData` (clause 5.5.4); the
-//! subscription was previously accepted and its `temporalQ` silently dropped when
-//! compiled for matching.
+//! break their data type definition with `BadRequestData` (clause 5.5.4).
 //!
 //! Needs the host broker: the case drives the HTTP API and is not run without
 //! one.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

@@ -12,16 +12,15 @@
 //! and whenever there is a change of a matching Context Source Registration
 //! (creation, update, deletion) ... informing about this change", so while
 //! nothing matches there is no change to inform about and nothing is sent.
-//! The broker read the first bullet as belonging to the periodic worker alone
-//! and never notified an interval subscription on creation, and the periodic
-//! worker in turn skipped an empty match set and omitted the `triggerReason`
-//! Table 5.3.2-1 gives cardinality 1.
+//! The first bullet covers an interval subscription from creation: it is
+//! notified on creation, an empty match set is still reported, and every
+//! notification carries the `triggerReason` Table 5.3.2-1 gives cardinality 1.
 //!
 //! Clause 5.11.7 also has the notification carry "filtered Context Source
 //! Registrations, which only contain context source registration information
 //! relevant for the subscription". That is a notification body, so its entity
 //! types are compacted back through the @context the notification is sent
-//! under; they were being written out in the expanded form the store holds.
+//! under rather than in the expanded form the store holds.
 //!
 //! Clauses 5.10.2.4 and 5.11.2.4 both match a temporal query against a
 //! registration's `observationInterval` or `managementInterval`, and word the
@@ -29,12 +28,10 @@
 //! endpoint of a time period included in the specified time interval". Read as
 //! containment that answers the wrong question: a source covering August 2020
 //! to August 2021 plainly holds observations made after June 2020. Every
-//! relation is now the overlap the same clause states outright for `between`,
+//! relation is the overlap the same clause states outright for `between`,
 //! and the in-memory subscription match and the SQL discovery query implement
 //! it identically -- a client that reaches a source through one must reach it
 //! through the other.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -229,8 +226,7 @@ async fn regression_csource_notification_a_change_driven_subscription_is_silent_
 
 /// Table 5.3.2-1 gives every `CSourceNotification` member cardinality 1,
 /// `triggerReason` included, and clause 5.3.3 says `newlyMatching` "is used in
-/// the first notification". The periodic sender assembled its own body and
-/// left the member out.
+/// the first notification".
 #[tokio::test]
 async fn regression_csource_notification_a_periodic_notification_has_the_mandatory_members() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

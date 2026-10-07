@@ -57,7 +57,7 @@ pub struct TenantRuntimeManager<D: TenantDatabase, F: TenantStateFactory> {
     /// Per-tenant build locks that single-flight a cold start.
     ///
     /// Without this, N concurrent first requests for one tenant would each
-    /// build a whole runtime and N-1 would be thrown away — after opening their
+    /// build a whole runtime and N-1 would be thrown away after opening their
     /// connection pools. Concurrent requests share one lock; the first builds,
     /// the rest re-check `runtimes` under the lock and reuse what it inserted.
     build_locks: DashMap<TenantRef, Arc<Mutex<()>>>,
@@ -74,7 +74,7 @@ pub struct TenantRuntimeManager<D: TenantDatabase, F: TenantStateFactory> {
     /// Every eviction path takes a permit before it removes a runtime from the
     /// cache and the permit travels with the runtime into its teardown, so an
     /// evicted runtime is always inside one of these slots: the runtimes alive at
-    /// once -- cached plus being torn down -- stay bounded however slowly their
+    /// once (cached plus being torn down) stay bounded however slowly their
     /// pools close, instead of piling up behind a teardown queue.
     eviction_permits: Arc<Semaphore>,
     /// Bounds how many evicted tenants' databases are probed for due work at
@@ -82,8 +82,8 @@ pub struct TenantRuntimeManager<D: TenantDatabase, F: TenantStateFactory> {
     ///
     /// Separate from [`eviction_permits`](Self::eviction_permits) because the
     /// probe runs after the runtime has been released: holding a teardown slot
-    /// across it would slow teardown -- and with it every cold build waiting for
-    /// room -- to the pace of the probe.
+    /// across it would slow teardown, and with it every cold build waiting for
+    /// room, to the pace of the probe.
     wake_probe_permits: Arc<Semaphore>,
     /// Teardowns and wake probes the eviction paths detached, so no request
     /// waits on another tenant's shutdown. Drained by
@@ -167,9 +167,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
 
     /// Whether a runtime for `tenant` is currently held open in the cache.
     ///
-    /// The residency half of a tenant's computed
-    /// [`TenantState`](crate::tenant_state::TenantState): a cheap in-memory read
-    /// that never touches a tenant database.
+    /// The residency half of a tenant's computed `TenantState`: a cheap
+    /// in-memory read that never touches a tenant database.
     fn residency(&self, tenant: &TenantRef) -> TenantResidency {
         if self.runtimes.contains_key(tenant) {
             TenantResidency::Resident
@@ -233,7 +232,7 @@ impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantAdministr
         // Suspending releases the runtime at once so its pool closes
         // deterministically; a runtime a request still holds is retired and
         // released as soon as that hold drops, and admission refuses the tenant
-        // in the meantime (docs/tenant-management.md, "Suspend and resume").
+        // in the meantime.
         match status {
             TenantStatus::Suspended => self.release_suspended(&tenant).await,
             TenantStatus::Active => self.reinstate(&tenant),

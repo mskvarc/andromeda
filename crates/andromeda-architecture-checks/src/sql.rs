@@ -17,8 +17,7 @@ pub(crate) const SQL_FRAGMENTS: &[&str] = &[
     "::geography",
     // Word-boundary rather than cast-only: `lquery` and `jsonb` name a type or a
     // function family a store spells in more than one syntactic position
-    // (`::lquery`, a bare `lquery` operand; `::jsonb`, `jsonb_path_query`), and a
-    // cast-only fragment let the others through.
+    // (`::lquery`, a bare `lquery` operand; `::jsonb`, `jsonb_path_query`).
     "lquery",
     "jsonb",
     "ST_",
@@ -34,10 +33,8 @@ pub(crate) const SQL_FRAGMENTS: &[&str] = &[
 ///
 /// The dependency check reads dependency names, which is exactly what SQL
 /// emitted as a string constant slips past: a specification crate can spell an
-/// entire SQL predicate without declaring `sea-query`. Six items did — a
-/// comparison operator, a POSIX regex operator, an `AND` composer, a JSONB
-/// cast and two column mappings on a resource — and nothing in the workspace
-/// could see them.
+/// entire SQL predicate without declaring `sea-query`, so this guard scans the
+/// source text for the dialect fragments themselves.
 ///
 /// The directory is walked rather than a list of files being passed in: a list
 /// goes stale the moment a file is added, and a guard that silently stops
@@ -257,7 +254,7 @@ fn copy_raw_string(chars: &[char], i: usize, out: &mut String) -> usize {
         out.push(chars[j]);
         j += 1;
     }
-    out.push(chars[j]); // the `r`
+    out.push(chars[j]);
     j += 1;
     let mut hashes = 0usize;
     while chars.get(j) == Some(&'#') {
@@ -265,7 +262,7 @@ fn copy_raw_string(chars: &[char], i: usize, out: &mut String) -> usize {
         hashes += 1;
         j += 1;
     }
-    out.push(chars[j]); // the opening quote
+    out.push(chars[j]);
     j += 1;
     while j < chars.len() {
         if chars[j] == '"' && closing_hashes_match(chars, j + 1, hashes) {
@@ -361,7 +358,7 @@ mod tests {
 
     #[test]
     fn stripping_a_comment_does_not_fuse_the_lines_around_it() {
-        // Concatenating the kept lines used to splice `SELECT` onto a following
+        // Concatenating the kept lines must not splice `SELECT` onto a following
         // space and invent a fragment neither line contains.
         let source = "let keyword = \"SELECT\";\n    let subject = value;";
         assert!(!code_of(source).contains("SELECT "));
@@ -369,8 +366,7 @@ mod tests {
 
     #[test]
     fn a_jsonb_cast_and_a_bare_lquery_operand_are_both_caught() {
-        // The cast-only fragments used to let `::jsonb` and a bare `lquery`
-        // operand through while catching only `jsonb_...` and `::lquery`.
+        // A cast, a function family and a bare operand are each caught.
         assert!(contains_fragment("let sql = \"value::jsonb\";", "jsonb"));
         assert!(contains_fragment("let sql = \"jsonb_path_query(x)\";", "jsonb"));
         assert!(contains_fragment("let sql = \"path ~ 'a.b'::lquery\";", "lquery"));
@@ -379,16 +375,15 @@ mod tests {
 
     #[test]
     fn a_comment_that_mentions_cfg_test_does_not_truncate_the_scan() {
-        // The comment names `#[cfg(test)]`; the real dialer below it must still
-        // be scanned, which the split-before-strip order used to skip.
+        // The comment names `#[cfg(test)]`; the real dialect below it must still
+        // be scanned.
         let source = "// this is not the #[cfg(test)] module\nlet cast = \"value::jsonb\";";
         assert!(code_of(source).contains("::jsonb"));
     }
 
     #[test]
     fn a_block_comment_naming_a_backend_fragment_is_ignored() {
-        // A line-based filter kept a `/* … */` block whole, so a fragment named
-        // only in one would have failed the guard.
+        // A fragment named only inside a `/* … */` block is not code.
         let source = "let subject = value; /* ST_Within(subject, reference) */";
         assert!(!code_of(source).contains("ST_"));
     }

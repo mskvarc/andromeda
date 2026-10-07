@@ -21,14 +21,7 @@
 //! * "If the target element is a Relationship, the target object is defined as
 //!   the object associated (represented as a URI or array of URIs)".
 //!
-//! Every one of those that can hold more than one value resolves to an array,
-//! which is what makes the clause's array rules — "Is included in the target
-//! value, if the latter is an array", and under `unequal` "Is not included in
-//! the target value, if the latter is an array" — apply to it. A resolution
-//! that stopped at the first value instead answered `==` for the first element
-//! only and answered `!=` with the exact opposite of what the clause requires,
-//! because a target the operand *is* in still had a first element that differed
-//! from it.
+//! Every one of those that can hold more than one value resolves to an array, which is what makes the clause's array rules -- "Is included in the target value, if the latter is an array", and under `unequal` "Is not included in the target value, if the latter is an array" -- apply to it.
 //!
 //! The two list families are ordered, so their target is the array even when
 //! it holds a single element, which is what keeps the ordering and pattern
@@ -225,10 +218,7 @@ mod tests {
     /// gives `@id` nodes. Both spell the same target object.
     #[test]
     fn a_list_relationship_resolves_to_the_whole_object_list_in_either_expansion() {
-        // The third member shape is the normalized representation of clause
-        // 4.5.22.2: a Relationship Object wrapper carrying `hasObject`. The
-        // reader used to stop at that wrapper and resolve nothing, so a `q`
-        // over a `ListRelationship` silently matched no entity.
+        // The third member shape is the normalized representation of clause 4.5.22.2: a Relationship Object wrapper carrying `hasObject`.
         for member in [
             json!({"@value": "urn:ngsi-ld:Part:1"}),
             json!({"@id": "urn:ngsi-ld:Part:1"}),

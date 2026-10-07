@@ -125,7 +125,7 @@ async fn temporal_semantics_every_family_of_pairs_becomes_its_typed_observation(
     assert_eq!(status, StatusCode::CREATED, "{body:?}");
 
     // Stored family codes: 2 Relationship, 5 LanguageProperty, 6 JsonProperty,
-    // 4 VocabProperty, as migration 0021 fixes them.
+    // 4 VocabProperty.
     for (term, attribute_kind) in [("owner", 2_i16), ("label", 5), ("doc", 6), ("tags", 4)] {
         let rows = stored_attribute_history(&pool, &entity_id, &attribute_iri(term)).await;
         assert_eq!(rows.len(), 2, "{term} recorded both pairs");

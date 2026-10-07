@@ -3,7 +3,7 @@
 //! An operator can drop and recreate a tenant's schema directly against the
 //! database while the broker keeps the tenant's runtime -- and its in-memory
 //! `NameCache` -- alive. A recreate resets the dictionary's `IDENTITY`
-//! sequences, so a cached name-to-key mapping now points at a dictionary row
+//! sequences, so a cached name-to-key mapping points at a dictionary row
 //! that no longer exists. This helper reproduces that exact signature on a
 //! tenant's own database pool: it resets the dictionary and re-stamps the
 //! schema, which is what the broker's schema-epoch check detects.

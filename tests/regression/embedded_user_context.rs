@@ -9,10 +9,10 @@
 //! reshape NGSI-LD Elements during the expansion of terms". Clauses 4.4 and
 //! 4.5.1 restate it.
 //!
-//! The broker accepted every one of them: an `@context` written inside an
-//! attribute node, inside a sub-attribute, or inside a Property's value object
-//! reached the JSON-LD processor and was applied, so a client could redefine
-//! the terms of the very attribute it was writing.
+//! An `@context` written inside an attribute node, inside a sub-attribute, or
+//! inside a Property's value object would reach the JSON-LD processor and be
+//! applied, letting a client redefine the terms of the very attribute it was
+//! writing, so each is refused.
 //!
 //! The one place a key spelled `@context` is data rather than a context is a
 //! `JsonProperty`, which clause 5.5.7 closes on: it "is designed to hold native
@@ -22,11 +22,10 @@
 //!
 //! The rule holds for every NGSI-LD document a client sends, not only for
 //! Entities: a Subscription or a Context Source Registration carrying an
-//! `@context` inside `entities` or `information` was accepted. The user `@context` admission now refuses it on every operation, after
-//! the context loaded, so an unreachable context still answers
+//! `@context` inside `entities` or `information` is refused too. The user
+//! `@context` admission refuses it on every operation, after the context
+//! loaded, so an unreachable context still answers
 //! `LdContextNotAvailable` first (clause 5.5.4).
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

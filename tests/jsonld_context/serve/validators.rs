@@ -1,4 +1,4 @@
-//! The validators a served document carries (study E1 to E3, E8, E9).
+//! The validators a served document carries.
 
 use crate::{
     context_api::{add_hosted, create_implicit_context, serve, serve_details},
@@ -14,7 +14,7 @@ fn varies_by_tenant(vary: Option<&str>) -> bool {
     vary.is_some_and(|vary| vary.split(',').any(|name| name.trim().eq_ignore_ascii_case("ngsild-tenant")))
 }
 
-/// Study E1: a Hosted document is served exactly as stored, with a positive
+/// A Hosted document is served exactly as stored, with a positive
 /// `max-age`, a strong `ETag` and `Vary: NGSILD-Tenant`.
 #[tokio::test]
 async fn a_hosted_document_is_served_as_stored_with_max_age_a_strong_tag_and_vary() {
@@ -34,7 +34,7 @@ async fn a_hosted_document_is_served_as_stored_with_max_age_a_strong_tag_and_var
     tenant.finish().await;
 }
 
-/// Study E2: an `ImplicitlyCreated` document carries the same validators, and
+/// An `ImplicitlyCreated` document carries the same validators, and
 /// the same `max-age` as a Hosted one, since both are revalidated alike.
 #[tokio::test]
 async fn an_implicitly_created_document_carries_the_same_validators() {
@@ -53,7 +53,7 @@ async fn an_implicitly_created_document_carries_the_same_validators() {
     tenant.finish().await;
 }
 
-/// Study E3: the tag follows the bytes served: serving a document again
+/// The tag follows the bytes served: serving a document again
 /// repeats it, a different document gets a different one, and the same
 /// document stored under another identifier gets the same one.
 #[tokio::test]
@@ -72,7 +72,7 @@ async fn the_entity_tag_follows_the_document_content() {
     tenant.finish().await;
 }
 
-/// Study E8: the details projection is lifecycle metadata that changes on
+/// The details projection is lifecycle metadata that changes on
 /// every access, and carries no validators.
 #[tokio::test]
 async fn the_details_projection_carries_no_validators() {
@@ -87,7 +87,7 @@ async fn the_details_projection_carries_no_validators() {
     tenant.finish().await;
 }
 
-/// Study E9: the embedded core `@context` is immutable and carries no
+/// The embedded core `@context` is immutable and carries no
 /// validators.
 #[tokio::test]
 async fn the_embedded_core_context_is_served_without_validators() {

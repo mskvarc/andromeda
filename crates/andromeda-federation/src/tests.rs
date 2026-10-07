@@ -242,7 +242,6 @@ fn csr_mode_filter_all_includes_every_mode() {
     use crate::request::CsrModeFilter;
 
     let filter = CsrModeFilter::All;
-    // All should include every mode
     assert!(matches!(filter, CsrModeFilter::All));
 }
 
@@ -292,7 +291,6 @@ fn merge_query_auxiliary_supplements_without_adding_entities() {
 
 #[test]
 fn merge_query_primary_adds_new_entities() {
-    // Non-auxiliary modes should add new entities
     let local = vec![version("urn:a", &[])];
     let remote = vec![ForwardedEntities {
         registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),

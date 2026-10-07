@@ -14,10 +14,7 @@ pub fn opens_with_context(object: &str) -> bool {
         .is_some_and(|rest| rest.trim_start().starts_with("\"@context\""))
 }
 
-/// The raw text of every item of the JSON array `text`, in document order.
-///
-/// Returns `None` when `text` is not a JSON array. Strings are skipped as a
-/// unit, so braces, brackets and commas inside them never split an item.
+/// `None` when `text` is not a JSON array. Strings are skipped as a unit, so braces, brackets and commas inside them never split an item.
 pub fn array_items(text: &str) -> Option<Vec<&str>> {
     let trimmed = text.trim();
     let inner = trimmed.strip_prefix('[')?.strip_suffix(']')?;

@@ -1,7 +1,6 @@
 //! Context Source Registration (CSR) integration tests for the NGSI-LD context broker.
 //!
-//! Standalone test suite using `tokio::test` and `reqwest` directly -- no dependency
-//! on the libtest-mimic harness or its fixtures module.
+//! Standalone test suite using `tokio::test` and `reqwest` directly.
 //!
 //! Tests that require a clean database state are annotated with `#[serial]` and call
 //! `clean_database()` before running. All tests create and clean up their own resources.
@@ -48,10 +47,6 @@ async fn provision_tenant(client: &TestClient) {
     assert_eq!(status, StatusCode::CREATED, "tenant provisioning registration must be created");
     cleanup_registration(client, &id).await;
 }
-
-// ---------------------------------------------------------------------------
-// Inline fixtures
-// ---------------------------------------------------------------------------
 
 use serde_json::json;
 
@@ -602,10 +597,6 @@ fn expected_query_detailed_expanded(id: &str) -> Value {
     }])
 }
 
-// ---------------------------------------------------------------------------
-// JSON value helpers
-// ---------------------------------------------------------------------------
-
 fn strip_ignored_keys(val: &mut Value, keys: &[&str]) {
     match val {
         Value::Object(map) => {
@@ -627,10 +618,6 @@ fn strip_ignored_keys(val: &mut Value, keys: &[&str]) {
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
-
-// ---------------------------------------------------------------------------
-// HTTP helpers
-// ---------------------------------------------------------------------------
 
 /// POST /csourceRegistrations with JSON-LD body. Returns (status, location, body).
 async fn create_registration(client: &TestClient, body: &Value) -> (StatusCode, Option<String>, Value) {

@@ -10,10 +10,8 @@
 //! `modifiedAt` of an instance are output only (clause 5.2.5, Table 5.2.5-2:
 //! "In the event that they are provided (in update or create operations)
 //! NGSI-LD implementations shall ignore them"), so the local write stamps its
-//! own and a value a client sent is not among what is forwarded. The broker
-//! once forwarded the paths of the Scope and dropped the history.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! own and a value a client sent is not among what is forwarded. The history is
+//! forwarded, not only the paths of the Scope.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

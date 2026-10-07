@@ -1,5 +1,4 @@
-//! A JSON literal in a Property value holding the NGSI-LD Null under a key
-//! (R03).
+//! A JSON literal in a Property value holding the NGSI-LD Null under a key.
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 5.5.4: "Any attempt to use "urn:ngsi-ld:null"
 //! as the value of a key value pair within a JSON object, which is the
@@ -9,12 +8,9 @@
 //!
 //! A JSON literal reaches a Property value as a member a context coerces to
 //! `@json`, or as a value written `{"@type": "@json", "@value": ..}`. Either
-//! way it is a JSON object on the right-hand side of the value. Before, Create
-//! and Replace Entity stored the Null under its key as data, and every other
-//! write outside a merge silently dropped the key. A merge deletes the key
-//! (clause 5.5.12, IETF RFC 7396), which it already did.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! way it is a JSON object on the right-hand side of the value, so every write
+//! outside a merge refuses it. A merge deletes the key (clause 5.5.12, IETF RFC
+//! 7396).
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -137,7 +133,7 @@ async fn assert_held(client: &TestClient, id: &str, literal: Literal, case: &str
 }
 
 /// Clause 5.6.1: a creation is no fragment, so it is refused and stores
-/// nothing, where it used to store the Null under the key as data.
+/// nothing.
 #[tokio::test]
 async fn regression_r03_a_create_refuses_a_json_literal_holding_the_null_under_a_key() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -155,8 +151,7 @@ async fn regression_r03_a_create_refuses_a_json_literal_holding_the_null_under_a
 }
 
 /// Clauses 5.6.2, 5.6.3, 5.6.4, 5.6.18 and 5.6.19 are no merge, so each
-/// refuses the literal and leaves the held one as it was, where the update
-/// paths used to drop the key and Replace Entity to store the Null.
+/// refuses the literal and leaves the held one as it was.
 #[tokio::test]
 async fn regression_r03_every_write_of_a_held_entity_refuses_a_json_literal_holding_the_null_under_a_key() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

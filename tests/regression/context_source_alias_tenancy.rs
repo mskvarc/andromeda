@@ -8,10 +8,10 @@
 //! Tenant found within each registered Context Source shall be considered
 //! separately."
 //!
-//! The broker previously served one configured alias to every tenant, so two
-//! tenants of one broker were indistinguishable in a `Via` chain. Clause 5.12
-//! then dropped from the match set every registration naming either of them as
-//! soon as a request had traversed one: "no registration shall match if the
+//! One alias served to every tenant would leave two tenants of one broker
+//! indistinguishable in a `Via` chain, and clause 5.12 would then drop from the
+//! match set every registration naming either of them as soon as a request had
+//! traversed one: "no registration shall match if the
 //! `CSourceRegistration` `contextSourceAlias` can be found within the listing of
 //! previously encountered Context Sources".
 
@@ -147,7 +147,7 @@ async fn regression_the_context_source_identifier_does_not_move_with_the_tenant(
 
 /// Clause 6.3.14: "If the HTTP header `NGSILD-Tenant` is present in the HTTP
 /// request, it shall also be present in HTTP response." The identity endpoint
-/// now reads that header, so it must also echo it.
+/// reads that header, so it also echoes it.
 #[tokio::test]
 async fn regression_source_identity_echoes_the_tenant_it_answered_for() {
     let response = tenant_client("regressionaliasalpha")
@@ -166,9 +166,8 @@ async fn regression_source_identity_echoes_the_tenant_it_answered_for() {
 /// context source must survive a request that traversed a different tenant of
 /// the same context source, and must be excluded only by its own tenant.
 ///
-/// This is the defect in its observable form: while every tenant shared one
-/// alias, the two `Via` chains below were the same value and the registration
-/// disappeared from both discoveries.
+/// Were every tenant to share one alias, the two `Via` chains below would be the
+/// same value and the registration would disappear from both discoveries.
 #[tokio::test]
 async fn regression_a_hop_through_one_tenant_does_not_exclude_another_tenants_registration() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

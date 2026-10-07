@@ -12,16 +12,14 @@
 //! reduces the attribute to its bare value or to one of three one-member
 //! wrappers.
 //!
-//! Before this suite existed the response pipeline never told the adaptation
-//! which representation it was working on, so every `Prefer: ngsi-ld=` response
-//! was amended under the normalized reading. In a clause 4.5.4 payload the value
-//! member that reading looks for is the wrapper key, so `languageMap`, `json`
-//! and `vocab` were each renamed to `value` and a `keyValues` response came back
-//! carrying `{"value": ...}` objects — a shape clause 4.5.4 defines for nothing.
-//! In a concise payload the clause 4.5.2.3 collapse never ran, so an attribute
-//! stripped down to its value alone stayed an object.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! The response pipeline tells the adaptation which representation it is
+//! working on, since amending every `Prefer: ngsi-ld=` response under the
+//! normalized reading would be wrong. In a clause 4.5.4 payload the value member
+//! that reading looks for is the wrapper key, so `languageMap`, `json` and
+//! `vocab` would each be renamed to `value` and a `keyValues` response would
+//! carry `{"value": ...}` objects -- a shape clause 4.5.4 defines for nothing. In
+//! a concise payload the clause 4.5.2.3 collapse must run, so an attribute
+//! stripped down to its value alone does not stay an object.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -127,7 +125,7 @@ fn attribute_values(entity: &Value) -> Vec<&Value> {
 }
 
 /// Whether a value is the one-member `{"value": ...}` object the normalized
-/// reading of a clause 4.5.4 payload used to produce.
+/// reading of a clause 4.5.4 payload would produce.
 fn is_value_wrapper(value: &Value) -> bool {
     value.as_object().is_some_and(|members| members.len() == 1 && members.contains_key("value"))
 }

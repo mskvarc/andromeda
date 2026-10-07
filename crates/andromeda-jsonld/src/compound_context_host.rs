@@ -53,11 +53,7 @@ pub trait CompoundContextHost: Debug + Send + Sync {
     fn host<'a>(&'a self, context: &'a JsonLiteral, usage: WrapperUse) -> CompoundContextHostFuture<'a>;
 }
 
-/// A host that stores nothing.
-///
-/// A test double: every broker operation that can render a `Link` has its
-/// tenant's host. Asked all the same, it reports that no host is attached
-/// rather than naming a context it never stored.
+/// A test double: asked to host, it reports that no host is attached rather than naming a context it never stored.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoCompoundContextHost;
 

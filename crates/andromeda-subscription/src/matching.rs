@@ -345,8 +345,7 @@ mod tests {
     fn a_subscription_geo_filter_is_the_same_compiled_type_a_query_uses() -> Result<(), SubscriptionError> {
         // Clause 4.10 is one relation, so a subscription's stored `geoQ` and a
         // request's `georel`/`geometry`/`coordinates` must compile to the same
-        // value. They used to be two types, one of them stringly-typed, and
-        // only one of them had an in-memory evaluator.
+        // value, evaluated in memory by the one evaluator.
         let from_subscription = compile_geo_q(&stored_geo_q(serde_json::json!({
             "georel": "near;maxDistance==1000",
             "geometry": "Point",

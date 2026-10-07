@@ -5,11 +5,9 @@
 //! Entity Array. The returned result is then merged into S4", paginated "as
 //! mandated by clause 5.5.9", and clause 4.3.6.7 asks the broker to "initially
 //! make a broad request to each registered Context Source" so that pagination is
-//! consistent. The broker sent each source one `limit=1000` request and never
-//! followed the source's `Link rel="next"` (clauses 5.5.9.1 and 6.3.10), so the
-//! merged collection, its `NGSILD-Results-Count` and every hub page past the
-//! first thousand entities stopped at 1,000 per source (real-world campaign
-//! finding A-29, the temporal remainder of A-18).
+//! consistent. The broker follows the source's `Link rel="next"` (clauses 5.5.9.1
+//! and 6.3.10), so the merged collection, its `NGSILD-Results-Count` and every
+//! hub page past the first thousand entities do not stop at 1,000 per source.
 //!
 //! A source also pages each entity's history (clause 6.3.10): a 206 whose
 //! `Content-Range` says where it stopped. Clause 6.3.10 gives the hub's response
@@ -22,11 +20,8 @@
 //! Each scenario releases its registration and its mock source before it
 //! asserts anything, because a registration left behind points at a port that
 //! no longer listens. The per-request ceiling (`federation.max_query_entities`,
-//! `403 TooManyResults` under clause 4.12) is covered by the unit tests of
-//! `andromeda-federation`'s source walk, since the shared test broker runs with
-//! its default of 10,000.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! `403 TooManyResults` under clause 4.12) is not exercised here, since the
+//! shared test broker runs with its default of 10,000.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

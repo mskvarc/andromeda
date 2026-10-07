@@ -1,4 +1,4 @@
-//! Update Attributes forwarding — REQ-PROV-13..19 (clause 5.6.2.4).
+//! Update Attributes forwarding (clause 5.6.2.4).
 //!
 //! A partial update of `PATCH /entities/{id}/attrs` returns `404` only when no
 //! local entity and no matching registration exists; an exclusive registration
@@ -27,7 +27,7 @@ fn brand_only(id: &str) -> Value {
 }
 
 /// An update on an absent entity with no matching registration is `404
-/// ResourceNotFound`. Confirms REQ-PROV-13 (positive).
+/// ResourceNotFound`.
 #[tokio::test]
 async fn update_attrs_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -43,7 +43,7 @@ async fn update_attrs_absent_and_no_registration_returns_404() {
 }
 
 /// A matching registration means an absent local entity does not force `404`:
-/// the update forwards once. Confirms REQ-PROV-13 (negative).
+/// the update forwards once.
 #[tokio::test]
 async fn update_attrs_registration_matches_entity_absent_not_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -76,7 +76,7 @@ async fn update_attrs_registration_matches_entity_absent_not_404() {
 }
 
 /// An exclusive update forwards the owned `speed`, strips it from the local
-/// patch, and applies the remainder locally. Confirms REQ-PROV-14, 15, 17.
+/// patch, and applies the remainder locally.
 #[tokio::test]
 async fn update_attrs_exclusive_match_forwards_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -139,7 +139,7 @@ async fn update_attrs_exclusive_match_forwards_and_strips() {
 
 /// An exclusive registration without `updateEntity` (the Table 4.20-1 name of
 /// 5.6.2) rejects an owned-only update with a bare `409 Conflict` and no
-/// forwarding. Confirms REQ-PROV-16 (complete-fail).
+/// forwarding.
 #[tokio::test]
 async fn update_attrs_exclusive_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -178,7 +178,7 @@ async fn update_attrs_exclusive_op_unsupported_returns_409() {
 
 /// The same unsupported `updateEntity`, but with a local remainder, degrades to
 /// `207 Multi-Status` carrying the `409` keyed by `registrationId`; the
-/// remainder is patched locally. Confirms REQ-PROV-16 (partial), 19.
+/// remainder is patched locally.
 #[tokio::test]
 async fn update_attrs_op_unsupported_with_remainder_returns_207() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -230,7 +230,7 @@ async fn update_attrs_op_unsupported_with_remainder_returns_207() {
 }
 
 /// An inclusive update forwards the full remainder and also patches locally
-/// (clause 5.5.8). Confirms REQ-PROV-18, 19.
+/// (clause 5.5.8).
 #[tokio::test]
 async fn update_attrs_inclusive_forwards_remainder_and_patches_local() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -294,7 +294,7 @@ async fn update_attrs_inclusive_forwards_remainder_and_patches_local() {
 }
 
 /// End-to-end against real broker B: the owned `speed` update lands on B and is
-/// never stored on A. Confirms REQ-PROV-14, 15, 17.
+/// never stored on A.
 #[tokio::test]
 async fn update_attrs_pair_exclusive_end_to_end() {
     let topology = topology::pair().await.expect("two-broker topology");

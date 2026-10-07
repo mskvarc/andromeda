@@ -1,7 +1,6 @@
 //! Verification of the name dictionaries' capacity and their unbounded growth.
 //!
-//! Migration `0007_name_dictionaries` gives both dictionary keys `INTEGER`
-//! range, well past the 32,767-entry ceiling a `SMALLINT` key would impose by
+//! Both dictionary keys have `INTEGER` range, well past the 32,767-entry ceiling a `SMALLINT` key would impose by
 //! accident. Neither dictionary is bounded above the database: only each
 //! tenant's in-process cache of a dictionary is, by bytes, and a name the cache
 //! does not hold is read from its table. The attribute dictionary is checked

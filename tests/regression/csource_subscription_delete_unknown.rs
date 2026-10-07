@@ -6,11 +6,6 @@
 //! 404. A syntactically valid URN that names no stored subscription is exactly
 //! that case: the request is well formed, so it is a not-found, not a bad
 //! request.
-//!
-//! Corresponds to the official suite case `042_03_01`. This pins the broker's 404
-//! against the well-formed-but-absent identifier.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

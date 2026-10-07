@@ -1,4 +1,4 @@
-//! Batch Create forwarding — REQ-PROV-47..56 (clause 5.6.7.4).
+//! Batch Create forwarding (clause 5.6.7.4).
 //!
 //! Each matching registration receives its own filtered copy of the batch: an
 //! exclusive/redirect source is forwarded only the entities and attributes it
@@ -22,8 +22,7 @@ use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 /// Per-CSR filtering forwards each redirect source only its owned attribute of
-/// the matching entity, dropping the unmatched entity entirely. Confirms
-/// REQ-PROV-47, 48, 49.
+/// the matching entity, dropping the unmatched entity entirely.
 #[tokio::test]
 async fn batch_create_per_csr_filters_input_copy() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -99,7 +98,7 @@ async fn batch_create_per_csr_filters_input_copy() {
 }
 
 /// A redirect-owned attribute is stripped from the copy forwarded to another
-/// matching source. Confirms REQ-PROV-50.
+/// matching source.
 #[tokio::test]
 async fn batch_create_strips_redirect_owned_attrs_for_other_csr() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -156,7 +155,7 @@ async fn batch_create_strips_redirect_owned_attrs_for_other_csr() {
 }
 
 /// A source that owns nothing present in the batch is skipped, while the other
-/// source is still forwarded. Confirms REQ-PROV-51.
+/// source is still forwarded.
 #[tokio::test]
 async fn batch_create_empty_in_skips_csr() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -205,7 +204,6 @@ async fn batch_create_empty_in_skips_csr() {
 
 /// A source advertising the batch operation is forwarded the batch and its
 /// per-entity results merge into the response keyed by `registrationId`.
-/// Confirms REQ-PROV-52, 53.
 #[tokio::test]
 async fn batch_create_supported_forwards_and_merges_results() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -248,7 +246,7 @@ async fn batch_create_supported_forwards_and_merges_results() {
 }
 
 /// Without the batch operation the broker falls back to one forwarded create per
-/// entity. Confirms REQ-PROV-54.
+/// entity.
 #[tokio::test]
 async fn batch_create_fallback_per_entity_create() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -286,7 +284,7 @@ async fn batch_create_fallback_per_entity_create() {
 
 /// A redirect source advertising neither the batch nor the per-entity create
 /// yields a per-entity `409 Conflict` keyed by `registrationId`, with no
-/// forwarding. Confirms REQ-PROV-55.
+/// forwarding.
 #[tokio::test]
 async fn batch_create_redirect_neither_op_conflict_per_entity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -326,8 +324,7 @@ async fn batch_create_redirect_neither_op_conflict_per_entity() {
 }
 
 /// The local phase populates `success` for the new entity and `errors` for the
-/// pre-existing one, independently of the auxiliary registration. Confirms
-/// REQ-PROV-56.
+/// pre-existing one, independently of the auxiliary registration.
 #[tokio::test]
 async fn batch_create_local_phase_populates_success_and_errors() {
     let topology = topology::single().await.expect("single-broker topology");

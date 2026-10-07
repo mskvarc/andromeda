@@ -468,10 +468,6 @@ mod tests {
 
     #[test]
     fn common_reaches_the_shared_fields_of_every_family() {
-        // `common()` must land on the same `CommonAttributeFields` the family
-        // struct embeds, for every one of the eight families: each
-        // fully-populated instance carries exactly one sub-attribute there, and
-        // the `expires_at`/`dataset_id` accessors read through it.
         for original in fully_populated_instances() {
             let attribute: Attribute = serde_json::from_value(original).expect("attribute parses");
             let common = attribute.common();

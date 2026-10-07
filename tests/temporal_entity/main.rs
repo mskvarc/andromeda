@@ -35,10 +35,6 @@ fn jsonld_link_header(context_url: &str) -> HeaderValue {
     try_jsonld_link_header(context_url).expect("valid JSON-LD Link header")
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn client() -> Client {
     Client::new()
 }
@@ -119,10 +115,6 @@ fn collect_timestamps_vehicles(body: &[Value], representation: &str) -> Vec<Stri
 fn get_most_recent_timestamp_vehicles(body: &[Value], representation: &str) -> Option<String> {
     collect_timestamps_vehicles(body, representation).into_iter().max()
 }
-
-// ---------------------------------------------------------------------------
-// Temporal entity factories
-// ---------------------------------------------------------------------------
 
 /// Vehicle with temporal speed and fuelLevel attributes (August 2020 data).
 fn vehicle_temporal_august(id: &str) -> Value {
@@ -386,10 +378,6 @@ fn vehicle_temporal_multi_attributes(id: &str) -> Value {
         "@context": [COMPOUND_CONTEXT]
     })
 }
-
-// ---------------------------------------------------------------------------
-// HTTP helpers
-// ---------------------------------------------------------------------------
 
 async fn create_temporal_entity(c: &Client, entity: &Value) -> StatusCode {
     let resp = c

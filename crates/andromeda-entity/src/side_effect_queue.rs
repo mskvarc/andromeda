@@ -30,12 +30,10 @@ pub struct LeasedSideEffect {
     ///
     /// Counts every attempt that ended without settling the job: one that
     /// failed and was released for a retry, and one that ended without a word
-    /// -- a crash, or a lease that lapsed before the replay could lock the job
-    /// -- which the claim that reclaimed the job counted.
+    /// (a crash, or a lease that lapsed before the replay could lock the job),
+    /// which the claim that reclaimed the job counted.
     ///
-    /// Decoded from `pending_side_effects.attempt_count`, an `INTEGER` column
-    /// (migration 0026), so this is `i32` to match its SQL width; the sibling
-    /// notification and temporal queues carry the same-width counter.
+    /// Decoded from `pending_side_effects.attempt_count`, an `INTEGER` column, so this is `i32` to match its SQL width.
     pub attempts: i32,
     /// The work to perform.
     pub job: BatchSideEffectJob,
@@ -65,8 +63,8 @@ pub enum DeadLetterAttempt {
     /// statement counted yet.
     Failed,
     /// The job is dead-lettered without a new attempt: every attempt it had was
-    /// already counted -- by the retries that released it and by the claims
-    /// that reclaimed its lapsed leases -- so the stored count is exact as it
+    /// already counted, by the retries that released it and by the claims
+    /// that reclaimed its lapsed leases, so the stored count is exact as it
     /// stands.
     AlreadyCounted,
 }
@@ -98,8 +96,8 @@ pub trait SideEffectQueue: Send + Sync + 'static {
     /// the attempt.
     ///
     /// Guarded by `owner` still being the job's claimant, not by its lease
-    /// still being live. A replay may outlive its lease -- its settlement locks
-    /// the job for as long as it runs -- and one that fails afterwards still
+    /// still being live. A replay may outlive its lease, its settlement locks
+    /// the job for as long as it runs, and one that fails afterwards still
     /// owes the job its diagnostic and its backoff. Every claim rewrites the
     /// claimant, so a job another worker reclaimed in the meantime is no longer
     /// `owner`'s and the release reports [`LeaseAcknowledgement::Lost`] rather

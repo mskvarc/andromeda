@@ -98,8 +98,7 @@ async fn snapshot_count(transaction: &mut Transaction<'_, Postgres>) -> Result<i
 /// The total on-disk size of every Snapshot branch schema.
 ///
 /// Each Snapshot's captured state lives in a `snap_%` schema, so one sum over
-/// those schemas' relations is the materialised byte footprint the quota bounds,
-/// replacing the per-branch-key accounting the row-tagged model needed. The
+/// those schemas' relations is the materialised byte footprint the quota bounds. The
 /// underscore in the `LIKE` pattern is escaped so it matches literally.
 ///
 /// The relations are summed by catalogue OID rather than by re-resolving a

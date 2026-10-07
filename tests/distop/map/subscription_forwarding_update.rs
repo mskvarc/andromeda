@@ -1,7 +1,7 @@
 //! Forwarding of subscription updates and deletes to supporting Context Sources,
 //! captured on in-process mocks (clause 5.8.5): reduced-copy updates, mapped-id
 //! targeting, no-longer-matching tear-down, and delete propagation to every
-//! supporting source. All `T-MOCK`, seeded `UNKNOWN`.
+//! supporting source. All `T-MOCK`.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -54,7 +54,7 @@ async fn subscription_over_source(
 }
 
 /// An updated subscription rebuilds a reduced-copy update on the source
-/// (clause 5.8.5). Confirms REQ-MAP-29.
+/// (clause 5.8.5).
 #[tokio::test]
 async fn sub_updated_supporting_source_builds_reduced_update() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -88,7 +88,7 @@ async fn sub_updated_supporting_source_builds_reduced_update() {
 /// explicitly set to true or, if not explicitly set, the default setting of the
 /// deployment allows split entities, the members q, geoQ and scopeQ shall be
 /// removed from the updated Subscription"). The member is set explicitly
-/// because the deployment default is complete entities. Confirms REQ-MAP-30.
+/// because the deployment default is complete entities.
 #[tokio::test]
 async fn sub_updated_split_forward_strips_q_geoq_scopeq() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -119,7 +119,7 @@ async fn sub_updated_split_forward_strips_q_geoq_scopeq() {
 }
 
 /// An updated forward strips the notification `attributes` projection
-/// (clause 5.8.5). Confirms REQ-MAP-31.
+/// (clause 5.8.5).
 #[tokio::test]
 async fn sub_updated_forward_strips_notification_attributes_pick_omit() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -155,8 +155,8 @@ async fn sub_updated_forward_strips_notification_attributes_pick_omit() {
 /// A member the local update deletes with an NGSI-LD Null is forwarded to the
 /// source's copy as a Null, so the source does not keep the stale value
 /// (clause 5.8.2.4 has the update followed by the copy, clause 5.5.8 makes the
-/// Null a deletion). This is the regression test for the forwarded deletion: the
-/// mock source stands in for a context source holding the reduced copy.
+/// Null a deletion). The mock source stands in for a context source holding the
+/// reduced copy.
 #[tokio::test]
 async fn sub_updated_forward_carries_a_deleted_member_as_null() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -199,7 +199,6 @@ async fn sub_updated_forward_carries_a_deleted_member_as_null() {
 }
 
 /// An updated forward targets the mapped CSR subscription id (clause 5.8.5).
-/// Confirms REQ-MAP-32.
 #[tokio::test]
 async fn sub_updated_forward_uses_mapped_subscription_id() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -230,7 +229,7 @@ async fn sub_updated_forward_uses_mapped_subscription_id() {
 
 /// A relevant-change-only forwarding policy is a permitted optimisation: the
 /// local update always succeeds, and any forwarding is observational
-/// (clause 5.8.5, MAY). Confirms REQ-MAP-33.
+/// (clause 5.8.5, MAY).
 #[tokio::test]
 async fn sub_updated_forward_only_on_relevant_change() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -255,8 +254,7 @@ async fn sub_updated_forward_only_on_relevant_change() {
 /// A no-longer-matching change forwards a delete via the mapped id (clause
 /// 5.8.1.4, "noLongerMatching" trigger). The fragment is `application/json`, so
 /// its context travels in the `Link` header and never inline (clause 6.3.5: an
-/// inline `@context` is only carried by `application/ld+json`). Confirms
-/// REQ-MAP-34.
+/// inline `@context` is only carried by `application/ld+json`).
 #[tokio::test]
 async fn sub_no_longer_matching_forwards_delete_via_mapped_id() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -288,7 +286,6 @@ async fn sub_no_longer_matching_forwards_delete_via_mapped_id() {
 }
 
 /// A local update propagates to the mapped CSR subscription (clause 5.8.5).
-/// Confirms REQ-MAP-50.
 #[tokio::test]
 async fn sub_update_propagates_to_mapped_csr_subscription() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -318,7 +315,7 @@ async fn sub_update_propagates_to_mapped_csr_subscription() {
 }
 
 /// Deleting a subscription forwards a delete to every supporting source
-/// (clause 5.8.5). Confirms REQ-MAP-55.
+/// (clause 5.8.5).
 #[tokio::test]
 async fn sub_delete_forwards_delete_to_each_supporting_source() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -379,7 +376,6 @@ async fn sub_delete_forwards_delete_to_each_supporting_source() {
 }
 
 /// A local delete propagates to the mapped CSR subscription (clause 5.8.5).
-/// Confirms REQ-MAP-56.
 #[tokio::test]
 async fn sub_delete_propagates_to_mapped_csr_subscription() {
     let topology = topology::single().await.expect("single-broker topology");

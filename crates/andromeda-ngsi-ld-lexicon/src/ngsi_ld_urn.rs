@@ -396,7 +396,7 @@ mod tests {
         assert!(matches!(past_limit.parse::<JsonLdContextId>(), Err(JsonLdContextIdParseError::TooLong(_))));
     }
 
-    /// A Hosted or Cached entry gets a random identifier (study section 7.2).
+    /// A Hosted or Cached entry gets a random identifier.
     #[test]
     fn a_minted_json_ld_context_identifier_carries_a_version_4_uuid() {
         let id = JsonLdContextId::mint().expect("a minted identifier");
@@ -407,7 +407,7 @@ mod tests {
     }
 
     /// Equal content derives an equal identifier, and the identifier carries a
-    /// version 5 UUID (study section 7.3).
+    /// version 5 UUID.
     #[test]
     fn equal_content_derives_an_equal_version_5_identifier() {
         let document = br#"{"@context":{"a":"https://e.org/a","b":"https://e.org/b"}}"#;

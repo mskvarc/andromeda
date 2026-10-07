@@ -33,10 +33,6 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 
-// ---------------------------------------------------------------------------
-// Query by IDs
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_query_by_ids_returns_matching_entities() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -58,10 +54,6 @@ async fn entity_query_by_ids_returns_matching_entities() {
     assert_eq!(arr.len(), 2);
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Query by type
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_query_by_type_returns_matching_entities() {
@@ -91,10 +83,6 @@ async fn entity_query_by_type_returns_matching_entities() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Query by id pattern
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_query_by_id_pattern_returns_matching_entities() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -116,10 +104,6 @@ async fn entity_query_by_id_pattern_returns_matching_entities() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Query by attrs
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_query_by_attrs_returns_matching_entities() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -140,10 +124,6 @@ async fn entity_query_by_attrs_returns_matching_entities() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Query with geoquery
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_query_by_geoquery_returns_matching_entities() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -162,10 +142,6 @@ async fn entity_query_by_geoquery_returns_matching_entities() {
     assert_eq!(arr.len(), 2);
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Scope queries
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_query_scope_full_returns_matching_entities() {
@@ -317,10 +293,6 @@ async fn entity_query_scope_or_returns_union() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// POST query
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_query_post_by_id_returns_matching_entity() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -469,10 +441,6 @@ async fn entity_query_post_two_ids_returns_both() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Invalid query params
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_query_invalid_ids_returns_bad_request() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -524,10 +492,6 @@ async fn entity_query_invalid_georel_returns_bad_request() {
     assert!(body["type"].as_str().unwrap().contains("BadRequestData"));
 }
 
-// ---------------------------------------------------------------------------
-// Simplified representation
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_query_key_values_returns_simplified() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -551,10 +515,6 @@ async fn entity_query_key_values_returns_simplified() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// GeoJSON query
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_query_geojson_returns_feature_collection() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -572,10 +532,6 @@ async fn entity_query_geojson_returns_feature_collection() {
     assert!(body["features"].as_array().is_some());
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Pagination
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_query_with_limit_returns_limited_results() {
@@ -597,10 +553,6 @@ async fn entity_query_with_limit_returns_limited_results() {
     assert_eq!(arr.len(), 2);
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Count header
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_query_count_returns_header() {
@@ -640,10 +592,6 @@ async fn entity_query_count_with_q_returns_filtered_count() {
     assert_eq!(count, Some("1".to_owned()));
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Entity Type Selection Language
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_query_type_selection_one_type() {
@@ -712,10 +660,6 @@ async fn entity_query_type_selection_or_operator() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Query with q parameter
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_query_q_name_equals_returns_matching() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -765,10 +709,6 @@ async fn entity_query_q_relationship_returns_matching() {
     assert_eq!(count, Some("1".to_owned()));
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Geoquery with Point
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_query_geo_equals_point_returns_matching() {
@@ -829,10 +769,6 @@ async fn entity_query_geo_within_polygon_returns_matching() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Geoquery with Polygon
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_query_geo_polygon_equals_returns_matching() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -850,10 +786,6 @@ async fn entity_query_geo_polygon_equals_returns_matching() {
     assert_eq!(count, Some("1".to_owned()));
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Dataset ID filter
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_query_dataset_attrs_only_returns_entity() {
@@ -941,10 +873,6 @@ async fn entity_query_dataset_default_instance_returns_entity() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// One-level linked entities in query
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_query_inline_linked_returns_nested_entities() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -1016,10 +944,6 @@ async fn entity_query_flat_linked_returns_flattened_entities() {
     assert!(arr.len() >= 4, "should contain 2 buildings + 2 cities");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Two-level linked entities in query
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_query_inline_two_level_returns_nested() {
@@ -1100,10 +1024,6 @@ async fn entity_query_flat_two_level_returns_all_entities() {
     assert!(arr.len() >= 6, "should contain buildings, cities, and countries");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Linked entities + sysAttrs
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_query_inline_linked_sys_attrs_returns_created_at() {

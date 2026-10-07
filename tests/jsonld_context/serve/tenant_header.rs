@@ -2,7 +2,7 @@
 //!
 //! The `NGSILD-Tenant` header is the only way a request names a tenant, Serve
 //! @context included: a request carrying the header reaches that tenant's
-//! document, a request without it reads the default tenant, and the former
+//! document, a request without it reads the default tenant, and the
 //! vendor tenant parameter is an undefined parameter (clause 6.3.20).
 
 use crate::{
@@ -53,7 +53,7 @@ async fn the_document_is_not_served_to_the_default_tenant() {
     tenant.finish().await;
 }
 
-/// Clause 6.3.20: the former vendor tenant parameter is undefined on every
+/// Clause 6.3.20: the vendor tenant parameter is undefined on every
 /// operation, Serve included, so it is `InvalidRequest` and changes nothing.
 #[tokio::test]
 async fn the_former_tenant_parameter_is_an_undefined_parameter() {

@@ -1,20 +1,8 @@
-//! What a Context Source Registration discovery returns of a registration it
-//! matched.
+//! What a Context Source Registration discovery returns of a registration it matched.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.10.2.5 recommends the narrow answer:
-//! implementations "should return filtered Context Source Registrations, which
-//! only contain context source registration information relevant for the
-//! query, in particular only matching `RegistrationInfo` elements". Clause
-//! 5.11.7 recommends the same of a Context Source Notification, in the same
-//! words. Andromeda adopts the recommendation on both paths: a discovery
-//! answers with only the `RegistrationInfo` elements the query matched, keeping
-//! parity with the Context Source Notification trim and with the distributed
-//! discovery conformance the suite exercises.
+//! ETSI GS CIM 009 v1.9.1 clause 5.10.2.5 recommends the narrow answer: implementations "should return filtered Context Source Registrations, which only contain context source registration information relevant for the query, in particular only matching `RegistrationInfo` elements". Clause 5.11.7 recommends the same of a Context Source Notification. A discovery therefore answers with only the `RegistrationInfo` elements the query matched.
 //!
-//! Clause 5.12 still decides which registrations are returned at all: one whose
-//! `information` matches on none of its elements is not in the answer.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Clause 5.12 still decides which registrations are returned at all: one whose `information` matches on none of its elements is not in the answer.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

@@ -49,7 +49,7 @@ pub const NGSI_LD_CORE_CONTEXT_V19: &str = include_str!("context/ngsi-ld-core-co
 ///
 /// No clause of ETSI GS CIM 009 v1.9.1 names this URL: clause 4.4 names only
 /// the versioned v1.9 one, which Andromeda emits ([`NGSI_LD_CORE_CONTEXT_URL`]).
-/// Clients and earlier releases still write the version-less spelling, so it is
+/// Clients commonly write the version-less spelling, so it is
 /// accepted as a non-normative alias of the core context and resolves to the
 /// v1.9 payload; it is never emitted.
 pub const NGSI_LD_CORE_CONTEXT_UNVERSIONED_URL: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld");
@@ -68,8 +68,7 @@ pub const NGSI_LD_CORE_CONTEXT_URL_LIST: [Iri<&'static str>; 8] = [
 
 /// Lookup table from core context URL to its embedded JSON payload.
 ///
-/// This is written once at initialization and only read afterwards, so a
-/// plain `HashMap` suffices (no concurrent-write support needed).
+/// The unversioned alias and the v1.9 URL both map to the v1.9 payload.
 pub const NGSI_LD_CORE_CONTEXT_MAP: [(Iri<&'static str>, &str); 8] = [
     (NGSI_LD_CORE_CONTEXT_V13_URL, NGSI_LD_CORE_CONTEXT_V13),
     (NGSI_LD_CORE_CONTEXT_V14_URL, NGSI_LD_CORE_CONTEXT_V14),
@@ -119,8 +118,8 @@ mod tests {
         assert!(!is_ngsi_ld_core_context_url(iri!("https://example.com/context.jsonld")));
     }
 
-    /// Annex B is normative — "the definition of the Core NGSI-LD @context
-    /// which shall be supported by implementations" — but its printed listing
+    /// Annex B is normative ("the definition of the Core NGSI-LD @context
+    /// which shall be supported by implementations"), but its printed listing
     /// is not self-consistent with the clauses it serves, so the served payload
     /// deviates from it in four places, each recorded here so a later reader
     /// finds the reasoning rather than an unexplained difference.

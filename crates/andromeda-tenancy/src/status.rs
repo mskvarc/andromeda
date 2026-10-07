@@ -4,12 +4,12 @@
 ///
 /// This is the write axis of tenant lifecycle control: an operator suspends a
 /// tenant to take it out of service and resumes it to bring it back. It is kept
-/// deliberately distinct from the computed wire [`TenantState`](crate::tenant_state::TenantState),
+/// deliberately distinct from the computed wire `TenantState`,
 /// which folds this administrative state together with runtime residency into the
 /// single read-only `status` a tenant resource exposes.
 ///
 /// Carries no persistence derive: how a store encodes a status is the store's
-/// business, and a `sqlx::Type` here is what used to make this enum unmovable.
+/// business, and a `sqlx::Type` here would tie this enum to one store crate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumIter)]
 #[strum(serialize_all = "lowercase")]
 pub enum TenantStatus {

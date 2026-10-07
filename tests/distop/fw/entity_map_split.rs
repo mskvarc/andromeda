@@ -1,7 +1,4 @@
-//! Split-entity assembly, remote filter forwarding, unitary map caching, and map
-//! expiry/location handling (ETSI GS CIM 009 v1.9.1, clauses 5.7.2, 5.14).
-//! Remote-filter and map rows on `T-MOCK`; split assembly and the unitary
-//! sequence on `T-SPLIT`/`T-CHAIN`.
+//! Split-entity assembly, remote filter forwarding, unitary map caching, and map expiry/location handling (ETSI GS CIM 009 v1.9.1, clauses 5.7.2, 5.14).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -27,9 +24,7 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
     body.as_array()?.iter().find(|entity| entity["id"].as_str() == Some(id))
 }
 
-/// With `splitEntities=false` the filter is forwarded to the source rather than
-/// evaluated only locally: the `q` survives on the forwarded request (clause
-/// 5.7.2). Confirms REQ-FW-53.
+/// With `splitEntities=false` the filter is forwarded to the source rather than evaluated only locally: the `q` survives on the forwarded request (clause 5.7.2).
 #[tokio::test]
 async fn distop_entity_map_no_split_param_forwards_filters_remotely() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -78,15 +73,7 @@ async fn distop_entity_map_no_split_param_forwards_filters_remotely() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A split entity is assembled from both sources before the local filter is
-/// applied: with speed on one source and a supplementary attribute on another,
-/// the assembled entity passes `q=speed>50` and carries both attributes. The
-/// query sets `splitEntities=true` explicitly, since clause 5.7.2.4 applies the
-/// assemble-then-filter path only "If the split entities flag is explicitly
-/// set to true or, if not explicitly set, the default setting of the deployment
-/// allows split entities" and the deployment default is complete entities,
-/// under which `q` is forwarded and the fuel-only source returns nothing.
-/// Confirms REQ-FW-54, REQ-FW-55.
+/// A split entity is assembled from both sources before the local filter is applied: with speed on one source and a supplementary attribute on another, the assembled entity passes `q=speed>50` and carries both attributes. The query sets `splitEntities=true` explicitly, since clause 5.7.2.4 applies the assemble-then-filter path only "If the split entities flag is explicitly set to true or, if not explicitly set, the default setting of the deployment allows split entities" and the deployment default is complete entities, under which `q` is forwarded and the fuel-only source returns nothing.
 #[tokio::test]
 async fn distop_entity_map_split_entities_assembled_before_filtering() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -154,8 +141,7 @@ async fn distop_entity_map_split_entities_assembled_before_filtering() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A unitary sequence over a chain creates and caches an entity map, returning
-/// its location (clause 5.7.2, 5.14). Confirms REQ-FW-71, REQ-FW-72.
+/// A unitary sequence over a chain creates and caches an entity map, returning its location (clause 5.7.2, 5.14).
 #[tokio::test]
 async fn distop_entity_map_unitary_sequence_creates_and_caches_map() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -194,8 +180,7 @@ async fn distop_entity_map_unitary_sequence_creates_and_caches_map() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A suggested `entityMapLifetime` is honoured in the created map's `expiresAt`
-/// (clause 5.14). Confirms REQ-FW-73.
+/// A suggested `entityMapLifetime` is honoured in the created map's `expiresAt` (clause 5.14).
 #[tokio::test]
 async fn distop_entity_map_suggested_expiry_honoured() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -244,8 +229,7 @@ async fn distop_entity_map_suggested_expiry_honoured() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A source that declines to return a map location does not cause an error: the
-/// broker proceeds and returns its own map (clause 5.7.2). Confirms REQ-FW-74.
+/// A source that declines to return a map location does not cause an error: the broker proceeds and returns its own map (clause 5.7.2).
 #[tokio::test]
 async fn distop_entity_map_source_may_decline_location() {
     let topology = topology::single().await.expect("single-broker topology");

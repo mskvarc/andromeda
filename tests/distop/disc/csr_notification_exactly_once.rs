@@ -1,10 +1,4 @@
-//! Each change of a matching registration is notified to a context source
-//! subscription once, and with the trigger reason what the subscriber was
-//! already told calls for (clauses 5.3.3 and 5.11.7), whichever broker sharing
-//! the tenant database evaluates it and however it overlaps the subscription's
-//! initial notification. A subscription update is notified once, with every
-//! registration it then matches (clause 5.11.3.4), however late the broker
-//! reaches the registration changes made before it.
+//! Each change of a matching registration is notified to a context source subscription once, and with the trigger reason what the subscriber was already told calls for (clauses 5.3.3 and 5.11.7), whichever broker sharing the tenant database evaluates it and however it overlaps the subscription's initial notification. A subscription update is notified once, with every registration it then matches (clause 5.11.3.4), however late the broker reaches the registration changes made before it.
 
 use crate::{
     disc::{
@@ -31,25 +25,16 @@ const PRESENT: Duration = Duration::from_secs(10);
 /// How long an unexpected notification is waited for.
 const ABSENT: Duration = Duration::from_secs(4);
 
-/// How many subscription and registration pairs race at once, so the broker
-/// evaluates some creations while initial notifications are still pending.
+/// How many subscription and registration pairs race at once, so the broker evaluates some creations while initial notifications are still pending.
 const RACING_PAIRS: usize = 24;
 
-/// The subscription's `throttling`, in seconds: long enough that a
-/// registration created right after a notification is certainly held back.
+/// The subscription's `throttling`, in seconds: long enough that a registration created right after a notification is certainly held back.
 const THROTTLING_SECONDS: u64 = 10;
 
-/// How long after a notification was received the next change is made so the
-/// throttling no longer holds it back: the throttling and a one-second margin.
-/// The notification's slot was claimed before it was sent, so the margin is
-/// measured from a later instant than the slot.
+/// How long after a notification was received the next change is made so the throttling no longer holds it back: the throttling and a one-second margin. The notification's slot was claimed before it was sent, so the margin is measured from a later instant than the slot.
 const THROTTLE_CLEARANCE: Duration = Duration::from_secs(THROTTLING_SECONDS + 1);
 
-/// A registration created the moment its subscription is acknowledged is
-/// reported once, as `newlyMatching`, whether the subscription's initial
-/// notification or the registration's creation carries it; its next update is
-/// then `updated` (clause 5.3.3). Many pairs race at once so the broker is
-/// still working through initial notifications when the creations arrive.
+/// A registration created the moment its subscription is acknowledged is reported once, as `newlyMatching`, whether the subscription's initial notification or the registration's creation carries it; its next update is then `updated` (clause 5.3.3). Many pairs race at once so the broker is still working through initial notifications when the creations arrive.
 #[tokio::test]
 async fn csr_notification_a_registration_created_right_after_its_subscription_is_reported_once() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -124,10 +109,7 @@ fn notified_registrations(notification: &Value) -> Vec<&str> {
         .collect()
 }
 
-/// One subscription that first selects a type no registration has, two
-/// registrations of two other types, and the update that makes the
-/// subscription select exactly those two types: the sequence of ETSI
-/// `047_16_03`.
+/// One subscription that first selects a type no registration has, two registrations of two other types, and the update that makes the subscription select exactly those two types: in that order.
 struct UpdatedSelection {
     /// The subscription.
     subscription_id: String,
@@ -164,9 +146,7 @@ impl UpdatedSelection {
         registrations
     }
 
-    /// Create the subscription on the front broker, the two registrations on
-    /// `registrar`, and update the subscription on the front broker the moment
-    /// the second registration is acknowledged.
+    /// Create the subscription on the front broker, the two registrations on `registrar`, and update the subscription on the front broker the moment the second registration is acknowledged.
     async fn run(&self, topology: &MultiBrokerTopology<BrokerRole>, registrar: BrokerRole, endpoint: &str) {
         csr_subscription::create_and_assert(
             topology,
@@ -192,9 +172,7 @@ impl UpdatedSelection {
     }
 }
 
-/// Run every selection of `selections` at once, then require each
-/// subscription's one notification to carry both of its registrations and no
-/// second notification to follow.
+/// Run every selection of `selections` at once, then require each subscription's one notification to carry both of its registrations and no second notification to follow.
 async fn assert_each_update_is_notified_once_with_both_registrations(
     topology: &MultiBrokerTopology<BrokerRole>,
     adapter: &NotificationAdapter,
@@ -228,15 +206,7 @@ async fn assert_each_update_is_notified_once_with_both_registrations(
     }
 }
 
-/// Clauses 5.11.2.4 and 5.11.3.4: two registrations created while a
-/// subscription selected neither are no change of a matching registration,
-/// so their creations notify nothing; the update that makes the subscription
-/// select both is notified once, with both. Many selections race at once so
-/// the broker reaches the registration creations, and the subscription's own
-/// creation, only after the update has committed: evaluated against the
-/// subscription as it stands by then, a creation reports its registration
-/// alone ahead of the update, and the creation of the subscription reports
-/// both a second time.
+/// Clauses 5.11.2.4 and 5.11.3.4: two registrations created while a subscription selected neither are no change of a matching registration, so their creations notify nothing; the update that makes the subscription select both is notified once, with both. Many selections race at once so the broker reaches the registration creations, and the subscription's own creation, only after the update has committed: evaluated against the subscription as it stands by then, a creation reports its registration alone ahead of the update, and the creation of the subscription reports both a second time.
 #[tokio::test]
 async fn csr_notification_an_update_selecting_registrations_created_before_it_is_notified_once_with_both() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -247,11 +217,7 @@ async fn csr_notification_an_update_selecting_registrations_created_before_it_is
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The same sequence with the registrations created on the replica and the
-/// subscription created and updated on the front broker: the replica learns of
-/// the update only through the tenant database, so it is the order the writes
-/// committed in, recorded there, that keeps it from reporting a registration
-/// the subscription did not select when the registration was created.
+/// The same sequence with the registrations created on the replica and the subscription created and updated on the front broker: the replica learns of the update only through the tenant database, so it is the order the writes committed in, recorded there, that keeps it from reporting a registration the subscription did not select when the registration was created.
 #[tokio::test]
 async fn csr_notification_a_replica_does_not_report_a_registration_created_before_the_update_that_selected_it() {
     let topology = topology::replica_pair().await.expect("replica-pair topology");
@@ -262,24 +228,11 @@ async fn csr_notification_a_replica_does_not_report_a_registration_created_befor
     topology.finish().await.expect("topology cleanup");
 }
 
-/// What a subscriber was told is recorded in the tenant database, shared by
-/// every broker, and a registration change is notified against that record
-/// (clause 5.3.3: `newlyMatching` for a registration the subscriber has not
-/// been told of, `updated` for one "that was part of a previous
-/// notification").
+/// What a subscriber was told is recorded in the tenant database, shared by every broker, and a registration change is notified against that record (clause 5.3.3: `newlyMatching` for a registration the subscriber has not been told of, `updated` for one "that was part of a previous notification").
 ///
-/// A subscription created on the front broker throttles its notifications. The
-/// replica reports a first registration as `newlyMatching`; a second, created
-/// on the replica at once, is held back by the throttling, so the subscriber
-/// never hears of it. Once the throttling has passed, the front broker updates
-/// the second registration -- which it must report as `newlyMatching`, since
-/// the subscriber was never told of it -- and then the first, which it must
-/// report as `updated`, since the replica told the subscriber of it.
+/// A subscription created on the front broker throttles its notifications. The replica reports a first registration as `newlyMatching`; a second, created on the replica at once, is held back by the throttling, so the subscriber never hears of it. Once the throttling has passed, the front broker updates the second registration -- which it must report as `newlyMatching`, since the subscriber was never told of it -- and then the first, which it must report as `updated`, since the replica told the subscriber of it.
 ///
-/// Deciding the reason from the registration's state before and after the
-/// change reports the second update as `updated`; a record kept by each broker
-/// for itself reports the first as `newlyMatching`. Only a record shared
-/// through the tenant database reports both correctly.
+/// Deciding the reason from the registration's state before and after the change reports the second update as `updated`; a record kept by each broker for itself reports the first as `newlyMatching`. Only a record shared through the tenant database reports both correctly.
 #[tokio::test]
 async fn csr_notification_the_front_broker_reports_registration_updates_against_what_the_replica_notified() {
     let topology = topology::replica_pair().await.expect("replica-pair topology");

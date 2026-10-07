@@ -130,7 +130,6 @@ async fn copy_staged_batches_commit_atomically_across_concurrent_tenants() {
         "every concurrent batch must commit: {outcomes:?}"
     );
 
-    // A sampled entity from each tenant is readable with its exact value.
     for tenant in &tenants {
         let id = urlencoding::encode(&format!("urn:ngsi-ld:Device:atomic:{tenant}:499")).into_owned();
         let response = client
@@ -150,8 +149,6 @@ async fn copy_staged_batches_commit_atomically_across_concurrent_tenants() {
         );
     }
 
-    // No staging relation from `CREATE TEMP TABLE ... ON COMMIT DROP` is visible
-    // in any tenant database after the transactions committed.
     for database in tenant_databases(&pool).await {
         let url = endpoints::database_url().replace("/postgres", &format!("/{database}"));
         if let Ok(tenant_pool) = PgPool::connect(&url).await {
@@ -241,7 +238,6 @@ async fn snapshot_branch_clone_and_promote_run_through_the_pooler_under_load() {
         .await
         .expect("every tenant is provisioned");
 
-    // Background load on sixteen tenants while snapshots run on four.
     let picker = tenant_load::UniformPicker::new(load_tenants.len(), 42);
     let load = tenant_load::run_bounded(16, Duration::from_secs(20), |_| {
         let client = &client;
@@ -370,7 +366,6 @@ async fn durable_notifications_are_delivered_exactly_per_change_through_the_pool
         let _ = join_all(writes).await;
     }
 
-    // Drain notifications for up to 30s and count the deliveries.
     let mut delivered = 0;
     while server.next_request(Duration::from_secs(5)).await.is_ok() {
         delivered += 1;
@@ -451,7 +446,6 @@ async fn a_tenant_created_at_runtime_is_routed_with_no_pooler_reload() {
     let replica = endpoints::broker_replica();
     let tenant = tenant_load::tenant_names("pgbroute", 1).remove(0);
 
-    // Create through the primary, read immediately through both replicas.
     let create = tenant_load::create_entity(
         &client,
         &broker,
@@ -477,7 +471,6 @@ async fn a_tenant_created_at_runtime_is_routed_with_no_pooler_reload() {
         );
     }
 
-    // The console lists the tenant database as an auto-registered database.
     let console = PoolerConsole::new(endpoints::pgbouncer_admin_url());
     let listed = console
         .show_pools()
@@ -501,8 +494,6 @@ async fn maintenance_holds_its_session_lock_on_a_direct_connection_while_request
         .expect("every tenant is provisioned");
 
     let before = maintenance_decisions(&client, &broker).await;
-    // Drive some writes to give maintenance something to decide on, then wait a
-    // couple of responsive-profile cadences.
     for tenant in &tenants {
         let _ = upsert_batch(&client, &broker, tenant, 100).await;
     }
@@ -541,7 +532,6 @@ async fn concurrent_writes_to_one_entity_serialise_correctly_on_two_backends() {
         .await
         .expect("every tenant is provisioned");
 
-    // Thirty-two concurrent PATCHes to the one provisioned entity.
     let entity_id = format!("urn:ngsi-ld:Device:provision:{tenant}");
     let encoded = urlencoding::encode(&entity_id).into_owned();
     let patches = (0..32).map(|value| {
@@ -563,7 +553,6 @@ async fn concurrent_writes_to_one_entity_serialise_correctly_on_two_backends() {
     let outcomes = join_all(patches).await;
     let failed: Vec<&RequestOutcome> = outcomes.iter().filter(|outcome| outcome.status().is_none_or(|status| status >= 500)).collect();
 
-    // Final state is consistent and readable.
     let final_read = RequestOutcome::of(
         client
             .get(format!("{broker}entities/{encoded}"))

@@ -17,8 +17,7 @@ use sqlx::{PgConnection, PgPool, Row};
 pub(crate) struct MapControlRecord {
     /// The map's expiry.
     pub(crate) expires_at: DateTime<Utc>,
-    /// The stored `<operation>:<sha256 hex>` fingerprint of the creating
-    /// request, absent on maps created before it was recorded.
+    /// The stored `<operation>:<sha256 hex>` fingerprint of the creating request, when one was recorded.
     pub(crate) request_fingerprint: Option<String>,
 }
 

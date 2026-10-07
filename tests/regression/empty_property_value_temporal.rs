@@ -7,8 +7,6 @@
 //! observation it is (clauses 5.6.11, 5.6.12, 4.5.7 and 4.5.9), a notification
 //! carries it as the current value (clause 5.8.6), and `q` reads it as clause
 //! 4.9 reads any array: the attribute exists, and no operand is included in it.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

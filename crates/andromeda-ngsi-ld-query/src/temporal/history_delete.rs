@@ -1,5 +1,5 @@
 //! The compiled scope of a temporal history delete-by-query (an Andromeda
-//! extension; see `docs/extensions/temporal-delete-by-query.md`).
+//! extension).
 //!
 //! This is the neutral input a store lowers to a windowed `DELETE` over the
 //! attribute-history relation. It is deliberately separate from

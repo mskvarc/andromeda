@@ -5,9 +5,7 @@
 //! member already implies, and collapses an attribute that carries nothing but
 //! a type and a value down to the value alone, both only where the result reads
 //! back as the attribute that was written, by the reading of
-//! [`andromeda_ngsi_ld_representation::concise_reading`]. The typed walk of
-//! [`crate::entity_body`] states where an instance stands through
-//! [`InstanceStanding`].
+//! [`andromeda_ngsi_ld_representation::concise_reading`].
 
 /// Where an attribute instance stands in the member it is written in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

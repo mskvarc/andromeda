@@ -1,7 +1,7 @@
 //! The pinned official ETSI NGSI-LD test-suite checkout: cloning it once into
 //! `target/` and resetting it to the exact commit the matrix was recorded against.
-//! The broker URL and core @context are no longer rewritten here at runtime; the
-//! infra patch set (`suite-delta/infra`) bakes them into the checkout instead.
+//! The broker URL and core @context are not rewritten at runtime; the infra
+//! patch set bakes them into the checkout.
 
 use crate::{error::XtaskError, etsi};
 use iri_rs::{Iri, iri};
@@ -9,7 +9,7 @@ use std::{fs, path::Path, process::Command};
 
 /// Upstream origin of the official ETSI NGSI-LD test suite.
 const SUITE_ORIGIN: Iri<&str> = iri!("https://forge.etsi.org/rep/cim/ngsi-ld-test-suite.git");
-/// The commit the test-case matrix in `docs/official-ngsi-ld-tests.md` is recorded
+/// The commit the test-case matrix is recorded
 /// against; every corrected-material patch is authored to apply at this revision.
 pub(crate) const PINNED_COMMIT: &str = "48d5ff4e5c6f83527d64d0960703a25939521308";
 

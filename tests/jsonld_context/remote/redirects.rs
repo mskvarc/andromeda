@@ -32,7 +32,7 @@ async fn redirecting_origin() -> (ContextOrigin, String) {
     (origin, moved)
 }
 
-/// Study F7: the relative reference in a redirected document resolves against
+/// The relative reference in a redirected document resolves against
 /// the final URL, and the download is recorded under the requested URL.
 #[tokio::test]
 async fn a_relative_context_in_a_redirected_document_resolves_against_the_final_url() {

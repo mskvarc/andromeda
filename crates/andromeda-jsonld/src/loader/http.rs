@@ -14,9 +14,8 @@
 //! states none.
 //!
 //! A reference to one of the tenant's own stored `@context`s is resolved from
-//! storage first (`loader::own_context`), and which resolutions count
-//! toward clause 5.13.3.5's `numberOfHits` is decided beside the pipeline
-//! (`loader::access_accounting`).
+//! storage first, and which resolutions count toward clause 5.13.3.5's
+//! `numberOfHits` is decided beside the pipeline.
 
 use crate::{
     context_cache::{ContextCache, DownloadedContext},
@@ -534,10 +533,9 @@ mod tests {
 
     #[tokio::test]
     async fn an_l2_cache_hit_loads_without_a_spurious_invalid_context_error() {
-        // A stored payload is converted straight through `from_serde_json`; the
-        // old `to_string`/`parse_str` round trip fell back to an empty string on
-        // a (serde-impossible) failure and then reported an unrelated "invalid
-        // context" error. Even with remote fetching denied, an L2 hit resolves.
+        // A stored payload converts straight to the processor's form, so an L2
+        // hit resolves even with remote fetching denied and reports no
+        // "invalid context" error.
         let l2 = Arc::new(FixedL2 {
             payload: literal(&json!({ "@context": { "name": "https://example.com/name" } })),
             residual: ResidualLifetime::Bounded(CacheLifetime::from_seconds(30).expect("thirty seconds is a positive lifetime")),

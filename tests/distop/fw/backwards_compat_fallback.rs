@@ -1,8 +1,4 @@
-//! The clause 4.3.6.8 fallback tables applied to a forwarded write payload bound
-//! for an older source: entity- and attribute-level removals (Table 4.3.6.8-1),
-//! property sub-attribute removals (Table 4.3.6.8-2), and relationship
-//! sub-attribute removals (Table 4.3.6.8-3). All `T-MOCK`; `UNKNOWN` status,
-//! each classifying on first run.
+//! The clause 4.3.6.8 fallback tables applied to a forwarded write payload bound for an older source: entity- and attribute-level removals (Table 4.3.6.8-1), property sub-attribute removals (Table 4.3.6.8-2), and relationship sub-attribute removals (Table 4.3.6.8-3).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -27,9 +23,7 @@ const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 /// conformance version of its source.
 const CONFORMANCE_KEY: &str = "ngsildConformance";
 
-/// Provision an entity through an inclusive registration declaring an older
-/// source conformance version and return the exact payload forwarded to the
-/// source, so a downgrade transform can be asserted.
+/// Provision an entity through an inclusive registration declaring an older source conformance version and return the exact payload forwarded to the source, so a downgrade transform can be asserted.
 async fn forwarded_downgrade_body(name: &str, conformance: &str, make_entity: impl FnOnce(&str) -> Value) -> Value {
     let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
@@ -74,8 +68,7 @@ async fn forwarded_downgrade_body(name: &str, conformance: &str, make_entity: im
     forwarded_body
 }
 
-/// An attribute-level `expiresAt` is removed for an older source (Table
-/// 4.3.6.8-1). Confirms REQ-FW-59.
+/// An attribute-level `expiresAt` is removed for an older source (Table 4.3.6.8-1).
 #[tokio::test]
 async fn distop_entity_bc_attr_fallback_expires_at_removed() {
     let forwarded = forwarded_downgrade_body("bc-attr-expiresat", "1.0", |id| {
@@ -94,7 +87,6 @@ async fn distop_entity_bc_attr_fallback_expires_at_removed() {
 }
 
 /// An entity-level `scope` is removed for an older source (Table 4.3.6.8-1).
-/// Confirms REQ-FW-59.
 #[tokio::test]
 async fn distop_entity_bc_attr_fallback_scope_removed() {
     let forwarded = forwarded_downgrade_body("bc-attr-scope", "1.0", |id| {
@@ -106,8 +98,7 @@ async fn distop_entity_bc_attr_fallback_scope_removed() {
     assert!(forwarded.get("scope").is_none(), "the entity-level scope is removed: {forwarded}");
 }
 
-/// A `LanguageProperty` is downgraded to a `Property` for an older source (Table
-/// 4.3.6.8-1). Confirms REQ-FW-59.
+/// A `LanguageProperty` is downgraded to a `Property` for an older source (Table 4.3.6.8-1).
 #[tokio::test]
 async fn distop_entity_bc_attr_fallback_language_property_downgraded_to_property() {
     let forwarded = forwarded_downgrade_body("bc-attr-language", "1.0", |id| {
@@ -127,7 +118,6 @@ async fn distop_entity_bc_attr_fallback_language_property_downgraded_to_property
 }
 
 /// A `JsonProperty` is downgraded for an older source (Table 4.3.6.8-1).
-/// Confirms REQ-FW-59.
 #[tokio::test]
 async fn distop_entity_bc_attr_fallback_json_property() {
     let forwarded = forwarded_downgrade_body("bc-attr-json", "1.0", |id| {
@@ -143,7 +133,6 @@ async fn distop_entity_bc_attr_fallback_json_property() {
 }
 
 /// A `VocabProperty` is downgraded for an older source (Table 4.3.6.8-1).
-/// Confirms REQ-FW-59.
 #[tokio::test]
 async fn distop_entity_bc_attr_fallback_vocab_property() {
     let forwarded = forwarded_downgrade_body("bc-attr-vocab", "1.0", |id| {
@@ -159,7 +148,6 @@ async fn distop_entity_bc_attr_fallback_vocab_property() {
 }
 
 /// A `ListProperty` is downgraded for an older source (Table 4.3.6.8-1).
-/// Confirms REQ-FW-59.
 #[tokio::test]
 async fn distop_entity_bc_attr_fallback_list_property() {
     let forwarded = forwarded_downgrade_body("bc-attr-listprop", "1.0", |id| {
@@ -174,8 +162,7 @@ async fn distop_entity_bc_attr_fallback_list_property() {
     );
 }
 
-/// A `ListRelationship` is downgraded to a `Relationship` for an older source
-/// (Table 4.3.6.8-1). Confirms REQ-FW-59.
+/// A `ListRelationship` is downgraded to a `Relationship` for an older source (Table 4.3.6.8-1).
 #[tokio::test]
 async fn distop_entity_bc_attr_fallback_list_relationship_downgraded_to_relationship() {
     let forwarded = forwarded_downgrade_body("bc-attr-listrel", "1.0", |id| {
@@ -197,8 +184,7 @@ async fn distop_entity_bc_attr_fallback_list_relationship_downgraded_to_relation
     );
 }
 
-/// A multi-valued `type` is reduced to its first value for a v1.0 source (note
-/// 1). Confirms REQ-FW-60.
+/// A multi-valued `type` is reduced to its first value for a v1.0 source (note 1).
 #[tokio::test]
 async fn distop_entity_bc_v1_0_multivalued_type_reduced_to_first() {
     let forwarded = forwarded_downgrade_body("bc-multitype", "1.0", |id| {
@@ -215,8 +201,7 @@ async fn distop_entity_bc_v1_0_multivalued_type_reduced_to_first() {
     );
 }
 
-/// A multi-instance attribute is reduced to its default instance for a v1.0
-/// source (notes 2-3). Confirms REQ-FW-61.
+/// A multi-instance attribute is reduced to its default instance for a v1.0 source (notes 2-3).
 #[tokio::test]
 async fn distop_entity_bc_v1_0_multi_instance_attr_reduced_to_default() {
     let forwarded = forwarded_downgrade_body("bc-multiinstance", "1.0", |id| {
@@ -240,8 +225,7 @@ async fn distop_entity_bc_v1_0_multi_instance_attr_reduced_to_default() {
     );
 }
 
-/// A property's `datasetId` sub-attribute is removed for an older source (Table
-/// 4.3.6.8-2). Confirms REQ-FW-62.
+/// A property's `datasetId` sub-attribute is removed for an older source (Table 4.3.6.8-2).
 #[tokio::test]
 async fn distop_entity_bc_property_sub_attr_dataset_id_removed() {
     let forwarded = forwarded_downgrade_body("bc-prop-datasetid", "1.0", |id| {
@@ -259,8 +243,7 @@ async fn distop_entity_bc_property_sub_attr_dataset_id_removed() {
     );
 }
 
-/// A property's `expiresAt` sub-attribute is removed for an older source (Table
-/// 4.3.6.8-2). Confirms REQ-FW-62.
+/// A property's `expiresAt` sub-attribute is removed for an older source (Table 4.3.6.8-2).
 #[tokio::test]
 async fn distop_entity_bc_property_sub_attr_expires_at_removed() {
     let forwarded = forwarded_downgrade_body("bc-prop-expiresat", "1.0", |id| {
@@ -278,8 +261,7 @@ async fn distop_entity_bc_property_sub_attr_expires_at_removed() {
     );
 }
 
-/// A property's `observedAt` sub-attribute is removed for an older source (Table
-/// 4.3.6.8-2). Confirms REQ-FW-62.
+/// A property's `observedAt` sub-attribute is removed for an older source (Table 4.3.6.8-2).
 #[tokio::test]
 async fn distop_entity_bc_property_sub_attr_observed_at_removed() {
     let forwarded = forwarded_downgrade_body("bc-prop-observedat", "1.0", |id| {
@@ -297,8 +279,7 @@ async fn distop_entity_bc_property_sub_attr_observed_at_removed() {
     );
 }
 
-/// A property's `unitCode` sub-attribute is removed for an older source (Table
-/// 4.3.6.8-2). Confirms REQ-FW-62.
+/// A property's `unitCode` sub-attribute is removed for an older source (Table 4.3.6.8-2).
 #[tokio::test]
 async fn distop_entity_bc_property_sub_attr_unit_code_removed() {
     let forwarded = forwarded_downgrade_body("bc-prop-unitcode", "1.0", |id| {
@@ -312,8 +293,7 @@ async fn distop_entity_bc_property_sub_attr_unit_code_removed() {
     );
 }
 
-/// A property's `valueType` sub-attribute is removed for an older source (Table
-/// 4.3.6.8-2). Confirms REQ-FW-62.
+/// A property's `valueType` sub-attribute is removed for an older source (Table 4.3.6.8-2).
 #[tokio::test]
 async fn distop_entity_bc_property_sub_attr_value_type_removed() {
     let forwarded = forwarded_downgrade_body("bc-prop-valuetype", "1.0", |id| {
@@ -334,8 +314,7 @@ async fn distop_entity_bc_property_sub_attr_value_type_removed() {
     );
 }
 
-/// A relationship's `datasetId` sub-attribute is removed for an older source
-/// (Table 4.3.6.8-3). Confirms REQ-FW-63.
+/// A relationship's `datasetId` sub-attribute is removed for an older source (Table 4.3.6.8-3).
 #[tokio::test]
 async fn distop_entity_bc_relationship_sub_attr_dataset_id_removed() {
     let forwarded = forwarded_downgrade_body("bc-rel-datasetid", "1.0", |id| {
@@ -356,8 +335,7 @@ async fn distop_entity_bc_relationship_sub_attr_dataset_id_removed() {
     );
 }
 
-/// A relationship's `expiresAt` sub-attribute is removed for an older source
-/// (Table 4.3.6.8-3). Confirms REQ-FW-63.
+/// A relationship's `expiresAt` sub-attribute is removed for an older source (Table 4.3.6.8-3).
 #[tokio::test]
 async fn distop_entity_bc_relationship_sub_attr_expires_at_removed() {
     let forwarded = forwarded_downgrade_body("bc-rel-expiresat", "1.0", |id| {
@@ -378,8 +356,7 @@ async fn distop_entity_bc_relationship_sub_attr_expires_at_removed() {
     );
 }
 
-/// A relationship's `objectType` sub-attribute is removed for an older source
-/// (Table 4.3.6.8-3). Confirms REQ-FW-63.
+/// A relationship's `objectType` sub-attribute is removed for an older source (Table 4.3.6.8-3).
 #[tokio::test]
 async fn distop_entity_bc_relationship_sub_attr_object_type_removed() {
     let forwarded = forwarded_downgrade_body("bc-rel-objecttype", "1.0", |id| {
@@ -400,8 +377,7 @@ async fn distop_entity_bc_relationship_sub_attr_object_type_removed() {
     );
 }
 
-/// A relationship's `observedAt` sub-attribute is removed for an older source
-/// (Table 4.3.6.8-3). Confirms REQ-FW-63.
+/// A relationship's `observedAt` sub-attribute is removed for an older source (Table 4.3.6.8-3).
 #[tokio::test]
 async fn distop_entity_bc_relationship_sub_attr_observed_at_removed() {
     let forwarded = forwarded_downgrade_body("bc-rel-observedat", "1.0", |id| {
@@ -422,10 +398,7 @@ async fn distop_entity_bc_relationship_sub_attr_observed_at_removed() {
     );
 }
 
-/// A Subscription is no Entity data: forwarded to a 1.0 source, the reduced
-/// copy keeps its own `expiresAt` and every `entities` selector (Tables
-/// 4.3.6.8-x describe Entity data alone). The request names its `@context` in
-/// the body, as clause 6.3.5 requires of an `application/ld+json` body.
+/// A Subscription is no Entity data: forwarded to a 1.0 source, the reduced copy keeps its own `expiresAt` and every `entities` selector (Tables 4.3.6.8-x describe Entity data alone). The request names its `@context` in the body, as clause 6.3.5 requires of an `application/ld+json` body.
 #[tokio::test]
 async fn a_forwarded_subscription_keeps_its_expiry() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -467,8 +440,7 @@ async fn a_forwarded_subscription_keeps_its_expiry() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A partial attribute update forwarded to a 1.0 source loses the members that
-/// version does not define on the attribute (Tables 4.3.6.8-2 and -3).
+/// A partial attribute update forwarded to a 1.0 source loses the members that version does not define on the attribute (Tables 4.3.6.8-2 and -3).
 #[tokio::test]
 async fn a_forwarded_attribute_patch_is_amended() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -497,9 +469,7 @@ async fn a_forwarded_attribute_patch_is_amended() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A temporal write is no set of datasets: forwarded to a 1.0 source, an
-/// attribute keeps every instance and the `observedAt` that places it in time
-/// (clause 4.5.7).
+/// A temporal write is no set of datasets: forwarded to a 1.0 source, an attribute keeps every instance and the `observedAt` that places it in time (clause 4.5.7).
 #[tokio::test]
 async fn a_forwarded_temporal_write_keeps_its_instances() {
     let topology = topology::single().await.expect("single-broker topology");

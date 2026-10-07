@@ -1,5 +1,4 @@
-//! Temporal history delete-by-query (an Andromeda extension; see
-//! `docs/extensions/temporal-delete-by-query.md`).
+//! Temporal history delete-by-query (an Andromeda extension).
 //!
 //! The operation resolves the entities its selection and window match with the
 //! ordinary temporal query machinery, then removes the history instances the

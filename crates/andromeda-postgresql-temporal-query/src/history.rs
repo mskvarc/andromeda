@@ -1,7 +1,7 @@
 //! Stage 2 of a temporal query: attribute history for one entity, optionally
 //! narrowed to one clause 6.3.10 page of instances per attribute.
 //!
-//! The statement reads the rebuilt hypertable through the temporal catalogue
+//! The statement reads the hypertable through the temporal catalogue
 //! alone - `attribute_history` to `temporal_attribute_streams` to
 //! `temporal_entities` - so an entity whose current state was deleted (clause
 //! 5.6.6) still answers with its evolution. Every row carries its own
@@ -378,7 +378,7 @@ mod tests {
 
     /// Clause 5.6.6 leaves the evolution standing when the current entity is
     /// deleted, so stage 2 reaches the entity grain through the temporal
-    /// catalogue and names neither `entities` nor the retired one.
+    /// catalogue and not through the current-state tables.
     #[test]
     fn history_reaches_the_entity_through_the_temporal_catalogue() {
         let sql = sql_of(&minimal_compiled());

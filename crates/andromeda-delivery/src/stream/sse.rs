@@ -9,8 +9,8 @@ pub struct SseNotificationEvent {
     /// The notification identifier, used as the SSE `id:` field so a client
     /// reconnecting with `Last-Event-ID` names something meaningful.
     ///
-    /// An NGSI-LD identifier — the notification's own `id`, or the subscription
-    /// id when the payload carries none — so it is a [`Identifier`], not free text.
+    /// The notification's own `id`, an NGSI-LD identifier, so it is an
+    /// [`Identifier`] and not free text.
     pub event_id: Identifier,
     /// The serialised notification, used as the SSE `data:` field.
     pub data: String,

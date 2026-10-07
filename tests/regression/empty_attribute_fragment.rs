@@ -9,10 +9,7 @@
 //! with `BadRequestData` (clause 5.5.2), a Fragment declaring no family being
 //! read as a Property (clause 4.5.2). Clause 5.6.4.4 only patches the members
 //! the Fragment names (clause 5.5.8, an IETF RFC 7396 merge patch under clause
-//! 5.4), so the same `{}` there stays the 204 no-op recorded in
-//! `docs/empty-fragment-writes.md`.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! 5.4), so the same `{}` there stays the 204 no-op.
 
 use andromeda_test_client::{response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::context::CORE_CONTEXT;

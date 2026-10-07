@@ -253,9 +253,7 @@ fn write_scalar(buf: &mut String, scalar: &Scalar) {
 ///
 /// Clause 4.9 makes `RegExp` its own terminal rather than a `quotedStr`, and
 /// [`crate::filter::operand::parse_pattern_string`] reads the body verbatim, so
-/// escaping it here would change the pattern: `^\w+$` came back as `^\\w+$`, a
-/// literal backslash followed by `w`s, and a stored Subscription selected
-/// nothing after its first reload. The verbatim body is always safe to quote
+/// escaping it here would change the pattern: `^\w+$` would become `^\\w+$`, a literal backslash followed by `w`s. The verbatim body is always safe to quote
 /// again: the lexer ends a quoted token only at a `"` no backslash escapes, so
 /// every `"` the body holds is still escaped, and a body ending in an odd run of
 /// backslashes is no regular expression either engine compiles.
@@ -358,11 +356,7 @@ mod tests {
         }
     }
 
-    /// Clause 4.9's `QueryTermAssoc` is the only way to override the default
-    /// precedence, so a group the client wrote has to come back as a group. A
-    /// stored subscription is re-serialised whenever it is read back or
-    /// updated, and this used to drop the parentheses: `(a|b);c` became
-    /// `a|b;c`, which is `a|(b;c)`.
+    /// Clause 4.9's `QueryTermAssoc` is the only way to override the default precedence, so a group the client wrote has to come back as a group: `(a|b);c` must not become `a|b;c`, which is `a|(b;c)`. A stored subscription is re-serialised whenever it is read back or updated.
     #[test]
     fn an_explicit_group_survives_the_round_trip() {
         let shapes = [
@@ -458,7 +452,6 @@ mod tests {
 
     #[test]
     fn serialize_expanded_iri() {
-        // After expansion, attrs become full IRIs with dots
         let expr = Expr::Pred(Predicate::Ordering {
             path: QueryPath::Local(AttrPath::simple("https://example.com/speed".parse().expect("valid attribute name"))),
             op: OrderingOp::Greater,
@@ -467,7 +460,6 @@ mod tests {
         let s = serialize(&expr);
         // The IRI must be quoted because it contains a dot
         pretty_assertions::assert_eq!(s, "\"https://example.com/speed\">50");
-        // And it should parse back
         let parsed = parse(&s).unwrap();
         match parsed {
             Expr::Pred(Predicate::Ordering { path, .. }) => {

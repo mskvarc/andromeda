@@ -1,19 +1,6 @@
-//! Two replicas over one database budget, serve and delete large entities
-//! alike.
+//! Two replicas over one database budget, serve and delete large entities alike.
 //!
-//! Several broker replicas sharing one database are a supported deployment,
-//! and a load balancer sends any request to any of them. Each replica budgets
-//! what it admits from its own configuration, which the replicas of one
-//! deployment share, so both refuse an oversized geometry alike (clause 6.3.2),
-//! and an entity one replica wrote is read and deleted whole by the other. A
-//! deletion reads the state it removes only when a subscription may be owed its
-//! notification; the replica serving it asks the shared database whether one
-//! may, so a subscription another replica created is notified (clause 5.8.6).
-//!
-//! The second replica is the base tier's `broker-trusted`, which serves the
-//! same database as `broker`.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Several broker replicas sharing one database are a supported deployment, and a load balancer sends any request to any of them. Each replica budgets what it admits from its own configuration, which the replicas of one deployment share, so both refuse an oversized geometry alike (clause 6.3.2), and an entity one replica wrote is read and deleted whole by the other. A deletion reads the state it removes only when a subscription may be owed its notification; the replica serving it asks the shared database whether one may, so a subscription another replica created is notified (clause 5.8.6). The second replica is the base tier's `broker-trusted`, which serves the same database as `broker`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -120,9 +107,7 @@ async fn regression_a_n12_a_deletion_on_one_replica_notifies_with_the_removed_st
     let first = scope.client();
     let second = second_replica(&scope);
     let entity_type = "Probe";
-    // The tenant comes into being through the first replica, before the second
-    // has served it, so the second loads its subscriptions only after the
-    // subscription below exists.
+    // The tenant comes into being through the first replica before the second has served it, so the second loads its subscriptions only after the subscription below exists.
     create_small(first, &scope.id("Probe:tenant"), entity_type).await;
     let subscription = scope.id("Subscription:a-n12-replica-deletion");
     let failing = scope.id("Subscription:a-n12-replica-deletion-active");

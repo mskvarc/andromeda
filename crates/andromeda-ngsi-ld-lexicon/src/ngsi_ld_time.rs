@@ -163,9 +163,9 @@ mod tests {
     /// Clause 4.6.3, `Time`: "The string shall not contain expressions of the
     /// difference between local time and UTC. All representations shall be
     /// interpreted as being expressed in UTC." A numeric offset is exactly such
-    /// an expression, so it is refused rather than resolved -- the broker
-    /// previously accepted `13:00:00+01:00` and stored it as `12:00:00Z`, which
-    /// let a spelling the clause forbids round-trip as a valid value.
+    /// an expression, so `13:00:00+01:00` is refused rather than resolved to
+    /// `12:00:00Z`, which would let a forbidden spelling round-trip as a valid
+    /// value.
     #[test]
     fn a_numeric_offset_is_refused_rather_than_resolved() {
         for value in ["13:00:00+01:00", "23:30:00-05:00", "12:00:00+00:00"] {

@@ -86,7 +86,7 @@ fn compile_equality_on_projection(
         // rather than `NOT (any member matches)`: only one value column of a row
         // is ever populated, so the other columns' comparisons are NULL, and
         // negating the whole disjunction turns that NULL into a non-match for
-        // every entity — which made `attr!="a","b"` select nothing at all.
+        // every entity.
         CompareValue::ValueList(values) => match membership {
             SetMembership::Within => values.iter().fold(Condition::any(), |cond, value| {
                 cond.add(equality_condition(target, value, SetMembership::Within, scan))
@@ -115,8 +115,8 @@ fn compile_equality_on_projection(
 /// the Query Term value are different, then they shall be considered unequal."
 /// A row whose value sits in another typed column makes every comparison
 /// unknown, and only a total negation reads that as the datatype difference it
-/// is — `temp!="20"` over a numeric Property matched nothing while the clause
-/// requires it to match. Its inner disjunction is the whole `equal` condition,
+/// is: `temp!="20"` over a numeric Property matches, as the clause requires.
+/// Its inner disjunction is the whole `equal` condition,
 /// so the two operators cannot drift apart.
 ///
 /// With a target language the typed columns are left out entirely. A

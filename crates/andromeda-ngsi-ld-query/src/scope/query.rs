@@ -249,7 +249,7 @@ impl TryFrom<String> for ScopeQuery {
 // Clause 4.19's grammar is `OrScopeQ = "(" ScopeQ *(andOp ScopeQ) ")" / ScopeQ`:
 // a conjunction is legal *only* parenthesised, with no unparenthesised form. So
 // an alternative of two or more requirements is wrapped — a bare `/A;/B` is text
-// outside the grammar that a conforming peer broker rejects — while a
+// outside the grammar that a conforming parser rejects — while a
 // single-requirement alternative, and the top-level `,` between alternatives,
 // stand unparenthesised.
 impl fmt::Display for ScopeQuery {

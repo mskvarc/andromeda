@@ -1,5 +1,5 @@
 //! Group-key projection for the `aggrGroupBy` temporal aggregation grouping
-//! extension (study §4).
+//! extension.
 //!
 //! Clause 4.5.19 fixes the aggregation key at `(attribute, datasetId, period)`.
 //! The extension partitions each of those groups further, by one or more
@@ -44,7 +44,7 @@ use andromeda_postgresql_seaquery::{
 use sea_query::{Alias, DynIden, Expr, ExprTrait, Func, JoinType, Order, Query, SelectStatement, SimpleExpr};
 
 /// Which facets an `aggrGroupBy` promotes to group keys, for the mixed-group
-/// guard — computed from the grouping alone so the SQL builder and the reader
+/// guard, computed from the grouping alone so the SQL builder and the reader
 /// agree without one depending on the other.
 #[must_use]
 pub fn promoted_facets(grouping: &AggregationGrouping) -> PromotedGroupFacets {
@@ -170,7 +170,7 @@ fn add_group_key(select: &mut SelectStatement, expr: SimpleExpr) {
 ///
 /// Correlates on the aggregated entity's streams: the instance of the key
 /// attribute whose axis value is the greatest one not after the aggregated
-/// row's axis value (clause 4.8; the "in effect at t" rule, study §4.4). A
+/// row's axis value (clause 4.8; the "in effect at t" rule). A
 /// tombstone (`value_kind = 0`) carries no value, so it is excluded.
 fn project_value_in_effect(select: &mut SelectStatement, index: usize, attribute_iri: &str, axis: AttributeHistory, schema: Option<&DynIden>) {
     let history = value_key_history_alias(index);

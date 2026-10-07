@@ -12,7 +12,7 @@ use serde_json::value::{RawValue, to_raw_value};
 
 /// What one attribute-history row records.
 ///
-/// The rebuilt history table constrains a row so that its `value_kind` and the
+/// The history table constrains a row so that its `value_kind` and the
 /// typed column actually holding the value agree, and this enumeration is the
 /// Rust half of that constraint: a row cannot be built that declares one shape
 /// and populates another, so no reader has to guess which column to believe.
@@ -24,27 +24,27 @@ use serde_json::value::{RawValue, to_raw_value};
 /// is indistinguishable from a client that genuinely sent that string.
 #[derive(Clone, Debug)]
 pub enum AttributeHistoryValue {
-    /// The row ends the attribute instance at the given instant.
+    /// Ends the attribute instance at `deleted_at`.
     Tombstone {
-        /// The instant the deletion took effect.
+        /// Instant the deletion took effect.
         deleted_at: DateTime<Utc>,
     },
-    /// An arbitrary-precision number.
+    /// Arbitrary-precision number.
     Number(JsonNumber),
     /// A string that is not an `xsd:dateTime`.
     String(String),
-    /// A boolean.
+    /// Boolean.
     Boolean(bool),
     /// A geometry, its positions stored in the broker's single geodetic
     /// reference system and its `bbox` and foreign members (IETF RFC 7946
     /// sections 5 and 6.1) as the JSON their own column stores them as.
     Geometry {
-        /// The positions.
+        /// Positions.
         form: GeometryForm,
-        /// The stored JSON of the members, when the geometry has any.
+        /// Stored JSON of the `bbox` and foreign members, when present.
         members: Option<Box<RawValue>>,
     },
-    /// A structured value, as the JSON the structured column stores it as.
+    /// Structured value, as the JSON the structured column stores.
     Object(Box<RawValue>),
     /// A point in time, already truncated to the broker's microsecond resolution.
     DateTime(DateTime<Utc>),
@@ -80,7 +80,7 @@ impl AttributeHistoryValue {
         })
     }
 
-    /// The code the row records for this value's shape.
+    /// Code the row records for this value's shape.
     #[must_use]
     pub const fn kind(&self) -> ValueKind {
         match self {
@@ -95,7 +95,7 @@ impl AttributeHistoryValue {
         }
     }
 
-    /// The instant this row records a deletion at, when it records one.
+    /// Instant a tombstone records its deletion at.
     #[must_use]
     pub const fn deleted_at(&self) -> Option<DateTime<Utc>> {
         match self {
@@ -110,7 +110,7 @@ impl AttributeHistoryValue {
         }
     }
 
-    /// The `NUMERIC` literal for the numeric column, when this row populates it.
+    /// `NUMERIC` literal for the numeric column.
     ///
     /// The column is arbitrary-precision, so the value is handed over as its
     /// decimal text rather than as a double: a JSON integer beyond the range the
@@ -132,7 +132,7 @@ impl AttributeHistoryValue {
         }
     }
 
-    /// Borrows the exact numeric value for an ordinary `SQLx` `NUMERIC` bind.
+    /// Exact numeric value for a `NUMERIC` bind.
     #[must_use]
     pub const fn number(&self) -> Option<&BigDecimal> {
         match self {
@@ -147,7 +147,7 @@ impl AttributeHistoryValue {
         }
     }
 
-    /// The string column's content, when this row populates it.
+    /// String column content.
     #[must_use]
     pub fn string(&self) -> Option<&str> {
         match self {
@@ -162,7 +162,7 @@ impl AttributeHistoryValue {
         }
     }
 
-    /// The boolean column's content, when this row populates it.
+    /// Boolean column content.
     #[must_use]
     pub const fn boolean(&self) -> Option<bool> {
         match self {
@@ -177,7 +177,7 @@ impl AttributeHistoryValue {
         }
     }
 
-    /// The geometry column's content, when this row populates it.
+    /// Geometry column content.
     #[must_use]
     pub const fn geometry(&self) -> Option<&GeometryForm> {
         match self {
@@ -192,7 +192,7 @@ impl AttributeHistoryValue {
         }
     }
 
-    /// The geometry-members column's content, when this row populates it.
+    /// Geometry-members column content.
     #[must_use]
     pub fn geometry_members(&self) -> Option<&RawValue> {
         match self {
@@ -207,7 +207,7 @@ impl AttributeHistoryValue {
         }
     }
 
-    /// The structured column's content, when this row populates it.
+    /// Structured column content.
     #[must_use]
     pub fn object(&self) -> Option<&RawValue> {
         match self {
@@ -222,7 +222,7 @@ impl AttributeHistoryValue {
         }
     }
 
-    /// The timestamp column's content, when this row populates it.
+    /// Timestamp column content.
     #[must_use]
     pub const fn date_time(&self) -> Option<DateTime<Utc>> {
         match self {
@@ -237,7 +237,7 @@ impl AttributeHistoryValue {
         }
     }
 
-    /// The URI column's content, when this row populates it.
+    /// URI column content.
     #[must_use]
     pub const fn uri(&self) -> Option<&Uri> {
         match self {
@@ -278,8 +278,7 @@ mod tests {
 
     #[test]
     fn an_integer_beyond_the_exact_double_range_reaches_the_numeric_column_unchanged() {
-        // One above 2^53, which the double format cannot name individually and
-        // the previous `DOUBLE PRECISION` column therefore refused outright.
+        // One above 2^53, which the double format cannot name individually.
         let value = AttributeHistoryValue::Number(JsonNumber::from(9_007_199_254_740_993_i64));
         pretty_assertions::assert_eq!(value.numeric_literal().as_deref(), Some("9007199254740993"));
     }

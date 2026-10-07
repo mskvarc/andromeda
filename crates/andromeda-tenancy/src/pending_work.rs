@@ -23,7 +23,7 @@ pub enum PendingWork {
     None,
     /// The earliest instant at which some obligation becomes due.
     ///
-    /// May be in the past -- already overdue, so the tenant is woken now -- or
+    /// May be in the past (already overdue, so the tenant is woken now) or
     /// in the future, in which case the wake schedule records it and the tenant
     /// is left dormant until then.
     DueAt(SystemTime),

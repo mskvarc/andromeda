@@ -9,8 +9,8 @@
 //! own business, and two things follow from the order:
 //!
 //! - a representation this broker refuses is never handed to a Context Source;
-//! - an operation whose local part is left with nothing to do -- every
-//!   attribute claimed by an exclusive or redirect registration -- has still
+//! - an operation whose local part is left with nothing to do, every
+//!   attribute claimed by an exclusive or redirect registration, has still
 //!   run the validation, so it cannot answer 201 or 204 to a payload clause
 //!   5.5.4 refuses.
 //!
@@ -23,11 +23,11 @@
 //! [`EntityService::admit_attribute_write`] and
 //! `EntityService::admit_batch_write`, which expand the payload the way the
 //! write path stores it and hand back what they expanded; the write paths
-//! accept only such an admitted payload (see `crate::admitted_write`), so no
+//! accept only such an admitted payload, so no
 //! write stores a payload the screening did not read. What a client wrote
-//! before expansion -- the attribute types of clause 5.2.4, the seals of
+//! before expansion, the attribute types of clause 5.2.4, the seals of
 //! clause 4.5.2.2 and the `@context` clause 5.5.7 admits only at the
-//! document's top level -- is decided on the compact payload, which is the
+//! document's top level, is decided on the compact payload, which is the
 //! transport layer's own half of the same admission.
 //!
 //! Every admission takes the request's `@context` as an [`AdmittedContext`]:
@@ -158,7 +158,7 @@ impl BatchWrite {
     /// Clause 5.6.8.4 is the one that splits: its update mode runs "the
     /// behaviour defined by clause 5.6.2 [...] limited to a local operation",
     /// and clause 5.6.2.4 supports NGSI-LD Nulls, while its replace mode
-    /// replaces the Entity "completely" -- the clause 5.6.18 whose clause
+    /// replaces the Entity "completely", the clause 5.6.18 whose clause
     /// 5.6.18.4 states that Nulls are not supported. The update mode's
     /// admission covers only the Entity that exists: one it finds absent is
     /// created by clause 5.6.1, which supports no Null, and is refused when its

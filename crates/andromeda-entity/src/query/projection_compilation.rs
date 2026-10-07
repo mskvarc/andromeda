@@ -4,8 +4,8 @@
 //!
 //! An entity query expands its projection as part of compiling the whole
 //! [`CompiledEntityQuery`], and reads it back off that cached compilation. The
-//! clause 5.6.3 single-entity retrieval compiles no query at all — it looks an
-//! identifier up — yet still carries `pick` and `omit`, so it needs the
+//! clause 5.6.3 single-entity retrieval compiles no query at all, it looks an
+//! identifier up, yet still carries `pick` and `omit`, so it needs the
 //! projection on its own. The expansion itself is shared:
 //! [`expand_projection_terms`] is what compiling a query calls too, so the two
 //! bindings cannot expand the same terms differently.
@@ -26,7 +26,7 @@ impl EntityQueryService {
     /// Expand a request's `pick` and `omit` terms against the active context.
     ///
     /// Returns `None` when the request named neither, which is what tells the
-    /// read path there is nothing to narrow — distinct from a projection whose
+    /// read path there is nothing to narrow, distinct from a projection whose
     /// term lists happen to be empty.
     ///
     /// # Errors

@@ -232,8 +232,7 @@ mod tests {
     #[test]
     fn a_prefix_multi_level_wildcard_matches_its_anchor_or_any_descendant() {
         // Clause 4.19 Example 2: `/A/#` matches the anchor `/A` itself as well
-        // as every path below it. An earlier reading required at least one
-        // further level, so it wrongly rejected `/A`.
+        // as every path below it.
         let pattern = ScopePattern::parse("/A/#").expect("valid pattern");
         assert!(pattern.matches(&path("/A")));
         assert!(pattern.matches(&path("/A/B")));

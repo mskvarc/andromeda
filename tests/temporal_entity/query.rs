@@ -40,10 +40,6 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 
-// ---------------------------------------------------------------------------
-// Query with temporal constraints
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_query_after_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -114,10 +110,6 @@ async fn temporal_query_between_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Query specific attributes
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_query_attrs_speed_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -142,14 +134,9 @@ async fn temporal_query_attrs_speed_success() {
     let arr = body.as_array().expect("response should be array");
     for entity in arr {
         assert!(entity.get("speed").is_some(), "speed should be present");
-        // fuelLevel should not be present when filtering by attrs=speed
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Query with lastN
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_query_last_n_success() {
@@ -173,7 +160,6 @@ async fn temporal_query_last_n_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    // Each entity should have at most lastN instances per attribute
     for entity in arr {
         if let Some(speed_arr) = entity.get("speed").and_then(|v| v.as_array()) {
             assert!(speed_arr.len() <= 4, "speed should have at most 4 instances with lastN=4");
@@ -181,10 +167,6 @@ async fn temporal_query_last_n_success() {
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Query with context
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_query_with_context_success() {
@@ -205,10 +187,6 @@ async fn temporal_query_with_context_success() {
     assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Query by type
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_query_by_type_bus_success() {
@@ -233,10 +211,6 @@ async fn temporal_query_by_type_bus_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Query by entity ID
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_query_by_id_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -258,10 +232,6 @@ async fn temporal_query_by_id_success() {
     assert_eq!(arr[0]["id"], va);
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Query by idPattern
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_query_by_id_pattern_success() {
@@ -290,10 +260,6 @@ async fn temporal_query_by_id_pattern_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Query with q filter
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_query_q_filter_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -306,7 +272,6 @@ async fn temporal_query_q_filter_success() {
     assert_eq!(create_temporal_entity(&c, &entity_a).await, StatusCode::CREATED);
     assert_eq!(create_temporal_entity(&c, &entity_b).await, StatusCode::CREATED);
 
-    // Query for entities where speed > 90
     let (status, body, _) = query_temporal_entities(
         &c,
         &scope,
@@ -363,10 +328,6 @@ async fn temporal_query_q_language_strings_read_the_instances() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Geo-query
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_query_geo_near_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -422,14 +383,9 @@ async fn temporal_query_geo_within_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    // Should return entities within the polygon
     assert!(arr.is_empty() || arr.iter().all(|e| e["type"] == "Vehicle"));
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Query with limit
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_query_limit_2_success() {
@@ -483,10 +439,6 @@ async fn temporal_query_limit_3_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Invalid request
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_query_missing_type_returns_400() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -497,10 +449,6 @@ async fn temporal_query_missing_type_returns_400() {
     assert!(body["type"].as_str().unwrap_or("").contains("BadRequestData"));
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// POST entityOperations/query
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_query_post_after_success() {
@@ -619,15 +567,10 @@ async fn temporal_query_post_multiple_types_success() {
 
     let arr = body.as_array().expect("response should be array");
     assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
-    // Should include both Vehicle and Bus types
     let types: Vec<_> = arr.iter().filter_map(|e| e.get("type").and_then(|t| t.as_str())).collect();
     assert!(types.contains(&"Vehicle") || types.contains(&"Bus"));
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Simplified temporal representation (temporalValues)
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_query_temporal_values_after_success() {
@@ -650,7 +593,6 @@ async fn temporal_query_temporal_values_after_success() {
 
     let arr = body.as_array().expect("response should be array");
     for entity in arr {
-        // In temporalValues format, attributes have a "values" array
         if let Some(speed) = entity.get("speed") {
             assert!(speed.get("values").is_some(), "speed should have values array in temporalValues format");
         }
@@ -705,10 +647,6 @@ async fn temporal_query_temporal_values_between_success() {
     assert!(!arr.is_empty(), "the temporal query must return at least one matching entity");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Pagination
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_query_pagination_last_n_before_returns_206_with_content_range() {
@@ -813,10 +751,6 @@ async fn temporal_query_pagination_temporal_values_after_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// POST query pagination
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_query_post_pagination_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -842,10 +776,6 @@ async fn temporal_query_post_pagination_success() {
     assert_eq!(unit, "DateTime", "clause 6.3.10: the range unit shall be equal to \"DateTime\"");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Aggregated values
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_query_aggregated_avg_pt1h_success() {
@@ -938,10 +868,6 @@ async fn temporal_query_aggregated_min_max_p1d_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Filter by datasetId
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_query_attrs_speed_with_multi_instances_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -985,7 +911,6 @@ async fn temporal_query_dataset_common_success() {
     assert_eq!(status, StatusCode::OK);
 
     let arr = body.as_array().expect("response should be array");
-    // Should filter to instances with datasetId=urn:ngsi-ld:Dataset:Common
     assert!(!arr.is_empty() || arr.is_empty()); // May be empty if no match
     scope.finish().await.expect("cleanup failed");
 }
@@ -1017,7 +942,7 @@ async fn temporal_query_dataset_default_instance_success() {
 /// step (S8) then removes `speed`, which carries no `fuel` instance: "Remove all
 /// Attributes without remaining Attribute instances". S8 removes Attributes,
 /// never the Entity, so the Vehicle answers with its `id` and `type` alone.
-/// ETSI `021_18_07` expects an empty array, which the clause does not allow.
+/// An empty array is not an answer the clause allows.
 #[tokio::test]
 async fn temporal_query_dataset_no_match_keeps_the_entity_without_attributes() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -1042,10 +967,6 @@ async fn temporal_query_dataset_no_match_keeps_the_entity_without_attributes() {
     assert!(arr[0].get("speed").is_none(), "speed has no fuel instance: {body}");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Format/options params
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_query_format_temporal_values_success() {
@@ -1098,16 +1019,11 @@ async fn temporal_query_format_takes_precedence_over_options_success() {
     let arr = body.as_array().expect("response should be array");
     for entity in arr {
         if let Some(speed) = entity.get("speed") {
-            // format takes precedence, so should have values array not aggregated
             assert!(speed.get("values").is_some());
         }
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Faulty format/options
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_query_invalid_format_returns_400() {

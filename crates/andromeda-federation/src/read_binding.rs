@@ -100,9 +100,7 @@ mod tests {
             read_binding_for(ReadIntent::Query, &registration(&["redirectionOps"])),
             Some(ReadBinding::Query)
         );
-        // federationOps advertises both, and a GET query prefers queryEntity.
         assert_eq!(read_binding_for(ReadIntent::Query, &registration(&["federationOps"])), Some(ReadBinding::Query));
-        // retrieveEntity alone cannot serve a general query.
         assert_eq!(read_binding_for(ReadIntent::Query, &registration(&["retrieveEntity"])), None);
         assert_eq!(read_binding_for(ReadIntent::Query, &registration(&["updateOps"])), None);
     }
@@ -112,7 +110,6 @@ mod tests {
     /// registration does not advertise `queryBatch` (e.g. redirectionOps).
     #[test]
     fn a_post_query_prefers_batch_then_query() {
-        // federationOps advertises both; a POST query prefers queryBatch.
         assert_eq!(
             read_binding_for(ReadIntent::QueryBatch, &registration(&["federationOps"])),
             Some(ReadBinding::BatchQuery)

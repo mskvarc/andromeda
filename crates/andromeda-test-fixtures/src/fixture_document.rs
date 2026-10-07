@@ -60,12 +60,10 @@ impl FixtureDocument {
     pub fn load(path: PathBuf) -> Result<FixtureDocument, FixtureError> {
         let cache = fixture_cache();
         if let Some(value) = cache.get(&path) {
-            // Each test must own its document because pointer replacement mutates it.
             return Ok(FixtureDocument { value: value.clone() }); // clone: each test receives an independently mutable cached document.
         }
         let bytes = fs::read(&path).map_err(|source| FixtureError::Read { path: path.clone(), source })?; // clone: an error owns the path while the success path still inserts it into the cache.
         let document = FixtureDocument::parse(&bytes)?;
-        // The cache and returned document need independent ownership across parallel tests.
         cache.insert(path, document.value.clone()); // clone: the cache and returned document need independent ownership.
         Ok(document)
     }

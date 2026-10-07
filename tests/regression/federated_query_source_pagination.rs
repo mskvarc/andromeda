@@ -4,12 +4,10 @@
 //! the local entities merged "with the locally queried result according to the
 //! algorithm defined in clause 4.5.5", paginated "as mandated by clause 5.5.9",
 //! and clause 4.3.6.7 asks the broker to "initially make a broad request to each
-//! registered Context Source" so that pagination is consistent. The broker sent
-//! each source one `limit=1000` request and never followed the source's
-//! `Link rel="next"` (clauses 5.5.9.1 and 6.3.10), so the merged collection, its
-//! `NGSILD-Results-Count` and every hub page past the first thousand entities
-//! stopped at 1,000: a live GTFS-RT feed with 3,040 vehicles on the source
-//! answered 1,000 through the hub, and offsets 1,000 and 2,000 answered nothing.
+//! registered Context Source" so that pagination is consistent. The broker follows
+//! the source's `Link rel="next"` (clauses 5.5.9.1 and 6.3.10), so the merged
+//! collection, its `NGSILD-Results-Count` and every hub page past the first
+//! thousand entities do not stop at 1,000.
 //!
 //! Every scenario registers a mock Context Source serving 2,500 entities in
 //! pages of 1,000 linked by `next`, beside entities the hub holds itself --
@@ -21,10 +19,7 @@
 //!
 //! The per-request ceiling (`federation.max_query_entities`, answered with
 //! `403 TooManyResults` under clause 4.12) is a broker-wide setting the shared
-//! test broker runs with its default of 10,000, so it is covered by the unit
-//! tests of `andromeda-federation`'s source walk rather than here.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! test broker runs with its default of 10,000, so it is not exercised here.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

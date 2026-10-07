@@ -6,7 +6,7 @@ use std::borrow::Cow;
 /// The ledger the platform migration set is recorded in.
 pub const PLATFORM_LEDGER: &str = "_andromeda_platform_migrations";
 
-/// The platform migrations, exactly as `migrations/platform/` holds them.
+/// The platform migrations, exactly as embedded in the binary.
 static PLATFORM_MIGRATIONS: Migrator = sqlx::migrate!("../../migrations/platform");
 
 /// The platform migrations, in version order.

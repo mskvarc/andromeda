@@ -1,7 +1,7 @@
 //! Registration update lifecycle (clause 5.9.3): a valid fragment merges and
 //! returns 204, the `id` is immutable, a malformed target or fragment is
 //! rejected, an unknown target is a 404, and shorthand names expand under the
-//! request context. All `T-LOCAL`, all `IMPL`.
+//! request context. All `T-LOCAL`.
 
 use crate::{
     oracle::{assert_problem_details, assert_status, json_body},
@@ -36,7 +36,7 @@ async fn create_baseline(topology: &MultiBrokerTopology<BrokerRole>, id: &str) {
 }
 
 /// A valid update fragment returns 204 and merges into the stored registration
-/// (clauses 5.9.3, 5.5.8). Confirms REQ-REG-66, REQ-REG-77, REQ-REG-78.
+/// (clauses 5.9.3, 5.5.8).
 #[tokio::test]
 async fn update_valid_fragment_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -72,8 +72,7 @@ async fn update_valid_fragment_returns_204() {
 }
 
 /// An update fragment cannot change the registration `id`: the original id keeps
-/// resolving and the proposed id is never created (clause 5.9.3). Confirms
-/// REQ-REG-7.
+/// resolving and the proposed id is never created (clause 5.9.3).
 #[tokio::test]
 async fn update_cannot_change_id() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -112,7 +111,7 @@ async fn update_cannot_change_id() {
 }
 
 /// An update against a syntactically invalid target id is rejected (clause
-/// 5.9.3). Confirms REQ-REG-67.
+/// 5.9.3).
 #[tokio::test]
 async fn update_invalid_target_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -131,7 +130,7 @@ async fn update_invalid_target_id_returns_400() {
 }
 
 /// An update against a well-formed but unknown registration id is a 404 (clause
-/// 5.9.3). Confirms REQ-REG-69.
+/// 5.9.3).
 #[tokio::test]
 async fn update_unknown_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -151,7 +150,7 @@ async fn update_unknown_registration_returns_404() {
 }
 
 /// An update fragment with a `contextSourceInfo` `accept` that violates 4.3.6.6
-/// is rejected (clause 5.9.3). Confirms REQ-REG-68.
+/// is rejected (clause 5.9.3).
 #[tokio::test]
 async fn update_bad_contextsourceinfo_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -173,7 +172,7 @@ async fn update_bad_contextsourceinfo_returns_400() {
 }
 
 /// An `application/ld+json` update whose `@context` is not a valid JSON-LD context
-/// is rejected (clauses 5.9.3, 5.5.4). Confirms REQ-REG-70.
+/// is rejected (clauses 5.9.3, 5.5.4).
 #[tokio::test]
 async fn update_invalid_jsonld_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -198,7 +197,7 @@ async fn update_invalid_jsonld_returns_400() {
 }
 
 /// An update fragment that violates a 5.2.9 constraint is rejected (clause
-/// 5.9.3). Confirms REQ-REG-71.
+/// 5.9.3).
 #[tokio::test]
 async fn update_fragment_violates_529_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -220,7 +219,7 @@ async fn update_fragment_violates_529_returns_400() {
 }
 
 /// Shorthand names in an update fragment are expanded through the request context
-/// and stored as IRIs (clauses 5.9.3, 5.5.7). Confirms REQ-REG-72.
+/// and stored as IRIs (clauses 5.9.3, 5.5.7).
 #[tokio::test]
 async fn update_shorthand_names_expanded() {
     let topology = topology::single().await.expect("single-broker topology");

@@ -92,8 +92,6 @@ async fn create(client: &TestClient, entity: &Value) {
     assert_eq!(response.status, StatusCode::CREATED);
 }
 
-// --- NGSILD-Response-Format ---
-
 #[tokio::test]
 async fn extension_headers_response_format_keyvalues_via_header_produces_simplified_output() {
     let scope = TestEnvironment::from_suite("extension").await.expect("isolated test environment");
@@ -149,8 +147,6 @@ async fn extension_headers_response_format_normalized_without_header_returns_ful
     scope.finish().await.expect("cleanup failed");
 }
 
-// --- NGSILD-Dataset-Id ---
-
 #[tokio::test]
 async fn extension_headers_dataset_id_via_header_matches_query_param_result() {
     let scope = TestEnvironment::from_suite("extension").await.expect("isolated test environment");
@@ -192,8 +188,6 @@ async fn extension_headers_dataset_id_query_param_overrides_header() {
     assert_eq!(query_only, both, "datasetId query param must take precedence over NGSILD-Dataset-Id header");
     scope.finish().await.expect("cleanup failed");
 }
-
-// --- NGSILD-Join / NGSILD-JoinLevel ---
 
 #[tokio::test]
 async fn extension_headers_join_via_header_includes_linked_entities_in_flat_response() {
@@ -289,8 +283,6 @@ async fn extension_headers_join_level_header_limits_traversal_depth() {
     assert!(ids_2.contains(&leaf_id.as_str()), "NGSILD-JoinLevel: 2 must traverse two hops and include leaf");
     scope.finish().await.expect("cleanup failed");
 }
-
-// --- NGSILD-Scope ---
 
 #[tokio::test]
 async fn extension_headers_scope_via_header_filters_entities_by_scope_path() {

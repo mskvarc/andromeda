@@ -1,6 +1,4 @@
-//! Notification content selection: status gating, periodic vs change-driven
-//! assembly, filter and dataset restriction, and multi-instance geoproperty
-//! matching (clause 5.8.6). All `T-LOCAL` against a live receiver.
+//! Notification content selection: status gating, periodic vs change-driven assembly, filter and dataset restriction, and multi-instance geoproperty matching (clause 5.8.6).
 
 use crate::{
     entity::{property, typed_vehicle},
@@ -53,7 +51,6 @@ async fn create_vehicle(client: &TestClient, entity_type: &str, id: &str, speed:
 }
 
 /// A paused subscription sends nothing on a matching change (clause 5.8.6).
-/// Confirms REQ-MAP-58.
 #[tokio::test]
 async fn notif_only_sent_when_status_active() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -86,7 +83,6 @@ async fn notif_only_sent_when_status_active() {
 }
 
 /// A periodic subscription notifies without any change (clause 5.8.6).
-/// Confirms REQ-MAP-59.
 #[tokio::test]
 async fn notif_time_interval_periodic_regardless_of_change() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -121,7 +117,6 @@ async fn notif_time_interval_periodic_regardless_of_change() {
 }
 
 /// A periodic notification includes only filter-matching entities (clause 5.8.6).
-/// Confirms REQ-MAP-60.
 #[tokio::test]
 async fn notif_periodic_includes_only_filter_matching_entities() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -149,8 +144,7 @@ async fn notif_periodic_includes_only_filter_matching_entities() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A periodic notification with no filters includes all subscribed entities
-/// (clause 5.8.6). Confirms REQ-MAP-61.
+/// A periodic notification with no filters includes all subscribed entities (clause 5.8.6).
 #[tokio::test]
 async fn notif_periodic_no_filters_includes_all_subscribed() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -181,8 +175,7 @@ async fn notif_periodic_no_filters_includes_all_subscribed() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A periodic notification includes only the subscription's `datasetId`
-/// instances (clause 5.8.6). Confirms REQ-MAP-62.
+/// A periodic notification includes only the subscription's `datasetId` instances (clause 5.8.6).
 #[tokio::test]
 async fn notif_periodic_includes_only_subscription_dataset_id_instances() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -233,7 +226,6 @@ async fn notif_periodic_includes_only_subscription_dataset_id_instances() {
 }
 
 /// A periodic subscription with zero matches sends nothing (clause 5.8.6).
-/// Confirms REQ-MAP-63.
 #[tokio::test]
 async fn notif_periodic_zero_matches_sends_nothing() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -262,8 +254,7 @@ async fn notif_periodic_zero_matches_sends_nothing() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Without a `timeInterval`, a watched-attribute change drives a notification
-/// (clause 5.8.6). Confirms REQ-MAP-64.
+/// Without a `timeInterval`, a watched-attribute change drives a notification (clause 5.8.6).
 #[tokio::test]
 async fn notif_no_time_interval_change_driven_on_watched_change() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -302,8 +293,7 @@ async fn notif_no_time_interval_change_driven_on_watched_change() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A change-driven notification fires only on an actual value difference
-/// (clause 5.8.6). Confirms REQ-MAP-65.
+/// A change-driven notification fires only on an actual value difference (clause 5.8.6).
 #[tokio::test]
 async fn notif_change_only_on_actual_value_difference() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -356,8 +346,7 @@ async fn notif_change_only_on_actual_value_difference() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A change-driven notification includes the changed, filter-matching entity
-/// (clause 5.8.6). Confirms REQ-MAP-66.
+/// A change-driven notification includes the changed, filter-matching entity (clause 5.8.6).
 #[tokio::test]
 async fn notif_change_driven_includes_changed_filter_matching() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -385,8 +374,7 @@ async fn notif_change_driven_includes_changed_filter_matching() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A change-driven notification with no filters includes any changed entity
-/// (clause 5.8.6). Confirms REQ-MAP-67.
+/// A change-driven notification with no filters includes any changed entity (clause 5.8.6).
 #[tokio::test]
 async fn notif_change_driven_no_filters_includes_all_changed() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -413,8 +401,7 @@ async fn notif_change_driven_no_filters_includes_all_changed() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Any matching instance of a multi-instance geoproperty qualifies the entity
-/// (clause 5.8.6). Confirms REQ-MAP-68.
+/// Any matching instance of a multi-instance geoproperty qualifies the entity (clause 5.8.6).
 #[tokio::test]
 async fn notif_multi_instance_geoproperty_any_matching_instance_qualifies() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -465,8 +452,7 @@ async fn notif_multi_instance_geoproperty_any_matching_instance_qualifies() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A change-driven notification includes only the subscription's `datasetId`
-/// instances (clause 5.8.6). Confirms REQ-MAP-69.
+/// A change-driven notification includes only the subscription's `datasetId` instances (clause 5.8.6).
 #[tokio::test]
 async fn notif_change_driven_includes_only_dataset_id_instances() {
     let topology = topology::single().await.expect("single-broker topology");

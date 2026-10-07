@@ -1,5 +1,4 @@
-//! The `ngsildConformance` member a Subscription declares, which the broker
-//! accepted and then ignored entirely.
+//! The `ngsildConformance` member a Subscription declares.
 //!
 //! ETSI GS CIM 009 v1.9.1 Table 5.2.12-1 gives a Subscription an optional
 //! `ngsildConformance`, "a semantically versioned string in the form
@@ -10,17 +9,9 @@
 //! before "A Notification shall be sent", after the `notification.format`
 //! rendering and after `pick`, `omit` and `join`.
 //!
-//! Before this suite existed the member did not survive a create: it was not a
-//! column, not a field of the resource, and not read by any notification path,
-//! so a client that asked for a 1.0-shaped payload was answered `201 Created`
-//! and then sent a 1.9-shaped one. A malformed value was accepted just as
-//! silently.
-//!
 //! Every test that asserts an amendment carries a control subscription that
 //! declares no `ngsildConformance` and is otherwise identical, so an assertion
 //! can only pass when the two notifications genuinely differ.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

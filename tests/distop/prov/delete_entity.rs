@@ -1,4 +1,4 @@
-//! Delete Entity forwarding — REQ-PROV-41..46 (clause 5.6.6.4).
+//! Delete Entity forwarding (clause 5.6.6.4).
 //!
 //! A delete with no local entity and no matching registration is `404`, but a
 //! matching registration makes the delete forwardable rather than not-found.
@@ -39,7 +39,7 @@ async fn seed_local(client: &TestClient, payload: &Value) {
 }
 
 /// A delete for an absent entity with no matching registration is
-/// `404 ResourceNotFound`. Confirms REQ-PROV-41 (positive).
+/// `404 ResourceNotFound`.
 #[tokio::test]
 async fn delete_entity_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -54,7 +54,7 @@ async fn delete_entity_absent_and_no_registration_returns_404() {
 }
 
 /// A delete for an absent entity that a registration matches is forwarded rather
-/// than answered `404`. Confirms REQ-PROV-41 (negative).
+/// than answered `404`.
 #[tokio::test]
 async fn delete_entity_registration_matches_entity_absent_not_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -87,7 +87,7 @@ async fn delete_entity_registration_matches_entity_absent_not_404() {
 /// A redirect registration forwards the delete and terminates local processing.
 /// The registration precedes the local seed because clause 5.9.2.4 rejects a
 /// redirect registration when "an existing Entity already matches the Context
-/// Source Registration". Confirms REQ-PROV-42, 43.
+/// Source Registration".
 #[tokio::test]
 async fn delete_entity_exclusive_redirect_match_forwards() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -124,7 +124,7 @@ async fn delete_entity_exclusive_redirect_match_forwards() {
 /// delete with a bare `409 Conflict` and no forwarding. No local copy is seeded:
 /// clause 5.6.6.4 answers `Conflict` only "in case the complete delete Entity
 /// failed" and a partial success otherwise, so a locally deletable copy would
-/// turn the row into a `207`. Confirms REQ-PROV-44 (complete-fail).
+/// turn the row into a `207`.
 #[tokio::test]
 async fn delete_entity_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -159,7 +159,6 @@ async fn delete_entity_op_unsupported_returns_409() {
 /// partial success: the entity is gone locally and the registration surfaces a
 /// keyed `409`. The registration precedes the local seed because clause 5.9.2.4
 /// rejects a proxied registration over an already-matching local entity.
-/// Confirms REQ-PROV-44 (partial success).
 #[tokio::test]
 async fn delete_entity_op_unsupported_with_local_copy_returns_207() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -208,7 +207,7 @@ async fn delete_entity_op_unsupported_with_local_copy_returns_207() {
 }
 
 /// An inclusive registration forwards the delete and also removes the local
-/// entity. Confirms REQ-PROV-45, 46.
+/// entity.
 #[tokio::test]
 async fn delete_entity_inclusive_forwards_and_removes_local() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -243,7 +242,7 @@ async fn delete_entity_inclusive_forwards_and_removes_local() {
 }
 
 /// End-to-end against real broker B: a redirect delete on A removes the entity on
-/// B. Confirms REQ-PROV-42, 43.
+/// B.
 #[tokio::test]
 async fn delete_entity_pair_redirect_end_to_end() {
     let topology = topology::pair().await.expect("two-broker topology");

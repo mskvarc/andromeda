@@ -184,7 +184,7 @@ fn build_entity_conditions_for_temporal(schema: Option<&DynIden>, compiled: &Com
 
     // Entity selectors, unioned (clause 5.2.33): `(sel1) OR (sel2) OR ...`,
     // each reached through the `e` alias stage 1 selects the temporal
-    // catalogue under. Rendered only when every selector constrains — the
+    // catalogue under. Rendered only when every selector constrains, the
     // reading `EntitySelection::selectors_constrain` shares with the entity path.
     if compiled.entities.selectors_constrain() {
         let mut union = Condition::any();
@@ -196,7 +196,7 @@ fn build_entity_conditions_for_temporal(schema: Option<&DynIden>, compiled: &Com
 
     // Clause 5.5.14: "An EntityMap fixes the Entities to be considered." A
     // request narrowed to no entity at all cannot say so through a selector's
-    // identifier list, where an empty list reads as no identifier constraint --
+    // identifier list, where an empty list reads as no identifier constraint,
     // so it is conjoined here, where nothing can widen it back.
     match compiled.entities.considered {
         ConsideredEntities::Selected => {}
@@ -514,7 +514,7 @@ mod tests {
     }
 
     /// Scope history hangs off the temporal entity, so the probe correlates on
-    /// the surrogate key the rebuilt relation carries.
+    /// the surrogate key the relation carries.
     #[test]
     fn scope_history_correlates_on_the_temporal_entity_key() {
         let mut compiled = minimal_compiled();

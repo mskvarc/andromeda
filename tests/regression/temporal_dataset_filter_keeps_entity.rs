@@ -6,11 +6,9 @@
 //! include data corresponding to the temporal query interval"; the `datasetId`
 //! step runs on S1 afterwards and, when "there is no Attribute instance whose
 //! datasetId matches the value of the parameter", removes "the complete
-//! Attribute from S1". The broker judged S1 after the dataset filter, so a
-//! dataset no instance carries answered 404 for an Entity whose history the
-//! window selected.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Attribute from S1". S1 is judged before the dataset filter, so a dataset no
+//! instance carries does not turn the answer into a 404 for an Entity whose
+//! history the window selected.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

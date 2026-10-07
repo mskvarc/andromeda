@@ -1,8 +1,4 @@
-//! Auxiliary mode: a source only supplements retrieval, never overriding a
-//! local attribute and never receiving writes, and its registration is always
-//! accepted even overlapping an exclusive one (ETSI GS CIM 009 v1.9.1, clauses
-//! 4.3.6.2, 4.3.6.3, 5.7). Real-peer merge on `T-PAIR`; forwarding checks on
-//! `T-MOCK`; registration acceptance on `T-LOCAL`.
+//! Auxiliary mode: a source only supplements retrieval, never overriding a local attribute and never receiving writes, and its registration is always accepted even overlapping an exclusive one (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.2, 4.3.6.3, 5.7).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -19,9 +15,7 @@ use serde_json::json;
 /// The path a broker appends to a registration `endpoint` for an entity query.
 const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 
-/// An auxiliary source never overrides a local attribute: the local value wins
-/// while a genuinely new source attribute is added (clause 4.3.6.2). Confirms
-/// REQ-FW-15, REQ-FW-17.
+/// An auxiliary source never overrides a local attribute: the local value wins while a genuinely new source attribute is added (clause 4.3.6.2).
 #[tokio::test]
 async fn distop_entity_auxiliary_never_overrides_local_attribute() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -64,9 +58,7 @@ async fn distop_entity_auxiliary_never_overrides_local_attribute() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Only a genuinely supplementary attribute from an auxiliary source is
-/// included: an attribute already held locally keeps its local value and the
-/// source copy is discarded (clause 4.3.6.2). Confirms REQ-FW-17.
+/// Only a genuinely supplementary attribute from an auxiliary source is included: an attribute already held locally keeps its local value and the source copy is discarded (clause 4.3.6.2).
 #[tokio::test]
 async fn distop_entity_auxiliary_supplementary_attribute_only_included() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -127,9 +119,7 @@ async fn distop_entity_auxiliary_supplementary_attribute_only_included() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An auxiliary registration never receives writes: an append is applied locally
-/// only and nothing is forwarded to the source (clause 4.3.6.2). Confirms
-/// REQ-FW-16.
+/// An auxiliary registration never receives writes: an append is applied locally only and nothing is forwarded to the source (clause 4.3.6.2).
 #[tokio::test]
 async fn distop_entity_auxiliary_write_not_forwarded() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -192,9 +182,7 @@ async fn distop_entity_auxiliary_write_not_forwarded() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An auxiliary registration overlapping an existing exclusive one on the same
-/// id and attribute is always accepted (clause 4.3.6.2, 5.2.9). Confirms
-/// REQ-FW-18.
+/// An auxiliary registration overlapping an existing exclusive one on the same id and attribute is always accepted (clause 4.3.6.2, 5.2.9).
 #[tokio::test]
 async fn distop_entity_auxiliary_registration_overlapping_exclusive_accepted() {
     let topology = topology::single().await.expect("single-broker topology");

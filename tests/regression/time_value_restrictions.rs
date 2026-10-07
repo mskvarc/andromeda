@@ -8,11 +8,9 @@
 //!
 //! Clause 4.9's grammar defines the query language's `dateTime` and `time`
 //! productions as values "as mandated by clause 4.6.3", so a `q` operand is
-//! admitted on exactly the terms a stored value is. The broker did the mirror
-//! image of the clause on two counts: it resolved an offset-bearing operand to
-//! UTC and compared it, and it refused the comma compatibility form outright.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! admitted on exactly the terms a stored value is. An offset-bearing operand is
+//! therefore not resolved to UTC and compared, and the comma compatibility form
+//! is not refused.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -164,8 +162,8 @@ enum Selection {
 /// carrying one satisfies clause 4.9's `time` production nowhere and is
 /// derivable from no other production either — `quotedStr` is the IETF RFC 8259
 /// `String` production *including its quotes*, which a bare literal does not
-/// carry. The broker used to resolve `13:00:00+01:00` to `12:00:00Z` and compare
-/// it, so a spelling the write path refuses could still be queried with.
+/// carry. Resolving `13:00:00+01:00` to `12:00:00Z` and comparing it would let a
+/// spelling the write path refuses be queried with.
 ///
 /// The quoted spelling of the same text is a `quotedStr` and therefore a
 /// well-formed Query Term: it compares as the text it is, which is exactly what
@@ -191,8 +189,8 @@ async fn regression_time_value_a_bare_q_time_operand_carrying_a_numeric_offset_i
 
 /// Clause 4.6.3, `DateTime`, requires the literal `Z` designator in the same
 /// way, so a bare `q` `dateTime` operand written with a numeric offset is
-/// refused for the same reason. Without this the query side admitted operands
-/// the storage side rejects, and the two sides disagreed about what a value is.
+/// refused for the same reason, so the query side admits no operand the storage
+/// side rejects.
 ///
 /// Quoted, the same text is a `quotedStr` and compares as text — against
 /// `readingLabel`, which holds exactly one such value, it matches.
@@ -226,8 +224,7 @@ async fn regression_time_value_a_bare_q_date_time_operand_carrying_a_numeric_off
 ///
 /// It also has every reason not to. Each value below is one clause 4.6.3 admits
 /// as "a JSON native data type" and stores as the string it is, and refusing the
-/// operand made every one of them unqueryable in either spelling: bare it was a
-/// malformed `dateTime`, `date` or `time`, and quoted it was the same refusal.
+/// operand would make every one of them unqueryable in either spelling.
 /// A broker that accepts a value and then answers 400 to the only filter that
 /// names it has lost the value.
 #[tokio::test]
@@ -261,8 +258,7 @@ async fn regression_time_value_a_quoted_operand_no_temporal_form_admits_finds_th
 /// a decimal point may be used as separator for compatibility reasons."
 ///
 /// A `q` operand is request text, so the comma form has to name the same value
-/// the decimal point does. The broker refused it, which made a conformant
-/// client's filter a 400.
+/// the decimal point does.
 #[tokio::test]
 async fn regression_time_value_a_q_operand_may_use_a_comma_decimal_separator() {
     let (scope, id) = seeded("Observation:comma-separator-operand", "12:00:00.500000Z", "2024-01-01T00:00:00.250000Z").await;
@@ -300,7 +296,7 @@ async fn regression_time_value_a_bare_q_operand_beyond_six_fractional_digits_is_
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The tightening must not cost the forms clause 4.6.3 does admit. A `Z` value
+/// The restrictions must not cost the forms clause 4.6.3 does admit. A `Z` value
 /// with no fraction, with a short fraction, and with the full six digits are
 /// all one value, and all remain queryable.
 #[tokio::test]
@@ -330,11 +326,11 @@ async fn regression_time_value_the_admitted_lexical_forms_still_match() {
 /// broker to substitute one for another, so the document carries the client's
 /// text. What the value *is* under the clause, and therefore what a `q` operand
 /// is compared against, is decided separately and never reaches the document.
-/// The broker used to sniff the value into a typed one for the document alone
-/// and re-render it, which cost `2024-01-01T00:00:00.250000Z` its trailing
-/// zeroes and rewrote `2024-01-01T01:00:00+01:00` -- a value clause 4.6.3 makes
-/// an ordinary string, because the trailing component "shall always be equal to
-/// the character 'Z'" -- into a UTC instant the client never wrote.
+/// The document must not be rebuilt from a sniffed typed value, which would cost
+/// `2024-01-01T00:00:00.250000Z` its trailing zeroes and rewrite
+/// `2024-01-01T01:00:00+01:00` -- a value clause 4.6.3 makes an ordinary string,
+/// because the trailing component "shall always be equal to the character 'Z'"
+/// -- into a UTC instant the client never wrote.
 #[tokio::test]
 async fn regression_time_value_a_stored_time_property_is_served_back_verbatim() {
     let (scope, id) = seeded("Observation:stored-spelling", "12:00:00.500000Z", "2024-01-01T00:00:00.250000Z").await;
@@ -357,11 +353,10 @@ async fn regression_time_value_a_stored_time_property_is_served_back_verbatim() 
 
 /// Clause 4.9's `ComparableValue` admits a `dateTime`, and clause 4.8 NOTE 3
 /// puts a time value on an ordinary Property, so every operator the clause
-/// defines has to answer over one. None of them did: the write path read a
-/// timestamp-shaped Property value as a String and the operand parser read the
-/// operand as a `dateTime`, and clause 4.9 makes differing data types
-/// non-matching -- so equality, inequality and all four ordering operators
-/// selected nothing, in every spelling.
+/// defines has to answer over one. A timestamp-shaped Property value must not be
+/// read as a String while the operand is read as a `dateTime`: clause 4.9 makes
+/// differing data types non-matching, so equality, inequality and all four
+/// ordering operators would select nothing, in every spelling.
 ///
 /// "When comparing dates or times, the order relation considered shall be a
 /// temporal one", which is why `12:00:00.000000Z` and `12:00:00Z` name the same
@@ -397,8 +392,8 @@ async fn regression_time_value_a_date_time_property_answers_every_clause_4_9_ope
 /// still chronological; a `Time` Property that reached storage in the spelling
 /// the client wrote would break exactly that.
 ///
-/// The bare spelling had no tokenisation at all: `readingTime==09:30:00Z` was
-/// read as the number `09` followed by an unexpected identifier and refused.
+/// The bare spelling needs its own tokenisation: `readingTime==09:30:00Z` is not
+/// the number `09` followed by an unexpected identifier.
 #[tokio::test]
 async fn regression_time_value_a_time_property_answers_every_clause_4_9_operator() {
     let (scope, id) = seeded("Observation:time-operators", "09:30:00Z", "2024-06-15T12:00:00Z").await;
@@ -465,9 +460,9 @@ async fn regression_time_value_a_date_property_answers_every_clause_4_9_operator
 ///
 /// `readingNote` is the other half of the control. Text carrying the colons of a
 /// time of day is a `quotedStr` under clause 4.9's grammar, not a malformed
-/// `time`; classifying an operand by three byte positions made
-/// `readingNote=="12:00:00 in the morning"` a `BadRequestData` and refused a
-/// conformant filter outright.
+/// `time`; classifying an operand by three byte positions would make
+/// `readingNote=="12:00:00 in the morning"` a `BadRequestData` and refuse a
+/// conformant filter.
 #[tokio::test]
 async fn regression_time_value_a_string_that_only_resembles_a_time_value_is_compared_as_text() {
     let (scope, id) = seeded("Observation:resemblance-control", "12:00:00Z", "2024-06-15T12:00:00Z").await;

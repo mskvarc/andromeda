@@ -1,6 +1,4 @@
-//! Query-CSR (clause 5.10.2): JSON-LD and query-parameter validation, the
-//! too-wide-query guard, pagination, and the JSON-LD array result shape. All
-//! `T-LOCAL`.
+//! Query-CSR (clause 5.10.2): JSON-LD and query-parameter validation, the too-wide-query guard, pagination, and the JSON-LD array result shape.
 
 use crate::{
     disc::{PEER_ENDPOINT, csr_discovery::matched_ids},
@@ -13,8 +11,7 @@ use pretty_assertions::assert_eq;
 use reqwest::Method;
 use urlencoding::encode;
 
-/// A syntactically malformed `Link` context header is rejected with `400
-/// BadRequestData` (clauses 5.10.2, 6.3.5). Confirms REQ-DISC-17.
+/// A syntactically malformed `Link` context header is rejected with `400 BadRequestData` (clauses 5.10.2, 6.3.5).
 #[tokio::test]
 async fn query_csr_applies_jsonld_validation() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -33,9 +30,7 @@ async fn query_csr_applies_jsonld_validation() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A query with no entity type, attribute list, `q`, or geo-query is too wide
-/// and is rejected with `400 BadRequestData` (clause 5.10.2). Confirms
-/// REQ-DISC-18, REQ-DISC-98.
+/// A query with no entity type, attribute list, `q`, or geo-query is too wide and is rejected with `400 BadRequestData` (clause 5.10.2).
 #[tokio::test]
 async fn query_csr_without_type_attrs_q_geoq_returns_400_too_wide() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -51,9 +46,7 @@ async fn query_csr_without_type_attrs_q_geoq_returns_400_too_wide() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Entity ids alone, without a type, attribute list, `q`, or geo-query, are
-/// still too wide and rejected with `400` (clause 5.10.2). Confirms
-/// REQ-DISC-40.
+/// Entity ids alone, without a type, attribute list, `q`, or geo-query, are still too wide and rejected with `400` (clause 5.10.2).
 #[tokio::test]
 async fn query_csr_ids_only_without_type_attrs_q_geoq_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -71,7 +64,6 @@ async fn query_csr_ids_only_without_type_attrs_q_geoq_returns_400() {
 }
 
 /// A non-URI entity id is rejected with `400 BadRequestData` (clause 5.10.2).
-/// Confirms REQ-DISC-20.
 #[tokio::test]
 async fn query_csr_invalid_entity_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -87,8 +79,7 @@ async fn query_csr_invalid_entity_id_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A malformed `q`, geo-query, or temporal query each fail parsing and return
-/// `400 BadRequestData` (clause 5.10.2). Confirms REQ-DISC-21.
+/// A malformed `q`, geo-query, or temporal query each fail parsing and return `400 BadRequestData` (clause 5.10.2).
 #[tokio::test]
 async fn query_csr_malformed_q_geoq_temporalq_return_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -111,9 +102,7 @@ async fn query_csr_malformed_q_geoq_temporalq_return_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Pagination slices the result: with a unique registered type, `limit` bounds
-/// the page and a full query returns every registration (clauses 5.10.2,
-/// 5.5.9). Confirms REQ-DISC-39.
+/// Pagination slices the result: with a unique registered type, `limit` bounds the page and a full query returns every registration (clauses 5.10.2, 5.5.9).
 #[tokio::test]
 async fn query_csr_pagination_limit_offset() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -158,8 +147,7 @@ async fn query_csr_pagination_limit_offset() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A matching Query-CSR returns a JSON-LD array of the matching registrations
-/// (clauses 5.10.2, 5.2.9). Confirms REQ-DISC-42, REQ-DISC-93.
+/// A matching Query-CSR returns a JSON-LD array of the matching registrations (clauses 5.10.2, 5.2.9).
 #[tokio::test]
 async fn query_csr_returns_jsonld_array_of_matching_csrs() {
     let topology = topology::single().await.expect("single-broker topology");

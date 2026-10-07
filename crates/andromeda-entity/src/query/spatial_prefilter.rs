@@ -56,14 +56,14 @@ impl EntityQueryService {
     /// the store evaluates every instance carrying a `datasetId` itself, so an
     /// entity whose only matching instance has one is never narrowed away,
     /// whatever the index holds. The index narrows only where it holds every
-    /// entity's default instance -- what [`SpatialAcceleration`] guarantees for
+    /// entity's default instance, what [`SpatialAcceleration`] guarantees for
     /// the configured consistency mode, and what an unseeded scope declines to
     /// claim. A candidate that no longer matches is harmless: the store
     /// re-applies the clause 4.10 relation to every one.
     ///
     /// Returns the query unchanged when it is not geo-accelerable, when no index
-    /// may narrow it, when the index declines the relation -- a `near` with
-    /// only a `minDistance`, which no envelope bounds -- or for a Snapshot
+    /// may narrow it, when the index declines the relation, a `near` with
+    /// only a `minDistance`, which no envelope bounds, or for a Snapshot
     /// branch, which the live index does not describe; the store then
     /// evaluates every instance in full.
     ///

@@ -1,4 +1,4 @@
-//! Randomly minted identifiers (study G1 and G5, H21 and H22).
+//! Randomly minted identifiers.
 
 use crate::{
     context_api::{create_context, extract_id, find_cached_context_id, get_context, setup_cached_context},

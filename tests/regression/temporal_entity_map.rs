@@ -6,17 +6,18 @@
 //! exhibit the behaviour defined by clause 5.7.4", and Table 6.24.3.1-1 answers
 //! it with "201 Created (in case an `EntityMap` has been (re)created)" plus "an
 //! 'NGSILD-EntityMap' HTTP header that contains the resource URI of the
-//! `EntityMap` resource created in the operation". The binding created none,
-//! reported none, ignored the `NGSILD-EntityMap` header a follow-up referenced,
-//! and dropped the clause 5.2.23 `csf` member on the way to discovery.
+//! `EntityMap` resource created in the operation". The binding therefore
+//! creates an `EntityMap`, reports it, honours the `NGSILD-EntityMap` header a
+//! follow-up references, and passes the clause 5.2.23 `csf` member on to
+//! discovery.
 //!
 //! Clause 4.12 lists "Query Temporal Evolution of Entities (clause 5.7.4)"
 //! among the operations that shall "provide a mechanism to flag NGSI-LD Clients
 //! when there are remaining NGSI-LD Elements to be traversed as part of a result
 //! set" and shall "allow NGSI-LD Clients iterating forwards and backwards
 //! through a result set"; clause 6.3.10 binds both to the `Link` relations
-//! `next` and `prev`. Neither temporal binding emitted either, so a client had
-//! no way to learn that a page was not the whole answer. The two bindings
+//! `next` and `prev`, without which a client cannot learn that a page is not
+//! the whole answer. The two bindings
 //! answer it differently, because clause 6.3.10 asks for a Link Target "that
 //! could be dereferenced by an NGSI-LD Client to retrieve the next page" and
 //! clause 5.5.9.1 for pointers carrying "all the parameters needed [...]
@@ -30,8 +31,6 @@
 //! additional dimension to the pagination" — answered with a 206 and a
 //! `Content-Range` over the time range. The two dimensions bound different
 //! things, so the last test here holds them on one response at once.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -194,9 +193,8 @@ fn id_filter(ids: &[String]) -> String {
 /// Table 6.24.3.1-1: the POST binding answers "201 Created (in case an
 /// `EntityMap` has been (re)created)" and "shall include an 'NGSILD-EntityMap'
 /// HTTP header that contains the resource URI of the `EntityMap` resource created
-/// in the operation". The binding answered 200 with no header at all, so a
-/// client asking for a map by the clause 5.2.23 `entityMap` member never learned
-/// where its map was — or that one existed.
+/// in the operation". A client asking for a map by the clause 5.2.23 `entityMap`
+/// member learns where its map is from that header.
 #[tokio::test]
 async fn regression_temporal_entity_map_a_post_query_creates_and_reports_its_map() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -241,8 +239,8 @@ async fn regression_temporal_entity_map_a_post_query_creates_and_reports_its_map
 /// shall be used for the purposes of Entity registration matching, and queries
 /// shall be filtered to only consider the Entities listed [...] An `EntityMap`
 /// fixes the Entities to be considered for subsequent requests based on it."
-/// The POST binding never read the `NGSILD-EntityMap` request header, so a
-/// follow-up under a map was answered as if no map existed.
+/// The POST binding reads the `NGSILD-EntityMap` request header, so a follow-up
+/// under a map is not answered as if no map existed.
 #[tokio::test]
 async fn regression_temporal_entity_map_a_post_follow_up_is_filtered_to_the_mapped_entities() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -374,8 +372,8 @@ async fn regression_temporal_entity_map_a_post_follow_up_outside_the_map_returns
 /// clause 4.9" naming the "Context source filter that shall be matched by
 /// Context Source Registrations describing Context Sources to be used for
 /// retrieving Entities", and clause 5.7.4.3 lists it among the operation's
-/// inputs. The POST binding parsed it out of the body and then passed nothing to
-/// discovery, so every registration was contacted whatever the client asked for.
+/// inputs. It must reach discovery, or every registration is contacted whatever
+/// the client asks for.
 #[tokio::test]
 async fn regression_temporal_entity_map_a_post_query_honours_its_context_source_filter() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -483,8 +481,8 @@ async fn regression_temporal_entity_map_a_post_query_honours_its_context_source_
 /// "provide a mechanism to flag NGSI-LD Clients when there are remaining NGSI-LD
 /// Elements to be traversed as part of a result set" and to "allow NGSI-LD
 /// Clients iterating forwards and backwards through a result set"; clause 6.3.10
-/// binds those to `Link` relation types `next` and `prev`. The GET binding
-/// emitted neither, so a limited page looked exactly like a complete answer.
+/// binds those to `Link` relation types `next` and `prev`. Without them a
+/// limited page looks exactly like a complete answer.
 #[tokio::test]
 async fn regression_temporal_pagination_the_get_binding_flags_the_remaining_entities() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

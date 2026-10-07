@@ -157,8 +157,7 @@ impl From<SubmissionRefusal> for TemporalError {
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
 /// A written document the model refuses is the client's `BadRequestData`
-/// (clause 5.5.4), an unusable or forbidden `unitCode` keeping the reason the
-/// temporal write path has always given it, except an unreadable compiled-in
+/// (clause 5.5.4), an unusable or forbidden `unitCode` keeping its own reason, except an unreadable compiled-in
 /// unit catalog, which is the build's fault and no request can mend.
 impl From<EntityRefusal> for TemporalError {
     fn from(refusal: EntityRefusal) -> TemporalError {
@@ -208,8 +207,8 @@ impl From<EntityRefusal> for TemporalError {
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
-/// A context that does not load and a document the processor refuses are the
-/// JSON-LD failures they always were; a refused document is classified as the
+/// A context that does not load and a document the processor refuses are
+/// JSON-LD failures; a refused document is classified as the
 /// model refuses it.
 impl From<ExpansionError> for TemporalError {
     fn from(error: ExpansionError) -> TemporalError {

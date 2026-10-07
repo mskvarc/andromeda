@@ -13,11 +13,6 @@
 //! Fragment naming another Attribute is refused only once the target is known.
 //! Clause 5.6.14.4 then replaces the instance, keeping its `createdAt` and
 //! setting `modifiedAt`.
-//!
-//! The broker took the bare instance, which ETSI 016_01-016_03 sent, and
-//! refused the specification's Fragment as a Property missing its value (A-42).
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -180,7 +175,7 @@ async fn regression_temporal_instance_fragment_a_fragment_naming_another_attribu
 
 /// Clause 5.6.14.4 raises `ResourceNotFound` for an unknown Attribute or
 /// instance before the Fragment is read, so a well-formed Fragment answers 404
-/// there, whichever Attribute it names (ETSI `016_03_02` and `016_03_03`).
+/// there, whichever Attribute it names.
 #[tokio::test]
 async fn regression_temporal_instance_fragment_an_unknown_target_is_not_found_before_the_fragment_is_read() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

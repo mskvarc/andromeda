@@ -1,4 +1,4 @@
-//! Replace Attribute forwarding — REQ-PROV-119..124 (clause 5.6.19.4).
+//! Replace Attribute forwarding (clause 5.6.19.4).
 //!
 //! `PUT /entities/{id}/attrs/{attr}` replaces a single attribute. An exclusive
 //! registration that owns the attribute forwards the replacement and terminates
@@ -47,7 +47,7 @@ async fn replace_speed(topology: &MultiBrokerTopology<BrokerRole>, entity_id: &s
 }
 
 /// Replacing an attribute on an absent entity with no matching registration is a
-/// plain `404 ResourceNotFound`. Confirms REQ-PROV-119 (positive).
+/// plain `404 ResourceNotFound`.
 #[tokio::test]
 async fn replace_attr_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -61,7 +61,7 @@ async fn replace_attr_absent_and_no_registration_returns_404() {
 }
 
 /// A matching registration for an entity absent locally forwards the attribute
-/// replacement rather than returning `404`. Confirms REQ-PROV-119 (negative), 120.
+/// replacement rather than returning `404`.
 #[tokio::test]
 async fn replace_attr_registration_matches_entity_absent_not_404_and_forwards() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -102,7 +102,7 @@ async fn replace_attr_registration_matches_entity_absent_not_404_and_forwards() 
 
 /// An exclusive registration that does not advertise `replaceAttrs` (the Table
 /// 4.20-1 name of 5.6.19) rejects the owned attribute replacement with a bare
-/// `409 Conflict` and no forwarding. Confirms REQ-PROV-121.
+/// `409 Conflict` and no forwarding.
 #[tokio::test]
 async fn replace_attr_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -138,7 +138,7 @@ async fn replace_attr_op_unsupported_returns_409() {
 }
 
 /// An exclusive registration forwards the owned attribute replacement and
-/// terminates without applying it locally. Confirms REQ-PROV-122.
+/// terminates without applying it locally.
 #[tokio::test]
 async fn replace_attr_exclusive_match_terminates_after_forwarding() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -195,7 +195,7 @@ async fn replace_attr_exclusive_match_terminates_after_forwarding() {
 }
 
 /// An inclusive registration forwards the attribute replacement and also replaces
-/// it locally. Confirms REQ-PROV-123.
+/// it locally.
 #[tokio::test]
 async fn replace_attr_inclusive_forwards_remainder() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -350,7 +350,7 @@ async fn replace_attr_type_selector_decides_which_registration_receives_the_writ
 }
 
 /// Replacing an attribute absent from a locally present entity with no matching
-/// registration is `404 ResourceNotFound`. Confirms REQ-PROV-124.
+/// registration is `404 ResourceNotFound`.
 #[tokio::test]
 async fn replace_attr_local_present_attr_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");

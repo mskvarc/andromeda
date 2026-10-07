@@ -51,8 +51,8 @@ const JSON_ARRAY_TYPE: &str = "array";
 ///
 /// One member per column of Tables 4.5.19.1-1 and 4.5.19.1-2, plus the URI a
 /// Relationship object is held as, which Table 4.5.19.1-3 aggregates. The
-/// numbering is a projection detail rather than a stored contract — no row
-/// carries it — so it is dense and unrelated to [`ValueKind`]'s; only
+/// numbering is a projection detail rather than a stored contract (no row
+/// carries it), so it is dense and unrelated to [`ValueKind`]'s; only
 /// equality of two codes is read, never their order.
 ///
 /// Andromeda owns this vocabulary rather than the specification, so the labels

@@ -1,19 +1,6 @@
-//! A temporal geo query narrows on the `GeoProperty` instances within the
-//! window, not on a single hoisted current-state geometry.
+//! A temporal geo query narrows on the `GeoProperty` instances within the window, not on a single hoisted current-state geometry.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.7.4.4 step S3: when a geoquery accompanies a
-//! temporal query, "those geospatial restrictions shall be checked against the
-//! `GeoProperty` instances that are within the interval defined by the temporal
-//! query", and clause 4.10 counts an entity as matching when *any* such instance
-//! meets the restriction. Andromeda evaluated the temporal geoquery against
-//! current state: for the default `location` it read the single hoisted
-//! `entity_search.location` column, which holds one instant -- the first
-//! datasetId-less instance -- so an entity whose *other* location instance was
-//! the one near the reference was dropped. The restriction is now an existential
-//! over the `attribute_history` instances of the target `GeoProperty`, windowed
-//! by the same `timerel`/`timeAt` the temporal query applies.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 clause 5.7.4.4 step S3: when a geoquery accompanies a temporal query, "those geospatial restrictions shall be checked against the `GeoProperty` instances that are within the interval defined by the temporal query", and clause 4.10 counts an entity as matching when *any* such instance meets the restriction. The restriction is therefore an existential over the `attribute_history` instances of the target `GeoProperty`, windowed by the same `timerel`/`timeAt` as the temporal query, never the single hoisted `entity_search.location` column.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

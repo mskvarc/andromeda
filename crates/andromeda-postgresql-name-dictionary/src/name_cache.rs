@@ -43,7 +43,7 @@ use std::{
 /// exist" would make a name created after the first lookup permanently
 /// invisible to predicates, which compile an unknown IRI to a constant
 /// `FALSE`. A mapping minted inside a caller's transaction is likewise not
-/// stored — see [`CachePublication`]; it is published by the first read that
+/// stored (see [`CachePublication`]); it is published by the first read that
 /// provably sees a committed snapshot, which is either a pool-side lookup or a
 /// minting resolution made by a transaction that has not written yet.
 #[derive(Debug)]
@@ -59,8 +59,8 @@ pub struct NameCache<N: DictionaryRelation> {
     /// The tenant schema stamp (`schema_metadata.applied_at`, microseconds) this
     /// cache was warmed against, or [`UNKNOWN_EPOCH`] before it has been
     /// established. A fresh migration re-stamps it, so it advances whenever the
-    /// schema was dropped and recreated -- whether by dropping the database or
-    /// the schema -- which is exactly when every cached key goes stale. See
+    /// schema was dropped and recreated, whether by dropping the database or
+    /// the schema, which is exactly when every cached key goes stale. See
     /// [`NameCache::revalidate_epoch`].
     schema_epoch: AtomicI64,
     /// Milliseconds since [`EPOCH`] at the last schema-stamp probe, throttling
@@ -140,7 +140,7 @@ impl<N: DictionaryRelation> NameCache<N> {
     /// The stamp is read once by
     /// [`read_established_epoch`](crate::schema_epoch::read_established_epoch) and handed to every
     /// dictionary the tenant opens, so the caches share one catalogue read. A
-    /// `None` -- a schema migrated but not yet stamped -- leaves the sentinel in
+    /// `None` (a schema migrated but not yet stamped) leaves the sentinel in
     /// place and only records that the baseline probe ran.
     pub fn adopt_epoch(&self, epoch: Option<i64>) {
         if let Some(epoch) = epoch {
@@ -149,13 +149,13 @@ impl<N: DictionaryRelation> NameCache<N> {
         self.epoch_checked_at.store(now_millis(), Ordering::Relaxed);
     }
 
-    /// Re-read the tenant database oid when the throttle interval has elapsed,
+    /// Re-read the tenant schema stamp when the throttle interval has elapsed,
     /// discarding every cached key if it changed.
     ///
     /// A tenant database dropped and recreated under the same name comes back
     /// with fresh `IDENTITY` sequences, so every name->key mapping this cache
     /// published against the previous generation now points at a dictionary row
-    /// that does not exist -- a write that trusts one raises
+    /// that does not exist, and a write that trusts one raises
     /// `fk_temporal_attribute_streams_attribute_name`. The broker performs
     /// no such drop itself and nothing evicts a runtime whose registry row still
     /// stands, so only operator surgery opens this window; the check closes it
@@ -246,8 +246,8 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
         let unheld = names_not_yet_held(&wanted, &held);
         // What the dictionary already held may still be rolled back by the
         // caller's transaction when that transaction wrote it, so by default the
-        // mappings answer this caller and go no further -- see
-        // [`CachePublication`]. The one case that is provably safe is a
+        // mappings answer this caller and go no further (see
+        // [`CachePublication`]). The one case that is provably safe is a
         // transaction that has written nothing yet: it holds no transaction id,
         // so every row its snapshot shows was committed by someone else, and
         // publishing those is exactly what lets a write path that resolves its
@@ -506,7 +506,7 @@ mod tests {
                 /// resolution that finds every name cached issues no catalogue
                 /// probe: the unroutable pool turns any probe into an error, so
                 /// an Ok proves none was issued. This is the invariant the
-                /// staleness check must not break -- a cached hit stays free.
+                /// staleness check must not break: a cached hit stays free.
                 #[tokio::test]
                 async fn a_warm_cache_does_not_probe_the_database_within_the_check_interval() {
                     let cache = cache::<$name>();

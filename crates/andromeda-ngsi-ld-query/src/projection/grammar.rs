@@ -1,5 +1,4 @@
-//! Raw projection list grammar for the `pick` and `omit` linked-entity syntax
-//! (ETSI GS CIM 009 v1.9.1 clause 4.21):
+//! Raw projection list grammar for the `pick` and `omit` linked-entity syntax (ETSI GS CIM 009 v1.9.1 clause 4.21):
 //!
 //! ```text
 //! ProjectionTerm = AttrName *1(LinkedEntityTerm) *(orOp ProjectionTerm)
@@ -7,11 +6,7 @@
 //! orOp = %x7C / %x2C
 //! ```
 //!
-//! `pick=observation{temperature,humidity}` selects the `observation`
-//! relationship's own representation together with the `temperature` and
-//! `humidity` attributes of the entity it links to. Braces nest to any depth,
-//! following the linked-entity chain across as many relationships as the
-//! client names.
+//! `pick=observation{temperature,humidity}` selects the `observation` relationship's own representation together with the `temperature` and `humidity` attributes of the entity it links to. Braces nest to any depth, following the linked-entity chain across as many relationships as the client names.
 
 use crate::{error::QueryError, projection::term::ProjectionTerm};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -22,37 +17,20 @@ use std::{
     str::FromStr,
 };
 
-/// One term of a clause 4.21 raw (pre-expansion) projection list.
+/// One term of a clause 4.21 raw (pre-expansion) projection list: one attribute and, when it constrains a linked entity's own projection, the `{...}` sub-terms selected on the other side of the relationship it names.
 ///
-/// A term names one attribute and, when it constrains a linked entity's own
-/// projection, carries the `{...}` sub-terms selected on the other side of
-/// the relationship it names.
-///
-/// Serialized as the tree `{"name": ..., "linked": [...]}` rather than as
-/// clause 4.21 text: a stored subscription keeps its terms expanded (clause
-/// 5.5.7), and an expanded IRI may hold the `,` and `|` the grammar separates
-/// terms with, which the clause 4.9 `AttrName` a client writes never does.
+/// Serialized as the tree `{"name": ..., "linked": [...]}` rather than as clause 4.21 text: a stored subscription keeps its terms expanded (clause 5.5.7), and an expanded IRI may hold the `,` and `|` the grammar separates terms with, which the clause 4.9 `AttrName` a client writes never does.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawProjectionTerm {
     /// The compact or expanded attribute name this term selects.
     pub name: AttributeName,
-    /// The linked-entity sub-projection carried inside `{...}`, empty when
-    /// this term selects no linked entity.
+    /// The linked-entity sub-projection carried inside `{...}`, empty when the term selects no linked entity.
     pub linked: Vec<RawProjectionTerm>,
 }
 
 impl RawProjectionTerm {
-    /// How many Relationship hops this term's clause 4.21 nesting reaches.
-    ///
-    /// A term selecting only members of the entity it is written against is
-    /// `0`; `rel{a}` is `1`, `rel{inner{a}}` is `2`, and so on. The depth is
-    /// what a `joinLevel` has to cover for the nested terms to name anything
-    /// the traversal actually retrieves (clause 5.7.2.4).
-    ///
-    /// The walk recurses over `linked`, which the clause 4.21 grammar builds
-    /// as a finite tree from a finite input, so it terminates at the deepest
-    /// brace group the client wrote.
+    /// How many Relationship hops this term's clause 4.21 nesting reaches: `0` for a term selecting only members of its own entity, `1` for `rel{a}`, `2` for `rel{inner{a}}`. It is what a `joinLevel` has to cover for the nested terms to name anything the traversal retrieves (clause 5.7.2.4).
     pub fn linked_depth(&self) -> u32 {
         match self.linked.iter().map(RawProjectionTerm::linked_depth).max() {
             Some(deepest) => deepest.saturating_add(1),
@@ -61,10 +39,7 @@ impl RawProjectionTerm {
     }
 }
 
-// `RawProjectionTerm` nests through `linked`, and rendering it requires
-// walking that recursive structure and separating siblings with `,` — a shape
-// `derive_more::Display`'s format-string mode cannot express. So this is a
-// hand-written `impl Display` rather than a derive.
+// Rendering walks the recursive `linked` structure and separates siblings with `,`, a shape `derive_more::Display`'s format-string mode cannot express.
 impl fmt::Display for RawProjectionTerm {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.name.as_str())?;
@@ -107,12 +82,7 @@ fn write_terms(formatter: &mut fmt::Formatter<'_>, terms: &[RawProjectionTerm]) 
     Ok(())
 }
 
-/// One clause 4.21 projection-language string: a comma/pipe-separated
-/// sequence of [`RawProjectionTerm`], each optionally followed by a `{...}`
-/// group of linked-entity sub-terms.
-///
-/// Parsed from and displayed as clause 4.21 text (`|` displays as `,`);
-/// serialized as the term tree, for the reason [`RawProjectionTerm`] states.
+/// One clause 4.21 projection-language string: a comma/pipe-separated sequence of [`RawProjectionTerm`], each optionally followed by a `{...}` group of linked-entity sub-terms. Parsed from and displayed as clause 4.21 text (`|` displays as `,`); serialized as the term tree, for the reason [`RawProjectionTerm`] states.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Deref, From, Into)]
 #[serde(transparent)]
 pub struct ProjectionList(Vec<RawProjectionTerm>);
@@ -139,8 +109,7 @@ impl FromStr for ProjectionList {
     }
 }
 
-// A list renders its terms joined by `,`, which `derive_more::Display`'s
-// format-string mode cannot express over a `Vec`.
+// `derive_more::Display`'s format-string mode cannot join the terms of a `Vec` with `,`.
 impl fmt::Display for ProjectionList {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_terms(formatter, &self.0)
@@ -173,9 +142,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parses `ProjectionTerm *(orOp ProjectionTerm)`: one or more terms
-    /// separated by `,` or `|`, stopping at the first character that is
-    /// neither a separator nor the start of another term.
+    /// Parses `ProjectionTerm *(orOp ProjectionTerm)`, stopping at the first character that is neither a separator nor the start of another term.
     fn parse_term_list(&mut self) -> Result<Vec<RawProjectionTerm>, QueryError> {
         let mut terms = Vec::new();
         loop {
@@ -210,12 +177,7 @@ impl<'a> Parser<'a> {
         Ok(RawProjectionTerm { name, linked })
     }
 
-    /// Parses `%x7B ProjectionTerm %x7D`, having already confirmed the next
-    /// character is `{`.
-    ///
-    /// An unclosed brace is reported at the position of the `{` that opened
-    /// it — the character actually missing its counterpart — rather than at
-    /// the end of input, which names nothing a client wrote.
+    /// Parses `%x7B ProjectionTerm %x7D` once the next character is known to be `{`. An unclosed brace is reported at the `{` that opened it, the character actually missing its counterpart, rather than at the end of input, which names nothing a client wrote.
     fn parse_linked_entity_term(&mut self) -> Result<Vec<RawProjectionTerm>, QueryError> {
         let brace_position = self.pos;
         self.advance();
@@ -373,9 +335,7 @@ mod tests {
         assert!(matches!(error, QueryError::ProjectionUnbalancedBrace { position: 6 }), "got {error:?}");
     }
 
-    /// Clause 5.7.2.4 measures a projection against `joinLevel` by how many
-    /// Relationship hops its nesting crosses: a flat term crosses none, and
-    /// each brace group crosses one more.
+    /// Clause 5.7.2.4 measures a projection against `joinLevel` by how many Relationship hops its nesting crosses.
     #[test]
     fn linked_depth_counts_the_relationship_hops_the_nesting_crosses() {
         for (raw, expected) in [("temperature", 0), ("a{b}", 1), ("a{b{c}}", 2), ("a{b{c{d}}}", 3)] {
@@ -392,9 +352,7 @@ mod tests {
         pretty_assertions::assert_eq!(terms[0].linked_depth(), 2);
     }
 
-    /// A stored projection selector is re-serialised whenever it is read back
-    /// (clause 4.21 `pick`/`omit`), so the grammar must round-trip through
-    /// its own `Display` rendering.
+    /// A stored projection selector is re-serialised whenever it is read back, so the grammar must round-trip through its own `Display` rendering.
     #[test]
     fn a_projection_list_round_trips_through_text() {
         for raw in ["owner{name},speed", "observation{temperature,humidity},name", "a{b{c,d}},e"] {

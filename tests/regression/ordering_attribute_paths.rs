@@ -10,14 +10,12 @@
 //! names". Both are the clause 4.9 `ValuePath` production,
 //! `DottedPath *1([DottedPath])`.
 //!
-//! The defect these cover admitted neither `.` nor `[` in an ordering member,
-//! so both of the clause's own examples were refused with `400`.
+//! Both `.` and `[` are admitted in an ordering member, so both of the clause's
+//! own examples are served rather than refused with `400`.
 //!
 //! Every query carries `local=true`: clause 4.23.1 forbids ordering on
 //! distributed operations and the broker enforces it, so without it these
 //! assertions would pass for the wrong reason.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -283,7 +281,7 @@ async fn regression_ordering_path_a_path_beyond_the_depth_cap_is_refused() {
 }
 
 /// The clause 4.23 keywords name structural members and are spelled as bare
-/// names, so admitting paths did not turn `id` into an attribute.
+/// names, so admitting paths does not turn `id` into an attribute.
 #[tokio::test]
 async fn regression_ordering_path_the_structural_keywords_still_order_their_members() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

@@ -3,13 +3,12 @@
 //!
 //! Clause 5.7.2.4 and clause 5.7.4.4 both raise `BadRequestData` when "the
 //! ordering parameter is present and the execution of the operation is not
-//! limited to the local scope (see clause 5.5.13)". Andromeda read that as the
-//! request having asked for local scope, and so refused every `orderBy` that
-//! did not carry `local=true` -- in a broker with an empty Context Registry
-//! too, which made clause 4.23.3's "shall be supported" ordering language
-//! unreachable in exactly the deployment clause 4.23.1 names, "a Context
-//! Consumer [that] queries for Entities retrieved from a single context
-//! broker".
+//! limited to the local scope (see clause 5.5.13)". That is not read as the
+//! request having asked for local scope: refusing every `orderBy` that does not
+//! carry `local=true`, in a broker with an empty Context Registry too, would make
+//! clause 4.23.3's "shall be supported" ordering language unreachable in exactly
+//! the deployment clause 4.23.1 names, "a Context Consumer [that] queries for
+//! Entities retrieved from a single context broker".
 //!
 //! It is read here as clause 5.5.13 defines it: executing "only ... based on
 //! information available in the Context Source or Context Broker directly
@@ -18,15 +17,11 @@
 //! registration matches is in that state whether or not it asked to be, so the
 //! ordering is admitted; a query a registration takes part in is refused, which
 //! is the case clause 4.23.1 wrote the rule for: "Sort ordering is never
-//! applied to distributed operations". `docs/entity-ordering-local-scope.md`
-//! records the decision, including why the narrowing rule in the same two
-//! clauses is deliberately not relaxed the same way.
+//! applied to distributed operations".
 //!
 //! Each test allocates its own entity type from the environment's prefix, so a
 //! registration another test registers concurrently can never decide these
 //! answers.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

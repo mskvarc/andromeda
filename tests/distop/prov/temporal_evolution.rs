@@ -1,4 +1,4 @@
-//! Temporal delete-evolution forwarding — REQ-PROV-104..107 (clause 5.6.16.4).
+//! Temporal delete-evolution forwarding (clause 5.6.16.4).
 //! The advertised operation is the Table 4.20-1 name `deleteTemporal`.
 //!
 //! Deleting a temporal entity's whole evolution reports `404` only when nothing
@@ -39,7 +39,7 @@ async fn seed_local_temporal(client: &TestClient, body: &Value) {
 }
 
 /// Deleting the evolution of an absent entity with no matching registration is
-/// `404 ResourceNotFound`. Confirms REQ-PROV-104 (positive).
+/// `404 ResourceNotFound`.
 #[tokio::test]
 async fn temporal_delete_evolution_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -54,7 +54,7 @@ async fn temporal_delete_evolution_absent_and_no_registration_returns_404() {
 }
 
 /// Exclusive delete-evolution forwards to the owning source and terminates local
-/// processing. Confirms REQ-PROV-104 (negative), 105, 106.
+/// processing.
 #[tokio::test]
 async fn temporal_delete_evolution_exclusive_match_forwards_and_terminates() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -93,7 +93,7 @@ async fn temporal_delete_evolution_exclusive_match_forwards_and_terminates() {
 }
 
 /// Inclusive delete-evolution forwards the delete and removes the local
-/// evolution. Confirms REQ-PROV-107.
+/// evolution.
 #[tokio::test]
 async fn temporal_delete_evolution_inclusive_forwards_and_removes_local() {
     let topology = topology::single().await.expect("single-broker topology");

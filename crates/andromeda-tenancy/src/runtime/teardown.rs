@@ -55,15 +55,15 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// Each candidate carries the `last_used` instant it was picked at. Removal
     /// is conditional on that instant still matching and on the runtime still
     /// being unleased, so a runtime a request touched or leased between the
-    /// sweep's snapshot and this removal is spared -- a request holding its
+    /// sweep's snapshot and this removal is spared, so a request holding its
     /// `Arc` is never handed a torn-down runtime. `reason` is what the eviction
     /// counter records for each release.
     ///
     /// Each removal first takes a teardown slot, so the removed runtimes are torn
     /// down concurrently up to the eviction bound and never pile up alive behind
     /// it. This call awaits them all: the janitor sweeps, the orphan eviction and
-    /// a suspend have no request waiting on them -- a suspend in fact promises
-    /// its pool is closed once it answers -- so they settle the teardown here.
+    /// a suspend have no request waiting on them (a suspend in fact promises
+    /// its pool is closed once it answers), so they settle the teardown here.
     /// An excess eviction of a named tenant instead detaches its teardown and the
     /// wake probe that follows it.
     pub(super) async fn evict_all(&self, candidates: Vec<(TenantRef, Instant)>, reason: EvictionReason) -> usize {
@@ -77,7 +77,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             record_eviction(reason);
             evicted += 1;
             // An excess eviction leaves a still-registered tenant dormant, so it
-            // is shut down and its due work scheduled on the eviction set -- the
+            // is shut down and its due work scheduled on the eviction set: the
             // probe reads the database only after shutdown has committed any
             // in-flight delivery. An orphan, a suspended tenant (or the unnamed
             // default) is never woken, so it is torn down on this call's awaited
@@ -101,7 +101,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// holds, returning whether it was released.
     ///
     /// The removal is conditional exactly as in [`evict_all`](Self::evict_all);
-    /// the teardown -- and, for a named tenant, the wake probe after it -- is
+    /// the teardown, and for a named tenant the wake probe after it, is
     /// detached so the caller waits on neither.
     pub(super) async fn evict_holding(&self, permit: Option<OwnedSemaphorePermit>, tenant: TenantRef, chosen_at: Instant) -> bool {
         let Some(cached) = self.remove_unleased(&tenant, chosen_at) else {
@@ -149,7 +149,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
 
     /// Wait for a teardown slot.
     ///
-    /// A closed semaphore never arises here -- nothing closes it -- so a slot
+    /// A closed semaphore never arises here (nothing closes it), so a slot
     /// that cannot be acquired degrades to an unbounded teardown rather than a
     /// panic or a leaked runtime.
     pub(super) async fn teardown_slot(&self) -> Option<OwnedSemaphorePermit> {
@@ -168,7 +168,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// The shutdown precedes the probe deliberately. A delivery the runtime was
     /// mid-flight commits and releases its pool during shutdown, so a probe that
     /// ran first could snapshot the database before the obligation landed and
-    /// record a null wake -- stranding the evicted tenant until the slow
+    /// record a null wake, stranding the evicted tenant until the slow
     /// reconciliation sweep found it. Probing after shutdown reads the settled
     /// state instead. The teardown slot is released as soon as the runtime is
     /// gone, so a slow probe never holds back the next eviction; the probe waits

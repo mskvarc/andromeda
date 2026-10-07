@@ -2,7 +2,7 @@
 //! update (clauses 5.2.9, 5.9.3). Exclusive and redirect registrations may not
 //! overlap another source or a local entity for the same id/attribute footprint,
 //! and auxiliary registrations may only carry consumption operations. All
-//! `T-LOCAL`, all `IMPL`.
+//! `T-LOCAL`.
 
 use crate::{
     entity::vehicle,
@@ -33,7 +33,7 @@ async fn create_local_vehicle(topology: &MultiBrokerTopology<BrokerRole>, id: &s
 }
 
 /// A second exclusive registration over the same id/attribute footprint as an
-/// existing exclusive one is rejected (clause 5.2.9). Confirms REQ-REG-55.
+/// existing exclusive one is rejected (clause 5.2.9).
 #[tokio::test]
 async fn reg_exclusive_over_existing_exclusive_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -74,7 +74,7 @@ async fn reg_exclusive_over_existing_exclusive_returns_409() {
 }
 
 /// An exclusive registration over the same footprint as an existing redirect
-/// registration is rejected (clause 5.2.9). Confirms REQ-REG-55.
+/// registration is rejected (clause 5.2.9).
 #[tokio::test]
 async fn reg_exclusive_over_existing_redirect_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -115,7 +115,7 @@ async fn reg_exclusive_over_existing_redirect_returns_409() {
 }
 
 /// An exclusive registration over a local entity that already holds the covered
-/// attribute is rejected (clause 5.2.9). Confirms REQ-REG-56.
+/// attribute is rejected (clause 5.2.9).
 #[tokio::test]
 async fn reg_exclusive_over_local_entity_with_attr_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -142,7 +142,7 @@ async fn reg_exclusive_over_local_entity_with_attr_returns_409() {
 }
 
 /// A redirect registration over an entity that already exists locally is rejected
-/// (clause 5.2.9). Confirms REQ-REG-57.
+/// (clause 5.2.9).
 #[tokio::test]
 async fn reg_redirect_over_existing_entity_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -165,7 +165,6 @@ async fn reg_redirect_over_existing_entity_returns_409() {
 }
 
 /// An auxiliary registration may not advertise a write operation (clause 5.2.9).
-/// Confirms REQ-REG-58.
 #[tokio::test]
 async fn reg_auxiliary_with_write_operation_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -191,7 +190,7 @@ async fn reg_auxiliary_with_write_operation_returns_400() {
 }
 
 /// An auxiliary registration carrying only consumption operations is accepted
-/// (clause 5.2.9). Confirms REQ-REG-58.
+/// (clause 5.2.9).
 #[tokio::test]
 async fn reg_auxiliary_with_valid_consumption_ops_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -216,7 +215,7 @@ async fn reg_auxiliary_with_valid_consumption_ops_accepted() {
 }
 
 /// Updating one exclusive registration so it overlaps another exclusive one is
-/// rejected (clause 5.9.3). Confirms REQ-REG-73.
+/// rejected (clause 5.9.3).
 #[tokio::test]
 async fn update_producing_exclusive_overlap_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -270,7 +269,7 @@ async fn update_producing_exclusive_overlap_returns_409() {
 }
 
 /// Updating an exclusive registration so it covers an attribute a local entity
-/// already holds is rejected (clause 5.9.3). Confirms REQ-REG-74.
+/// already holds is rejected (clause 5.9.3).
 #[tokio::test]
 async fn update_exclusive_onto_existing_entity_attr_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -309,7 +308,7 @@ async fn update_exclusive_onto_existing_entity_attr_returns_409() {
 }
 
 /// Updating a redirect registration so it matches an existing local entity is
-/// rejected (clause 5.9.3). Confirms REQ-REG-75.
+/// rejected (clause 5.9.3).
 #[tokio::test]
 async fn update_redirect_matching_existing_entity_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -345,7 +344,7 @@ async fn update_redirect_matching_existing_entity_returns_409() {
 }
 
 /// Updating an auxiliary registration to advertise a write operation is rejected
-/// (clause 5.9.3). Confirms REQ-REG-76.
+/// (clause 5.9.3).
 #[tokio::test]
 async fn update_auxiliary_with_write_operation_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");

@@ -1,6 +1,4 @@
-//! Matching algorithm, entity part (clause 5.12): the relevant-spec inputs, the
-//! any-RegistrationInfo rule, the both-parts rule, and the id sub-cases,
-//! exercised through the discovery-query surface. All `T-LOCAL`.
+//! Matching algorithm, entity part (clause 5.12): the relevant-spec inputs, the any-RegistrationInfo rule, the both-parts rule, and the id sub-cases, exercised through the discovery-query surface.
 
 use crate::{
     disc::{
@@ -13,8 +11,7 @@ use crate::{
 use serde_json::json;
 use urlencoding::encode;
 
-/// The relevant-spec inputs (type, id, idPattern, attribute list) each narrow
-/// the matched registrations independently (clause 5.12). Confirms REQ-DISC-94.
+/// The relevant-spec inputs (type, id, idPattern, attribute list) each narrow the matched registrations independently (clause 5.12).
 #[tokio::test]
 async fn matching_query_relevant_spec_uses_type_ids_idpattern_attrs() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -43,8 +40,7 @@ async fn matching_query_relevant_spec_uses_type_ids_idpattern_attrs() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A query spec matches a registration if any of its `RegistrationInfo` entries
-/// matches (clause 5.12). Confirms REQ-DISC-99.
+/// A query spec matches a registration if any of its `RegistrationInfo` entries matches (clause 5.12).
 #[tokio::test]
 async fn matching_spec_matches_csr_if_any_registrationinfo_matches() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -66,8 +62,7 @@ async fn matching_spec_matches_csr_if_any_registrationinfo_matches() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `RegistrationInfo` matches only when both its entity part and its attribute
-/// part match (clause 5.12). Confirms REQ-DISC-100.
+/// A `RegistrationInfo` matches only when both its entity part and its attribute part match (clause 5.12).
 #[tokio::test]
 async fn matching_registrationinfo_requires_both_entity_and_attribute_parts() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -91,8 +86,7 @@ async fn matching_registrationinfo_requires_both_entity_and_attribute_parts() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The entity part requires both a type selector and the id condition to hold
-/// (clause 5.12). Confirms REQ-DISC-101.
+/// The entity part requires both a type selector and the id condition to hold (clause 5.12).
 #[tokio::test]
 async fn matching_entity_requires_type_selector_and_id_condition() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -114,8 +108,7 @@ async fn matching_entity_requires_type_selector_and_id_condition() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Id sub-case: `EntityInfo` with neither id nor idPattern matches any queried id
-/// (clause 5.12). Confirms REQ-DISC-102.
+/// Id sub-case: `EntityInfo` with neither id nor idPattern matches any queried id (clause 5.12).
 #[tokio::test]
 async fn matching_id_subcase_entityinfo_without_id_or_idpattern_matches() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -128,8 +121,7 @@ async fn matching_id_subcase_entityinfo_without_id_or_idpattern_matches() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Id sub-case: a specified id equal to EntityInfo.id matches, a different id
-/// does not (clause 5.12). Confirms REQ-DISC-103.
+/// Id sub-case: a specified id equal to EntityInfo.id matches, a different id does not (clause 5.12).
 #[tokio::test]
 async fn matching_id_subcase_specified_id_equals_entityinfo_id() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -147,8 +139,7 @@ async fn matching_id_subcase_specified_id_equals_entityinfo_id() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Id sub-case: a specified id that matches EntityInfo.idPattern matches, one
-/// outside it does not (clause 5.12). Confirms REQ-DISC-104.
+/// Id sub-case: a specified id that matches EntityInfo.idPattern matches, one outside it does not (clause 5.12).
 #[tokio::test]
 async fn matching_id_subcase_specified_id_matches_entityinfo_idpattern() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -173,8 +164,7 @@ async fn matching_id_subcase_specified_id_matches_entityinfo_idpattern() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Id sub-case: a specified idPattern that matches EntityInfo.id matches, a
-/// disjoint pattern does not (clause 5.12). Confirms REQ-DISC-105.
+/// Id sub-case: a specified idPattern that matches EntityInfo.id matches, a disjoint pattern does not (clause 5.12).
 #[tokio::test]
 async fn matching_id_subcase_specified_idpattern_matches_entityinfo_id() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -199,9 +189,7 @@ async fn matching_id_subcase_specified_idpattern_matches_entityinfo_id() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Id sub-case: when both the queried idPattern and EntityInfo.idPattern are
-/// present, overlapping patterns match conservatively (clause 5.12). Confirms
-/// REQ-DISC-106.
+/// Id sub-case: when both the queried idPattern and EntityInfo.idPattern are present, overlapping patterns match conservatively (clause 5.12).
 #[tokio::test]
 async fn matching_id_subcase_both_patterns_present_conservative_match() {
     let topology = topology::single().await.expect("single-broker topology");

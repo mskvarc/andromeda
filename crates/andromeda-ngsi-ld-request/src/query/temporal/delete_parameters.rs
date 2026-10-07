@@ -1,5 +1,4 @@
-//! Parameters of the temporal history delete-by-query (an Andromeda extension;
-//! see `docs/extensions/temporal-delete-by-query.md`).
+//! Parameters of the temporal history delete-by-query (an Andromeda extension).
 //!
 //! `DELETE /temporal/entities` composes the entity selection of a temporal
 //! query, the attribute `drop`/`keep` and `datasetId`/`deleteAll` scoping of the
@@ -42,7 +41,6 @@ use serde::Deserialize;
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TemporalDeleteParameters {
-    // --- Entity selection ---
     /// Entity identifiers to select, comma-separated (`id`).
     #[serde(default, deserialize_with = "deserialize_optional_uri_csv")]
     pub id: Option<Vec<Identifier>>,
@@ -67,7 +65,6 @@ pub struct TemporalDeleteParameters {
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
     pub csf: Option<Expr>,
 
-    // --- Temporal window ---
     /// How the window relates to the given instants (clause 4.11 `timerel`).
     #[serde(default, deserialize_with = "deserialize_option_timerel")]
     pub timerel: Option<TimeRel>,
@@ -81,7 +78,6 @@ pub struct TemporalDeleteParameters {
     #[serde(default, deserialize_with = "deserialize_option_timeproperty")]
     pub timeproperty: Option<TimeProp>,
 
-    // --- Attribute scope ---
     /// Attributes whose instances are removed (clause 5.6.21 `drop`).
     /// Mutually exclusive with `keep`.
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
@@ -91,7 +87,6 @@ pub struct TemporalDeleteParameters {
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub keep: Option<Vec<AttributeName>>,
 
-    // --- Dataset scope ---
     /// Dataset instances to remove, comma-separated (`datasetId`, clause 4.5.5).
     #[serde(rename = "datasetId")]
     #[serde(default, deserialize_with = "deserialize_optional_dataset_selectors")]
@@ -101,7 +96,6 @@ pub struct TemporalDeleteParameters {
     #[serde(rename = "deleteAll")]
     pub delete_all: Option<bool>,
 
-    // --- Extension control ---
     /// Whether the operation only reports the would-delete count and removes
     /// nothing (`dryRun`).
     #[serde(rename = "dryRun")]

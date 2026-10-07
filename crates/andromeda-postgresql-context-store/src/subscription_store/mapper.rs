@@ -54,8 +54,7 @@ pub fn stored_subscription_uri(raw: &str) -> Result<Identifier, ContextStoreErro
 
 /// The value the JSON text of a column holds, read straight from the text.
 ///
-/// A column holding the JSON `null` literal, which an earlier release wrote for
-/// a member a client removed, is read as the absent member.
+/// A column holding the JSON `null` literal is read as the absent member.
 ///
 /// # Errors
 ///
@@ -124,7 +123,7 @@ fn stored_subscription_key(raw: i64) -> Result<SubscriptionKey, ContextStoreErro
 }
 
 /// The stored `q`, its trailing members carrying the spelling the subscriber
-/// wrote (clause 4.9), which the expanded `q` column alone no longer holds.
+/// wrote (clause 4.9), which the expanded `q` column alone does not hold.
 ///
 /// # Errors
 ///
@@ -331,7 +330,7 @@ fn row_to_subscription(row: SubscriptionRow) -> Subscription {
         )
         .lifecycle(
             SubscriptionLifecycle::builder()
-                // `isActive` is no longer stored: on read it is always
+                // `isActive` is not stored: on read it is always
                 // `status == active`, so it is derived rather than kept.
                 .is_active(Some(row.status == SubscriptionStatus::Active))
                 .status(row.status)
@@ -386,9 +385,8 @@ mod tests {
         pretty_assertions::assert_eq!(read, Some(geo_q()));
     }
 
-    /// The JSON `null` literal an earlier release wrote for a removed member
-    /// is the absent member, and a column that is no `geoQ` or no `temporalQ`
-    /// names itself in the failure.
+    /// The JSON `null` literal is the absent member, and a column that is no
+    /// `geoQ` or no `temporalQ` names itself in the failure.
     #[test]
     fn a_null_column_is_absent_and_a_malformed_one_names_its_member() {
         let absent = decoded_column::<GeoQueryInput>(JsonbText::new(b"null"), StoredSubscriptionError::GeoQ).expect("null decodes");

@@ -115,7 +115,7 @@ pub struct CompiledSubscription {
     /// Events that trigger this subscription.
     pub triggers: Vec<NotificationTrigger>,
     /// Expanded watched attribute names, or every attribute when absent.
-    pub watched_attrs: Option<HashSet<AttributeName>>, // expanded IRIs; None = all
+    pub watched_attrs: Option<HashSet<AttributeName>>,
     /// Entity selectors evaluated during matching.
     pub selectors: Vec<EntitySelector>,
     /// Minimum seconds between notifications.

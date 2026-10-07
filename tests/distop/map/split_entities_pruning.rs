@@ -2,8 +2,7 @@
 //!
 //! Under `splitEntities` an entity's attributes are spread across sources, so no
 //! single reader can decide whether it matches: `q`, the geoquery and `scopeQ`
-//! are held back and evaluated once over the merged result. Two consequences the
-//! broker used to get wrong:
+//! are held back and evaluated once over the merged result. Two consequences:
 //!
 //! - When an `EntityMap` is minted, a locally held partial entity that fails the
 //!   filter on its own must still be a candidate, because a peer may hold the

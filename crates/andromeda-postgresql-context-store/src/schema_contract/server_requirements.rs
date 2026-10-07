@@ -17,9 +17,7 @@ use std::{num::ParseIntError, str::FromStr};
 /// `UNIQUE NULLS NOT DISTINCT (temporal_entity_key, attribute_name_key, dataset_id)`,
 /// which is how ETSI GS CIM 009 v1.9.1 clause 4.5.5 is modelled — an absent
 /// `datasetId` is the one default instance — and `NULLS NOT DISTINCT` is a
-/// PostgreSQL 15 feature. The floor rises to 18 when the schema adopts
-/// database-side `uuidv7()` defaults; until it does, stating 18 here would
-/// refuse servers the schema runs on correctly.
+/// PostgreSQL 15 feature.
 pub const REQUIRED_POSTGRES_VERSION: PostgresVersion = PostgresVersion::new(150_000);
 
 /// The `PostGIS` version the tenant schema requires.
@@ -163,7 +161,7 @@ pub enum ExtensionVersionError {
 /// the schema also creates — `pg_trgm`, `ltree`, `btree_gist`, `btree_gin`
 /// (the `int4_ops` half of the attribute-aware trigram index on
 /// `current_attribute_values`) — ship with every supported server, so their
-/// `CREATE EXTENSION IF NOT EXISTS` in migration 0006 is the check.
+/// `CREATE EXTENSION IF NOT EXISTS` in the migrations is the check.
 ///
 /// # Errors
 ///

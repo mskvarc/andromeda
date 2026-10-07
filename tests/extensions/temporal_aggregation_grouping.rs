@@ -3,8 +3,7 @@
 //!
 //! Runs against a broker started with
 //! `ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING=enabled` and a small
-//! `ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING_MAX_GROUPS` (see
-//! `docker/compose/test/extensions/env`).
+//! `ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING_MAX_GROUPS`.
 
 use crate::seeding::{DATASET_A, DATASET_B, seed_grouping_history, seed_hourly_history, seed_mixed_unit_history, seed_monthly_history};
 use andromeda_test_client::test_client::TestClient;
@@ -122,8 +121,7 @@ async fn a_cyclic_hour_of_day_bucket_folds_the_timeline() {
     scope.finish().await.expect("cleanup");
 }
 
-/// A value-in-effect key groups each instant by the `zone` value at that instant
-/// (study §4.4).
+/// A value-in-effect key groups each instant by the `zone` value at that instant.
 #[tokio::test]
 async fn a_value_key_groups_by_the_attribute_in_effect() {
     let scope = TestEnvironment::from_suite("extensions").await.expect("isolated environment");

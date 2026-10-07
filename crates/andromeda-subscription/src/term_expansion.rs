@@ -31,8 +31,7 @@ use tracing::warn;
 /// Expand every name of one attribute-name list in place (clause 5.5.7).
 ///
 /// An unavailable `@context` fails the request; a single name the context
-/// cannot expand is left as written and reported, the same lenience the
-/// attribute lists always had.
+/// cannot expand is left as written and reported.
 async fn expand_name_list(
     engine: &JsonLdEngine,
     prepared_context: &PreparedTermContext,

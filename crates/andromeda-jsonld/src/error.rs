@@ -278,8 +278,8 @@ const fn is_protected_term_redefinition(error: &context_processing::Error<Loader
 
 /// Recover the loader failure buried inside a typed [`ExpandError`].
 ///
-/// The typed `LoadError<LoaderError>` exposes its source directly, so this is
-/// a match rather than a chain of `Box<dyn Error>` downcasts.
+/// The typed `LoadError<LoaderError>` exposes its source directly, so no
+/// downcast is needed.
 fn context_error_of_expansion(error: &ExpandError<LoaderError>) -> Option<JsonLdError> {
     match error {
         ExpandError::Loading(load) | ExpandError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load)) => Some(JsonLdError::from(&load.source)),

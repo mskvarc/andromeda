@@ -66,8 +66,8 @@ impl HttpTransport {
     /// # Errors
     ///
     /// Returns [`TransportError::ClientInitializationFailed`] when `reqwest`
-    /// refuses the client configuration — a TLS backend that cannot be
-    /// initialised, or a resolver the runtime will not accept.
+    /// refuses the client configuration, such as a TLS backend that cannot be
+    /// initialised or a resolver the runtime will not accept.
     pub fn new(config: HttpTransportConfig) -> Result<HttpTransport, TransportError> {
         let client = reqwest::ClientBuilder::new()
             .http1_title_case_headers()
@@ -163,14 +163,13 @@ pub(crate) fn error_chain_text(error: &(dyn Error + 'static)) -> String {
 /// Whether a send failure is a TLS handshake or certificate failure.
 ///
 /// `reqwest` exposes no `is_tls()` and abstracts the TLS backend away, so the
-/// classification walks the typed error source chain — the same idiom
+/// classification walks the typed error source chain, the same idiom
 /// `reqwest::Error::is_connect` uses internally to find a `hyper` error. This
-/// build links `reqwest` against `rustls` (see the crate's Cargo.lock), so a
-/// handshake or certificate failure surfaces as a [`rustls::Error`] somewhere
-/// below `reqwest`'s own error; downcasting to it is immune to the spelling and
-/// capitalisation changes that broke the previous `Display`-substring check. The
-/// text pass is only a backstop for a future wrapping that erases the type
-/// before it reaches the chain, and the unit tests pin both paths.
+/// build links `reqwest` against `rustls`, so a handshake or certificate failure
+/// surfaces as a [`rustls::Error`] somewhere below `reqwest`'s own error;
+/// downcasting to it is immune to changes in the spelling and capitalisation of
+/// the message. The text pass is only a backstop for a wrapping that erases the
+/// type before it reaches the chain, and the unit tests pin both paths.
 fn chain_indicates_tls(error: &(dyn Error + 'static)) -> bool {
     let mut current = Some(error);
     while let Some(source) = current {
@@ -238,7 +237,7 @@ impl HttpTransport {
         // Table 5.2.15-1: the endpoint's `timeout` is the "maximum period of
         // time in milliseconds which may elapse before a notification is
         // assumed to have failed", and "the NGSI-LD system can override this
-        // value" — which the broker-wide bound below does, in the one direction
+        // value", which the broker-wide bound below does, in the one direction
         // an override runs. The row also confines the member to a binding whose
         // "protocol always returns a response".
         let deadline = delivery_deadline(req.timeout, self.config.timeout);
@@ -385,7 +384,7 @@ mod tests {
 
     /// A receiver that answers the first request on each connection and keeps
     /// the connection open, but drops any later request sent over it without
-    /// answering -- a peer that has abandoned an idle keep-alive connection
+    /// answering, like a peer that has abandoned an idle keep-alive connection
     /// which the client still holds as open. Counts the connections accepted.
     async fn receiver_abandoning_idle_connections() -> (Url, Arc<AtomicUsize>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("a loopback listener binds");

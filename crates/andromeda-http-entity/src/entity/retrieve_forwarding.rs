@@ -75,8 +75,8 @@ impl RetrieveForwarding<'_> {
         let mut contributions: Vec<SourceContribution> = contributions_of(&primary.results).collect();
         let merged = merge_retrieve_results(local_entity, primary.results);
 
-        // Phase 2: auxiliary sources only if an entity was found, since they
-        // only supplement existing data (clause 4.3.6.2).
+        // Auxiliary sources are consulted only when an entity was found, since
+        // they only supplement existing data (clause 4.3.6.2).
         let entity = match merged {
             Some(merged) => {
                 let auxiliary = self.phase(CsrModeFilter::AuxiliaryOnly).await?;

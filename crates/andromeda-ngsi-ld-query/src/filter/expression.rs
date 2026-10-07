@@ -7,11 +7,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
-/// A parsed `q` filter expression tree.
-///
-/// Represents the boolean structure of an NGSI-LD query filter:
-/// `And` and `Or` nodes combine sub-expressions; `Pred` leaves contain
-/// individual predicates (existence checks, comparisons, pattern matches).
+/// A parsed `q` filter expression tree: `And` and `Or` nodes combine sub-expressions, `Pred` leaves hold individual predicates.
 ///
 /// The wire form is the clause 4.9 expression itself, in both directions: a
 /// resource that carries a filter — a Subscription (clause 5.2.12), a

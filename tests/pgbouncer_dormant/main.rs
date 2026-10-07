@@ -271,7 +271,6 @@ async fn a_time_interval_subscription_keeps_notifying_after_its_tenant_is_evicte
 
     evict_by_pressure(&client, &broker).await;
 
-    // Count periodic notifications over 30s without ever touching the tenant.
     let mut count = 0;
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
@@ -318,7 +317,6 @@ async fn a_failed_durable_delivery_is_retried_after_eviction() {
         .expect("every tenant is provisioned");
     subscribe_change(&client, &broker, &tenant, &callback).await;
 
-    // A change: its first delivery attempt gets a 500.
     let patched = client
         .patch(format!(
             "{broker}entities/{}/attrs",
@@ -564,7 +562,7 @@ async fn pooler_clients(console: &PoolerConsole, database: &TenantDatabaseName) 
 #[serial_test::serial]
 async fn suspending_a_pooled_tenant_disconnects_its_pooler_clients_before_answering() {
     // A suspend releases the tenant's runtime synchronously: the 204 is sent only
-    // after its pool closed (docs/tenant-management.md, "Suspend and resume").
+    // after its pool closed.
     // Behind the pooler the broker's connections are PgBouncer *client*
     // connections, so that is what must be gone the moment the suspend answers.
     // The PostgreSQL backends behind them belong to PgBouncer and linger until its

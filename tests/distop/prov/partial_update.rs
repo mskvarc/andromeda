@@ -1,4 +1,4 @@
-//! Partial Attribute Update forwarding — REQ-PROV-27..33 (clause 5.6.4.4).
+//! Partial Attribute Update forwarding (clause 5.6.4.4).
 //!
 //! A partial update targets one attribute. An exclusive registration that owns
 //! it forwards the `PATCH` and terminates without touching the local copy; an
@@ -47,7 +47,7 @@ async fn seed_local(client: &TestClient, id: &str, attributes: &[(&str, Value)])
 }
 
 /// With neither a local entity nor a matching registration, a partial update is
-/// `404 ResourceNotFound`. Confirms REQ-PROV-27 (positive).
+/// `404 ResourceNotFound`.
 #[tokio::test]
 async fn partial_update_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -65,7 +65,7 @@ async fn partial_update_absent_and_no_registration_returns_404() {
 }
 
 /// A matching registration keeps a partial update on a locally absent entity from
-/// being a `404`; the operation is forwarded. Confirms REQ-PROV-27 (negative).
+/// being a `404`; the operation is forwarded.
 #[tokio::test]
 async fn partial_update_registration_matches_entity_absent_not_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -102,7 +102,6 @@ async fn partial_update_registration_matches_entity_absent_not_404() {
 /// An exclusive registration forwards the owned attribute and terminates: the
 /// local value is left unchanged. The forward names the attribute in the path
 /// and carries the Attribute Fragment as its body (clauses 5.6.4.3, 6.6.3.1).
-/// Confirms REQ-PROV-28, 29, 31.
 #[tokio::test]
 async fn partial_update_exclusive_match_forwards_and_terminates() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -158,7 +157,6 @@ async fn partial_update_exclusive_match_forwards_and_terminates() {
 
 /// An exclusive registration that does not advertise `updateAttrs` rejects the
 /// partial update it wholly owns with a bare `409 Conflict` and no forwarding.
-/// Confirms REQ-PROV-30 (complete-fail).
 #[tokio::test]
 async fn partial_update_exclusive_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -198,7 +196,7 @@ async fn partial_update_exclusive_op_unsupported_returns_409() {
 /// the same entity and attribute is a clause 5.9.2.4 Conflict. They are
 /// registered before the local copy is seeded, since clause 5.9.2.4 rejects a
 /// redirect when "an existing Entity already matches the Context Source
-/// Registration". Confirms REQ-PROV-30 (partial), 32.
+/// Registration".
 #[tokio::test]
 async fn partial_update_op_unsupported_multi_returns_207() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -252,7 +250,6 @@ async fn partial_update_op_unsupported_multi_returns_207() {
 }
 
 /// An inclusive registration forwards the input and also patches the local copy.
-/// Confirms REQ-PROV-32.
 #[tokio::test]
 async fn partial_update_inclusive_forwards_input() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -290,7 +287,7 @@ async fn partial_update_inclusive_forwards_input() {
 }
 
 /// A locally present entity that lacks the targeted attribute is `404` for a
-/// partial update. Confirms REQ-PROV-33.
+/// partial update.
 #[tokio::test]
 async fn partial_update_local_present_attr_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");

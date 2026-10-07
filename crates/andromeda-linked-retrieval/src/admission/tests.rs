@@ -62,15 +62,10 @@ const FILTER: ReachingMember = ReachingMember::Filter;
 /// The clause 5.7.1.4 cases and what Retrieve Entity answers to each.
 fn retrieve_cases() -> Vec<(Case, Result<(), AdmissionError>)> {
     vec![
-        // retrieve_admits_a_flat_projection_without_join
         (Case::pick("a", None, None), Ok(())),
-        // retrieve_refuses_a_nested_projection_without_join
         (Case::pick("a{b}", None, None), Err(AdmissionError::WithoutJoin(PROJECTION))),
-        // retrieve_refuses_a_nested_projection_under_join_none
         (Case::pick("a{b}", Some(JoinMode::None), None), Err(AdmissionError::WithoutJoin(PROJECTION))),
-        // retrieve_admits_a_nesting_within_the_default_depth
         (Case::pick("a{b}", Some(JoinMode::Flat), None), Ok(())),
-        // retrieve_refuses_a_nesting_deeper_than_join_level
         (
             Case::pick("a{b{c}}", Some(JoinMode::Inline), Some(1)),
             Err(AdmissionError::DeeperThanJoinLevel {
@@ -79,7 +74,6 @@ fn retrieve_cases() -> Vec<(Case, Result<(), AdmissionError>)> {
                 join_level: depth(1),
             }),
         ),
-        // retrieve_admits_a_nesting_as_deep_as_join_level
         (Case::pick("a{b{c}}", Some(JoinMode::Flat), Some(2)), Ok(())),
     ]
 }
@@ -88,7 +82,6 @@ fn retrieve_cases() -> Vec<(Case, Result<(), AdmissionError>)> {
 fn query_cases() -> Vec<(Case, Result<(), AdmissionError>)> {
     let mut cases = retrieve_cases();
     cases.extend([
-        // query_refuses_a_hopping_filter_without_join
         (
             Case::filter("isParkedIn{category}==\"x\"", None, None),
             Err(AdmissionError::WithoutJoin(FILTER)),
@@ -97,10 +90,8 @@ fn query_cases() -> Vec<(Case, Result<(), AdmissionError>)> {
             Case::filter("isParkedIn{category}==\"x\"", Some(JoinMode::None), None),
             Err(AdmissionError::WithoutJoin(FILTER)),
         ),
-        // query_admits_a_hop_within_join_level
         (Case::filter("isParkedIn{category}", Some(JoinMode::Flat), None), Ok(())),
         (Case::filter("isParkedIn{category}", Some(JoinMode::Inline), None), Ok(())),
-        // query_refuses_a_hop_deeper_than_join_level
         (
             Case::filter("isParkedIn{inDistrict{zone}}==\"n\"", Some(JoinMode::Flat), Some(1)),
             Err(AdmissionError::DeeperThanJoinLevel {
@@ -109,7 +100,6 @@ fn query_cases() -> Vec<(Case, Result<(), AdmissionError>)> {
                 join_level: depth(1),
             }),
         ),
-        // query_bounds_a_conjunction_by_its_deepest_hop
         (
             Case::filter("speed>50;isParkedIn{inDistrict{zone}}", Some(JoinMode::Flat), Some(1)),
             Err(AdmissionError::DeeperThanJoinLevel {

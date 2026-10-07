@@ -33,7 +33,7 @@ use chrono::Utc;
 #[global_allocator]
 static ALLOCATOR: CountingAllocator = CountingAllocator::new();
 
-/// The positions of the test polygon's one ring, closing position included.
+/// How many positions the test polygon's ring holds, closing position included.
 const POSITIONS: usize = 1_000_000;
 
 /// The compaction may peak this far above what was allocated before it.

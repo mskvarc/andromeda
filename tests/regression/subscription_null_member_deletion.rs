@@ -6,14 +6,8 @@
 //! target, the target member is deleted." Table 5.2.12-1 gives `expiresAt`
 //! cardinality `0..1`, so deleting it leaves a subscription that never expires.
 //!
-//! Before this suite existed the broker read a `null` `expiresAt` (and every
-//! other scalar member) as an absent one, so `PATCH {"expiresAt": null}` was
-//! answered `204 No Content` and the expiry silently stayed.
-//!
 //! Needs the host broker: the case drives the HTTP API and is not run without
 //! one.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

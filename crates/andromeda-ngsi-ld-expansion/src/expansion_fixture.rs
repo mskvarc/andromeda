@@ -1,11 +1,11 @@
 //! An offline engine resolving the test contexts, and both expansions of one
 //! request side by side.
 //!
-//! A request is read the way the transport reads it -- numbers canonicalised,
+//! A request is read the way the transport reads it (numbers canonicalised,
 //! the body `@context` split off into the request context, a typed body
-//! decoded into the compact model -- and then expanded twice: by the typed
+//! decoded into the compact model) and then expanded twice: by the typed
 //! walk, and by the JSON-LD processor from the serialization the write path
-//! hands it today, read through the processor decoding.
+//! hands it, read through the processor decoding.
 
 use crate::{
     attribute_fragment::AttributeFragment,

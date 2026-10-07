@@ -263,8 +263,6 @@ mod tests {
         format!("\"{iri}\"")
     }
 
-    // -- projection-backed comparisons (clause 4.9) --------------------------
-
     #[test]
     fn number_comparison_probes_typed_number_column() {
         let (sql, binds) = render(&format!("{}>50", quoted(SPEED)));
@@ -579,8 +577,6 @@ mod tests {
         assert!(sql.contains("\"cav\".\"value_number\" >"), "{sql}");
     }
 
-    // -- patterns ------------------------------------------------------------
-
     #[test]
     fn pattern_match_uses_posix_regex_on_the_string_column() {
         let (sql, _) = render("\"https://example.com/name\"~=\"^A.*\"");
@@ -598,8 +594,6 @@ mod tests {
             "clause 4.9 requires the target element to be present: {sql}"
         );
     }
-
-    // -- structured target values (clause 4.9) -------------------------------
 
     /// Clause 4.9: with no target language specified, a `LanguageProperty`'s
     /// target value is "a value from any of the key-value pairs held within the
@@ -819,8 +813,6 @@ mod tests {
         assert!(!sql.contains("hasLanguageMap"), "{sql}");
     }
 
-    // -- unknown attributes --------------------------------------------------
-
     #[test]
     fn unknown_attribute_iri_compiles_to_a_constant_false() {
         let (sql, _) = render_with(
@@ -831,8 +823,6 @@ mod tests {
         assert!(sql.contains("FALSE"), "{sql}");
         assert!(!sql.contains("current_attribute_values"), "no probe is emitted when no row can exist: {sql}");
     }
-
-    // -- existence -----------------------------------------------------------
 
     #[test]
     fn bare_existence_is_the_presence_of_a_projection_row() {
@@ -856,8 +846,6 @@ mod tests {
         assert!(sql.contains("FALSE"), "{sql}");
         assert!(!sql.contains("current_attribute_values"), "{sql}");
     }
-
-    // -- boolean structure ---------------------------------------------------
 
     #[test]
     fn and_or_nesting_preserves_grouping() {
@@ -936,8 +924,6 @@ mod tests {
         assert_eq!(sql.matches("EXISTS").count(), 2, "{sql}");
     }
 
-    // -- correlation ---------------------------------------------------------
-
     #[test]
     fn a_correlated_statement_probes_against_the_entity_key_of_its_own_alias() {
         let (sql, _) = render_with(
@@ -954,10 +940,6 @@ mod tests {
         assert!(sql.contains("\"cav\".\"entity_key\" = \"entities\".\"entity_key\""), "{sql}");
         assert!(!sql.contains("\"entities\".\"id\""), "the URI is not the correlation column: {sql}");
     }
-
-    // -- attribute collection ------------------------------------------------
-
-    // -- linked-entity traversal (clause 4.9) --------------------------------
 
     const IS_PARKED_IN: &str = "https://example.com/isParkedIn";
     const CATEGORY: &str = "https://example.com/category";

@@ -7,7 +7,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_subscription::error::SubscriptionError;
 
-/// The unique constraint migration 0024 names on `subscriptions.id`.
+/// The unique constraint the migrations name on `subscriptions.id`.
 const UQ_SUBSCRIPTIONS_ID: &str = "uq_subscriptions_id";
 
 /// Flatten an adapter failure at the policy boundary.
@@ -49,7 +49,7 @@ mod tests {
         assert!(matches!(persistence_error(sqlx::Error::RowNotFound), SubscriptionError::Persistence(_)));
     }
 
-    /// Migration 0024 names every constraint, so the duplicate-identifier
+    /// The migrations name every constraint, so the duplicate-identifier
     /// refusal matches the declared name rather than one PostgreSQL generated.
     #[test]
     fn the_duplicate_id_refusal_names_the_constraint_migration_0024_declares() {

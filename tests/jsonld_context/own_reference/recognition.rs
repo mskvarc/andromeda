@@ -101,7 +101,7 @@ async fn an_entry_held_only_by_another_tenant_is_not_resolved_from_it() {
     other.finish().await;
 }
 
-/// A reference with any query, the former tenant parameter included, an extra
+/// A reference with any query, the vendor tenant parameter included, an extra
 /// path segment or another path prefix is not an own reference: it is fetched
 /// as the URL it is, and not available on an origin nothing resolves.
 #[tokio::test]

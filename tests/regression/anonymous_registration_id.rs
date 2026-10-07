@@ -1,17 +1,4 @@
-//! A Context Source Registration created without an `id` is assigned one.
-//!
-//! ETSI GS CIM 009 v1.9.1 clause 5.9.2 (Register Context Source) takes a
-//! Context Source Registration whose `id` is optional (Table 5.2.9-1 gives it
-//! cardinality 0..1), and clause 5.2.7 states that "if no entity `id` ... is
-//! present ... a new one shall be assigned". The HTTP binding of clause 6.9.3.1
-//! answers 201 Created with the assigned resource in the `Location` header, and
-//! the registration is then retrievable under it.
-//!
-//! Corresponds to the official suite case `033_11`. This pins the assignment
-//! behaviour: an anonymous registration is accepted, given an identifier, and
-//! reachable under it.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 clause 5.9.2 takes a Context Source Registration whose `id` is optional (Table 5.2.9-1, cardinality 0..1), and clause 5.2.7 requires a new one to be assigned when absent. Clause 6.9.3.1 answers 201 Created with the assigned resource in the `Location` header.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

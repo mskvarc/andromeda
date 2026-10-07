@@ -1,21 +1,8 @@
-//! The one `@context` a forwarded request is expressed against (clauses 4.3.6.6,
-//! 6.3.5 and 6.3.19).
+//! The one `@context` a forwarded request is expressed against (clauses 4.3.6.6, 6.3.5 and 6.3.19).
 //!
-//! For every registration and every request forwarded as `application/json`
-//! the broker chooses exactly one forwarding context: the registration's
-//! `jsonldContext`, else the inbound context when it is a single absolute URL,
-//! else the core context. The request carries at most one context `Link`, to
-//! that context, and every name in its query and body is compacted against it;
-//! the source's answer is expanded against it and read back in the client's
-//! terms. A request forwarded as `application/ld+json` carries the inbound
-//! context inline and no context `Link`. No forwarded request ever carries a
-//! relative context reference or a second context link-value (JSON-LD 1.1
-//! section 6.1: a single context link).
+//! For every registration and every request forwarded as `application/json` the broker chooses exactly one forwarding context: the registration's `jsonldContext`, else the inbound context when it is a single absolute URL, else the core context. The request carries at most one context `Link`, to that context, and every name in its query and body is compacted against it; the source's answer is expanded against it and read back in the client's terms. A request forwarded as `application/ld+json` carries the inbound context inline and no context `Link`. No forwarded request ever carries a relative context reference or a second context link-value (JSON-LD 1.1 section 6.1: a single context link).
 //!
-//! Two hosted documents give the same two IRIs different spellings: the
-//! client's (`spd`, `Veh`) and a registration's configured one (`velocity`,
-//! `Car`). Which spelling reaches the mock source proves which context compacted
-//! the forwarded request.
+//! Two hosted documents give the same two IRIs different spellings: the client's (`spd`, `Veh`) and a registration's configured one (`velocity`, `Car`). Which spelling reaches the mock source proves which context compacted the forwarded request.
 
 use crate::{
     compaction::{
@@ -44,32 +31,27 @@ use url::{Url, form_urlencoded};
 /// The path a broker appends when forwarding a batch entity query (clause 6.23).
 const FORWARDED_BATCH_QUERY: &str = "/ngsi-ld/v1/entityOperations/query";
 
-/// The path a broker appends when forwarding a batch entity creation (clause
-/// 6.14).
+/// The path a broker appends when forwarding a batch entity creation (clause 6.14).
 const FORWARDED_BATCH_CREATE: &str = "/ngsi-ld/v1/entityOperations/create";
 
-/// The path a broker appends when forwarding a list of the available entity
-/// types (clause 5.7.6).
+/// The path a broker appends when forwarding a list of the available entity types (clause 5.7.6).
 const FORWARDED_TYPES: &str = "/ngsi-ld/v1/types";
 
 /// The link relation that marks a `Link` link-value as a JSON-LD context
 /// (JSON-LD 1.1 section 6.1).
 const CONTEXT_RELATION: &str = "http://www.w3.org/ns/json-ld#context";
 
-/// A registration's configured `jsonldContext`: the client's IRIs under other
-/// terms, so a forwarded `velocity`/`Car` can only come from this document.
+/// A registration's configured `jsonldContext`: the client's IRIs under other terms, so a forwarded `velocity`/`Car` can only come from this document.
 fn configured_document() -> String {
     json!({ "@context": { "velocity": SPEED_IRI, "Car": VEHICLE_IRI } }).to_string()
 }
 
-/// A second client document naming a term the query does not use, so a request
-/// listing it beside the client's document carries a compound `@context`.
+/// A second client document naming a term the query does not use, so a request listing it beside the client's document carries a compound `@context`.
 fn brand_document() -> String {
     json!({ "@context": { "brand": "https://example.org/vocab/brand" } }).to_string()
 }
 
-/// A client document spelling the speed IRI `rate`, so two batch items can name
-/// the same attribute through two different contexts.
+/// A client document spelling the speed IRI `rate`, so two batch items can name the same attribute through two different contexts.
 fn rate_document() -> String {
     json!({ "@context": { "rate": SPEED_IRI, "Veh": VEHICLE_IRI } }).to_string()
 }
@@ -89,8 +71,7 @@ fn context_link_targets(request: &CapturedRequest) -> Vec<String> {
         .collect()
 }
 
-/// Assert the forwarded request names at most one context, and that every
-/// context it names is an absolute URL (clause 6.3.5; JSON-LD 1.1 section 6.1).
+/// Assert the forwarded request names at most one context, and that every context it names is an absolute URL (clause 6.3.5; JSON-LD 1.1 section 6.1).
 fn assert_at_most_one_absolute_context_link(request: &CapturedRequest) -> Option<String> {
     let targets = context_link_targets(request);
     assert!(targets.len() <= 1, "a forwarded request carries at most one context link-value: {targets:?}");
@@ -112,8 +93,7 @@ fn assert_single_context_link(request: &CapturedRequest, expected: &str) {
     );
 }
 
-/// Assert the forwarded request names no context other than the core, whose
-/// absence means the same thing (clause 6.3.5).
+/// Assert the forwarded request names no context other than the core, whose absence means the same thing (clause 6.3.5).
 fn assert_core_or_no_context_link(request: &CapturedRequest) {
     if let Some(target) = assert_at_most_one_absolute_context_link(request) {
         assert_eq!(target, CORE_CONTEXT, "a compound inbound context is forwarded against the core context");
@@ -133,9 +113,7 @@ fn first_entity(answer: &Value) -> &Value {
     answer.as_array().and_then(|entities| entities.first()).unwrap_or(answer)
 }
 
-/// H1: a forwarded GET for a request naming one user context in its `Link`
-/// carries exactly one context link-value, naming that URL, and its `type`,
-/// `attrs` and `q` names are the request's own terms (clause 6.3.5).
+/// A forwarded GET for a request naming one user context in its `Link` carries exactly one context link-value, naming that URL, and its `type`, `attrs` and `q` names are the request's own terms (clause 6.3.5).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_a_single_inbound_link_is_forwarded_as_the_one_context() {
@@ -175,12 +153,7 @@ async fn distop_forwarding_context_a_single_inbound_link_is_forwarded_as_the_one
     topology.finish().await.expect("topology cleanup");
 }
 
-/// H2: an `application/ld+json` POST query whose `@context` lists two
-/// documents is forwarded, to a `queryBatch` source, against the core context:
-/// at most one context link-value (the core), fully qualified names in the
-/// forwarded `Query` body and no inline `@context`, while the source's fully
-/// qualified answer reaches the client in the client's own terms (clauses
-/// 4.3.6.6, 6.3.5, 6.23).
+/// An `application/ld+json` POST query whose `@context` lists two documents is forwarded, to a `queryBatch` source, against the core context: at most one context link-value (the core), fully qualified names in the forwarded `Query` body and no inline `@context`, while the source's fully qualified answer reaches the client in the client's own terms (clauses 4.3.6.6, 6.3.5, 6.23).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_a_compound_body_context_is_forwarded_against_the_core() {
@@ -249,10 +222,7 @@ async fn distop_forwarding_context_a_compound_body_context_is_forwarded_against_
     topology.finish().await.expect("topology cleanup");
 }
 
-/// H2: an `application/ld+json` POST query with an inline `@context` object is
-/// forwarded, to a `queryEntity` source, as a GET whose query names are fully
-/// qualified and whose only possible context link-value is the core (clauses
-/// 4.3.6.6, 6.3.5).
+/// An `application/ld+json` POST query with an inline `@context` object is forwarded, to a `queryEntity` source, as a GET whose query names are fully qualified and whose only possible context link-value is the core (clauses 4.3.6.6, 6.3.5).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_an_inline_body_context_is_forwarded_against_the_core() {
@@ -318,11 +288,7 @@ async fn distop_forwarding_context_an_inline_body_context_is_forwarded_against_t
     topology.finish().await.expect("topology cleanup");
 }
 
-/// H3: a registration whose `contextSourceInfo` names a `jsonldContext` X is
-/// sent one context link-value, to X, and every name of the forwarded query is
-/// compacted against X rather than the client's context; the source's answer,
-/// spelled in X, reaches the client in the client's own terms (clauses 4.3.6.6,
-/// 6.3.19).
+/// A registration whose `contextSourceInfo` names a `jsonldContext` X is sent one context link-value, to X, and every name of the forwarded query is compacted against X rather than the client's context; the source's answer, spelled in X, reaches the client in the client's own terms (clauses 4.3.6.6, 6.3.19).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_a_configured_jsonld_context_spells_the_forwarded_query() {
@@ -382,10 +348,7 @@ async fn distop_forwarding_context_a_configured_jsonld_context_spells_the_forwar
     topology.finish().await.expect("topology cleanup");
 }
 
-/// H3: a creation forwarded to a registration with a configured `jsonldContext`
-/// X carries one context link-value, to X, and its body is compacted against X
-/// with no inline `@context` (clause 4.3.6.6: "over both payload and query
-/// parameters").
+/// A creation forwarded to a registration with a configured `jsonldContext` X carries one context link-value, to X, and its body is compacted against X with no inline `@context` (clause 4.3.6.6: "over both payload and query parameters").
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_a_configured_jsonld_context_spells_the_forwarded_body() {
@@ -445,9 +408,7 @@ async fn distop_forwarding_context_a_configured_jsonld_context_spells_the_forwar
     topology.finish().await.expect("topology cleanup");
 }
 
-/// H4: a registration whose `contextSourceInfo` names the `contentType`
-/// `application/ld+json` is sent no context link-value; the body carries the
-/// inbound context inline, as that MIME type requires (clauses 4.3.6.6, 6.3.5).
+/// A registration whose `contextSourceInfo` names the `contentType` `application/ld+json` is sent no context link-value; the body carries the inbound context inline, as that MIME type requires (clauses 4.3.6.6, 6.3.5).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_an_ld_json_source_receives_the_inbound_context_inline() {
@@ -507,12 +468,7 @@ async fn distop_forwarding_context_an_ld_json_source_receives_the_inbound_contex
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Review change 17: a relative context reference is never forwarded. An
-/// `application/ld+json` source is sent the inbound context inline, but an
-/// inbound context naming one of this broker's own hosted documents by its
-/// root-relative path would resolve against the source's URL instead; the body
-/// is then written inline against the core context, every term fully qualified
-/// (clauses 4.3.6.6, 6.3.5).
+/// An `application/ld+json` source is sent the inbound context inline, but an inbound context naming one of this broker's own hosted documents by its root-relative path would resolve against the source's URL instead; the body is then written inline against the core context, every term fully qualified (clauses 4.3.6.6, 6.3.5).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_a_relative_inline_reference_is_forwarded_against_the_core() {
@@ -588,10 +544,7 @@ async fn distop_forwarding_context_a_relative_inline_reference_is_forwarded_agai
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Clause 6.3.19 sets `Content-Type` "whenever a payload body is present": a
-/// query forwarded as a body-less GET to a registration whose `contentType` is
-/// `application/ld+json` carries no `Content-Type`, so no JSON-LD media type
-/// travels beside its context `Link` (clause 6.3.5).
+/// Clause 6.3.19 sets `Content-Type` "whenever a payload body is present": a query forwarded as a body-less GET to a registration whose `contentType` is `application/ld+json` carries no `Content-Type`, so no JSON-LD media type travels beside its context `Link` (clause 6.3.5).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_a_body_less_forward_carries_no_content_type() {
@@ -635,11 +588,7 @@ async fn distop_forwarding_context_a_body_less_forward_carries_no_content_type()
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Clause 6.3.6: a 207 body carries Fully Qualified Names. A source written to
-/// in a registration's configured `jsonldContext` answers a partial append
-/// with an `UpdateResult` naming the attribute in that context (`velocity`);
-/// the broker's own 207 names it by its full IRI, never in the source's
-/// spelling (clauses 4.3.6.6, 5.2.18, 5.6.3.4).
+/// Clause 6.3.6: a 207 body carries Fully Qualified Names. A source written to in a registration's configured `jsonldContext` answers a partial append with an `UpdateResult` naming the attribute in that context (`velocity`); the broker's own 207 names it by its full IRI, never in the source's spelling (clauses 4.3.6.6, 5.2.18, 5.6.3.4).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_a_forwarded_update_result_is_read_back_in_full_names() {
@@ -704,12 +653,7 @@ async fn distop_forwarding_context_a_forwarded_update_result_is_read_back_in_ful
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The attribute segment of a forwarded attribute path -- the one after the
-/// `attrs` collection -- is spelled in the registration's configured context
-/// and the collection is left as it is: `DELETE /attrs/spd` reaches the source
-/// as `/attrs/velocity` (clauses 4.3.6.6, 6.7.3.2). The collection name itself
-/// can never be an attribute's spelling here: `attrs` is a term of the core
-/// `@context`, which no user context redefines (clause 5.5.7).
+/// The attribute segment of a forwarded attribute path -- the one after the `attrs` collection -- is spelled in the registration's configured context and the collection is left as it is: `DELETE /attrs/spd` reaches the source as `/attrs/velocity` (clauses 4.3.6.6, 6.7.3.2). The collection name itself can never be an attribute's spelling here: `attrs` is a term of the core `@context`, which no user context redefines (clause 5.5.7).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_the_attribute_segment_is_spelled_in_the_configured_context() {
@@ -757,11 +701,7 @@ async fn distop_forwarding_context_the_attribute_segment_is_spelled_in_the_confi
     topology.finish().await.expect("topology cleanup");
 }
 
-/// H5: a batch creation whose items carry different contexts -- each JSON-LD
-/// node is read under its own `@context` -- is forwarded as one JSON request
-/// against the core context: never a second context link-value, never a
-/// relative one, and every item's attribute fully qualified whichever term the
-/// client used for it (clauses 5.6.7, 6.3.5).
+/// A batch creation whose items carry different contexts -- each JSON-LD node is read under its own `@context` -- is forwarded as one JSON request against the core context: never a second context link-value, never a relative one, and every item's attribute fully qualified whichever term the client used for it (clauses 5.6.7, 6.3.5).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_a_mixed_context_batch_carries_one_absolute_context_at_most() {
@@ -818,10 +758,7 @@ async fn distop_forwarding_context_a_mixed_context_batch_carries_one_absolute_co
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A1: a temporal answer a source spelled in its registration's configured
-/// `jsonldContext` is expanded under that context and compacted under the
-/// client's, so the client reads its own `Veh` and `spd` and none of the
-/// source's `Car` and `velocity` (clauses 4.3.6.6, 5.7.4.4).
+/// A temporal answer a source spelled in its registration's configured `jsonldContext` is expanded under that context and compacted under the client's, so the client reads its own `Veh` and `spd` and none of the source's `Car` and `velocity` (clauses 4.3.6.6, 5.7.4.4).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_a_temporal_answer_is_read_back_in_the_client_terms() {
@@ -880,10 +817,7 @@ async fn distop_forwarding_context_a_temporal_answer_is_read_back_in_the_client_
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A2: a discovery answer a source spelled in its registration's configured
-/// `jsonldContext` names its types under that context, and the client reads
-/// them under its own: `Veh`, never the source's `Car` (clauses 5.7.6 and
-/// 6.3.19).
+/// A discovery answer a source spelled in its registration's configured `jsonldContext` names its types under that context, and the client reads them under its own: `Veh`, never the source's `Car` (clauses 5.7.6 and 6.3.19).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_a_discovery_answer_is_read_back_in_the_client_terms() {
@@ -927,10 +861,7 @@ async fn distop_forwarding_context_a_discovery_answer_is_read_back_in_the_client
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A3: a source answering a `join=inline` query nests a Linked Entity under the
-/// Relationship naming it. The nested copy is spelled in the source's
-/// configured `jsonldContext`, and the client reads it under its own terms,
-/// nested under that Relationship alone (clauses 4.5.23.2, 4.3.6.6).
+/// A source answering a `join=inline` query nests a Linked Entity under the Relationship naming it. The nested copy is spelled in the source's configured `jsonldContext`, and the client reads it under its own terms, nested under that Relationship alone (clauses 4.5.23.2, 4.3.6.6).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_an_inline_join_answer_from_a_source_with_another_context() {
@@ -996,12 +927,7 @@ async fn distop_forwarding_context_an_inline_join_answer_from_a_source_with_anot
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A4: an answer entity that carries its own `@context` is read in that
-/// context, not in the one the request was forwarded against (JSON-LD 1.1: a
-/// node's `@context` applies to that node). The forwarding context here is the
-/// client's, which knows neither `Car` nor `velocity`; the entity's own
-/// context aliases both to the client's IRIs, so the client reads `Veh` and
-/// `spd`.
+/// An answer entity that carries its own `@context` is read in that context, not in the one the request was forwarded against (JSON-LD 1.1: a node's `@context` applies to that node). The forwarding context here is the client's, which knows neither `Car` nor `velocity`; the entity's own context aliases both to the client's IRIs, so the client reads `Veh` and `spd`.
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_forwarding_context_an_answer_entity_with_its_own_context_is_read_in_that_context() {

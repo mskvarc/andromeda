@@ -348,8 +348,7 @@ fn an_all_scalar_array_is_stored_as_bare_scalars() {
 
 /// The clause 5.6.15 instance-replacement path reads its instance here too, so
 /// an array-valued Property replaced through it keeps every element, exactly as
-/// one appended through clause 5.6.12 does. The store's own reader took only
-/// the first value node and silently dropped the rest.
+/// one appended through clause 5.6.12 does.
 #[test]
 fn a_replaced_array_valued_property_keeps_every_element() {
     let value = recorded(&property(&json!([{"@value": 1}, {"@value": 2}, {"@value": 3}])));
@@ -359,9 +358,7 @@ fn a_replaced_array_valued_property_keeps_every_element() {
 /// What an instance carries beside its value is its metadata, and only that:
 /// its identity and time axes have columns of their own, and its clause 4.8
 /// system times would echo a current-state time back as a sub-Property of a
-/// past observation. The store's own reader kept `createdAt`, `modifiedAt` and
-/// the plural and list value members in the metadata blob, where they
-/// overrode the rendered value.
+/// past observation.
 #[test]
 fn the_metadata_holds_neither_the_value_nor_the_identity_nor_the_time_axes() {
     let accuracy = json!([{"@type": [PROPERTY], expanded_properties::VALUE.as_str(): [{"@value": 0.5}]}]);

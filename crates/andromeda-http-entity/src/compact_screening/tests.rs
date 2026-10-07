@@ -202,9 +202,8 @@ fn seal_cases() -> Vec<(Value, Outcome)> {
             entity(json!({"speed": {"type": "Property", "value": 1, "entityTypeSealed": "x", "entityIdSealed": "y"}})),
             sealed_at("/speed", "entityIdSealed"),
         ),
-        // The rule over the compact JSON stepped over a sub-attribute named
-        // `name`; the decode reads it as the attribute clause 4.5.2.2 makes it,
-        // seals included.
+        // A sub-attribute named `name` is read as the attribute clause 4.5.2.2
+        // makes it, seals included.
         (
             entity(json!({"speed": {"type": "Property", "value": 1, "name": {"type": "Property", "value": 1, "entityIdSealed": "x"}}})),
             sealed_at("/speed/name", "entityIdSealed"),

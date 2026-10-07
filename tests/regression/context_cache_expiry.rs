@@ -551,10 +551,10 @@ async fn regression_context_cache_expiry_added_context_discards_members_outside_
 
 /// Clause 5.13.2.3 requires that "all extra information located outside of the
 /// @context subtree in the referenced object shall be discarded", and a
-/// downloaded `@context` document is such a referenced object. The rule was
-/// applied where a client hands a document over and skipped where the resolver
-/// downloads one, so a cached entry kept whatever else the origin server's file
-/// happened to carry.
+/// downloaded `@context` document is such a referenced object. The rule applies
+/// where a client hands a document over and where the resolver downloads one, so
+/// a cached entry keeps nothing the origin server's file carries beside the
+/// subtree.
 #[tokio::test]
 async fn regression_a_cached_document_discards_members_outside_the_context_subtree() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -578,10 +578,10 @@ async fn regression_a_cached_document_discards_members_outside_the_context_subtr
 
 /// Clause 5.13.5.4: with reload true on a `Cached` `@context`, "the existing
 /// @context is replaced with the newly downloaded one." Replaced, not nested:
-/// the broker used to store the download inside a second `@context` member, and
-/// because clause 5.13.4.4 never serves a `Cached` entry and clause 5.13.5 has
-/// no operation that repairs one, the stored document became permanently
-/// unusable — every later request naming that URL answered `BadRequestData`.
+/// a download stored inside a second `@context` member would leave the stored
+/// document permanently unusable, because clause 5.13.4.4 never serves a
+/// `Cached` entry and clause 5.13.5 has no operation that repairs one: every
+/// later request naming that URL would answer `BadRequestData`.
 #[tokio::test]
 async fn regression_reloading_a_cached_context_replaces_it_with_the_download() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -675,9 +675,8 @@ async fn regression_reloading_the_core_context_is_bad_request_data() {
 /// storage is defined for the `Hosted` and `ImplicitlyCreated` kinds; for a
 /// `Cached` one the broker "shall give back `OperationNotSupported` error".
 /// Clause 5.13.1 gives the reason — a `"Cached"` entry is a local performance
-/// copy of someone else's document and is never served on demand. The broker
-/// previously served it, republishing a third party's document under its own
-/// identifier.
+/// copy of someone else's document and is never served on demand, which would
+/// republish a third party's document under the broker's own identifier.
 #[tokio::test]
 async fn regression_a_cached_context_is_not_served_on_demand() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

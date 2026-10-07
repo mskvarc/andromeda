@@ -1,7 +1,4 @@
-//! Periodic and change-driven Context Source Notification delivery and matching
-//! filters (clause 5.11.7): time-interval versus change-driven behaviour,
-//! empty-attribute match-all, watched-attribute filtering, and `RegistrationInfo`
-//! trimming in the notification data. `T-LOCAL` plus the notification adapter.
+//! Periodic and change-driven Context Source Notification delivery and matching filters (clause 5.11.7): time-interval versus change-driven behaviour, empty-attribute match-all, watched-attribute filtering, and `RegistrationInfo` trimming in the notification data.
 
 use crate::{
     disc::{
@@ -22,9 +19,7 @@ const PRESENT: Duration = Duration::from_secs(12);
 /// The quiet window over which an absence is confirmed.
 const ABSENT: Duration = Duration::from_secs(4);
 
-/// A time-interval subscription sends both an initial and a periodic
-/// notification even without an intervening change (clause 5.11.7). Confirms
-/// REQ-DISC-59, REQ-DISC-79, REQ-DISC-80.
+/// A time-interval subscription sends both an initial and a periodic notification even without an intervening change (clause 5.11.7).
 #[tokio::test]
 async fn csr_notification_time_interval_sends_initial_and_periodic_regardless_of_change() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -49,8 +44,7 @@ async fn csr_notification_time_interval_sends_initial_and_periodic_regardless_of
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A periodic notification includes every currently matching registration
-/// (clause 5.11.7). Confirms REQ-DISC-80.
+/// A periodic notification includes every currently matching registration (clause 5.11.7).
 #[tokio::test]
 async fn csr_notification_time_interval_periodic_includes_every_currently_matching_csr() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -84,9 +78,7 @@ async fn csr_notification_time_interval_periodic_includes_every_currently_matchi
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A subscription without a time interval is change-driven: a change notifies
-/// and a quiet window stays silent (clause 5.11.7). Confirms REQ-DISC-60,
-/// REQ-DISC-82, REQ-DISC-78.
+/// A subscription without a time interval is change-driven: a change notifies and a quiet window stays silent (clause 5.11.7).
 #[tokio::test]
 async fn csr_notification_no_time_interval_is_change_driven() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -112,8 +104,7 @@ async fn csr_notification_no_time_interval_is_change_driven() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Empty watched or notification attributes match any registration (clause
-/// 5.12). Confirms REQ-DISC-81, REQ-DISC-49, REQ-DISC-96.
+/// Empty watched or notification attributes match any registration (clause 5.12).
 #[tokio::test]
 async fn csr_notification_empty_watched_or_notification_attributes_match_all() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -144,9 +135,7 @@ async fn csr_notification_empty_watched_or_notification_attributes_match_all() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Watched attributes filter matching to registrations covering them: a
-/// registration that does not cover the watched attribute is silent, one that
-/// does notifies (clause 5.12). Confirms REQ-DISC-48.
+/// Watched attributes filter matching to registrations covering them: a registration that does not cover the watched attribute is silent, one that does notifies (clause 5.12).
 #[tokio::test]
 async fn csr_notification_watched_attributes_filter_matches_registration() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -188,8 +177,7 @@ async fn csr_notification_watched_attributes_filter_matches_registration() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The notification data trims each registration to only its matching
-/// `RegistrationInfo` (clause 5.11.7, SHOULD). Confirms REQ-DISC-85, REQ-DISC-84.
+/// The notification data trims each registration to only its matching `RegistrationInfo` (clause 5.11.7, SHOULD).
 #[tokio::test]
 async fn csr_notification_returns_only_matching_registration_info() {
     let topology = topology::single().await.expect("single-broker topology");

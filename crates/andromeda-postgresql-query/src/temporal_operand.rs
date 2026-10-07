@@ -18,7 +18,7 @@
 //!   productions, so PostgreSQL's far more permissive timestamp grammar cannot
 //!   admit `now`, `epoch`, a bare date, or a `2024-01-01 BC` era marker — none of
 //!   which the client wrote as a `DateTime` or `Time` literal;
-//! * [`pg_input_is_valid`](https://www.postgresql.org/docs/current/functions-info.html#FUNCTIONS-INFO-VALIDATE)
+//! * `pg_input_is_valid`
 //!   (PostgreSQL 16+) then asks the `timestamptz` input function itself whether
 //!   the shaped text is a real instant, without raising. A string can satisfy
 //!   the regex and still not be one — `2024-02-30T00:00:00Z` has the right

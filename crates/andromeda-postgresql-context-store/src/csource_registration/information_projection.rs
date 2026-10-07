@@ -48,10 +48,10 @@
 //! );
 //! ```
 //!
-//! Migration `0013_registration_information` declares it, with the storage
-//! parameters, the well-formedness check on the sentinels and the index set that
-//! belong to the schema rather than to this module; nothing here may name a
-//! column that file does not. This module derives the rows;
+//! The schema migration that creates `registration_information` declares it,
+//! with the storage parameters, the well-formedness check on the sentinels and
+//! the index set that belong to the schema rather than to this module; nothing
+//! here may name a column that migration does not. This module derives the rows;
 //! [`crate::csource_registration::routing_rewrite`] writes them.
 //!
 //! The row has no natural key. It is never referenced, never updated in place

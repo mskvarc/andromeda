@@ -24,10 +24,6 @@ use uuid::Uuid;
 pub mod context_source_adapter;
 use context_source_adapter::ContextSourceAdapter as MockServer;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// A reqwest client that carries `NGSILD-Tenant` on every request, so a test's
 /// entire forwarding registry and `/types` collection live in its own private
 /// tenant and stay isolated from concurrent tests.
@@ -142,10 +138,6 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 /// `list_types` with local=true does not forward to CSR endpoints.
 #[tokio::test]
 async fn distop_types_local_skips_forwarding() {
@@ -185,14 +177,12 @@ async fn distop_types_merges_remote_types() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:types-merge");
     let reg_id = unique_id("urn:ngsi-ld:Registration:types-merge");
 
-    // Create a local entity so "Vehicle" type exists locally
     let entity = vehicle_entity(&entity_id);
     pretty_assertions::assert_eq!(create_entity_local(&c, &entity).await, StatusCode::CREATED);
 
     let reg = vehicle_registration(&reg_id, &mock.url(""));
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Remote returns a type not present locally
     let mock_types = json!({
         "id": "urn:ngsi-ld:EntityTypeList:mock",
         "type": "EntityTypeList",
@@ -234,7 +224,6 @@ async fn distop_types_deduplicates_type_list() {
     let reg = vehicle_registration(&reg_id, &mock.url(""));
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Remote also returns Vehicle (already exists locally)
     let mock_types = json!({
         "id": "urn:ngsi-ld:EntityTypeList:mock",
         "type": "EntityTypeList",
@@ -271,7 +260,6 @@ async fn distop_types_details_merges_remote_type_objects() {
     let reg = vehicle_registration(&reg_id, &mock.url(""));
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Remote returns a detailed type not present locally
     let mock_details = json!([
         {
             // Table 5.2.25-1: `id` is the Valid URI that is the type's FQN.
@@ -340,7 +328,6 @@ async fn distop_types_warning_on_csr_unreachable() {
     let reg = vehicle_registration(&reg_id, &endpoint);
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Stop mock before querying to simulate unreachable CSR
     mock.shutdown().await;
 
     let (status, headers, _) = list_types(&c, "").await;
@@ -375,7 +362,6 @@ async fn distop_types_type_info_merges_remote_attribute_details() {
     let reg = vehicle_registration(&reg_id, &mock.url(""));
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
-    // Remote returns the type information a conforming source answers with.
     // Clauses 5.2.26 and 5.2.28 make `id` the Fully Qualified Name, and the
     // merge is by that name: the remote record names the Vehicle type the
     // local broker holds, under the test suite `@context`, and a further

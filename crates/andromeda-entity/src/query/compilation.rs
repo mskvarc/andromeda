@@ -149,9 +149,9 @@ impl EntityQueryService {
     /// Compile the `orderBy` terms against the active context (clause 4.23).
     ///
     /// Every name of an ordering path is expanded, not just its head. Clause
-    /// 4.9 requires it of the attribute path clause 4.23.3 borrows — "Every name
+    /// 4.9 requires it of the attribute path clause 4.23.3 borrows, "Every name
     /// in the list shall be expanded to a URI (Fully Qualified Name) as mandated
-    /// by clause 5.5.7" — and the members of a compound value expand for the
+    /// by clause 5.5.7", and the members of a compound value expand for the
     /// same reason, because expansion turns them into IRI-keyed nodes of the
     /// graph. Expanding the head alone addressed `city` in a payload holding
     /// the expansion of `city`, and ordered by nothing.

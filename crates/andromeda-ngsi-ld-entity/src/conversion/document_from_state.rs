@@ -1,9 +1,9 @@
 //! Reading entity state as the written document it is.
 //!
 //! Every state is a document a write could have carried: the same members,
-//! each set, none deleted. A reader that takes documents -- the Temporal
-//! Evolution a Core write records (clause 4.3.1), the request an insert that
-//! lost a race is retried as -- reads a state through this conversion instead
+//! each set, none deleted. A reader that takes documents, such as the Temporal
+//! Evolution a Core write records (clause 4.3.1) or the request an insert that
+//! lost a race is retried as, reads a state through this conversion instead
 //! of encoding it and decoding the text again; the result is the document that
 //! decoding gives, member for member.
 

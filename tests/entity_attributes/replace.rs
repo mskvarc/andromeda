@@ -24,10 +24,6 @@ use reqwest::{Method, StatusCode};
 use serde_json::{Number, json};
 use std::str::FromStr;
 
-// ---------------------------------------------------------------------------
-// Replace existing attribute
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn attribute_replace_existing_success() {
     let scope = TestEnvironment::from_suite("entity_attributes").await.expect("isolated test environment");
@@ -83,7 +79,6 @@ async fn attribute_replace_with_type_change_success() {
     let status = create_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Change isParked from Relationship to Property
     let fragment = json!({
         "type": "Property",
         "value": true
@@ -97,10 +92,6 @@ async fn attribute_replace_with_type_change_success() {
     assert_eq!(body["isParked"]["type"], "Property");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Multi-instance handling
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_replace_default_instance_returns_404_when_no_default() {
@@ -149,10 +140,6 @@ async fn attribute_replace_specific_instance_by_datasetid_success() {
     assert_eq!(status, StatusCode::NO_CONTENT, "replace specific instance by datasetId should return 204");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Error cases
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn attribute_replace_invalid_entity_id_returns_400() {

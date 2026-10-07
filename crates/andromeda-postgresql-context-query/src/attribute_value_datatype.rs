@@ -13,8 +13,8 @@
 //! [`TimeValueForm`], the classifier the write projection and the clause 4.9 `q`
 //! operand parser share, and the pattern below is that same classifier written
 //! for a statement, which is why it is taken from the form rather than restated
-//! here. A stored timestamp that `q` finds as a `DateTime` and this ranked under
-//! Strings was one value with two datatypes.
+//! here. A stored timestamp must not be a `DateTime` to `q` and a String to the
+//! ordering.
 //!
 //! The order is rendered as a rank rather than as a chain of comparisons. The
 //! datatype is read as a single token, and the token's position in a

@@ -1,4 +1,4 @@
-//! Bulk inserts into the rebuilt `scope_history` hypertable.
+//! Bulk inserts into the `scope_history` hypertable.
 
 use crate::{
     error::TemporalStoreError,

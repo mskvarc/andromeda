@@ -185,10 +185,8 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         // answer the map fixes.
         let considers_nothing = matches!(ConsideredEntities::of_request(query.id.as_deref()), ConsideredEntities::NoEntity);
 
-        // Distributed forwarding: query matching context sources unless
-        // local=true. Forwarding reads the query as the client wrote it, so it
-        // runs before the split-entities filters are held back from the local
-        // query below.
+        // Forwarding reads the query as the client wrote it, so it runs before
+        // the split-entities filters are held back from the local query below.
         let forwarding = (!is_local && !considers_nothing).then(|| QueryForwarding {
             forwarding: &state.forwarding,
             target: &target,

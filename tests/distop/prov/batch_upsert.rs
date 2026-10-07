@@ -1,4 +1,4 @@
-//! Batch Upsert forwarding — REQ-PROV-57..66 (clause 5.6.8.4).
+//! Batch Upsert forwarding (clause 5.6.8.4).
 //!
 //! Each matching registration receives a filtered copy of the batch input; a
 //! source that advertises the batch operation is handed the whole batch and its
@@ -49,7 +49,6 @@ fn error_keyed(body: &Value, registration: &str, status: u64) -> bool {
 }
 
 /// Each registration receives only the attributes it owns from the upsert input.
-/// Confirms REQ-PROV-57.
 #[tokio::test]
 async fn batch_upsert_per_csr_filtering() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -120,7 +119,7 @@ async fn batch_upsert_per_csr_filtering() {
 }
 
 /// A source advertising the batch operation is handed the whole batch and its
-/// per-entity result is merged back keyed by `registrationId`. Confirms REQ-PROV-58.
+/// per-entity result is merged back keyed by `registrationId`.
 #[tokio::test]
 async fn batch_upsert_supported_forwards_and_merges() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -164,7 +163,7 @@ async fn batch_upsert_supported_forwards_and_merges() {
 /// Create Entity; with every create succeeding and nothing left locally the
 /// result is `201` (clause 5.6.8.5: "the list of Entities successfully created
 /// (S Array), if all Entities not existing prior to this request have been
-/// successfully created"). Confirms REQ-PROV-59.
+/// successfully created").
 #[tokio::test]
 async fn batch_upsert_fallback_per_entity_create() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -198,7 +197,7 @@ async fn batch_upsert_fallback_per_entity_create() {
 }
 
 /// When the source reports the entity already exists and the mode is replace,
-/// the broker follows up with a per-entity Replace Entity. Confirms REQ-PROV-60.
+/// the broker follows up with a per-entity Replace Entity.
 #[tokio::test]
 async fn batch_upsert_already_exists_replace_mode_forwards_replace() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -237,7 +236,6 @@ async fn batch_upsert_already_exists_replace_mode_forwards_replace() {
 /// (`options=update`), the broker follows up with a per-entity Update Attributes
 /// (clause 5.6.8.4: "if the Update Attributes operation (clause 5.6.2) is
 /// supported by CSR and the value of the update mode flag is Update").
-/// Confirms REQ-PROV-61.
 #[tokio::test]
 async fn batch_upsert_already_exists_update_mode_forwards_update() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -280,7 +278,7 @@ async fn batch_upsert_already_exists_update_mode_forwards_update() {
 
 /// When the source reports the entity already exists but no follow-up operation
 /// is advertised, the entity fails with `422 OperationNotSupported` keyed by
-/// `registrationId`. Confirms REQ-PROV-62.
+/// `registrationId`.
 #[tokio::test]
 async fn batch_upsert_already_exists_no_path_operation_not_supported() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -312,7 +310,7 @@ async fn batch_upsert_already_exists_no_path_operation_not_supported() {
 }
 
 /// A replace-only source without the batch operation is driven per entity via
-/// Replace Entity. Confirms REQ-PROV-63.
+/// Replace Entity.
 #[tokio::test]
 async fn batch_upsert_fallback_per_entity_replace() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -356,7 +354,7 @@ async fn batch_upsert_fallback_per_entity_replace() {
 /// Update Attributes under `options=update`, which the binding carries as
 /// `PATCH /entities/{id}/attrs` (clause 5.6.8.4 takes that branch only when
 /// "the value of the update mode flag is Update"; Table 4.20-1 calls the
-/// operation `updateEntity`). Confirms REQ-PROV-64.
+/// operation `updateEntity`).
 #[tokio::test]
 async fn batch_upsert_fallback_per_entity_update() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -400,7 +398,7 @@ async fn batch_upsert_fallback_per_entity_update() {
 }
 
 /// A redirect registration advertising no viable operation fails every owned
-/// entity with a `409 Conflict` keyed by `registrationId`. Confirms REQ-PROV-65.
+/// entity with a `409 Conflict` keyed by `registrationId`.
 #[tokio::test]
 async fn batch_upsert_redirect_no_viable_op_conflict_per_entity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -443,7 +441,6 @@ async fn batch_upsert_redirect_no_viable_op_conflict_per_entity() {
 /// entity already existed and was updated, answers with no content (clause
 /// 5.6.8.5: "none (if all Entities already existed and are successfully
 /// updated)"), while an auxiliary registration suppresses forwarding.
-/// Confirms REQ-PROV-66.
 #[tokio::test]
 async fn batch_upsert_local_phase_per_mode() {
     let topology = topology::single().await.expect("single-broker topology");

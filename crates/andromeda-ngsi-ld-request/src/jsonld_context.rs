@@ -55,7 +55,7 @@ mod tests {
     }
 
     /// Clauses 4.14, 6.3.14 and 6.3.20: the tenant is named by the
-    /// `NGSILD-Tenant` header alone, so every operation refuses the former
+    /// `NGSILD-Tenant` header alone, so every operation refuses a
     /// vendor tenant parameter like any undefined parameter.
     #[test]
     fn every_operation_refuses_the_former_tenant_parameter() {

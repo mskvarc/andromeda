@@ -23,10 +23,6 @@ use uuid::Uuid;
 pub mod context_source_adapter;
 use context_source_adapter::ContextSourceAdapter as MockServer;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// A reqwest client that carries `NGSILD-Tenant` on every request, so a test's
 /// temporal entities and forwarding registry live in its own private tenant and
 /// stay isolated from concurrent tests.
@@ -186,10 +182,6 @@ async fn get_entity_map(client: &Client, id: &str, link: &str) -> (StatusCode, V
     (status, body)
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 /// Temporal `EntityMap` includes both local and forwarded entity IDs.
 #[tokio::test]
 async fn distop_temporal_entity_map_includes_forwarded_ids() {
@@ -203,22 +195,18 @@ async fn distop_temporal_entity_map_includes_forwarded_ids() {
     let remote_id = unique_id("urn:ngsi-ld:Vehicle:tmap-remote");
     let reg_id = unique_id("urn:ngsi-ld:Registration:tmap");
 
-    // Create local temporal entity
     let entity = temporal_vehicle_entity(&local_id);
     let (status, _) = create_temporal_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Mock returns remote temporal entity
     let mock_entity = temporal_vehicle_entity(&remote_id);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/temporal/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
 
-    // Register context source
     let reg = vehicle_registration_temporal(&reg_id, &mock.url(""), "inclusive");
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Query with entityMap=true
     let (status, headers, _) = query_temporal_entities(
         &c,
         "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z",
@@ -230,7 +218,6 @@ async fn distop_temporal_entity_map_includes_forwarded_ids() {
     let entity_map_header = headers.get("ngsild-entitymap");
     assert!(entity_map_header.is_some(), "NGSILD-EntityMap header should be present");
 
-    // Retrieve the entity map
     let map_id = entity_map_header.unwrap().to_str().unwrap();
     let resp = c
         .get(format!("{BASE_URL}/entityMaps/{}", encode(map_id)))
@@ -287,7 +274,6 @@ async fn distop_temporal_entity_map_local_only_when_local_true() {
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Query with local=true
     let (status, headers, _) = query_temporal_entities(
         &c,
         "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z&local=true",
@@ -330,7 +316,6 @@ async fn distop_temporal_entity_map_scopes_subsequent_query() {
     let extra_id = unique_id("urn:ngsi-ld:Vehicle:tmap-scope-extra");
     let reg_id = unique_id("urn:ngsi-ld:Registration:tmap-scope");
 
-    // Create two local temporal entities
     let entity = temporal_vehicle_entity(&local_id);
     let (status, _) = create_temporal_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -339,7 +324,6 @@ async fn distop_temporal_entity_map_scopes_subsequent_query() {
     let (status, _) = create_temporal_entity(&c, &extra_entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Mock returns remote temporal entity
     let mock_entity = temporal_vehicle_entity(&remote_id);
     mock.set_stub_with_body(Method::GET, "/ngsi-ld/v1/temporal/entities", 200, &Value::Array(vec![mock_entity]))
         .await;
@@ -348,7 +332,6 @@ async fn distop_temporal_entity_map_scopes_subsequent_query() {
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create entity map (includes local_id, remote_id, extra_id)
     let (status, headers, _) = query_temporal_entities(
         &c,
         "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z",
@@ -359,7 +342,6 @@ async fn distop_temporal_entity_map_scopes_subsequent_query() {
 
     let map_id = headers.get("ngsild-entitymap").unwrap().to_str().unwrap();
 
-    // Query with NGSILD-EntityMap header to scope results
     let resp = c
         .get(format!("{BASE_URL}/temporal/entities?type=Vehicle&local=true"))
         .header("Accept", "application/json")
@@ -375,7 +357,6 @@ async fn distop_temporal_entity_map_scopes_subsequent_query() {
     let entities = scoped_body.as_array().expect("response should be array");
     let returned_ids: Vec<&str> = entities.iter().filter_map(|e| e["id"].as_str()).collect();
 
-    // All returned IDs should be members of the entity map
     for id in &returned_ids {
         assert!(*id == local_id || *id == extra_id, "returned ID {id} should be a member of the entity map");
     }
@@ -433,7 +414,6 @@ async fn distop_temporal_entity_map_echoed_in_response() {
     let entity = temporal_vehicle_entity(&entity_id);
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &entity).await.0, StatusCode::CREATED);
 
-    // Create EntityMap
     let (status, headers, _) = query_temporal_entities(
         &c,
         "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z",
@@ -443,7 +423,6 @@ async fn distop_temporal_entity_map_echoed_in_response() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = headers.get("ngsild-entitymap").unwrap().to_str().unwrap().to_string();
 
-    // Query again with EntityMap header
     let resp = c
         .get(format!("{BASE_URL}/temporal/entities?type=Vehicle"))
         .header("Accept", "application/json")
@@ -490,11 +469,9 @@ async fn distop_temporal_entity_map_retrieve_not_in_map_returns_local_entity() {
     let entity_a = unique_id("urn:ngsi-ld:Vehicle:tmap-scope-a");
     let entity_b = unique_id("urn:ngsi-ld:Vehicle:tmap-scope-b");
 
-    // Create entity A only
     let fixture_a = temporal_vehicle_entity(&entity_a);
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &fixture_a).await.0, StatusCode::CREATED);
 
-    // Create EntityMap containing only entity A
     let (status, headers, _) = query_temporal_entities(
         &c,
         "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z",
@@ -504,11 +481,9 @@ async fn distop_temporal_entity_map_retrieve_not_in_map_returns_local_entity() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = headers.get("ngsild-entitymap").unwrap().to_str().unwrap().to_string();
 
-    // Create entity B (not in map)
     let fixture_b = temporal_vehicle_entity(&entity_b);
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &fixture_b).await.0, StatusCode::CREATED);
 
-    // Retrieve entity B using EntityMap that only contains A
     let (status, _, body) = get_temporal_entity_with_entity_map(&c, &entity_b, &map_id, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(
         status,
@@ -537,7 +512,6 @@ async fn distop_temporal_entity_map_retrieve_in_map_succeeds() {
     let fixture_a = temporal_vehicle_entity(&entity_a);
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &fixture_a).await.0, StatusCode::CREATED);
 
-    // Create EntityMap containing entity A
     let (status, headers, _) = query_temporal_entities(
         &c,
         "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z",
@@ -547,7 +521,6 @@ async fn distop_temporal_entity_map_retrieve_in_map_succeeds() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = headers.get("ngsild-entitymap").unwrap().to_str().unwrap().to_string();
 
-    // Retrieve entity A using EntityMap
     let (status, headers, body) = get_temporal_entity_with_entity_map(&c, &entity_a, &map_id, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK, "entity A is in the map, should return 200");
 
@@ -579,7 +552,6 @@ async fn distop_temporal_entity_map_with_lifetime_sets_expiry() {
     let entity = temporal_vehicle_entity(&entity_id);
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &entity).await.0, StatusCode::CREATED);
 
-    // Create EntityMap with 5 minute lifetime
     let (status, headers, _) = query_temporal_entities(
         &c,
         "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z&entityMapLifetime=PT5M",
@@ -589,7 +561,6 @@ async fn distop_temporal_entity_map_with_lifetime_sets_expiry() {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
     let map_id = headers.get("ngsild-entitymap").unwrap().to_str().unwrap().to_string();
 
-    // Retrieve EntityMap and verify expiresAt
     let (status, body) = get_entity_map(&c, &map_id, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -625,7 +596,6 @@ async fn distop_temporal_entity_map_query_scoped_to_members() {
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &fixture_a).await.0, StatusCode::CREATED);
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &fixture_b).await.0, StatusCode::CREATED);
 
-    // Create EntityMap containing A and B
     let (status, headers, _) = query_temporal_entities(
         &c,
         "type=Vehicle&entityMap=true&timerel=before&timeAt=2030-01-01T00:00:00Z",
@@ -640,7 +610,6 @@ async fn distop_temporal_entity_map_query_scoped_to_members() {
     let fixture_c = temporal_vehicle_entity(&entity_c);
     pretty_assertions::assert_eq!(create_temporal_entity(&c, &fixture_c).await.0, StatusCode::CREATED);
 
-    // Query with frozen EntityMap - only A and B should appear
     let resp = c
         .get(format!("{BASE_URL}/temporal/entities?type=Vehicle"))
         .header("Accept", "application/json")

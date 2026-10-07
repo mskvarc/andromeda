@@ -17,11 +17,11 @@ pub(crate) mod aggregation_group_key_decode;
 pub(crate) mod aggregation_row_decode;
 /// Reading one entity's aggregation rows as the aggregates they compute.
 pub(crate) mod aggregation_rows_read;
-/// One row of the rebuilt `attribute_history` hypertable.
+/// One row of the `attribute_history` hypertable.
 pub mod attribute_history_row;
 /// The value one attribute-history row carries, and the column it occupies.
 pub mod attribute_history_value;
-/// Bulk inserts into the rebuilt `attribute_history` hypertable.
+/// Bulk inserts into the `attribute_history` hypertable.
 pub mod attribute_history_write;
 /// Deleting the Temporal Evolution of one attribute.
 pub mod attribute_stream_deletion;
@@ -69,7 +69,7 @@ pub mod scope_history_entry;
 pub(crate) mod scope_history_read;
 /// The value one scope-history row carries.
 pub mod scope_history_value;
-/// Bulk inserts into the rebuilt `scope_history` hypertable.
+/// Bulk inserts into the `scope_history` hypertable.
 pub mod scope_history_write;
 /// The NGSI-LD time axes a stored temporal row carries besides its write clock.
 pub mod semantic_time_axes;

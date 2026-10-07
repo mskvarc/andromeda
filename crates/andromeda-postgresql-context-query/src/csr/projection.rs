@@ -25,12 +25,11 @@
 //! *single* predicate that names the sentinel beside the requested value —
 //! `entity_types && ARRAY[$1, '*']`, `entity_id IN ($1, '')`,
 //! `property_name_keys && array_append(ARRAY(<keys>), 0)` — with one index
-//! behind it, and it is what removes the emptiness test the earlier NULL-based
-//! projection forced on every dimension: `NOT EXISTS (SELECT 1 FROM
-//! registration_information …)` was a predicate *of the registration*, so the
-//! candidate set could never be enumerated from the projection alone and
-//! discovery stayed linear in the number of registrations however selective the
-//! dimension was. With sentinel rows the semi-join can be driven from the
+//! behind it, and it removes any emptiness test: a `NOT EXISTS (SELECT 1 FROM
+//! registration_information …)` is a predicate *of the registration*, so the
+//! candidate set could not be enumerated from the projection alone and
+//! discovery would stay linear in the number of registrations however
+//! selective the dimension. With sentinel rows the semi-join is driven from the
 //! projection's own indexes, and a selective type or attribute name reaches the
 //! registrations that declare it (or declare everything) without reading the
 //! rest.
@@ -218,8 +217,8 @@ mod tests {
 
     #[test]
     fn no_dimension_tests_for_the_absence_of_projection_rows() {
-        // A registration that constrains nothing is one wildcard row now, so the
-        // emptiness escape hatch is gone from every dimension.
+        // A registration that constrains nothing is one wildcard row, so no
+        // dimension needs an emptiness escape hatch.
         for sql in every_dimension() {
             assert!(!sql.contains("NOT EXISTS"), "the emptiness test must be gone: {sql}");
             assert!(!sql.contains("IS NULL OR"), "no dimension disjoins a NULL test: {sql}");

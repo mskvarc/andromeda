@@ -631,7 +631,7 @@ mod tests {
     }
 
     /// Clause 6.3.5 governs where the `@context` of each item lives; a
-    /// misplaced or missing one is that item's failure (ETSI `003_06`, `003_08`).
+    /// misplaced or missing one is that item's failure.
     #[tokio::test]
     async fn a_misplaced_or_missing_context_refuses_only_its_own_item() {
         for (content_type, body, detail) in [

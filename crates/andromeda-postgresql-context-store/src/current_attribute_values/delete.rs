@@ -87,12 +87,12 @@ fn staging_columns() -> [UnnestColumn; 3] {
 ///
 /// The `datasetId` comparison is `IS NOT DISTINCT FROM` rather than `=`, because
 /// the default instance is the one carrying no `datasetId` at all (clause 4.5.5)
-/// and an equality test against a null matches nothing — the default instance
+/// and an equality test against a null matches nothing, so the default instance
 /// would survive every delete aimed at it.
 ///
-/// `DELETE … USING` is expressed as a correlated `EXISTS`: sea-query has no
-/// `USING` clause, and the existence test deletes exactly the rows the staged
-/// grain names, which is what the join did.
+/// The join is expressed as a correlated `EXISTS` because sea-query has no
+/// `DELETE ... USING` clause; the existence test deletes exactly the rows the
+/// staged grain names.
 fn delete_instances_sql(target: &ContextTarget) -> String {
     let columns = staging_columns();
     let call = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))));

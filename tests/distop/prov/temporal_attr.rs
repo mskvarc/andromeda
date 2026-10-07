@@ -1,4 +1,4 @@
-//! Temporal delete-attribute and instance forwarding — REQ-PROV-89..103
+//! Temporal delete-attribute and instance forwarding
 //! (clauses 5.6.13.4, 5.6.14.4, 5.6.15.4). Exclusive registrations forward and
 //! terminate, inclusive forward the input, an unadvertised operation is
 //! `409 Conflict`, and `404` surfaces only when nothing matches. The advertised
@@ -53,7 +53,7 @@ async fn seed_local_temporal(client: &TestClient, body: &Value) {
 }
 
 /// Deleting a temporal attribute on an absent entity with no matching
-/// registration is `404 ResourceNotFound`. Confirms REQ-PROV-89 (positive).
+/// registration is `404 ResourceNotFound`.
 #[tokio::test]
 async fn temporal_delete_attr_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -72,8 +72,7 @@ async fn temporal_delete_attr_absent_and_no_registration_returns_404() {
 }
 
 /// Exclusive delete-attribute forwards to the owning source and terminates local
-/// processing, leaving the local instances intact. Confirms REQ-PROV-89
-/// (negative), 90, 91.
+/// processing, leaving the local instances intact.
 #[tokio::test]
 async fn temporal_delete_attr_exclusive_match_forwards_and_terminates() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -119,7 +118,7 @@ async fn temporal_delete_attr_exclusive_match_forwards_and_terminates() {
 }
 
 /// Inclusive delete-attribute forwards the input and removes the attribute
-/// locally. Confirms REQ-PROV-92.
+/// locally.
 #[tokio::test]
 async fn temporal_delete_attr_inclusive_forwards_input() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -156,7 +155,7 @@ async fn temporal_delete_attr_inclusive_forwards_input() {
 }
 
 /// Deleting an absent attribute of a locally present temporal entity is
-/// `404 ResourceNotFound`. Confirms REQ-PROV-93.
+/// `404 ResourceNotFound`.
 #[tokio::test]
 async fn temporal_delete_attr_local_present_attr_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -176,7 +175,7 @@ async fn temporal_delete_attr_local_present_attr_absent_returns_404() {
 }
 
 /// Modifying an instance on an absent entity with no matching registration is
-/// `404 ResourceNotFound`. Confirms REQ-PROV-94 (positive).
+/// `404 ResourceNotFound`.
 #[tokio::test]
 async fn temporal_modify_instance_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -198,7 +197,7 @@ async fn temporal_modify_instance_absent_and_no_registration_returns_404() {
 }
 
 /// Exclusive modify-instance forwards to the owning source and terminates local
-/// processing. Confirms REQ-PROV-94 (negative), 95, 97.
+/// processing.
 #[tokio::test]
 async fn temporal_modify_instance_exclusive_supported_forwards_and_terminates() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -253,7 +252,7 @@ async fn temporal_modify_instance_exclusive_supported_forwards_and_terminates() 
 }
 
 /// An exclusive registration without `updateAttrs` rejects a modify-instance
-/// with `409 Conflict` and no forwarding. Confirms REQ-PROV-96.
+/// with `409 Conflict` and no forwarding.
 #[tokio::test]
 async fn temporal_modify_instance_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -288,7 +287,7 @@ async fn temporal_modify_instance_op_unsupported_returns_409() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Inclusive modify-instance forwards the input. Confirms REQ-PROV-98.
+/// Inclusive modify-instance forwards the input.
 #[tokio::test]
 async fn temporal_modify_instance_inclusive_forwards_input() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -328,7 +327,7 @@ async fn temporal_modify_instance_inclusive_forwards_input() {
 }
 
 /// Deleting an instance on an absent entity with no matching registration is
-/// `404 ResourceNotFound`. Confirms REQ-PROV-99 (positive).
+/// `404 ResourceNotFound`.
 #[tokio::test]
 async fn temporal_delete_instance_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -348,7 +347,7 @@ async fn temporal_delete_instance_absent_and_no_registration_returns_404() {
 }
 
 /// Exclusive delete-instance forwards to the owning source and terminates local
-/// processing. Confirms REQ-PROV-99 (negative), 100, 101.
+/// processing.
 #[tokio::test]
 async fn temporal_delete_instance_exclusive_match_forwards_and_terminates() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -394,7 +393,7 @@ async fn temporal_delete_instance_exclusive_match_forwards_and_terminates() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Inclusive delete-instance forwards the input. Confirms REQ-PROV-102.
+/// Inclusive delete-instance forwards the input.
 #[tokio::test]
 async fn temporal_delete_instance_inclusive_forwards_input() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -428,7 +427,7 @@ async fn temporal_delete_instance_inclusive_forwards_input() {
 }
 
 /// Deleting an absent instance of a locally present temporal entity is
-/// `404 ResourceNotFound`. Confirms REQ-PROV-103.
+/// `404 ResourceNotFound`.
 #[tokio::test]
 async fn temporal_delete_instance_local_present_instance_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");

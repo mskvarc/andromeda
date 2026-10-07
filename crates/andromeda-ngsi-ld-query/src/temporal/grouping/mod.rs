@@ -1,5 +1,4 @@
-//! The `aggrGroupBy` grouping grammar (temporal aggregation grouping extension,
-//! study §4.2).
+//! The `aggrGroupBy` grouping grammar (temporal aggregation grouping extension).
 //!
 //! A fourth small language beside `orderBy` (clause 4.23.3), `pick`/`omit`
 //! (clause 4.21) and `q` (clause 4.9). It partitions a temporal aggregation into

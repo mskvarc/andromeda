@@ -1,16 +1,11 @@
-//! `EntityMap` creation, update, and query-with-map requests expressed against the
-//! broker origin, since the test client exposes only retrieve/delete for
-//! `EntityMaps`. Creation is the `GET`/`POST` `/entityMaps` binding (clause
-//! 5.14.4), the temporal variant is `/temporal/entityMaps` (clause 5.14.5), and
-//! updates use `PATCH /entityMaps/{id}` (clause 5.14.2).
+//! `EntityMap` creation, update, and query-with-map requests expressed against the broker origin, since the test client exposes only retrieve/delete for `EntityMaps`. Creation is the `GET`/`POST` `/entityMaps` binding (clause 5.14.4), the temporal variant is `/temporal/entityMaps` (clause 5.14.5), and updates use `PATCH /entityMaps/{id}` (clause 5.14.2).
 
 use andromeda_test_client::{response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use axum::http::Method;
 use serde_json::Value;
 
-/// The JSON-LD context Link header value carrying the compound test context, so
-/// query terms in the request expand the same way the entities were stored.
+/// The JSON-LD context Link header value carrying the compound test context, so query terms in the request expand the same way the entities were stored.
 pub fn jsonld_link() -> String {
     format!(
         "<{}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"",

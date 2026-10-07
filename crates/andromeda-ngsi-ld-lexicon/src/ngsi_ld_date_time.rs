@@ -23,8 +23,6 @@
 //! the six-digit limit parsing enforces above; it exists because a value the
 //! broker itself mints can carry nanosecond resolution that the storage
 //! column cannot hold.
-//!
-//! The policy and its consequences are set out in `docs/timestamp-precision.md`.
 
 use crate::fractional_seconds::{FractionalSecondsError, accept_comma_decimal_separator, reject_excess_fractional_digits};
 use chrono::{DateTime, NaiveDate, NaiveTime, SecondsFormat, Timelike, Utc, format::ParseErrorKind};

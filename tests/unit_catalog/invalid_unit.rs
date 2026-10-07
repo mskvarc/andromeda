@@ -137,7 +137,7 @@ async fn no_history_row_carries_a_unit_only_as_leftover_metadata() {
     }
 
     // The whole hypertable, not only this test's rows: an identity with no
-    // catalogue row is what a hand-written row or a catalogue regression leaves.
+    // catalogue row is what a hand-written row leaves.
     let unregistered: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM attribute_history ah \
          LEFT JOIN unit_codes uc ON uc.id = ah.unit_code_id \

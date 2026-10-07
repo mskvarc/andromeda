@@ -26,10 +26,6 @@ use reqwest::{Method, StatusCode};
 use serde_json::Value;
 use urlencoding::encode;
 
-// ---------------------------------------------------------------------------
-// Auxiliary mode tests
-// ---------------------------------------------------------------------------
-
 /// Retrieve entity merges local and remote attributes in auxiliary mode.
 #[tokio::test]
 async fn distop_entity_retrieve_auxiliary_merges_local_and_remote_attributes() {
@@ -40,22 +36,18 @@ async fn distop_entity_retrieve_auxiliary_merges_local_and_remote_attributes() {
     let entity_id = scope.id("Vehicle:retrieve-aux");
     let reg_id = scope.id("Registration:retrieve-aux");
 
-    // Create local entity (brandName=Mercedes, isParked)
     let local_entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity_local(&c, &local_entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create auxiliary registration
     let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), Some("auxiliary"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Mock returns entity with brandName=BMW and isParked2
     let mock_entity = vehicle_entity_second(&entity_id);
     mock.set_stub_with_body(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 200, &mock_entity)
         .await;
 
-    // Retrieve entity
     let (status, _, body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -71,10 +63,6 @@ async fn distop_entity_retrieve_auxiliary_merges_local_and_remote_attributes() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Exclusive mode tests
-// ---------------------------------------------------------------------------
-
 /// Retrieve entity from exclusive registration returns remote attributes.
 #[tokio::test]
 async fn distop_entity_retrieve_exclusive_returns_remote_attributes() {
@@ -85,22 +73,18 @@ async fn distop_entity_retrieve_exclusive_returns_remote_attributes() {
     let entity_id = scope.id("Vehicle:retrieve-exc");
     let reg_id = scope.id("Registration:retrieve-exc");
 
-    // Create local entity (no speed attribute)
     let local_entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity_local(&c, &local_entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create exclusive registration with retrieveEntity operation
     let reg = vehicle_registration_speed_property(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"), Some(&["retrieveEntity"]));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Mock returns entity with speed attribute
     let mock_entity = vehicle_entity_speed_only(&entity_id);
     mock.set_stub_with_body(Method::GET, &format!("/broker1/ngsi-ld/v1/entities/{entity_id}"), 200, &mock_entity)
         .await;
 
-    // Retrieve entity
     let (status, _, body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -130,22 +114,18 @@ async fn distop_entity_retrieve_exclusive_local_true_excludes_remote() {
     let entity_id = scope.id("Vehicle:retrieve-exc-local");
     let reg_id = scope.id("Registration:retrieve-exc-local");
 
-    // Create local entity
     let local_entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity_local(&c, &local_entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create exclusive registration
     let reg = vehicle_registration_speed_property(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"), None);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Mock returns entity with speed
     let mock_entity = vehicle_entity_speed_only(&entity_id);
     mock.set_stub_with_body(Method::GET, &format!("/broker1/ngsi-ld/v1/entities/{entity_id}"), 200, &mock_entity)
         .await;
 
-    // Retrieve with local=true
     let (status, _, body) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -160,10 +140,6 @@ async fn distop_entity_retrieve_exclusive_local_true_excludes_remote() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Inclusive mode tests
-// ---------------------------------------------------------------------------
-
 /// Retrieve entity from inclusive registration returns entity from remote.
 #[tokio::test]
 async fn distop_entity_retrieve_inclusive_returns_remote_entity() {
@@ -174,17 +150,14 @@ async fn distop_entity_retrieve_inclusive_returns_remote_entity() {
     let entity_id = scope.id("Vehicle:retrieve-inc");
     let reg_id = scope.id("Registration:retrieve-inc");
 
-    // Create inclusive registration (no mode = inclusive default)
     let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), None);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Mock returns entity
     let mock_entity = vehicle_entity(&entity_id);
     mock.set_stub_with_body(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 200, &mock_entity)
         .await;
 
-    // Retrieve entity
     let (status, _, _) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -203,21 +176,17 @@ async fn distop_entity_retrieve_inclusive_local_true_returns_404() {
     let entity_id = scope.id("Vehicle:retrieve-inc-local");
     let reg_id = scope.id("Registration:retrieve-inc-local");
 
-    // Create inclusive registration (entity only on remote)
     let reg = vehicle_registration(&reg_id, Some(&entity_id), &mock.url(""), None);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Mock stub (should not be called)
     let mock_entity = vehicle_entity(&entity_id);
     mock.set_stub_with_body(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 200, &mock_entity)
         .await;
 
-    // Retrieve with local=true returns 404
     let (status, _, _) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // Verify no request was forwarded
     pretty_assertions::assert_eq!(mock.get_total_count(), 0);
 
     delete_registration(&c, &reg_id).await;
@@ -235,17 +204,14 @@ async fn distop_entity_retrieve_inclusive_with_retrieve_entity_op() {
     let entity_id = scope.id("Vehicle:retrieve-inc-op1");
     let reg_id = scope.id("Registration:retrieve-inc-op1");
 
-    // Create inclusive registration with retrieveEntity operation
     let reg = vehicle_registration_with_ops(&reg_id, Some(&entity_id), &mock.url(""), None, &["retrieveEntity"]);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Mock returns entity
     let mock_entity = vehicle_entity(&entity_id);
     mock.set_stub_with_body(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 200, &mock_entity)
         .await;
 
-    // Retrieve entity
     let (status, _, _) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -382,10 +348,6 @@ async fn distop_entity_retrieve_with_only_query_batch_is_not_forwarded() {
     assert_retrieve_skips_registration_advertising_only("queryBatch", "retrieve-inc-op3").await;
 }
 
-// ---------------------------------------------------------------------------
-// Redirect mode tests
-// ---------------------------------------------------------------------------
-
 /// Retrieve entity with two redirect registrations merges attributes from both.
 #[tokio::test]
 async fn distop_entity_retrieve_redirect_merges_two_brokers() {
@@ -397,7 +359,6 @@ async fn distop_entity_retrieve_redirect_merges_two_brokers() {
     let reg_id1 = scope.id("Registration:retrieve-red-1");
     let reg_id2 = scope.id("Registration:retrieve-red-2");
 
-    // Create two redirect registrations
     let reg1 = vehicle_registration_with_ops(&reg_id1, Some(&entity_id), &mock.url("/broker1"), Some("redirect"), &["redirectionOps"]);
     let (status, _) = create_registration(&c, &reg1).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -406,17 +367,14 @@ async fn distop_entity_retrieve_redirect_merges_two_brokers() {
     let (status, _) = create_registration(&c, &reg2).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // broker1 returns entity with isParked
     let mock_entity1 = vehicle_entity(&entity_id);
     mock.set_stub_with_body(Method::GET, &format!("/broker1/ngsi-ld/v1/entities/{entity_id}"), 200, &mock_entity1)
         .await;
 
-    // broker2 returns entity with isParked2
     let mock_entity2 = vehicle_entity_second(&entity_id);
     mock.set_stub_with_body(Method::GET, &format!("/broker2/ngsi-ld/v1/entities/{entity_id}"), 200, &mock_entity2)
         .await;
 
-    // Retrieve entity
     let (status, _, body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
@@ -442,7 +400,6 @@ async fn distop_entity_retrieve_redirect_local_true_returns_404() {
     let reg_id1 = scope.id("Registration:retrieve-red-local-1");
     let reg_id2 = scope.id("Registration:retrieve-red-local-2");
 
-    // Create two redirect registrations
     let reg1 = vehicle_registration_with_ops(&reg_id1, Some(&entity_id), &mock.url("/broker1"), Some("redirect"), &["redirectionOps"]);
     let (status, _) = create_registration(&c, &reg1).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -451,15 +408,12 @@ async fn distop_entity_retrieve_redirect_local_true_returns_404() {
     let (status, _) = create_registration(&c, &reg2).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Set mock stubs
     mock.set_stub(Method::GET, &format!("/broker1/ngsi-ld/v1/entities/{entity_id}"), 200).await;
     mock.set_stub(Method::GET, &format!("/broker2/ngsi-ld/v1/entities/{entity_id}"), 200).await;
 
-    // Retrieve with local=true returns 404
     let (status, _, _) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // Verify no requests forwarded
     pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/broker1/ngsi-ld/v1/entities/{entity_id}")), 0);
     pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/broker2/ngsi-ld/v1/entities/{entity_id}")), 0);
 
@@ -468,10 +422,6 @@ async fn distop_entity_retrieve_redirect_local_true_returns_404() {
     mock.shutdown().await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Retrieve Entity `type` parameter (clauses 5.7.1.3, 5.7.1.4)
-// ---------------------------------------------------------------------------
 
 /// Clause 5.7.1.4 retrieves the Entity "whose id (URI), and where specified
 /// type, is equivalent": a local Entity of another type is not found, one of

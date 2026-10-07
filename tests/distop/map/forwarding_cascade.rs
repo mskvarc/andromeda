@@ -1,11 +1,6 @@
-//! Tearing down forwarded subscription copies when the rows they hang off go
-//! (clause 5.8.5.4).
+//! Tearing down forwarded subscription copies when the rows they hang off go (clause 5.8.5.4).
 //!
-//! The records of a reduced copy placed at a context source cascade with both
-//! the local subscription and the registration the copy was placed through, so
-//! the broker reads what it must tear down before either is deleted. Deleting
-//! either one removes the records and still sends the source the remote
-//! `DELETE`, whichever side went first.
+//! The records of a reduced copy placed at a context source cascade with both the local subscription and the registration the copy was placed through, so the broker reads what it must tear down before either is deleted. Deleting either one removes the records and still sends the source the remote `DELETE`, whichever side went first.
 
 use crate::{
     map::{

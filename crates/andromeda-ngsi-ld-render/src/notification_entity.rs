@@ -9,12 +9,12 @@
 //! carries; a time the compact entity carries itself keeps the rendering's own
 //! spelling, except `deletedAt`, which is always the deletion's.
 //!
-//! The entity is written by the typed walk a query response is written by
-//! ([`crate::entity_response`]): what the notification reports of the change
-//! beside the entity's state ([`NotifiedChanges`]) and the Linked Entities of
-//! a `join=inline` subscription (clause 4.5.23.2) are written on the way. A
-//! Linked Entity a `join=flat` subscription appends is written by the same
-//! walk, under the rule the Linked Entity plan decided for it.
+//! The entity is written by the typed walk a query response is written by:
+//! what the notification reports of the change beside the entity's state
+//! ([`NotifiedChanges`]) and the Linked Entities of a `join=inline`
+//! subscription (clause 4.5.23.2) are written on the way. A Linked Entity a
+//! `join=flat` subscription appends is written by the same walk, under the
+//! rule the join plan decided for it.
 //!
 //! A Subscription's `ngsildConformance` has every Entity of the notification
 //! "amended to conform to the supplied version" (clause 5.8.6): the clause
@@ -63,7 +63,7 @@ pub struct StampedInstants {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetSpelling {
     /// Percent-decoded at the presentation boundary, as a query response
-    /// spells them (see [`crate::uri_decoding`]).
+    /// spells them.
     Decoded,
     /// As the store holds them.
     AsStored,

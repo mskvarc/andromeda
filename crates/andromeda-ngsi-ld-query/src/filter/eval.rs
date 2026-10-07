@@ -143,9 +143,7 @@ fn any_one_value<'t, 'a>(target: &'t ResolvedTarget<'a>) -> Option<&'t [TargetVa
 /// neither in nor out. The exception is a Range target that is a Relationship
 /// object: clause 4.9 forbids the ordering operators against a Relationship in
 /// either direction, and a range is two ordering comparisons, so neither
-/// membership polarity holds — "outside" is not a match here either, mirroring
-/// the Ordering predicate arm above and the SQL compiler (`projection.rs`),
-/// which routes `<`/`>`/`<=`/`>=` away from `value_uri` for both range halves.
+/// membership polarity holds -- "outside" is not a match here either, mirroring the Ordering predicate arm above and the SQL compiler, which routes `<`/`>`/`<=`/`>=` away from `value_uri` for both range halves.
 fn eval_equality(target: &ResolvedTarget<'_>, membership: SetMembership, rhs: &CompareValue) -> bool {
     match rhs {
         CompareValue::Scalar(scalar) => compare(&target.value, membership.as_cmp_op(), scalar),
@@ -490,12 +488,7 @@ mod tests {
         assert!(!holds(&expr, &vehicle_entity()));
     }
 
-    /// A structured Property value expanded by JSON-LD, which is the shape a
-    /// notification payload and a stored entity carry: the members are IRI-keyed
-    /// nodes hanging off `hasValue`, not keys inside one `@value`. An evaluator
-    /// that read the terminal `@value` first and then indexed into it resolved
-    /// nothing here, so a subscription filtering on a compound member never
-    /// matched.
+    /// A structured Property value expanded by JSON-LD, which is the shape a notification payload and a stored entity carry: the members are IRI-keyed nodes hanging off `hasValue`, not keys inside one `@value`.
     fn entity_with_expanded_compound_value() -> Value {
         serde_json::json!([{
             "@id": "urn:ngsi-ld:Building:1",
@@ -584,13 +577,7 @@ mod tests {
         }])
     }
 
-    /// The defect a term-expanded `value_path` reintroduced: `resolve_member_hops`
-    /// cannot walk into a `JsonProperty`'s raw `@value` object (it carries no
-    /// IRI-keyed member nodes to hop through), so a compound `q` over one has to
-    /// fall back to the raw-JSON walk — and that walk has to use the key the
-    /// client wrote, not the IRI the path was expanded to. `eval_compound_value_path`
-    /// above parses without ever calling `expand_q_expression`, so it cannot
-    /// exercise this: `path.value_path` there is already the compact spelling.
+    /// `resolve_member_hops` cannot walk into a `JsonProperty`'s raw `@value` object (it carries no IRI-keyed member nodes), so a compound `q` over one falls back to the raw-JSON walk, which has to use the key the client wrote, not the IRI the path was expanded to. Parsing without expansion cannot exercise this, as `path.value_path` is then already the compact spelling.
     #[tokio::test]
     async fn a_json_property_compound_member_is_still_reached_after_the_path_is_expanded() {
         let expanded = expand_q_expression(Some("myJson[city]==\"Berlin\""), &JsonKeyAttributes::default(), &PrefixExpander)
@@ -626,8 +613,7 @@ mod tests {
 
     #[test]
     fn eval_matches_when_any_instance_satisfies_the_predicate() {
-        // Clause 4.9 p. 86: the target value is any value of the instances.
-        // The first instance is 10, so a first-instance-only evaluator says no.
+        // Clause 4.9 p. 86: the target value is any value of the instances; the first instance alone is 10.
         let expr = parse("\"https://example.com/speed\">50").unwrap();
         assert!(holds(&expr, &multi_instance_entity()));
     }
@@ -697,8 +683,7 @@ mod tests {
 
     #[test]
     fn a_language_property_satisfies_a_bare_existence_check() {
-        // Clause 4.9: existence holds for any attribute family, including a
-        // LanguageProperty, which the hasValue/hasObject-only reader missed.
+        // Clause 4.9: existence holds for any attribute family, including a LanguageProperty.
         let expr = parse("\"https://example.com/description\"").unwrap();
         assert!(holds(&expr, &rich_entity()));
     }
@@ -756,9 +741,7 @@ mod tests {
         // value, if the latter is an array"; `unequal`: it "is not included in
         // the target value, if the latter is an array". The array a client wrote
         // as a Property value expands to one `hasValue` node per element, so
-        // every element is part of the target value — a reading that stopped at
-        // the first node answered `==` for element 1 alone and answered `!=`
-        // with the opposite of the clause for every other element.
+        // every element is part of the target value.
         assert!(holds(&parse("\"https://example.com/tags\"==1").unwrap(), &rich_entity()));
         assert!(holds(&parse("\"https://example.com/tags\"==3").unwrap(), &rich_entity()));
         assert!(!holds(&parse("\"https://example.com/tags\"==9").unwrap(), &rich_entity()));
@@ -861,10 +844,7 @@ mod tests {
 
     #[test]
     fn a_range_comparison_against_a_relationship_does_not_match_in_either_polarity() {
-        // Clause 4.9: a range is two ordering comparisons, and ordering shall
-        // not match a Relationship object in either direction — so neither
-        // `==` (within) nor `!=` (outside) holds, mirroring `projection.rs`'s
-        // `a_string_range_bound_keeps_relationship_objects_out_of_its_ordering_halves`.
+        // Clause 4.9: a range is two ordering comparisons, and ordering shall not match a Relationship object in either direction -- so neither `==` (within) nor `!=` (outside) holds.
         assert!(!holds(&parse("\"https://example.com/owner\"==\"urn:a\"..\"urn:z\"").unwrap(), &rich_entity()));
         assert!(!holds(&parse("\"https://example.com/owner\"!=\"urn:a\"..\"urn:z\"").unwrap(), &rich_entity()));
     }
@@ -875,8 +855,6 @@ mod tests {
         // holds for a string target that cannot be inside it.
         assert!(holds(&parse("\"https://example.com/brandName\"!=70..90").unwrap(), &vehicle_entity()));
     }
-
-    // -- linked-entity traversal (clause 4.9) --------------------------------
 
     /// A vehicle whose `isParkedIn` Relationship names `parking`.
     fn vehicle_parked_in(parking: &str) -> Value {
@@ -1019,8 +997,6 @@ mod tests {
         assert!(!holds_linked(&linked_predicate("commercial"), &entity, &linked));
     }
 
-    // -- target language (clause 4.9) -----------------------------------------
-
     /// A Door whose `description` is a language map, and whose `tags` hold two
     /// strings under one language.
     fn door() -> Value {
@@ -1152,8 +1128,7 @@ mod tests {
         // target language is specified, the target value is defined as a value
         // from any of the key-value pairs held within the languageMap" — which
         // is what both spellings of "no target language" address, the bare path
-        // and the `[*]` suppression marker. A reading that saw only the first
-        // language answered `==` for it alone.
+        // and the `[*]` suppression marker.
         assert!(holds(&parse("\"https://example.com/description\"[*]==\"Tuer\"").unwrap(), &rich_entity()));
         assert!(holds(&parse("\"https://example.com/description\"==\"Tuer\"").unwrap(), &rich_entity()));
         assert!(holds(&parse("\"https://example.com/description\"==\"Door\"").unwrap(), &rich_entity()));

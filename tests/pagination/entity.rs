@@ -457,8 +457,7 @@ async fn pagination_entities_cursor_mode_still_reports_the_count() {
 
 /// Clause 5.5.9.1: a plain query -- no `local`, default order, no offset -- on
 /// a tenant where no Context Source Registration can contribute offers opaque
-/// cursor pointers, not offsets. The cursor used to be withheld from every
-/// request that did not say `local=true`.
+/// cursor pointers, not offsets.
 #[tokio::test]
 async fn pagination_entities_default_scope_first_page_offers_opaque_cursor_pointers() {
     let (scope, client) = make_scope().await;

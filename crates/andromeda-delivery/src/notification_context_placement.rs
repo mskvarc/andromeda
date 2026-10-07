@@ -27,7 +27,7 @@ pub enum NotificationContextPlacement {
 /// context in a `Link` header. `application/geo+json` is the media type whose
 /// answer depends on the subscription: the context goes in the body when
 /// `receiverInfo` carries `Prefer: body=ld+json`, when the `Prefer` key is
-/// omitted, and when `receiverInfo` does not exist at all -- only an explicit
+/// omitted, and when `receiverInfo` does not exist at all. Only an explicit
 /// `Prefer: body=json` moves it to the `Link` header. The body is therefore the
 /// default for `GeoJSON` notifications, which is the opposite of the clause 6.3.7
 /// rule for `GeoJSON` *responses*.

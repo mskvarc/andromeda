@@ -1,21 +1,6 @@
 //! Merging an entity `scope` replaces it as a whole.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.6.17.4: "If scope is included in the
-//! Fragment and overwrite is allowed, the scope of the target Entity will become
-//! the one included in the Fragment." Merge Entity takes no `noOverwrite` option
-//! (clause 5.6.17.3), and Batch Entity Merge runs the same behaviour for each
-//! entity (clause 5.6.20.4). Clause 4.18 makes `scope` one non-reified member
-//! with one value, so the Scopes it lists are not attribute instances told apart
-//! by `datasetId`.
-//!
-//! The broker merged them as if they were: every fragment Scope matched the
-//! first stored one, so each overwrote position 0 in turn and the stored tail
-//! survived. `["/A/B","/C/D"]` merged onto `["/X/A","/Y/A","/Z/A"]` read back as
-//! `["/C/D","/Y/A","/Z/A"]`, and `scopeQ` answered from that corrupted value.
-//! A merge onto a single Scope or onto no Scope looked right only because one
-//! overwritten position was the whole value.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 clause 5.6.17.4: "If scope is included in the Fragment and overwrite is allowed, the scope of the target Entity will become the one included in the Fragment." Merge Entity takes no `noOverwrite` option (clause 5.6.17.3), and Batch Entity Merge runs the same behaviour for each entity (clause 5.6.20.4). Clause 4.18 makes `scope` one non-reified member with one value, so the Scopes it lists are not attribute instances told apart by `datasetId`. Merging them positionally would let each fragment Scope overwrite position 0 in turn and leave the stored tail in place: `["/A/B","/C/D"]` merged onto `["/X/A","/Y/A","/Z/A"]` must read back as `["/A/B","/C/D"]`, and `scopeQ` answers from the replaced value.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -100,9 +85,7 @@ async fn assert_scope_counts(client: &TestClient, id: &str, expected: &[(&str, u
     }
 }
 
-/// Clause 5.6.17.4: the merged scope is the fragment's. Before the fix the
-/// entity read back `["/C/D","/Y/A","/Z/A"]`, `/A/B` matched nothing and `/Y/A`
-/// still matched.
+/// Clause 5.6.17.4: the merged scope is the fragment's, so `["/C/D","/Y/A","/Z/A"]` (the fragment overwriting only position 0) is wrong: `/A/B` must match and `/Y/A` must not.
 #[tokio::test]
 async fn regression_scope_merge_entity_replaces_an_array_with_an_array() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -119,8 +102,7 @@ async fn regression_scope_merge_entity_replaces_an_array_with_an_array() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// A single Scope replaces a stored array whole. Before the fix it overwrote
-/// only the first stored Scope: `["/G/H","/Y/A","/Z/A"]`.
+/// A single Scope replaces a stored array whole, not only its first element.
 #[tokio::test]
 async fn regression_scope_merge_entity_replaces_an_array_with_a_string() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -137,9 +119,7 @@ async fn regression_scope_merge_entity_replaces_an_array_with_a_string() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// A fragment whose first Scope equals the stored first Scope keeps it, in the
-/// fragment's order. Before the fix both fragment Scopes landed on position 0
-/// one after the other, losing `/X/A` and keeping `/Y/A`: `["/Q/R","/Y/A"]`.
+/// A fragment whose first Scope equals the stored first Scope keeps it, in the fragment's order; `/X/A` must not be lost while `/Y/A` survives.
 #[tokio::test]
 async fn regression_scope_merge_entity_keeps_the_fragment_order_for_an_overlapping_array() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

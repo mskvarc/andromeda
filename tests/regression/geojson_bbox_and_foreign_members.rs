@@ -7,11 +7,8 @@
 //! 4.7.2 accepts a geometry "meeting the syntax and restrictions mandated by
 //! IETF RFC 7946", and clause 4.6.4 obliges the broker to "preserve the
 //! representation of the content of the values provided [...] and return the
-//! original content". The broker kept a geometry's type and positions only, so
-//! both members were dropped on every write, Core and Temporal alike, and a
-//! stored document holding them could not be read at all.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! original content". The broker keeps both members on every write, Core and
+//! Temporal alike, and reads a stored document holding them.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

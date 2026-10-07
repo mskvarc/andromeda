@@ -21,9 +21,8 @@
 //!
 //! Clause 5.5.7's second prohibition -- no part of the user `@context` below
 //! the top level of the document -- is a property of the same user
-//! `@context`. The request body extractors find it on the request text
-//! (`andromeda_ngsi_ld_representation::embedded_context_admission`) and carry
-//! it in the [`SubmittedContext`], so the admission refuses it on every
+//! `@context`. The request body extractors find it on the request text and
+//! carry it in the [`SubmittedContext`], so the admission refuses it on every
 //! operation, after the context loaded and was found free of scoped contexts.
 //!
 //! Three things shape the rule itself:

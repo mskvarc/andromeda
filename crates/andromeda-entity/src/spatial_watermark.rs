@@ -11,8 +11,8 @@
 //! re-verifies each candidate and drops it.
 //!
 //! Catch-ups are coalesced. A query waits for a catch-up that *started* after
-//! it arrived -- one started earlier may have read the store before a write
-//! this query must see -- and every query waiting when a catch-up starts is
+//! it arrived, one started earlier may have read the store before a write
+//! this query must see, and every query waiting when a catch-up starts is
 //! served by it, so a burst of geo queries costs one read of the store rather
 //! than one each.
 

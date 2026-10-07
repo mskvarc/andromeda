@@ -1,11 +1,11 @@
-//! Subscription and Endpoint members the broker accepted and then ignored.
+//! Subscription and Endpoint members that must take effect once accepted.
 //!
 //! ETSI GS CIM 009 v1.9.1 Table 5.2.12-1 gives a Subscription an `expandValues`
 //! and a `jsonKeys` member, Table 5.2.15-1 gives its `Endpoint` a `cooldown` and
 //! a `timeout`, and Table 5.2.14.2-1 gives its `NotificationParams` an
-//! output-only `timesFailed`. All five were accepted with `201 Created` and had
-//! no effect at all: the two `Endpoint` members did not even survive a retrieve,
-//! and a subscription carrying `expandValues` matched exactly as one without it.
+//! output-only `timesFailed`. All five are accepted with `201 Created` and take
+//! effect: the two `Endpoint` members survive a retrieve, and a subscription
+//! carrying `expandValues` matches differently from one without it.
 //!
 //! Two rules about how those members are read back are asserted here too. Table
 //! 5.2.14.2-1 restricts `timesSent` and `timesFailed` to "Greater than 0" at
@@ -13,8 +13,6 @@
 //! member rather than a zero; and Table 5.2.12-1 defines `expandValues` as a
 //! coercion applied "prior to executing the query", so the `q` a Subscription
 //! echoes is the one its client wrote.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -155,8 +153,7 @@ async fn poll_notification_state(client: &TestClient, id: &str, within: Duration
 }
 
 /// Table 5.2.12-1: `expandValues` and `jsonKeys` are each a `String` holding a
-/// "comma separated list of attribute names". The broker accepted both and
-/// dropped them, so a retrieve reported a subscription that carried neither.
+/// "comma separated list of attribute names". A retrieve reports both.
 ///
 /// The same table says of `expandValues` that the values it identifies "should
 /// be expanded against the supplied @context using JSON-LD type coercion prior
@@ -196,9 +193,7 @@ async fn regression_subscription_endpoint_members_expand_values_and_json_keys_su
 }
 
 /// Table 5.2.15-1: an `Endpoint` carries a `cooldown` and a `timeout`, both
-/// numbers of milliseconds. Neither survived a retrieve, because the stored
-/// notification parameters were decoded into a type that had no member for
-/// either.
+/// numbers of milliseconds. Both survive a retrieve.
 #[tokio::test]
 async fn regression_subscription_endpoint_members_cooldown_and_timeout_survive_a_retrieve() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

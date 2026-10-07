@@ -21,10 +21,6 @@ use reqwest::{Method, StatusCode};
 use serde_json::{Number, json};
 use std::str::FromStr;
 
-// ---------------------------------------------------------------------------
-// Add attribute to temporal entity
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_attrs_add_attribute_success() {
     let scope = TestEnvironment::from_suite("temporal_entity_attributes")
@@ -33,18 +29,15 @@ async fn temporal_attrs_add_attribute_success() {
     let c = client();
     let id = scope.id("Vehicle:add_014_01_01");
 
-    // Setup: create temporal entity
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Add attribute
     let fragment = add_attribute_fragment();
     let (status, body) = add_temporal_attrs(&c, &id, &fragment).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "add attrs should return 204");
     assert!(body.is_empty(), "response body should be empty");
 
-    // Verify
     let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -84,12 +77,10 @@ async fn temporal_attrs_add_multiple_attributes_success() {
     let c = client();
     let id = scope.id("Vehicle:add_014_01_02");
 
-    // Setup: create temporal entity
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Add multiple attributes at once
     let fragment = json!({
         "newAttr1": [
             { "type": "Property", "value": 10, "observedAt": "2020-09-01T12:00:00Z" }
@@ -103,7 +94,6 @@ async fn temporal_attrs_add_multiple_attributes_success() {
     assert_eq!(status, StatusCode::NO_CONTENT, "add multiple attrs should return 204");
     assert!(body.is_empty(), "response body should be empty");
 
-    // Verify both attributes added
     let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -124,7 +114,6 @@ async fn temporal_attrs_add_relationship_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Add Relationship attribute
     let fragment = json!({
         "isParkedIn": [
             {
@@ -157,7 +146,6 @@ async fn temporal_attrs_add_geoproperty_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Add GeoProperty attribute
     let fragment = json!({
         "location": [
             {
@@ -190,7 +178,6 @@ async fn temporal_attrs_add_instances_to_existing_attribute_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Add more instances to existing speed attribute
     let fragment = json!({
         "speed": [
             { "type": "Property", "value": 90, "observedAt": "2020-09-01T12:10:00Z" },
@@ -207,10 +194,6 @@ async fn temporal_attrs_add_instances_to_existing_attribute_success() {
     assert_eq!(speed.len(), 4, "should have 4 speed instances (2 original + 2 added)");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Invalid entity ID
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_attrs_add_empty_entity_id_returns_400() {
@@ -248,10 +231,6 @@ async fn temporal_attrs_add_invalid_entity_id_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Entity not found
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_attrs_add_entity_not_found_returns_404() {
     let scope = TestEnvironment::from_suite("temporal_entity_attributes")
@@ -271,10 +250,6 @@ async fn temporal_attrs_add_entity_not_found_returns_404() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Invalid/empty content
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_attrs_add_invalid_json_returns_400() {
     let scope = TestEnvironment::from_suite("temporal_entity_attributes")
@@ -283,7 +258,6 @@ async fn temporal_attrs_add_invalid_json_returns_400() {
     let c = client();
     let id = scope.id("Vehicle:add_014_04_01");
 
-    // Setup: create entity
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
@@ -306,7 +280,6 @@ async fn temporal_attrs_add_empty_json_returns_400() {
     let c = client();
     let id = scope.id("Vehicle:add_014_04_02");
 
-    // Setup: create entity
     let entity = vehicle_temporal_representation(&id);
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);

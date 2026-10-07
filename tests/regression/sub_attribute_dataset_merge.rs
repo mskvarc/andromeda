@@ -12,13 +12,10 @@
 //! another datasetId or an instance without a datasetId untouched." Clause 5.5.8
 //! states the same for the Partial Attribute Update (clause 5.6.4).
 //!
-//! The broker landed a sub-attribute as one value: a single written instance
-//! merged into a single held one whatever their `datasetId`s, taking the written
-//! `datasetId`, so `accuracy` B merged onto a held `accuracy` A left one instance
-//! B and A was lost; any other shape replaced every held instance, and a
-//! deletion naming one `datasetId` removed them all.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! A sub-attribute lands per instance, not as one value: a written instance
+//! merges only into the held instance with its `datasetId`, so `accuracy` B
+//! merged onto a held `accuracy` A leaves both, and a deletion naming one
+//! `datasetId` removes that instance alone.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -102,8 +99,7 @@ fn expected<'a>(values: &'a [(&'a str, Value)]) -> BTreeMap<&'a str, &'a Value> 
 }
 
 /// Clauses 5.5.12 and 5.6.17.4: a written `datasetId` the held instances do
-/// not carry is added beside them. Before the fix A was merged into B and
-/// lost: `{B: 0.2}`.
+/// not carry is added beside them.
 #[tokio::test]
 async fn regression_sub_attribute_dataset_merge_adds_another_dataset_instance() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -122,8 +118,7 @@ async fn regression_sub_attribute_dataset_merge_adds_another_dataset_instance() 
 }
 
 /// Clause 5.5.12: a written instance naming no `datasetId` targets the
-/// default instance, "merged if present and otherwise added". Before the fix
-/// it merged into A: `{A: 0.2}`.
+/// default instance, "merged if present and otherwise added".
 #[tokio::test]
 async fn regression_sub_attribute_dataset_merge_adds_a_default_instance_beside_a_dataset_instance() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -142,8 +137,7 @@ async fn regression_sub_attribute_dataset_merge_adds_a_default_instance_beside_a
 
 /// Clauses 5.5.12 and 4.5.5.1: the instance with the written `datasetId` is
 /// merged, keeping the `observedAt` the fragment omits, and the other is left
-/// untouched. Before the fix A was rebuilt from the fragment alone and B was
-/// lost.
+/// untouched.
 #[tokio::test]
 async fn regression_sub_attribute_dataset_merge_merges_only_the_matching_instance() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -175,7 +169,7 @@ async fn regression_sub_attribute_dataset_merge_merges_only_the_matching_instanc
 
 /// Clause 5.5.12 hands the deletion of "a specific Attribute instance with a
 /// datasetId" to clause 5.6.5, which removes that instance alone (clause
-/// 5.6.5.4). Before the fix the whole `accuracy` was deleted.
+/// 5.6.5.4).
 #[tokio::test]
 async fn regression_sub_attribute_dataset_merge_deletes_only_the_named_instance() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -202,8 +196,7 @@ async fn regression_sub_attribute_dataset_merge_deletes_only_the_named_instance(
 
 /// Clauses 5.6.4 and 5.5.8: a partially updated attribute's sub-attribute
 /// "is only replaced if the datasetId is the same, otherwise the member of the
-/// Fragment is added as a new instance". Before the fix A was dropped: `{B:
-/// 0.2}`.
+/// Fragment is added as a new instance".
 #[tokio::test]
 async fn regression_sub_attribute_dataset_partial_update_adds_another_dataset_instance() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

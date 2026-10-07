@@ -1,8 +1,4 @@
-//! Redirect mode: registered data is obtained externally and never held
-//! locally; a redirect footprint may be by id, idPattern, type, or attributes
-//! only, and multiple overlapping redirects fan out to every source (ETSI GS
-//! CIM 009 v1.9.1, clauses 4.3.6.3, 5.2.9, 5.7). Registration rows are
-//! `T-LOCAL`; forwarding rows are `T-MOCK`/`T-MOCK-N`.
+//! Redirect mode: registered data is obtained externally and never held locally; a redirect footprint may be by id, idPattern, type, or attributes only, and multiple overlapping redirects fan out to every source (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.3, 5.2.9, 5.7).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -42,9 +38,7 @@ async fn assert_redirect_accepted(topology: &MultiBrokerTopology<BrokerRole>, re
     assert_status(&created, 201);
 }
 
-/// A redirect registration obtains its registered attribute from the source with
-/// nothing held locally and no local conflict (clause 4.3.6.3). Confirms
-/// REQ-FW-26.
+/// A redirect registration obtains its registered attribute from the source with nothing held locally and no local conflict (clause 4.3.6.3).
 #[tokio::test]
 async fn distop_entity_redirect_registered_data_obtained_externally() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -102,8 +96,7 @@ async fn distop_entity_redirect_registered_data_obtained_externally() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A redirect registration by exact id is accepted (clause 5.2.9). Confirms
-/// REQ-FW-27.
+/// A redirect registration by exact id is accepted (clause 5.2.9).
 #[tokio::test]
 async fn distop_entity_redirect_registration_by_id_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -117,8 +110,7 @@ async fn distop_entity_redirect_registration_by_id_accepted() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A redirect registration by idPattern is accepted (clause 5.2.9). Confirms
-/// REQ-FW-27.
+/// A redirect registration by idPattern is accepted (clause 5.2.9).
 #[tokio::test]
 async fn distop_entity_redirect_registration_by_id_pattern_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -130,8 +122,7 @@ async fn distop_entity_redirect_registration_by_id_pattern_accepted() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A redirect registration by type only is accepted (clause 5.2.9). Confirms
-/// REQ-FW-27.
+/// A redirect registration by type only is accepted (clause 5.2.9).
 #[tokio::test]
 async fn distop_entity_redirect_registration_type_only_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -147,8 +138,7 @@ async fn distop_entity_redirect_registration_type_only_accepted() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A redirect registration by attributes only, with no entity clause, is
-/// accepted (clause 5.2.9). Confirms REQ-FW-27.
+/// A redirect registration by attributes only, with no entity clause, is accepted (clause 5.2.9).
 #[tokio::test]
 async fn distop_entity_redirect_registration_attributes_only_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -165,9 +155,7 @@ async fn distop_entity_redirect_registration_attributes_only_accepted() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A redirect registration for a whole entity by id, with no attribute clause,
-/// forwards a retrieve carrying no `attrs` and returns every source attribute
-/// with nothing local (clause 4.3.6.3). Confirms REQ-FW-28.
+/// A redirect registration for a whole entity by id, with no attribute clause, forwards a retrieve carrying no `attrs` and returns every source attribute with nothing local (clause 4.3.6.3).
 #[tokio::test]
 async fn distop_entity_redirect_whole_entity_by_id_forwards_all_attributes() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -217,9 +205,7 @@ async fn distop_entity_redirect_whole_entity_by_id_forwards_all_attributes() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Multiple overlapping redirect registrations fan out to every source, each
-/// receiving one request, their results merged with no conflicting local data
-/// (clause 4.3.6.3). Confirms REQ-FW-29.
+/// Multiple overlapping redirect registrations fan out to every source, each receiving one request, their results merged with no conflicting local data (clause 4.3.6.3).
 #[tokio::test]
 async fn distop_entity_redirect_multiple_overlapping_fan_out_to_all_sources() {
     let topology = topology::single().await.expect("single-broker topology");

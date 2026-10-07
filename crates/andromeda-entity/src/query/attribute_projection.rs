@@ -2,9 +2,9 @@
 //! (clause 4.21 `pick` and `omit`, clause 5.7.2 `attrs`).
 //!
 //! An entity read from the local store is narrowed before it is compacted
-//! (`crate::query::state_projection`); this narrows an entity that arrives
-//! compact -- a Linked Entity another broker returned, or an entity on its way
-//! to a subscriber -- whose member names have to be expanded to be matched.
+//! compact, a Linked Entity another broker returned, or an entity on its way
+//! compact, a Linked Entity another broker returned, or an entity on its way
+//! to a subscriber, whose member names have to be expanded to be matched.
 
 use crate::{error::EntityError, query::attribute_expansion::AttributeExpansions};
 use andromeda_linked_retrieval::{keyword::Keyword, narrowing::list::ListInForce};

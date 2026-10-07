@@ -7,10 +7,10 @@
 //! at its neighbours. The clause 5.5.9.2 offset pointers carry `limit`/`offset`,
 //! plus a `first`/`last` extension when the total is known and the relation
 //! does not name the current page. The clause 5.5.9.1 opaque pointers carry a
-//! `cursor` token the client only follows. The window decides which (see
-//! `docs/conformance/stable-pagination.md`). Clause 5.5.9.1 forbids a page
-//! pointing at itself, so `first` is dropped on the first page and `last` on the
-//! last in both modes.
+//! `cursor` token the client only follows. The window decides which. Clause
+//! 5.5.9.1 forbids a page pointing at
+//! itself, so `first` is dropped on the first page and `last` on the last in
+//! both modes.
 
 use andromeda_http_headers::{
     link::{header::Link, relation_type::RelationType, value::LinkValue},

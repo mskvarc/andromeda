@@ -143,10 +143,6 @@ fn relationship_entity(id: &str, attr: &str, values: &[(&str, &str)]) -> Value {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Validation tests (spec 4.5.19.1)
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn aggregated_format_requires_aggr_methods() {
     let client = Client::new();
@@ -172,10 +168,6 @@ async fn invalid_aggr_method_returns_400() {
 
     delete(&client, &id).await;
 }
-
-// ---------------------------------------------------------------------------
-// Numeric Property aggregation (spec Table 4.5.19.1-1, JSON Number)
-// ---------------------------------------------------------------------------
 
 const NUMERIC_OBS: &[(f64, &str)] = &[
     (100.0, "2024-01-01T00:00:00Z"),
@@ -310,10 +302,6 @@ async fn distinct_count_on_numeric_property() {
     delete(&client, &id).await;
 }
 
-// ---------------------------------------------------------------------------
-// Boolean Property aggregation (spec Table 4.5.19.1-1, JSON Boolean)
-// ---------------------------------------------------------------------------
-
 const BOOL_OBS: &[(bool, &str)] = &[(true, "2024-01-01T00:00:00Z"), (false, "2024-01-01T01:00:00Z"), (true, "2024-01-01T02:00:00Z")];
 
 #[tokio::test]
@@ -400,10 +388,6 @@ async fn distinct_count_on_boolean_property() {
 
     delete(&client, &id).await;
 }
-
-// ---------------------------------------------------------------------------
-// String Property aggregation (spec Table 4.5.19.1-1, JSON String)
-// ---------------------------------------------------------------------------
 
 const STRING_OBS: &[(&str, &str)] = &[
     ("banana", "2024-01-01T00:00:00Z"),
@@ -520,10 +504,6 @@ async fn sumsq_on_string_property_returns_null() {
     delete(&client, &id).await;
 }
 
-// ---------------------------------------------------------------------------
-// Relationship aggregation (spec Table 4.5.19.1-3)
-// ---------------------------------------------------------------------------
-
 const REL_OBS: &[(&str, &str)] = &[
     ("urn:ngsi-ld:Parking:P1", "2024-01-01T00:00:00Z"),
     ("urn:ngsi-ld:Parking:P2", "2024-01-01T01:00:00Z"),
@@ -583,10 +563,6 @@ async fn relationship_type_preserved_in_aggregation() {
     delete(&client, &id).await;
 }
 
-// ---------------------------------------------------------------------------
-// Period bucketing (spec 4.5.19.1)
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn aggregation_with_period_creates_buckets() {
     let client = Client::new();
@@ -618,7 +594,6 @@ async fn aggregation_with_period_creates_buckets() {
     let b2_val = buckets[2][0].as_f64().expect("bucket value should be number");
     assert_aggregate(b2_val, 55.0);
 
-    // Each bucket should have start and end timestamps
     assert!(buckets[0][1].is_string(), "bucket_start should be datetime string");
     assert!(buckets[0][2].is_string(), "bucket_end should be datetime string");
 
@@ -635,7 +610,6 @@ async fn aggregation_without_period_gives_single_result() {
     let buckets = body["speed"]["avg"].as_array().expect("avg should be array");
     pretty_assertions::assert_eq!(buckets.len(), 1, "no period means single aggregate");
     assert_aggregate(buckets[0][0].as_f64().expect("avg value"), 200.0);
-    // Without period, bucket timestamps should be null
     assert!(buckets[0][1].is_null(), "bucket_start should be null when no period");
     assert!(buckets[0][2].is_null(), "bucket_end should be null when no period");
 
@@ -648,7 +622,7 @@ async fn zero_duration_aggregates_whole_range() {
     let id = uid("pt0s");
     create(&client, &numeric_entity(&id, "speed", NUMERIC_OBS)).await;
 
-    // PT0S means aggregate whole range (spec 4.5.19.1)
+    // A zero duration aggregates the whole range (clause 4.5.19.1).
     let body = get_aggregated(&client, &id, "avg", Some("PT0S")).await;
     let buckets = body["speed"]["avg"].as_array().expect("avg should be array");
     pretty_assertions::assert_eq!(buckets.len(), 1, "PT0S should aggregate whole range as single result");
@@ -656,10 +630,6 @@ async fn zero_duration_aggregates_whole_range() {
 
     delete(&client, &id).await;
 }
-
-// ---------------------------------------------------------------------------
-// Multiple methods and attributes
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn multiple_aggr_methods_in_single_query() {
@@ -703,10 +673,6 @@ async fn aggregation_across_multiple_attributes() {
     delete(&client, &id).await;
 }
 
-// ---------------------------------------------------------------------------
-// Response structure (spec 4.5.19)
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn aggregated_response_has_correct_structure() {
     let client = Client::new();
@@ -715,11 +681,9 @@ async fn aggregated_response_has_correct_structure() {
 
     let body = get_aggregated(&client, &id, "avg", None).await;
 
-    // Entity-level fields
     pretty_assertions::assert_eq!(body["id"].as_str().expect("id"), id);
     pretty_assertions::assert_eq!(body["type"].as_str().expect("type"), "AggTestEntity");
 
-    // Attribute structure: object with type + aggregation keys
     let speed = &body["speed"];
     pretty_assertions::assert_eq!(speed["type"].as_str().expect("attr type"), "Property");
     assert!(speed["avg"].is_array(), "aggregation key should contain array of triples");
@@ -743,10 +707,6 @@ async fn aggregated_response_property_type_is_property() {
 
     delete(&client, &id).await;
 }
-
-// ---------------------------------------------------------------------------
-// Mixed types in same entity
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn mixed_property_types_aggregated_correctly() {
@@ -773,21 +733,18 @@ async fn mixed_property_types_aggregated_correctly() {
 
     let body = get_aggregated(&client, &id, "avg,min,max,totalCount,distinctCount", None).await;
 
-    // Numeric: all methods work
     assert_aggregate(body["speed"]["avg"][0][0].as_f64().expect("speed avg"), 150.0);
     assert_aggregate(body["speed"]["min"][0][0].as_f64().expect("speed min"), 100.0);
     assert_aggregate(body["speed"]["max"][0][0].as_f64().expect("speed max"), 200.0);
     pretty_assertions::assert_eq!(body["speed"]["totalCount"][0][0].as_i64().expect("speed tc"), 2);
     pretty_assertions::assert_eq!(body["speed"]["distinctCount"][0][0].as_i64().expect("speed dc"), 2);
 
-    // String: min/max are lexicographic, avg is null
     assert!(body["status"]["avg"][0][0].is_null(), "avg on string should be null");
     pretty_assertions::assert_eq!(body["status"]["min"][0][0].as_str().expect("status min"), "closed");
     pretty_assertions::assert_eq!(body["status"]["max"][0][0].as_str().expect("status max"), "open");
     pretty_assertions::assert_eq!(body["status"]["totalCount"][0][0].as_i64().expect("status tc"), 2);
     pretty_assertions::assert_eq!(body["status"]["distinctCount"][0][0].as_i64().expect("status dc"), 2);
 
-    // Relationship: avg is null, distinctCount counts targets
     assert!(body["isParked"]["avg"][0][0].is_null(), "avg on relationship should be null");
     pretty_assertions::assert_eq!(body["isParked"]["totalCount"][0][0].as_i64().expect("rel tc"), 2);
     pretty_assertions::assert_eq!(body["isParked"]["distinctCount"][0][0].as_i64().expect("rel dc"), 2);
@@ -795,10 +752,6 @@ async fn mixed_property_types_aggregated_correctly() {
 
     delete(&client, &id).await;
 }
-
-// ---------------------------------------------------------------------------
-// Edge cases
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn aggregation_single_value() {
@@ -836,12 +789,10 @@ async fn aggregation_with_dataset_id() {
     create(&client, &entity).await;
 
     let body = get_aggregated(&client, &id, "avg", None).await;
-    // Two datasets should produce separate aggregation instances
     let speed = &body["speed"];
     assert!(speed.is_array(), "multi-dataset should produce an array of instances");
     let arr = speed.as_array().expect("array");
     pretty_assertions::assert_eq!(arr.len(), 2, "two datasets should produce two instances");
-    // Find the default (no datasetId) and the named one
     let default_inst = arr.iter().find(|v| v.get("datasetId").is_none());
     let radar_inst = arr.iter().find(|v| v.get("datasetId").is_some());
     assert!(default_inst.is_some(), "should have default dataset instance");
@@ -889,7 +840,6 @@ async fn aggregation_bucket_timestamps_are_consistent() {
     for bucket in buckets {
         let start = bucket[1].as_str().expect("bucket_start should be string");
         let end = bucket[2].as_str().expect("bucket_end should be string");
-        // end should be start + PT1H
         let start_dt = chrono::DateTime::parse_from_rfc3339(start).expect("parse start");
         let end_dt = chrono::DateTime::parse_from_rfc3339(end).expect("parse end");
         let diff = end_dt - start_dt;
@@ -905,7 +855,7 @@ async fn p0d_duration_aggregates_whole_range() {
     let id = uid("p0d");
     create(&client, &numeric_entity(&id, "speed", NUMERIC_OBS)).await;
 
-    // P0D (zero days) should behave like PT0S -- aggregate whole range
+    // A zero-day duration aggregates the whole range, like PT0S.
     let body = get_aggregated(&client, &id, "avg", Some("P0D")).await;
     let buckets = body["speed"]["avg"].as_array().expect("array");
     pretty_assertions::assert_eq!(buckets.len(), 1, "P0D should aggregate whole range");

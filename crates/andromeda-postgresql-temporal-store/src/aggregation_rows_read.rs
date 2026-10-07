@@ -28,20 +28,15 @@ pub(crate) fn decode_aggregation_rows(
     entity_id: &Identifier,
     compiled: &CompiledTemporalQuery,
 ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
-    // Clause 4.5.19 gives one aggregate value per attribute, `datasetId` and
-    // period, so the statement groups on exactly those and each row is one
-    // rendered period. What the rows underneath a group disagreed about is
-    // read first: a unit-sensitive aggregate over values that do not share a
-    // unit, a family or a shape has no meaning, and the broker converts
-    // nothing, so the request is refused before any aggregate of it is
-    // decoded.
+    // A unit-sensitive aggregate over values that do not share a unit, a family
+    // or a shape has no meaning and the broker converts nothing, so the group
+    // spans are read and checked before any aggregate is decoded.
     let mut spans = Vec::with_capacity(pg_rows.len());
     for pg_row in pg_rows {
         spans.push(decode_aggregation_group_span(pg_row).map_err(TemporalError::from)?);
     }
     // A facet promoted to an `aggrGroupBy` key splits the groups rather than
-    // contradicting them, so the guard skips its uniformity check (study
-    // §4).
+    // contradicting them, so the guard skips its uniformity check.
     let promoted = compiled
         .representation
         .grouping

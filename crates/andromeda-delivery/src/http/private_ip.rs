@@ -58,8 +58,7 @@ pub async fn resolve_private_ip_outcome(authority: &HostPort) -> PrivateIpCheck 
 /// `is_global` does not cover for this guard are added here:
 ///
 /// - IPv4-mapped IPv6 (`::ffff:a.b.c.d`) reaches the IPv4 it embeds, so it is
-///   classified as that IPv4 — the previous IPv6 arm tested only IPv6 ranges and
-///   let `::ffff:127.0.0.1` through.
+///   classified as that IPv4, so `::ffff:127.0.0.1` is refused as loopback.
 /// - NAT64 (RFC 6052 well-known `64:ff9b::/96` and RFC 8215 local-use
 ///   `64:ff9b:1::/48`) is translated to an IPv4 destination, so `64:ff9b::7f00:1`
 ///   would reach `127.0.0.1`; the whole prefix is refused.
@@ -136,8 +135,8 @@ mod tests {
 
     #[test]
     fn an_ipv4_mapped_ipv6_address_is_classified_as_the_ipv4_it_embeds() {
-        // The pre-fix IPv6 arm tested only IPv6 ranges, so ::ffff:127.0.0.1 and
-        // ::ffff:10.0.0.1 passed the guard and reached the loopback / RFC 1918.
+        // Testing only IPv6 ranges would let ::ffff:127.0.0.1 and ::ffff:10.0.0.1
+        // through to loopback and RFC 1918 space.
         assert!(is_private_ip(&IpAddr::V6(Ipv4Addr::LOCALHOST.to_ipv6_mapped())));
         assert!(is_private_ip(&IpAddr::V6(Ipv4Addr::new(10, 0, 0, 1).to_ipv6_mapped())));
         // A mapped public address is still allowed.

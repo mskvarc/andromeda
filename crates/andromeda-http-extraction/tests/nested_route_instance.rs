@@ -272,8 +272,8 @@ async fn answer(request: Request<Body>) -> Result<(StatusCode, Value), Box<dyn E
 
 #[tokio::test]
 async fn every_extractor_refusal_names_the_uri_the_client_addressed() -> Result<(), Box<dyn Error>> {
-    // Every case is answered before anything is asserted, so a regression
-    // names each extractor it reaches rather than only the first.
+    // Every case is answered before anything is asserted, so a failure
+    // names every extractor it reaches rather than only the first.
     let mut misnamed = Vec::new();
     for request in refused_requests()? {
         let addressed = format!("{} {}", request.method(), request.uri());

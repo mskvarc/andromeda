@@ -1,9 +1,4 @@
-//! `lastN` over a merged temporal history (clause 5.7.3.4): the clause fixes
-//! which `n` instances the answer keeps -- the ones at the last `n` instants of
-//! the merged history -- and not their order, so the answer lists them in the
-//! one order every local read lists instances in, oldest first. Before this, the
-//! cut after a federated merge re-ordered the instances newest first, so the same
-//! query answered in a different order depending on whether a source took part.
+//! `lastN` over a merged temporal history (clause 5.7.3.4): the clause fixes which `n` instances the answer keeps -- the ones at the last `n` instants of the merged history -- and not their order, so the answer lists them in the one order every local read lists instances in, oldest first.
 
 use crate::{
     entity::entity,
@@ -32,9 +27,7 @@ fn observed_ats(body: &Value, attribute: &str) -> Vec<String> {
         .collect()
 }
 
-/// Two holders contribute older and newer instances; the front broker answers
-/// `lastN=3` over the merged history and lists the kept instances oldest
-/// first, as a read that took no source would.
+/// Two holders contribute older and newer instances; the front broker answers `lastN=3` over the merged history and lists the kept instances oldest first, as a read that took no source would.
 #[tokio::test]
 async fn distop_federated_last_n_keeps_the_newest_instances_in_ascending_order() {
     let topology = topology::pair().await.expect("two-broker topology");

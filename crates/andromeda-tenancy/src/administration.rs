@@ -7,7 +7,7 @@ use async_trait::async_trait;
 /// The broker's answer to "what tenants are there, and control one of them".
 ///
 /// Implemented by the runtime cache, because computing a tenant's
-/// [`TenantState`](crate::tenant_state::TenantState) needs both the persisted
+/// `TenantState` needs both the persisted
 /// registry row and the cache's own residency, and suspending a tenant means
 /// flipping that row and releasing the runtime in one coordinated step. The HTTP
 /// tenancy routes hold this and stay thin.

@@ -1,7 +1,7 @@
 //! The durable-cache steps of context resolution.
 //!
 //! Between the in-process cache and the network sits the durable cache a broker
-//! attaches — the rows clause 5.13.1 flags `"Cached"`. Reading one is a hit;
+//! attaches: the rows clause 5.13.1 flags `"Cached"`. Reading one is a hit;
 //! writing one happens exactly once per URL, on the first remote-fetch success,
 //! and carries the lifetime clause 6.3.16 derived from that response so the row
 //! lapses when the origin server said it would.
@@ -41,7 +41,7 @@ use tracing::{trace, warn};
 /// The entry the hit produces is bounded by what is left of the stored row's
 /// lifetime, which the hit carries. Clause 6.3.16 makes the span the origin
 /// server granted authoritative over every tier holding the document, so the
-/// in-process copy lapses at the instant the row does — bounding it by the
+/// in-process copy lapses at the instant the row does. Bounding it by the
 /// configured heuristic instead would keep serving, for an hour, a `@context`
 /// the origin server said lives thirty seconds. A row with no expiry is one the
 /// broker stores itself, and its copy is bounded by `hosted_revalidation`
@@ -198,8 +198,7 @@ pub(crate) async fn fetch_and_persist(
 
 /// Prepare a downloaded document for processing, its relative context
 /// references resolved against `document_url`, the URL it was finally read
-/// from (JSON-LD 1.1 API section 4.1.2 step 5.2.6; see
-/// `engine::context_document`).
+/// from (JSON-LD 1.1 API section 4.1.2 step 5.2.6).
 ///
 /// # Errors
 ///

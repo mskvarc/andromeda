@@ -1,10 +1,4 @@
-//! A fixed in-memory registration store and local-type resolver for the
-//! forwarding tests.
-//!
-//! Registration matching only ever reads candidates through
-//! [`RegistrationStore::find_matching`], which answers the whole fixed list as
-//! the superset preselect it is allowed to be; every other call answers
-//! nothing.
+//! A fixed in-memory registration store and local-type resolver for the forwarding tests. Registration matching only reads candidates through [`RegistrationStore::find_matching`], which answers the whole fixed list as the superset preselect it is allowed to be; every other call answers nothing.
 
 use crate::{FederationService, config::FederationConfig, local_entity_type::LocalEntityTypeResolver};
 use andromeda_context_space::context_target::ContextTarget;

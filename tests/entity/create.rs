@@ -37,10 +37,6 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 
-// ---------------------------------------------------------------------------
-// 001_01: Create entity with valid payload
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_create_minimal_success() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -142,10 +138,6 @@ async fn entity_create_non_core_geoproperty_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 001_02: Invalid entity creation requests
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_create_invalid_json_returns_400() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -217,10 +209,6 @@ async fn entity_create_repeated_member_returns_400_naming_it() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 001_03: Duplicate entity ID
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_create_duplicate_id_returns_409() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -239,10 +227,6 @@ async fn entity_create_duplicate_id_returns_409() {
     );
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 001_04: Link header with JSON content type
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_create_json_with_link_header_success() {
@@ -295,16 +279,11 @@ async fn entity_create_json_with_link_header_no_context_retrieval() {
     let status = create_entity_json(&c, &entity, TEST_SUITE_CONTEXT).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Retrieve without context - attributes should appear as expanded URIs
     let (status, body) = get_entity(&c, &id, "", "application/json", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 001_05: Default context with JSON content type
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_create_default_context_success() {
@@ -347,7 +326,6 @@ async fn entity_create_default_context_retrieval() {
     let (status, _, _) = create_entity_full(&c, &entity, "application/json", None).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Retrieve without context - attributes use default context expansion
     let (status, body) = get_entity(&c, &id, "", "application/json", None).await;
     assert_eq!(status, StatusCode::OK);
     // Attribute appears with expanded IRI since no context is used for compaction
@@ -357,10 +335,6 @@ async fn entity_create_default_context_retrieval() {
     );
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 001_06: @context in body with application/json
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_create_json_with_context_in_body_returns_400() {
@@ -381,10 +355,6 @@ async fn entity_create_json_with_context_in_body_returns_400() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "@context with application/json should return 400");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 001_07: @context from payload with application/ld+json
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_create_ld_json_with_context_success() {
@@ -423,10 +393,6 @@ async fn entity_create_ld_json_with_context_retrieval() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 001_08: Missing @context with application/ld+json
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_create_ld_json_without_context_returns_400() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -446,10 +412,6 @@ async fn entity_create_ld_json_without_context_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 001_09: Link header with application/ld+json
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_create_ld_json_with_link_header_returns_400() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -461,10 +423,6 @@ async fn entity_create_ld_json_with_link_header_returns_400() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "Link header with ld+json should return 400");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 001_10: LanguageProperty
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_create_language_property_success() {
@@ -485,10 +443,6 @@ async fn entity_create_language_property_success() {
     assert_eq!(body["name"]["languageMap"]["de"], "Eiffelturm");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 001_11: Scope property
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_create_one_scope_success() {
@@ -523,10 +477,6 @@ async fn entity_create_many_scopes_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 001_12: observationSpace GeoProperty
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_create_observation_space_success() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -542,10 +492,6 @@ async fn entity_create_observation_space_success() {
     assert_eq!(body["observationSpace"]["type"], "GeoProperty");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 001_13: operationSpace GeoProperty
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_create_operation_space_success() {
@@ -563,10 +509,6 @@ async fn entity_create_operation_space_success() {
     assert_eq!(body["operationSpace"]["value"]["type"], "Polygon");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 001_14: JsonProperty
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_create_json_property_object_success() {
@@ -602,10 +544,6 @@ async fn entity_create_json_property_array_success() {
     assert_eq!(body["jsonProperty"]["json"].as_array().unwrap().len(), 2);
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 001_15: VocabProperty
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_create_vocab_property_string_success() {

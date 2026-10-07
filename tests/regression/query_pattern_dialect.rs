@@ -1,23 +1,8 @@
 //! Clause 4.9 `RegExp`, end to end.
 //!
-//! Clause 4.9: "`RegExp` shall be a regular expression as mandated by
-//! IEEE 1003.2 [11]", and Table 5.2.8-1 says the same of `idPattern`.
-//! IEEE 1003.2 is POSIX.2, which the broker's two engines — the `regex` crate
-//! in memory, PostgreSQL's `~` operator in the store — implement alike in the
-//! large and differ on in the small.
+//! Clause 4.9: "`RegExp` shall be a regular expression as mandated by IEEE 1003.2 [11]", and Table 5.2.8-1 says the same of `idPattern`. IEEE 1003.2 is POSIX.2, which the `regex` crate (in memory) and PostgreSQL's `~` operator (in the store) implement alike in the large and differ on in the small.
 //!
-//! The defect these cover validated a pattern in one dialect and executed it in
-//! the other. `idPattern=\p{L}` compiled in the `regex` crate, reached SQL, and
-//! PostgreSQL's refusal surfaced as `500 InternalError` — a malformed pattern
-//! is client input and owes the client a `400`.
-//!
-//! Its silent half is the one a status code cannot show: a pattern both engines
-//! compile and read differently answers one request from PostgreSQL and the
-//! next from the `regex` crate, and the two select different entities. A stored
-//! query is answered by the store; a subscription's `q` is answered in memory.
-//! Both entry points are exercised here for that reason.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! A pattern validated in one dialect and executed in the other would surface PostgreSQL's refusal as `500 InternalError`, though a malformed pattern is client input and owes a `400`. A pattern both engines compile but read differently would answer one request from PostgreSQL and the next from the `regex` crate. A stored query is answered by the store and a subscription's `q` in memory, so both entry points are exercised.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -152,10 +137,7 @@ async fn delivered_pairs(receiver: &NotificationServer, expected: usize) -> BTre
     delivered
 }
 
-/// The defect, reproduced through the parameter that showed it: a Unicode
-/// property class compiles in the `regex` crate and PostgreSQL answers it with
-/// "invalid escape \\ sequence". Executing it raised inside SQL, which the
-/// broker reported as `500 InternalError`.
+/// A Unicode property class compiles in the `regex` crate but PostgreSQL answers it with "invalid escape \\ sequence"; executing it inside SQL must not surface as `500 InternalError`.
 #[tokio::test]
 async fn regression_query_pattern_a_construct_postgresql_cannot_run_is_a_bad_request_not_an_internal_error() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -225,16 +207,7 @@ async fn regression_query_pattern_an_assertion_the_two_engines_read_differently_
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The `regex` crate has no parse path for POSIX.2's equivalence classes or
-/// collating symbols, so it reads `[[=a=]]` as a nested class over `{'=','a'}`
-/// where PostgreSQL reads the equivalence class of `a`. Executed against a
-/// store holding `a` and `=`, the query answered `["a"]` and a subscription
-/// carrying the identical `q` notified both — one filter, two answers.
-///
-/// Refusing these narrows what clause 4.9 mandates, which
-/// `docs/spec-conformance-sweep.md` states and justifies. The same parse — and
-/// the same refusal — covers the `regex` crate's own nested-class extension and
-/// a mistyped POSIX class name, which PostgreSQL rejects outright.
+/// The `regex` crate has no parse path for POSIX.2's equivalence classes or collating symbols, so it reads `[[=a=]]` as a nested class over `{'=','a'}` where PostgreSQL reads the equivalence class of `a`. Refusing these narrows what clause 4.9 mandates but keeps one filter from giving two answers. The same parse and refusal cover the `regex` crate's own nested-class extension and a mistyped POSIX class name, which PostgreSQL rejects outright.
 #[tokio::test]
 async fn regression_query_pattern_a_bracket_expression_the_two_engines_read_differently_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -252,9 +225,8 @@ async fn regression_query_pattern_a_bracket_expression_the_two_engines_read_diff
 
 /// A subscription's `q` is the request that reaches the in-memory evaluator, so
 /// a construct the two engines read differently has to be refused there too.
-/// Accepting it at this entry point is what made one filter mean two things:
-/// the store answered the query and the `regex` crate answered the
-/// subscription.
+/// Accepting it at this entry point would make one filter mean two things: the
+/// store would answer the query and the `regex` crate the subscription.
 #[tokio::test]
 async fn regression_query_pattern_the_subscription_entry_point_refuses_the_same_constructs() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -274,14 +246,7 @@ async fn regression_query_pattern_the_subscription_entry_point_refuses_the_same_
     scope.finish().await.expect("cleanup failed");
 }
 
-/// POSIX.2 gives `.` no newline exception and PostgreSQL's default is
-/// newline-insensitive matching, so `Merc.des` selects a value spelled
-/// `Merc\ndes` in the store. The `regex` crate's default is the opposite, so
-/// the same filter selected that value from a stored query and not from a
-/// subscription until the in-memory engine was built to POSIX's reading.
-///
-/// The control subscription cannot match the fixture at all, so a broker that
-/// delivered every change rather than the matching one fails this too.
+/// POSIX.2 gives `.` no newline exception and PostgreSQL's default is newline-insensitive matching, so `Merc.des` selects a value spelled `Merc\ndes`; the `regex` crate's default is the opposite, so the in-memory engine is built to POSIX's reading. The control subscription cannot match the fixture at all, so a broker that delivered every change rather than the matching one fails this too.
 #[tokio::test]
 async fn regression_query_pattern_a_dot_selects_a_newline_in_both_engines() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -343,11 +308,7 @@ async fn regression_query_pattern_every_posix_extended_regular_expression_is_exe
         "[-M]erc",
         "Merc[e-]des",
         "[M\\-]erc",
-        // A backslash escaping a POSIX metacharacter. Clause 4.9 delegates
-        // `RegExp` to IEEE 1003.2 and only `quotedStr` to IETF RFC 8259, so
-        // these must reach the pattern engine as written. Reading a `RegExp`
-        // as a JSON string refused all four, because none of `\.`, `\(`, `\)`
-        // or `\+` is one of RFC 8259's eight escapes.
+        // Clause 4.9 delegates `RegExp` to IEEE 1003.2 and only `quotedStr` to RFC 8259, so `\.`, `\(`, `\)` and `\+` must reach the pattern engine as written although none is a JSON escape.
         r"Merc\.?edes",
         r"^\(?Merc",
         r"Merc\+?edes",
@@ -361,11 +322,7 @@ async fn regression_query_pattern_every_posix_extended_regular_expression_is_exe
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The extensions the two engines share stay available, so narrowing the
-/// dialect did not turn away patterns both engines run identically. The
-/// shorthand classes are among them: the store runs their Unicode ranges rather
-/// than PostgreSQL's own shorthand, which classifies only ASCII under
-/// `COLLATE "C"` (`tests/unicode_pattern`).
+/// The extensions the two engines share stay available. The shorthand classes are among them: the store runs their Unicode ranges rather than PostgreSQL's own shorthand, which classifies only ASCII under `COLLATE "C"`.
 #[tokio::test]
 async fn regression_query_pattern_a_shorthand_both_engines_share_is_still_executed() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -393,9 +350,7 @@ async fn regression_query_pattern_a_shorthand_both_engines_share_is_still_execut
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The guard that predates the dialect walk: PostgreSQL answers a repetition
-/// applied to another repetition with "quantifier operand invalid", and the
-/// broker still refuses it before it reaches SQL.
+/// PostgreSQL answers a repetition applied to another repetition with "quantifier operand invalid", so the broker refuses it before it reaches SQL.
 #[tokio::test]
 async fn regression_query_pattern_a_repeated_quantifier_is_still_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

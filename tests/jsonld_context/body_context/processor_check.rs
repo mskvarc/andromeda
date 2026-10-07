@@ -1,5 +1,5 @@
 //! A rendered body reads as NGSI-LD under nothing but the `@context` it names
-//! (clause 4.4; study A2 to A5 and A7, "processor check").
+//! (clause 4.4, the "processor check").
 //!
 //! Each case retrieves an Entity as `application/ld+json`, hands the body to an
 //! independent JSON-LD 1.1 processor that resolves only the documents the body
@@ -74,7 +74,7 @@ async fn assert_reads_as_stored(client: &Client, id: &str, rendered: &Value) {
     assert_eq!(node.properties, stored_node.properties, "rendered {rendered}\nstored {stored}");
 }
 
-/// Study A2, A3 and A4 with the processor check, for a request context named
+/// The processor check, for a request context named
 /// in a `Link`: a context ending with the core `@context`, one without it, and
 /// one setting its own `@vocab` after importing it.
 #[tokio::test]
@@ -91,7 +91,7 @@ async fn a_body_rendered_under_a_linked_context_reads_as_the_stored_entity() {
     tenant.finish().await;
 }
 
-/// Study A5 and A7 with the processor check, for a request context named in
+/// The processor check, for a request context named in
 /// an `application/ld+json` POST query body: an inline definition, and an older
 /// core release before a user context.
 #[tokio::test]

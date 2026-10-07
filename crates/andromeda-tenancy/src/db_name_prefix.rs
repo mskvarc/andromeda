@@ -9,8 +9,8 @@ use thiserror::Error;
 /// name.
 ///
 /// A tenant database name is this prefix joined to a per-tenant suffix, so the
-/// prefix must already be a legal unquoted SQL identifier fragment —
-/// `[A-Za-z_][A-Za-z0-9_]*` — or the joined name cannot be used without
+/// prefix must already be a legal unquoted SQL identifier fragment
+/// (`[A-Za-z_][A-Za-z0-9_]*`) or the joined name cannot be used without
 /// quoting. Validating it here rejects an unusable prefix at startup rather
 /// than at the first tenant provision.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Into)]

@@ -56,8 +56,8 @@ pub struct ReconnectState {
 /// State the event loop writes and the delivery and health paths read.
 ///
 /// One `Arc` rather than three: the event loop needs all of it on every
-/// packet, so splitting it into separate handles bought three refcount bumps
-/// per connection and no isolation.
+/// packet, so separate handles would cost three refcount bumps per connection
+/// and buy no isolation.
 #[derive(Debug)]
 pub struct ConnectionState {
     /// Current health, written by the event loop on every packet.
@@ -128,9 +128,9 @@ impl ConnectionState {
 
 /// A pooled connection to one broker.
 ///
-/// [`close`](MqttConnection::close) performs the graceful teardown — a broker
-/// DISCONNECT, aborting the event loop, and failing every unacknowledged publish
-/// — and the pool calls it wherever a connection is removed or replaced.
+/// [`close`](MqttConnection::close) performs the graceful teardown (a broker
+/// DISCONNECT, aborting the event loop, and failing every unacknowledged publish)
+/// and the pool calls it wherever a connection is removed or replaced.
 /// [`Drop`] aborts the event loop as a backstop, so a connection dropped without
 /// `close` still cannot leave its spawned task polling an orphaned session.
 pub struct MqttConnection {
@@ -149,8 +149,8 @@ impl MqttConnection {
     /// Tear the connection down: ask the broker to end the session, stop the
     /// event loop, and fail every publish still awaiting acknowledgement.
     ///
-    /// The disconnect is best-effort — a broker that has already gone answers
-    /// nothing — and the abort is what guarantees the spawned event loop does
+    /// The disconnect is best-effort (a broker that has already gone answers
+    /// nothing) and the abort is what guarantees the spawned event loop does
     /// not outlive the connection. Failing the pending acknowledgements resolves
     /// their waiters to a retryable outcome so the delivery queue retransmits.
     pub async fn close(&self) {

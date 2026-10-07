@@ -1,6 +1,6 @@
 //! An engine bound to one `@context`, as a query-term expander.
 //!
-//! `andromeda-ngsi-ld-query` states what it needs from an expander and names
+//! The query language states what it needs from an expander and names
 //! nothing here; binding an engine and a context to that trait happens on this
 //! side of the boundary, which is what keeps the query language free of
 //! JSON-LD.
@@ -39,8 +39,8 @@ impl<'a> ContextualExpander<'a> {
 // Spelled with the trait's own `impl Future` return rather than as `async fn`
 // bodies. The two are equivalent to the compiler, but rustdoc cannot yet
 // document an `async fn` that implements a return-position `impl Future`
-// method on a type carrying a lifetime (rust-lang/rust#100013), and this
-// crate documents with private items included.
+// method on a type carrying a lifetime, and this crate documents with private
+// items included.
 impl TermExpander for ContextualExpander<'_> {
     fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
         let (engine, context) = (self.engine, self.context);

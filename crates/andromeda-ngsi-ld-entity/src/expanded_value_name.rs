@@ -8,8 +8,8 @@
 //! clause 4.6.2 restricts Entity Type, Property and Relationship names only,
 //! and clause 4.6.4 lets a broker refuse a value for its listed injection
 //! characters only. Expansion turns each key into what IRI expansion against
-//! the active context makes of it -- `opening hours` becomes
-//! `https://uri.etsi.org/ngsi-ld/default-context/opening hours` -- and keeps
+//! the active context makes of it (`opening hours` becomes
+//! `https://uri.etsi.org/ngsi-ld/default-context/opening hours`) and keeps
 //! every result holding a `:` whether or not it is a well-formed IRI (JSON-LD
 //! 1.1 expansion algorithm step 13.3); compaction turns it back into the key
 //! the client wrote. An `@type` entry is expanded the same way, vocabulary

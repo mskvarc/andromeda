@@ -1,8 +1,8 @@
 //! The `type` token of a `GeoJSON` geometry object, standing alone.
 //!
 //! ETSI GS CIM 009 v1.9.1 uses the bare token in places where no coordinates
-//! accompany it — the `geometry` member of a GeoJSON-rendered query result
-//! among them — so it is a value in its own right, distinct from
+//! accompany it, such as the `geometry` member of a GeoJSON-rendered query
+//! result, so it is a value in its own right, distinct from
 //! [`crate::form::GeometryForm`], which is the token together with the
 //! coordinates it describes.
 

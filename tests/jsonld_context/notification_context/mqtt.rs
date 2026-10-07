@@ -1,4 +1,4 @@
-//! The `@context` of an MQTT notification (study D13).
+//! The `@context` of an MQTT notification.
 //!
 //! Clause 7.2 carries an MQTT notification's headers inside its payload, and
 //! the body is the notification an HTTP receiver would get, so an

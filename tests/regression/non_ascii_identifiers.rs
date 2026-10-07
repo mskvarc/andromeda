@@ -6,18 +6,11 @@
 //! with a non-ASCII vowel, or an entity so named, is therefore a valid NGSI-LD
 //! identifier and must be given back character for character.
 //!
-//! The [`andromeda_ngsi_ld_lexicon::uri::Uri`] type parsed such an identifier
-//! by trying a URN and then a URL: the URN parser refuses a non-ASCII
-//! namespace-specific string, and the URL parser's cannot-be-a-base encoder
-//! rewrote every non-ASCII octet as a percent escape, so `Paris` with an
-//! accented vowel became `Par%C3%ADs`. A compensating decoder on the render
-//! path undid this only for a normalized Relationship, whose `type` member it
-//! keyed on -- concise and keyValues strip that member before it runs, and an
-//! entity identifier never had one -- so those forms leaked the escaped
-//! spelling. The identifier is now held verbatim as an IRI, so every
-//! representation carries the character the client wrote.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! The identifier is held verbatim as an IRI rather than parsed as a URN and
+//! then a URL: the URN parser refuses a non-ASCII namespace-specific string, and
+//! a URL parser's cannot-be-a-base encoder would rewrite every non-ASCII octet as
+//! a percent escape, so `Paris` with an accented vowel would become `Par%C3%ADs`.
+//! Every representation carries the character the client wrote.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -34,7 +27,7 @@ use std::time::Duration;
 const ARRIVAL: Duration = Duration::from_secs(10);
 
 /// The non-ASCII identifier under test: a Spanish city name whose accented
-/// vowel is the character the URL encoder used to corrupt.
+/// vowel is the character a URL encoder would corrupt.
 const NON_ASCII_OBJECT: &str = "urn:ngsi-ld:Ciudad:Par\u{00ed}s";
 
 /// The datasetId distinguishing the non-ASCII instance in the multi-instance
@@ -147,23 +140,21 @@ async fn assert_notification_keeps_identifier(format: &str) {
 }
 
 /// Clause 4.6.2 NOTE 2: a normalized notification keeps the non-ASCII target
-/// verbatim -- the case the render-path decoder already handled, guarded here so
-/// the source fix does not regress it.
+/// verbatim.
 #[tokio::test]
 async fn regression_non_ascii_identifier_a_normalized_notification_keeps_it_verbatim() {
     assert_notification_keeps_identifier("normalized").await;
 }
 
-/// Clause 4.6.2 NOTE 2: a concise notification strips the `type` discriminator
-/// the decoder keyed on, so only the source fix keeps its target verbatim.
+/// Clause 4.6.2 NOTE 2: a concise notification, which carries no `type`
+/// discriminator, keeps the non-ASCII target verbatim.
 #[tokio::test]
 async fn regression_non_ascii_identifier_a_concise_notification_keeps_it_verbatim() {
     assert_notification_keeps_identifier("concise").await;
 }
 
 /// Clause 4.6.2 NOTE 2: a keyValues notification renders the Relationship as a
-/// bare target, which the decoder never reached, so only the source fix keeps
-/// it verbatim.
+/// bare target and keeps it verbatim.
 #[tokio::test]
 async fn regression_non_ascii_identifier_a_keyvalues_notification_keeps_it_verbatim() {
     assert_notification_keeps_identifier("keyValues").await;
@@ -209,8 +200,8 @@ async fn regression_non_ascii_identifier_a_plain_retrieval_keeps_it_verbatim() {
 
 /// Clause 4.6.2 NOTE 2 with clause 4.5.5: a keyValues notification of a
 /// multi-instance Relationship keeps the non-ASCII target verbatim in the
-/// dataset-map rendering. This is the path ETSI case `046_22_07` exercises, where
-/// `urn:ngsi-ld:Ciudad:Par\u{00ed}s` came back double-encoded as
+/// dataset-map rendering, where `urn:ngsi-ld:Ciudad:Par\u{00ed}s` must not come back
+/// double-encoded as
 /// `urn:ngsi-ld:Ciudad:ParÃ­s`.
 #[tokio::test]
 async fn regression_non_ascii_identifier_a_multi_instance_keyvalues_notification_keeps_it_verbatim() {
@@ -244,8 +235,8 @@ async fn regression_non_ascii_identifier_a_multi_instance_keyvalues_notification
 /// Clause 4.6.2 NOTE 2 with clause 4.5.5: a multi-instance Relationship keeps
 /// the non-ASCII target verbatim in the dataset-map rendering too. The
 /// single-instance path holds the object as a typed URI, but the dataset-map
-/// path corrupted a non-ASCII target -- `urn:ngsi-ld:Ciudad:Par\u{00ed}s` came
-/// back as the double-encoded `urn:ngsi-ld:Ciudad:ParÃ­s`.
+/// path must not corrupt a non-ASCII target: `urn:ngsi-ld:Ciudad:Par\u{00ed}s`
+/// must not come back as the double-encoded `urn:ngsi-ld:Ciudad:ParÃ­s`.
 #[tokio::test]
 async fn regression_non_ascii_identifier_a_multi_instance_retrieval_keeps_it_verbatim() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

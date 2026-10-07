@@ -111,9 +111,8 @@ mod tests {
     use crate::dereferenceable_uri::DereferenceableUri;
     use url::Url;
 
-    /// ETSI test `033_01_01`: a registration written without a trailing slash
-    /// reads back without one, where a bare `Url` would have added the empty
-    /// path it implies.
+    /// A registration written without a trailing slash reads back without one,
+    /// where a bare `Url` would add the empty path it implies.
     #[test]
     fn an_authority_only_uri_keeps_the_spelling_it_was_written_with() {
         let endpoint: DereferenceableUri = "http://my.csource.org:1026".parse().expect("a dereferenceable URI");

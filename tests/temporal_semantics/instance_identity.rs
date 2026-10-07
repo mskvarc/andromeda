@@ -33,8 +33,8 @@ const CLIENT_URN_INSTANCE: &str = "urn:ngsi-ld:my-own:instance:42";
 /// A client-supplied URL identifier.
 const CLIENT_URL_INSTANCE: &str = "https://example.org/instances/7";
 
-/// The spelling earlier releases minted, carrying a trailing write ordinal the
-/// one-value template cannot reproduce.
+/// A spelling carrying a trailing write ordinal, which the one-value template
+/// cannot reproduce.
 const LEGACY_GENERATED_INSTANCE: &str = "urn:ngsi-ld:attribute:instance:01942f6c-7f00-7000-8000-000000000001:0";
 
 /// The rendered `instanceId` of every instance of one attribute.

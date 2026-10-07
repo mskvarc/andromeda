@@ -23,7 +23,7 @@ use serde_json::json;
 /// The parameters a JSON-LD alternate link carries.
 const ALTERNATE: &str = r#"; rel="alternate"; type="application/ld+json""#;
 
-/// Study F4: an HTML page naming one JSON-LD alternate is replaced by it; the
+/// An HTML page naming one JSON-LD alternate is replaced by it; the
 /// term expands through the alternate, and the entry is recorded under the URL
 /// the request named.
 #[tokio::test]
@@ -79,7 +79,7 @@ async fn an_absolute_alternate_target_is_followed() {
     tenant.finish().await;
 }
 
-/// Study F5 and F6: an alternate that is itself HTML is not followed again,
+/// An alternate that is itself HTML is not followed again,
 /// two alternates state no context, and an alternate of another media type
 /// is none; each is a context that could not be obtained.
 #[tokio::test]

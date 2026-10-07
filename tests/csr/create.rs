@@ -24,10 +24,6 @@ use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use reqwest::StatusCode;
 use serde_json::json;
 
-// ---------------------------------------------------------------------------
-// 5.9.2 -- Basic creation
-// ---------------------------------------------------------------------------
-
 /// Create CSR without specifying mode or operations -- defaults applied (5.9.2).
 #[tokio::test]
 async fn create_without_mode_and_operations_returns_201() {
@@ -153,10 +149,6 @@ async fn create_without_id_server_generates_id() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 5.9.2 -- Invalid content
-// ---------------------------------------------------------------------------
-
 /// Create CSR with null information field -- 400 (5.9.2).
 #[tokio::test]
 async fn create_with_invalid_content_returns_400() {
@@ -217,10 +209,6 @@ async fn create_with_past_expiration_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 5.9.2 -- Duplicate registration
-// ---------------------------------------------------------------------------
-
 /// Create CSR that already exists -- 409 (5.9.2).
 #[tokio::test]
 async fn create_duplicate_returns_409() {
@@ -240,10 +228,6 @@ async fn create_duplicate_returns_409() {
     cleanup_registration(&c, &id).await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 6.3.5 -- JSON content type with Link header context
-// ---------------------------------------------------------------------------
 
 /// JSON body + Link header context, retrieve with context -- compacted names (6.3.5).
 #[tokio::test]
@@ -304,10 +288,6 @@ async fn create_json_with_link_context_retrieve_without_context_returns_fqn() {
     cleanup_registration(&c, &id).await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 6.3.5 -- Default context with JSON content
-// ---------------------------------------------------------------------------
 
 /// JSON body without Link header (default core context), retrieve with compound context (6.3.5).
 /// Core @vocab expands "Building" to "ngsi-ld:default-context/Building" -- compound context
@@ -371,10 +351,6 @@ async fn create_json_default_context_retrieve_without_context() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 6.3.5 -- JSON content type with @context in body (should be rejected)
-// ---------------------------------------------------------------------------
-
 /// application/json body containing @context key -- 400 (6.3.5).
 #[tokio::test]
 async fn create_json_content_type_with_context_in_body_returns_400() {
@@ -399,10 +375,6 @@ async fn create_json_content_type_with_context_in_body_returns_400() {
     assert!(body["title"].is_string(), "response should contain title");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 6.3.5 -- JSON-LD content type
-// ---------------------------------------------------------------------------
 
 /// JSON-LD body with @context, retrieve with compound context -- compacted names (6.3.5).
 #[tokio::test]
@@ -444,10 +416,6 @@ async fn create_jsonld_retrieve_without_context_returns_expanded_type() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 6.3.5 -- JSON-LD content type without @context
-// ---------------------------------------------------------------------------
-
 /// application/ld+json without @context in body -- 400 (6.3.5).
 #[tokio::test]
 async fn create_jsonld_content_type_without_context_in_body_returns_400() {
@@ -473,10 +441,6 @@ async fn create_jsonld_content_type_without_context_in_body_returns_400() {
     assert!(body["title"].is_string(), "response should contain title");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 6.3.5 -- JSON-LD content type with Link header (should be rejected)
-// ---------------------------------------------------------------------------
 
 /// application/ld+json body AND Link header context -- 400 (6.3.5).
 #[tokio::test]

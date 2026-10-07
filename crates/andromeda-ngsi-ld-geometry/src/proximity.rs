@@ -5,8 +5,8 @@
 //! (as defined by [14])" of the reference, and OGC 06-103r4 clause 6.1.2.4
 //! defines both `Buffer` and `Distance` through "the shortest distance between
 //! any two Points in the two geometric objects". The separation of two
-//! geometries is therefore their minimum distance -- zero when they share a
-//! point -- and never a distance between centroids: a building whose nearest
+//! geometries is therefore their minimum distance (zero when they share a
+//! point) and never a distance between centroids: a building whose nearest
 //! wall is 100 m away is 100 m away, wherever its middle lies.
 //!
 //! Clause 4.10 gives distances "in meters" and names no earth model. The store

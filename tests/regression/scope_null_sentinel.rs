@@ -1,13 +1,6 @@
 //! The NGSI-LD Null as the value of the entity `scope` member.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 4.18 admits two things under one grammar: a
-//! hierarchical scope path, and the special string `urn:ngsi-ld:null`, which
-//! "shall be only used and only appear in case of deleted scopes". The broker
-//! read both as paths and handed the sentinel to the label-path index its
-//! current-state scopes are stored in, where `:` and `-` are not label
-//! characters: every write verb answered a well-formed request with
-//! `InternalError`. The same cast failed for a scope level longer than a label
-//! can hold, on the write path and in the `scopeQ` of clause 4.19 alike.
+//! ETSI GS CIM 009 v1.9.1 clause 4.18 admits two things under one grammar: a hierarchical scope path, and the special string `urn:ngsi-ld:null`, which "shall be only used and only appear in case of deleted scopes". The sentinel is not a label path (`:` and `-` are not label characters), so it must never reach the label-path index current-state scopes are stored in, and a scope level longer than a label can hold must be refused rather than fail on the write path or in the `scopeQ` of clause 4.19.
 //!
 //! Clause 5.5.4 says which verbs may carry it at all: "Any attempt to use
 //! "urn:ngsi-ld:null" as a first level member value ("<key>":
@@ -17,8 +10,6 @@
 //! `BadRequestData`". `scope` is a first level member (clause 5.2.4), so a
 //! creation, a replacement and an append are refused, while the partial update
 //! of clause 5.6.2 and the merge of clause 5.6.17 delete the member with it.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -39,8 +30,7 @@ const NGSI_LD_NULL: &str = "urn:ngsi-ld:null";
 /// A three-level scope path, the shape of clause 4.18 EXAMPLE 3.
 const MULTI_LEVEL_SCOPE: &str = "/a/b/c";
 
-/// Assert a refusal is the `BadRequestData` of clauses 5.5.3 and 5.5.4, and in
-/// particular that it is not the `InternalError` this defect produced.
+/// Assert a refusal is the `BadRequestData` of clauses 5.5.3 and 5.5.4, and in particular not an `InternalError`.
 fn assert_bad_request_data(response: &TestResponse, scenario: &str) {
     assert_eq!(response.status, StatusCode::BAD_REQUEST, "{scenario}: {:?}", response.body);
     let problem = response.json_value().expect("a refusal carries a problem details body");
@@ -85,11 +75,7 @@ fn scope_fragment(scope: &Value) -> Value {
     json!({"scope": scope, "@context": [TEST_SUITE_CONTEXT]})
 }
 
-/// Clause 5.6.1 creates an Entity from a whole Entity representation rather
-/// than from a Fragment, so clause 5.5.4's exception does not reach it: "Any
-/// attempt to use "urn:ngsi-ld:null" as a first level member value [...] shall
-/// result in an error of type `BadRequestData`". The broker answered 500, because
-/// the sentinel was stored as if it were a scope path.
+/// Clause 5.6.1 creates an Entity from a whole Entity representation rather than from a Fragment, so clause 5.5.4's exception does not reach it: "Any attempt to use "urn:ngsi-ld:null" as a first level member value [...] shall result in an error of type `BadRequestData`".
 #[tokio::test]
 async fn regression_scope_null_sentinel_create_refuses_the_deleted_scope_spelling() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -244,7 +230,7 @@ async fn regression_scope_null_sentinel_partial_update_refuses_scope_as_its_targ
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The fix is a reading of the NGSI-LD Null, not a blanket refusal of `scope`:
+/// The refusal is a reading of the NGSI-LD Null, not a blanket refusal of `scope`:
 /// a hierarchical path of clause 4.18 EXAMPLE 3 still round-trips through every
 /// verb that writes one — create, append (clause 5.6.3.4), update (clause
 /// 5.6.2.4) and merge (clause 5.6.17.4) — and comes back as it was written.
@@ -291,8 +277,7 @@ async fn regression_scope_null_sentinel_a_multi_level_scope_round_trips_through_
 
 /// Clause 4.18 admits the special string only "in case of deleted scopes",
 /// which is a statement about the whole member: one request cannot delete the
-/// scope and set it at the same time. The mixed array reached the label-path
-/// cast as two paths and produced an `InternalError`.
+/// scope and set it at the same time.
 #[tokio::test]
 async fn regression_scope_null_sentinel_a_deleted_scope_beside_a_path_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

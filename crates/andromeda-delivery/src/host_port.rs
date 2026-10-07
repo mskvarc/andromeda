@@ -3,7 +3,7 @@
 use std::{borrow::Cow, str::FromStr};
 use url::{Host, Url};
 
-/// A broker or endpoint authority — a host and the port it answers on.
+/// A broker or endpoint authority: a host and the port it answers on.
 ///
 /// Composes [`url::Host`] rather than a bare `String` so the host keeps the
 /// distinction the URL parser already drew between a domain, an IPv4 literal and
@@ -68,7 +68,7 @@ pub struct HostPortParseError;
 // IPv6 literal's own colons would defeat. A throwaway `http` scheme gives the
 // parser an authority to read the host and port out of; `http` specifically
 // because the URL parser only recognises an IPv4 literal as one under a special
-// scheme, keeping it an opaque domain otherwise. The port is required — a
+// scheme, keeping it an opaque domain otherwise. The port is required: a
 // `HostPort` is a host *and* a port, so an authority without one is rejected.
 impl FromStr for HostPort {
     type Err = HostPortParseError;

@@ -124,10 +124,7 @@ pub struct TemporalConfig {
     /// default limit is enforced, depending on implementation specific
     /// configurations").
     ///
-    /// Defaults to 100. The ETSI conformance suite has a precondition of
-    /// pagination at 20 instances per attribute (a default query must page
-    /// rather than return every instance), so a conformance run sets
-    /// `ANDROMEDA__TEMPORAL__DEFAULT_LAST_N=19` to sit just under that threshold.
+    /// Defaults to 100.
     pub default_last_n: u32,
     /// The largest `lastN` answered in full; a larger one is narrowed to this
     /// many instances per attribute and paged backwards with a 206 whose
@@ -136,9 +133,7 @@ pub struct TemporalConfig {
     /// Defaults to 1000, and may be raised to at most 5000; it must not fall
     /// below `default_last_n`. The same number bounds the instances that share
     /// one timestamp at the edge of a page: a page never splits them, and a
-    /// group larger than this is refused with `TooManyResults`. The ETSI
-    /// conformance suite expects a `lastN` of 20 to be paged, so a conformance
-    /// run sets `ANDROMEDA__TEMPORAL__MAX_LAST_N=19` beside the default.
+    /// group larger than this is refused with `TooManyResults`.
     pub max_last_n: u32,
     /// Cadence of every `expiresAt` sweep the broker schedules per tenant:
     /// entities (clause 5.2.4), subscriptions (clause 5.8.1.4), context source
@@ -146,8 +141,7 @@ pub struct TemporalConfig {
     /// human-readable form (`"30s"`). Each sweep deletes what has expired at the
     /// moment it runs, so a resource may outlive its `expiresAt` in storage by
     /// up to one cadence; the read paths hide an expired registration in the
-    /// meantime, so the API never serves one. The conformance stacks run this at
-    /// `"5s"`.
+    /// meantime, so the API never serves one.
     #[toml_comment(inline)]
     pub expiration_check_interval: HumanDuration,
     /// Fallback poll cadence for committed temporal intents, in human-readable

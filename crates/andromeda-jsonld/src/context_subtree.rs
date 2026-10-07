@@ -6,13 +6,7 @@
 //! of the @context subtree in the referenced object shall be discarded", as the
 //! JSON-LD specification specifies.
 //!
-//! That obligation is not particular to the Add @context operation. It is a
-//! property of a *referenced* context object, so it holds at every point a
-//! context document enters the broker: a client handing one over to be hosted,
-//! and the resolver downloading one to cache. The reduction therefore lives
-//! here, once, rather than at each entry point where it could be forgotten —
-//! and the resolver's copy was forgotten, which is why a downloaded document's
-//! unrelated members used to be stored beside its `@context`.
+//! That obligation is a property of a *referenced* context object, so it holds wherever a context document enters the broker: a client handing one over to be hosted, and the resolver downloading one to cache. The reduction therefore lives here, once.
 
 use andromeda_json_literal::{
     JsonLiteral,

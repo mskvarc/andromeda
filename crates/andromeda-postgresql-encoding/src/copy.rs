@@ -1,7 +1,6 @@
 //! Shared encoders for the Postgres binary `COPY ... FROM STDIN` protocol.
 //!
-//! The format is documented at
-//! <https://www.postgresql.org/docs/current/sql-copy.html#id-1.9.3.55.9.4.6>.
+//! The format is the one PostgreSQL documents for `COPY ... WITH (FORMAT binary)`.
 //! Each tuple is preceded by a 16-bit field count; each field is either
 //! `-1` (NULL, signalled as `i32 = -1`) or `len` followed by `len` bytes
 //! of pre-typed payload. Encoders here own the per-type payload layout

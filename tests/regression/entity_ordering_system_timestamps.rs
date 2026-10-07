@@ -7,12 +7,11 @@
 //! time has the same two timestamps on an Entity; clause 4.23 makes them
 //! orderable there too.
 //!
-//! The defect classified `orderBy=createdAt` as an attribute path and resolved
-//! it through a lateral JSONB join that found nothing, so every entity tied and
-//! the result fell through to the `id ASC` pagination tie-break rather than to
-//! creation order. The two keywords now read the entity's own `created_at` and
-//! the document row's `modified_at` columns, like `id`, `type` and `scope` read
-//! theirs.
+//! The two keywords read the entity's own `created_at` and the document row's
+//! `modified_at` columns, like `id`, `type` and `scope` read theirs, rather than
+//! resolving as attribute paths: a path lookup would find nothing, so every
+//! entity would tie and the result would fall through to the `id ASC` pagination
+//! tie-break instead of creation order.
 //!
 //! A dotted path whose head happens to be `createdAt` (`name.createdAt`) still
 //! descends into an attribute's temporal sub-member, so admitting the bare
@@ -21,8 +20,6 @@
 //! Every query carries `local=true`: clause 4.23.1 forbids ordering on
 //! distributed operations, so without it these assertions could pass for the
 //! wrong reason.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

@@ -39,7 +39,7 @@ pub enum SpatialConsistency {
     ///
     /// Exact only when exactly one broker process writes the store, which then
     /// saves the per-query read `Watermark` makes. A write committed by another
-    /// process sharing the store -- a replica -- reaches this process's index
+    /// process sharing the store, a replica, reaches this process's index
     /// only at the next rebuild, and until then a geo query here can miss the
     /// entity.
     CommitSynchronous,

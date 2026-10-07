@@ -92,7 +92,6 @@ pub(crate) async fn update_attrs(
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
-        // No matching CSRs — update locally
         let (requested, not_updated) = service.update_attrs(&target, entity, admitted).await.with_entity_instance(&uri)?;
         if not_updated.is_empty() {
             return Ok(StatusCode::NO_CONTENT.into_response());

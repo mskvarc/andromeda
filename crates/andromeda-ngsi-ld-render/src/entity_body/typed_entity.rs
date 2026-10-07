@@ -148,8 +148,6 @@ impl Serialize for TypedEntity<'_> {
                 object.serialize_entry(name, &instant)?;
             }
         }
-        // The entity is open on the join's path while its own Relationships
-        // nest their targets.
         let open = self.join.map(|cursor| cursor.open(&entity.id));
         for (name, member) in entity.attribute_members() {
             if self.narrowing.is_some_and(|rule| rule.member(name).is_skip()) {
@@ -165,7 +163,6 @@ impl Serialize for TypedEntity<'_> {
                 }
             }
         }
-        // The Attributes a change deleted whole join the ones still held.
         if let Some(changes) = &self.changes
             && let Some(deleted) = changes.deleted
         {

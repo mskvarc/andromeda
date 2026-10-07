@@ -2,8 +2,8 @@
 //!
 //! The index holds the default `location` `GeoProperty` only, and holds it as
 //! the store evaluates it: the one geometry the store hoists from the payload
-//! into its search projection. Every path that feeds the index -- the commit
-//! path, a rebuild and a catch-up -- places an entity through this one module,
+//! into its search projection. Every path that feeds the index, the commit
+//! path, a rebuild and a catch-up, places an entity through this one module,
 //! so the three can never disagree about which partitions an entity occupies.
 //! A geo query naming any other `GeoProperty` is never narrowed and is
 //! evaluated by the store in full.

@@ -112,7 +112,6 @@ pub(crate) async fn delete_by_query(
     // Purge (clause 5.6.21) is unchanged.
     let dataset = purge_dataset_scope(&query, enabled, &uri)?;
 
-    // Determine purge mode from drop/keep parameters (clause 5.6.21).
     let purge_mode = if let Some(ref drop_attrs) = query.drop {
         PurgeMode::Drop {
             attributes: drop_attrs.clone(), // clone: the compiled mode owns its attribute list

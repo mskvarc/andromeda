@@ -51,10 +51,10 @@ use sqlx::{PgPool, Row};
 ///   checksum check could not see, in which case it is refused exactly like
 ///   any other mismatch.
 ///
-/// Reading the stamp back after every write is not ceremony: it is what turns
-/// a database whose `schema_metadata` row cannot be written or does not
-/// survive into a refusal here rather than into a failure on the first query
-/// that depends on the new shape.
+/// Reading the stamp back after every write turns a database whose
+/// `schema_metadata` row cannot be written or does not survive into a refusal
+/// here rather than into a failure on the first query that depends on the new
+/// shape.
 ///
 /// # Errors
 ///
@@ -94,7 +94,7 @@ pub async fn ensure_schema_contract(pool: &PgPool, contract: &SchemaContract) ->
 /// same version.
 ///
 /// The tenant ledger is queried rather than recomputed from the embedded
-/// migrator's own list: a migration file the current binary has since deleted
+/// migrator's own list: a migration file the current binary no longer embeds
 /// would be invisible to a binary-only recomputation, which would silently
 /// turn a diverged history into an accepted upgrade.
 ///

@@ -87,11 +87,9 @@ impl<'a> Iterator for SplitAsciiUnquoted<'a> {
 pub fn verify_and_trim(raw: &str, open: u8, close: u8) -> Result<&str, LinkParseError> {
     let bytes = raw.as_bytes();
     if bytes.len() > 1 && bytes[0] == open && bytes[bytes.len() - 1] == close {
-        // Strip exactly the one matched open/close pair, then trim whitespace
-        // inside it. `trim_matches` stripped *every* leading and trailing
-        // delimiter, so `<<url>>` lost both brackets on each side instead of
-        // the single outer pair. `open`/`close` are single ASCII bytes, so
-        // slicing off byte 0 and the last byte lands on char boundaries.
+        // Only the one outer pair is stripped, so `<<url>>` keeps its inner
+        // brackets. `open`/`close` are single ASCII bytes, so slicing off byte 0
+        // and the last byte lands on char boundaries.
         Ok(raw[1..raw.len() - 1].trim())
     } else {
         Err(LinkParseError)
@@ -139,9 +137,8 @@ mod tests {
 
     #[test]
     fn only_the_single_outer_delimiter_pair_is_stripped() {
-        // `trim_matches` stripped every leading and trailing delimiter, so a
-        // value that legitimately begins or ends with the delimiter character
-        // lost it. Only the one outer pair is removed.
+        // A value that legitimately begins or ends with the delimiter character
+        // keeps it: only the one outer pair is removed.
         pretty_assertions::assert_eq!(verify_and_trim("<<url>>", b'<', b'>').ok(), Some("<url>"));
     }
 }

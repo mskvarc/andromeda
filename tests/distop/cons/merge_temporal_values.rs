@@ -1,10 +1,4 @@
-//! Retrieve Temporal Entity forwarding in the simplified temporal representation
-//! (clauses 4.5.9 and 5.7.3.4): a source is asked for the normalized instances of
-//! the window whatever representation the client asked for, so the instances two
-//! holders keep of one `datasetId` are instances of one dataset, and the
-//! `temporalValues` object of that dataset carries the pairs of both. Before this,
-//! each holder answered its own `temporalValues` object and the merge appended a
-//! second object for the same `datasetId` instead of merging it.
+//! Retrieve Temporal Entity forwarding in the simplified temporal representation (clauses 4.5.9 and 5.7.3.4): a source is asked for the normalized instances of the window whatever representation the client asked for, so the instances two holders keep of one `datasetId` are instances of one dataset, and the `temporalValues` object of that dataset carries the pairs of both.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -32,8 +26,7 @@ fn observed_dataset(value: i64, observed_at: &str, dataset_id: &str) -> Value {
     json!({ "type": "Property", "value": value, "observedAt": observed_at, "datasetId": dataset_id })
 }
 
-/// The objects one attribute of a `temporalValues` answer is written as: a
-/// single object for one dataset, an array of them for several.
+/// The objects one attribute of a `temporalValues` answer is written as: a single object for one dataset, an array of them for several.
 fn dataset_objects(attribute: &Value) -> Vec<&Value> {
     match attribute {
         Value::Array(objects) => objects.iter().collect(),
@@ -131,8 +124,7 @@ async fn merged_speed(label: &str, selection: &str) -> Value {
     body
 }
 
-/// What the merged `speed` of `body` must hold: the pairs of both holders, once
-/// each, in one object.
+/// What the merged `speed` of `body` must hold: the pairs of both holders, once each, in one object.
 fn assert_pairs_of_both_holders(body: &Value) {
     let objects = dataset_objects(&body["speed"]);
     assert_eq!(objects.len(), 1, "one dataset, one object: {body}");
@@ -150,9 +142,7 @@ fn assert_pairs_of_both_holders(body: &Value) {
     );
 }
 
-/// Two holders of one `datasetId` answer a `format=temporalValues` retrieval
-/// with one object whose pairs are the union of their instances (clauses 4.5.5,
-/// 4.5.9). Confirms T-D2.
+/// Two holders of one `datasetId` answer a `format=temporalValues` retrieval with one object whose pairs are the union of their instances (clauses 4.5.5, 4.5.9).
 #[tokio::test]
 async fn distop_merge_temporal_values_format_merges_the_pairs_of_one_dataset() {
     assert_pairs_of_both_holders(&merged_speed("merge-values-format", "format=temporalValues").await);
@@ -164,9 +154,7 @@ async fn distop_merge_temporal_values_options_merges_the_pairs_of_one_dataset() 
     assert_pairs_of_both_holders(&merged_speed("merge-values-options", "options=temporalValues").await);
 }
 
-/// A source is asked for the normalized instances of the window whatever
-/// representation the client asked for: the request it receives names no
-/// `temporalValues`, in `format` or in `options`.
+/// A source is asked for the normalized instances of the window whatever representation the client asked for: the request it receives names no `temporalValues`, in `format` or in `options`.
 #[tokio::test]
 async fn distop_merge_temporal_values_a_source_is_asked_for_normalized_instances() {
     let topology = topology::single().await.expect("single-broker topology");

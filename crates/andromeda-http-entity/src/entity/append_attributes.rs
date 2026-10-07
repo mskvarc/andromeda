@@ -106,7 +106,6 @@ pub(crate) async fn append_attrs(
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
-        // No matching CSRs — append locally
         let (all_attrs, not_appended) = service.append_attrs(&target, entity, admitted, overwrite).await.with_entity_instance(&uri)?;
 
         return Ok(append_outcome_response(&all_attrs, &not_appended, Vec::new(), ForwardedCompleteness::Complete));

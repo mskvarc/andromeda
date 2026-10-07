@@ -5,12 +5,9 @@
 //! of an Entity', as defined in clause 4.5.9", which clauses 5.6.11.3 and
 //! 5.6.12.3 take as the input of Create or Update and of Add Attributes. In it,
 //! each attribute holds its family's plural member of `[value, instant]` pairs
-//! and nothing else. Every pair was dropped, so each became an instance with no
-//! value and the write was refused, while a shape clause 4.5.9 does not define
-//! -- instance objects under the plural member, inheriting members written
-//! beside it -- was accepted.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! and nothing else. Every pair is recorded, and a shape clause 4.5.9 does not
+//! define -- instance objects under the plural member, inheriting members
+//! written beside it -- is refused.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -163,8 +160,8 @@ async fn regression_r11_add_attributes_records_simplified_pairs_in_their_dataset
 /// Clause 4.5.9 makes every element a pair of exactly two elements, wraps a
 /// `LanguageProperty` value in a one-member object, and has the object "only
 /// contain" its plural member: each departure is refused with 400 and no
-/// Temporal Evolution is created. The instance objects under `values` the
-/// broker once accepted are among them.
+/// Temporal Evolution is created. The instance objects under `values` are among
+/// them.
 #[tokio::test]
 async fn regression_r11_a_malformed_simplified_attribute_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

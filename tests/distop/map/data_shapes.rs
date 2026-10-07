@@ -1,8 +1,4 @@
-//! `EntityMap` and `ContextSourceIdentity` field-shape constraints (clauses 5.2.39,
-//! 5.2.40): the URI and enum-typed members, the datetime members, the
-//! entity-to-holder-list element shape, the `@none` local marker, and the
-//! per-broker alias. Local rows are `T-LOCAL`; the alias row spans three brokers
-//! and the linkedMaps row uses a mock (`T-MOCK`, seeded `UNKNOWN`).
+//! `EntityMap` and `ContextSourceIdentity` field-shape constraints (clauses 5.2.39, 5.2.40): the URI and enum-typed members, the datetime members, the entity-to-holder-list element shape, the `@none` local marker, and the per-broker alias.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -57,7 +53,7 @@ async fn identity(topology: &MultiBrokerTopology<BrokerRole>) -> Value {
     json_body(&response)
 }
 
-/// An `EntityMap` `id` is a valid URI (clause 5.2.39). Confirms REQ-MAP-163.
+/// An `EntityMap` `id` is a valid URI (clause 5.2.39).
 #[tokio::test]
 async fn entity_map_id_is_valid_uri() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -68,7 +64,7 @@ async fn entity_map_id_is_valid_uri() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An `EntityMap` `type` is `EntityMap` (clause 5.2.39). Confirms REQ-MAP-164.
+/// An `EntityMap` `type` is `EntityMap` (clause 5.2.39).
 #[tokio::test]
 async fn entity_map_type_is_entity_map() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -78,7 +74,7 @@ async fn entity_map_type_is_entity_map() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An `EntityMap` `expiresAt` is a `DateTime` (clause 5.2.39). Confirms REQ-MAP-165.
+/// An `EntityMap` `expiresAt` is a `DateTime` (clause 5.2.39).
 #[tokio::test]
 async fn entity_map_expires_at_is_datetime() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -92,7 +88,7 @@ async fn entity_map_expires_at_is_datetime() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The output-only members are ignored on input (clause 5.2.39). Confirms REQ-MAP-166.
+/// The output-only members are ignored on input (clause 5.2.39).
 #[tokio::test]
 async fn entity_map_output_only_fields_ignored_on_input() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -119,7 +115,6 @@ async fn entity_map_output_only_fields_ignored_on_input() {
 }
 
 /// An `entityMap` element maps an entity id to a holder list (clause 5.2.39).
-/// Confirms REQ-MAP-167.
 #[tokio::test]
 async fn entity_map_element_shape_entity_to_csr_list() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -131,7 +126,6 @@ async fn entity_map_element_shape_entity_to_csr_list() {
 }
 
 /// An `@none` holder marks a locally held entity (clause 5.2.39).
-/// Confirms REQ-MAP-168.
 #[tokio::test]
 async fn entity_map_none_key_marks_locally_held() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -146,7 +140,6 @@ async fn entity_map_none_key_marks_locally_held() {
 }
 
 /// `linkedMaps` maps a CSR id to a remote `EntityMap` id (clause 5.2.39).
-/// Confirms REQ-MAP-169.
 #[tokio::test]
 async fn entity_map_linked_maps_shape_csr_to_map_id() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -194,7 +187,7 @@ async fn entity_map_linked_maps_shape_csr_to_map_id() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `ContextSourceIdentity` `id` is a valid URI (clause 5.2.40). Confirms REQ-MAP-170.
+/// A `ContextSourceIdentity` `id` is a valid URI (clause 5.2.40).
 #[tokio::test]
 async fn identity_id_is_valid_uri() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -205,7 +198,6 @@ async fn identity_id_is_valid_uri() {
 }
 
 /// A `ContextSourceIdentity` `type` is `ContextSourceIdentity` (clause 5.2.40).
-/// Confirms REQ-MAP-171.
 #[tokio::test]
 async fn identity_type_is_context_source_identity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -218,7 +210,6 @@ async fn identity_type_is_context_source_identity() {
 }
 
 /// Each broker reports a non-empty, distinct `contextSourceAlias` (clause 5.2.40).
-/// Confirms REQ-MAP-172.
 #[tokio::test]
 async fn identity_context_source_alias_non_empty() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -239,8 +230,7 @@ async fn identity_context_source_alias_non_empty() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `ContextSourceIdentity` `contextSourceUptime` is an ISO 8601 duration
-/// (clause 5.2.40). Confirms REQ-MAP-173.
+/// A `ContextSourceIdentity` `contextSourceUptime` is an ISO 8601 duration (clause 5.2.40).
 #[tokio::test]
 async fn identity_context_source_uptime_iso8601() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -250,7 +240,6 @@ async fn identity_context_source_uptime_iso8601() {
 }
 
 /// A `ContextSourceIdentity` `contextSourceTimeAt` is a `DateTime` (clause 5.2.40).
-/// Confirms REQ-MAP-174.
 #[tokio::test]
 async fn identity_context_source_time_at_datetime() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -262,8 +251,7 @@ async fn identity_context_source_time_at_datetime() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `ContextSourceIdentity` `contextSourceExtras` is preserved verbatim when
-/// configured (clause 5.2.40). Confirms REQ-MAP-175.
+/// A `ContextSourceIdentity` `contextSourceExtras` is preserved verbatim when configured (clause 5.2.40).
 #[tokio::test]
 async fn identity_context_source_extras_preserved_verbatim() {
     let topology = topology::single().await.expect("single-broker topology");

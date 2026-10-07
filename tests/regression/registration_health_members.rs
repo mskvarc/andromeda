@@ -1,37 +1,8 @@
-//! What a Context Source Registration reports about itself, and how its
-//! `endpoint` is spelled on the way back out.
+//! What a Context Source Registration reports about itself, and how its `endpoint` is spelled on the way back out.
 //!
-//! ETSI GS CIM 009 v1.9.1 Table 5.2.9-2 adds five read-only members to the
-//! `CSourceRegistration` of Table 5.2.9-1, and gives every one of them
-//! cardinality 0..1. They report observations: `status` is "ok" "if the last
-//! attempt to perform a distributed operation succeeded" and "failed" if it
-//! failed, `timesSent` counts the operations the registration triggered,
-//! `timesFailed` those that failed, and `lastSuccess` is "created on first
-//! successful operation". A registration that has triggered nothing has
-//! observed nothing, so it reports none of them — the broker answered with a
-//! `status` and two zeroes instead, which asserts a health nothing had been
-//! observed.
+//! ETSI GS CIM 009 v1.9.1 Table 5.2.9-2 adds five read-only members to the `CSourceRegistration` of Table 5.2.9-1, each with cardinality 0..1. They report observations: `status` is "ok" "if the last attempt to perform a distributed operation succeeded" and "failed" if it failed, `timesSent` counts the operations the registration triggered, `timesFailed` those that failed, and `lastSuccess` is "created on first successful operation". A registration that has triggered nothing has observed nothing, so it reports none of them. Table 5.2.14.2-1 gives a Subscription's `notification` the same three members on the same terms.
 //!
-//! Table 5.2.14.2-1 gives a Subscription's `notification` the same three
-//! members on the same terms, and the subscription side already suppressed
-//! them; the registration side is brought level with it here rather than given
-//! a second rule.
-//!
-//! The `endpoint` half is Table 5.2.9-1, which restricts the member to "a
-//! dereferenceable URI" but says nothing about rewriting it. Clause 5.2.2 makes
-//! the members a Context Producer supplies ones the broker stores and serves
-//! back, so a registration written as `http://my.csource.org:1026` has to read
-//! back that way — the broker parsed it into a `url::Url`, which normalizes an
-//! authority-only URI by appending the empty path it implies, and answered
-//! `http://my.csource.org:1026/`. The same applied to `jsonldContext` and to a
-//! Subscription's `notification.endpoint.uri`.
-//!
-//! `tests/distop/reg/csr_health_fields.rs` owns the rule that a client cannot
-//! set these members, and the dynamic transitions on the multi-broker topology;
-//! this module asserts the absence, the counting and the spelling on the base
-//! tier.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Table 5.2.9-1 restricts `endpoint` to "a dereferenceable URI" but says nothing about rewriting it. Clause 5.2.2 makes the members a Context Producer supplies ones the broker stores and serves back, so a registration written as `http://my.csource.org:1026` has to read back that way, not as `http://my.csource.org:1026/` as `url::Url` normalization would give. The same applies to `jsonldContext` and to a Subscription's `notification.endpoint.uri`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -231,7 +202,7 @@ async fn regression_registration_health_a_success_after_a_failure_flips_the_stat
 /// Clause 5.2.2 has the broker serve a Context Producer's members back as they
 /// were supplied. Table 5.2.9-1 restricts `endpoint` to a dereferenceable URI
 /// and Table 5.2.9-1's `jsonldContext` likewise, but neither admits a canonical
-/// rewrite: an authority-only URI came back with the empty path a `url::Url`
+/// rewrite: an authority-only URI would come back with the empty path a `url::Url`
 /// appends, which is a different string from the one the client registered.
 #[tokio::test]
 async fn regression_registration_health_an_endpoint_round_trips_the_spelling_it_was_written_with() {

@@ -6,8 +6,8 @@
 //! the tree into the written document, so the two ways cannot disagree on
 //! anything but the tree itself, which the differential tests compare.
 //!
-//! The tree keeps exactly what JSON-LD 1.1 expansion produces -- value
-//! objects, JSON literals, node objects, list objects -- with every identifier
+//! The tree keeps exactly what JSON-LD 1.1 expansion produces (value
+//! objects, JSON literals, node objects, list objects) with every identifier
 //! and IRI still the text expansion produced and every number the exact text
 //! it was written with. One shape is added: a geometry the transport already
 //! read into its positions stays those positions, so a `GeoProperty` of a

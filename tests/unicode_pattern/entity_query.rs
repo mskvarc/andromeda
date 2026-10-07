@@ -73,8 +73,8 @@ async fn unicode_pattern_entity_query_a_negated_match_selects_what_the_fold_set_
 
 /// `(?m)` makes `^` and `$` line anchors without changing `.`, which still
 /// matches a newline as clause 4.9's IEEE 1003.2 reading has it. Handed the
-/// client's text, PostgreSQL read its own `m` option, which also stops `.` at a
-/// newline, and folded only ASCII under `i`, so it selected nothing here.
+/// client's text, PostgreSQL would read its own `m` option, which also stops
+/// `.` at a newline, and fold only ASCII under `i`, so it would select nothing.
 #[tokio::test]
 async fn unicode_pattern_entity_query_the_multi_line_option_keeps_a_dot_matching_a_newline() {
     let scope = TestEnvironment::from_suite("unicode_pattern").await.expect("isolated test environment");
@@ -96,8 +96,8 @@ async fn unicode_pattern_entity_query_the_multi_line_option_keeps_a_dot_matching
 }
 
 /// `\w` holds `č`, `Č` and `Š` as it holds the ASCII letters, and `\s` the
-/// space between two words. Handed the client's text, PostgreSQL classified by
-/// the `COLLATE "C"` the value carries and selected only `cebela`.
+/// space between two words. Handed the client's text, PostgreSQL would classify
+/// by the `COLLATE "C"` the value carries and select only `cebela`.
 #[tokio::test]
 async fn unicode_pattern_entity_query_a_word_class_selects_non_ascii_words() {
     let scope = TestEnvironment::from_suite("unicode_pattern").await.expect("isolated test environment");

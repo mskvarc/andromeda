@@ -77,8 +77,7 @@ impl<'de> Deserialize<'de> for OrderingParameters {
     }
 }
 
-/// Deserialize the JSON array defined by Table 5.2.43-1 or the CSV string used
-/// by the HTTP GET binding into the same typed ordering terms.
+/// Reads the JSON array of Table 5.2.43-1 or the CSV string of the HTTP GET binding into the same ordering terms.
 fn deserialize_order_by<'de, D>(deserializer: D) -> Result<Vec<OrderTerm>, D::Error>
 where
     D: Deserializer<'de>,
@@ -138,9 +137,7 @@ mod tests {
         pretty_assertions::assert_eq!(geometry.value.type_name(), GeometryType::Point.to_string());
     }
 
-    /// Clause 5.2.43 Table 5.2.43-1 and the GET binding: `orderFrom` carries
-    /// JSON text and `orderBy` a comma-separated list, and both read as the
-    /// JSON body's array members do.
+    /// Table 5.2.43-1 and the GET binding: `orderFrom` carries JSON text and `orderBy` a comma-separated list.
     #[test]
     fn the_query_string_spelling_reads_as_the_body_spelling() {
         let ordering: OrderingParameters = serde_json::from_value(serde_json::json!({

@@ -9,9 +9,8 @@ use iso8601_duration::Duration;
 /// Clause 4.5.19: when `aggrPeriodDuration` is absent, empty, or zero, the
 /// whole time range is aggregated into a single bucket. Those three inputs mean
 /// one thing, so they all compile to no period at all and this type can only
-/// ever hold a width that actually buckets. That is what removes the
-/// `"" | "PT0S" | "P0D"` test the SQL builder used to carry: a zero period
-/// cannot reach it.
+/// ever hold a width that actually buckets. A SQL builder needs no
+/// `"" | "PT0S" | "P0D"` test: a zero period cannot reach it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AggregationPeriod(Duration);
 

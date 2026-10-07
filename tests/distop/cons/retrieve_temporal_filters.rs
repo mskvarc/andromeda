@@ -1,6 +1,4 @@
-//! Retrieve Temporal auxiliary supplementation, post-merge `datasetId` filtering,
-//! and `lastN` projection (clause 5.7.3.4). Forwarding-selection and base-series
-//! rows live in `crate::cons::retrieve_temporal`.
+//! Retrieve Temporal auxiliary supplementation, post-merge `datasetId` filtering, and `lastN` projection (clause 5.7.3.4).
 
 use crate::{
     entity::entity,
@@ -37,9 +35,7 @@ fn observed_ats(body: &Value, attribute: &str) -> Vec<String> {
 
 const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 
-/// An auxiliary source adds a temporal instance only where that timeproperty value
-/// is absent: a duplicate `observedAt` is suppressed while a new instance and a new
-/// attribute are added (clause 5.7.3.4). Confirms REQ-CONS-47.
+/// An auxiliary source adds a temporal instance only where that timeproperty value is absent: a duplicate `observedAt` is suppressed while a new instance and a new attribute are added (clause 5.7.3.4).
 #[tokio::test]
 #[ignore = "SPEC-CONFLICT: clause 5.9.2.4 limits auxiliary registrations to retrieveOps, retrieveEntity and queryEntity, so an auxiliary temporal source cannot be registered"]
 async fn distop_retrieve_temporal_auxiliary_added_only_if_timeproperty_absent() {
@@ -103,8 +99,7 @@ async fn distop_retrieve_temporal_auxiliary_added_only_if_timeproperty_absent() 
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `datasetId` query parameter keeps only matching instances across the temporal
-/// history; `@none` keeps the default (clause 5.7.3.4). Confirms REQ-CONS-49.
+/// A `datasetId` query parameter keeps only matching instances across the temporal history; `@none` keeps the default (clause 5.7.3.4).
 #[tokio::test]
 async fn distop_retrieve_temporal_datasetid_filters_s1() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -179,8 +174,7 @@ async fn distop_retrieve_temporal_datasetid_filters_s1() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `datasetId` no instance carries removes the whole attribute from S1 while
-/// other attributes are retained (clause 5.7.3.4). Confirms REQ-CONS-50.
+/// A `datasetId` no instance carries removes the whole attribute from S1 while other attributes are retained (clause 5.7.3.4).
 #[tokio::test]
 async fn distop_retrieve_temporal_datasetid_no_match_removes_attribute() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -213,9 +207,7 @@ async fn distop_retrieve_temporal_datasetid_no_match_removes_attribute() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `lastN` limits the projected instances to the most recent across the merged
-/// history, applied post-merge rather than per source (clause 5.7.3.4). Confirms
-/// REQ-CONS-51.
+/// `lastN` limits the projected instances to the most recent across the merged history, applied post-merge rather than per source (clause 5.7.3.4).
 #[tokio::test]
 async fn distop_retrieve_temporal_lastn_limits_projected_instances() {
     let topology = topology::chain().await.expect("three-broker topology");

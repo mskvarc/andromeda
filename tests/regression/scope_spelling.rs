@@ -1,20 +1,17 @@
-//! A Scope is returned as it was written, and matched by its levels (R59).
+//! A Scope is returned as it was written, and matched by its levels.
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 4.18 makes the leading `/` of a Scope
 //! optional -- `Scope = [%x2F] ScopeLevel *(%x2F ScopeLevel)`, with `Madrid`
 //! as its EXAMPLE 2 -- and clause 4.6.4 has a broker "return the original
 //! content when replying to context consumption requests". The Temporal
-//! Evolution and the Context Source Registration both stored a Scope as a label
-//! path and rebuilt it with a leading `/`, so `CompanyA` came back as
-//! `/CompanyA`; Core entities, read from their stored document, already kept
-//! the spelling.
+//! Evolution and the Context Source Registration store a Scope as a label path,
+//! so they must not rebuild it with a leading `/`: `CompanyA` stays `CompanyA`.
+//! Core entities are read from their stored document and keep the spelling.
 //!
 //! Clause 4.19 spells every `scopeQ` pattern with a leading `/`, so a Scope
 //! written without one is reachable only when matching compares levels: the
 //! last three tests pin that a rooted pattern selects a bare Scope on the Core,
 //! temporal and registration paths alike.
-//!
-//! Naming convention: `regression_scope_spelling_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

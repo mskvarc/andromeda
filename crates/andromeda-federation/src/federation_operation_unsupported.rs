@@ -1,9 +1,4 @@
-//! Why a single registered source cannot perform the forwarded operation.
-//!
-//! [`FederationError::OperationNotSupported`](crate::error::FederationError::OperationNotSupported)
-//! carries one of these (422; clause 5.6.8.4). A refusal this broker reasons
-//! about names its registration; a refusal the remote source declared carries
-//! that source's own answer.
+//! A refusal this broker reasons about names its registration; a refusal the remote source declared carries that source's own answer.
 
 use crate::remote_answer::RemoteAnswer;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;

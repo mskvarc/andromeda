@@ -1,7 +1,4 @@
-//! Staged construction of a temporal `EntityMap` (clause 5.14.5): the candidate
-//! set S1, the value-filter result S2, the geo-filter result S3, the
-//! scope-filter result S4, and the map built from S4. Each row observes the
-//! stage boundary through map membership. All `T-LOCAL`.
+//! Staged construction of a temporal `EntityMap` (clause 5.14.5): the candidate set S1, the value-filter result S2, the geo-filter result S3, the scope-filter result S4, and the map built from S4. Each row observes the stage boundary through map membership.
 
 use crate::{
     map::{
@@ -34,10 +31,7 @@ fn far_vehicle(id: &str, entity_type: &str) -> Value {
     })
 }
 
-/// A temporal `Vehicle` carrying a scope stamped inside the `BEFORE_2022`
-/// window, so the temporal representation exposes the scope within the queried
-/// interval (clause 5.14.5.4 evaluates the scope query against the selected
-/// temporal evolution).
+/// A temporal `Vehicle` carrying a scope stamped inside the `BEFORE_2022` window, so the temporal representation exposes the scope within the queried interval (clause 5.14.5.4 evaluates the scope query against the selected temporal evolution).
 fn scoped_vehicle(id: &str, entity_type: &str, scope: &str) -> Value {
     json!({
         "id": id,
@@ -53,8 +47,7 @@ fn maps(created: &Value, entity_id: &str) -> bool {
     created["entityMap"].get(entity_id).is_some()
 }
 
-/// The full non-split local pipeline keeps only entities passing every stage
-/// (clause 5.14.5). Confirms REQ-MAP-142.
+/// The full non-split local pipeline keeps only entities passing every stage (clause 5.14.5).
 #[tokio::test]
 async fn emt_non_split_local_fully_filtered_s1_s4() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -83,7 +76,7 @@ async fn emt_non_split_local_fully_filtered_s1_s4() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A values filter narrows S1 into S2 (clause 5.14.5). Confirms REQ-MAP-143.
+/// A values filter narrows S1 into S2 (clause 5.14.5).
 #[tokio::test]
 async fn emt_values_filter_produces_s2() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -111,7 +104,7 @@ async fn emt_values_filter_produces_s2() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Without a values filter S2 equals S1 (clause 5.14.5). Confirms REQ-MAP-144.
+/// Without a values filter S2 equals S1 (clause 5.14.5).
 #[tokio::test]
 async fn emt_no_values_filter_s2_equals_s1() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -142,7 +135,7 @@ async fn emt_no_values_filter_s2_equals_s1() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A geo query narrows S2 into S3 (clause 5.14.5). Confirms REQ-MAP-145.
+/// A geo query narrows S2 into S3 (clause 5.14.5).
 #[tokio::test]
 async fn emt_geoquery_produces_s3() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -166,7 +159,7 @@ async fn emt_geoquery_produces_s3() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Without a geo query S3 equals S2 (clause 5.14.5). Confirms REQ-MAP-146.
+/// Without a geo query S3 equals S2 (clause 5.14.5).
 #[tokio::test]
 async fn emt_no_geoquery_s3_equals_s2() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -190,7 +183,7 @@ async fn emt_no_geoquery_s3_equals_s2() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A scope query narrows S3 into S4 (clause 5.14.5). Confirms REQ-MAP-147.
+/// A scope query narrows S3 into S4 (clause 5.14.5).
 #[tokio::test]
 async fn emt_scope_query_produces_s4() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -218,7 +211,7 @@ async fn emt_scope_query_produces_s4() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Without a scope query S4 equals S3 (clause 5.14.5). Confirms REQ-MAP-148.
+/// Without a scope query S4 equals S3 (clause 5.14.5).
 #[tokio::test]
 async fn emt_no_scope_query_s4_equals_s3() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -246,7 +239,7 @@ async fn emt_no_scope_query_s4_equals_s3() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The local map is created from S4 (clause 5.14.5). Confirms REQ-MAP-149.
+/// The local map is created from S4 (clause 5.14.5).
 #[tokio::test]
 async fn emt_local_map_created_from_s4() {
     let topology = topology::single().await.expect("single-broker topology");

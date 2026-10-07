@@ -1,8 +1,8 @@
 //! The contexts that resolve without a network.
 //!
 //! Holds the embedded core contexts and whatever the operator preloaded from
-//! disk. Documents are normalised once, at registration — a redundant embedded
-//! Core @context reference is dropped per [`crate::core_context_precedence`] —
+//! disk. Documents are normalised once, at registration (a redundant embedded
+//! Core @context reference is dropped per [`crate::core_context_precedence`]),
 //! so a lookup on the expansion path is a map read and nothing else.
 
 use crate::{
@@ -49,8 +49,8 @@ impl ContextRegistry {
 
     /// Register a context document under a URL.
     ///
-    /// A redundant embedded Core @context reference is dropped at registration
-    /// (`engine::context_document`), so the broker's authoritative Core --
+    /// A redundant embedded Core @context reference is dropped at registration,
+    /// so the broker's authoritative Core --
     /// appended last per clause 4.4 -- stays the single occurrence and a
     /// registered user context that redefines a core term resolves to the
     /// Core's definition rather than failing.
@@ -124,11 +124,6 @@ mod tests {
 
     #[test]
     fn a_registered_user_context_drops_its_redundant_core_import() {
-        // Clause 5.5.7: the broker appends the authoritative Core last, giving
-        // it absolute precedence regardless of position. A registered user
-        // context's own embedded Core reference is therefore redundant and is
-        // dropped, so the Core stays the single occurrence; the user context's
-        // own new terms are kept.
         let registry = ContextRegistry::new();
         let url = IriBuf::new("https://example.com/user.jsonld".to_string()).expect("valid URL");
         registry
@@ -143,7 +138,7 @@ mod tests {
 
     /// Clause 4.4 and Annex C.8: the registry keeps what the document as
     /// written left in force last, although the copy it hands the processor
-    /// no longer names the Core.
+    /// does not name the Core.
     #[test]
     fn a_registered_document_keeps_what_it_left_in_force_last() {
         let registry = ContextRegistry::new();

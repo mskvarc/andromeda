@@ -20,7 +20,7 @@ use serde_json::json;
 const INERT_ENDPOINT: &str = "http://127.0.0.1:9/notify";
 
 /// A body missing the mandatory `notification` member is rejected with
-/// `400 BadRequestData` (clause 5.8.1). Confirms REQ-MAP-1.
+/// `400 BadRequestData` (clause 5.8.1).
 #[tokio::test]
 async fn sub_create_malformed_body_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -39,7 +39,7 @@ async fn sub_create_malformed_body_returns_400() {
 }
 
 /// Re-creating an existing subscription id is rejected `409 AlreadyExists`
-/// (clause 5.8.1). Confirms REQ-MAP-2.
+/// (clause 5.8.1).
 #[tokio::test]
 async fn sub_create_duplicate_id_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -66,7 +66,7 @@ async fn sub_create_duplicate_id_returns_409() {
 }
 
 /// A subscription created without an `id` is assigned a generated URI returned in
-/// `Location` (clause 5.8.1). Confirms REQ-MAP-3, REQ-MAP-36.
+/// `Location` (clause 5.8.1).
 #[tokio::test]
 async fn sub_create_without_id_returns_generated_uri() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -98,7 +98,7 @@ async fn sub_create_without_id_returns_generated_uri() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A future `expiresAt` is accepted and stored (clause 5.2.12). Confirms REQ-MAP-5.
+/// A future `expiresAt` is accepted and stored (clause 5.2.12).
 #[tokio::test]
 async fn sub_create_with_expires_at_stores_expiration() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -130,7 +130,6 @@ async fn sub_create_with_expires_at_stores_expiration() {
 }
 
 /// A past `expiresAt` is rejected with `400 BadRequestData` (clause 5.8.1).
-/// Confirms REQ-MAP-6.
 #[tokio::test]
 async fn sub_create_past_expires_at_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -150,7 +149,7 @@ async fn sub_create_past_expires_at_returns_400() {
 }
 
 /// A subscription without `expiresAt` is perpetual: no expiration is stored
-/// (clause 5.2.12). Confirms REQ-MAP-7.
+/// (clause 5.2.12).
 #[tokio::test]
 async fn sub_create_without_expires_at_is_perpetual() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -175,7 +174,7 @@ async fn sub_create_without_expires_at_is_perpetual() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An absent `isActive` yields `status` `active` (clause 5.2.12). Confirms REQ-MAP-8.
+/// An absent `isActive` yields `status` `active` (clause 5.2.12).
 #[tokio::test]
 async fn sub_create_is_active_absent_or_true_status_active() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -204,7 +203,7 @@ async fn sub_create_is_active_absent_or_true_status_active() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `isActive` false yields `status` `paused` (clause 5.2.12). Confirms REQ-MAP-9.
+/// `isActive` false yields `status` `paused` (clause 5.2.12).
 #[tokio::test]
 async fn sub_create_is_active_false_status_paused() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -238,7 +237,7 @@ async fn sub_create_is_active_false_status_paused() {
 /// Retrieving under the core context alone (clause 6.3.5: a GET without a
 /// `Link` header uses the default context, so the read-back must not carry
 /// the topology client's compound `Link`) leaves the compound-context term
-/// uncompacted, so its expanded IRI is visible. Confirms REQ-MAP-11.
+/// uncompacted, so its expanded IRI is visible.
 #[tokio::test]
 async fn sub_create_watched_attributes_expanded_and_stored() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -274,7 +273,7 @@ async fn sub_create_watched_attributes_expanded_and_stored() {
 }
 
 /// A subscription whose `jsonldContext` resolves is accepted and stores that
-/// context (clause 5.8.1). Confirms REQ-MAP-14.
+/// context (clause 5.8.1).
 #[tokio::test]
 async fn sub_create_notification_context_resolves_from_jsonld_context() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -307,7 +306,7 @@ async fn sub_create_notification_context_resolves_from_jsonld_context() {
 }
 
 /// An unreachable `jsonldContext` is rejected `LdContextNotAvailable`, mapped to `504` by Table 6.3.2-1,
-/// (clause 5.8.1). Confirms REQ-MAP-15.
+/// (clause 5.8.1).
 #[tokio::test]
 async fn sub_create_unreachable_jsonld_context_returns_504() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -327,7 +326,7 @@ async fn sub_create_unreachable_jsonld_context_returns_504() {
 }
 
 /// A structurally invalid `jsonldContext` is rejected `400 BadRequestData`
-/// (clause 5.8.1). Confirms REQ-MAP-16.
+/// (clause 5.8.1).
 #[tokio::test]
 async fn sub_create_invalid_jsonld_context_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");

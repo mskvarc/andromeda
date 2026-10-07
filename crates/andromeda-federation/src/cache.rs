@@ -68,7 +68,7 @@ struct CachedResponse {
 pub(crate) struct ForwardedGetCache {
     /// The live entries.
     entries: DashMap<CacheKey, CachedResponse>,
-    /// The most entries held at once; a full cache stops admitting.
+    /// A full cache stops admitting.
     max_entries: usize,
 }
 

@@ -29,11 +29,11 @@ pub struct TransportDispatcher {
 
 /// Result of a notification delivery attempt.
 ///
-/// Coarser than [`DeliveryOutcome`] — the dispatcher has already logged why —
+/// Coarser than [`DeliveryOutcome`] (the dispatcher has already logged why)
 /// but it keeps the one distinction a retrying caller needs: whether a failure
-/// is worth another attempt. Collapsing every failure to one variant is what let
-/// a permanently-rejecting `400` be retried through its whole budget exactly like
-/// a transient `503`.
+/// is worth another attempt. Collapsing every failure to one variant would retry
+/// a permanently-rejecting `400` through its whole budget exactly like a
+/// transient `503`.
 pub enum DeliveryResult {
     /// The endpoint accepted the notification.
     Delivered,
@@ -103,8 +103,8 @@ impl TransportDispatcher {
     ///
     /// The payload limit is left to each transport: the HTTP transport enforces
     /// its configured maximum (and answers `PayloadTooLarge`), while an MQTT
-    /// publish is bounded by the broker's packet size. The dispatcher applying
-    /// the HTTP knob to an MQTT publish governed one transport by another's.
+    /// publish is bounded by the broker's packet size. Applying the HTTP knob to
+    /// an MQTT publish would govern one transport by another's.
     pub async fn deliver(&self, endpoint: &EndpointTransport, request: &DeliveryRequest) -> DeliveryResult {
         let handle = match endpoint {
             EndpointTransport::Sse => return self.deliver_sse(request),
@@ -199,8 +199,8 @@ fn report_stream<E: Error>(subscription_id: &Identifier, outcome: Result<(), E>)
         }
         Err(error) => {
             debug!(subscription_id = %subscription_id, error = %error, "streaming notification delivery failed");
-            // A stream push has no delivery queue to retry through — the client must
-            // reconnect — so a failed push is terminal, not retryable.
+            // A stream push has no delivery queue to retry through and the client must
+            // reconnect, so a failed push is terminal, not retryable.
             DeliveryResult::TerminalFailure
         }
     }

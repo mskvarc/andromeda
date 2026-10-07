@@ -9,8 +9,8 @@
 //! the payload in the case of Linked Entity retrieval)" -- and clause 5.7.2.5
 //! of the query's, reducing "every Entity within the payload body". A Linked
 //! Entity is therefore narrowed by exactly the rule that narrows a matching
-//! one, `id` and `type` included, and the broker's earlier rule of preserving
-//! identity on a Linked Entity has no clause behind it.
+//! one, `id` and `type` included, and no clause preserves
+//! identity on a Linked Entity.
 //!
 //! Three further consequences follow from the same sentences.
 //!
@@ -36,11 +36,9 @@
 //! Finally, Table 5.2.4-1 makes `location`, `observationSpace` and
 //! `operationSpace` Attributes of the Entity like any other -- clause 4.7 fixes
 //! what they mean, not what they are. Andromeda keeps all three in Entity
-//! members of their own, and every narrowing that selected Attributes by name
-//! read the rest of the attribute map only, so all three survived `attrs`,
-//! `pick` and `omit` alike.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! members of their own, so every narrowing that selects Attributes by name must
+//! reach them as well as the rest of the attribute map: all three are subject to
+//! `attrs`, `pick` and `omit` alike.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

@@ -9,8 +9,8 @@
 //!
 //! Their content is the merged `@context` clause C.2.4 prints, split back into
 //! the three parts by the IRI namespace each term expands to. C.2.4 does not
-//! define every term its own sibling examples use; the additions are recorded
-//! in `docs/annex-c-corpus.md`.
+//! define every term its own sibling examples use, so the hosted documents add
+//! the missing ones.
 
 use andromeda_test_mocks::{callback_path::CallbackPath, jsonld_context_server::JsonLdContextServer, server_config::MockServerConfig};
 use axum::{body::Bytes, http::HeaderMap};

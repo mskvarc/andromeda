@@ -299,9 +299,9 @@ mod tests {
 
     /// A transaction the datastore rolled back is re-run by the committer, so
     /// it must reach the commit boundary as contention from every phase that
-    /// can raise it. The 40P01/40001 recognition itself is exercised in
-    /// andromeda-postgresql-pool, whose fake database error can carry a
-    /// SQLSTATE a bare `sqlx::Error` cannot; here, the typed contention of a
+    /// can raise it. The 40P01/40001 recognition itself is exercised where a
+    /// fake database error can carry a SQLSTATE a bare `sqlx::Error` cannot;
+    /// here, the typed contention of a
     /// lower layer is carried through and nothing else is mistaken for it.
     #[test]
     fn contention_from_a_lower_layer_stays_contention_and_nothing_else_becomes_it() {

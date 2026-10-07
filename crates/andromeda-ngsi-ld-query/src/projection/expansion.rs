@@ -8,11 +8,7 @@ use crate::{
 use iri_rs::IriBuf;
 use std::{future::Future, pin::Pin};
 
-/// Expand a list of short attribute names to their full IRIs.
-///
-/// Used for every attribute selection list the API accepts: `attrs` on entity
-/// and temporal queries, the CSR property/relationship names, and the
-/// `expandValues` / `jsonKeys` extensions.
+/// Expands a list of short attribute names to their full IRIs, for every attribute selection list the API accepts: `attrs` on entity and temporal queries, the CSR property/relationship names, and the `expandValues` / `jsonKeys` extensions.
 ///
 /// # Errors
 ///
@@ -26,9 +22,7 @@ pub async fn expand_attrs<S: AsRef<str> + Sync>(raw: &[S], expander: &impl TermE
     Ok(expanded_iris)
 }
 
-/// Expand a `pick` / `omit` term list (clause 4.21), keeping the keywords
-/// `id`, `type` and `scope` as written and recursing into each term's clause
-/// 4.21 linked-entity sub-projection.
+/// Expands a `pick` / `omit` term list (clause 4.21), keeping the keywords `id`, `type` and `scope` as written and recursing into each term's linked-entity sub-projection.
 ///
 /// # Errors
 ///
@@ -40,12 +34,7 @@ pub async fn expand_projection_terms(raw: &[RawProjectionTerm], expander: &impl 
     expand_projection_terms_inner(raw, expander).await
 }
 
-/// The boxed future the recursive walk over `RawProjectionTerm::linked` returns.
-///
-/// Async fns cannot recurse directly (their future type would be infinitely
-/// sized), so the recursive step is boxed — the same pattern
-/// `EntityQueryService::resolve_linked_inner` uses for the clause 4.5.20 join
-/// walk.
+/// The boxed future the recursive walk over `RawProjectionTerm::linked` returns; async fns cannot recurse directly because their future type would be infinitely sized.
 fn expand_projection_terms_inner<'a, E: TermExpander>(
     raw: &'a [RawProjectionTerm],
     expander: &'a E,
@@ -62,9 +51,7 @@ fn expand_projection_terms_inner<'a, E: TermExpander>(
 /// Expand one raw term, recursing into its linked-entity sub-projection when
 /// it is an attribute term.
 async fn expand_one_term<E: TermExpander>(term: &RawProjectionTerm, expander: &E) -> Result<ProjectionTerm, QueryError> {
-    // Clause 4.21: the keywords name structural members of the
-    // representation, not attributes, so they have no IRI to expand to and no
-    // linked entity to project — `LinkedEntityTerm` only ever follows `AttrName`.
+    // Clause 4.21: the keywords name structural members, not attributes, so they have no IRI to expand to and no linked entity to project (`LinkedEntityTerm` only ever follows `AttrName`).
     if let Some(keyword) = ProjectionTerm::keyword(term.name.as_str()) {
         return keyword_term(term, keyword);
     }
@@ -125,8 +112,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_projection_term_of_id_type_or_scope_is_not_expanded() {
-        // Clause 4.21: `id`, `type` and `scope` name structural members of the
-        // representation, not attributes, so they have no IRI to expand to.
         let raw = [leaf("id"), leaf("type"), leaf("scope"), leaf("speed")];
         let expanded = expand_projection_terms(&raw, &PrefixExpander).await.expect("expands");
         assert_eq!(
@@ -143,9 +128,7 @@ mod tests {
         );
     }
 
-    /// Clause 4.21: `observation{temperature}` selects the `observation`
-    /// relationship together with the `temperature` attribute of the entity
-    /// it links to.
+    /// Clause 4.21: `observation{temperature}` selects the `observation` relationship together with the `temperature` attribute of the entity it links to.
     #[tokio::test]
     async fn a_linked_entity_term_expands_recursively() {
         let raw = [RawProjectionTerm {
@@ -183,8 +166,7 @@ mod tests {
         );
     }
 
-    /// Clause 4.21: `LinkedEntityTerm` only ever follows `AttrName`, so a
-    /// keyword carrying `{...}` (e.g. `id{a}`) is rejected.
+    /// Clause 4.21: `LinkedEntityTerm` only ever follows `AttrName`, so `id{a}` is rejected.
     #[tokio::test]
     async fn a_keyword_carrying_a_linked_term_is_rejected() {
         let raw = [RawProjectionTerm {

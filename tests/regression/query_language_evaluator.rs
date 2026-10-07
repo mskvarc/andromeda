@@ -6,14 +6,12 @@
 //! the in-memory reading of clause 4.9's target values end to end. The two list
 //! families are the reason this suite exists: JSON-LD expansion wraps an ordered
 //! `valueList` and `objectList` in a single `@list` node, an evaluator reading
-//! one level too high resolved no target at all, and a subscription filtering on
-//! either family therefore never fired — in both polarities, since a target that
-//! resolves to nothing satisfies no operator.
+//! one level too high would resolve no target at all, and a subscription
+//! filtering on either family would never fire -- in both polarities, since a
+//! target that resolves to nothing satisfies no operator.
 //!
 //! Every assertion states what ETSI GS CIM 009 v1.9.1 requires rather than what
 //! the broker happened to do.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -98,9 +96,8 @@ async fn delivering_subscriptions(receiver: &NotificationServer, expected: usize
 /// target value, if the latter is an array".
 ///
 /// A subscription is the request that puts those definitions through the
-/// in-memory evaluator, and one filtering on either list family fired for no
-/// change at all: the expanded `@list` wrapper meant the evaluator resolved no
-/// target, and an unresolved target satisfies no operator.
+/// in-memory evaluator, which has to see through the expanded `@list` wrapper:
+/// an unresolved target satisfies no operator.
 #[tokio::test]
 async fn regression_query_evaluator_a_subscription_filtering_on_a_list_family_fires() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -145,8 +142,8 @@ async fn regression_query_evaluator_a_subscription_filtering_on_a_list_family_fi
 /// `["blue","red","green"]`)."
 ///
 /// The negated polarity is the half an unresolved target hides: with no target
-/// resolved neither `==` nor `!=` ever held, so the operator looked "safe" while
-/// being wrong in both directions. Here the array does hold `"commercial"`, so
+/// resolved neither `==` nor `!=` would ever hold, so the operator would look
+/// "safe" while being wrong in both directions. Here the array does hold `"commercial"`, so
 /// `!=` must not fire, and the array does not hold `"industrial"`, so it must.
 #[tokio::test]
 async fn regression_query_evaluator_a_negated_list_filter_is_the_complement_of_membership() {

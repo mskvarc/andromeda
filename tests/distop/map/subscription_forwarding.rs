@@ -1,8 +1,7 @@
 //! Reduced-copy subscription forwarding to a supporting Context Source, captured
 //! on an in-process mock (clause 5.8.5). A local subscription that matches an
 //! inclusive registration drives a CSR-subscription: the mock captures the exact
-//! forwarded request so its shape can be asserted. All `T-MOCK`, seeded
-//! `UNKNOWN` (the ratchet promotes them once the broker forwards on green).
+//! forwarded request so its shape can be asserted. All `T-MOCK`.
 
 use crate::{
     map::{
@@ -25,7 +24,7 @@ fn scoped_sub(id: &str, entity_type: &str) -> Value {
 }
 
 /// Creating a matching local subscription provisions a subscription on the
-/// supporting source (clause 5.8.5). Confirms REQ-MAP-17.
+/// supporting source (clause 5.8.5).
 #[tokio::test]
 async fn sub_create_provisions_csr_subscription() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -56,7 +55,7 @@ async fn sub_create_provisions_csr_subscription() {
 }
 
 /// The local-to-CSR mapping lets a local delete tear down exactly its CSR
-/// subscription (clause 5.8.5). Confirms REQ-MAP-18.
+/// subscription (clause 5.8.5).
 #[tokio::test]
 async fn sub_create_stores_local_to_csr_subscription_mapping() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -103,7 +102,7 @@ async fn sub_create_stores_local_to_csr_subscription_mapping() {
 }
 
 /// A non-`localOnly` subscription drives per-CSR handling when the source reports
-/// a change (clause 5.8.5). Confirms REQ-MAP-21.
+/// a change (clause 5.8.5).
 #[tokio::test]
 async fn sub_local_only_false_triggers_per_csr_handling_on_csource_notification() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -129,7 +128,7 @@ async fn sub_local_only_false_triggers_per_csr_handling_on_csource_notification(
 }
 
 /// The forwarded copy branches on trigger reason per registration mode
-/// (clause 5.8.5). Confirms REQ-MAP-22.
+/// (clause 5.8.5).
 #[tokio::test]
 async fn sub_csource_notification_branches_on_trigger_reason_per_mode() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -160,7 +159,7 @@ async fn sub_csource_notification_branches_on_trigger_reason_per_mode() {
 }
 
 /// A newly matching supporting source builds a reduced-copy subscription
-/// (clause 5.8.5). Confirms REQ-MAP-23.
+/// (clause 5.8.5).
 #[tokio::test]
 async fn sub_newly_matching_supporting_source_builds_reduced_copy() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -193,7 +192,7 @@ async fn sub_newly_matching_supporting_source_builds_reduced_copy() {
 /// explicitly set, the default setting of the deployment allows split entities,
 /// the members q, geoQ and scopeQ shall be removed from the created copy"). The
 /// member is set explicitly because the deployment default is complete
-/// entities. Confirms REQ-MAP-24.
+/// entities.
 #[tokio::test]
 async fn sub_newly_matching_split_forward_strips_q_geoq_scopeq() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -230,7 +229,7 @@ async fn sub_newly_matching_split_forward_strips_q_geoq_scopeq() {
 }
 
 /// The forwarded copy strips the notification `attributes` pick/omit projection
-/// (clause 5.8.5). Confirms REQ-MAP-25.
+/// (clause 5.8.5).
 #[tokio::test]
 async fn sub_newly_matching_forward_strips_notification_attributes_pick_omit() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -263,7 +262,7 @@ async fn sub_newly_matching_forward_strips_notification_attributes_pick_omit() {
 }
 
 /// The forwarded copy's endpoint is the local broker, so notifications return to
-/// it for re-assembly (clause 5.8.5). Confirms REQ-MAP-26.
+/// it for re-assembly (clause 5.8.5).
 #[tokio::test]
 async fn sub_newly_matching_forward_endpoint_is_local_broker() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -295,7 +294,7 @@ async fn sub_newly_matching_forward_endpoint_is_local_broker() {
 }
 
 /// The remote-to-local mapping routes an inbound remote id to the correct local
-/// subscription (clause 5.8.5). Confirms REQ-MAP-27.
+/// subscription (clause 5.8.5).
 #[tokio::test]
 async fn sub_newly_matching_forward_stores_remote_to_local_subscription_mapping() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -325,7 +324,7 @@ async fn sub_newly_matching_forward_stores_remote_to_local_subscription_mapping(
 }
 
 /// The CSR-to-remote mapping lets a no-longer-matching change delete exactly the
-/// remote subscription id (clause 5.8.5). Confirms REQ-MAP-28.
+/// remote subscription id (clause 5.8.5).
 #[tokio::test]
 async fn sub_newly_matching_forward_stores_csr_to_remote_subscription_mapping() {
     let topology = topology::single().await.expect("single-broker topology");

@@ -6,11 +6,9 @@
 //! the supplied @context". Tables 5.2.6-1 and 5.2.37-1 allow `objectType` "short
 //! hand string(s) (type name) or URI(s)". None restricts the string to the
 //! clause 4.6.2 short-name grammar, which has no `-`, so a hyphenated term the
-//! user `@context` defines is a valid value. Reading the compact body typed
-//! before expansion held both members to that grammar, so the entity was
-//! refused with `400 BadRequestData`.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! user `@context` defines is a valid value: reading the compact body typed
+//! before expansion must not hold both members to that grammar and refuse the
+//! entity with `400 BadRequestData`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

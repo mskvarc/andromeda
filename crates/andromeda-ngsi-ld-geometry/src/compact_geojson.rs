@@ -9,9 +9,9 @@
 //! constructors every other geometry path uses, refused at the same place with
 //! the same reason.
 //!
-//! A value that is not a `GeoJSON` geometry object at all -- an unknown
+//! A value that is not a `GeoJSON` geometry object at all (an unknown
 //! `type`, a missing or misshapen `coordinates`, an ordinate that is not a
-//! number, a `bbox` that is not an array of numbers -- is refused with the
+//! number, a `bbox` that is not an array of numbers) is refused with the
 //! [`GeometryError`] naming what is missing or misplaced, and never with any
 //! part of the value itself. The form is the positions alone: the members RFC
 //! 7946 section 6.1 calls foreign are passed over, and a `bbox` is checked but

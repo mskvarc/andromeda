@@ -3,7 +3,7 @@
 //! One reading of the seven `georel` relations, for every relation the broker
 //! filters on. What varies between callers is where the subject geometry is
 //! read from and what a row without one means; the relations themselves do not
-//! vary, and before this module they were written three times.
+//! vary.
 //!
 //! Clause 4.10 lets `geoproperty` name any `GeoProperty` of the entity, defaulting
 //! to `location`, and clause 5.7.2.4 counts an entity as matching when any
@@ -62,9 +62,9 @@ use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, SelectStatement, S
 ///
 /// The two questions are one choice rather than two, because no caller mixes
 /// them: an entity query excludes a row that conveys no geometry (clause 4.10),
-/// while a registration discovery keeps one (clause 5.10.2). Carrying them
-/// separately made "an entity whose missing `GeoProperty` matches" expressible,
-/// and nothing could produce it.
+/// while a registration discovery keeps one (clause 5.10.2). Keeping them in
+/// one type makes "an entity whose missing `GeoProperty` matches"
+/// unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GeometrySource<'a> {
     /// One entity's current-state rows, addressed through the names the
@@ -165,8 +165,7 @@ pub fn condition(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &R
 ///
 /// The test compares the stored geometry's planar box, which bounds its
 /// vertices only. A stored edge long enough for its great circle to bow past
-/// its vertices towards the reference can therefore still be discarded;
-/// `docs/near-distance-model.md` sets out that residual and what closes it.
+/// its vertices towards the reference can therefore still be discarded.
 pub(crate) fn near_envelope_prefilter(geo: &GeoQuery, geometry: &SimpleExpr) -> Option<SimpleExpr> {
     let GeoRel::Near {
         max_distance: Some(max_distance),
@@ -646,8 +645,8 @@ mod tests {
     }
 
     /// `near` is measured on the spheroid, where 5 000 m due north of the
-    /// equator is latitude 0.045 218 4; a box grown on the sphere stopped at
-    /// 0.044 966 and discarded what lay between.
+    /// equator is latitude 0.045 218 4, beyond the 0.044 966 a box grown on the
+    /// sphere would reach.
     #[test]
     fn a_near_prefilter_covers_the_spheroidal_reach_of_the_reference() {
         let geo = near_query(0.0, 0.0, Some("5000"), None);
@@ -679,8 +678,6 @@ mod tests {
         assert!(sql.contains("\"geo_instance\".\"entity_key\" = \"e\".\"entity_key\""), "{sql}");
     }
 
-    // -- what a missing geometry means, per source (clauses 4.10, 5.10.2) -----
-
     #[test]
     fn a_registration_without_a_location_matches_a_geo_filter() {
         // Clause 5.10.2: a registration that declares no location may still
@@ -711,8 +708,6 @@ mod tests {
         assert!(!sql.contains("FALSE"), "{sql}");
         assert!(sql.contains("ST_Within"), "{sql}");
     }
-
-    // -- one reading of clause 4.10 ------------------------------------------
 
     /// Every relation renders through the same seven arms whatever the source,
     /// so the `PostGIS` function each one picks cannot drift between callers.
@@ -763,8 +758,6 @@ mod tests {
             temporal_sql
         );
     }
-
-    // -- a third ordinate does not reach the predicate (clause 4.10) ----------
 
     /// Clause 4.10 defines every `georel` on the horizontal plane, so a
     /// reference geometry that carries an altitude must render the same

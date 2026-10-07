@@ -133,9 +133,8 @@ fn scan_into(value: &Value, scan: &mut UserContextScan) {
                 .for_each(|entry| scan_term_declaration(&entry.key, &entry.value, scan));
         }
         // A loaded context document may wrap its declarations in another
-        // remote context URL (for example a suite context that imports the
-        // test vocabulary and the core context); the reference is recorded so
-        // the clause 5.5.7 walk can follow it.
+        // remote context URL; the reference is recorded so the clause 5.5.7
+        // walk can follow it.
         Value::String(reference) => {
             // owned: the scan outlives the borrowed context document
             if let Ok(url) = IriBuf::new(reference.to_string()) {

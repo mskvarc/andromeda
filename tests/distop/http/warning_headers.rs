@@ -1,7 +1,4 @@
-//! `NGSILD-Warning` fault-injection matrix (clause 6.3.11): a forwarded query to
-//! a mock Context Source that returns an error, an invalid payload, or is
-//! unreachable must surface the correct warning code (110/111/199/299) while the
-//! query itself still succeeds with `200 OK`. All `T-MOCK`.
+//! `NGSILD-Warning` fault-injection matrix (clause 6.3.11): a forwarded query to a mock Context Source that returns an error, an invalid payload, or is unreachable must surface the correct warning code (110/111/199/299) while the query itself still succeeds with `200 OK`.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -14,18 +11,7 @@ use pretty_assertions::assert_eq;
 use reqwest::Method;
 use serde_json::json;
 
-/// A second query inside the registration's `cacheDuration` reuses the cached
-/// source response and carries warning `110` (clause 6.3.17: "where a Context
-/// Source Registration matches the request and a previous forwarded response
-/// has been cached and a subsequent request occurs before the Context Source
-/// Registration cacheDuration (as defined in Table 5.2.34-1) has been reached,
-/// the result may incorporate data cached from a previous response. To indicate
-/// that data from a cache has been included in the response, the HTTP header
-/// "NGSILD-Warning" shall be included. The value shall match the IANA Warning
-/// Code [32] 110 - Response is Stale"). The registration therefore sets
-/// `management.cacheDuration`, the source answers a valid empty array so there
-/// is a response to cache, and the warning is asserted on the second query
-/// only. Confirms REQ-HTTP-16, REQ-HTTP-17, REQ-HTTP-19.
+/// A second query inside the registration's `cacheDuration` reuses the cached source response and carries warning `110` (clause 6.3.17: "where a Context Source Registration matches the request and a previous forwarded response has been cached and a subsequent request occurs before the Context Source Registration cacheDuration (as defined in Table 5.2.34-1) has been reached, the result may incorporate data cached from a previous response. To indicate that data from a cache has been included in the response, the HTTP header "NGSILD-Warning" shall be included. The value shall match the IANA Warning Code [32] 110 - Response is Stale"). The registration therefore sets `management.cacheDuration`, the source answers a valid empty array so there is a response to cache, and the warning is asserted on the second query only.
 #[tokio::test]
 async fn dist_http_query_cached_result_returns_warning_110() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -87,8 +73,7 @@ async fn dist_http_query_cached_result_returns_warning_110() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A source returning `500` is abnormal, so the forwarded query carries a
-/// `NGSILD-Warning` (clause 6.3.11). Confirms REQ-HTTP-18.
+/// A source returning `500` is abnormal, so the forwarded query carries a `NGSILD-Warning` (clause 6.3.11).
 #[tokio::test]
 async fn dist_http_query_abnormal_source_sets_warning_header() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -124,8 +109,7 @@ async fn dist_http_query_abnormal_source_sets_warning_header() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A source that answers within the timeout with an undecodable payload yields
-/// warning `111` (clause 6.3.11). Confirms REQ-HTTP-20.
+/// A source that answers within the timeout with an undecodable payload yields warning `111` (clause 6.3.11).
 #[tokio::test]
 async fn dist_http_query_invalid_payload_within_timeout_returns_warning_111() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -166,8 +150,7 @@ async fn dist_http_query_invalid_payload_within_timeout_returns_warning_111() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A source that never responds (unreachable) is a timeout, yielding warning
-/// `199` (clause 6.3.11). Confirms REQ-HTTP-21.
+/// A source that never responds (unreachable) is a timeout, yielding warning `199` (clause 6.3.11).
 #[tokio::test]
 async fn dist_http_query_source_timeout_returns_warning_199() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -209,8 +192,7 @@ async fn dist_http_query_source_timeout_returns_warning_199() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A source that answers promptly with `403` is a definite error response within
-/// the timeout, yielding warning `299` (clause 6.3.11). Confirms REQ-HTTP-22.
+/// A source that answers promptly with `403` is a definite error response within the timeout, yielding warning `299` (clause 6.3.11).
 #[tokio::test]
 async fn dist_http_query_source_error_within_timeout_returns_warning_299() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -250,8 +232,7 @@ async fn dist_http_query_source_error_within_timeout_returns_warning_299() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A non-NGSI-LD payload is rejected (warning `111`) and contributes no entities
-/// to the merged result (clause 6.3.11). Confirms REQ-HTTP-23.
+/// A non-NGSI-LD payload is rejected (warning `111`) and contributes no entities to the merged result (clause 6.3.11).
 #[tokio::test]
 async fn dist_http_query_non_ngsi_payload_rejected_and_excluded() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -295,8 +276,7 @@ async fn dist_http_query_non_ngsi_payload_rejected_and_excluded() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A source returning `404` reports absence of data, not an error, so no warning
-/// is flagged (clause 6.3.11). Confirms REQ-HTTP-24.
+/// A source returning `404` reports absence of data, not an error, so no warning is flagged (clause 6.3.11).
 #[tokio::test]
 async fn dist_http_query_source_404_no_data_not_flagged() {
     let topology = topology::single().await.expect("single-broker topology");

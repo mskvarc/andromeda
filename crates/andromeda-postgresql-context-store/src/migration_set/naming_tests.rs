@@ -1,4 +1,4 @@
-//! The naming and storage conventions of `docs/database-schema-conventions.md`,
+//! The naming and storage conventions of the database schema,
 //! checked against every object the migrations declare.
 //!
 //! Every mechanically checkable rule runs over the declared schema, and any

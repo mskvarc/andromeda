@@ -1,19 +1,8 @@
-//! The health endpoint keeps the documented shape of its component details
-//! through its typed model.
+//! The health endpoint keeps the documented shape of its component details through its typed model.
 //!
-//! `GET /health` is a broker extension, not a resource of ETSI GS CIM 009
-//! v1.9.1, so it names no clause of its own; it is rendered as a plain
-//! `application/json` document and, as clause 6.3.6 does for a body that
-//! carries no `@context`, it invents none. The documented shape is a
-//! `HealthCheck` carrying `id`, `type` and a `healthCheck` object whose `status`
-//! is `up` or `degraded` and whose `components` each carry a `status` and a
-//! `details` object. The PostgreSQL indicator documents the numeric `poolSize`,
-//! `idleConnections` and `pingLatencyMs` details and nothing else.
+//! `GET /health` is a broker extension, not a resource of ETSI GS CIM 009 v1.9.1, rendered as a plain `application/json` document that, as clause 6.3.6 does for a body carrying no `@context`, invents none. The shape is a `HealthCheck` with `id`, `type` and a `healthCheck` object whose `status` is `up` or `degraded` and whose `components` each carry a `status` and a `details` object. The PostgreSQL indicator documents the numeric `poolSize`, `idleConnections` and `pingLatencyMs` details and nothing else.
 //!
-//! Needs the host broker: the case drives the HTTP API and is not run without
-//! one.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Needs the host broker: the case drives the HTTP API.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

@@ -13,8 +13,8 @@
 //! sea-query extension and iden crates, the binary-COPY modules, the procedural
 //! `schema_ddl` — is where dialect SQL is spelled on purpose and is never a
 //! violation. A baseline path is a site not yet converted; it is tolerated so
-//! the gate passes today and fails on anything new, and each migration phase
-//! deletes its converted entries. A baseline entry that no longer violates is
+//! the gate passes today and fails on anything new, and a migration deletes
+//! the entries it converts. A baseline entry that no longer violates is
 //! itself a failure, so the ratchet can only tighten.
 
 use crate::{
@@ -62,8 +62,8 @@ const SANCTIONED_PREFIXES: &[&str] = &[
 /// The raw-SQL sites present when the gate was introduced.
 ///
 /// Every entry is a file the migration has yet to convert. A new raw-SQL
-/// site in any other file fails the gate immediately; each migration phase
-/// deletes the entries it converts, and a converted file left here fails the
+/// site in any other file fails the gate immediately; a migration deletes
+/// the entries it converts, and a converted file left here fails the
 /// gate too, so the list can only shrink to empty.
 pub const RAW_SQL_BASELINE: &[&str] = &[];
 
@@ -112,7 +112,7 @@ fn is_sanctioned(path: &str) -> bool {
 ///
 /// The gate fails on a violation in a file that is neither sanctioned nor on the
 /// shrinking baseline, and equally on a baseline file that no longer violates —
-/// a converted phase that forgets to delete its entry. Both directions keep the
+/// a conversion that forgets to delete its entry. Both directions keep the
 /// baseline honest.
 ///
 /// # Panics

@@ -186,7 +186,6 @@ mod tests {
                 stamped(10, "2020-01-01T00:00:00Z", "2020-01-01T00:00:00Z"),
             )]),
         )]);
-        // Dataset A is restated unchanged; dataset B is new.
         let mut target = entity(vec![(
             SPEED,
             instances(vec![

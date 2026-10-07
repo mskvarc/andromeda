@@ -509,8 +509,7 @@ mod tests {
     /// 5.2.13-1 or 5.2.21-1 gives it is refused when it is read (answered as
     /// `BadRequestData`). The reader's own message names the member for a
     /// missing or unknown one; for a mistyped value the HTTP extraction layer
-    /// retraces the body and names the member, which the integration suite
-    /// asserts.
+    /// retraces the body and names the member.
     #[test]
     fn a_member_that_is_not_its_data_type_is_refused_when_the_body_is_read() {
         for (reading, body) in [

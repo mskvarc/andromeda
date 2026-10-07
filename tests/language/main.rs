@@ -94,8 +94,6 @@ fn building_fr_nl(id: &str) -> Value {
     })
 }
 
-// --- Retrieve entity: basic negotiation (spec 6.3.5, 5.7.2.5) ---
-
 #[tokio::test]
 async fn language_retrieve_exact_match_returns_property_with_lang_tag() {
     let scope = TestEnvironment::from_suite("language").await.expect("isolated test environment");
@@ -443,8 +441,6 @@ async fn language_retrieve_array_value_in_language_map_preserved() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// --- NGSILD-Language header ---
-
 #[tokio::test]
 async fn language_header_fallback_when_lang_query_absent() {
     let scope = TestEnvironment::from_suite("language").await.expect("isolated test environment");
@@ -496,8 +492,6 @@ async fn language_header_invalid_empty_value_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// --- Query entities ---
-
 #[tokio::test]
 async fn language_query_lang_param_applied_to_query_results() {
     let scope = TestEnvironment::from_suite("language").await.expect("isolated test environment");
@@ -542,8 +536,6 @@ async fn language_query_key_values_with_lang_returns_scalar_value() {
     assert_eq!(arr[0]["street"], "Grote Markt");
     scope.finish().await.expect("cleanup failed");
 }
-
-// --- Batch query ---
 
 #[tokio::test]
 async fn language_batch_query_ngsild_language_header_applied_to_results() {

@@ -19,14 +19,14 @@
 //! whole batch whose later jobs would wait out their leases behind the earlier
 //! ones.
 //!
-//! A replay that fails -- even one that ran past its lease -- releases the job
+//! A replay that fails, even one that ran past its lease, releases the job
 //! with its diagnostic and the policy backoff, stamped with the instant of the
 //! release rather than the start of the pass. The release is guarded by this
 //! drain still being the job's claimant, not by the lease still being live,
 //! which is what lets a failure after a lapsed lease still be recorded.
 //!
 //! Every attempt counts toward the configured ceiling exactly once, including
-//! one that ends without a word -- a crash, or a lease that lapsed before the
+//! one that ends without a word, a crash, or a lease that lapsed before the
 //! replay could lock its job. The claim counts those, and a job whose permitted
 //! attempts all ended that way is dead-lettered when it is next claimed,
 //! without counting an attempt it did not make, instead of being reclaimed
@@ -71,7 +71,7 @@ pub struct EntitySideEffectDrainConfig {
     /// Lease duration stamped on a claimed row.
     ///
     /// It has to cover only the wait between a job's claim and the start of
-    /// its replay -- chiefly acquiring the replay transaction's connection --
+    /// its replay, chiefly acquiring the replay transaction's connection,
     /// since the replay locks the job for as long as it runs.
     pub lease_seconds: i32,
     /// Maximum jobs one bounded pass claims, one after another.
@@ -230,8 +230,8 @@ impl EntitySideEffectDrain {
     /// Dead-letter a job whose permitted attempts all ended without settling
     /// or releasing it.
     ///
-    /// Such attempts leave no diagnostic of their own -- the worker crashed, or
-    /// its lease lapsed before its replay could lock the job -- so the reason
+    /// Such attempts leave no diagnostic of their own, the worker crashed, or
+    /// its lease lapsed before its replay could lock the job, so the reason
     /// recorded is the ceiling itself. No attempt is made here, and every one
     /// the job had is already counted, so the dead letter keeps `attempts` as
     /// its exact count.
@@ -735,8 +735,8 @@ mod tests {
     }
 
     /// A job whose every permitted attempt ended without settling or releasing
-    /// it -- each lease lapsed before its replay could lock the job, and each
-    /// reclaim counted the attempt -- is dead-lettered when it is next claimed,
+    /// it, each lease lapsed before its replay could lock the job, and each
+    /// reclaim counted the attempt, is dead-lettered when it is next claimed,
     /// not replayed and reclaimed forever, and without counting an attempt it
     /// did not make.
     #[tokio::test]
@@ -876,7 +876,7 @@ mod tests {
         Ok(())
     }
 
-    /// End to end: the same job is delivered twice -- once by a worker whose
+    /// End to end: the same job is delivered twice, once by a worker whose
     /// lease passed to another before its replay could commit, and once by the
     /// worker that reclaimed it. Only the reclaiming worker's replay lands, and
     /// the live change event reaches the sink exactly once.
@@ -884,14 +884,12 @@ mod tests {
     async fn a_reclaimed_redelivery_publishes_the_change_event_exactly_once() -> Result<(), EntityError> {
         let sink = Arc::new(RecordingSink::default());
 
-        // First worker: its replay is refused, the lease having passed on.
         let lost_queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()));
         drain_with_sink(lost_queue, CommitDisposition::LeaseLost, Arc::clone(&sink))
             .execute(Utc::now())
             .await?;
         pretty_assertions::assert_eq!(sink.count(), 0, "the worker that lost its lease publishes nothing");
 
-        // Reclaiming worker: replays the same job and settles it.
         let applied_queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()));
         drain_with_sink(applied_queue, CommitDisposition::Applied, Arc::clone(&sink))
             .execute(Utc::now())

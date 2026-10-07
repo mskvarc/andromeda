@@ -1,11 +1,4 @@
-//! Snapshot locality and lifecycle: a snapshot captures data, its operations are
-//! implicitly local, it is orthogonal to tenancy, and low-resource eviction
-//! follows priority (ETSI GS CIM 009 v1.9.1, clause 5.16). Snapshot creation
-//! returns before its queries run (clause 5.16.1.4: "The request returns,
-//! confirming the creation of the snapshot ... The following is executed in the
-//! background"), so every row that scopes an operation to a snapshot first polls
-//! its status out of `preparing`. The eviction rows lack a deterministic
-//! trigger and are ignored.
+//! Snapshot locality and lifecycle: a snapshot captures data, its operations are implicitly local, it is orthogonal to tenancy, and low-resource eviction follows priority (ETSI GS CIM 009 v1.9.1, clause 5.16). Snapshot creation returns before its queries run (clause 5.16.1.4: "The request returns, confirming the creation of the snapshot ... The following is executed in the background"), so every row that scopes an operation to a snapshot first polls its status out of `preparing`. The eviction rows lack a deterministic trigger and are ignored.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -30,9 +23,7 @@ const PREPARATION_BUDGET: Duration = Duration::from_secs(30);
 /// The pause between two status polls.
 const PREPARATION_POLL: Duration = Duration::from_millis(200);
 
-/// A minimal valid snapshot creation body: a Snapshot resource with one query
-/// and a bounded lifetime (clause 5.16), carrying its `@context` inline because
-/// it is sent as `application/ld+json` (clause 6.3.5).
+/// A minimal valid snapshot creation body: a Snapshot resource with one query and a bounded lifetime (clause 5.16), carrying its `@context` inline because it is sent as `application/ld+json` (clause 6.3.5).
 fn snapshot_body() -> Value {
     json!({ "type": "Snapshot", "snapshotLifetime": "PT1H", "snapshotQueries": [{ "type": "Query" }], "@context": COMPOUND_CONTEXT.as_str() })
 }
@@ -43,11 +34,7 @@ async fn create_snapshot(client: &TestClient) -> String {
     create_prepared_snapshot(client, &snapshot_body()).await
 }
 
-/// Create a snapshot from `body` and poll `GET /snapshots/{id}` until its
-/// `snapshotStatus` has left the pending state, returning the snapshot
-/// identifier. Table 5.2.41-2 names the initial status `preparing`; the
-/// `preparation` spelling in clause 5.16.1.4 is an editorial error reconciled
-/// by the Snapshot conformance register and is never accepted or emitted.
+/// Create a snapshot from `body` and poll `GET /snapshots/{id}` until its `snapshotStatus` has left the pending state, returning the snapshot identifier. Table 5.2.41-2 names the initial status `preparing`; the `preparation` spelling in clause 5.16.1.4 is an editorial error and is never accepted or emitted.
 pub async fn create_prepared_snapshot(client: &TestClient, body: &Value) -> String {
     let created = client.create_snapshot(body).await.expect("create snapshot");
     assert_status(&created, 201);
@@ -93,7 +80,6 @@ async fn register_inclusive_query(topology: &MultiBrokerTopology<BrokerRole>, en
 }
 
 /// Snapshot creation returns a usable identifier and location (clause 5.16).
-/// Confirms REQ-FW-84.
 #[tokio::test]
 async fn distop_entity_snapshot_creation_returns_identifier() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -112,8 +98,7 @@ async fn distop_entity_snapshot_creation_returns_identifier() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A snapshot operation is scoped to the captured information and does not see a
-/// later mutation (clause 5.16). Confirms REQ-FW-80.
+/// A snapshot operation is scoped to the captured information and does not see a later mutation (clause 5.16).
 #[tokio::test]
 async fn distop_entity_snapshot_op_scoped_to_snapshot_information() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -165,8 +150,7 @@ async fn distop_entity_snapshot_op_scoped_to_snapshot_information() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A snapshot permits both Core and Temporal operations against its isolated
-/// local branch (clause 5.16). Confirms REQ-FW-81.
+/// A snapshot permits both Core and Temporal operations against its isolated local branch (clause 5.16).
 #[tokio::test]
 async fn distop_entity_snapshot_permitted_ops_core_plus_temporal() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -201,8 +185,7 @@ async fn distop_entity_snapshot_permitted_ops_core_plus_temporal() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Snapshot operations are implicitly local: no source is contacted even without
-/// a `local` parameter (clause 5.16). Confirms REQ-FW-82.
+/// Snapshot operations are implicitly local: no source is contacted even without a `local` parameter (clause 5.16).
 #[tokio::test]
 async fn distop_entity_snapshot_ops_implicitly_local() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -234,8 +217,7 @@ async fn distop_entity_snapshot_ops_implicitly_local() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A snapshot operation's implicit locality skips the registry entirely (clause
-/// 5.16). Confirms REQ-FW-83.
+/// A snapshot operation's implicit locality skips the registry entirely (clause 5.16).
 #[tokio::test]
 async fn distop_entity_snapshot_implicit_local_skips_registry_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -268,8 +250,7 @@ async fn distop_entity_snapshot_implicit_local_skips_registry_csrs() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An explicit `local=false` is ignored for a snapshot operation: still no
-/// forwarding (clause 5.16). Confirms REQ-FW-70.
+/// An explicit `local=false` is ignored for a snapshot operation: still no forwarding (clause 5.16).
 #[tokio::test]
 async fn distop_entity_snapshot_local_false_ignored() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -301,15 +282,7 @@ async fn distop_entity_snapshot_local_false_ignored() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A tenant snapshot resolves only with both the snapshot id and its tenant: the
-/// same id is unknown under the default tenant (clause 5.16, 4.14). The tenant
-/// is brought into existence by a Create Entity first, since clause 5.5.10
-/// lists the operations that implicitly create a Tenant ("Create Entity (clause
-/// 5.6.1). Batch Entity Creation (clause 5.6.7). Create or Update Temporal
-/// Evolution of an Entity (clause 5.6.11). Create Subscription (clause 5.8.1).
-/// Register Context Source (clause 5.9.2). Create Context Source Registration
-/// (clause 5.11.2)") and snapshot creation is not among them. Confirms
-/// REQ-FW-85.
+/// A tenant snapshot resolves only with both the snapshot id and its tenant: the same id is unknown under the default tenant (clause 5.16, 4.14). The tenant is brought into existence by a Create Entity first, since clause 5.5.10 lists the operations that implicitly create a Tenant ("Create Entity (clause 5.6.1). Batch Entity Creation (clause 5.6.7). Create or Update Temporal Evolution of an Entity (clause 5.6.11). Create Subscription (clause 5.8.1). Register Context Source (clause 5.9.2). Create Context Source Registration (clause 5.11.2)") and snapshot creation is not among them.
 #[tokio::test]
 async fn distop_entity_snapshot_orthogonal_to_tenant_requires_both() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -352,8 +325,7 @@ async fn distop_entity_snapshot_orthogonal_to_tenant_requires_both() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Under low resources a broker MAY delete a snapshot (clause 5.16). Confirms
-/// REQ-FW-86.
+/// Under low resources a broker MAY delete a snapshot (clause 5.16).
 #[ignore = "non-deterministic REQ-FW-86: requires induced resource pressure with no deterministic trigger"]
 #[tokio::test]
 async fn distop_entity_snapshot_low_resources_may_delete() {
@@ -370,8 +342,7 @@ async fn distop_entity_snapshot_low_resources_may_delete() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Under eviction the lowest `snapshotPriority` is deleted first, ties broken by
-/// `expiresAt`/`lastUsedAt` (clause 5.16). Confirms REQ-FW-87.
+/// Under eviction the lowest `snapshotPriority` is deleted first, ties broken by `expiresAt`/`lastUsedAt` (clause 5.16).
 #[ignore = "non-deterministic REQ-FW-87: eviction trigger is non-deterministic"]
 #[tokio::test]
 async fn distop_entity_snapshot_deletion_order_by_priority() {

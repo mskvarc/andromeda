@@ -27,13 +27,13 @@ const MQTTS_DEFAULT_PORT: u16 = 8883;
 /// and are not read.
 #[derive(Debug, Clone)]
 pub enum EndpointTransport {
-    /// `http` or `https` — one POST per notification.
+    /// `http` or `https`: one POST per notification.
     Http,
-    /// `mqtt` or `mqtts` — a publish on a pooled broker connection.
+    /// `mqtt` or `mqtts`: a publish on a pooled broker connection.
     Mqtt(MqttEndpointConfig),
-    /// `sse` — pushed to whichever clients are streaming this subscription.
+    /// `sse`: pushed to whichever clients are streaming this subscription.
     Sse,
-    /// `ws` — pushed to whichever clients hold a WebSocket for this subscription.
+    /// `ws`: pushed to whichever clients hold a WebSocket for this subscription.
     WebSocket,
 }
 

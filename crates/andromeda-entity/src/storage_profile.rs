@@ -60,7 +60,7 @@ impl StorageProfile {
     /// `ltree` scope paths.
     ///
     /// Constant rather than probed, which is the difference between these axes
-    /// and the `TimescaleDB` edition. `migrations/tenant/` creates the `PostGIS`
+    /// and the `TimescaleDB` edition. The tenant migrations create the `PostGIS`
     /// and `ltree` columns, so a pool that migrated has them and one that could
     /// not migrate never becomes a store. There is no runtime state to detect
     /// and no per-tenant divergence to carry.
@@ -72,8 +72,8 @@ impl StorageProfile {
 
     /// The predicates of `selection` this store cannot apply exactly.
     ///
-    /// A store that narrows a predicate without deciding it -- a bounding box
-    /// standing in for a `georel`, a prefix standing in for a wildcard path --
+    /// A store that narrows a predicate without deciding it (a bounding box
+    /// standing in for a `georel`, a prefix standing in for a wildcard path)
     /// still hands it back: the rows it returns are a superset, and returning a
     /// superset without saying so is the failure this whole mechanism exists to
     /// prevent.

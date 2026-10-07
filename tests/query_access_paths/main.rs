@@ -1,4 +1,4 @@
-//! Verification suite for the query access paths of the redesigned schema.
+//! Verification suite for the query access paths of the schema.
 //!
 //! Covers typed `q` predicates, queries on an arbitrary `GeoProperty`, entity
 //! access-path plans, identifier collation, the object GIN operator class,

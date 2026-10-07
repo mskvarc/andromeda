@@ -3,9 +3,9 @@
 //! JSON-LD applies a top-level node's `@context` to that node alone, so each
 //! entity of an `application/ld+json` batch is expanded under the context it
 //! carried itself (clause 5.5.7, "the @context [...] provided by each API
-//! call"). Entities naming one and the same context -- one
+//! call"). Entities naming one and the same context, one
 //! [`BatchContextId`](andromeda_jsonld::batch_contexts::BatchContextId), given
-//! when the batch was parsed -- are prepared together, so a batch whose
+//! when the batch was parsed, are prepared together, so a batch whose
 //! entities agree processes its context once, and a batch whose entities
 //! differ never reads one entity's terms through another's definitions.
 

@@ -436,7 +436,7 @@ async fn a_remote_holders_extra_entities_are_neither_re_fetched_nor_expanded() {
 
 /// Clause 4.21 under `temporalValues`: `linksTo{reading}` narrows B to
 /// `reading`, and the group names no `id`, so B's identity is not written
-/// either (D3).
+/// either.
 #[tokio::test]
 async fn a_nested_pick_narrows_the_linked_entity_under_temporal_values() {
     let broker = StubBroker::new([(uri("urn:ngsi-ld:T:B"), vec![uri("urn:ngsi-ld:T:C")])]);
@@ -468,7 +468,7 @@ async fn a_nested_omit_narrows_the_resolved_target() {
     pretty_assertions::assert_eq!(appended[0], vec!["id", "type"], "the nested omit drops `reading` and leaves the rest of B");
 }
 
-/// D3 and Table 6.19.3.1-1: `attrs` is the `pick` synonym that keeps the
+/// Table 6.19.3.1-1: `attrs` is the `pick` synonym that keeps the
 /// identity, and it narrows every entity of the payload, so a Linked Entity
 /// holding none of the named attributes is written with its identity alone.
 #[tokio::test]

@@ -17,10 +17,11 @@ pub fn is_full_iri(term: &str) -> bool {
 /// Whether a term has the form of an absolute IRI: a scheme (RFC 3987
 /// `scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`) followed by `:`.
 ///
-/// Unlike [`is_full_iri`] this admits every scheme — `did:`, `mailto:`, `tel:` —
+/// Unlike [`is_full_iri`] this admits every scheme (`did:`, `mailto:`, `tel:`),
 /// so a context reference written with any scheme is kept as the absolute
 /// IRI it is rather than resolved against a base (JSON-LD 1.1 clause 4.6.2).
-/// `did:example:1` is the case the three-scheme allowlist mis-read.
+/// `did:example:1` is an absolute IRI although the three-scheme allowlist
+/// rejects it.
 pub(crate) fn is_absolute_iri(term: &str) -> bool {
     let mut chars = term.char_indices();
     match chars.next() {
@@ -49,17 +50,13 @@ mod tests {
         assert!(is_full_iri("urn:ngsi-ld:Type"));
         assert!(!is_full_iri("Vehicle"));
         assert!(!is_full_iri("ex:Vehicle"));
-        // A term that merely starts with `http` but carries no scheme is not a
-        // full IRI. Compaction's own gate is this predicate, so an attribute
-        // named `httpEndpoint` is no longer mistaken for one it could shorten.
+        // A term that merely starts with `http` but carries no scheme is not a full IRI: compaction gates on this predicate.
         assert!(!is_full_iri("httpEndpoint"));
-        // A made-up scheme is not one of the three the short-circuit admits.
         assert!(!is_full_iri("httpfoo:x"));
     }
 
     #[test]
     fn a_string_with_any_scheme_has_the_form_of_an_absolute_iri() {
-        // Clause 4.6.2: any scheme, not just the three the fast short-circuit lists.
         assert!(is_absolute_iri("https://example.com/Type"));
         assert!(is_absolute_iri("urn:ngsi-ld:Type"));
         assert!(is_absolute_iri("did:example:123"));
@@ -67,9 +64,7 @@ mod tests {
         // `ex:Vehicle` has IRI form; whether it expands as a compact IRI is
         // decided by the prefix table before this is consulted.
         assert!(is_absolute_iri("ex:Vehicle"));
-        // A plain term has no scheme.
         assert!(!is_absolute_iri("Vehicle"));
-        // A leading digit is not a valid scheme start.
         assert!(!is_absolute_iri("1did:x"));
     }
 }

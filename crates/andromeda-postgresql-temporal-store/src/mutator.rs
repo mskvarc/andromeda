@@ -1,10 +1,4 @@
-//! [`TemporalMutator`] implementation for [`TemporalRepository`].
-//!
-//! Thin delegation layer: every method forwards to an existing
-//! `TemporalRepository` method, mapping errors at the boundary. Every question
-//! it answers is answered from the temporal catalogue, never from current
-//! state, because clause 5.6.6 leaves the Temporal Evolution standing when the
-//! entity itself is deleted.
+//! Every question the mutator answers is answered from the temporal catalogue, never from current state, because clause 5.6.6 leaves the Temporal Evolution standing when the entity itself is deleted.
 
 use crate::{attribute_stream_deletion::AttributeStreamScope, repo::TemporalRepository};
 use andromeda_context_space::context_target::ContextTarget;

@@ -6,8 +6,7 @@
 //! and `ltree[]`, the EWKB geometries are validated. The relation statements
 //! that follow read `proj` rather than repeating the projection, so a geometry
 //! is validated once per row however many relations it lands in. The stored
-//! document is staged apart, keyed by the entity identifier
-//! ([`payload_staging`](crate::entity::write::payload_staging)).
+//! document is staged apart, keyed by the entity identifier.
 
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::{

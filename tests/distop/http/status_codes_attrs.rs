@@ -1,6 +1,4 @@
-//! Response-code matrix for attribute append, update and partial-update (clause
-//! 6.3.16, 6.6, 6.7): local `204`, forwarded partial-failure `207` with an
-//! `UpdateResult`, invalid `400`, and absent-entity/attribute `404`.
+//! Response-code matrix for attribute append, update and partial-update (clause 6.3.16, 6.6, 6.7): local `204`, forwarded partial-failure `207` with an `UpdateResult`, invalid `400`, and absent-entity/attribute `404`.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -12,7 +10,7 @@ use crate::{
 use reqwest::Method;
 use serde_json::json;
 
-/// A local attribute append returns `204` (clause 6.6.3.1). Confirms REQ-HTTP-74.
+/// A local attribute append returns `204` (clause 6.6.3.1).
 #[tokio::test]
 async fn dist_http_append_attrs_local_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -42,11 +40,7 @@ async fn dist_http_append_attrs_local_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An append where a forwarded endpoint fails is a partial failure, mapped to
-/// `207` with an `UpdateResult` (clause 6.3.16). The appended attribute is the
-/// registered `speed`: only attributes the registration covers are forwarded
-/// (clause 5.6.3.4), so appending an uncovered attribute would never reach the
-/// failing endpoint. Confirms REQ-HTTP-74.
+/// An append where a forwarded endpoint fails is a partial failure, mapped to `207` with an `UpdateResult` (clause 6.3.16). The appended attribute is the registered `speed`: only attributes the registration covers are forwarded (clause 5.6.3.4), so appending an uncovered attribute would never reach the failing endpoint.
 #[tokio::test]
 async fn dist_http_append_attrs_partial_failure_returns_207_update_result() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -93,7 +87,6 @@ async fn dist_http_append_attrs_partial_failure_returns_207_update_result() {
 }
 
 /// An append with an invalid fragment is rejected with `400` (clause 6.6.3.1).
-/// Confirms REQ-HTTP-74.
 #[tokio::test]
 async fn dist_http_append_attrs_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -125,7 +118,7 @@ async fn dist_http_append_attrs_invalid_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Appending to an absent entity returns `404` (clause 6.6.3.1). Confirms REQ-HTTP-74.
+/// Appending to an absent entity returns `404` (clause 6.6.3.1).
 #[tokio::test]
 async fn dist_http_append_attrs_entity_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -142,7 +135,7 @@ async fn dist_http_append_attrs_entity_absent_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A local attribute update returns `204` (clause 6.6.3.2). Confirms REQ-HTTP-75.
+/// A local attribute update returns `204` (clause 6.6.3.2).
 #[tokio::test]
 async fn dist_http_update_attrs_local_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -172,10 +165,7 @@ async fn dist_http_update_attrs_local_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An update where a forwarded endpoint fails is a partial failure, mapped to
-/// `207` with an `UpdateResult` (clause 6.3.16). The registration advertises
-/// `updateEntity`, the Table 4.20-1 name of 5.6.2 Update Attributes.
-/// Confirms REQ-HTTP-75.
+/// An update where a forwarded endpoint fails is a partial failure, mapped to `207` with an `UpdateResult` (clause 6.3.16). The registration advertises `updateEntity`, the Table 4.20-1 name of 5.6.2 Update Attributes.
 #[tokio::test]
 async fn dist_http_update_attrs_partial_failure_returns_207_update_result() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -222,7 +212,6 @@ async fn dist_http_update_attrs_partial_failure_returns_207_update_result() {
 }
 
 /// An update with an invalid fragment is rejected with `400` (clause 6.6.3.2).
-/// Confirms REQ-HTTP-75.
 #[tokio::test]
 async fn dist_http_update_attrs_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -254,7 +243,7 @@ async fn dist_http_update_attrs_invalid_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Updating an absent entity returns `404` (clause 6.6.3.2). Confirms REQ-HTTP-75.
+/// Updating an absent entity returns `404` (clause 6.6.3.2).
 #[tokio::test]
 async fn dist_http_update_attrs_entity_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -272,7 +261,6 @@ async fn dist_http_update_attrs_entity_absent_returns_404() {
 }
 
 /// A local partial attribute update returns `204` (clause 6.7.3.1).
-/// Confirms REQ-HTTP-76.
 #[tokio::test]
 async fn dist_http_partial_update_attr_local_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -301,8 +289,7 @@ async fn dist_http_partial_update_attr_local_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A partial update where a forwarded endpoint fails is a partial failure, mapped
-/// to `207` with an `UpdateResult` (clause 6.3.16). Confirms REQ-HTTP-76.
+/// A partial update where a forwarded endpoint fails is a partial failure, mapped to `207` with an `UpdateResult` (clause 6.3.16).
 #[tokio::test]
 async fn dist_http_partial_update_attr_partial_failure_returns_207_update_result() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -347,8 +334,7 @@ async fn dist_http_partial_update_attr_partial_failure_returns_207_update_result
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A partial update with an invalid fragment is rejected with `400`
-/// (clause 6.7.3.1). Confirms REQ-HTTP-76.
+/// A partial update with an invalid fragment is rejected with `400` (clause 6.7.3.1).
 #[tokio::test]
 async fn dist_http_partial_update_attr_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -382,7 +368,6 @@ async fn dist_http_partial_update_attr_invalid_returns_400() {
 }
 
 /// A partial update of an absent attribute returns `404` (clause 6.7.3.1).
-/// Confirms REQ-HTTP-76.
 #[tokio::test]
 async fn dist_http_partial_update_attr_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");

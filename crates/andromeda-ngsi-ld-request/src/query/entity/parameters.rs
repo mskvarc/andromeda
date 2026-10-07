@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn parse_options_format_takes_precedence_over_options_for_render_mode() {
         // Clause 4.5.1: `format` is the current representation selector and
-        // `options` its legacy predecessor, so an explicit `format` wins over a
+        // `options` its deprecated predecessor, so an explicit `format` wins over a
         // conflicting `options`. `format=normalized&options=keyValues` must
         // render normalized, not simplified.
         let p = params_from_query("format=normalized&options=keyValues");
@@ -377,7 +377,7 @@ mod tests {
     /// Clause 5.7.2.4's ordering rule turns on whether a registered Context
     /// Source takes part, which the Context Registry answers and these
     /// parameters cannot, so validation passes an `orderBy` either way and
-    /// `andromeda_federation::ordering_admission` decides it.
+    /// the federation layer's ordering admission decides it.
     #[test]
     fn validate_leaves_the_ordering_rule_to_the_operation() {
         assert!(params_from_query("type=Vehicle&orderBy=speed").validate(EntityQueryOperation::Query).is_ok());

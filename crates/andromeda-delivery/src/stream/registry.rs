@@ -134,7 +134,7 @@ impl<P: StreamPayload> ConnectionRegistry<P> {
     ///
     /// Returns [`StreamSendError::BufferFull`] when every live client's channel
     /// is full, and [`StreamSendError::NoClient`] when the subscription has no
-    /// connected client left — either none ever registered, or every one of
+    /// connected client left: either none ever registered, or every one of
     /// them closed its channel. The distinction is what separates a slow
     /// consumer from an absent one: the caller retries the first and gives up
     /// on the second.

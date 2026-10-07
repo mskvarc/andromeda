@@ -206,11 +206,7 @@ where
 /// Expand an attribute path — main attribute, sub-attributes and, when
 /// `members` makes them terms, compound-value member names — to full IRIs.
 ///
-/// The member names of a compound value expand for the same reason the attribute
-/// name does: JSON-LD expansion of a structured Property value turns its members
-/// into IRI-keyed nodes, so `address[city]` addresses the expansion of `city`
-/// under the request `@context`, not the four letters the client typed. Leaving
-/// them compact addressed a member the stored payload does not carry.
+/// The member names of a compound value expand for the same reason the attribute name does: JSON-LD expansion of a structured Property value turns its members into IRI-keyed nodes, so `address[city]` addresses the expansion of `city` under the request `@context`, not the four letters the client typed.
 ///
 /// # Errors
 ///
@@ -499,10 +495,7 @@ mod tests {
         );
     }
 
-    /// JSON-LD expansion of a structured Property value turns its members into
-    /// IRI-keyed nodes, so a compound-value member has to be expanded through the
-    /// same `@context` the attribute name is. Leaving it compact addressed a
-    /// member the stored payload does not carry.
+    /// JSON-LD expansion of a structured Property value turns its members into IRI-keyed nodes, so a compound-value member has to be expanded through the same `@context` the attribute name is.
     #[tokio::test]
     async fn a_compound_value_member_is_expanded_through_the_context() {
         let expanded = expand_q_expression(Some("address[city]==\"Berlin\""), &JsonKeyAttributes::default(), &PrefixExpander)

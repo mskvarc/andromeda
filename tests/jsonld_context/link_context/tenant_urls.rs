@@ -1,5 +1,5 @@
 //! A wrapper linked for a non-default tenant is dereferenceable under that
-//! tenant's header, and visible to no other tenant (study B14).
+//! tenant's header, and visible to no other tenant.
 //!
 //! Clause 4.14 keeps a tenant's information to that tenant, and clauses 4.14
 //! and 6.3.14 make the `NGSILD-Tenant` header the only way a request names a

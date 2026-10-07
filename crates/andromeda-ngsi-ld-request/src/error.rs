@@ -2,9 +2,8 @@
 //!
 //! These are faults of a *request*, not of a query language: a `format` value
 //! that names no rendering, `drop` and `keep` sent together, a selection with
-//! no selector at all. They used to sit in `QueryError`, which meant the
-//! specification's query-language crate declared a dozen variants it could not
-//! construct, and only the binary ever did.
+//! no selector at all. They stay out of `QueryError` so the specification's
+//! query-language crate declares no variant it cannot construct.
 //!
 //! The language's own failures arrive through [`QueryError`], which this wraps:
 //! a parameter is parsed by the language wherever the language defines its
@@ -157,8 +156,8 @@ pub enum ParameterError {
     /// (clause 4.5.19).
     #[error("aggrMethods is required when format is 'aggregatedValues'")]
     AggrMethodsRequired,
-    /// `aggrGroupBy` was sent without `format=groupedValues` (extension, study
-    /// §4.9).
+    /// `aggrGroupBy` was sent without `format=groupedValues` (grouping
+    /// extension).
     ///
     /// The grouped response shape is a pure function of the format, so grouping
     /// only takes effect under the grouped format; asking to group any other
@@ -166,22 +165,22 @@ pub enum ParameterError {
     /// parameter.
     #[error("aggrGroupBy requires format=groupedValues (or options=groupedValues)")]
     AggrGroupByWithoutGroupedValues,
-    /// `aggrGroupBy` did not parse as the extension grouping grammar (study §4.2).
+    /// `aggrGroupBy` did not parse as the extension grouping grammar.
     #[error("invalid aggrGroupBy: {0}")]
     AggrGroupByInvalid(#[source] GroupingParseError),
     /// An `aggrGroupBy` key named an attribute that is also an aggregation
-    /// target (extension, study §4.9).
+    /// target (grouping extension).
     ///
-    /// Grouping by the same attribute the request aggregates is ambiguous — the
-    /// value that keys the group is the value being summarised — so the study
+    /// Grouping by the same attribute the request aggregates is ambiguous: the
+    /// value that keys the group is the value being summarised. The extension
     /// requires it to be spelled out rather than guessed.
     #[error("aggrGroupBy key '{0}' is also an aggregation target; group by a different member")]
     AggrGroupByOnAggregatedAttribute(AttributeName),
-    /// `lastN` was combined with `aggrGroupBy` (extension, study OQ-5).
+    /// `lastN` was combined with `aggrGroupBy` (grouping extension).
     ///
     /// `lastN` bounds the instances per attribute, which grouping then
-    /// re-partitions; the two shape the result along different axes and the
-    /// study leaves the combination out, as aggregation already leaves out
+    /// re-partitions; the two shape the result along different axes, so the
+    /// extension excludes the combination, as aggregation already excludes
     /// `lastN`.
     #[error("lastN is not applicable together with aggrGroupBy")]
     LastNWithGrouping,
@@ -199,8 +198,7 @@ pub enum ParameterError {
     ///
     /// Raised by the operation rather than by parameter validation: whether a
     /// registration takes part is what the Context Registry answers, not what
-    /// the parameters say. The reading of "limited to the local scope" this
-    /// rests on is recorded in `docs/entity-ordering-local-scope.md`.
+    /// the parameters say.
     #[error(
         "orderBy is not applicable to a query a registered context source takes part in; limit the query to the local scope (local=true) or remove orderBy"
     )]
@@ -218,7 +216,7 @@ pub enum ParameterError {
 }
 
 // Hand-written because each admission failure keeps the parameter error, and
-// so the problem type and wording, a client has always received for it; no
+// so the problem type and wording, the client receives for it; no
 // derive maps one enum's variants onto another's.
 impl From<AdmissionError> for ParameterError {
     fn from(error: AdmissionError) -> ParameterError {

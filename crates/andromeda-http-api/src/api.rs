@@ -9,8 +9,8 @@ use tower_http::normalize_path::NormalizePath;
 
 /// Fully assembled, state-complete public HTTP API.
 ///
-/// The NGSI-LD families live under `/ngsi-ld/v1`; metrics have moved off the
-/// data plane to the management plane. In merged mode the management probes
+/// The NGSI-LD families live under `/ngsi-ld/v1`; metrics are served on the
+/// management plane, not the data plane. In merged mode the management probes
 /// (`/livez`, `/readyz`) and the optional scrape (`/metrics`) sit at the root as
 /// siblings of the `/ngsi-ld/v1` nest, behind the full process stack -- the
 /// documented cost of collapsing both planes onto one port.
@@ -457,11 +457,10 @@ mod tests {
         Ok(())
     }
 
-    /// The orphan-eviction endpoint was retired: the janitor sweeps orphaned
-    /// runtimes automatically, and suspend/resume replaced its only public use.
-    /// `POST /tenants/evictOrphans` now falls under the `/tenants/{tenantName}`
-    /// resource, which serves only `GET` and `PATCH`, so the `POST` is answered
-    /// `405` rather than reaching any handler.
+    /// There is no orphan-eviction endpoint: the janitor sweeps orphaned
+    /// runtimes automatically. `POST /tenants/evictOrphans` falls under the
+    /// `/tenants/{tenantName}` resource, which serves only `GET` and `PATCH`, so
+    /// the `POST` is answered `405` rather than reaching any handler.
     #[tokio::test]
     async fn the_retired_evict_orphans_route_is_absent() -> Result<(), Box<dyn Error>> {
         let service = test_api()?.into_service();
@@ -470,7 +469,7 @@ mod tests {
         Ok(())
     }
 
-    /// Metrics have left the data plane for the management plane, so the scrape
+    /// Metrics are served on the management plane, so the scrape
     /// never answers under `/ngsi-ld/v1` -- neither on the plain data plane nor
     /// in merged mode, where the scrape lives at the root `/metrics` instead.
     #[tokio::test]

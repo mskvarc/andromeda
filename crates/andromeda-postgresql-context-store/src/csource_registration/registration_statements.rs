@@ -1,8 +1,4 @@
-//! The registration statements the read and write sides build on.
-//!
-//! Every read selects through the one projection
-//! [`registration_select`](andromeda_postgresql_context_query::csr::registration_select::registration_select)
-//! discovery shares; this module owns the writes.
+//! Every read selects through the one `registration_select` projection that discovery shares; this module owns the writes.
 
 use crate::csource_registration::{
     mode_code::stored_mode,

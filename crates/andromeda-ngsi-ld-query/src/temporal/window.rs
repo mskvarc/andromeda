@@ -9,9 +9,8 @@ use typed_builder::TypedBuilder;
 ///
 /// `timerel` and `timeAt` are meaningless apart — clause 5.7.3 requires both or
 /// neither — and `endTimeAt` is required exactly when `timerel` is `between`.
-/// Stating that in the type is what removes the three runtime checks the SQL
-/// builders used to carry, one of which raised a *request* error from inside a
-/// statement builder because the compiled query could not rule the case out.
+/// Stating that in the type means SQL builders need no runtime checks for it,
+/// and none has to raise a *request* error from inside a statement builder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeInterval {
     /// The query bounded nothing; every instant qualifies.

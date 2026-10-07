@@ -1,8 +1,4 @@
-//! The attributes the attribute nesting tests write, in every shape that
-//! nests, and the refusal an attribute nesting too deeply is answered with.
-//!
-//! A level is a sub-attribute, a JSON object or list of a value, or a container
-//! inside a JSON literal; the broker under test admits 32 of them, its default.
+//! A level is a sub-attribute, a JSON object or list of a value, or a container inside a JSON literal; the broker under test admits 32 of them, its default.
 
 use andromeda_test_client::{response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::context::CORE_CONTEXT;
@@ -16,8 +12,7 @@ pub const LIMIT: usize = 32;
 /// The problem type an attribute nesting too deeply is refused with.
 pub const BAD_REQUEST_DATA: &str = "https://uri.etsi.org/ngsi-ld/errors/BadRequestData";
 
-/// The expanded name of the attribute `p` every test nests, under the core
-/// context's default vocabulary.
+/// The expanded name of the attribute `p` every test nests, under the core context's default vocabulary.
 pub const NESTED: &str = "https://uri.etsi.org/ngsi-ld/default-context/p";
 
 /// A chain of `levels` JSON objects ending in a string.

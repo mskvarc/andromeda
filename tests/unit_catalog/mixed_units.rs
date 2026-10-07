@@ -2,15 +2,15 @@
 //!
 //! Clause 5.2.5 attaches `unitCode` to the instance, so two instances of one
 //! attribute may differ in unit, and clause 4.5.19 says nothing about what an
-//! average across two units would mean. Andromeda never converts
-//! (`docs/unit-handling.md`), so a unit-sensitive aggregate spanning two units
+//! average across two units would mean. Andromeda never converts units, so a
+//! unit-sensitive aggregate spanning two units
 //! is refused rather than labelled with one of them, while an aggregate that
 //! only counts stays answerable because its result carries no unit at all.
 //!
 //! Clause 4.5.19 also gives exactly one aggregate value per attribute,
 //! `datasetId` and period, so the answerable case has to arrive as one triple
-//! covering both units — not as one triple per unit repeating the same period
-//! bounds, which is what grouping the statement by unit used to produce.
+//! covering both units, not as one triple per unit repeating the same period
+//! bounds.
 
 use crate::fixtures::SUITE;
 use andromeda_test_fixtures::context::CORE_CONTEXT;

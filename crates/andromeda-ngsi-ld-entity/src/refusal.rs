@@ -3,9 +3,8 @@
 //!
 //! One enum serves the canonical decoder, the conversion of a written document
 //! into state and the write admission, because they refuse the same things for
-//! the same reasons: clause 5.5.4 makes each of them a `BadRequestData`. The
-//! messages are the ones clients have always been answered with; none of them
-//! echoes the raw input, only typed values the broker already validated.
+//! the same reasons: clause 5.5.4 makes each of them a `BadRequestData`. No
+//! message echoes the raw input, only typed values the broker already validated.
 
 use crate::{
     expanded_value_name::ExpandedValueNameError,

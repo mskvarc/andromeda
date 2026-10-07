@@ -1,27 +1,11 @@
 //! A quiet tenant's paced background work still meets every new obligation.
 //!
-//! A resident tenant's timer-driven background work runs only when an
-//! obligation is due: one read of the tenant's earliest obligation decides for
-//! every timer until it expires or the tenant is used again, and a tenant with
-//! nothing outstanding rests for up to sixteen sweep cadences. An obligation a
-//! request creates -- a periodic notification's first period, an entity's
-//! `expiresAt` -- must void that rest as soon as the request's commit is
-//! visible, or it waits for the ceiling:
+//! A resident tenant's timer-driven background work runs only when an obligation is due: one read of the tenant's earliest obligation decides for every timer until it expires or the tenant is used again, and a tenant with nothing outstanding rests for up to sixteen sweep cadences. An obligation a request creates, such as a periodic notification's first period or an entity's `expiresAt`, must void that rest as soon as the request's commit is visible, or it waits for the ceiling:
 //!
-//! - clause 5.8.6: "a Notification shall be sent periodically, when the time
-//!   interval ... is reached";
+//! - clause 5.8.6: "a Notification shall be sent periodically, when the time interval ... is reached";
 //! - clause 4.22: deletion lags `expiresAt` only by the clean-up cadence.
 //!
-//! Each test uses a private tenant, so no other test's obligations keep its
-//! pacer awake, and lets the tenant idle for several sweep cadences first, so
-//! the pacer has read "nothing due" and is resting when the obligation is
-//! created. The race between a tick and an in-flight request is pinned
-//! deterministically by the pacer's own unit tests; these tests pin the
-//! end-to-end guarantee. Every bound is the obligation's own time plus a small
-//! multiple of the base stack's one-second sweep cadence, far below the
-//! sixteen-cadence ceiling a missed wake would fall back to.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Each test uses a private tenant, so no other test's obligations keep its pacer awake, and lets the tenant idle for several sweep cadences first so the pacer is resting when the obligation is created. Every bound is the obligation's own time plus a small multiple of the base stack's one-second sweep cadence, far below the sixteen-cadence ceiling a missed wake would fall back to.
 
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;

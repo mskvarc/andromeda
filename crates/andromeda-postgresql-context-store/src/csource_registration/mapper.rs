@@ -183,9 +183,9 @@ fn row_to_access(row: &PgRow) -> Result<ContextSourceAccess, ContextStoreError> 
 
 /// The pseudonym a distributed operation attributes forwarded context to.
 ///
-/// The column is absent from projections that predate it and undecodable where
-/// the projection widened it, and neither case is a broken registration, so both
-/// read as "no alias declared".
+/// The column is absent from a projection that does not carry it and
+/// undecodable where the projection widened it, and neither case is a broken
+/// registration, so both read as "no alias declared".
 fn row_to_alias(row: &PgRow) -> Result<Option<ContextSourcePseudonym>, ContextStoreError> {
     match row.try_get::<Option<String>, _>("context_source_alias") {
         Ok(value) => value

@@ -21,8 +21,8 @@ pub enum GeoRelParseError {
     #[error("georel 'near' requires a maxDistance or minDistance")]
     NearMissingDistance,
     /// A `near` relationship carried a modifier that is neither `maxDistance`
-    /// nor `minDistance`. Silently dropping it (as an earlier reading did) let
-    /// a typo such as `maxDistanc==500` parse as an unbounded `near`.
+    /// nor `minDistance`. Dropping it would let a typo such as
+    /// `maxDistanc==500` parse as an unbounded `near`.
     #[error("unknown georel modifier")]
     UnknownModifier,
 }

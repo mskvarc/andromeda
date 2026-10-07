@@ -1,4 +1,4 @@
-//! Batch Delete forwarding — REQ-PROV-73..77 (clause 5.6.10.4).
+//! Batch Delete forwarding (clause 5.6.10.4).
 //!
 //! Each matching registration is forwarded only the ids it owns; a source
 //! advertising the batch delete is forwarded the batch and its results merge
@@ -20,7 +20,6 @@ use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
 /// Per-CSR filtering forwards each redirect source only the id it owns.
-/// Confirms REQ-PROV-73.
 #[tokio::test]
 async fn batch_delete_per_csr_filtering() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -69,7 +68,7 @@ async fn batch_delete_per_csr_filtering() {
 }
 
 /// A source advertising the batch delete is forwarded the batch and its results
-/// merge keyed by `registrationId`. Confirms REQ-PROV-74.
+/// merge keyed by `registrationId`.
 #[tokio::test]
 async fn batch_delete_supported_forwards_and_merges() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -108,7 +107,6 @@ async fn batch_delete_supported_forwards_and_merges() {
 }
 
 /// Without the batch operation the broker falls back to one delete per id.
-/// Confirms REQ-PROV-75.
 #[tokio::test]
 async fn batch_delete_fallback_per_entity_delete() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -142,8 +140,7 @@ async fn batch_delete_fallback_per_entity_delete() {
 
 /// A redirect source advertising neither the batch nor the per-entity delete
 /// yields a per-entity `409 Conflict`, with no forwarding. The registration
-/// precedes the local seeds (clause 5.9.2.4 redirect restriction). Confirms
-/// REQ-PROV-76.
+/// precedes the local seeds (clause 5.9.2.4 redirect restriction).
 #[tokio::test]
 async fn batch_delete_redirect_neither_op_conflict_per_entity() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -189,7 +186,7 @@ async fn batch_delete_redirect_neither_op_conflict_per_entity() {
 }
 
 /// The local phase removes the matched ids and reports them in `success`, with
-/// the auxiliary registration forwarding nothing. Confirms REQ-PROV-77.
+/// the auxiliary registration forwarding nothing.
 #[tokio::test]
 async fn batch_delete_local_phase_removes_ids() {
     let topology = topology::single().await.expect("single-broker topology");

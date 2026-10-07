@@ -1,11 +1,10 @@
 //! Verification of the UN/CEFACT unit-code catalogue end to end.
 //!
-//! The redesign moved `unitCode` (clause 5.2.5) out of every attribute
-//! instance's metadata document and into a two-byte identity resolved through
-//! the append-only catalogue `crates/andromeda-unit-catalog` compiles in and
-//! migration `0009_unit_codes_seed` loads. These tests cover the
-//! properties that can only be answered against a live broker and a migrated
-//! tenant: that the compiled catalogue and the seeded rows are the same
+//! `unitCode` (clause 5.2.5) is not stored in an attribute instance's metadata
+//! document but as a two-byte identity resolved through an append-only
+//! catalogue, which the broker compiles in and a migration seeds into
+//! `unit_codes`. These tests cover the properties that can only be answered
+//! against a live broker and a migrated tenant: that the compiled catalogue and the seeded rows are the same
 //! assignment, that an unusable code is refused on both the API and the bypass
 //! path, that the member is reconstructed byte for byte on the way out, that
 //! the attribute types the specification leaves unitless cannot carry one, and

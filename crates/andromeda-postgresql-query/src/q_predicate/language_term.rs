@@ -27,8 +27,7 @@ use andromeda_postgresql_seaquery::{
 use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
 
 /// The collation the stored String columns are declared under, so a string read
-/// out of a map orders exactly as one read from `value_string` does
-/// (`docs/text-collation-invariant.md`).
+/// out of a map orders exactly as one read from `value_string` does.
 const BYTE_ORDER: &str = "C";
 
 /// Whether a string can compare with an operand at all.

@@ -1,9 +1,9 @@
 //! Current state, and every query that reads it, follows the Core writes
 //! history leaves out.
 //!
-//! The current-attribute projection that answers Core `q` was fed from each
-//! write's history; with that history unrecorded it must still move with
-//! every write, or Core queries would answer from the state before it.
+//! The current-attribute projection that answers Core `q` must move with every
+//! write even though the write's history is not recorded, or Core queries
+//! would answer from the state before it.
 
 use crate::{
     evolution::{assert_holds_only, evolution, instances, seed},

@@ -6,7 +6,7 @@
 //! is never JSON-LD-expanded. Everything inside it is therefore already
 //! implementation-specific by construction, so the enabled extensions are
 //! announced under a plain `extensions` key rather than a full vendor IRI: the
-//! extension-strategy.md 5.4 "never `ngsi-ld:`" rule guards terms that get
+//! rule against squatting the `ngsi-ld:` namespace guards terms that get
 //! expanded against a context, which an extras key is not.
 
 use crate::enabled::{EnabledExtensions, Extension};
@@ -260,8 +260,7 @@ mod tests {
         assert!(extras.piece().member(EXTENSION_KEY).is_some());
     }
 
-    /// Clause 5.4 of the extension strategy: no advertised key may squat the
-    /// ETSI `ngsi-ld:` namespace.
+    /// No advertised key may squat the ETSI `ngsi-ld:` namespace.
     #[test]
     fn no_advertised_key_uses_the_ngsi_ld_namespace() {
         let extras = extras(Some(literal(r#"{"ngsi-ld:vocab": true}"#)), both_enabled()).expect("extras present");

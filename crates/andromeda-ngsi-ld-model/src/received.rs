@@ -242,7 +242,7 @@ mod tests {
         assert!(contextual.entity.attrs.is_empty(), "@context is no attribute");
     }
 
-    /// Decision F2: a member the model cannot hold refuses the entity, naming
+    /// A member the model cannot hold refuses the entity, naming
     /// the member, instead of being carried unread.
     #[test]
     fn an_unreadable_member_refuses_the_entity() {

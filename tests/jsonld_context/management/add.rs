@@ -1,4 +1,4 @@
-//! Add @context (clause 5.13.2, binding 6.29.3.1; ETSI 050).
+//! Add @context (clause 5.13.2, binding 6.29.3.1).
 
 use crate::{
     broker_endpoints::broker_url,
@@ -13,7 +13,7 @@ use crate::{
 use reqwest::StatusCode;
 use serde_json::json;
 
-/// `050_01_01`: a key-value dictionary is added as a Hosted @context.
+/// A key-value dictionary is added as a Hosted @context.
 #[tokio::test]
 async fn add_valid_context_dictionary_returns_201() {
     let tenant = PrivateTenant::provisioned().await;
@@ -35,7 +35,7 @@ async fn add_valid_context_dictionary_returns_201() {
     tenant.finish().await;
 }
 
-/// `050_01_02`: a list of URLs is added as a Hosted @context; the documents it
+/// A list of URLs is added as a Hosted @context; the documents it
 /// names are served by the test's own origin.
 #[tokio::test]
 async fn add_valid_context_uri_list_returns_201() {
@@ -75,7 +75,7 @@ async fn assert_refused_as_bad_request_data(body: &serde_json::Value) {
     tenant.finish().await;
 }
 
-/// `050_02_01`: a body without a top-level `@context` is `BadRequestData`.
+/// A body without a top-level `@context` is `BadRequestData`.
 #[tokio::test]
 async fn add_context_without_a_context_member_is_bad_request_data() {
     assert_refused_as_bad_request_data(&json!({
@@ -86,7 +86,7 @@ async fn add_context_without_a_context_member_is_bad_request_data() {
     .await;
 }
 
-/// `050_02_02`: an empty object carries no `@context` and is `BadRequestData`.
+/// An empty object carries no `@context` and is `BadRequestData`.
 #[tokio::test]
 async fn add_context_empty_object_is_bad_request_data() {
     assert_refused_as_bad_request_data(&json!({})).await;
@@ -140,7 +140,7 @@ async fn add_context_naming_a_term_twice_is_bad_request_data() {
     tenant.finish().await;
 }
 
-/// `050_03_01`: a subscription whose `@context` is an array leaves an
+/// A subscription whose `@context` is an array leaves an
 /// `ImplicitlyCreated` @context behind (clause 5.13.1).
 #[tokio::test]
 async fn add_implicitly_created_context_via_subscription() {
@@ -162,7 +162,7 @@ async fn add_implicitly_created_context_via_subscription() {
     tenant.finish().await;
 }
 
-/// `050_04_01`: a Hosted @context naming a remote URL, used by a write, has the
+/// A Hosted @context naming a remote URL, used by a write, has the
 /// broker download that URL and record it as Cached; the Hosted entry itself
 /// is resolved from storage.
 #[tokio::test]

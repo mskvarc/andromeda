@@ -1,5 +1,4 @@
-//! Creating an `EntityMap` from an entity query: input validation, term expansion,
-//! and the candidate-id shape of the result (clause 5.14.4). All `T-LOCAL`.
+//! Creating an `EntityMap` from an entity query: input validation, term expansion, and the candidate-id shape of the result (clause 5.14.4).
 
 use crate::{
     entity::typed_vehicle,
@@ -31,7 +30,6 @@ async fn seed_vehicle(topology: &MultiBrokerTopology<BrokerRole>, entity_type: &
 }
 
 /// The map records candidate entity ids, not entities (clause 5.14.4).
-/// Confirms REQ-MAP-111.
 #[tokio::test]
 async fn emq_returns_candidate_ids_not_entities() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -52,11 +50,9 @@ async fn emq_returns_candidate_ids_not_entities() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Irrelevant query parameters are ignored (clause 5.14.4). Confirms REQ-MAP-112.
+/// Irrelevant query parameters are ignored (clause 5.14.4).
 ///
-/// "Ignored" is a claim about the candidate set, not about acceptance: a `201`
-/// alone would also be answered by a broker that let `lang` narrow the query.
-/// The seeded entity therefore has to still be a candidate.
+/// "Ignored" is a claim about the candidate set, not about acceptance: a `201` alone would also be answered by a broker that let `lang` narrow the query. The seeded entity therefore has to still be a candidate.
 #[tokio::test]
 async fn emq_ignores_irrelevant_query_params() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -76,7 +72,7 @@ async fn emq_ignores_irrelevant_query_params() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// At least one filter is accepted (clause 5.14.4). Confirms REQ-MAP-113.
+/// At least one filter is accepted (clause 5.14.4).
 #[tokio::test]
 async fn emq_at_least_one_filter_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -91,10 +87,7 @@ async fn emq_at_least_one_filter_accepted() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// No narrowing input at all is rejected `400 BadRequestData` (clause 5.14.4.4
-/// "too wide query"). Confirms REQ-MAP-114. Local scope is deliberately not sent:
-/// clause 5.14.4.4 lists it (item e) among the inputs that narrow a creation, so
-/// `local=true` belongs to the accepted case below, not to this one.
+/// No narrowing input at all is rejected `400 BadRequestData` (clause 5.14.4.4 "too wide query"). Local scope is deliberately not sent: clause 5.14.4.4 lists it (item e) among the inputs that narrow a creation, so `local=true` belongs to the accepted case below, not to this one.
 #[tokio::test]
 async fn emq_no_filter_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -104,9 +97,7 @@ async fn emq_no_filter_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Local scope alone narrows a creation: clause 5.14.4.4 item (e) admits "local
-/// scope (see clause 5.5.13)" as one of its inputs, so `local=true` with nothing
-/// else is accepted `201`. Confirms REQ-MAP-113.
+/// Local scope alone narrows a creation: clause 5.14.4.4 item (e) admits "local scope (see clause 5.5.13)" as one of its inputs, so `local=true` with nothing else is accepted `201`.
 #[tokio::test]
 async fn emq_local_scope_alone_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -115,8 +106,7 @@ async fn emq_local_scope_alone_accepted() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An invalid `id`, `q`, `geoQ`, or `csf` is rejected `400 BadRequestData`
-/// (clause 5.14.4). Confirms REQ-MAP-115.
+/// An invalid `id`, `q`, `geoQ`, or `csf` is rejected `400 BadRequestData` (clause 5.14.4).
 #[tokio::test]
 async fn emq_invalid_id_q_geoq_csf_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -126,15 +116,7 @@ async fn emq_invalid_id_q_geoq_csf_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A linked-entity projection with Linked Entity retrieval unspecified is
-/// rejected `400 BadRequestData` (clause 5.14.4.4: "If projection attributes
-/// are present and indicate the use of Linked Entity retrieval, and the use of
-/// Linked Entity retrieval is not specified, or the projected attribute depth
-/// exceeds the Linked Entity retrieval depth, then an error of type
-/// `BadRequestData` shall be raised"). The projection uses the clause 4.21
-/// `LinkedEntityTerm` form `linkedTo{speed}` and omits `join`, which clause
-/// 5.14.4.3 lists among the accepted Query Entities parameters. Confirms
-/// REQ-MAP-116.
+/// A linked-entity projection with Linked Entity retrieval unspecified is rejected `400 BadRequestData` (clause 5.14.4.4: "If projection attributes are present and indicate the use of Linked Entity retrieval, and the use of Linked Entity retrieval is not specified, or the projected attribute depth exceeds the Linked Entity retrieval depth, then an error of type `BadRequestData` shall be raised"). The projection uses the clause 4.21 `LinkedEntityTerm` form `linkedTo{speed}` and omits `join`, which clause 5.14.4.3 lists among the accepted Query Entities parameters.
 #[tokio::test]
 async fn emq_projection_linked_entity_unspecified_or_deep_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -148,13 +130,7 @@ async fn emq_projection_linked_entity_unspecified_or_deep_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `q` filter over linked-entity attributes without Linked Entity retrieval is
-/// rejected `400 BadRequestData` (clause 5.14.4.4: "If the filter conditions
-/// specified by the query includes Linked Entity attributes, and the use of
-/// Linked Entity retrieval is not specified ... an error of type `BadRequestData`
-/// shall be raised (too deep query)"). The hop uses the clause 4.9 brace form
-/// `linkedTo{speed}>5`; a dotted path would address a sub-attribute, not a
-/// linked entity. Confirms REQ-MAP-117.
+/// A `q` filter over linked-entity attributes without Linked Entity retrieval is rejected `400 BadRequestData` (clause 5.14.4.4: "If the filter conditions specified by the query includes Linked Entity attributes, and the use of Linked Entity retrieval is not specified ... an error of type `BadRequestData` shall be raised (too deep query)"). The hop uses the clause 4.9 brace form `linkedTo{speed}>5`; a dotted path would address a sub-attribute, not a linked entity.
 #[tokio::test]
 async fn emq_query_linked_entity_attrs_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -168,8 +144,7 @@ async fn emq_query_linked_entity_attrs_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A geometry-property projection without a `GeoJSON` `Accept` is rejected
-/// `400 BadRequestData` (clause 5.14.4). Confirms REQ-MAP-118.
+/// A geometry-property projection without a `GeoJSON` `Accept` is rejected `400 BadRequestData` (clause 5.14.4).
 #[tokio::test]
 async fn emq_geometry_property_non_geojson_accept_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -190,7 +165,6 @@ async fn emq_geometry_property_non_geojson_accept_returns_400() {
 }
 
 /// Type and attribute terms are expanded before the map is built (clause 5.14.4).
-/// Confirms REQ-MAP-119.
 #[tokio::test]
 async fn emq_expands_type_and_attribute_terms() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -208,7 +182,6 @@ async fn emq_expands_type_and_attribute_terms() {
 }
 
 /// JSON-LD type coercion is applied for the expansion list (clause 5.14.4).
-/// Confirms REQ-MAP-120.
 #[tokio::test]
 async fn emq_applies_jsonld_type_coercion_for_expand_list() {
     let topology = topology::single().await.expect("single-broker topology");

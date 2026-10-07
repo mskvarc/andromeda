@@ -23,8 +23,8 @@
 //!
 //! Coordinates are up to three-dimensional, because RFC 7946 section 3.1.1
 //! makes altitude an optional third ordinate of every position and NGSI-LD
-//! inherits it. The model that carries them — [`position::Position`],
-//! [`form::GeometryForm`] — is this crate's own, and `geo` is used as the
+//! inherits it. The model that carries them ([`position::Position`],
+//! [`form::GeometryForm`]) is this crate's own, and `geo` is used as the
 //! planar computation engine underneath it: no maintained Rust crate offers
 //! geographic predicates over three-dimensional coordinates, and none is
 //! needed, because clause 4.10 evaluates its predicates on the horizontal

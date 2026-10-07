@@ -63,7 +63,7 @@ pub trait EntitySpatialSnapshotSource: Send + Sync + 'static {
         Self: 'async_trait;
 
     /// Read every live entity whose types or geometries changed at or above
-    /// `horizon` -- with or without a `location` now -- together with the
+    /// `horizon`, with or without a `location` now, together with the
     /// horizon this read was taken at.
     fn locations_changed_since<'life0, 'async_trait>(&'life0 self, horizon: ChangeHorizon) -> BoxFuture<'async_trait, Result<LocationRead, EntityError>>
     where

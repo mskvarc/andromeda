@@ -1,6 +1,4 @@
-//! Retrieve Entity auxiliary supplementation, shorthand term expansion, and
-//! post-merge `datasetId` / attribute projection (clauses 5.7.1.4, 5.5.7). The
-//! forwarding-selection and 4.5.5 merge rows live in `crate::cons::retrieve_entity`.
+//! Retrieve Entity auxiliary supplementation, shorthand term expansion, and post-merge `datasetId` / attribute projection (clauses 5.7.1.4, 5.5.7).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -16,9 +14,7 @@ use serde_json::json;
 use std::time::Duration;
 use urlencoding::encode;
 
-/// An auxiliary source supplies an attribute only where it is absent from the
-/// merged result: it does not override a present local attribute, but it does add
-/// one that is missing (clause 5.7.1.4, auxiliary mode). Confirms REQ-CONS-12.
+/// An auxiliary source supplies an attribute only where it is absent from the merged result: it does not override a present local attribute, but it does add one that is missing (clause 5.7.1.4, auxiliary mode).
 #[tokio::test]
 async fn distop_retrieve_entity_auxiliary_added_only_when_absent() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -56,10 +52,7 @@ async fn distop_retrieve_entity_auxiliary_added_only_when_absent() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A shorthand `attrs` term is expanded against the request `@context` before
-/// registration matching and forwarding, so an exclusive CSR on the expanded IRI
-/// matches and the forwarded request carries the projected attribute
-/// (clause 5.5.7). Confirms REQ-CONS-14.
+/// A shorthand `attrs` term is expanded against the request `@context` before registration matching and forwarding, so an exclusive CSR on the expanded IRI matches and the forwarded request carries the projected attribute (clause 5.5.7).
 #[tokio::test]
 async fn distop_retrieve_entity_expands_shorthand_attribute_names() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -96,8 +89,7 @@ async fn distop_retrieve_entity_expands_shorthand_attribute_names() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `datasetId` query parameter keeps only the matching instances post-merge;
-/// `@none` keeps only the default instance (clause 5.7.1.4). Confirms REQ-CONS-15.
+/// A `datasetId` query parameter keeps only the matching instances post-merge; `@none` keeps only the default instance (clause 5.7.1.4).
 #[tokio::test]
 async fn distop_retrieve_entity_datasetid_keeps_matching_instances() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -152,9 +144,7 @@ async fn distop_retrieve_entity_datasetid_keeps_matching_instances() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `datasetId` that no instance of an attribute carries omits that attribute
-/// from the retrieved entity after aggregation (clause 5.7.1.4). Confirms
-/// REQ-CONS-16.
+/// A `datasetId` that no instance of an attribute carries omits that attribute from the retrieved entity after aggregation (clause 5.7.1.4).
 #[tokio::test]
 async fn distop_retrieve_entity_datasetid_no_match_omits_attribute() {
     let topology = topology::chain().await.expect("three-broker topology");
@@ -201,9 +191,7 @@ async fn distop_retrieve_entity_datasetid_no_match_omits_attribute() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A projection that no holder can satisfy yields `404 ResourceNotFound`, but the
-/// decision is taken after distributed aggregation: a projection only a remote
-/// holder satisfies returns `200` (clause 5.7.1.4). Confirms REQ-CONS-17.
+/// A projection that no holder can satisfy yields `404 ResourceNotFound`, but the decision is taken after distributed aggregation: a projection only a remote holder satisfies returns `200` (clause 5.7.1.4).
 #[tokio::test]
 async fn distop_retrieve_entity_projection_lacking_all_attrs_404_after_aggregation() {
     let topology = topology::pair().await.expect("two-broker topology");

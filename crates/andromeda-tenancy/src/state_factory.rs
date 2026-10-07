@@ -31,8 +31,8 @@ pub trait TenantRuntime: Send + Sync + 'static {
 
 /// Told when requests reach for, and let go of, one tenant runtime.
 ///
-/// A request may write work that falls due later -- an `expiresAt`, a
-/// periodic subscription, a queued delivery -- and it has committed that work
+/// A request may write work that falls due later (an `expiresAt`, a
+/// periodic subscription, a queued delivery) and it has committed that work
 /// by the time it lets the runtime go, so a runtime that caches what it last
 /// read as due must read again after either report.
 pub trait RuntimeActivity: Send + Sync + 'static {
@@ -43,7 +43,7 @@ pub trait RuntimeActivity: Send + Sync + 'static {
 /// Building everything a tenant needs in order to serve requests.
 ///
 /// Implemented by the composition root, because building a tenant's runtime
-/// means naming every service the broker has — which is exactly what this
+/// means naming every service the broker has, which is exactly what this
 /// crate must not do. The inversion is the point: the cache decides *when* a
 /// runtime is needed and *when* it is dropped, and knows nothing about what is
 /// in one.

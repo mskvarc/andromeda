@@ -1,8 +1,8 @@
 //! Expanding a compact NGSI-LD write request into the typed written document.
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 5.5.7 makes every term of a request mean what
-//! the request's `@context` -- the user context, then the protected core
-//! context -- expands it to. This crate reads a request into
+//! the request's `@context` (the user context, then the protected core
+//! context) expands it to. This crate reads a request into
 //! `andromeda_ngsi_ld_entity::document::EntityDocument` (or one written
 //! attribute instance) by asking the processed context, through the JSON-LD
 //! library's own IRI expansion, for every decision: member keys, `@id`- and

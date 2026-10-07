@@ -90,7 +90,7 @@ struct Report<'runs> {
 }
 
 /// Read every executed test case out of one robot `output.xml`, keyed by official
-/// identifier with the last occurrence winning, as the reference tool does.
+/// identifier with the last occurrence winning.
 fn collect(path: &Path) -> Result<BTreeMap<String, TestOutcome>, XtaskError> {
     if !path.is_file() {
         return Err(XtaskError::OutputXmlMissing(path.to_path_buf()));

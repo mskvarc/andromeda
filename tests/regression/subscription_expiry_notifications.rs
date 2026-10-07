@@ -3,17 +3,15 @@
 //! Clause 5.8.1.4: once `expiresAt` is reached the Subscription is expired "so
 //! that notifications will no longer be sent", and clause 5.8.6 sends a
 //! periodic notification only for a Subscription that is active. The
-//! periodic-notification sweep once selected due `timeInterval` Subscriptions
-//! by status alone, so an expired one kept notifying until the expiry sweep
-//! caught up with it.
+//! periodic-notification sweep must not select due `timeInterval` Subscriptions
+//! by status alone, or an expired one would keep notifying until the expiry
+//! sweep caught up with it.
 //!
 //! Each test is decided by the notifications' own `notifiedAt` rather than by
 //! how long the receiver waited: a sentinel Subscription without an expiry
 //! must be seen notifying after the other one's `expiresAt`, which proves the
 //! sweep ran past that instant, and no notification of the expiring
 //! Subscription may carry a `notifiedAt` at or after it.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;

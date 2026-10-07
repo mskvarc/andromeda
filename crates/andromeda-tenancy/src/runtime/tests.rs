@@ -491,7 +491,7 @@ async fn concurrent_first_requests_for_one_tenant_trigger_a_single_build() {
 async fn eviction_spares_a_runtime_used_since_it_was_chosen() {
     // Eviction snapshots last_used, then removes. A request that touches the
     // runtime in that window bumps last_used, and the conditional removal
-    // must spare it -- otherwise a request holding its Arc is handed a
+    // must spare it, otherwise a request holding its Arc is handed a
     // torn-down runtime.
     let Harness { manager, shutdowns, .. } = harness(&["acme"], true, 64);
     let tenant = TenantRef::Named(named("acme"));
@@ -844,7 +844,7 @@ async fn resolving_past_the_limit_trims_the_lru_named_tenant_on_insert() {
 #[tokio::test]
 async fn insert_trim_keeps_the_just_built_runtime_at_capacity_one() {
     // With a cap of one beside the unnamed default, the freshly built named
-    // runtime is itself over the cap. Its own lease -- and `protect` -- must
+    // runtime is itself over the cap. Its own lease, and `protect`, must
     // spare it, so the resolve hands back a live runtime rather than one the
     // trim just tore down.
     let Harness { manager, shutdowns, .. } = harness(&[], true, 1);
@@ -1370,7 +1370,7 @@ async fn a_claimed_tenant_with_due_work_is_loaded() {
 #[tokio::test]
 async fn a_database_gone_probe_clears_the_schedule_rather_than_retrying() {
     // A tenant whose database no longer exists (deprovisioned under a stale
-    // schedule row) must have its schedule cleared, not re-armed with a retry --
+    // schedule row) must have its schedule cleared, not re-armed with a retry,
     // otherwise it churns the wake pass every dormancy interval and starves the
     // tenants that really have work.
     let schedule = Arc::new(FakeSchedule::inert());
@@ -1390,7 +1390,7 @@ async fn a_database_gone_probe_clears_the_schedule_rather_than_retrying() {
 #[tokio::test]
 async fn an_excess_evicted_tenant_with_due_work_is_scheduled_for_wake() {
     // Cache pressure evicts through the excess path, not the idle sweep, so an
-    // excess victim with due work must still be scheduled for a wake -- otherwise
+    // excess victim with due work must still be scheduled for a wake, otherwise
     // a dormant tenant evicted under pressure is only found by the slow
     // reconciliation sweep. A victim with nothing due records a null wake and is
     // never claimed, so an obligation-free workload adds no wake load.
@@ -1781,8 +1781,8 @@ async fn a_tenant_suspended_mid_request_is_refused_then_released_when_the_reques
     // at once. The runtime is retired instead: admission refuses the tenant as
     // nonexistent even though its runtime is still cached (clause 5.5.10), and
     // when the request's lease drops the janitor releases it promptly rather
-    // than leaving a suspended tenant's runtime -- and its background work --
-    // running until it idles out (docs/tenant-management.md).
+    // than leaving a suspended tenant's runtime, and its background work,
+    // running until it idles out.
     let Harness { manager, shutdowns, .. } = harness(&["acme"], true, 64);
     let janitor = manager.spawn_janitor().expect("a multi-tenant broker runs a janitor");
     let tenant = TenantRef::Named(named("acme"));

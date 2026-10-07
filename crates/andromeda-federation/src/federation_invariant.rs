@@ -1,8 +1,4 @@
-//! The invariants federation relies on, and how each one broke.
-//!
-//! None of these is the client's doing: each is a property of a registration the
-//! broker admitted or of the broker's own configuration, so a broken one is
-//! answered `InternalError`.
+//! None of these is the client's doing: each is a property of a registration the broker admitted or of the broker's own configuration, so a broken one is answered `InternalError`.
 
 use andromeda_http_headers::received_protocol::ReceivedProtocolError;
 use andromeda_ngsi_ld_lexicon::{

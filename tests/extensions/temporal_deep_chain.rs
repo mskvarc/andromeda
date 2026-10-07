@@ -84,13 +84,13 @@ async fn assert_chain_answers_inline(depth: usize) {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Follow-up 50: a 1,000-level inline temporal join answers.
+/// A 1,000-level inline temporal join answers.
 #[tokio::test]
 async fn temporal_join_inline_answers_a_1000_level_chain() {
     assert_chain_answers_inline(1000).await;
 }
 
-/// Follow-up 50: a 2,000-level inline temporal join answers.
+/// A 2,000-level inline temporal join answers.
 #[tokio::test]
 async fn temporal_join_inline_answers_a_2000_level_chain() {
     assert_chain_answers_inline(2000).await;

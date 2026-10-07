@@ -334,7 +334,7 @@ fn a_scope_instance_carries_no_identity_members() {
 /// Clauses 5.7.3/5.7.4 with 4.6.3: an `observedAt` rebuilt from the stored
 /// instant keeps its sub-second precision, and a whole-second one renders as a
 /// bare `Z`, which is the spelling a client that wrote a whole second reads
-/// back and the form the conformance suite requires.
+/// back.
 #[test]
 fn observed_at_keeps_exactly_the_sub_second_precision_it_carries() {
     for (nanos, expected) in [(123_000_000, "2023-11-14T22:13:20.123Z"), (0, "2023-11-14T22:13:20Z")] {

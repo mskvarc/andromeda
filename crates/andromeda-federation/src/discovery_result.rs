@@ -143,9 +143,7 @@ impl FederationService {
             Discovered::TypeInfo(mut info) => {
                 let DecodedAnswers { answers, warnings } = decoded::<EntityTypeInfo>(remote);
                 for (answer, _) in answers.into_iter().filter(|(answer, _)| answer.id == info.id) {
-                    // Decision F5: the counts of every holder are summed; an
-                    // entity split over several holders is counted once per
-                    // holder, which no holder's answer can tell apart.
+                    // The counts of every holder are summed; an entity split over several holders is counted once per holder, which no holder's answer can tell apart.
                     info.entity_count = info.entity_count.saturating_add(answer.entity_count);
                     for detail in answer.attribute_details {
                         merge_attribute_detail(&mut info.attribute_details, detail, &names);
@@ -256,8 +254,7 @@ fn union<T: PartialEq>(held: &mut Vec<T>, values: impl IntoIterator<Item = T>) {
     }
 }
 
-/// Fold an `EntityType` record a source answered into the records held,
-/// keyed by its Fully Qualified Name (F-D1).
+/// Fold an `EntityType` record a source answered into the records held, keyed by its Fully Qualified Name.
 fn merge_entity_type(types: &mut Vec<EntityType>, mut record: EntityType, names: &NameCompaction) {
     // A source's attribute names are its own terms; the record's `id` is the
     // type's FQN, so the type's name is spelled from it.
@@ -270,8 +267,7 @@ fn merge_entity_type(types: &mut Vec<EntityType>, mut record: EntityType, names:
     }
 }
 
-/// Fold an attribute detail a source answered into the details held, keyed
-/// by the attribute's FQN, their families unioned (F-D1).
+/// Fold an attribute detail a source answered into the details held, keyed by the attribute's FQN, their families unioned.
 fn merge_attribute_detail(details: &mut Vec<AttributeDetail>, mut detail: AttributeDetail, names: &NameCompaction) {
     if let Some(held) = details.iter_mut().find(|held| held.id == detail.id) {
         union(&mut held.attribute_types, detail.attribute_types);
@@ -283,9 +279,7 @@ fn merge_attribute_detail(details: &mut Vec<AttributeDetail>, mut detail: Attrib
     details.push(detail);
 }
 
-/// Fold an `Attribute` record a source answered for the same attribute,
-/// already spelled in the client's terms, into the one held: families and
-/// type names unioned, counts summed (F-D2, decision F5).
+/// Fold an `Attribute` record a source answered for the same attribute, already spelled in the client's terms, into the one held: families and type names unioned, counts summed.
 fn merge_attribute_info(held: &mut AttributeInfo, record: AttributeInfo) {
     union::<AttributeType>(&mut held.attribute_types, record.attribute_types);
     union(&mut held.type_names, record.type_names);
@@ -365,7 +359,6 @@ mod tests {
         let (merged, _) = merged(local, vec![answer(&remote, ContextSpec::core_only())], type_info).await;
         pretty_assertions::assert_eq!(merged["attributeDetails"][0]["attributeTypes"], json!(["Property", "GeoProperty"]));
         pretty_assertions::assert_eq!(merged["attributeDetails"][1]["attributeName"], json!("name"));
-        // Decision F5: the counts of every holder are summed.
         pretty_assertions::assert_eq!(merged["entityCount"], json!(5));
     }
 

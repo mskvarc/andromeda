@@ -1,25 +1,6 @@
 //! The clause 4.5.16.1 top-level `geometry` field selection, end to end.
 //!
-//! Clause 4.5.16.1: "If the selected `GeoProperty` has multiple instances as
-//! described in clause 4.5.5, either a `datasetId` shall be specified, in order
-//! to define which instance of the value is to be selected, or a default
-//! attribute instance exists, which is then selected, if no `datasetId` was
-//! specified. If an entity lacks the `GeoProperty` as specified or the value
-//! does not hold a valid `GeoJSON` geometry object then the geometry shall be
-//! undefined and returned with a value of null - which is syntactically valid
-//! `GeoJSON`." Clause 4.5.17.1 sends the simplified `GeoJSON` rendering back to
-//! the same algorithm: "The selection of the geometry field is defined in
-//! clause 4.5.16.1."
-//!
-//! Two defects lived here. The simplified rendering rewrites a multi-instance
-//! attribute into the clause 4.5.4 `dataset` map before the `GeoJSON` envelope
-//! is built, and the selection recognised only the normalized array, so the
-//! same entity answered with a geometry under `normalized` and with `null`
-//! under `keyValues`. And with several instances, none of them the default, the
-//! selection fell back to the first instance the store happened to return —
-//! a third outcome clause 4.5.16.1 does not admit.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! With several instances a `datasetId` selects one, otherwise the default instance is selected. An entity lacking the `GeoProperty` as specified, or holding no valid `GeoJSON` geometry, answers `geometry: null`. Clause 4.5.17.1 sends the simplified rendering back to the same algorithm, so every representation must pick the same instance.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -80,24 +61,14 @@ async fn feature(client: &TestClient, id: &str, query: &str) -> Value {
     body
 }
 
-/// The representations a `GeoJSON` Feature is asked for, paired with a label.
-///
-/// The simplified rendering is asked for twice. Clause 4.21 pruning routes the
-/// simplification through the serialized reading of the entity, which is where
-/// clause 4.5.4's `dataset` map is built for a multi-instance attribute, so the
-/// two spellings exercise the two readings of one rendering. Clause 4.5.17.1
-/// gives both of them the same geometry.
+/// The simplified rendering is asked for twice. Clause 4.21 pruning routes it through the serialized reading of the entity, where the clause 4.5.4 `dataset` map is built for a multi-instance attribute, so the two spellings exercise the two readings of one rendering. Clause 4.5.17.1 gives both the same geometry.
 const GEO_JSON_QUERIES: [(&str, &str); 3] = [
     ("normalized", ""),
     ("keyValues", "options=keyValues"),
     ("keyValues with a clause 4.21 projection", "options=keyValues&omit=scope"),
 ];
 
-/// Clause 4.5.16.1: with multiple instances and no `datasetId` specified, "a
-/// default attribute instance exists, which is then selected". Clause 4.5.17.1
-/// binds the simplified `GeoJSON` rendering to the same algorithm, so the
-/// representation a client asks for cannot change which instance the geometry
-/// comes from.
+/// Clause 4.5.16.1: with multiple instances and no `datasetId`, the default instance is selected. Clause 4.5.17.1 binds the simplified rendering to the same algorithm, so the representation cannot change which instance the geometry comes from.
 #[tokio::test]
 async fn regression_geojson_geometry_the_default_instance_is_selected_in_every_representation() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -129,13 +100,7 @@ async fn regression_geojson_geometry_the_default_instance_is_selected_in_every_r
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.16.1 admits exactly two outcomes for a multi-instance
-/// `GeoProperty` — the instance a `datasetId` named, or the default instance —
-/// and neither exists here. The entity therefore lacks "the `GeoProperty` as
-/// specified", and the same clause answers that with "the geometry shall be
-/// undefined and returned with a value of null - which is syntactically valid
-/// `GeoJSON`", never with an arbitrary instance whose identity would depend on
-/// the order the store returned the rows in.
+/// Clause 4.5.16.1 admits two outcomes for a multi-instance `GeoProperty`, the instance a `datasetId` named or the default instance, and neither exists here. The entity lacks "the `GeoProperty` as specified", which the clause answers with a null geometry, never with an arbitrary instance whose identity would depend on row order.
 #[tokio::test]
 async fn regression_geojson_geometry_no_default_instance_and_no_dataset_id_renders_a_null_geometry() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -160,10 +125,7 @@ async fn regression_geojson_geometry_no_default_instance_and_no_dataset_id_rende
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.16.1: "either a `datasetId` shall be specified, in order to
-/// define which instance of the value is to be selected". The named instance is
-/// the one the geometry comes from, in place of the default one that would
-/// otherwise be selected.
+/// Clause 4.5.16.1: a `datasetId` defines which instance is selected, in place of the default one.
 #[tokio::test]
 async fn regression_geojson_geometry_a_named_dataset_id_selects_that_instance() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -200,16 +162,7 @@ async fn regression_geojson_geometry_a_named_dataset_id_selects_that_instance() 
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.16.1: "If an entity lacks the `GeoProperty` as specified **or the
-/// value does not hold a valid `GeoJSON` geometry object** then the geometry
-/// shall be undefined and returned with a value of null - which is
-/// syntactically valid `GeoJSON`."
-///
-/// The second half had no implementation: whatever the selected member held
-/// under `value` was answered as the Feature's `geometry`, so a `geometryProperty`
-/// naming an ordinary Property put a string, a number or a JSON object into the
-/// one member IETF RFC 7946 requires to be a geometry or null, and the response
-/// was not the `GeoJSON` the media type promises.
+/// Clause 4.5.16.1: a selected member whose value is not a valid `GeoJSON` geometry yields a null geometry, because IETF RFC 7946 requires the `geometry` member to be a geometry or null.
 #[tokio::test]
 async fn regression_geojson_geometry_a_value_that_is_not_a_geometry_renders_a_null_geometry() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -244,23 +197,14 @@ async fn regression_geojson_geometry_a_value_that_is_not_a_geometry_renders_a_nu
         }
     }
 
-    // The control: the same entity does answer with a geometry when the
-    // selected attribute holds one.
+    // Control: the same entity answers with a geometry when the selected attribute holds one.
     let located = feature(client, &id, "").await;
     assert_eq!(located["geometry"], point(9.0), "the control must still carry its geometry: {located}");
 
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.16.1: "either a `datasetId` shall be specified, in order to define
-/// which instance of the value is to be selected". An instance carrying a
-/// different `datasetId` is not the instance that was specified, so the entity
-/// lacks "the `GeoProperty` as specified" and the geometry is undefined.
-///
-/// Clause 4.5.5 renders a single instance as a JSON object rather than an array,
-/// and that rendering detail decided the answer: the array reading applied the
-/// selector and the object reading returned whatever it was given, so a lone
-/// instance was selected by a `datasetId` it does not carry.
+/// Clause 4.5.16.1: an instance carrying a different `datasetId` is not the instance that was specified, so the geometry is undefined. A lone instance is rendered as an object (clause 4.5.5) rather than an array, and must be subject to the same selector.
 #[tokio::test]
 async fn regression_geojson_geometry_a_lone_instance_is_not_selected_by_another_dataset_id() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -282,9 +226,7 @@ async fn regression_geojson_geometry_a_lone_instance_is_not_selected_by_another_
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.16.1: with a `geometryProperty` naming another `GeoProperty`,
-/// the instance selection runs over that attribute; without it "the default
-/// name of `location` shall be used".
+/// Clause 4.5.16.1: with a `geometryProperty` naming another `GeoProperty`, the instance selection runs over that attribute; without it "the default name of `location` shall be used".
 #[tokio::test]
 async fn regression_geojson_geometry_a_named_geometry_property_uses_its_own_default_instance() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

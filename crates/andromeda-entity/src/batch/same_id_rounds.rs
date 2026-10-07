@@ -13,9 +13,9 @@
 //! reads the state the previous round committed and writes on top of it, so the
 //! current state ends up as "the entity resulting from merging all of the entity
 //! instances, in the correct order". Because every round commits separately,
-//! every instance also lands its own temporal-history observation — clause
+//! every instance also lands its own temporal-history observation, clause
 //! 5.5.11.2's "all entity instances shall be taken into account, in the correct
-//! order" — and its own notification, which is what clause 5.5.11.3 means by
+//! order", and its own notification, which is what clause 5.5.11.3 means by
 //! "separate notifications for each individual update".
 //!
 //! Separate commits give the repeated instances distinct `modifiedAt` values.
@@ -26,7 +26,7 @@
 //! instance's history row indistinguishable from the first's.
 //!
 //! An array without repeats yields exactly one round holding every entry, so the
-//! ordinary batch keeps the chunking and write concurrency it has always had.
+//! ordinary batch keeps its chunking and write concurrency.
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::collections::HashMap;

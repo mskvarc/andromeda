@@ -1,9 +1,4 @@
-//! PostgreSQL implementation of the registration persistence port.
-//!
-//! The port's reads live in `registration_read`, its writes in
-//! `registration_write` and the statements both build on in
-//! `registration_statements`; this module owns the adapter and the error
-//! and outcome translation every one of them shares.
+//! PostgreSQL implementation of the registration persistence port, with the error and outcome translation its reads and writes share.
 
 use crate::{
     csource_registration::{registration_read, registration_write},
@@ -32,8 +27,7 @@ use iri_rs::IriBuf;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
 
-/// The primary key migration 0012 declares on `context_source_registrations.id`,
-/// the registration identifier itself.
+/// The primary key constraint on `context_source_registrations.id`, the registration identifier itself.
 const PK_CONTEXT_SOURCE_REGISTRATIONS: &str = "pk_context_source_registrations";
 
 /// PostgreSQL-backed registration persistence adapter.
@@ -164,8 +158,7 @@ mod tests {
         subscriber::with_default,
     };
 
-    /// Migration 0012 names every constraint, so the duplicate-identifier
-    /// refusal matches the declared name rather than one PostgreSQL generated.
+    /// Every constraint is named, so the duplicate-identifier refusal matches the declared name rather than one PostgreSQL generated.
     #[test]
     fn the_duplicate_id_refusal_names_the_constraint_migration_0012_declares() {
         let declaration = format!("CONSTRAINT {PK_CONTEXT_SOURCE_REGISTRATIONS} PRIMARY KEY (id)").to_ascii_uppercase();

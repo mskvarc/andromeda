@@ -11,7 +11,7 @@
 //! within a quoted operand stands for the two-character sequence `%` `2` `0`,
 //! not for a space.
 //!
-//! This is the same rule the operand scanner already documents: a quoted
+//! The operand scanner follows the same rule: a quoted
 //! operand is the clause 4.9 `quotedStr`, an IETF RFC 8259 JSON String, whose
 //! grammar has no percent-decoding step. Decoding it would rewrite
 //! `ref=="urn:x:a%2Fb"` into `ref=="urn:x:a/b"` and silently change the meaning
@@ -22,12 +22,7 @@
 //!
 //! These tests pin that a body-borne operand is matched byte for byte: a
 //! literal space matches a value that has one, and a `%20` matches only a value
-//! that literally contains `%20`. The behaviour is spec-correct; the ETSI case
-//! `046_05_01` subscribes with `name=="Eiffel%20Tower"` in a JSON body against an
-//! entity named `Eiffel Tower`, which cannot match, and is corrected against
-//! the specification in the test-material patch set.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! that literally contains `%20`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

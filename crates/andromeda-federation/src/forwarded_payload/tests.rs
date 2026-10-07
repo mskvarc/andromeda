@@ -272,7 +272,7 @@ async fn a_forwarded_subscription_is_spelled_from_the_typed_subscription() {
     pretty_assertions::assert_eq!(forwarded["q"], json!("velocity>1"));
 }
 
-/// Review change 17: a relative reference is never forwarded. An inline
+/// A relative reference is never forwarded. An inline
 /// context holding one -- as an entry, or as an `@import` -- would resolve
 /// against the source's URL rather than this broker's request, so the
 /// `application/ld+json` body is written inline against the core context

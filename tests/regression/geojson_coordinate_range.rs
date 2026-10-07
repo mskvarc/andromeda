@@ -5,22 +5,19 @@
 //! and clause 4.10 requires a reference geometry's coordinates "as mandated by
 //! IETF RFC 7946 [8], section 3.1.1". RFC 7946 section 4 places every position
 //! in WGS 84 longitude and latitude, in decimal degrees: longitude from -180 to
-//! 180, latitude pole to pole. The broker accepted any finite ordinate, so a
-//! position off the axes was stored and then read three different ways: the
-//! planar georels took it as written, `PostGIS` geography silently wrapped or
-//! reflected it for `near`
-//! (`POINT(-1 100)` became `POINT(-1 80)`), and the in-memory distance turned a
-//! latitude past a pole into a wrong or NaN distance. A geoquery with such a
-//! reference answered `200 []`.
+//! 180, latitude pole to pole. A position off the
+//! axes would otherwise be stored and read three different ways: the planar
+//! georels would take it as written, `PostGIS` geography would silently wrap or
+//! reflect it for `near` (`POINT(-1 100)` becomes `POINT(-1 80)`), and the
+//! in-memory distance would turn a latitude past a pole into a wrong or NaN
+//! distance. A geoquery with such a reference would answer `200 []`.
 //!
-//! Every client-facing surface now answers `BadRequestData` (clause 5.5.4, and
+//! Every client-facing surface answers `BadRequestData` (clause 5.5.4, and
 //! clause 4.10's syntactic validity for geoqueries) whose detail names the
 //! refused ordinate, its value and where in `coordinates` the position sits.
 //! Both ends of each axis are positions, and altitude has no bound. A Context
 //! Source answering with such a geometry has that one entity dropped with a
 //! clause 6.3.17 warning, the rest of its answer kept.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -338,8 +335,7 @@ async fn regression_coordinate_range_a_subscription_geoq_off_the_axes_is_refused
 /// Table 5.2.13-1 gives `georel`, `geometry` and `coordinates` cardinality 1.
 /// A `geoQ` missing one is refused on create (clause 5.8.1.4) and on update
 /// (clauses 5.8.2.4 and 5.5.4), where clause 5.5.8 would otherwise store the
-/// incomplete `geoQ` whole; such a `geoQ` used to be admitted and then matched
-/// every entity.
+/// incomplete `geoQ` whole and it would match every entity.
 #[tokio::test]
 async fn regression_coordinate_range_an_incomplete_subscription_geoq_is_refused_on_create_and_update() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

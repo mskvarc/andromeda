@@ -11,10 +11,6 @@ use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 
-// ---------------------------------------------------------------------------
-// 002_01: Delete existing entity
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn entity_delete_existing_success() {
     let scope = TestEnvironment::from_suite("entity").await.expect("isolated test environment");
@@ -28,15 +24,10 @@ async fn entity_delete_existing_success() {
     let (status, _) = delete_entity(&c, &id).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete should return 204");
 
-    // Verify entity is gone
     let (status, _) = get_entity(&c, &id, "", "application/json", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "entity should no longer exist");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 002_02: Invalid delete requests
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_delete_missing_id_returns_400() {
@@ -58,10 +49,6 @@ async fn entity_delete_invalid_id_returns_400() {
     assert!(body["type"].as_str().is_some(), "should contain error type");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 002_03: Non-existent entity
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn entity_delete_not_found_returns_404() {

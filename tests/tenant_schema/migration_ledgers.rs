@@ -1,7 +1,7 @@
 //! The three migration ledgers and what each refuses.
 //!
-//! Platform, tenant and branch migrations are recorded in their own ledgers
-//! (`docs/schema-migration-policy.md`), none of them shared and none of them
+//! Platform, tenant and branch migrations are recorded in their own ledgers,
+//! none of them shared and none of them
 //! tolerant of a history the embedded set does not account for. The platform
 //! database carries both the platform and the tenant ledger and never the
 //! sqlx default, and a scratch database shows that a ledger row the binary

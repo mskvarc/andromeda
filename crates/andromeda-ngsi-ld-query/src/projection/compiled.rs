@@ -5,10 +5,7 @@ use typed_builder::TypedBuilder;
 
 /// Which members of a matching entity reach the response.
 ///
-/// Clause 4.21 defines `pick` and `omit` as mutually exclusive. Both shape the
-/// representation of the entities a query selects; the one way they reach the
-/// selection is through an Entity they would reduce to no member at all, which
-/// [`ProjectedMembers`] states as a selection criterion of its own.
+/// Clause 4.21 defines `pick` and `omit` as mutually exclusive. They shape the representation of the selected entities; the one way they reach the selection is through an Entity they would reduce to no member at all, which [`ProjectedMembers`] states as a selection criterion of its own.
 ///
 /// [`ProjectedMembers`]: crate::projection::projected_members::ProjectedMembers
 #[derive(Debug, Clone, Default, PartialEq, Eq, TypedBuilder)]

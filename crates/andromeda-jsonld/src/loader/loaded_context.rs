@@ -2,8 +2,8 @@
 //!
 //! An entry carries two things the cache cannot infer: where its durable row
 //! and hit accounting live, and how long it may be kept. The second is what
-//! clause 6.3.16 governs — the entry lives for the span the response granted,
-//! not for a fixed configured time — so the in-process cache is driven by a
+//! clause 6.3.16 governs: the entry lives for the span the response granted,
+//! not for a fixed configured time, so the in-process cache is driven by a
 //! per-entry [`Expiry`] rather than by one cache-wide time-to-live.
 
 use crate::{

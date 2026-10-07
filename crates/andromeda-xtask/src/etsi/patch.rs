@@ -1,5 +1,5 @@
 //! Applying and reverting the ETSI patch sets. Both sets are `git format-patch`
-//! output of the `andromeda-corrections` commit series. The infra set bakes the
+//! output of a commit series. The infra set bakes the
 //! run configuration and the suite-infrastructure corrections into the checkout and
 //! is always applied; the corrected-material set adjudicates expectation defects and
 //! is applied unless the run asks for the material as-shipped. A guard reverts
@@ -95,7 +95,7 @@ fn material_patches() -> Result<Vec<PathBuf>, XtaskError> {
     patches_in("corrected")
 }
 
-/// Every `.patch` file directly under `suite-delta/<subdir>`, sorted by file name.
+/// Every `.patch` file directly under a patch-set subdirectory, sorted by file name.
 /// The `NNNN-` prefix `git format-patch` writes makes lexical order the commit
 /// order, so a plain sort reproduces the series' application sequence.
 fn patches_in(subdir: &str) -> Result<Vec<PathBuf>, XtaskError> {

@@ -364,8 +364,8 @@ impl PostgresAtomicCommitter {
 
 impl ContextCommitter for PostgresAtomicCommitter {
     /// Every refused write is set aside and the rest run again, one attempt per
-    /// refusal, so a successful commit costs exactly what it did before and
-    /// each refused entity costs its chunk one more transaction.
+    /// refusal, so a successful commit costs one transaction and each refused
+    /// entity costs its chunk one more.
     fn commit(&self, target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         let target = target.clone();
         Box::pin(async move {

@@ -10,17 +10,12 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 
-// ---------------------------------------------------------------------------
-// Valid delete operations
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_delete_entity_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
     let id = scope.id("Vehicle:delete_009_01_01");
 
-    // Setup: create the temporal entity
     let entity = json!({
         "id": &id,
         "type": "Vehicle",
@@ -33,19 +28,13 @@ async fn temporal_delete_entity_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Delete
     let (status, _) = delete_temporal_entity(&c, &id).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "delete should return 204");
 
-    // Verify: entity no longer exists
     let (status, _, _) = get_temporal_entity(&c, &id, "", "application/ld+json", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "deleted entity should return 404");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Empty entity ID
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_delete_empty_id_returns_405() {
@@ -56,10 +45,6 @@ async fn temporal_delete_empty_id_returns_405() {
     assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED, "empty ID should return 405");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Invalid entity ID
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_delete_invalid_id_returns_400() {
@@ -75,10 +60,6 @@ async fn temporal_delete_invalid_id_returns_400() {
     assert!(body["title"].as_str().is_some(), "should contain error title");
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Unknown entity ID
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_delete_unknown_id_returns_404() {
@@ -96,17 +77,12 @@ async fn temporal_delete_unknown_id_returns_404() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Delete and recreate
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_delete_and_recreate_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
     let id = scope.id("Vehicle:delete_009_04_01");
 
-    // Create
     let entity = json!({
         "id": &id,
         "type": "Vehicle",
@@ -118,11 +94,9 @@ async fn temporal_delete_and_recreate_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Delete
     let (status, _) = delete_temporal_entity(&c, &id).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Recreate with different data
     let entity2 = json!({
         "id": &id,
         "type": "Vehicle",
@@ -134,7 +108,6 @@ async fn temporal_delete_and_recreate_success() {
     let status = create_temporal_entity(&c, &entity2).await;
     assert_eq!(status, StatusCode::CREATED, "recreate after delete should return 201");
 
-    // Verify new data
     let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     let speed = body["speed"].as_array().expect("speed should be array");

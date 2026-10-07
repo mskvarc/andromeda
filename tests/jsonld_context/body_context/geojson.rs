@@ -1,4 +1,4 @@
-//! The `@context` of a `GeoJSON` representation (study A20).
+//! The `@context` of a `GeoJSON` representation.
 //!
 //! Clause 4.5.16.3 has a `FeatureCollection` carry one `@context` at its top
 //! level: "separate @context elements for each Feature will not be present in

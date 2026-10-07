@@ -3,32 +3,25 @@
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 6.3.6 has an `application/ld+json` body
 //! "include a JSON-LD @context", and clause 6.3.5 forbids mixing that with the
-//! `Link` header the `application/json` case uses. Andromeda wrote the member
-//! once, on the Notification envelope, and stripped it from every Entity in
-//! `data`. The body is two documents, not one: Table 5.3.1-1 gives the
-//! Notification an `id` that is the JSON-LD `@id` and a `type` that is the
-//! `@type`, and clause 4.5.1 gives every Entity the same two, so a subscriber
-//! that lifts one Entity out of `data` held something it could not expand.
-//! Both carry it now, with the one @context clause 5.8.6 names, "the one
-//! specified in the jsonldContext field".
+//! `Link` header the `application/json` case uses. The member is
+//! written on the Notification envelope and on every Entity in `data`. The body
+//! is two documents, not one: Table 5.3.1-1 gives the Notification an `id` that
+//! is the JSON-LD `@id` and a `type` that is the `@type`, and clause 4.5.1 gives
+//! every Entity the same two, so a subscriber that lifts one Entity out of `data`
+//! must hold something it can expand. Both carry the one @context clause 5.8.6
+//! names, "the one specified in the jsonldContext field".
 //!
 //! Clause 5.8.6 also reduces "every Entity within the payload body ... down to
 //! only contain the defined entity members listed" when `notification.pick` or
 //! `notification.omit` is set -- clause 5.7.1.5's sentence for a query
-//! response, which clause 4.21 governs in both places. The notification path
-//! read it differently, keeping `id` and `type` on the ground that Table
-//! 5.2.4-1 makes them mandatory for an Entity; the query path had the same
-//! reading until clause 5.7.1.5's own words settled it, and the notification
-//! now applies that one rule after compaction, where `id`, `type` and `scope`
-//! exist as such.
+//! response, which clause 4.21 governs in both places. The notification applies
+//! that one rule after compaction, where `id`, `type` and `scope` exist as such.
 //!
 //! Clause 5.8.6 holds one member back from that rule: a notification carries
 //! Entities and an Entity is only actionable if it carries its `id` (clause
 //! 4.5.1), so `id` survives a `notification.pick`/`notification.omit` that
 //! would otherwise drop it, while `type` and `scope` follow the projection as a
 //! query response does.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

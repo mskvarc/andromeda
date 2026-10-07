@@ -1,12 +1,4 @@
-//! Reading a context source's answer of Temporal Evolutions into the model
-//! (clauses 5.7.3.4, 5.7.4.4 and 6.3.17).
-//!
-//! A source answers in compact JSON-LD spelled in the forwarding context of
-//! the request. Each page is decoded element by element straight from its
-//! text, an element the model cannot hold becoming a clause 6.3.17 warning
-//! instead of failing the page. Once every page is in, each entity is expanded
-//! under the context it was written in, so the histories of every holder merge
-//! by expanded name (`crate::answered_temporal`).
+//! A source answers in compact JSON-LD spelled in the forwarding context of the request. Each page is decoded element by element straight from its text, an element the model cannot hold becoming a clause 6.3.17 warning instead of failing the page. Once every page is in, each entity is expanded under the context it was written in, so the histories of every holder merge by expanded name.
 
 use crate::{
     FederationService,
@@ -29,8 +21,7 @@ use tracing::warn;
 /// One source's answer of Temporal Evolutions, decoded but not yet read into
 /// the model.
 pub(crate) struct ReceivedTemporalAnswer {
-    /// The registration the entities came from; `None` for the entry that
-    /// carries only the clause 6.3.17 loop warning.
+    /// `None` for the entry that carries only the clause 6.3.17 loop warning.
     pub(crate) registration_id: Option<Identifier>,
     /// The registration's forwarding mode.
     pub(crate) mode: ForwardingMode,

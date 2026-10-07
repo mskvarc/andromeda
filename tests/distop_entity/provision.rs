@@ -46,10 +46,6 @@ use crate::{
     },
 };
 
-// ===========================================================================
-// Create Entity Tests
-// ===========================================================================
-
 /// Create entity on both context broker and context source (inclusive mode).
 #[tokio::test]
 #[serial]
@@ -95,19 +91,16 @@ async fn distop_entity_create_exclusive_forwards_exclusive_attributes() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-exc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-exc");
 
-    // Create entity locally first
     let entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity_local(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create exclusive registration for speed attribute
     let reg = vehicle_registration_speed_redirection_ops(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entities", 201).await;
 
-    // Create entity with speed attribute
     let speed_entity = vehicle_entity_speed_only(&entity_id);
     let (status, _) = create_entity(&c, &speed_entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -115,7 +108,6 @@ async fn distop_entity_create_exclusive_forwards_exclusive_attributes() {
     let count = mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entities");
     assert!(count > 0, "forwarding should have happened");
 
-    // Local entity should NOT have speed (exclusive)
     let (status, _, body) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(!body.as_object().unwrap().contains_key("speed"), "speed should not be local");
@@ -175,24 +167,20 @@ async fn distop_entity_create_without_redirection_ops_no_forwarding() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-no-ops");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-no-ops");
 
-    // Create entity locally first
     let entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity_local(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create exclusive registration WITHOUT redirection ops
     let reg = vehicle_registration_speed_default_ops(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entities", 409).await;
 
-    // Try to create entity with speed -> should fail with 409 (already exists locally)
     let speed_entity = vehicle_entity_speed_only(&entity_id);
     let (status, _) = create_entity(&c, &speed_entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CONFLICT);
 
-    // No forwarding should have happened
     pretty_assertions::assert_eq!(mock.get_count(Method::POST, "/broker1/ngsi-ld/v1/entities"), 0);
 
     delete_entity(&c, &entity_id).await;
@@ -219,7 +207,6 @@ async fn distop_entity_create_malformed_id_returns_400() {
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    // No entity should exist
     let (status, _, body) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     let entities = body.as_array().expect("response should be array");
@@ -240,19 +227,16 @@ async fn distop_entity_create_existing_locally_returns_207() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-exist-local");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-exist-local");
 
-    // Create entity first
     let entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create inclusive registration
     let reg = vehicle_registration_redirection_ops(&reg_id, Some(&entity_id), &mock.url(""), None);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     mock.set_stub(Method::POST, "/ngsi-ld/v1/entities", 201).await;
 
-    // Create same entity again -> 207 (local conflict, remote success)
     let entity = vehicle_entity(&entity_id);
     let resp = c
         .post(format!("{BASE_URL}/entities"))
@@ -268,7 +252,6 @@ async fn distop_entity_create_existing_locally_returns_207() {
     pretty_assertions::assert_eq!(errors.len(), 1);
     pretty_assertions::assert_eq!(errors[0]["error"]["status"], 409);
 
-    // Forwarding should still have happened
     assert!(mock.get_count(Method::POST, "/ngsi-ld/v1/entities") > 0);
 
     delete_entity(&c, &entity_id).await;
@@ -295,7 +278,6 @@ async fn distop_entity_create_existing_on_both_returns_409() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-exist-both");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-exist-both");
 
-    // Create entity locally first
     let entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -304,10 +286,8 @@ async fn distop_entity_create_existing_on_both_returns_409() {
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Remote also returns conflict
     mock.set_stub(Method::POST, "/ngsi-ld/v1/entities", 409).await;
 
-    // Create same entity again -> 409, the complete create having failed
     let entity = vehicle_entity(&entity_id);
     let resp = c
         .post(format!("{BASE_URL}/entities"))
@@ -324,7 +304,6 @@ async fn distop_entity_create_existing_on_both_returns_409() {
         "the complete create failed, so AlreadyExists is raised: {body}"
     );
 
-    // The create was still forwarded to the matching inclusive registration.
     assert!(mock.get_count(Method::POST, "/ngsi-ld/v1/entities") > 0);
 
     delete_entity(&c, &entity_id).await;
@@ -343,15 +322,12 @@ async fn distop_entity_create_existing_remotely_returns_207() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-exist-remote");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-exist-remote");
 
-    // Create inclusive registration (no local entity)
     let reg = vehicle_registration_redirection_ops(&reg_id, Some(&entity_id), &mock.url(""), None);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Remote returns conflict
     mock.set_stub(Method::POST, "/ngsi-ld/v1/entities", 409).await;
 
-    // Create entity -> 207 (local success, remote conflict)
     let entity = vehicle_entity(&entity_id);
     let resp = c
         .post(format!("{BASE_URL}/entities"))
@@ -366,7 +342,6 @@ async fn distop_entity_create_existing_remotely_returns_207() {
     let errors = body["errors"].as_array().unwrap();
     assert!(errors.iter().any(|e| e["error"]["status"] == 409));
 
-    // Entity should exist locally
     let (status, _, body) = query_entities(&c, "type=Vehicle", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     let entities = body.as_array().expect("response should be array");
@@ -396,17 +371,12 @@ async fn distop_entity_create_local_true_skips_forwarding() {
     let (status, _) = create_entity_local(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // No forwarding should have happened
     pretty_assertions::assert_eq!(mock.get_total_count(), 0);
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
 }
-
-// ===========================================================================
-// Delete Entity Tests
-// ===========================================================================
 
 /// Delete entity on both context broker and context source (inclusive mode).
 #[tokio::test]
@@ -435,7 +405,6 @@ async fn distop_entity_delete_inclusive_forwards_to_context_source() {
 
     assert!(mock.get_count(Method::DELETE, &delete_path) > 0);
 
-    // Entity should be gone locally
     let (status, _, _) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
@@ -495,7 +464,6 @@ async fn distop_entity_delete_redirect_forwards_to_multiple_sources() {
     let (status, _) = create_registration(&c, &reg2).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create entities via redirect
     mock.set_stub(Method::POST, "/broker1/ngsi-ld/v1/entities", 201).await;
     mock.set_stub(Method::POST, "/broker2/ngsi-ld/v1/entities", 201).await;
 
@@ -507,7 +475,6 @@ async fn distop_entity_delete_redirect_forwards_to_multiple_sources() {
     let (status, _) = create_entity(&c, &entity2).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Set up delete stubs
     let delete_path1 = format!("/broker1/ngsi-ld/v1/entities/{entity_id1}");
     let delete_path2 = format!("/broker2/ngsi-ld/v1/entities/{entity_id2}");
     mock.set_stub(Method::DELETE, &delete_path1, 204).await;
@@ -554,7 +521,6 @@ async fn distop_entity_delete_local_success_remote_failure_returns_207() {
 
     pretty_assertions::assert_eq!(body["errors"][0]["error"]["status"], 404);
 
-    // Entity should be gone locally
     let (status, _, _) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
@@ -578,7 +544,6 @@ async fn distop_entity_delete_local_absent_remote_success_returns_204() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-remote-ok");
     let reg_id = unique_id("urn:ngsi-ld:Registration:delete-remote-ok");
 
-    // No local entity, only registration
     let reg = vehicle_registration_redirection_ops(&reg_id, Some(&entity_id), &mock.url(""), None);
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -613,7 +578,6 @@ async fn distop_entity_delete_exclusive_without_delete_op_is_partial_success() {
     let (status, _) = create_entity_local(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Exclusive registration for `speed` whose operations do not include deleteEntity.
     let reg = vehicle_registration_speed_default_ops(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -628,7 +592,6 @@ async fn distop_entity_delete_exclusive_without_delete_op_is_partial_success() {
 
     // The delete is never forwarded, since deleteEntity is not advertised.
     pretty_assertions::assert_eq!(mock.get_count(Method::DELETE, &delete_path), 0);
-    // The local part of the entity is removed.
     let (status, _, _) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
@@ -658,16 +621,11 @@ async fn distop_entity_delete_local_true_skips_forwarding() {
     let status = delete_entity_local(&c, &entity_id).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // No forwarding should have happened
     pretty_assertions::assert_eq!(mock.get_total_count(), 0);
 
     delete_registration(&c, &reg_id).await;
     mock.shutdown().await;
 }
-
-// ===========================================================================
-// Merge Entity Tests
-// ===========================================================================
 
 /// Merge entity with exclusive registration forwards exclusive attributes.
 #[tokio::test]
@@ -680,12 +638,10 @@ async fn distop_entity_merge_exclusive_forwards_exclusive_attributes() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:merge-exc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:merge-exc");
 
-    // Create entity locally
     let entity = vehicle_entity_second_ld(&entity_id);
     let (status, _) = create_entity_local(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create exclusive registration for speed
     let reg = vehicle_registration_speed_redirection_ops(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -693,14 +649,12 @@ async fn distop_entity_merge_exclusive_forwards_exclusive_attributes() {
     let patch_path = format!("/broker1/ngsi-ld/v1/entities/{entity_id}");
     mock.set_stub(Method::PATCH, &patch_path, 204).await;
 
-    // Merge entity with different attributes including speed
     let merge_payload = vehicle_entity_different_ld(&entity_id);
     let (status, _) = merge_entity(&c, &entity_id, &merge_payload, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     assert!(mock.get_count(Method::PATCH, &patch_path) > 0);
 
-    // Local entity should NOT have speed
     let (status, _, body) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(!body.as_object().unwrap().contains_key("speed"), "speed should not be local");
@@ -729,7 +683,6 @@ async fn distop_entity_merge_inclusive_updates_local_and_forwards() {
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Get old entity state
     let (status, _, old_body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     let old_isparked2 = old_body["isParked2"].clone();
@@ -738,14 +691,12 @@ async fn distop_entity_merge_inclusive_updates_local_and_forwards() {
     let patch_path = format!("/ngsi-ld/v1/entities/{entity_id}");
     mock.set_stub(Method::PATCH, &patch_path, 204).await;
 
-    // Merge with different attributes
     let merge_payload = vehicle_entity_different_ld(&entity_id);
     let (status, _) = merge_entity(&c, &entity_id, &merge_payload, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     assert!(mock.get_count(Method::PATCH, &patch_path) > 0);
 
-    // Entity should be updated locally
     let (status, _, new_body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(old_brandname, new_body["brandName"]); // unchanged
@@ -769,7 +720,6 @@ async fn distop_entity_merge_redirect_forwards_to_multiple_sources() {
     let reg_id1 = unique_id("urn:ngsi-ld:Registration:merge-red-1");
     let reg_id2 = unique_id("urn:ngsi-ld:Registration:merge-red-2");
 
-    // Two redirect registrations for same entity
     let reg1 = vehicle_registration_redirection_ops(&reg_id1, Some(&entity_id), &mock.url("/broker1"), Some("redirect"));
     let (status, _) = create_registration(&c, &reg1).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -795,10 +745,6 @@ async fn distop_entity_merge_redirect_forwards_to_multiple_sources() {
     mock.shutdown().await;
 }
 
-// ===========================================================================
-// Replace Entity Tests
-// ===========================================================================
-
 /// Replace entity with exclusive registration forwards exclusive attributes.
 #[tokio::test]
 #[serial]
@@ -810,12 +756,10 @@ async fn distop_entity_replace_exclusive_forwards_exclusive_attributes() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:replace-exc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:replace-exc");
 
-    // Create entity locally
     let entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity_local(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create exclusive registration for speed
     let reg = vehicle_registration_speed_redirection_ops(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -823,14 +767,12 @@ async fn distop_entity_replace_exclusive_forwards_exclusive_attributes() {
     let put_path = format!("/broker1/ngsi-ld/v1/entities/{entity_id}");
     mock.set_stub(Method::PUT, &put_path, 204).await;
 
-    // Replace entity
     let replacement = vehicle_replacement_json(&entity_id);
     let (status, _) = replace_entity(&c, &entity_id, &replacement, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
     assert!(mock.get_count(Method::PUT, &put_path) > 0);
 
-    // Local entity should NOT have speed (exclusive)
     let (status, _, body) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(!body.as_object().unwrap().contains_key("speed"), "speed should not be local");
@@ -851,7 +793,6 @@ async fn distop_entity_replace_inclusive_replaces_local_and_forwards() {
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:replace-inc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:replace-inc");
 
-    // Create entity with JSON content type
     let entity = vehicle_entity_json(&entity_id);
     let resp = c
         .post(format!("{BASE_URL}/entities"))
@@ -867,19 +808,16 @@ async fn distop_entity_replace_inclusive_replaces_local_and_forwards() {
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Get old entity state
     let (status, _, old_body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let put_path = format!("/ngsi-ld/v1/entities/{entity_id}");
     mock.set_stub(Method::PUT, &put_path, 204).await;
 
-    // Replace entity
     let replacement = vehicle_entity_second(&entity_id);
     let (status, _) = replace_entity(&c, &entity_id, &replacement, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Entity body should have changed
     let (status, _, new_body) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_ne!(old_body, new_body);
@@ -901,7 +839,6 @@ async fn distop_entity_replace_redirect_forwards_to_multiple_sources() {
     let reg_id1 = unique_id("urn:ngsi-ld:Registration:replace-red-1");
     let reg_id2 = unique_id("urn:ngsi-ld:Registration:replace-red-2");
 
-    // Two redirect registrations for same entity
     let reg1 = vehicle_registration_redirection_ops(&reg_id1, Some(&entity_id), &mock.url("/broker1"), Some("redirect"));
     let (status, _) = create_registration(&c, &reg1).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -927,10 +864,6 @@ async fn distop_entity_replace_redirect_forwards_to_multiple_sources() {
     mock.shutdown().await;
 }
 
-// ===========================================================================
-// Additional Tests (Extended Coverage)
-// ===========================================================================
-
 /// Create entity with auxiliary registration creates locally only.
 #[tokio::test]
 #[serial]
@@ -955,7 +888,6 @@ async fn distop_entity_create_auxiliary_creates_locally_only() {
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Auxiliary should not forward provision operations
     pretty_assertions::assert_eq!(mock.get_count(Method::POST, "/ngsi-ld/v1/entities"), 0);
 
     delete_entity(&c, &entity_id).await;
@@ -991,7 +923,6 @@ async fn distop_entity_delete_auxiliary_deletes_locally_only() {
     let (status, _) = delete_entity_with_status(&c, &entity_id).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Auxiliary should not forward provision operations
     pretty_assertions::assert_eq!(mock.get_count(Method::DELETE, &delete_path), 0);
 
     delete_registration(&c, &reg_id).await;

@@ -1,29 +1,26 @@
 //! The names and identifiers a discovery answer renders (clauses 5.7.5 to
 //! 5.7.10).
 //!
-//! Two rules meet on every one of these resources, and the broker got each of
-//! them wrong on a different surface.
+//! Two rules meet on every one of these resources.
 //!
 //! Table 5.2.28-1 defines `attributeName` as the "Name of the attribute, short
 //! name if contained in @context", and Tables 5.2.25-1 and 5.2.26-1 word
 //! `typeName` the same way. Membership of the `@context` is the whole
-//! condition. `GET /attributes?details=true` honoured it, while the
+//! condition. It holds on every surface, `GET /attributes?details=true`, the
 //! `attributeList` of clause 5.2.27 and the `relationshipNames` of a Context
-//! Source Registration rendered a Fully Qualified Name whenever the term's
-//! definition carried a `"@type": "@id"` coercion — a difference in the shape
-//! of the declaration, which neither table mentions.
+//! Source Registration alike, whatever the shape of the term's declaration:
+//! neither table mentions a `"@type": "@id"` coercion.
 //!
 //! The identifiers beside those names take the opposite rule. Table 5.2.28-1
 //! restricts the Attribute `id` to the "Full URI of attribute name" and Tables
 //! 5.2.25-1 and 5.2.26-1 restrict the entity type `id` to the "Fully Qualified
 //! Name (FQN) of the entity type being described". The core `location`
-//! Attribute was rendered as the compact IRI `ngsi-ld:location`, which resolves
-//! only against a `@context` declaring the `ngsi-ld` prefix.
+//! Attribute is therefore rendered as its full URI, not as the compact IRI
+//! `ngsi-ld:location`, which resolves only against a `@context` declaring the
+//! `ngsi-ld` prefix.
 //!
 //! Every test therefore asserts both halves of one answer: the name short and
 //! the identifier full, in the same response.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -73,7 +70,7 @@ impl RunVocabulary {
     ///
     /// `isParked` carries the `"@type": "@id"` definition of annex C clause
     /// C.2.4's `commonTerms` vocabulary, which is the declaration shape the
-    /// `attributeList` and `relationshipNames` surfaces failed to use.
+    /// `attributeList` and `relationshipNames` surfaces must treat like any other.
     /// `status` is deliberately absent, as clauses C.5.10 and C.5.11 leave one
     /// Attribute undeclared so the answer shows both renderings at once.
     fn declaring_document(&self) -> String {
@@ -184,7 +181,7 @@ async fn regression_discovery_name_compaction_the_attribute_list_uses_an_identif
 
 /// Clause 4.5.14: `GET /attributes?details=true` renders the short name and,
 /// beside it, the "Full URI of attribute name" Table 5.2.28-1 fixes the `id`
-/// to — never the compact IRI the core `location` used to come back as.
+/// to — never the compact IRI for the core `location`.
 #[tokio::test]
 async fn regression_discovery_name_compaction_the_attribute_details_pair_a_short_name_with_a_full_uri() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -382,7 +379,7 @@ async fn regression_discovery_name_compaction_a_silent_context_renders_every_use
 
 /// Table 5.2.9-1's `relationshipNames`, which annex C clause C.3 prints as
 /// `["isParked"]`, renders the declared term rather than the Fully Qualified
-/// Name its `"@type": "@id"` definition used to force.
+/// Name, whatever its `"@type": "@id"` definition says.
 #[tokio::test]
 async fn regression_discovery_name_compaction_a_registration_renders_its_relationship_names_short() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

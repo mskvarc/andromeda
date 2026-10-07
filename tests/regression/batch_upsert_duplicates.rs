@@ -1,14 +1,6 @@
-//! Regression tests for clause 5.5.11, "More than one instance of the same
-//! Entity in an Entity array".
+//! Clause 5.5.11, "More than one instance of the same Entity in an Entity array".
 //!
-//! The defect these cover is a batch coordinator that deduplicated a repeated
-//! identifier instead of processing every instance: upsert kept only the last
-//! occurrence, and update and merge computed every write for a repeated
-//! identifier from one pre-batch snapshot. Both lose what clause 5.5.11
-//! requires — the fold across all instances in array order, one temporal
-//! observation per instance, and one notification per instance.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! A batch processes every instance of a repeated identifier rather than deduplicating it: the fold runs across all instances in array order, with one temporal observation and one notification per instance.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

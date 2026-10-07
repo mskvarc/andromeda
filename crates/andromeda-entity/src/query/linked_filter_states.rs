@@ -1,8 +1,8 @@
 //! Gathering the entity states the `rel{…}` hops of an in-memory filter cross
 //! into (clause 4.9).
 //!
-//! A filter matched in memory — a subscription's `q`, a deferred split-query
-//! filter — reads the linked entities of its hops from a [`LinkedStates`]
+//! A filter matched in memory, a subscription's `q`, a deferred split-query
+//! filter, reads the linked entities of its hops from a [`LinkedStates`]
 //! filled beforehand. A hop "makes a sub-query on matching target objects"
 //! (clause 4.9 EXAMPLE 13), so what has to be read follows from the filter and
 //! the entities it is matched against: the objects of each hop's Relationship,

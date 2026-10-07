@@ -5,22 +5,18 @@
 //! instance per Attribute instance (clause 4.5.5: "There can only be one
 //! default Attribute instance for an Attribute with a given Attribute name in
 //! any request or response"), the most current one (clause 4.5.5.3: the most
-//! recent `observedAt`, then the most recent `modifiedAt`). The official suite
-//! (`020_17` to `020_20`) creates an Entity through the Temporal API and then
-//! deletes one of its Attributes through the Core API, so a Temporal API
-//! create brings the Entity into current state.
+//! recent `observedAt`, then the most recent `modifiedAt`). A client may create
+//! an Entity through the Temporal API and then delete one of its Attributes
+//! through the Core API, so a Temporal API create brings the Entity into
+//! current state.
 //!
-//! The broker stored a newly created Temporal Evolution as the Entity's Core
-//! document whole, so `GET /entities/{id}` answered every historical instance
-//! as a same-attribute array under the default `datasetId`, while the
-//! current-attribute projection kept the last *written* instance, so a Core `q`
-//! disagreed with the Core body. A Temporal API append projected every instance
-//! into current state without touching the document, and a backfill rewound
-//! what `q` read. Real impact: every Den Haag observation entity carried a
-//! 70-105 KB Core document of a day's series, and keyValues answered a
-//! multi-instance map.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! A newly created Temporal Evolution is not stored as the Entity's Core
+//! document whole: `GET /entities/{id}` answers the one current instance of
+//! each attribute, not every historical instance as a same-attribute array
+//! under the default `datasetId`, and the current-attribute projection a Core
+//! `q` reads agrees with that body. A Temporal API append advances current state
+//! only when the instance is more recent, and a backfill does not rewind what
+//! `q` reads.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -205,7 +201,7 @@ async fn regression_temporal_evolution_current_state_a_newer_append_advances_and
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The Den Haag producer pattern: a day's series through the Temporal API, then
+/// A day's series through the Temporal API, then
 /// a Core upsert restating the latest reading. The Core Entity carries that one
 /// reading -- a bare number under keyValues -- and a Core `q` agrees with it.
 #[tokio::test]
@@ -237,7 +233,7 @@ async fn regression_temporal_evolution_current_state_the_series_then_upsert_patt
     scope.finish().await.expect("cleanup failed");
 }
 
-/// The shape of the official `020_17`: an Entity created through the Temporal
+/// An Entity created through the Temporal
 /// API has its Attribute deleted through the Core API (clause 5.6.5), and the
 /// Temporal Evolution records exactly one deletion of the one current instance
 /// (clauses 4.5.7 and 4.5.8).

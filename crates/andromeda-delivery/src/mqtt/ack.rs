@@ -6,8 +6,8 @@
 //! acknowledgement. The event loop is the only place that sees both the
 //! `Outgoing::Publish(pkid)` when a publish reaches the wire and the `PubAck`
 //! (`QoS` 1) or `PubComp` (`QoS` 2) that later completes it. Publishes are
-//! registered here in send order — the delivery path holds a lock across
-//! register-and-publish, so the registration order matches the wire order —
+//! registered here in send order (the delivery path holds a lock across
+//! register-and-publish, so the registration order matches the wire order),
 //! assigned their id when the event loop reports the outgoing packet, and
 //! resolved when the matching acknowledgement arrives.
 
@@ -79,7 +79,7 @@ impl AckTracker {
     }
 
     /// Resolve the in-flight publish for `pkid`, but only when `kind` is the
-    /// acknowledgement it waits on — a `PUBACK` for a `QoS` 2 publish still
+    /// acknowledgement it waits on: a `PUBACK` for a `QoS` 2 publish still
     /// mid-handshake leaves it in flight for its real `PUBCOMP`.
     fn complete(&mut self, pkid: u16, kind: AckKind) {
         let awaits_this = self.in_flight.get(&pkid).is_some_and(|pending| pending.completes_on == kind);

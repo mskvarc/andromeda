@@ -1,9 +1,4 @@
-//! Discovery-response shaping (Table 6.8.3.2-1): `pick`/`omit` (clause 4.21),
-//! `lang` (clause 4.15) applied to the
-//! returned Context Source Registration documents. All `T-LOCAL`: the
-//! registrations are created and read back on the front broker, and each case
-//! asserts the shape of the document it created, found by id, so unrelated
-//! registrations under other prefixes cannot perturb it.
+//! Discovery-response shaping (Table 6.8.3.2-1): `pick`/`omit` (clause 4.21), `lang` (clause 4.15) applied to the returned Context Source Registration documents.
 
 use crate::{
     disc::{
@@ -21,8 +16,7 @@ use reqwest::Method;
 use serde_json::json;
 use urlencoding::encode;
 
-/// `pick` narrows the returned registration to the named members, always
-/// keeping `id` and `type` (clause 4.21). Confirms REQ-DISC pick projection.
+/// `pick` narrows the returned registration to the named members, always keeping `id` and `type` (clause 4.21).
 #[tokio::test]
 async fn query_csr_pick_reduces_registration_members() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -42,7 +36,6 @@ async fn query_csr_pick_reduces_registration_members() {
 }
 
 /// `omit` drops the named members but never `id` or `type` (clause 4.21).
-/// Confirms REQ-DISC omit projection.
 #[tokio::test]
 async fn query_csr_omit_removes_registration_members() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -60,8 +53,7 @@ async fn query_csr_omit_removes_registration_members() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `lang` reduces a language-map member of the registration to the negotiated
-/// `Property` (clause 4.15). Confirms REQ-DISC lang negotiation.
+/// `lang` reduces a language-map member of the registration to the negotiated `Property` (clause 4.15).
 #[tokio::test]
 async fn query_csr_lang_reduces_languagemap() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -95,18 +87,9 @@ async fn query_csr_lang_reduces_languagemap() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A Context Source Registration query refuses `application/geo+json`
-/// (clause 6.3.4). Confirms REQ-DISC `GeoJSON` negotiation.
+/// A Context Source Registration query refuses `application/geo+json` (clause 6.3.4).
 ///
-/// Clause 6.3.4 admits `GeoJSON` for "Context Information Consumption
-/// operations only, specifically 'Retrieve Entity' (see clause 5.7.1) and
-/// 'Query Entity' (clause 5.7.2)", and rules that "for all other operations,
-/// the request will result in a Not Acceptable Media Type error, returning a
-/// 406 HTTP status code". Query Context Source Registrations is clause 5.10.2,
-/// and clause 5.10.2.5 gives its output as "A JSON-LD array of matching Context
-/// Source Registrations as defined by clause 5.2.9". Clause 4.5.16 defines the
-/// `GeoJSON` representation of *Entities* and never extends it to a
-/// registration, so `geometryProperty` cannot select a Feature geometry here.
+/// Clause 6.3.4 admits `GeoJSON` for "Context Information Consumption operations only, specifically 'Retrieve Entity' (see clause 5.7.1) and 'Query Entity' (clause 5.7.2)", and rules that "for all other operations, the request will result in a Not Acceptable Media Type error, returning a 406 HTTP status code". Query Context Source Registrations is clause 5.10.2, and clause 5.10.2.5 gives its output as "A JSON-LD array of matching Context Source Registrations as defined by clause 5.2.9". Clause 4.5.16 defines the `GeoJSON` representation of *Entities* and never extends it to a registration, so `geometryProperty` cannot select a Feature geometry here.
 #[tokio::test]
 async fn query_csr_geojson_is_not_acceptable() {
     let topology = topology::single().await.expect("single-broker topology");

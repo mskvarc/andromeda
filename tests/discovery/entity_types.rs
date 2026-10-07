@@ -25,10 +25,6 @@ fn sorted_strings(val: &Value) -> Vec<String> {
     v
 }
 
-// ---------------------------------------------------------------------------
-// 5.5.9 -- Empty database
-// ---------------------------------------------------------------------------
-
 /// List entity types on empty database -- returns `EntityTypeList` with empty typeList (5.5.9).
 #[tokio::test]
 async fn list_entity_types_empty_database_returns_empty_list() {
@@ -43,10 +39,6 @@ async fn list_entity_types_empty_database_returns_empty_list() {
     assert!(types.is_empty(), "expected empty typeList on clean database, got: {types:?}");
     env.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.5.9, 6.3.5 -- Without Link header context
-// ---------------------------------------------------------------------------
 
 /// List entity types without Link header -- type URIs returned as expanded (absolute) IRIs (5.5.9, 6.3.5).
 #[tokio::test]
@@ -75,10 +67,6 @@ async fn list_entity_types_without_context_returns_expanded_uris() {
     delete_entity(&c, env.tenant(), &vehicle_id).await;
     env.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.5.9, 6.3.5 -- With Link header context
-// ---------------------------------------------------------------------------
 
 /// List entity types with compound context Link header -- type URIs compacted to short names (5.5.9, 6.3.5).
 #[tokio::test]

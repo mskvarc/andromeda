@@ -1,18 +1,6 @@
-//! A subscription's `jsonldContext` wrapper is served even after another
-//! replica deleted it.
+//! A subscription's `jsonldContext` wrapper is served even after another replica deleted it.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.8.1.4 initialises a subscription's
-//! `jsonldContext` with the `@context` applicable for it, and Table 5.2.12-1
-//! makes that one URI, so a compound `@context` is named through an
-//! `ImplicitlyCreated` wrapper, which clause 5.13.1 says "shall be served by
-//! brokers on-demand". Clause 5.13.5.4 lets a client delete any stored entry,
-//! a wrapper included. Equal wrappers share one entry under an identifier their
-//! content derives, and each broker remembered for a while which identifiers it
-//! had stored, so a wrapper deleted through one replica was taken as stored by
-//! the other: a subscription created there named a URL nothing served, and its
-//! notifications could not be rendered under it.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 clause 5.8.1.4 initialises a subscription's `jsonldContext` with the `@context` applicable for it, and Table 5.2.12-1 makes that one URI, so a compound `@context` is named through an `ImplicitlyCreated` wrapper, which clause 5.13.1 says "shall be served by brokers on-demand". Clause 5.13.5.4 lets a client delete any stored entry, a wrapper included. Equal wrappers share one entry under an identifier their content derives, so a broker must not trust a memory of which identifiers it stored: a wrapper deleted through one replica must be stored again by the other, or a subscription would name a URL nothing serves.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -24,8 +12,7 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
-/// A subscription whose `@context` no single URL names, so its `jsonldContext`
-/// is a wrapper the broker hosts (Annex C.8).
+/// A subscription whose `@context` no single URL names, so its `jsonldContext` is a wrapper the broker hosts (Annex C.8).
 fn compound_context_subscription(id: &str) -> Value {
     json!({
         "id": id,
@@ -52,9 +39,7 @@ async fn subscribe(client: &TestClient, id: &str) -> String {
         .to_owned()
 }
 
-/// The status dereferencing `url` in `tenant` answers. Clause 6.3.14 makes the
-/// `NGSILD-Tenant` header the only way a request names a tenant, so the
-/// wrapper a non-default tenant stored is dereferenced under that header.
+/// Clause 6.3.14 makes the `NGSILD-Tenant` header the only way a request names a tenant, so the wrapper a non-default tenant stored is dereferenced under that header.
 async fn dereference(url: &str, tenant: &str) -> StatusCode {
     reqwest::Client::new()
         .get(url)

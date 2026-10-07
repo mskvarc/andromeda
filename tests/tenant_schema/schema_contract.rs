@@ -109,9 +109,8 @@ async fn under_drift(pool: &PgPool, drift: &str) -> Result<(), SchemaContractErr
 /// production entry point, and put the stamp back.
 ///
 /// [`ensure_schema_contract`] is what `migrate_tenant_db` calls on every
-/// tenant boot, so this is the path the review flagged: a stamp-first
-/// implementation would silently overwrite the drift this induces instead of
-/// refusing it. The row `ensure_schema_contract` leaves behind is captured
+/// tenant boot. A stamp-first implementation would silently overwrite the drift
+/// this induces instead of refusing it. The row `ensure_schema_contract` leaves behind is captured
 /// before the restore, so the caller can assert the drifted value survived the
 /// call untouched rather than only that an error came back.
 async fn under_drift_through_ensure(pool: &PgPool, drift: &str) -> (Result<(), SchemaContractError>, Option<(i32, String)>) {

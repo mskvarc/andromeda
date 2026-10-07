@@ -1,4 +1,4 @@
-//! Conditional Serve @context requests (RFC 7232, study E4 to E7 and E12).
+//! Conditional Serve @context requests (RFC 7232).
 //!
 //! Once a document carries an `ETag` the broker is an origin server with
 //! validators, and RFC 7232 section 5 obliges it to evaluate `If-None-Match`
@@ -24,7 +24,7 @@ fn large_document() -> Value {
     json!({ "@context": terms })
 }
 
-/// Study E4: the current tag answers 304 with no body and the validators of
+/// The current tag answers 304 with no body and the validators of
 /// the 200, and the access is counted.
 #[tokio::test]
 async fn the_current_entity_tag_answers_not_modified_and_counts_the_access() {
@@ -49,7 +49,7 @@ async fn the_current_entity_tag_answers_not_modified_and_counts_the_access() {
     tenant.finish().await;
 }
 
-/// Study E5: `If-None-Match` compares weakly, `*` matches the stored
+/// `If-None-Match` compares weakly, `*` matches the stored
 /// document, a list naming the tag among others matches, and a stale tag
 /// answers the document.
 #[tokio::test]
@@ -72,7 +72,7 @@ async fn weak_star_list_and_stale_conditions_are_evaluated_as_rfc_7232_says() {
     tenant.finish().await;
 }
 
-/// Study E6: the precondition is evaluated after the normal checks, so an
+/// The precondition is evaluated after the normal checks, so an
 /// unknown identifier is still 404 and a Cached entry still 422.
 #[tokio::test]
 async fn a_precondition_does_not_mask_the_normal_refusals() {
@@ -91,7 +91,7 @@ async fn a_precondition_does_not_mask_the_normal_refusals() {
     tenant.finish().await;
 }
 
-/// Study E7: a compressed document carries the weak form of its tag (RFC 7232
+/// A compressed document carries the weak form of its tag (RFC 7232
 /// section 2.3.3), and revalidating with it answers 304; the identity
 /// representation of the same document keeps the strong tag.
 #[tokio::test]
@@ -113,7 +113,7 @@ async fn a_compressed_document_carries_a_weak_tag_that_revalidates() {
     tenant.finish().await;
 }
 
-/// Study E12: HEAD answers with the headers of GET and no body, and a
+/// HEAD answers with the headers of GET and no body, and a
 /// conditional HEAD answers 304 alike.
 #[tokio::test]
 async fn head_answers_with_the_headers_of_get_and_no_body() {

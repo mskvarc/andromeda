@@ -534,10 +534,8 @@ mod tests {
         assert!(!entity.attrs.contains_key("modifiedAt"));
         assert!(!entity.attrs.contains_key("deletedAt"));
 
-        // Regular attributes still go into attrs
         assert!(entity.attrs.contains_key("temperature"));
 
-        // Named fields are populated
         assert!(entity.expires_at.is_some());
         assert!(entity.location.is_some());
         assert!(entity.observation_space.is_some());

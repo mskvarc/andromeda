@@ -358,10 +358,7 @@ mod tests {
         })))
     }
 
-    /// Compaction as the engine performed it before contexts were prepared
-    /// once: the document is re-expanded and compacted against a context
-    /// processed for it alone, with the `@context` removed afterwards when it
-    /// is not kept. The prepared path must match it byte for byte.
+    /// Reference compaction: re-expand the document and compact it against a context processed for it alone, removing the `@context` afterwards when it is not kept; the prepared path must match it byte for byte.
     async fn per_document_compaction(engine: &JsonLdEngine, document: Value, spec: &ContextSpec, options: CompactOptions) -> Value {
         let context = JsonLdContext::try_from_json(&parse_str_value(spec.resolved_context().text()).expect("JSON")).expect("a JSON-LD context");
         let mut vocabulary: IndexVocabulary<IriIndex, BlankIdIndex> = IndexVocabulary::new();

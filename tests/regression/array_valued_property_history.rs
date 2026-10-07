@@ -1,28 +1,6 @@
-//! An array-valued Property in the Temporal Evolution of an Entity.
+//! ETSI GS CIM 009 v1.9.1 clause 5.2.5 puts no restriction on a Property `value`: Table 5.2.5-1 gives it the data type "JSON value", so an array and a JSON object are both admissible.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.2.5 puts no restriction on a Property
-//! `value`: Table 5.2.5-1 gives it the data type "JSON value" with no
-//! restriction column, so an array and a JSON object are both admissible. The
-//! write path accepted both and every later temporal read of the Entity
-//! answered `400 BadRequestData` with "Failed to compact document", while a
-//! temporal *query* silently omitted the Entity from its answer altogether.
-//!
-//! The cause was in the expanded rendering. `expanded_structured_value` wrapped
-//! the stored value in a single JSON-LD value node, `{"@value": <the array>}`,
-//! and a value node holds a string, number, boolean or null and nothing else,
-//! so the document could not be compacted at all.
-//!
-//! What the stored value means is decided by the write path, not by this suite:
-//! `crates/andromeda-ngsi-ld-model/src/temporal/structured_value.rs` stores an
-//! array-valued Property as the elements of the several value nodes JSON-LD
-//! expansion produced. That is observable — `["a"]` is stored as the string
-//! `"a"` and `[["a"],["b","c"]]` as `["a","b","c"]`, because JSON-LD expansion
-//! collapses a one-element array and flattens a nested one — so the temporal
-//! rendering has to produce those same value nodes back. Every test below
-//! therefore asserts the temporal answer against the current representation of
-//! the same Attribute, which is what a client comparing the two would see.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! A JSON-LD value node holds a string, number, boolean or null and nothing else, so an array-valued Property is stored as the elements of the value nodes JSON-LD expansion produced, and the temporal rendering has to produce those same value nodes back. That is observable: `["a"]` is stored as the string `"a"` and `[["a"],["b","c"]]` as `["a","b","c"]`, because expansion collapses a one-element array and flattens a nested one. Every test asserts the temporal answer against the current representation of the same Attribute, which is what a client comparing the two would see.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -91,12 +69,7 @@ async fn queried(client: &TestClient, id: &str) -> Value {
     matches[0].clone() // clone: the caller owns the record it asserts on
 }
 
-/// Write one array-valued Property, then assert the three temporal readings and
-/// the current one all carry `expected`.
-///
-/// The single instance the fixture writes is what lets the temporal reading be
-/// compared with the current one directly: clause 4.5.7 renders the instance as
-/// an array of one, and clause 4.5.9 renders it as one `[value, instant]` pair.
+/// The single instance the fixture writes is what lets the temporal reading be compared with the current one directly: clause 4.5.7 renders the instance as an array of one, and clause 4.5.9 renders it as one `[value, instant]` pair.
 async fn assert_value_round_trips(scope: &TestEnvironment, local: &str, name: &str, written: Value, expected: &Value) {
     let id = scope.id(local);
     create(scope.client(), &evolution(&id, name, &property(&written))).await;
@@ -144,9 +117,7 @@ async fn regression_array_valued_property_history_an_array_of_numbers_round_trip
     scope.finish().await.expect("cleanup failed");
 }
 
-/// A nested array is flattened by JSON-LD expansion before it is stored, so
-/// both representations answer the flattened array — the same answer, which is
-/// the property under test.
+/// A nested array is flattened by JSON-LD expansion before it is stored, so both representations answer the flattened array — the same answer, which is the property under test.
 #[tokio::test]
 async fn regression_array_valued_property_history_a_nested_array_reads_back_as_the_expansion_stored_it() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -156,8 +127,7 @@ async fn regression_array_valued_property_history_a_nested_array_reads_back_as_t
     scope.finish().await.expect("cleanup failed");
 }
 
-/// A one-element array is one value node after expansion, so it is stored and
-/// answered as the bare element — identically by both representations.
+/// A one-element array is one value node after expansion, so it is stored and answered as the bare element — identically by both representations.
 #[tokio::test]
 async fn regression_array_valued_property_history_a_one_element_array_reads_back_as_its_element() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -167,9 +137,7 @@ async fn regression_array_valued_property_history_a_one_element_array_reads_back
     scope.finish().await.expect("cleanup failed");
 }
 
-/// A JSON object is a Property value of the same family: it too could not be
-/// carried by one value node, and it too is stored as what expansion made of
-/// it.
+/// A JSON object is a Property value of the same family: it too could not be carried by one value node, and it too is stored as what expansion made of it.
 #[tokio::test]
 async fn regression_array_valued_property_history_an_object_valued_property_round_trips() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -186,9 +154,7 @@ async fn regression_array_valued_property_history_an_object_valued_property_roun
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 3.1 lists "an array" among the NGSI-LD Values, and the empty array
-/// is one: JSON-LD expansion keeps the `value` member with no value node, the
-/// Temporal Evolution records it, and every reading answers `[]` (finding R05).
+/// Clause 3.1 lists "an array" among the NGSI-LD Values, and the empty array is one: JSON-LD expansion keeps the `value` member with no value node, the Temporal Evolution records it, and every reading answers `[]`.
 #[tokio::test]
 async fn regression_array_valued_property_history_an_empty_array_round_trips() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -198,9 +164,7 @@ async fn regression_array_valued_property_history_an_empty_array_round_trips() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// An array inside a sub-Attribute is stored with the sub-Attribute rather than
-/// in the value column, so it takes a different route to the same rendering and
-/// is asserted separately.
+/// An array inside a sub-Attribute is stored with the sub-Attribute rather than in the value column, so it takes a different route to the same rendering and is asserted separately.
 #[tokio::test]
 async fn regression_array_valued_property_history_an_array_inside_a_sub_attribute_round_trips() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -228,9 +192,7 @@ async fn regression_array_valued_property_history_an_array_inside_a_sub_attribut
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.2.38's `JsonProperty` carries its array as a JSON literal in `json`
-/// rather than as a Property `value`, and that distinction survives both
-/// readings — the array-valued Property is not turned into one.
+/// Clause 5.2.38's `JsonProperty` carries its array as a JSON literal in `json` rather than as a Property `value`, and that distinction survives both readings — the array-valued Property is not turned into one.
 #[tokio::test]
 async fn regression_array_valued_property_history_a_json_property_array_stays_a_json_literal() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

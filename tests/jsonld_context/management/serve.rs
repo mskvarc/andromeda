@@ -1,4 +1,4 @@
-//! Serve @context (clause 5.13.4, binding 6.30.3.1; ETSI 053).
+//! Serve @context (clause 5.13.4, binding 6.30.3.1).
 
 use crate::{
     context_api::{create_hosted_context, create_implicit_context, delete_context, find_cached_context_id, get_context, number_of_hits, setup_cached_context},
@@ -10,7 +10,7 @@ use crate::{
 use reqwest::StatusCode;
 use serde_json::json;
 
-/// `053_01_01` and `053_01_02`: without `details`, and with `details=false`,
+/// Without `details`, and with `details=false`,
 /// Serve answers the stored document.
 #[tokio::test]
 async fn serve_context_without_details_returns_the_document() {
@@ -29,7 +29,7 @@ async fn serve_context_without_details_returns_the_document() {
     tenant.finish().await;
 }
 
-/// `053_02_01`: `details=true` answers the clause 5.13.3.5 metadata.
+/// `details=true` answers the clause 5.13.3.5 metadata.
 #[tokio::test]
 async fn serve_context_details_true_returns_metadata() {
     let tenant = PrivateTenant::provisioned().await;
@@ -45,7 +45,7 @@ async fn serve_context_details_true_returns_metadata() {
     tenant.finish().await;
 }
 
-/// `053_03_01`: an unknown identifier is `ResourceNotFound`.
+/// An unknown identifier is `ResourceNotFound`.
 #[tokio::test]
 async fn serve_unknown_context_returns_404() {
     let tenant = PrivateTenant::provisioned().await;
@@ -57,7 +57,7 @@ async fn serve_unknown_context_returns_404() {
     tenant.finish().await;
 }
 
-/// `053_04_01`: using a Hosted @context counts toward its `numberOfHits`, and
+/// Using a Hosted @context counts toward its `numberOfHits`, and
 /// the count is current the instant the using request returns.
 #[tokio::test]
 async fn serve_hosted_number_of_hits_increases() {
@@ -82,7 +82,7 @@ async fn serve_hosted_number_of_hits_increases() {
     tenant.finish().await;
 }
 
-/// `053_07_01`: an `ImplicitlyCreated` @context answers its metadata.
+/// An `ImplicitlyCreated` @context answers its metadata.
 #[tokio::test]
 async fn serve_implicitly_created_details_true() {
     let tenant = PrivateTenant::provisioned().await;
@@ -98,7 +98,7 @@ async fn serve_implicitly_created_details_true() {
     tenant.finish().await;
 }
 
-/// `053_08_01`: using an `ImplicitlyCreated` @context counts toward its
+/// Using an `ImplicitlyCreated` @context counts toward its
 /// `numberOfHits`.
 #[tokio::test]
 async fn serve_implicitly_created_number_of_hits_increases() {
@@ -123,7 +123,7 @@ async fn serve_implicitly_created_number_of_hits_increases() {
     tenant.finish().await;
 }
 
-/// `053_05_01`: a Cached @context keeps answering its metadata after its
+/// A Cached @context keeps answering its metadata after its
 /// origin is gone, although it cannot be reloaded.
 #[tokio::test]
 async fn serve_cached_context_after_server_down() {
@@ -143,7 +143,7 @@ async fn serve_cached_context_after_server_down() {
     tenant.finish().await;
 }
 
-/// `053_06_01`: a second use of a Cached @context counts toward its
+/// A second use of a Cached @context counts toward its
 /// `numberOfHits`.
 #[tokio::test]
 async fn serve_cached_number_of_hits_increases() {

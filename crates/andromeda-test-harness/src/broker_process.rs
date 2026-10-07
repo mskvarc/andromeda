@@ -26,7 +26,7 @@ use tokio::time::{Instant, sleep};
 const STARTUP_DEADLINE: Duration = Duration::from_secs(120);
 
 /// The settings every base-tier broker runs with beside its ports and
-/// database (`crates/andromeda-xtask/src/local_broker.rs`).
+/// database.
 const TIER_SETTINGS: [(&str, &str); 10] = [
     ("ANDROMEDA__TEMPORAL__DEFAULT_LAST_N", "19"),
     ("ANDROMEDA__TEMPORAL__MAX_LAST_N", "19"),

@@ -1,6 +1,6 @@
 //! Server-generated CSR health fields (clause 5.2.9, `status` and counters).
 //!
-//! The static half is `IMPL`: client-supplied health values are ignored and a
+//! The static half: client-supplied health values are ignored and a
 //! fresh registration exposes only server-owned counters. The dynamic half —
 //! flipping `status` and incrementing counters on a real forward — is driven
 //! through a mock context source (`T-MOCK`). The registration `endpoint` is the
@@ -22,8 +22,7 @@ use reqwest::Method;
 use serde_json::json;
 
 /// Client-supplied `status`, `timesSent`, `timesFailed` and `lastSuccess` are
-/// server-owned and must be discarded, not stored (clause 5.2.9). Confirms
-/// REQ-REG-30, REQ-REG-31, REQ-REG-32.
+/// server-owned and must be discarded, not stored (clause 5.2.9).
 #[tokio::test]
 async fn reg_client_supplied_health_fields_ignored() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -65,7 +64,7 @@ async fn reg_client_supplied_health_fields_ignored() {
 /// follows "the last attempt to perform a distributed operation", `timesSent`
 /// counts the operations the registration triggered, and `lastSuccess` is
 /// "created on first successful operation". A registration that has triggered
-/// nothing has none of that to report. Confirms REQ-REG-31, REQ-REG-32.
+/// nothing has none of that to report.
 #[tokio::test]
 async fn reg_fresh_registration_reports_no_observed_health() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -100,7 +99,7 @@ async fn reg_fresh_registration_reports_no_observed_health() {
 }
 
 /// A forward to an endpoint that always fails flips the registration `status` to
-/// `failed` (clause 5.2.9, dynamic). Confirms REQ-REG-31 (dynamic).
+/// `failed` (clause 5.2.9, dynamic).
 #[tokio::test]
 async fn reg_health_status_transitions_to_failed_on_forward_error() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -151,7 +150,7 @@ async fn reg_health_status_transitions_to_failed_on_forward_error() {
 }
 
 /// Every forward attempt increments the delivery counters and stamps the matching
-/// success/failure timestamp (clause 5.2.9, dynamic). Confirms REQ-REG-32 (dynamic).
+/// success/failure timestamp (clause 5.2.9, dynamic).
 #[tokio::test]
 async fn reg_health_counters_increment_on_forward_attempt() {
     let topology = topology::single().await.expect("single-broker topology");

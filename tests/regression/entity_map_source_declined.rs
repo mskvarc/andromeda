@@ -3,10 +3,10 @@
 //! ETSI GS CIM 009 v1.9.1 Table 6.34.3.1-1 lists, among the responses of
 //! "Create `EntityMap` for Query Entities", a `ProblemDetails` body with
 //! "501 Not Implemented -- It is used by Registered Context Sources to indicate
-//! that the data format of the request is unsupported see clause 6.3.7". The
-//! broker collapsed every non-404 answer from a source into a clause 6.3.17
-//! warning string and always answered 201, so a source's 501 was stringified
-//! into prose and the status was lost.
+//! that the data format of the request is unsupported see clause 6.3.7". A
+//! source's 501 is relayed as the operation's answer rather than collapsed, with
+//! every other non-404 source answer, into a clause 6.3.17 warning string on a
+//! 201.
 //!
 //! The relay is the one Table 6.4.3.2-3 already gives the entity reads: it
 //! applies only where a single exclusive or redirect registration holds all of
@@ -17,8 +17,6 @@
 //! registration left behind by a failed assertion points at a mock port that is
 //! no longer listening, and the broker goes on forwarding to it for every later
 //! request that matches.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

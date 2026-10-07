@@ -283,9 +283,6 @@ mod tests {
 
     #[test]
     fn a_user_context_importing_the_core_loses_only_that_redundant_import() {
-        // Clause 5.5.7: the broker appends the authoritative core last, so a
-        // user context's own embedded core reference is redundant and is
-        // dropped, while its genuine term definitions are kept untouched.
         let (normalized, tail) = prepare(
             "https://example.com/compound.jsonld",
             &json!({ "@context": [NGSI_LD_CORE_CONTEXT_URL.as_str(), { "location": "https://example.com/location" }] }),

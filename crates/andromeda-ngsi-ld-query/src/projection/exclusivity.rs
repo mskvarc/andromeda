@@ -1,18 +1,6 @@
 //! The clause 4.21 selectors one request may not combine.
 //!
-//! Three members shape the same projection and a request that supplies two of
-//! them says two contradictory things. `pick` reduces an Entity "down to only
-//! contain the specified Entity members" and `omit` removes them, so the two
-//! select opposite ends of one projection; `attrs` -- `attributes` in a
-//! Subscription -- is by definition redundant with `pick`, which Tables
-//! 6.4.3.2-1 and 5.2.14.1-1 say in the same words: "A synonym for pick, except
-//! that id, type, scope are not allowed. Deprecated".
-//!
-//! The rule is the same wherever the three members appear: on the URL of an
-//! entity query, an entity retrieval or a temporal query, and inside the
-//! `notification` of a Subscription (Table 5.2.14.1-1) or of a Context Source
-//! Registration Subscription (clause 5.11.2.3, which takes the clause 5.2.12
-//! data type unchanged).
+//! `pick` reduces an Entity "down to only contain the specified Entity members" and `omit` removes them, so the two select opposite ends of one projection. `attrs` (`attributes` in a Subscription) is by definition redundant with `pick`: Tables 6.4.3.2-1 and 5.2.14.1-1 call it "A synonym for pick, except that id, type, scope are not allowed. Deprecated". The rule is the same wherever the three members appear: on the URL of an entity query, an entity retrieval or a temporal query, and inside the `notification` of a Subscription (Table 5.2.14.1-1) or of a Context Source Registration Subscription (clause 5.11.2.3, which takes the clause 5.2.12 data type unchanged).
 
 use thiserror::Error;
 
@@ -64,13 +52,11 @@ pub struct ProjectionSelectors {
     pub attrs: Presence,
 }
 
-/// Refuse a request that combined selectors shaping the same projection.
+/// Refuses a request that combined selectors shaping the same projection.
 ///
 /// # Errors
 ///
-/// Returns [`ProjectionConflict::PickWithOmit`] when both ends of the
-/// projection are named, and [`ProjectionConflict::ProjectionWithAttrs`] when
-/// either is combined with the deprecated synonym.
+/// Returns [`ProjectionConflict::PickWithOmit`] when both ends of the projection are named, and [`ProjectionConflict::ProjectionWithAttrs`] when either is combined with the deprecated synonym.
 pub const fn check_projection_exclusivity(selectors: ProjectionSelectors) -> Result<(), ProjectionConflict> {
     if selectors.pick.is_present() && selectors.omit.is_present() {
         return Err(ProjectionConflict::PickWithOmit);

@@ -461,7 +461,7 @@ fn grouped_bucket(count: i64, keys: Vec<GroupKeyValue>) -> TemporalAggregationRo
     row
 }
 
-/// Study section 4.6: grouping terms nest a map keyed by the group value
+/// Grouping terms nest a map keyed by the group value
 /// between the method member and its triples, absent as `@none` and Null as
 /// `urn:ngsi-ld:null`.
 #[test]

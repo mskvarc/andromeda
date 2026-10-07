@@ -47,8 +47,8 @@ impl SubscriptionHttpClassify for SubscriptionError {
     }
 }
 
-// Clause 6.3.20 separates an unsupported parameter value from invalid data,
-// and `classify_parameter_error` is where that distinction is already drawn.
+// Clause 6.3.20 separates an unsupported parameter value from invalid data;
+// `classify_parameter_error` draws that distinction.
 impl SubscriptionHttpClassify for ParameterError {
     fn classify_for_subscription_http(&self) -> ClassifiedReport {
         classify_parameter_error(self)

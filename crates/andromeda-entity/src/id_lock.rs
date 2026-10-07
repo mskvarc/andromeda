@@ -85,12 +85,10 @@ mod tests {
         let guards = acquire_id_locks_in(&map, &live_target(), &ids).await;
         pretty_assertions::assert_eq!(map.len(), 3);
 
-        // While guards are alive, GC must keep every entry — strong_count > 1.
         gc_id_locks(&map);
         pretty_assertions::assert_eq!(map.len(), 3);
 
         drop(guards);
-        // Once the only outstanding `Arc` is the map's own, GC reclaims the entry.
         gc_id_locks(&map);
         pretty_assertions::assert_eq!(map.len(), 0);
     }
@@ -98,8 +96,6 @@ mod tests {
     #[tokio::test]
     async fn id_lock_acquire_dedupes_and_orders_ids() {
         let map: Arc<IdLockMap> = Arc::new(IdLockMap::new());
-        // Duplicates must collapse to a single entry; sorted ordering eliminates
-        // deadlocks between concurrent callers with overlapping id sets.
         let ids = [
             "https://example.com/entities/b".parse::<Identifier>().expect("valid test URI"),
             "urn:ngsi-ld:Entity:a".parse::<Identifier>().expect("valid test URI"),

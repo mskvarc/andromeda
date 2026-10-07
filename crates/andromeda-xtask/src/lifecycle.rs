@@ -1,6 +1,6 @@
 //! Per-stack orchestration: pre-clean, bring up, run the suites, tear down. The
 //! teardown is an RAII guard so a failing or panicking suite run still stops the
-//! stack, exactly as the shell tier's `trap cleanup EXIT` did.
+//! stack.
 
 use crate::{
     compose::{self, ImageBuild},

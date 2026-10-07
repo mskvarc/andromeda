@@ -27,10 +27,6 @@ use crate::{
 };
 use andromeda_test_harness::environment::TestEnvironment;
 
-// ---------------------------------------------------------------------------
-// Delete entity attribute (default instance) - inclusive mode
-// ---------------------------------------------------------------------------
-
 /// Delete attribute (default instance) with inclusive registration.
 #[tokio::test]
 async fn distop_entity_attrs_delete_inclusive_forwards_and_deletes_local() {
@@ -43,12 +39,10 @@ async fn distop_entity_attrs_delete_inclusive_forwards_and_deletes_local() {
     let entity_id = scope.id("Vehicle:delete-inc");
     let reg_id = scope.id("Registration:delete-inc");
 
-    // Create entity with two datasetId speed attributes
     let entity = vehicle_entity_two_speed_datasets(&entity_id);
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create inclusive registration
     let reg = vehicle_registration_redirection_ops(&reg_id, Some(&entity_id), &mock.url(""), Some("inclusive"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -56,15 +50,12 @@ async fn distop_entity_attrs_delete_inclusive_forwards_and_deletes_local() {
     let stub_path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
     mock.set_stub(Method::DELETE, &stub_path, 204).await;
 
-    // Delete attribute (default instance)
     let status = delete_entity_attr(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Verify forwarding happened
     let count = mock.get_count(Method::DELETE, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
-    // Verify local entity still contains speed (only default instance deleted)
     let (status, _, body) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("speed").is_some(), "speed should still exist (other instances remain)");
@@ -74,10 +65,6 @@ async fn distop_entity_attrs_delete_inclusive_forwards_and_deletes_local() {
     mock.shutdown().await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Delete entity attribute (default instance) - exclusive mode
-// ---------------------------------------------------------------------------
 
 /// Delete attribute (default instance) with exclusive registration.
 #[tokio::test]
@@ -91,12 +78,10 @@ async fn distop_entity_attrs_delete_exclusive_forwards_to_context_source() {
     let entity_id = scope.id("Vehicle:delete-exc");
     let reg_id = scope.id("Registration:delete-exc");
 
-    // Create entity locally
     let entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity_local(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create exclusive registration for speed
     let reg = vehicle_registration_speed_redirection_ops(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -104,11 +89,9 @@ async fn distop_entity_attrs_delete_exclusive_forwards_to_context_source() {
     let stub_path = format!("/broker1/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
     mock.set_stub(Method::DELETE, &stub_path, 204).await;
 
-    // Delete attribute
     let status = delete_entity_attr(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Verify forwarding happened
     let count = mock.get_count(Method::DELETE, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
@@ -117,10 +100,6 @@ async fn distop_entity_attrs_delete_exclusive_forwards_to_context_source() {
     mock.shutdown().await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Delete entity attribute (default instance) - redirect mode
-// ---------------------------------------------------------------------------
 
 /// Delete attribute (default instance) with redirect registrations.
 #[tokio::test]
@@ -151,11 +130,9 @@ async fn distop_entity_attrs_delete_redirect_forwards_to_multiple() {
     mock.set_stub(Method::DELETE, &stub_path1, 204).await;
     mock.set_stub(Method::DELETE, &stub_path2, 204).await;
 
-    // Delete attribute
     let status = delete_entity_attr(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Verify both stubs called
     assert!(mock.get_count(Method::DELETE, &stub_path1) > 0);
     assert!(mock.get_count(Method::DELETE, &stub_path2) > 0);
 
@@ -164,10 +141,6 @@ async fn distop_entity_attrs_delete_redirect_forwards_to_multiple() {
     mock.shutdown().await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Delete entity attribute (deleteAll=true) - inclusive mode
-// ---------------------------------------------------------------------------
 
 /// Delete attribute with deleteAll=true and inclusive registration.
 #[tokio::test]
@@ -181,12 +154,10 @@ async fn distop_entity_attrs_delete_all_inclusive_deletes_all_instances() {
     let entity_id = scope.id("Vehicle:delete-all-inc");
     let reg_id = scope.id("Registration:delete-all-inc");
 
-    // Create entity with two datasetId speed attributes
     let entity = vehicle_entity_two_speed_datasets(&entity_id);
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create inclusive registration
     let reg = vehicle_registration_redirection_ops(&reg_id, Some(&entity_id), &mock.url(""), Some("inclusive"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -194,15 +165,12 @@ async fn distop_entity_attrs_delete_all_inclusive_deletes_all_instances() {
     let stub_path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
     mock.set_stub(Method::DELETE, &stub_path, 204).await;
 
-    // Delete attribute with deleteAll=true
     let status = delete_entity_attr_all(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Verify forwarding happened
     let count = mock.get_count(Method::DELETE, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
-    // Verify local entity does NOT contain speed (all instances deleted)
     let (status, _, body) = get_entity(&c, &entity_id, "local=true", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(body.get("speed").is_none(), "speed should be fully deleted");
@@ -212,10 +180,6 @@ async fn distop_entity_attrs_delete_all_inclusive_deletes_all_instances() {
     mock.shutdown().await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Delete entity attribute (deleteAll=true) - exclusive mode
-// ---------------------------------------------------------------------------
 
 /// Delete attribute with deleteAll=true and exclusive registration.
 #[tokio::test]
@@ -229,12 +193,10 @@ async fn distop_entity_attrs_delete_all_exclusive_forwards_to_context_source() {
     let entity_id = scope.id("Vehicle:delete-all-exc");
     let reg_id = scope.id("Registration:delete-all-exc");
 
-    // Create entity locally
     let entity = vehicle_entity(&entity_id);
     let (status, _) = create_entity_local(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create exclusive registration for speed
     let reg = vehicle_registration_speed_redirection_ops(&reg_id, &entity_id, &mock.url("/broker1"), Some("exclusive"));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -242,11 +204,9 @@ async fn distop_entity_attrs_delete_all_exclusive_forwards_to_context_source() {
     let stub_path = format!("/broker1/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
     mock.set_stub(Method::DELETE, &stub_path, 204).await;
 
-    // Delete attribute with deleteAll=true
     let status = delete_entity_attr_all(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Verify forwarding happened
     let count = mock.get_count(Method::DELETE, &stub_path);
     assert!(count > 0, "forwarding should have happened");
 
@@ -255,10 +215,6 @@ async fn distop_entity_attrs_delete_all_exclusive_forwards_to_context_source() {
     mock.shutdown().await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Delete entity attribute (deleteAll=true) - redirect mode
-// ---------------------------------------------------------------------------
 
 /// Delete attribute with deleteAll=true and redirect registrations.
 #[tokio::test]
@@ -289,11 +245,9 @@ async fn distop_entity_attrs_delete_all_redirect_forwards_to_multiple() {
     mock.set_stub(Method::DELETE, &stub_path1, 204).await;
     mock.set_stub(Method::DELETE, &stub_path2, 204).await;
 
-    // Delete attribute with deleteAll=true
     let status = delete_entity_attr_all(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Verify both stubs called
     assert!(mock.get_count(Method::DELETE, &stub_path1) > 0);
     assert!(mock.get_count(Method::DELETE, &stub_path2) > 0);
 
@@ -302,10 +256,6 @@ async fn distop_entity_attrs_delete_all_redirect_forwards_to_multiple() {
     mock.shutdown().await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Additional delete tests
-// ---------------------------------------------------------------------------
 
 /// Delete attribute from non-existent entity returns 404.
 #[tokio::test]
@@ -333,12 +283,10 @@ async fn distop_entity_attrs_delete_auxiliary_no_forwarding() {
     let entity_id = scope.id("Vehicle:delete-aux");
     let reg_id = scope.id("Registration:delete-aux");
 
-    // Create entity with two datasetId speed attributes
     let entity = vehicle_entity_two_speed_datasets(&entity_id);
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // Create auxiliary registration (retrieval only)
     let reg = vehicle_registration_auxiliary_retrieve_ops(&reg_id, &entity_id, &mock.url(""));
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -346,11 +294,9 @@ async fn distop_entity_attrs_delete_auxiliary_no_forwarding() {
     let stub_path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
     mock.set_stub(Method::DELETE, &stub_path, 204).await;
 
-    // Delete attribute
     let status = delete_entity_attr(&c, &entity_id, "speed", &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Verify no forwarding happened
     let count = mock.get_count(Method::DELETE, &stub_path);
     pretty_assertions::assert_eq!(count, 0, "auxiliary registration should not trigger forwarding");
 

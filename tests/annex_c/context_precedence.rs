@@ -8,8 +8,7 @@
 //! The clause's collision is `location`, defined both by the Core `@context`
 //! and by schema.org. Only that one term and the `schema:` prefix matter to
 //! what is demonstrated, so the suite hosts a stand-in for schema.org rather
-//! than the whole vocabulary; the substitution is recorded in
-//! `docs/annex-c-corpus.md`.
+//! than the whole vocabulary.
 
 use crate::{BASE_URL, clean_tenant, comparison::corpus, context_link, context_utilization::flattened_context, example_context::hosted_contexts, get_json};
 use pretty_assertions::assert_eq;

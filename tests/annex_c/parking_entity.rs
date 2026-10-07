@@ -7,8 +7,7 @@
 //! The printed `GeoJSON` examples disagree with the printed NGSI-LD ones about
 //! where Downtown1 is -- the same Entity is drawn at `[-8.5, 41.2]`,
 //! `[-8.51, 41.1]` and `[-8.5, 41.1]` across the clause. One Entity has one
-//! location, so the corpus uses the `[-8.5, 41.2]` the first example prints and
-//! the repair is recorded in `docs/annex-c-corpus.md`.
+//! location, so the corpus uses the `[-8.5, 41.2]` the first example prints.
 
 use crate::{
     clean_tenant,

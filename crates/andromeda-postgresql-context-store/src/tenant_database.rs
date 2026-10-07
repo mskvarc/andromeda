@@ -97,7 +97,6 @@ pub fn generate_database_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -
 /// specification defines, and pinning it here would hide an omitted column
 /// declaration on databases Andromeda creates while leaving it live on every
 /// database an operator, a managed service or a restore provisions.
-/// `docs/text-collation-invariant.md` states the invariant and its inventory.
 ///
 /// `synchronous_commit_setting` is installed on the freshly created database
 /// with `ALTER DATABASE ... SET` so every session the request path later opens
@@ -148,8 +147,8 @@ const CREATE_DATABASE_BACKOFF: Duration = Duration::from_millis(250);
 /// one whose template is being read by a concurrent create with SQLSTATE 55006
 /// (`object_in_use`, "source database ... is being accessed by other users"); a
 /// deadlock (40P01), a serialization failure (40001) or momentary connection
-/// exhaustion (53300) is likewise transient. A fresh broker that materialises a
-/// tenant database per `--isolate-tenants` suite meets this contention in bursts,
+/// exhaustion (53300) is likewise transient. A broker that materialises many
+/// tenant databases at once meets this contention in bursts,
 /// which otherwise surfaces to the client as a 500 on the first request in the
 /// new tenant. A create that lost the race to a concurrent create of the same
 /// name (42P04) finds its database already made, which is success.

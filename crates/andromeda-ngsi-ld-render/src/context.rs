@@ -6,11 +6,7 @@
 //! carrier applies is decided by the media type and, for `GeoJSON`, by the
 //! `Prefer: body=` token; a partial-success body carries no context at all.
 //!
-//! Neither decision is made here. Which contexts apply depends on what the
-//! request carried, on the core context clause 5.2.3 adds to it and on what the
-//! broker holds of the documents the request named; which carrier applies is
-//! the HTTP binding's. The caller settles both and hands the answer down as a
-//! [`ResponseContext`], so the renderer writes exactly what it is given.
+//! Neither decision is made here: the caller settles which contexts apply and which carrier is used, and hands the answer down as a [`ResponseContext`], so the renderer writes exactly what it is given.
 
 use andromeda_json_literal::JsonLiteral;
 use iri_rs::IriBuf;

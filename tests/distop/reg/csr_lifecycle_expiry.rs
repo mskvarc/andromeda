@@ -24,7 +24,7 @@ const EXPIRY_LEAD_SECONDS: i64 = 3;
 const EXPIRY_WAIT: Duration = Duration::from_secs(10);
 
 /// A registration created without `expiresAt` persists indefinitely: it is stored
-/// with no expiry and stays retrievable (clause 5.9.2.4). Confirms REQ-REG-59.
+/// with no expiry and stays retrievable (clause 5.9.2.4).
 #[tokio::test]
 async fn reg_without_expiresat_persists_indefinitely() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -57,7 +57,6 @@ async fn reg_without_expiresat_persists_indefinitely() {
 }
 
 /// A registration whose `expiresAt` is in the past is rejected (clause 5.9.2.4).
-/// Confirms REQ-REG-60.
 #[tokio::test]
 async fn reg_past_expiresat_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -82,7 +81,7 @@ async fn reg_past_expiresat_returns_400() {
 /// is reached (clause 5.9.2.4: "If expiresAt is a date and time in the future,
 /// implementations shall delete the Registration when this point in time is
 /// reached"). The expiry is a few seconds ahead and the wait spans one full
-/// sweeper cadence past it. Confirms REQ-REG-61.
+/// sweeper cadence past it.
 #[tokio::test]
 async fn reg_future_expiresat_auto_deleted_when_reached() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -123,7 +122,7 @@ async fn reg_future_expiresat_auto_deleted_when_reached() {
 }
 
 /// Creating a second registration with an id that already exists is an
-/// `AlreadyExists` conflict (clause 5.9.2.2). Confirms REQ-REG-62.
+/// `AlreadyExists` conflict (clause 5.9.2.2).
 #[tokio::test]
 async fn reg_duplicate_id_returns_409_alreadyexists() {
     let topology = topology::single().await.expect("single-broker topology");

@@ -3,8 +3,8 @@
 //! Under `commit-synchronous` consistency the index is updated on the commit
 //! path, before the write that changed an entity's location returns. The
 //! update is made here, around the commit port every current-state write goes
-//! through -- entity, batch, purge and expiry writes as much as the placeholder
-//! a temporal write creates -- rather than at each of their call sites, so no
+//! through, entity, batch, purge and expiry writes as much as the placeholder
+//! a temporal write creates, rather than at each of their call sites, so no
 //! write path can be left out.
 //!
 //! Three properties keep the index from ever missing an entity the store holds:

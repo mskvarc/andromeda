@@ -18,27 +18,23 @@
 //! change by providing the Context Source Registration(s) together with the
 //! appropriate trigger reason in the triggerReason member". Clause 5.3.2's
 //! `triggerReason` is what reports the change; no notification trigger selects
-//! one. Defaulting the member there asserted a selection the operation does not
-//! make.
+//! one. Defaulting the member there would assert a selection the operation does
+//! not make.
 //!
-//! The broker materialised the default at creation, for both kinds. It is now
-//! stored as written and supplied where clause 5.2.12 defines it, which is the
-//! Subscription of clause 5.8 -- so an entity subscription still reads back the
-//! default the table names.
+//! The default is stored as written and supplied where clause 5.2.12 defines it,
+//! which is the Subscription of clause 5.8 -- so an entity subscription still
+//! reads back the default the table names.
 //!
-//! The same resource also hid a second member. Clause 5.8.1.4, which clause
+//! The same resource also carries a second member. Clause 5.8.1.4, which clause
 //! 5.11.2.4 adopts, requires that "the @context to be used for sending
 //! Notifications related to this Subscription shall be the one specified in
 //! the jsonldContext field. If not present, the jsonldContext field shall be
 //! initialized with the @context applicable for the Subscription". Andromeda
-//! initialised and stored it -- a context source notification compacts its
-//! registrations under it -- but the renderer removed it from every context
-//! source subscription representation as an internal member. Clause 5.11.2.3
-//! takes the Subscription data type of clause 5.2.12 unchanged, Table 5.2.12-1
-//! defines the member on it, and clause 5.11.4.5 returns "the subscription
-//! details as mandated by clause 5.2.12", so it is served now.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! initialises and stores it -- a context source notification compacts its
+//! registrations under it -- and serves it in every context source subscription
+//! representation. Clause 5.11.2.3 takes the Subscription data type of clause
+//! 5.2.12 unchanged, Table 5.2.12-1 defines the member on it, and clause
+//! 5.11.4.5 returns "the subscription details as mandated by clause 5.2.12".
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

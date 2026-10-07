@@ -3,16 +3,13 @@
 //! Tables 4.5.19.1-1, 4.5.19.1-2 and 4.5.19.1-3 of ETSI GS CIM 009 v1.9.1 fix
 //! one column per value datatype and one row per method, and clause 5.7.4.4
 //! makes a request naming a method its column marks N/A an `InvalidRequest`.
-//! Two columns were implemented as though they were a neighbouring column: a
-//! JSON Array was folded into the JSON Object beside it, losing the four
-//! methods the table defines over array sizes, and a `Time` was folded into the
-//! `DateTime` beside it, losing the `avg` the table defines over times of day.
+//! Two columns are not a neighbouring column: a JSON Array is not folded into
+//! the JSON Object beside it, which would lose the four methods the table
+//! defines over array sizes, and a `Time` is not folded into the `DateTime`
+//! beside it, which would lose the `avg` the table defines over times of day.
 //!
 //! Every test names the table and the column it transcribes, and asserts the
-//! value that table requires rather than the value the broker produced when the
-//! defect was found.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! value that table requires.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -125,8 +122,8 @@ async fn assert_answered(client: &TestClient, id: &str, attribute: &str, method:
 
 /// Table 4.5.19.1-1, "JSON Array" column, `avg` row: "Calculate the average
 /// number of the sizes of the arrays inside the period". Arrays of two and of
-/// four elements average to three. The defect folded a JSON Array into the JSON
-/// Object column, whose `avg` cell is N/A, so this was refused outright.
+/// four elements average to three. The JSON Object column's `avg` cell is N/A,
+/// so a JSON Array must not be folded into it.
 #[tokio::test]
 async fn regression_table_4_5_19_1_1_avg_over_json_arrays_is_the_average_array_size() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -186,8 +183,8 @@ async fn regression_table_4_5_19_1_1_min_max_and_sum_over_json_arrays_measure_ar
 
 /// Table 4.5.19.1-1, "JSON Array" column, `stddev` and `sumsq` rows: both are
 /// N/A, so clause 5.7.4.4 makes a request naming either an `InvalidRequest`.
-/// They are the only two of the eight the array column refuses, which is what
-/// separates it from the JSON Object column it was folded into.
+/// They are the only two of the eight the array column refuses, which separates
+/// it from the JSON Object column.
 #[tokio::test]
 async fn regression_table_4_5_19_1_1_stddev_and_sumsq_over_json_arrays_are_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -213,9 +210,8 @@ async fn regression_table_4_5_19_1_1_stddev_and_sumsq_over_json_arrays_are_refus
 
 /// Table 4.5.19.1-2, "Time" column, `avg` row: "Calculate the average time
 /// inside the period", the clause's own example being the time a car enters a
-/// parking. Entries at 08:00 and 10:00 UTC average to 09:00 UTC. The defect had
-/// no `Time` value shape at all, so a `Time` was aggregated as the `DateTime`
-/// beside it, whose `avg` cell is N/A.
+/// parking. Entries at 08:00 and 10:00 UTC average to 09:00 UTC. A `Time` is not
+/// aggregated as the `DateTime` beside it, whose `avg` cell is N/A.
 #[tokio::test]
 async fn regression_table_4_5_19_1_2_avg_over_a_time_property_is_the_average_time_of_day() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -248,8 +244,8 @@ async fn regression_table_4_5_19_1_2_avg_over_a_time_property_is_the_average_tim
 
 /// Table 4.5.19.1-2, "Date" and "`DateTime`" columns, `avg` row: both are N/A,
 /// unlike the "Time" column between them. Averaging a calendar day or an
-/// instant is not defined, and the broker must refuse both even now that it
-/// averages a time of day.
+/// instant is not defined, and the broker must refuse both although it averages
+/// a time of day.
 #[tokio::test]
 async fn regression_table_4_5_19_1_2_avg_over_a_date_or_a_date_time_property_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -397,8 +393,8 @@ async fn regression_table_4_5_19_1_3_a_relationship_admits_only_the_counting_met
 
 /// Table 4.5.19.1-1, "JSON Object" column: every method but the two counting
 /// ones is N/A, which is exactly what the JSON Array column beside it is not.
-/// The two columns share one storage representation, so this is what proves the
-/// array fix widened the array column alone.
+/// The two columns share one storage representation, so this proves only the
+/// array column admits the array methods.
 #[tokio::test]
 async fn regression_table_4_5_19_1_1_a_json_object_still_admits_counting_alone() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -427,9 +423,8 @@ async fn regression_table_4_5_19_1_1_a_json_object_still_admits_counting_alone()
 
 /// Table 4.5.19.1-1, "JSON String" column: `min` and `max` are the first and
 /// last value in lexicographical order and the arithmetic methods are N/A. A
-/// string is stored in the same column as a `Time` and a `Date`, so this is
-/// what proves the temporal refinement did not hand a plain string the `avg`
-/// the `Time` column defines.
+/// string is stored in the same column as a `Time` and a `Date`, so it must not
+/// get the `avg` the `Time` column defines.
 #[tokio::test]
 async fn regression_table_4_5_19_1_1_a_json_string_admits_ordering_but_no_arithmetic() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

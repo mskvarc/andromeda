@@ -26,12 +26,9 @@ use uuid::Uuid;
 
 /// Claim an ordered bounded batch of eligible intents for `owner`.
 ///
-/// The original data-modifying CTE (`WITH eligible AS (SELECT … FOR UPDATE SKIP
-/// LOCKED) UPDATE … RETURNING`) is rebuilt as one `UPDATE` whose `WHERE intent_key
-/// IN (SELECT … FOR UPDATE SKIP LOCKED)` both selects and claims the batch
-/// atomically. When `entity_id` is given, only that entity's intents are
-/// eligible; the original expressed this with a `$4 IS NULL OR entity_id = $4`
-/// guard, which is here simply an absent predicate.
+/// One `UPDATE` whose `WHERE intent_key IN (SELECT … FOR UPDATE SKIP LOCKED)`
+/// both selects and claims the batch atomically. When `entity_id` is given,
+/// only that entity's intents are eligible; otherwise the predicate is absent.
 pub(super) fn claim_statement(owner: LeaseHolder, entity_id: Option<&str>, limit: u32, lease_until: DateTime<Utc>) -> UpdateStatement {
     let mut eligible = Query::select();
     eligible

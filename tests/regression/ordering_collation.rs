@@ -6,10 +6,7 @@
 //! present and the execution of the operation is not limited to the local scope
 //! (see clause 5.5.13) then an error of type `BadRequestData` shall be raised";
 //! that condition is decided by whether a registered Context Source takes part
-//! in the answer, which `tests/regression/ordering_local_scope.rs` covers and
-//! `docs/entity-ordering-local-scope.md` records.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! in the answer.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -296,11 +293,11 @@ async fn regression_ordering_mixed_datatypes_follow_the_clause_4_23_2_comparison
 /// clause 4.8 NOTE 3 confirms it stays an ordinary Property — so the value's own
 /// lexical form is the only thing that says which data type it has.
 ///
-/// The write projection and the clause 4.9 `q` compiler both read it that way.
-/// The ordering read the JSON-LD `@type` alone, so the same value was a
-/// `DateTime` to a filter and a String to the sort, and the entity landed in the
-/// wrong clause 4.23.2 bucket: it ranked among the Strings and ordered against
-/// them by collated text.
+/// The write projection, the clause 4.9 `q` compiler and the ordering all read
+/// it that way. Reading the JSON-LD `@type` alone would make the same value a
+/// `DateTime` to a filter and a String to the sort, in the wrong clause 4.23.2
+/// bucket: it would rank among the Strings and order against them by collated
+/// text.
 #[tokio::test]
 async fn regression_ordering_an_undeclared_time_value_ranks_by_its_clause_4_6_3_form() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

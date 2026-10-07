@@ -1,4 +1,4 @@
-//! Delete and Reload @context (clause 5.13.5, binding 6.30.3.2; ETSI 051).
+//! Delete and Reload @context (clause 5.13.5, binding 6.30.3.2).
 
 use crate::{
     context_api::{
@@ -17,7 +17,7 @@ use crate::{
 };
 use reqwest::StatusCode;
 
-/// `051_01_01`: a Hosted @context is deleted with 204 and no body.
+/// A Hosted @context is deleted with 204 and no body.
 #[tokio::test]
 async fn delete_hosted_context_returns_204() {
     let tenant = PrivateTenant::provisioned().await;
@@ -32,7 +32,7 @@ async fn delete_hosted_context_returns_204() {
     tenant.finish().await;
 }
 
-/// `051_02_01`: an unknown identifier is `ResourceNotFound`.
+/// An unknown identifier is `ResourceNotFound`.
 #[tokio::test]
 async fn delete_unknown_context_returns_404() {
     let tenant = PrivateTenant::provisioned().await;
@@ -44,7 +44,7 @@ async fn delete_unknown_context_returns_404() {
     tenant.finish().await;
 }
 
-/// `051_04_01`: clause 5.13.5.4 settles "does not correspond to any existing
+/// Clause 5.13.5.4 settles "does not correspond to any existing
 /// entry" (`ResourceNotFound`) before either reload rule, so an unknown
 /// identifier with `reload=true` is a 404, not a kind mismatch.
 #[tokio::test]
@@ -58,7 +58,7 @@ async fn delete_unknown_with_reload_true_returns_404() {
     tenant.finish().await;
 }
 
-/// `051_04_02` and `051_04_03`: an unknown identifier is a 404 with
+/// An unknown identifier is a 404 with
 /// `reload=false` and without `reload`.
 #[tokio::test]
 async fn delete_unknown_with_reload_false_or_absent_returns_404() {
@@ -71,7 +71,7 @@ async fn delete_unknown_with_reload_false_or_absent_returns_404() {
     tenant.finish().await;
 }
 
-/// `051_04_04`: a `reload` value that is not a boolean is refused.
+/// A `reload` value that is not a boolean is refused.
 #[tokio::test]
 async fn delete_unknown_with_reload_invalid_returns_400() {
     let tenant = PrivateTenant::provisioned().await;
@@ -82,7 +82,7 @@ async fn delete_unknown_with_reload_invalid_returns_400() {
     tenant.finish().await;
 }
 
-/// `051_04_05`: clause 5.13.5.4 refuses reloading anything but a Cached entry
+/// Clause 5.13.5.4 refuses reloading anything but a Cached entry
 /// as `BadRequestData`.
 #[tokio::test]
 async fn delete_hosted_with_reload_true_returns_400() {
@@ -96,7 +96,7 @@ async fn delete_hosted_with_reload_true_returns_400() {
     tenant.finish().await;
 }
 
-/// `051_06_01`: an `ImplicitlyCreated` @context is deleted with 204.
+/// An `ImplicitlyCreated` @context is deleted with 204.
 #[tokio::test]
 async fn delete_implicitly_created_context_returns_204() {
     let tenant = PrivateTenant::provisioned().await;
@@ -109,7 +109,7 @@ async fn delete_implicitly_created_context_returns_204() {
     tenant.finish().await;
 }
 
-/// `051_07_01`: an `ImplicitlyCreated` @context is not Cached, so reloading it
+/// An `ImplicitlyCreated` @context is not Cached, so reloading it
 /// is `BadRequestData`.
 #[tokio::test]
 async fn delete_implicitly_created_with_reload_returns_400() {
@@ -124,7 +124,7 @@ async fn delete_implicitly_created_with_reload_returns_400() {
     tenant.finish().await;
 }
 
-/// `051_08_01` and `051_08_02`: the embedded core @context cannot be deleted.
+/// The embedded core @context cannot be deleted.
 #[tokio::test]
 async fn delete_core_context_without_reload_returns_400() {
     let tenant = PrivateTenant::provisioned().await;
@@ -137,7 +137,7 @@ async fn delete_core_context_without_reload_returns_400() {
     tenant.finish().await;
 }
 
-/// `051_09_01`: the embedded core @context is listed `ImplicitlyCreated`
+/// The embedded core @context is listed `ImplicitlyCreated`
 /// (clause 5.13.1) and has no URL to re-download from, so reloading it is
 /// `BadRequestData` and it stays served.
 #[tokio::test]
@@ -155,7 +155,7 @@ async fn delete_and_reload_core_context_returns_400() {
     tenant.finish().await;
 }
 
-/// `051_03_01`: a Cached @context is deleted with 204 and no body.
+/// A Cached @context is deleted with 204 and no body.
 #[tokio::test]
 async fn delete_cached_context_returns_204() {
     let tenant = PrivateTenant::provisioned().await;
@@ -170,7 +170,7 @@ async fn delete_cached_context_returns_204() {
     tenant.finish().await;
 }
 
-/// `051_05_01`: reloading a Cached @context whose origin is gone is
+/// Reloading a Cached @context whose origin is gone is
 /// `LdContextNotAvailable` (clause 5.13.5.4), and the entry stays.
 #[tokio::test]
 async fn delete_cached_reload_server_unavailable_returns_504() {

@@ -1,6 +1,4 @@
-//! Response-code matrix for attribute delete, attribute replace and batch merge
-//! (clause 6.3.16, 6.7, 6.20): local `204`, forwarded partial-failure `207`,
-//! invalid `400`, and absent `404`.
+//! Response-code matrix for attribute delete, attribute replace and batch merge (clause 6.3.16, 6.7, 6.20): local `204`, forwarded partial-failure `207`, invalid `400`, and absent `404`.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -13,7 +11,7 @@ use andromeda_test_client::entity_attribute::DatasetSelection;
 use reqwest::Method;
 use serde_json::json;
 
-/// A local attribute delete returns `204` (clause 6.7.3.2). Confirms REQ-HTTP-77.
+/// A local attribute delete returns `204` (clause 6.7.3.2).
 #[tokio::test]
 async fn dist_http_delete_attr_local_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -42,8 +40,7 @@ async fn dist_http_delete_attr_local_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An attribute delete where a forwarded endpoint fails is a partial failure,
-/// mapped to `207` (clause 6.3.16). Confirms REQ-HTTP-77.
+/// An attribute delete where a forwarded endpoint fails is a partial failure, mapped to `207` (clause 6.3.16).
 #[tokio::test]
 async fn dist_http_delete_attr_partial_failure_returns_207_update_result() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -88,8 +85,7 @@ async fn dist_http_delete_attr_partial_failure_returns_207_update_result() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An invalid entity id on attribute delete is rejected with `400`
-/// (clause 6.7.3.2). Confirms REQ-HTTP-77.
+/// An invalid entity id on attribute delete is rejected with `400` (clause 6.7.3.2).
 #[tokio::test]
 async fn dist_http_delete_attr_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -104,7 +100,7 @@ async fn dist_http_delete_attr_invalid_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Deleting an absent attribute returns `404` (clause 6.7.3.2). Confirms REQ-HTTP-77.
+/// Deleting an absent attribute returns `404` (clause 6.7.3.2).
 #[tokio::test]
 async fn dist_http_delete_attr_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -133,7 +129,7 @@ async fn dist_http_delete_attr_absent_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A local attribute replace returns `204` (clause 6.7.3.3). Confirms REQ-HTTP-78.
+/// A local attribute replace returns `204` (clause 6.7.3.3).
 #[tokio::test]
 async fn dist_http_replace_attr_local_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -165,9 +161,7 @@ async fn dist_http_replace_attr_local_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An attribute replace where a forwarded endpoint fails is a partial failure,
-/// mapped to `207` (clause 6.3.16). The registration advertises `replaceAttrs`,
-/// the Table 4.20-1 name of 5.6.19 Replace Attribute. Confirms REQ-HTTP-78.
+/// An attribute replace where a forwarded endpoint fails is a partial failure, mapped to `207` (clause 6.3.16). The registration advertises `replaceAttrs`, the Table 4.20-1 name of 5.6.19 Replace Attribute.
 #[tokio::test]
 async fn dist_http_replace_attr_partial_failure_returns_207_update_result() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -215,8 +209,7 @@ async fn dist_http_replace_attr_partial_failure_returns_207_update_result() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An attribute replace with an invalid body is rejected with `400`
-/// (clause 6.7.3.3). Confirms REQ-HTTP-78.
+/// An attribute replace with an invalid body is rejected with `400` (clause 6.7.3.3).
 #[tokio::test]
 async fn dist_http_replace_attr_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -248,7 +241,7 @@ async fn dist_http_replace_attr_invalid_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Replacing an absent attribute returns `404` (clause 6.7.3.3). Confirms REQ-HTTP-78.
+/// Replacing an absent attribute returns `404` (clause 6.7.3.3).
 #[tokio::test]
 async fn dist_http_replace_attr_absent_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -280,7 +273,7 @@ async fn dist_http_replace_attr_absent_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A local batch merge returns `204` (clause 6.20.3.1). Confirms REQ-HTTP-92.
+/// A local batch merge returns `204` (clause 6.20.3.1).
 #[tokio::test]
 async fn dist_http_batch_merge_local_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -310,11 +303,7 @@ async fn dist_http_batch_merge_local_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A batch merge where a forwarded endpoint fails is a partial failure, mapped to
-/// `207` with a `BatchOperationResult` (clause 6.3.16). The registration
-/// advertises `mergeBatch` (Table 4.20-1, 5.6.20), so the batch itself is
-/// forwarded to `POST /entityOperations/merge` (clause 5.6.20.4). Confirms
-/// REQ-HTTP-92.
+/// A batch merge where a forwarded endpoint fails is a partial failure, mapped to `207` with a `BatchOperationResult` (clause 6.3.16). The registration advertises `mergeBatch` (Table 4.20-1, 5.6.20), so the batch itself is forwarded to `POST /entityOperations/merge` (clause 5.6.20.4).
 #[tokio::test]
 async fn dist_http_batch_merge_partial_failure_returns_207_batch_result() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -361,7 +350,6 @@ async fn dist_http_batch_merge_partial_failure_returns_207_batch_result() {
 }
 
 /// A batch merge with an invalid body is rejected with `400` (clause 6.20.3.1).
-/// Confirms REQ-HTTP-92.
 #[tokio::test]
 async fn dist_http_batch_merge_invalid_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");

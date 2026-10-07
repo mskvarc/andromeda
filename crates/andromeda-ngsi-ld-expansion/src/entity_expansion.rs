@@ -1,5 +1,5 @@
 //! Expanding a write request: the typed walk first, the JSON-LD processor for
-//! what the walk declines (design section 4.2).
+//! what the walk declines.
 //!
 //! Both paths read the request under the same processed context and end in
 //! the same assembly; the processor starts from that context rather than

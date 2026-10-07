@@ -1,6 +1,4 @@
-//! Response-code matrix for entity retrieve and delete (clause 6.3.16, 6.4.3.2,
-//! 6.4.3.3): the invalid-id `400`, unknown `404`, single-source `501`, local
-//! `204`, and forwarded partial-failure `207` outcomes.
+//! Response-code matrix for entity retrieve and delete (clause 6.3.16, 6.4.3.2, 6.4.3.3): the invalid-id `400`, unknown `404`, single-source `501`, local `204`, and forwarded partial-failure `207` outcomes.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -12,7 +10,6 @@ use crate::{
 use reqwest::Method;
 
 /// An invalid entity id on retrieve is rejected with `400` (clause 6.4.3.2).
-/// Confirms REQ-HTTP-68.
 #[tokio::test]
 async fn dist_http_retrieve_entity_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -27,7 +24,7 @@ async fn dist_http_retrieve_entity_invalid_id_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An unknown entity on retrieve returns `404` (clause 6.4.3.2). Confirms REQ-HTTP-68.
+/// An unknown entity on retrieve returns `404` (clause 6.4.3.2).
 #[tokio::test]
 async fn dist_http_retrieve_entity_unknown_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -43,8 +40,7 @@ async fn dist_http_retrieve_entity_unknown_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A retrieve resolving to a single source that cannot serve the representation
-/// maps to `501` (clause 6.3.16). Confirms REQ-HTTP-68.
+/// A retrieve resolving to a single source that cannot serve the representation maps to `501` (clause 6.3.16).
 #[tokio::test]
 async fn dist_http_retrieve_entity_source_unsupported_format_returns_501() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -77,7 +73,7 @@ async fn dist_http_retrieve_entity_source_unsupported_format_returns_501() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A local delete returns `204` (clause 6.4.3.3). Confirms REQ-HTTP-69.
+/// A local delete returns `204` (clause 6.4.3.3).
 #[tokio::test]
 async fn dist_http_delete_entity_local_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -106,8 +102,7 @@ async fn dist_http_delete_entity_local_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A delete where a forwarded endpoint fails is a partial failure, mapped to
-/// `207` (clause 6.3.16). Confirms REQ-HTTP-69.
+/// A delete where a forwarded endpoint fails is a partial failure, mapped to `207` (clause 6.3.16).
 #[tokio::test]
 async fn dist_http_delete_entity_partial_failure_returns_207_batch_result() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -153,7 +148,6 @@ async fn dist_http_delete_entity_partial_failure_returns_207_batch_result() {
 }
 
 /// An invalid entity id on delete is rejected with `400` (clause 6.4.3.3).
-/// Confirms REQ-HTTP-69.
 #[tokio::test]
 async fn dist_http_delete_entity_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -168,7 +162,7 @@ async fn dist_http_delete_entity_invalid_id_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An unknown entity on delete returns `404` (clause 6.4.3.3). Confirms REQ-HTTP-69.
+/// An unknown entity on delete returns `404` (clause 6.4.3.3).
 #[tokio::test]
 async fn dist_http_delete_entity_unknown_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");

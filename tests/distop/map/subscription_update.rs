@@ -47,7 +47,7 @@ async fn stored(topology: &MultiBrokerTopology<BrokerRole>, id: &str) -> Value {
 }
 
 /// Updating an invalid subscription id is rejected `400 BadRequestData`
-/// (clause 5.8.1). Confirms REQ-MAP-37.
+/// (clause 5.8.1).
 #[tokio::test]
 async fn sub_update_missing_or_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -64,7 +64,7 @@ async fn sub_update_missing_or_invalid_id_returns_400() {
 }
 
 /// Updating an unknown subscription is rejected `404 ResourceNotFound`
-/// (clause 5.8.1). Confirms REQ-MAP-38.
+/// (clause 5.8.1).
 #[tokio::test]
 async fn sub_update_unknown_target_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -82,7 +82,7 @@ async fn sub_update_unknown_target_returns_404() {
 }
 
 /// A well-formed fragment passes JSON-LD validation and updates successfully
-/// (clause 5.8.1). Confirms REQ-MAP-39.
+/// (clause 5.8.1).
 #[tokio::test]
 async fn sub_update_performs_jsonld_validation() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -99,7 +99,7 @@ async fn sub_update_performs_jsonld_validation() {
 }
 
 /// A fragment violating the data model is rejected `400 BadRequestData`
-/// (clause 5.8.1). Confirms REQ-MAP-40.
+/// (clause 5.8.1).
 #[tokio::test]
 async fn sub_update_fragment_violating_data_model_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -120,7 +120,7 @@ async fn sub_update_fragment_violating_data_model_returns_400() {
 /// term is stored as an IRI (clause 5.8.1; term expansion per clause 5.5.7).
 /// The read-back deliberately names no context: under the core context alone
 /// the stored IRI cannot compact back to `speed`, which is what proves it was
-/// expanded on update. Confirms REQ-MAP-41.
+/// expanded on update.
 #[tokio::test]
 async fn sub_update_expands_attribute_terms() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -153,7 +153,7 @@ async fn sub_update_expands_attribute_terms() {
 
 /// An unreachable `@context` in an update is rejected `LdContextNotAvailable`,
 /// which the HTTP binding maps to `504` (clause 5.8.1; Table 6.3.2-1 maps
-/// `LdContextNotAvailable` to 504). Confirms REQ-MAP-42.
+/// `LdContextNotAvailable` to 504).
 #[tokio::test]
 async fn sub_update_unreachable_jsonld_context_returns_504() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -175,7 +175,7 @@ async fn sub_update_unreachable_jsonld_context_returns_504() {
 }
 
 /// A structurally invalid `@context` in an update is rejected `400 BadRequestData`
-/// (clause 5.8.1). Confirms REQ-MAP-43.
+/// (clause 5.8.1).
 #[tokio::test]
 async fn sub_update_invalid_jsonld_context_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -197,7 +197,6 @@ async fn sub_update_invalid_jsonld_context_returns_400() {
 }
 
 /// A partial update merges: an unmentioned member survives (clause 5.5.8).
-/// Confirms REQ-MAP-44.
 #[tokio::test]
 async fn sub_update_partial_merge_per_558() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -228,7 +227,6 @@ async fn sub_update_partial_merge_per_558() {
 }
 
 /// `isActive` true with no `expiresAt` yields `status` `active` (clause 5.2.12).
-/// Confirms REQ-MAP-45.
 #[tokio::test]
 async fn sub_update_is_active_true_no_expires_at_status_active_unless_expired() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -262,7 +260,7 @@ async fn sub_update_is_active_true_no_expires_at_status_active_unless_expired() 
 }
 
 /// `isActive` true with a future `expiresAt` yields `status` `active`
-/// (clause 5.2.12). Confirms REQ-MAP-46.
+/// (clause 5.2.12).
 #[tokio::test]
 async fn sub_update_is_active_true_future_expires_at_status_active() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -284,7 +282,6 @@ async fn sub_update_is_active_true_future_expires_at_status_active() {
 }
 
 /// `isActive` false with no `expiresAt` yields `status` `paused` (clause 5.2.12).
-/// Confirms REQ-MAP-47.
 #[tokio::test]
 async fn sub_update_is_active_false_no_expires_at_status_paused_unless_expired() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -306,7 +303,7 @@ async fn sub_update_is_active_false_no_expires_at_status_paused_unless_expired()
 }
 
 /// Setting a future `expiresAt` on an already-active subscription keeps it
-/// active (clause 5.2.12). Confirms REQ-MAP-48.
+/// active (clause 5.2.12).
 #[tokio::test]
 async fn sub_update_future_expires_at_only_reactivates_expired() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -328,7 +325,7 @@ async fn sub_update_future_expires_at_only_reactivates_expired() {
 }
 
 /// A past `expiresAt` in an update is rejected `400 BadRequestData`
-/// (clause 5.8.1). Confirms REQ-MAP-49.
+/// (clause 5.8.1).
 #[tokio::test]
 async fn sub_update_past_expires_at_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -345,7 +342,7 @@ async fn sub_update_past_expires_at_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A successful update returns `204 No Content` (clause 5.8.1). Confirms REQ-MAP-51.
+/// A successful update returns `204 No Content` (clause 5.8.1).
 #[tokio::test]
 async fn sub_update_success_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -362,7 +359,7 @@ async fn sub_update_success_returns_204() {
 }
 
 /// Deleting an invalid subscription id is rejected `400 BadRequestData`
-/// (clause 5.8.1). Confirms REQ-MAP-52.
+/// (clause 5.8.1).
 #[tokio::test]
 async fn sub_delete_missing_or_invalid_id_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -379,7 +376,7 @@ async fn sub_delete_missing_or_invalid_id_returns_400() {
 }
 
 /// Deleting an unknown subscription is rejected `404 ResourceNotFound`
-/// (clause 5.8.1). Confirms REQ-MAP-53.
+/// (clause 5.8.1).
 #[tokio::test]
 async fn sub_delete_unknown_id_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -396,7 +393,7 @@ async fn sub_delete_unknown_id_returns_404() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A successful delete returns `204 No Content` (clause 5.8.1). Confirms REQ-MAP-57.
+/// A successful delete returns `204 No Content` (clause 5.8.1).
 #[tokio::test]
 async fn sub_delete_success_returns_204() {
     let topology = topology::single().await.expect("single-broker topology");

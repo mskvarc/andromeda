@@ -34,10 +34,6 @@ use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 
-// ---------------------------------------------------------------------------
-// Basic retrieve
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_retrieve_basic_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -50,8 +46,7 @@ async fn temporal_retrieve_basic_success() {
 
     // Retrieve under the creation context so its terms compact: a retrieval that
     // carries no @context is rendered against the core context alone (clause
-    // 5.5.7), which does not declare Vehicle/speed and leaves them full IRIs --
-    // the no-context path is covered by tests/regression/temporal_retrieve_term_expansion.rs.
+    // 5.5.7), which does not declare Vehicle/speed and leaves them full IRIs.
     let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK, "retrieve should return 200");
     assert_eq!(body["id"], id);
@@ -77,10 +72,6 @@ async fn temporal_retrieve_with_context_success() {
     assert!(body.get("speed").is_some());
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Retrieve specific attributes
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_retrieve_attrs_fuel_level_success() {
@@ -116,10 +107,6 @@ async fn temporal_retrieve_attrs_multiple_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Temporal queries (timerel)
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_retrieve_timerel_after_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -140,7 +127,6 @@ async fn temporal_retrieve_timerel_after_success() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    // Should only return instances after 13:03:00
     if let Some(fuel_arr) = body.get("fuelLevel").and_then(|v| v.as_array()) {
         for instance in fuel_arr {
             let ts = instance.get("observedAt").and_then(|v| v.as_str()).unwrap_or("");
@@ -170,7 +156,6 @@ async fn temporal_retrieve_timerel_before_success() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    // Should only return instances before 12:05:00
     if let Some(speed_arr) = body.get("speed").and_then(|v| v.as_array()) {
         for instance in speed_arr {
             let ts = instance.get("observedAt").and_then(|v| v.as_str()).unwrap_or("9999");
@@ -200,7 +185,6 @@ async fn temporal_retrieve_timerel_between_success() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    // Should only return instances between the time range
     if let Some(speed_arr) = body.get("speed").and_then(|v| v.as_array()) {
         for instance in speed_arr {
             let ts = instance.get("observedAt").and_then(|v| v.as_str()).unwrap_or("");
@@ -209,10 +193,6 @@ async fn temporal_retrieve_timerel_between_success() {
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// lastN parameter
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_retrieve_last_n_4_success() {
@@ -227,7 +207,6 @@ async fn temporal_retrieve_last_n_4_success() {
     let (status, body, _) = get_temporal_entity(&c, &id, "lastN=4", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    // lastN=4 should return at most 4 instances per attribute
     if let Some(speed_arr) = body.get("speed").and_then(|v| v.as_array()) {
         assert!(speed_arr.len() <= 4, "speed should have at most 4 instances with lastN=4");
     }
@@ -255,10 +234,6 @@ async fn temporal_retrieve_last_n_7_success() {
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Error cases
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_retrieve_invalid_id_returns_400() {
@@ -346,10 +321,6 @@ async fn temporal_retrieve_between_missing_endtimeat_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Simplified temporal representation (temporalValues)
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_retrieve_temporal_values_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -363,16 +334,11 @@ async fn temporal_retrieve_temporal_values_success() {
     let (status, body, _) = get_temporal_entity(&c, &id, "options=temporalValues", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    // In temporalValues format, attributes have a "values" array of [value, timestamp] pairs
     if let Some(speed) = body.get("speed") {
         assert!(speed.get("values").is_some(), "speed should have values array in temporalValues format");
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Aggregated values
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_retrieve_aggregated_avg_pt1h_success() {
@@ -467,10 +433,6 @@ async fn temporal_retrieve_aggregated_min_max_p1d_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// LanguageProperty representation
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_retrieve_language_property_normalized_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -484,7 +446,6 @@ async fn temporal_retrieve_language_property_normalized_success() {
     let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    // Check LanguageProperty structure
     if let Some(name_arr) = body.get("name").and_then(|v| v.as_array()) {
         assert!(!name_arr.is_empty(), "the retrieved LanguageProperty must carry at least one instance");
         let first = &name_arr[0];
@@ -507,16 +468,11 @@ async fn temporal_retrieve_language_property_simplified_success() {
     let (status, body, _) = get_temporal_entity(&c, &id, "options=temporalValues", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    // In temporalValues, LanguageProperty uses languageMaps array
     if let Some(name) = body.get("name") {
         assert!(name.get("languageMaps").is_some() || name.get("values").is_some());
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Pagination
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_retrieve_pagination_basic_returns_206() {
@@ -638,10 +594,6 @@ async fn temporal_retrieve_pagination_temporal_values_after_returns_206() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// JsonProperty representation
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_retrieve_json_property_normalized_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
@@ -677,16 +629,11 @@ async fn temporal_retrieve_json_property_simplified_success() {
     let (status, body, _) = get_temporal_entity(&c, &id, "options=temporalValues", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    // In temporalValues, JsonProperty uses jsons array
     if let Some(config) = body.get("config") {
         assert!(config.get("jsons").is_some() || config.get("values").is_some());
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// VocabProperty representation
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_retrieve_vocab_property_normalized_success() {
@@ -723,16 +670,11 @@ async fn temporal_retrieve_vocab_property_simplified_success() {
     let (status, body, _) = get_temporal_entity(&c, &id, "options=temporalValues", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    // In temporalValues, VocabProperty uses vocabs array
     if let Some(cat) = body.get("category") {
         assert!(cat.get("vocabs").is_some() || cat.get("values").is_some());
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// DeletedAt temporal property
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_retrieve_deleted_at_property_success() {
@@ -744,15 +686,12 @@ async fn temporal_retrieve_deleted_at_property_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Delete the fuelLevel attribute
     let del_status = delete_entity_attr(&c, &id, "fuelLevel", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(del_status, StatusCode::NO_CONTENT);
 
-    // Retrieve with timeproperty=deletedAt
     let (status, body, _) = get_temporal_entity(&c, &id, "timeproperty=deletedAt", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
-    // fuelLevel should have deletedAt
     if let Some(fuel_arr) = body.get("fuelLevel").and_then(|v| v.as_array())
         && !fuel_arr.is_empty()
     {
@@ -771,11 +710,9 @@ async fn temporal_retrieve_deleted_at_relationship_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Delete the isParkedIn relationship
     let del_status = delete_entity_attr(&c, &id, "isParkedIn", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(del_status, StatusCode::NO_CONTENT);
 
-    // Retrieve with timeproperty=deletedAt
     let (status, body, _) = get_temporal_entity(&c, &id, "timeproperty=deletedAt", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -797,11 +734,9 @@ async fn temporal_retrieve_deleted_at_language_property_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Delete the name LanguageProperty
     let del_status = delete_entity_attr(&c, &id, "name", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(del_status, StatusCode::NO_CONTENT);
 
-    // Retrieve with timeproperty=deletedAt
     let (status, body, _) = get_temporal_entity(&c, &id, "timeproperty=deletedAt", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -812,10 +747,6 @@ async fn temporal_retrieve_deleted_at_language_property_success() {
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// DeletedAt with temporal values
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_retrieve_deleted_at_temporal_values_property_success() {
@@ -840,20 +771,14 @@ async fn temporal_retrieve_deleted_at_temporal_values_property_success() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    // In temporalValues with deletedAt, the simplified array should contain deletion timestamp
     if let Some(fuel) = body.get("fuelLevel")
         && let Some(values) = fuel.get("values").and_then(|v| v.as_array())
         && !values.is_empty()
     {
-        // Second element of first entry should be the deletedAt timestamp
         assert!(values[0].get(1).is_some());
     }
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// DeletedAt on scope
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_retrieve_deleted_at_scope_success() {

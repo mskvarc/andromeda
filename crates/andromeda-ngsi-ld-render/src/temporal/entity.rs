@@ -92,7 +92,7 @@ impl TemporalEntityRenderer<'_> {
     /// An attribute every instance of which lies beyond the cut is still
     /// rendered, with no instance: the stream was read, it merely continues on
     /// the next page, and a client reading the page by attribute finds it
-    /// there (ETSI TP `020_14` and `021_15` read those empty attributes).
+    /// there.
     ///
     /// # Errors
     ///

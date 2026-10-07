@@ -1,15 +1,4 @@
-//! Attribute nodes the specification does not admit, at every depth.
-//!
-//! ETSI GS CIM 009 v1.9.1 clause 4.5.2.3 treats an object carrying a `type` as a
-//! normalized attribute, clause 5.2.4 confines that `type` to eight tokens, and
-//! clause 4.5.2.2 makes a sub-attribute an attribute. The broker held only a
-//! top-level attribute to the eight: a misspelt sub-attribute `type` was stored
-//! as a Property whose value was the misspelt object, and so were a `type` that
-//! is not a string, a geometry type without its coordinates and an object
-//! carrying the value members of two families. Each is refused as
-//! `BadRequestData` (clause 5.5.4).
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 clause 4.5.2.3 treats an object carrying a `type` as a normalized attribute, clause 5.2.4 confines that `type` to eight tokens, and clause 4.5.2.2 makes a sub-attribute an attribute, so the eight-token rule holds at every depth. Each violation is refused as `BadRequestData` (clause 5.5.4).
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -58,9 +47,7 @@ async fn regression_attribute_node_a_misspelt_sub_attribute_type_is_refused() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.5.2.3: an object carrying a `type` is a normalized attribute, so a
-/// sub-attribute naming no attribute type is refused rather than kept as a
-/// value.
+/// Clause 4.5.2.3: an object carrying a `type` is a normalized attribute, so a sub-attribute naming no attribute type is refused rather than kept as a value.
 #[tokio::test]
 async fn regression_attribute_node_a_sub_attribute_naming_no_attribute_type_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -96,8 +83,7 @@ async fn regression_attribute_node_a_misspelt_sub_attribute_type_is_refused_on_a
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Table 5.2.5-1 makes `type` a String; an object whose `type` is anything else
-/// is no attribute and no value.
+/// Table 5.2.5-1 makes `type` a String; an object whose `type` is anything else is no attribute and no value.
 #[tokio::test]
 async fn regression_attribute_node_a_type_that_is_not_a_string_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -112,8 +98,7 @@ async fn regression_attribute_node_a_type_that_is_not_a_string_is_refused() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.7.1 and IETF RFC 7946 section 3.1: a geometry is its type together
-/// with its coordinates.
+/// Clause 4.7.1 and IETF RFC 7946 section 3.1: a geometry is its type together with its coordinates.
 #[tokio::test]
 async fn regression_attribute_node_a_geometry_type_without_coordinates_is_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -122,8 +107,7 @@ async fn regression_attribute_node_a_geometry_type_without_coordinates_is_refuse
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Each value member names one family (clauses 4.5.3.3 and 4.5.18.3), and an
-/// attribute has one.
+/// Each value member names one family (clauses 4.5.3.3 and 4.5.18.3), and an attribute has one.
 #[tokio::test]
 async fn regression_attribute_node_two_value_members_on_one_attribute_are_refused() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

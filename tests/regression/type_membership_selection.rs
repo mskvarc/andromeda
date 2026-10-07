@@ -4,17 +4,13 @@
 //! ETSI GS CIM 009 v1.9.1 clause 4.17 selects an Entity whose types include
 //! the one named ("possibly among others"), `,` selecting any of several and
 //! `;` all of them, and clause 5.5.9 pages the result in a consistent order,
-//! by `id` when none is requested. The broker used to answer a type page by
-//! walking every Entity in identifier order and filtering by type, so a type
-//! whose identifiers sort after another type's paid for every Entity before
-//! it: on 759,000 GTFS entities, the first page of trips read the 720,000
-//! stop times ahead of them. A type selection is now answered from one row per
-//! type an Entity carries, kept in step with every write, so these tests pin
-//! what that must never change: the selected set, its order and its count,
-//! for a multi-typed Entity too, and after a write moves an Entity between
-//! types.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! by `id` when none is requested. A type selection is answered from one row
+//! per type an Entity carries, kept in step with every write, rather than by
+//! walking every Entity in identifier order and filtering by type, which makes
+//! a type whose identifiers sort after another type's pay for every Entity
+//! before it. These tests pin what that index must never change: the selected
+//! set, its order and its count, for a multi-typed Entity too, and after a
+//! write moves an Entity between types.
 
 use andromeda_test_client::{entity::results_count, header::jsonld_link_header, response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;

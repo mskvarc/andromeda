@@ -95,11 +95,7 @@ impl ConsideredEntities {
 
 /// The filters that decide which entities a query returns.
 ///
-/// Everything here narrows the result set; nothing here affects how a matching
-/// entity is rendered, or which of its attribute instances come back. That
-/// separation is what lets `build_ids_query` — which only ever needs the
-/// identifiers — read this alone, and stage 1 of a temporal statement read it
-/// without seeing the time window.
+/// Everything here narrows the result set; nothing here affects how a matching entity is rendered, or which of its attribute instances come back. That separation is what lets a consumer that only needs the identifiers read this alone, without seeing the time window.
 ///
 /// The identifier, pattern and type axes are grouped into [`EntitySelector`]s
 /// and combined as a union (clause 5.2.33): an entity matches when it satisfies

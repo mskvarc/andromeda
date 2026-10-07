@@ -1,7 +1,7 @@
 //! Merge Entity applies the typed patch a merge fragment is read into
 //! (clause 5.5.12): an instance may leave its value out, a member written as
 //! the NGSI-LD Null removes what it stands on, and a whole member written as
-//! the Null removes the attribute -- proven on the Entity the merge stores.
+//! the Null removes the attribute, proven on the Entity the merge stores.
 
 use crate::{
     admission_fixture::{admitted_context, admitted_entity},
@@ -53,7 +53,7 @@ fn category(node: &Value) -> &Value {
     &node[CATEGORY_IRI][0]
 }
 
-/// S15: an instance that leaves its value out merges the members it writes
+/// An instance that leaves its value out merges the members it writes
 /// and keeps the value held ("up to an arbitrary depth", clause 5.5.12).
 #[tokio::test]
 async fn a_merge_instance_without_its_value_member_merges_its_other_members() {
@@ -63,7 +63,7 @@ async fn a_merge_instance_without_its_value_member_merges_its_other_members() {
     assert_eq!(category(&node)[ACCURACY_IRI][0][HAS_VALUE][0]["@value"], json!("high"), "{node}");
 }
 
-/// S11: the NGSI-LD Null on an instance member and on a sub-attribute
+/// The NGSI-LD Null on an instance member and on a sub-attribute
 /// removes each (clause 5.5.12), the value the instance writes landing.
 #[tokio::test]
 async fn a_null_on_an_instance_member_removes_it_in_a_merge() {
@@ -100,7 +100,7 @@ async fn a_merge_with_an_empty_fragment_stores_nothing() {
     assert!(recorded.lock().expect("the recording buffer").is_empty(), "an empty fragment stores no write");
 }
 
-/// S9: the NGSI-LD Null in place of a whole member removes the attribute
+/// The NGSI-LD Null in place of a whole member removes the attribute
 /// (clause 5.5.12).
 #[tokio::test]
 async fn a_bare_null_member_reads_as_a_member_deletion_in_a_merge() {

@@ -1,6 +1,4 @@
-//! Creating a temporal `EntityMap` from a temporal query: the mandatory temporal
-//! query, entity-filter validation, term expansion, `lastN` selection, and
-//! interval filtering (clause 5.14.5). All `T-LOCAL`.
+//! Creating a temporal `EntityMap` from a temporal query: the mandatory temporal query, entity-filter validation, term expansion, `lastN` selection, and interval filtering (clause 5.14.5).
 
 use crate::{
     map::{
@@ -26,7 +24,6 @@ async fn seed_temporal(client: &TestClient, entity_type: &str, id: &str, speed: 
 }
 
 /// A missing temporal query is rejected `400 BadRequestData` (clause 5.14.5).
-/// Confirms REQ-MAP-132.
 #[tokio::test]
 async fn emt_no_temporal_query_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -37,7 +34,6 @@ async fn emt_no_temporal_query_returns_400() {
 }
 
 /// At least one entity filter with a temporal query is accepted (clause 5.14.5).
-/// Confirms REQ-MAP-133.
 #[tokio::test]
 async fn emt_at_least_one_filter_accepted() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -59,7 +55,6 @@ async fn emt_at_least_one_filter_accepted() {
 }
 
 /// No entity filter is rejected `400 BadRequestData` (clause 5.14.5).
-/// Confirms REQ-MAP-134.
 #[tokio::test]
 async fn emt_no_filter_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -70,7 +65,6 @@ async fn emt_no_filter_returns_400() {
 }
 
 /// A linked-entity retrieval is rejected `400 BadRequestData` (clause 5.14.5).
-/// Confirms REQ-MAP-135.
 #[tokio::test]
 async fn emt_linked_entity_retrieval_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -84,8 +78,7 @@ async fn emt_linked_entity_retrieval_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An invalid `id`, `q`, `geoQ`, or `csf` is rejected `400 BadRequestData`
-/// (clause 5.14.5). Confirms REQ-MAP-136.
+/// An invalid `id`, `q`, `geoQ`, or `csf` is rejected `400 BadRequestData` (clause 5.14.5).
 #[tokio::test]
 async fn emt_invalid_id_q_geoq_csf_returns_400() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -99,8 +92,7 @@ async fn emt_invalid_id_q_geoq_csf_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Type and attribute terms are expanded before the temporal map is built
-/// (clause 5.14.5). Confirms REQ-MAP-137.
+/// Type and attribute terms are expanded before the temporal map is built (clause 5.14.5).
 #[tokio::test]
 async fn emt_expands_type_and_attribute_terms() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -122,7 +114,6 @@ async fn emt_expands_type_and_attribute_terms() {
 }
 
 /// JSON-LD type coercion is applied for the expansion list (clause 5.14.5).
-/// Confirms REQ-MAP-138.
 #[tokio::test]
 async fn emt_applies_jsonld_type_coercion() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -149,7 +140,7 @@ async fn emt_applies_jsonld_type_coercion() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// `lastN` selects the last N instances (clause 5.14.5). Confirms REQ-MAP-139.
+/// `lastN` selects the last N instances (clause 5.14.5).
 #[tokio::test]
 async fn emt_last_n_selects_last_n_instances() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -169,8 +160,7 @@ async fn emt_last_n_selects_last_n_instances() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Temporal filtering removes entities with no instance in the interval
-/// (clause 5.14.5). Confirms REQ-MAP-141.
+/// Temporal filtering removes entities with no instance in the interval (clause 5.14.5).
 #[tokio::test]
 async fn emt_temporal_filtering_removes_out_of_interval_entities() {
     let topology = topology::single().await.expect("single-broker topology");

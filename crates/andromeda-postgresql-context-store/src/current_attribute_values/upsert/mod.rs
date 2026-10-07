@@ -1,11 +1,4 @@
-//! Writing an entity mutation's attribute instances into the projection.
-//!
-//! One set-based statement per batch, built in stages: the shared
-//! [`staging`](crate::current_attribute_values::staging) unnests and
-//! deduplicates the batch, [`update_first`] updates the grains that already
-//! exist, and the final insert writes the rest under the conflict action
-//! [`no_op_guard`] shares with the update. The column lists all three agree on
-//! are [`column_sets`](crate::current_attribute_values::column_sets)'.
+//! One set-based statement per batch, built in stages: the shared staging unnests and deduplicates the batch, the update-first stage updates the grains that already exist, and the final insert writes the rest under the conflict action the no-op guard shares with the update.
 
 mod no_op_guard;
 mod update_first;

@@ -17,10 +17,6 @@ use crate::{
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use reqwest::StatusCode;
 
-// ---------------------------------------------------------------------------
-// 5.10.1 -- Retrieve with invalid ID
-// ---------------------------------------------------------------------------
-
 /// Retrieve with non-URI ID -- 400 (5.10.1).
 #[tokio::test]
 async fn retrieve_invalid_id_returns_400() {
@@ -33,10 +29,6 @@ async fn retrieve_invalid_id_returns_400() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 5.10.1 -- Retrieve unknown registration
-// ---------------------------------------------------------------------------
-
 /// Retrieve non-existent registration -- 404 (5.10.1).
 #[tokio::test]
 async fn retrieve_unknown_registration_returns_404() {
@@ -48,10 +40,6 @@ async fn retrieve_unknown_registration_returns_404() {
     pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.10.1, 5.5.7 -- Retrieve with default core context (no Link header)
-// ---------------------------------------------------------------------------
 
 /// Retrieve without Link header -- custom terms rendered as FQNs (5.10.1, 5.5.7).
 #[tokio::test]
@@ -78,10 +66,6 @@ async fn retrieve_without_context_returns_expanded_format() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// 5.10.1, 5.5.7 -- Retrieve with Link header context
-// ---------------------------------------------------------------------------
-
 /// Retrieve with compound context Link header -- compacted names (5.10.1, 5.5.7).
 #[tokio::test]
 async fn retrieve_with_context_returns_compacted_format() {
@@ -106,10 +90,6 @@ async fn retrieve_with_context_returns_compacted_format() {
     cleanup_registration(&c, &id).await;
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 6.3.5 -- JSON-LD context resolution
-// ---------------------------------------------------------------------------
 
 /// Empty JSON-LD context (no Link header) -- same as expanded format (6.3.5).
 #[tokio::test]

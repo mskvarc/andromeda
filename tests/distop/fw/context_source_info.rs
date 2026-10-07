@@ -1,7 +1,4 @@
-//! `contextSourceInfo` forwarding of headers, the `Accept`, and the
-//! `Content-Type` of a forwarded request (ETSI GS CIM 009 v1.9.1, clause
-//! 4.3.6.6). All `T-MOCK` for byte-level oracles, except the invalid-accept
-//! registration row (`T-LOCAL`) and the tenant row (`T-TENANT`).
+//! `contextSourceInfo` forwarding of headers, the `Accept`, and the `Content-Type` of a forwarded request (ETSI GS CIM 009 v1.9.1, clause 4.3.6.6).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -26,8 +23,7 @@ const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
 /// or create.
 const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 
-/// A static `contextSourceInfo` header is conveyed on the forwarded request
-/// (clause 4.3.6.6). Confirms REQ-FW-33.
+/// A static `contextSourceInfo` header is conveyed on the forwarded request (clause 4.3.6.6).
 #[tokio::test]
 async fn distop_entity_csi_static_header_conveyed_on_forward() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -73,9 +69,7 @@ async fn distop_entity_csi_static_header_conveyed_on_forward() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `contextSourceInfo` value of `urn:ngsi-ld:request` copies the header from
-/// the triggering request onto the forwarded one (clause 4.3.6.6). Confirms
-/// REQ-FW-34.
+/// A `contextSourceInfo` value of `urn:ngsi-ld:request` copies the header from the triggering request onto the forwarded one (clause 4.3.6.6).
 #[tokio::test]
 async fn distop_entity_csi_urn_request_copies_from_triggering_request() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -124,11 +118,7 @@ async fn distop_entity_csi_urn_request_copies_from_triggering_request() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The tenant is conveyed only via `NGSILD-Tenant`, never inside
-/// `contextSourceInfo` (clause 4.3.6.5: "As Tenant information, if applicable,
-/// is directly specified in the `CSourceRegistration`, it shall not be part of
-/// contextSourceInfo"). The header carries the registration's `tenant` (clause
-/// 4.14), not the tenant the triggering query ran in. Confirms REQ-FW-35.
+/// The tenant is conveyed only via `NGSILD-Tenant`, never inside `contextSourceInfo` (clause 4.3.6.5: "As Tenant information, if applicable, is directly specified in the `CSourceRegistration`, it shall not be part of contextSourceInfo"). The header carries the registration's `tenant` (clause 4.14), not the tenant the triggering query ran in.
 #[tokio::test]
 async fn distop_entity_csi_tenant_never_placed_inside_context_source_info() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -166,8 +156,7 @@ async fn distop_entity_csi_tenant_never_placed_inside_context_source_info() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `contextSourceInfo` key of `Content-length` cannot override the real body
-/// length of the forwarded request (clause 4.3.6.6). Confirms REQ-FW-36.
+/// A `contextSourceInfo` key of `Content-length` cannot override the real body length of the forwarded request (clause 4.3.6.6).
 #[tokio::test]
 async fn distop_entity_csi_cannot_override_content_length() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -216,8 +205,7 @@ async fn distop_entity_csi_cannot_override_content_length() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `contextSourceInfo` `accept` of `application/ld+json` sets the forwarded
-/// `Accept` (clause 4.3.6.6). Confirms REQ-FW-37.
+/// A `contextSourceInfo` `accept` of `application/ld+json` sets the forwarded `Accept` (clause 4.3.6.6).
 #[tokio::test]
 async fn distop_entity_csi_accept_ld_json_sets_forwarded_accept() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -260,8 +248,7 @@ async fn distop_entity_csi_accept_ld_json_sets_forwarded_accept() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `contextSourceInfo` `accept` of `application/json` sets the forwarded
-/// `Accept` (clause 4.3.6.6). Confirms REQ-FW-37.
+/// A `contextSourceInfo` `accept` of `application/json` sets the forwarded `Accept` (clause 4.3.6.6).
 #[tokio::test]
 async fn distop_entity_csi_accept_plain_json_sets_forwarded_accept() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -304,8 +291,7 @@ async fn distop_entity_csi_accept_plain_json_sets_forwarded_accept() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `contextSourceInfo` `accept` of `text/plain` is rejected at registration
-/// with 400 `BadRequestData` (clause 4.3.6.6, 5.2.9). Confirms REQ-FW-37.
+/// A `contextSourceInfo` `accept` of `text/plain` is rejected at registration with 400 `BadRequestData` (clause 4.3.6.6, 5.2.9).
 #[tokio::test]
 async fn distop_entity_csi_accept_invalid_rejected_at_registration() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -327,9 +313,7 @@ async fn distop_entity_csi_accept_invalid_rejected_at_registration() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A source responding `application/json` is converted to the client's requested
-/// `application/ld+json`, with an inline `@context` (clause 4.3.6.6). Confirms
-/// REQ-FW-38.
+/// A source responding `application/json` is converted to the client's requested `application/ld+json`, with an inline `@context` (clause 4.3.6.6).
 #[tokio::test]
 async fn distop_entity_csi_source_response_converted_to_client_type() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -375,8 +359,7 @@ async fn distop_entity_csi_source_response_converted_to_client_type() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `contextSourceInfo` `contentType` of `application/json` constrains the
-/// forwarded `Content-Type` (clause 4.3.6.6). Confirms REQ-FW-39.
+/// A `contextSourceInfo` `contentType` of `application/json` constrains the forwarded `Content-Type` (clause 4.3.6.6).
 #[tokio::test]
 async fn distop_entity_csi_content_type_json_constrains_forwarded_content_type() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -425,9 +408,7 @@ async fn distop_entity_csi_content_type_json_constrains_forwarded_content_type()
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `contextSourceInfo` `contentType` of `application/ld+json` constrains the
-/// forwarded `Content-Type` and the body carries an inline `@context` (clause
-/// 4.3.6.6). Confirms REQ-FW-39, REQ-FW-40.
+/// A `contextSourceInfo` `contentType` of `application/ld+json` constrains the forwarded `Content-Type` and the body carries an inline `@context` (clause 4.3.6.6).
 #[tokio::test]
 async fn distop_entity_csi_content_type_ld_json_constrains_forwarded_content_type() {
     let topology = topology::single().await.expect("single-broker topology");

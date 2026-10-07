@@ -15,10 +15,6 @@ use crate::{
 use andromeda_test_harness::tenant_scoped_environment::TenantScopedEnvironment;
 use reqwest::StatusCode;
 
-// ---------------------------------------------------------------------------
-// 5.5.12 -- Unknown attribute
-// ---------------------------------------------------------------------------
-
 /// Retrieve attribute info for a compacted name with no context -- 404 because the name cannot be resolved (5.5.12).
 #[tokio::test]
 async fn retrieve_attribute_info_unknown_attribute_returns_404() {
@@ -39,10 +35,6 @@ async fn retrieve_attribute_info_unknown_attribute_returns_404() {
     delete_entity(&c, env.tenant(), &id).await;
     env.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.5.12, 6.3.5 -- Compacted attribute name
-// ---------------------------------------------------------------------------
 
 /// Retrieve attribute info by compacted name with context Link header -- returns Attribute (5.5.12, 6.3.5).
 #[tokio::test]
@@ -68,10 +60,6 @@ async fn retrieve_attribute_info_with_compacted_name_returns_attribute_info() {
     delete_entity(&c, env.tenant(), &id).await;
     env.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.5.12, 6.3.5 -- Expanded (URL-encoded) attribute name
-// ---------------------------------------------------------------------------
 
 /// Retrieve attribute info by URL-encoded expanded IRI -- returns same Attribute as compacted lookup (5.5.12, 6.3.5).
 #[tokio::test]
@@ -99,10 +87,6 @@ async fn retrieve_attribute_info_with_expanded_name_returns_attribute_info() {
     delete_entity(&c, env.tenant(), &id).await;
     env.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// 5.5.12 -- Attribute count accuracy
-// ---------------------------------------------------------------------------
 
 /// Retrieve attribute info after adding two entities with the same attribute -- attributeCount reflects both (5.5.12).
 #[tokio::test]

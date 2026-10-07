@@ -36,7 +36,6 @@ impl IntervalCandidates<'_> {
     /// Returns the store's failure to read a page.
     pub(crate) async fn matching(&self, sub: &Subscription) -> Result<Vec<EntityState>, NotificationError> {
         let Some(selectors) = sub.selection.entities.as_ref() else {
-            // No entity selectors — every entity qualifies.
             return self.collect_pages(None, |_| true).await;
         };
 
@@ -44,9 +43,7 @@ impl IntervalCandidates<'_> {
         for selector in selectors {
             // A by-type lookup takes one type, so only a leaf selector can be
             // pushed down; a boolean expression reads every entity and is
-            // applied in memory. Passing the expression text as a type name,
-            // which is what happened before it was parsed, matched nothing at
-            // all.
+            // applied in memory; the expression text is not a type name.
             let single_type = selector.type_.as_single_type();
             let matched = self
                 .collect_pages(single_type, |entity| {

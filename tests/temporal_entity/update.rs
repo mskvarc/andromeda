@@ -12,17 +12,12 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 
-// ---------------------------------------------------------------------------
-// Update existing temporal entity
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_update_add_instances_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
     let id = scope.id("Vehicle:update_008_01_01");
 
-    // Create initial entity
     let entity = json!({
         "id": &id,
         "type": "Vehicle",
@@ -34,7 +29,6 @@ async fn temporal_update_add_instances_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Update: add more instances
     let update = json!({
         "id": &id,
         "type": "Vehicle",
@@ -47,7 +41,6 @@ async fn temporal_update_add_instances_success() {
     let status = create_temporal_entity(&c, &update).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "update should return 204");
 
-    // Verify: should have all instances
     let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -62,7 +55,6 @@ async fn temporal_update_add_new_attribute_success() {
     let c = client();
     let id = scope.id("Vehicle:update_008_01_02");
 
-    // Create initial entity with speed only
     let entity = json!({
         "id": &id,
         "type": "Vehicle",
@@ -74,7 +66,6 @@ async fn temporal_update_add_new_attribute_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Update: add fuelLevel attribute
     let update = json!({
         "id": &id,
         "type": "Vehicle",
@@ -87,7 +78,6 @@ async fn temporal_update_add_new_attribute_success() {
     let status = create_temporal_entity(&c, &update).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "update should return 204");
 
-    // Verify: should have both attributes
     let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -104,7 +94,6 @@ async fn temporal_update_multiple_attributes_success() {
     let c = client();
     let id = scope.id("Vehicle:update_008_01_03");
 
-    // Create initial entity
     let entity = json!({
         "id": &id,
         "type": "Vehicle",
@@ -119,7 +108,6 @@ async fn temporal_update_multiple_attributes_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Update both attributes
     let update = json!({
         "id": &id,
         "type": "Vehicle",
@@ -134,7 +122,6 @@ async fn temporal_update_multiple_attributes_success() {
     let status = create_temporal_entity(&c, &update).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "update should return 204");
 
-    // Verify
     let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
 
@@ -145,17 +132,12 @@ async fn temporal_update_multiple_attributes_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Update with different attribute types
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_update_with_relationship_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
     let id = scope.id("Vehicle:update_008_02_01");
 
-    // Create initial entity
     let entity = json!({
         "id": &id,
         "type": "Vehicle",
@@ -167,7 +149,6 @@ async fn temporal_update_with_relationship_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Update: add Relationship
     let update = json!({
         "id": &id,
         "type": "Vehicle",
@@ -183,7 +164,6 @@ async fn temporal_update_with_relationship_success() {
     let status = create_temporal_entity(&c, &update).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "update should return 204");
 
-    // Verify
     let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body["isParkedIn"].is_array());
@@ -197,7 +177,6 @@ async fn temporal_update_with_geoproperty_success() {
     let c = client();
     let id = scope.id("Vehicle:update_008_02_02");
 
-    // Create initial entity
     let entity = json!({
         "id": &id,
         "type": "Vehicle",
@@ -209,7 +188,6 @@ async fn temporal_update_with_geoproperty_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Update: add GeoProperty
     let update = json!({
         "id": &id,
         "type": "Vehicle",
@@ -225,7 +203,6 @@ async fn temporal_update_with_geoproperty_success() {
     let status = create_temporal_entity(&c, &update).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "update should return 204");
 
-    // Verify
     let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body["location"].is_array());
@@ -239,7 +216,6 @@ async fn temporal_update_with_language_property_success() {
     let c = client();
     let id = scope.id("Vehicle:update_008_02_03");
 
-    // Create initial entity
     let entity = json!({
         "id": &id,
         "type": "Vehicle",
@@ -255,7 +231,6 @@ async fn temporal_update_with_language_property_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Update: add another LanguageProperty instance
     let update = json!({
         "id": &id,
         "type": "Vehicle",
@@ -271,7 +246,6 @@ async fn temporal_update_with_language_property_success() {
     let status = create_temporal_entity(&c, &update).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "update should return 204");
 
-    // Verify
     let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     let name = body["name"].as_array().expect("name should be array");
@@ -279,17 +253,12 @@ async fn temporal_update_with_language_property_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Update with datasetId
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_update_with_datasetid_success() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
     let id = scope.id("Vehicle:update_008_03_01");
 
-    // Create initial entity with default instance
     let entity = json!({
         "id": &id,
         "type": "Vehicle",
@@ -301,7 +270,6 @@ async fn temporal_update_with_datasetid_success() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Update: add instance with datasetId
     let update = json!({
         "id": &id,
         "type": "Vehicle",
@@ -318,7 +286,6 @@ async fn temporal_update_with_datasetid_success() {
     let status = create_temporal_entity(&c, &update).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "update should return 204");
 
-    // Verify
     let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     let speed = body["speed"].as_array().expect("speed should be array");
@@ -326,17 +293,12 @@ async fn temporal_update_with_datasetid_success() {
     scope.finish().await.expect("cleanup failed");
 }
 
-// ---------------------------------------------------------------------------
-// Update nonexistent entity creates it
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn temporal_update_nonexistent_entity_creates() {
     let scope = TestEnvironment::from_suite("temporal_entity").await.expect("isolated test environment");
     let c = client();
     let id = scope.id("Vehicle:update_008_04_01");
 
-    // POST to nonexistent entity should create it
     let entity = json!({
         "id": &id,
         "type": "Vehicle",
@@ -348,16 +310,11 @@ async fn temporal_update_nonexistent_entity_creates() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED, "POST to nonexistent should return 201");
 
-    // Verify entity exists
     let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], id);
     scope.finish().await.expect("cleanup failed");
 }
-
-// ---------------------------------------------------------------------------
-// Idempotent updates
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn temporal_update_same_instance_idempotent() {
@@ -365,7 +322,6 @@ async fn temporal_update_same_instance_idempotent() {
     let c = client();
     let id = scope.id("Vehicle:update_008_05_01");
 
-    // Create initial entity
     let entity = json!({
         "id": &id,
         "type": "Vehicle",
@@ -377,7 +333,6 @@ async fn temporal_update_same_instance_idempotent() {
     let status = create_temporal_entity(&c, &entity).await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // Update with same instance (same observedAt)
     let update = json!({
         "id": &id,
         "type": "Vehicle",
@@ -389,7 +344,6 @@ async fn temporal_update_same_instance_idempotent() {
     let status = create_temporal_entity(&c, &update).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "update should return 204");
 
-    // Verify: should still have only 1 instance (or might have 2 depending on implementation)
     let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(body["speed"].is_array());

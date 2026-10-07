@@ -89,8 +89,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// A tenant reaches here only with work already due (see
     /// [`wake_inner`](Self::wake_inner)), so it must run rather than defer behind
     /// runtimes that may have no work at all. When the cache is at capacity it
-    /// evicts one unleased runtime -- the least recently used, whose own next wake
-    /// is rescheduled as it goes -- so the connection budget stays flat while the
+    /// evicts one unleased runtime (the least recently used, whose own next wake
+    /// is rescheduled as it goes) so the connection budget stays flat while the
     /// due work is admitted. Only genuine backpressure, every cached runtime held
     /// by an in-flight request so no slot can be freed, defers the wake.
     async fn load_woken(&self, tenant_ref: &TenantRef, database: TenantDatabaseName, tenant: &TenantName) -> WakeOutcome {

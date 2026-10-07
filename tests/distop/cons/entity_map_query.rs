@@ -1,7 +1,4 @@
-//! Query Entities entity-map create and reuse (clauses 5.7.2.4, 5.5.14, 6.3.15):
-//! minting a map and returning `201`, reusing a valid map so its CSR set is fixed,
-//! and recreating on an expired/missing map. The linked cross-instance map row
-//! (`REQ-CONS-26`) runs against the durable, shared entity-map store.
+//! Query Entities entity-map create and reuse (clauses 5.7.2.4, 5.5.14, 6.3.15): minting a map and returning `201`, reusing a valid map so its CSR set is fixed, and recreating on an expired/missing map.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -32,11 +29,7 @@ async fn query_reusing_map(topology: &MultiBrokerTopology<BrokerRole>, query: &s
         .expect("reuse query")
 }
 
-/// A minted query map fixes the CSR set on reuse and is recreated on a bogus map:
-/// a source registered after minting is consulted only after recreation
-/// (clause 5.5.14). Reusing the live map answers `200`; the bogus-map leg mints
-/// a replacement and answers `201` (Table 6.4.3.2-3: "201 Created (in case an
-/// `EntityMap` has been (re)created)"). Confirms REQ-CONS-23.
+/// A minted query map fixes the CSR set on reuse and is recreated on a bogus map: a source registered after minting is consulted only after recreation (clause 5.5.14). Reusing the live map answers `200`; the bogus-map leg mints a replacement and answers `201` (Table 6.4.3.2-3: "201 Created (in case an `EntityMap` has been (re)created)").
 #[tokio::test]
 async fn distop_query_entities_map_location_reused_or_recreated() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -110,8 +103,7 @@ async fn distop_query_entities_map_location_reused_or_recreated() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A query with the return flag and no existing map creates a new map and returns
-/// `201` with the `NGSILD-EntityMap` header (clause 6.3.15). Confirms REQ-CONS-24.
+/// A query with the return flag and no existing map creates a new map and returns `201` with the `NGSILD-EntityMap` header (clause 6.3.15).
 #[tokio::test]
 async fn distop_query_entities_return_flag_creates_map_and_header() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -140,8 +132,7 @@ async fn distop_query_entities_return_flag_creates_map_and_header() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A query reusing a map whose CSR entry links a downstream map forwards that
-/// linked location (clause 5.5.14). Confirms REQ-CONS-26.
+/// A query reusing a map whose CSR entry links a downstream map forwards that linked location (clause 5.5.14).
 #[tokio::test]
 async fn distop_query_entities_map_linked_entry_forwards_linked_location() {
     let topology = topology::single().await.expect("single-broker topology");

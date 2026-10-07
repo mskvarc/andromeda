@@ -1,6 +1,6 @@
 //! The three embedded migration sets and the ledger each is recorded in.
 //!
-//! The schema is described by three directories under `migrations/`:
+//! The schema is described by three migration directories:
 //!
 //! * `platform/` -- the platform tables (tenant registry, maintenance state,
 //!   forwarded-subscription routes, wake schedule), applied only to the platform

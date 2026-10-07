@@ -1,9 +1,6 @@
 //! Retrieve-by-id narrowing under an aliased `@context` (clause 5.7.1.4).
 //!
-//! A retrieval is forwarded as a retrieve-by-id to a source supporting
-//! `retrieveEntity`, narrowed to the type the client selected (clause 5.7.1.3)
-//! and the attribute the registration block covers (clause 4.3.6.3). Under an
-//! aliased context both must be forwarded in the context's compact spelling.
+//! A retrieval is forwarded as a retrieve-by-id to a source supporting `retrieveEntity`, narrowed to the type the client selected (clause 5.7.1.3) and the attribute the registration block covers (clause 4.3.6.3). Under an aliased context both must be forwarded in the context's compact spelling.
 
 use crate::{
     compaction::{CAPTURE_TIMEOUT, FORWARDED_ENTITIES, aliased_document, assert_no_last_segment, registration_context, serve},
@@ -17,8 +14,7 @@ use axum::http::Method;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-/// A retrieve-by-id naming the aliased type `Veh` is forwarded with that type
-/// and the covered aliased attribute `spd`, never the IRIs' last segments.
+/// A retrieve-by-id naming the aliased type `Veh` is forwarded with that type and the covered aliased attribute `spd`, never the IRIs' last segments.
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn distop_compaction_forwards_a_typed_retrieve_under_the_alias() {

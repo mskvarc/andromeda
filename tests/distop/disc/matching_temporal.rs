@@ -1,6 +1,4 @@
-//! Subscription-side temporal, geo, context-source and scope gating of the
-//! matching algorithm (clause 5.12), captured as `ContextSourceNotification`s
-//! through the in-process notification adapter. All `T-LOCAL` plus the adapter.
+//! Subscription-side temporal, geo, context-source and scope gating of the matching algorithm (clause 5.12), captured as `ContextSourceNotification`s through the in-process notification adapter.
 
 use crate::{
     disc::{
@@ -33,9 +31,7 @@ async fn create_subscription(topology: &MultiBrokerTopology<BrokerRole>, body: &
     assert_status(&created, 201);
 }
 
-/// A subscription without a temporal query matches latest-info registrations
-/// only: an interval-bearing registration is silent, a latest one notifies
-/// (clause 5.12). Confirms REQ-DISC-52, REQ-DISC-43.
+/// A subscription without a temporal query matches latest-info registrations only: an interval-bearing registration is silent, a latest one notifies (clause 5.12).
 #[tokio::test]
 async fn matching_sub_no_temporaliq_matches_latest_info_only() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -76,9 +72,7 @@ async fn matching_sub_no_temporaliq_matches_latest_info_only() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A subscription with a temporal query matches interval-bearing registrations
-/// only: a latest registration is silent, an interval one notifies (clause
-/// 5.12). Confirms REQ-DISC-53, REQ-DISC-44.
+/// A subscription with a temporal query matches interval-bearing registrations only: a latest registration is silent, an interval one notifies (clause 5.12).
 #[tokio::test]
 async fn matching_sub_temporaliq_matches_interval_csrs_only() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -122,9 +116,7 @@ async fn matching_sub_temporaliq_matches_interval_csrs_only() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An `observedAt` temporal query notifies when a registration's
-/// `observationInterval` overlaps the queried instant (clause 5.12). Confirms
-/// REQ-DISC-54.
+/// An `observedAt` temporal query notifies when a registration's `observationInterval` overlaps the queried instant (clause 5.12).
 #[tokio::test]
 async fn matching_sub_observedat_matches_observation_interval() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -159,8 +151,7 @@ async fn matching_sub_observedat_matches_observation_interval() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A management time-property query notifies against a `managementInterval`
-/// (clause 5.12). Confirms REQ-DISC-55.
+/// A management time-property query notifies against a `managementInterval` (clause 5.12).
 #[tokio::test]
 async fn matching_sub_management_timeproperties_match_management_interval() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -195,9 +186,7 @@ async fn matching_sub_management_timeproperties_match_management_interval() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// When the interval relevant to the queried time-property is absent the
-/// registration does not notify: a `createdAt` query against an
-/// observation-only registration is silent (clause 5.12). Confirms REQ-DISC-56.
+/// When the interval relevant to the queried time-property is absent the registration does not notify: a `createdAt` query against an observation-only registration is silent (clause 5.12).
 #[tokio::test]
 async fn matching_sub_relevant_interval_absent_no_match() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -227,8 +216,7 @@ async fn matching_sub_relevant_interval_absent_no_match() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The `before` relation notifies when the interval falls within the queried
-/// endpoint (clause 5.12). Confirms REQ-DISC-57.
+/// The `before` relation notifies when the interval falls within the queried endpoint (clause 5.12).
 #[tokio::test]
 async fn matching_sub_before_after_within_or_at_endpoint() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -263,8 +251,7 @@ async fn matching_sub_before_after_within_or_at_endpoint() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The `between` relation notifies when its window overlaps the interval
-/// (clause 5.12). Confirms REQ-DISC-58.
+/// The `between` relation notifies when its window overlaps the interval (clause 5.12).
 #[tokio::test]
 async fn matching_sub_between_matches_on_overlap() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -299,8 +286,7 @@ async fn matching_sub_between_matches_on_overlap() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A geo-query notifies against a registration's `location` `GeoProperty`
-/// (clause 5.12). Confirms REQ-DISC-50, REQ-DISC-51.
+/// A geo-query notifies against a registration's `location` `GeoProperty` (clause 5.12).
 #[tokio::test]
 async fn matching_sub_geoq_matches_geoproperty_and_default_location() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -327,12 +313,7 @@ async fn matching_sub_geoq_matches_geoproperty_and_default_location() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The Context Source Filter and scope query both gate matching: a registration
-/// satisfying the subscription's csf and scopeQ notifies (clause 5.12). The
-/// `csf` targets a Context Source Property of the registration (clause 4.9:
-/// "target is the name of a Context Source Property member of the
-/// `CSourceRegistration`"), so the fixture carries `tier` as a top-level member,
-/// not as a `contextSourceInfo` header pair. Confirms REQ-DISC-61, REQ-DISC-62.
+/// The Context Source Filter and scope query both gate matching: a registration satisfying the subscription's csf and scopeQ notifies (clause 5.12). The `csf` targets a Context Source Property of the registration (clause 4.9: "target is the name of a Context Source Property member of the `CSourceRegistration`"), so the fixture carries `tier` as a top-level member, not as a `contextSourceInfo` header pair.
 #[tokio::test]
 async fn matching_sub_csf_and_scope_gate_matching() {
     let topology = topology::single().await.expect("single-broker topology");

@@ -219,7 +219,7 @@ fn inline_join_cuts_cycles_on_the_path() {
     assert!(entity["parkedAt"][1].get("entity").is_none());
 }
 
-/// Decision A: every Relationship naming one target nests its own copy,
+/// Every Relationship naming one target nests its own copy,
 /// narrowed by the group that Relationship's term gives it.
 #[test]
 fn nested_projection_narrows_by_expanded_name() {

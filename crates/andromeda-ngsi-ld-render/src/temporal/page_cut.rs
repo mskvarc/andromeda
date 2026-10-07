@@ -9,8 +9,8 @@
 //! entity in the response is cut at the same instant: forwards at the earliest
 //! instant any cut stream stopped at, backwards at the latest instant any cut
 //! stream started from. A stream the common cut leaves empty stays in the
-//! response as an attribute with no instances, which is what the official test
-//! suite reads (ETSI TP `020_14` and `021_15`).
+//! response as an attribute with no instances, so a client reading the page by
+//! attribute still finds it.
 
 use crate::temporal::entity::is_scope_attribute;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time_prop::TimeProp};
@@ -181,7 +181,7 @@ mod tests {
         (from..=to).map(|offset| row(attribute, offset, total)).collect()
     }
 
-    /// ETSI TP `020_13`: `speed` holds 01:01-01:20 and `fuelLevel` 01:03-01:22,
+    /// `speed` holds 01:01-01:20 and `fuelLevel` 01:03-01:22,
     /// 20 of each; a forward page of 19 keeps 01:01-01:19 and 01:03-01:21.
     /// Both were cut, so the response ends at the earlier of their last
     /// instants, 01:19.

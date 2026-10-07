@@ -1,25 +1,4 @@
-//! One refused entity fails only itself, never the batch it travels in.
-//!
-//! ETSI GS CIM 009 v1.9.1 clauses 5.6.7.4 to 5.6.10.4 and 5.6.20.4 run the
-//! single-entity operation for each entity of the input array and, when it
-//! fails, add "a new `BatchEntityError` [...] containing the failed Entity ID and
-//! the related `ProblemDetails`" to the result; clause 5.6.8.4 says it most
-//! broadly: "If while processing an Entity there is any kind of error or
-//! abnormal situation, a `BatchEntityError` shall be added to E". Tables
-//! 6.14.3.1-1 and following answer 207 "if only some or none of the entities
-//! have been successfully" processed. The request fails as a whole only when
-//! there is no entity to report against: a null item (step 1 of each clause),
-//! and an item whose `id` is absent or not a URI, because Table 5.2.17-1 types
-//! `entityId` as a valid URI. Clause 5.5.4 makes each of those `BadRequestData`.
-//!
-//! The broker failed the whole batch in three further cases: an `id` longer
-//! than the identifier bound (a valid URI of any length, reportable per
-//! entity), any non-identifier item of a batch delete, and a `unitCode` naming
-//! no UN/CEFACT common code (Table 5.2.5-1), which was refused only when the
-//! chunk of up to 512 writes carrying it was committed. A producer's valid
-//! entities were lost as collateral in every case.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! ETSI GS CIM 009 v1.9.1 clauses 5.6.7.4 to 5.6.10.4 and 5.6.20.4 run the single-entity operation for each entity of the input array and, when it fails, add "a new `BatchEntityError` [...] containing the failed Entity ID and the related `ProblemDetails`" to the result; clause 5.6.8.4 says it most broadly: "If while processing an Entity there is any kind of error or abnormal situation, a `BatchEntityError` shall be added to E". Tables 6.14.3.1-1 and following answer 207 "if only some or none of the entities have been successfully" processed. The request fails as a whole only when there is no entity to report against: a null item (step 1 of each clause), and an item whose `id` is absent or not a URI, because Table 5.2.17-1 types `entityId` as a valid URI. Clause 5.5.4 makes each of those `BadRequestData`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -63,8 +42,7 @@ fn entity_with_unit(id: &str, unit_code: &str) -> Value {
     })
 }
 
-/// An entity whose `speed` Property has a null `value`, which clause 5.5.4
-/// refuses (the ETSI `invalid-json-ld.jsonld` fixture).
+/// An entity whose `speed` Property has a null `value`, which clause 5.5.4 refuses.
 fn entity_with_null_value(id: &str) -> Value {
     entity(id, &Value::Null)
 }
@@ -232,9 +210,7 @@ async fn regression_batch_entity_errors_update_and_merge_apply_the_valid_entity_
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Table 6.14.3.1-1: 207 "if only some or none of the entities have been
-/// successfully created", so a batch whose every entity is refused is still a
-/// 207 rather than a 400.
+/// Table 6.14.3.1-1: 207 "if only some or none of the entities have been successfully created", so a batch whose every entity is refused is still a 207 rather than a 400.
 #[tokio::test]
 async fn regression_batch_entity_errors_a_batch_in_which_every_entity_is_refused_is_a_207() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -253,11 +229,7 @@ async fn regression_batch_entity_errors_a_batch_in_which_every_entity_is_refused
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.6.8.4 step 1 and Tables 5.2.4-1 and 5.2.17-1: a null item, an item
-/// without an `id` and an item whose `id` is not a URI leave nothing to report
-/// against, so each fails the whole request as `BadRequestData` -- not
-/// `InvalidRequest`, which clause 5.5.4 keeps for a body that is not JSON --
-/// and nothing of the batch is stored.
+/// Clause 5.6.8.4 step 1 and Tables 5.2.4-1 and 5.2.17-1: a null item, an item without an `id` and an item whose `id` is not a URI leave nothing to report against, so each fails the whole request as `BadRequestData` -- not `InvalidRequest`, which clause 5.5.4 keeps for a body that is not JSON -- and nothing of the batch is stored.
 #[tokio::test]
 async fn regression_batch_entity_errors_an_item_with_no_uri_to_report_against_fails_the_request_and_stores_nothing() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -312,9 +284,7 @@ async fn regression_batch_entity_errors_delete_reports_an_over_long_id_and_delet
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clauses 5.6.10.3 and 5.6.10.4 and Table 5.2.17-1: a batch delete item that
-/// is null, not a string, or not a URI fails the request as `BadRequestData`,
-/// and nothing is deleted.
+/// Clauses 5.6.10.3 and 5.6.10.4 and Table 5.2.17-1: a batch delete item that is null, not a string, or not a URI fails the request as `BadRequestData`, and nothing is deleted.
 #[tokio::test]
 async fn regression_batch_entity_errors_a_delete_item_with_no_uri_fails_the_request_and_deletes_nothing() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -343,9 +313,7 @@ async fn regression_batch_entity_errors_a_delete_item_with_no_uri_fails_the_requ
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Table 5.2.5-1 restricts `unitCode` to a UN/CEFACT common code: an entity
-/// whose Property carries `km/h` is refused on its own, and its neighbour is
-/// stored with its unit.
+/// Table 5.2.5-1 restricts `unitCode` to a UN/CEFACT common code: an entity whose Property carries `km/h` is refused on its own, and its neighbour is stored with its unit.
 #[tokio::test]
 async fn regression_batch_entity_errors_a_unit_that_is_no_common_code_refuses_only_its_entity() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");
@@ -376,9 +344,7 @@ async fn regression_batch_entity_errors_a_unit_that_is_no_common_code_refuses_on
     scope.finish().await.expect("cleanup failed");
 }
 
-/// A batch larger than one commit chunk (512 writes) with one unusable unit in
-/// its first chunk stores every other entity: the refusal is the entity's,
-/// not the chunk's.
+/// A batch larger than one commit chunk (512 writes) with one unusable unit in its first chunk stores every other entity: the refusal is the entity's, not the chunk's.
 #[tokio::test]
 async fn regression_batch_entity_errors_one_unusable_unit_in_a_multi_chunk_batch_loses_no_neighbour() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

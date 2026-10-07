@@ -9,8 +9,7 @@ use sea_query::{BinOper, Condition, Expr as SeaExpr, ExprTrait, Query, SelectSta
 ///
 /// The filter is a parsed clause 4.9 subset over the members of the `Snapshot`
 /// resource, and turning those members into columns is a property of this
-/// schema rather than of the resource — which is where the mapping used to
-/// live, on the resource's own enum in the specification model crate.
+/// schema rather than of the resource.
 #[must_use]
 pub fn build_match_query(filter: &SnapshotPurgeFilter) -> SelectStatement {
     let mut condition = match filter.conjunction {
@@ -42,7 +41,6 @@ fn term_predicate(term: &SnapshotPurgeTerm) -> SimpleExpr {
     let operand = operand(&term.value);
     match term.op {
         SnapshotOp::Eq => column.eq(operand),
-        // `!=` is kept over the equivalent `<>` so the statement reads as it did.
         SnapshotOp::Neq => column.binary(BinOper::Custom("!="), operand),
         SnapshotOp::Lt => column.lt(operand),
         SnapshotOp::Lte => column.lte(operand),

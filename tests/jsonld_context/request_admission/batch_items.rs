@@ -1,5 +1,5 @@
 //! Each item of an `application/ld+json` batch is expanded under its own
-//! `@context` (study C11).
+//! `@context`.
 //!
 //! In JSON-LD each top-level node's `@context` applies to that node; a batch of
 //! `[{..., "@context": A}, {..., "@context": B}]` expands item 1 under A and

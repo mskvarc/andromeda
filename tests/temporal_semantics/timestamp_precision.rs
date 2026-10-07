@@ -1,6 +1,6 @@
 //! Timestamp precision policy: instants are stored exactly or refused.
 //!
-//! `docs/timestamp-precision.md` records the policy: a client-supplied NGSI-LD
+//! The policy: a client-supplied NGSI-LD
 //! instant is accepted exactly as clause 4.6.3 defines it — the literal `Z`
 //! designator, at most six fractional-second digits — and anything else is
 //! refused with a precise error rather than normalised, truncated or stored
@@ -13,7 +13,7 @@
 //! storage at all.
 //!
 //! Rendering the temporal representation carries the stored instant back in the
-//! form `andromeda_ngsi_ld_lexicon::rfc3339::sub_second` produces — exactly the
+//! form the lexicon crate's `sub_second` renderer produces — exactly the
 //! sub-second precision the instant carries, up to the microsecond resolution
 //! the `TIMESTAMPTZ` column holds and clause 4.6.3 caps a `DateTime` at. The
 //! assertions below compare the rendering against that form of the stored
@@ -39,7 +39,7 @@ const SUB_MICROSECOND: &str = "2026-03-04T05:06:07.123456789Z";
 /// An instant a microsecond-resolution timestamp represents exactly.
 const EXACT_MICROSECOND: &str = "2026-03-04T05:06:07.123456Z";
 
-/// Instants outside the range `docs/timestamp-precision.md` declares storable:
+/// Instants outside the storable range:
 /// below Julian day zero, and above chrono's year ceiling of 262142.
 const OUT_OF_RANGE: &[&str] = &["-4714-01-01T00:00:00Z", "300000-01-01T00:00:00Z"];
 
@@ -93,9 +93,7 @@ async fn temporal_semantics_sub_microsecond_instants_are_refused_rather_than_tru
     scope.finish().await.expect("cleanup failed");
 }
 
-/// A value already at the broker's resolution is stored and rendered unchanged,
-/// which is what makes the truncation above a decision rather than a loss of
-/// every fractional digit.
+/// A value already at the broker's resolution is stored and rendered unchanged.
 #[tokio::test]
 async fn temporal_semantics_a_microsecond_instant_round_trips_exactly() {
     let scope = TestEnvironment::from_suite("temporal_semantics").await.expect("isolated test environment");

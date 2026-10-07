@@ -142,7 +142,7 @@ pub struct TemporalAppendIntent {
     /// the intent lands selects the entity by (stage one of a temporal query).
     ///
     /// Shared with the write rather than copied, and persisted as the expanded
-    /// document it is under the name earlier intents used.
+    /// document it is.
     pub selection_value: Option<ObservedSelection>,
 }
 

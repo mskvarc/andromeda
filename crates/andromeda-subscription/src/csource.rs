@@ -37,7 +37,7 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
     fn present(&self, _subscription: &mut Subscription) {}
 
     fn validate_update_extra(&self, _request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
-        // CSR subscription updates (5.11.3) do NOT reject past expiresAt
+        // Clause 5.11.3: unlike entity subscriptions, a past `expiresAt` is not rejected.
         Ok(())
     }
 

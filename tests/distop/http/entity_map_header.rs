@@ -1,7 +1,4 @@
-//! `NGSILD-EntityMap` request and response header behaviour (clause 6.3.15): a
-//! distributed query or retrieve requested with `entityMap=true` returns the map
-//! id in the response header, and a subsequent request naming that map in the
-//! request header reuses it. All `T-MOCK`.
+//! `NGSILD-EntityMap` request and response header behaviour (clause 6.3.15): a distributed query or retrieve requested with `entityMap=true` returns the map id in the response header, and a subsequent request naming that map in the request header reuses it.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -14,8 +11,7 @@ use pretty_assertions::assert_eq;
 use reqwest::Method;
 use serde_json::json;
 
-/// A distributed query requested with `entityMap=true` returns an
-/// `NGSILD-EntityMap` header and `200`/`201` (clause 6.3.15). Confirms REQ-HTTP-54.
+/// A distributed query requested with `entityMap=true` returns an `NGSILD-EntityMap` header and `200`/`201` (clause 6.3.15).
 #[tokio::test]
 async fn dist_http_query_entity_map_requested_returns_map_header_200_or_201() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -58,8 +54,7 @@ async fn dist_http_query_entity_map_requested_returns_map_header_200_or_201() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A query naming an existing map in the `NGSILD-EntityMap` request header reuses
-/// that map (clause 6.3.15). Confirms REQ-HTTP-53.
+/// A query naming an existing map in the `NGSILD-EntityMap` request header reuses that map (clause 6.3.15).
 #[tokio::test]
 async fn dist_http_query_with_entity_map_request_header_uses_named_map() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -114,11 +109,7 @@ async fn dist_http_query_with_entity_map_request_header_uses_named_map() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A purge under an `NGSILD-EntityMap` request header determines its entity set
-/// from the map and returns the map's location (Table 6.4.3.3-2: "If present,
-/// the `EntityMap` supplied is used for determining the set of Entities requested
-/// during the purge operation. The location of the `EntityMap` used in the purge
-/// operation is returned in the response"). Confirms REQ-HTTP-60.
+/// A purge under an `NGSILD-EntityMap` request header determines its entity set from the map and returns the map's location (Table 6.4.3.3-2: "If present, the `EntityMap` supplied is used for determining the set of Entities requested during the purge operation. The location of the `EntityMap` used in the purge operation is returned in the response").
 #[tokio::test]
 async fn dist_http_purge_supports_entity_map_request_header() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -206,16 +197,9 @@ async fn dist_http_purge_supports_entity_map_request_header() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A retrieve naming an existing map in the `NGSILD-EntityMap` request header
-/// reuses that map (Table 6.5.3.1-2: "If present, the `EntityMap` supplied is
-/// used for determining the extent of the Entity data requested during the
-/// retrieval operation. The location of the `EntityMap` used in the retrieval
-/// operation is returned in the response"). Confirms REQ-HTTP-64.
+/// A retrieve naming an existing map in the `NGSILD-EntityMap` request header reuses that map (Table 6.5.3.1-2: "If present, the `EntityMap` supplied is used for determining the extent of the Entity data requested during the retrieval operation. The location of the `EntityMap` used in the retrieval operation is returned in the response").
 ///
-/// The returned location is what makes the named map observable: a retrieve
-/// that omits the header answers `200` with no `NGSILD-EntityMap` header at
-/// all, and one that names a map the broker does not honour answers `200`
-/// carrying a freshly minted map id instead of this one.
+/// The returned location is what makes the named map observable: a retrieve that omits the header answers `200` with no `NGSILD-EntityMap` header at all, and one that names a map the broker does not honour answers `200` carrying a freshly minted map id instead of this one.
 #[tokio::test]
 async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -282,8 +266,7 @@ async fn dist_http_retrieve_with_entity_map_request_header_uses_named_map() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A retrieve requested with `entityMap=true` returns `200` and an
-/// `NGSILD-EntityMap` header (clause 6.3.15). Confirms REQ-HTTP-65.
+/// A retrieve requested with `entityMap=true` returns `200` and an `NGSILD-EntityMap` header (clause 6.3.15).
 #[tokio::test]
 async fn dist_http_retrieve_entity_map_requested_returns_200_and_map_header() {
     let topology = topology::single().await.expect("single-broker topology");

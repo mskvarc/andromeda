@@ -4,7 +4,7 @@
 //! admitted, plus the predicates it left behind. The clause 5.7.2 answer is the
 //! intersection, so the caller evaluates the remainder in memory and only then
 //! takes the clause 5.5.9 window. A store that defers the window reads the
-//! whole selection in its order, so the window -- offset or cursor -- is cut
+//! whole selection in its order, so the window, offset or cursor, is cut
 //! from it exactly as the store would have cut it.
 
 use crate::{

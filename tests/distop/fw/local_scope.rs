@@ -1,8 +1,4 @@
-//! Local scope: `local=true`, the type wildcard, and a `localOnly` subscription
-//! or registration keep an operation to directly-held data and off the registry
-//! (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.3, 5.7, 5.11). `T-MOCK` for
-//! no-forwarding checks, `T-PAIR` for the subscription. Snapshot locality
-//! (clause 5.5.13) is asserted with the snapshot rows in `fw/snapshots.rs`.
+//! Local scope: `local=true`, the type wildcard, and a `localOnly` subscription or registration keep an operation to directly-held data and off the registry (ETSI GS CIM 009 v1.9.1, clauses 4.3.6.3, 5.7, 5.11).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -27,9 +23,7 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
     body.as_array()?.iter().find(|entity| entity["id"].as_str() == Some(id))
 }
 
-/// `local=true` restricts a query to directly-held data: no source is contacted
-/// and only local entities are returned (clause 4.3.6.3). Confirms REQ-FW-66,
-/// REQ-FW-69.
+/// `local=true` restricts a query to directly-held data: no source is contacted and only local entities are returned (clause 4.3.6.3).
 #[tokio::test]
 async fn distop_entity_local_scope_true_uses_only_directly_held_data() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -81,8 +75,7 @@ async fn distop_entity_local_scope_true_uses_only_directly_held_data() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `type=*` wildcard query implies local scope: the registry is not consulted
-/// (clause 4.3.6.3). Confirms REQ-FW-66, REQ-FW-69.
+/// A `type=*` wildcard query implies local scope: the registry is not consulted (clause 4.3.6.3).
 #[tokio::test]
 async fn distop_entity_local_scope_type_wildcard_implies_local() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -133,8 +126,7 @@ async fn distop_entity_local_scope_type_wildcard_implies_local() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// With several registrations present, a `local=true` operation consults none of
-/// them and returns only local data (clause 4.3.6.3). Confirms REQ-FW-69.
+/// With several registrations present, a `local=true` operation consults none of them and returns only local data (clause 4.3.6.3).
 #[tokio::test]
 async fn distop_entity_local_scope_true_skips_registry_csrs() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -188,9 +180,7 @@ async fn distop_entity_local_scope_true_skips_registry_csrs() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `localOnly` subscription matches only local changes: a change to a local
-/// entity notifies, while a remote-only entity does not (clause 5.11). Confirms
-/// REQ-FW-67.
+/// A `localOnly` subscription matches only local changes: a change to a local entity notifies, while a remote-only entity does not (clause 5.11).
 #[tokio::test]
 async fn distop_entity_local_scope_subscription_local_only_matches_local_only() {
     let topology = topology::pair().await.expect("two-broker topology");
@@ -246,9 +236,7 @@ async fn distop_entity_local_scope_subscription_local_only_matches_local_only() 
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration whose `management.localOnly` is set forwards its query with a
-/// `local=true` flag, so the source does not cascade further (clause 4.3.6.3).
-/// Confirms REQ-FW-68.
+/// A registration whose `management.localOnly` is set forwards its query with a `local=true` flag, so the source does not cascade further (clause 4.3.6.3).
 #[tokio::test]
 async fn distop_entity_local_scope_management_local_only_forwards_local_flag() {
     let topology = topology::single().await.expect("single-broker topology");

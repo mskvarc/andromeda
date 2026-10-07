@@ -1,7 +1,6 @@
 //! Attribute dictionary capacity: the key space is not bounded by `SMALLINT`.
 //!
-//! The dictionary key is `INTEGER` (migration `0007_name_dictionaries`)
-//! precisely so that a tenant modelling an open world is not stopped at the
+//! The dictionary key is `INTEGER` precisely so that a tenant modelling an open world is not stopped at the
 //! 32,767 entries a `SMALLINT` key could number. The check is therefore made
 //! past that boundary: 32,768 distinct valid attribute IRIs are interned, and
 //! every one of them keeps a positive, distinct key that the same array-bound
@@ -14,8 +13,7 @@ use sqlx::{PgPool, Row};
 
 /// How many distinct names the capacity check interns.
 ///
-/// One past the largest key a `SMALLINT` could hold, which is the boundary the
-/// widening removed.
+/// One past the largest key a `SMALLINT` could hold.
 const GENERATED_NAMES: i32 = 32_768;
 
 /// Names asked for in one array-bound lookup, the shape the broker's dictionary

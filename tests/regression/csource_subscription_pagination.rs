@@ -1,21 +1,17 @@
 //! `GET /csourceSubscriptions` paginates by `limit`/`offset`, never `page`.
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 5.5.9.2 defines pagination as `limit` and
-//! `offset`; `page` is not an NGSI-LD parameter. A prior handler emitted
-//! `?limit=N&page=M` `Link` values for this collection, which are unfollowable
-//! through the offset interface the endpoint accepts. These pin that an explicit
-//! `offset` query carries `prev`/`next` `Link` values expressed in `offset`, that
-//! no link value carries a `page` parameter, and that the last page offers only a
-//! `prev` link (clause 5.5.9.1). The `first`/`last` relations are not asserted:
-//! clause 5.5.9.1 mandates only the `prev` pointer on the last page and neither
-//! forbids nor requires additional relations (see the interpretations register in
-//! `docs/etsi-patch-audit.md`).
+//! `offset`; `page` is not an NGSI-LD parameter, so a `?limit=N&page=M` `Link`
+//! value would be unfollowable through the offset interface the endpoint accepts.
+//! These pin that an explicit `offset` query carries `prev`/`next` `Link` values
+//! expressed in `offset`, that no link value carries a `page` parameter, and that
+//! the last page offers only a `prev` link (clause 5.5.9.1). The `first`/`last`
+//! relations are not asserted: clause 5.5.9.1 mandates only the `prev` pointer on
+//! the last page and neither forbids nor requires additional relations.
 //!
 //! The collection is broker-wide, so every test resets broker state on entry and
 //! runs under `#[serial(global)]`. There is no dedicated client method for this
 //! endpoint, so the requests are issued raw.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

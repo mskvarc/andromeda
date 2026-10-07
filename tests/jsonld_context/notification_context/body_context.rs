@@ -1,5 +1,4 @@
-//! The `@context` of an `application/ld+json` notification body (study D1 to
-//! D4).
+//! The `@context` of an `application/ld+json` notification body.
 
 use crate::{
     core_contexts::{CORE_V18, CORE_VERSIONLESS, core, core_value},
@@ -20,7 +19,7 @@ async fn notified_under(tenant: &PrivateTenant, extra: Value) -> (Value, Value) 
     (notification["@context"].clone(), notification["data"][0]["@context"].clone()) // clone: the notification is dropped after this
 }
 
-/// Study D1 and clause 5.5.5: a subscription created under the core
+/// Clause 5.5.5: a subscription created under the core
 /// `@context` alone, without `jsonldContext`, is notified under the core
 /// `@context` alone, on the Notification and on every Entity.
 #[tokio::test]
@@ -34,7 +33,7 @@ async fn a_subscription_without_a_user_context_is_notified_under_the_core_contex
     tenant.finish().await;
 }
 
-/// Study D2 and ETSI `046_19`: a `jsonldContext` ending with the core
+/// A `jsonldContext` ending with the core
 /// `@context` is named alone.
 #[tokio::test]
 async fn a_jsonld_context_ending_with_the_core_context_is_named_alone() {
@@ -49,7 +48,7 @@ async fn a_jsonld_context_ending_with_the_core_context_is_named_alone() {
     tenant.finish().await;
 }
 
-/// Study D3: a `jsonldContext` without the core `@context` is followed by it.
+/// A `jsonldContext` without the core `@context` is followed by it.
 #[tokio::test]
 async fn a_jsonld_context_without_the_core_context_is_followed_by_it() {
     let tenant = PrivateTenant::provisioned().await;
@@ -63,7 +62,7 @@ async fn a_jsonld_context_without_the_core_context_is_followed_by_it() {
     tenant.finish().await;
 }
 
-/// Study D4 and ETSI `046_20`: a `jsonldContext` that is itself a core release,
+/// A `jsonldContext` that is itself a core release,
 /// or the versionless alias, is the subscriber's explicit choice and is named
 /// as written (clause 5.8.1.4).
 #[tokio::test]

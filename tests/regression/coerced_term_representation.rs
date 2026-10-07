@@ -21,13 +21,11 @@
 //! such an @context with the specification of testedAt could be used, as there
 //! is no reification."
 //!
-//! The broker kept the full URI in every representation, including the one the
-//! clause singles out as the one that works. It is the same rule Table 5.2.28-1
-//! states for a discovery answer — the short name is conditioned on membership
-//! of the `@context` — applied to the representation where no reified object
-//! stands in the way.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! The broker names the Attribute by its short name in the simplified
+//! representation, where no reified object stands in the way, and keeps the full
+//! URI in the reified ones. It is the same rule Table 5.2.28-1 states for a
+//! discovery answer: the short name is conditioned on membership of the
+//! `@context`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -147,9 +145,7 @@ async fn regression_coerced_term_representation_the_simplified_representation_us
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause C.6: the reified representations keep the full URI, which is the
-/// half of the clause the broker already had right and which the fix must not
-/// change.
+/// Clause C.6: the reified representations keep the full URI.
 #[tokio::test]
 async fn regression_coerced_term_representation_the_reified_representations_keep_the_full_uri() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

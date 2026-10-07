@@ -152,7 +152,7 @@ fn metadata_reads_and_writes_back_unchanged() {
 }
 
 /// The members a history row keeps in columns of their own never stay in its
-/// metadata, whatever an older row stored there.
+/// metadata, whatever a stored row carries there.
 #[test]
 fn column_members_are_not_metadata() {
     let stored = json!({
@@ -214,8 +214,8 @@ fn durable_row(value: &Value, metadata: &Value) -> Value {
 }
 
 /// The structured value and the metadata travel in an intent in the JSON a
-/// stored row holds, under the `object` tag an untyped value had, so a durable
-/// row reads back typed and writes out as it was read.
+/// stored row holds, under the `object` tag, so a durable row reads back typed
+/// and writes out as it was read.
 #[test]
 fn a_durable_row_reads_back_typed_and_writes_out_unchanged() {
     let durable = durable_row(
@@ -230,7 +230,7 @@ fn a_durable_row_reads_back_typed_and_writes_out_unchanged() {
     pretty_assertions::assert_eq!(reread, row);
 }
 
-/// The scalar values keep the wire shape durable intents have always used.
+/// The scalar values keep the wire shape of durable intents.
 #[test]
 fn scalar_values_keep_their_durable_wire_shape() {
     let number = TemporalValue::Number(JsonNumber::from_str("0.100000000000000005").expect("supported exact number"));

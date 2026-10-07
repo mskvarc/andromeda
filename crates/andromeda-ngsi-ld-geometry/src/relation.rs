@@ -1,10 +1,6 @@
 //! In-memory evaluation of a clause 4.10 spatial relation.
 //!
-//! One evaluator, used by every in-memory matcher in the broker. Before this
-//! module existed the same seven match arms were written three times — in the
-//! entity spatial index, in the subscription spatial index and in subscription
-//! matching — and one of the copies carried a comment asserting it "matches the
-//! semantics of" another. That assertion is now the compiler's.
+//! One evaluator, used by every in-memory matcher in the broker (the entity spatial index, the subscription spatial index and subscription matching), so the seven match arms exist once.
 //!
 //! Every predicate is evaluated over the horizontal projection of both
 //! geometries, which the caller supplies as [`PlanarGeometry`] values so that a
@@ -58,10 +54,9 @@ fn matches_planar(georel: &GeoRel, subject: &geo::Geometry<f64>, reference: &geo
         // equivalent, as it has no topological equality predicate.
         GeoRel::Equals => subject.contains(reference) && reference.contains(subject),
         // `ST_Overlaps(subject, reference)`: intersecting, of the same
-        // dimension, and neither one containing the other. This used to be
-        // plain `intersects`, under which an entity lying wholly inside the
-        // query polygon matched here and not in the PostGIS rendering of the
-        // same clause.
+        // dimension, and neither one containing the other. Plain `intersects`
+        // would match an entity lying wholly inside the query polygon, which
+        // the PostGIS rendering of the same clause does not.
         GeoRel::Overlaps => {
             topological_dimension(subject) == topological_dimension(reference)
                 && subject.intersects(reference)
@@ -215,8 +210,7 @@ mod tests {
         expected: bool,
     }
 
-    /// The conformance table over every clause 4.10 relation. The fixtures are
-    /// the ones the three deleted copies each tested separately.
+    /// The conformance table over every clause 4.10 relation.
     fn conformance_table(fixtures: &Fixtures) -> Vec<Case<'_>> {
         containment_cases(fixtures)
             .into_iter()
@@ -685,8 +679,8 @@ mod tests {
     #[test]
     fn every_georel_verdict_ignores_altitude() {
         // OGC 06-103r4 evaluates the clause 4.10 predicates on the horizontal
-        // plane, so lifting every fixture to a different altitude — which would
-        // separate them entirely in three dimensions — must change no verdict.
+        // plane, so lifting every fixture to a different altitude, which would
+        // separate them entirely in three dimensions, must change no verdict.
         let flat = Fixtures::flat();
         let elevated = Fixtures::elevated(&flat);
         for case in conformance_table(&elevated) {

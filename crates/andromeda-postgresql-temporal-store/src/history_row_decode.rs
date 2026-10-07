@@ -8,8 +8,7 @@
 //! unit identity — are shared with [`crate::aggregation_row_decode`], whose rows
 //! project those same columns.
 //!
-//! Nothing in this module guesses. The rebuilt history table records which
-//! typed column holds a row's value, so the value is read from that column and
+//! Nothing in this module guesses. The history table records which typed column holds a row's value, so the value is read from that column and
 //! from no other; a stored code the registry has never assigned fails the
 //! decode rather than falling back to a default, because a row written by a
 //! later release must be reported as unreadable instead of being silently
@@ -136,20 +135,13 @@ fn decode_value(row: &PgRow, attribute_type: AttributeType, attribute_name: &Att
     }
 }
 
-/// Read the arbitrary-precision value column.
-///
-/// The stored column is `NUMERIC`, so its decimal is carried directly into the
-/// exact neutral observation domain without a text or binary64 round trip
-/// (`docs/exact-numeric-representation.md`): a literal the JSON numeric model
-/// cannot carry fails the decode instead of becoming a rounded value or a null.
+/// The stored column is `NUMERIC`, so its decimal is carried directly into the exact neutral observation domain without a text or binary64 round trip: a literal the JSON numeric model cannot carry fails the decode instead of becoming a rounded value or a null.
 fn decode_number(row: &PgRow) -> Result<JsonNumber, TemporalStoreError> {
     let stored: BigDecimal = required_column(row, TABLE, HistoryColumn::ValueNumber)?;
     Ok(JsonNumber::from_decimal(&stored).map_err(StoredHistoryError::ValueNumber)?)
 }
 
-/// Read the geometry column, which the query layer selects as EWKB, and the
-/// `bbox` and foreign members kept beside it (IETF RFC 7946 sections 5 and
-/// 6.1).
+/// Read the geometry column, which the query layer selects as EWKB, and the `bbox` and foreign members kept beside it (IETF RFC 7946 sections 5 and 6.1).
 fn decode_geometry(row: &PgRow, attribute_name: &AttributeName) -> Result<GeometryValue, TemporalStoreError> {
     let bytes: Vec<u8> = required_column(row, TABLE, HistoryColumn::ValueGeometryEwkb)?;
     let (form, _) = geometry_from_ewkb(&bytes)?.into_parts();

@@ -1,5 +1,5 @@
 //! A request context whose remote references never end, or end too deep, is
-//! refused, and refusing it leaves the broker serving (study A14, as ruled).
+//! refused, and refusing it leaves the broker serving.
 //!
 //! JSON-LD 1.1 API section 4.1.2 step 5.2.2 bounds the remote contexts one
 //! processing run may follow and raises a "context overflow" error past the
@@ -95,7 +95,7 @@ async fn assert_refused_everywhere(client: &Client, contexts: &UserContexts, con
     assert!(implicit_context_ids(client).await.is_empty(), "no wrapper was hosted for {what}");
 }
 
-/// Study A14 as ruled: `a` naming `b` naming `a` is refused wherever a request
+/// `a` naming `b` naming `a` is refused wherever a request
 /// names it.
 #[tokio::test]
 async fn a_reference_cycle_is_refused_and_the_broker_keeps_serving() {

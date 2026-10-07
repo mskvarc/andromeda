@@ -232,9 +232,9 @@ const fn refinement_for(georel: &GeoRel) -> Refinement {
         // containment on the plane and runs its own geodesic arithmetic, so a
         // pair at the threshold can fall either side of it. The store
         // re-applies the relation to every candidate anyway, and refining
-        // would make an answer depend on two implementations agreeing exactly,
-        // which is how a centroid reading of `near` once dropped every building
-        // whose middle was out of range but whose nearest wall was not.
+        // would make an answer depend on two implementations agreeing exactly;
+        // a centroid reading of `near` would drop every building whose middle
+        // is out of range but whose nearest wall is not.
         GeoRel::Near { .. } => Refinement::EnvelopeOnly,
         GeoRel::Within | GeoRel::Contains | GeoRel::Intersects | GeoRel::Disjoint | GeoRel::Overlaps => Refinement::Exact,
     }

@@ -20,8 +20,7 @@
 //!
 //! Third, the cutover leaves no second authority to fall back on — no view
 //! carrying an old relation's name over a new one — so an operator's only
-//! recovery is the runbook's verified backup, which is what
-//! `docs/temporal-rebuild-runbook.md` documents.
+//! recovery is the runbook's verified backup.
 
 use crate::SUITE;
 use andromeda_postgresql_context_store::{

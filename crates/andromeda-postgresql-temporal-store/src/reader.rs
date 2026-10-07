@@ -1,10 +1,4 @@
-//! [`TemporalHistoryReader`] implementation for [`TemporalRepository`].
-//!
-//! Bridges the consumer-declared temporal read port to the PostgreSQL-backed
-//! store. Stage 1 (entity ID resolution) includes the `q`-attribute
-//! dictionary lookup that the service used to own; stage 2 (per-entity
-//! history) runs the SQL builder and decodes each `PgRow` into a
-//! [`TemporalHistoryRow`].
+//! Stage 1 resolves entity ids, including the `q`-attribute dictionary lookup; stage 2 runs the per-entity history SQL builder and decodes each `PgRow` into a [`TemporalHistoryRow`].
 
 use crate::{
     aggregation_rows_read::decode_aggregation_rows,

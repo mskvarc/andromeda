@@ -1,5 +1,5 @@
 //! Windowed temporal history deletion (the `temporal_delete_by_query`
-//! extension; see `docs/extensions/temporal-delete-by-query.md`).
+//! extension).
 //!
 //! A single `DELETE` over `attribute_history`, correlated to the streams the
 //! request scopes through a `stream_key IN (subquery)` over

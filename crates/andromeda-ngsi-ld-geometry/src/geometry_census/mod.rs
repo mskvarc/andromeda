@@ -1,8 +1,8 @@
 //! Counting what a `GeoJSON` geometry will cost before anything is built from
 //! it.
 //!
-//! Every later form of a geometry -- its parsed tree, its typed decode, its
-//! spatial projection, its `PostGIS` encoding, its index entry -- costs memory
+//! Every later form of a geometry (its parsed tree, its typed decode, its
+//! spatial projection, its `PostGIS` encoding, its index entry) costs memory
 //! per position, so the number of positions is what a budget on geometries is
 //! stated over. The rest of a geometry costs memory per JSON value like any
 //! other payload: the lists its positions are nested in, and whatever a

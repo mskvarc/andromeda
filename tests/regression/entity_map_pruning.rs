@@ -15,8 +15,6 @@
 //! request under a map can violate in either direction: by answering with
 //! entities the map does not list, or by shedding entities it was never asked
 //! about.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

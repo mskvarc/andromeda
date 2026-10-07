@@ -5,12 +5,10 @@
 //! least recent timestamp in the requested time range). For requests without
 //! the parameter lastN, pagination shall happen 'forwards' (from the least
 //! recent to the most recent timestamp in the requested time range)." Without
-//! `lastN` the broker used to apply its safety cap as an implicit `lastN`: it
-//! answered with the *newest* instances while advertising a forward
-//! `Content-Range` from `timeAt`, so a client resuming forwards from `range-end`
-//! received nothing and never saw the older history (real-world campaign
-//! finding A-19). The cap was also the largest `lastN` a client could ask for
-//! (A-20).
+//! `lastN` the safety cap must not act as an implicit `lastN`: that would answer
+//! with the *newest* instances while advertising a forward `Content-Range` from
+//! `timeAt`, so a client resuming forwards from `range-end` would receive
+//! nothing and never see the older history.
 //!
 //! Every page of a response is cut at one instant across all its attributes and
 //! entities, so a client resuming from the single `Content-Range` loses nothing;
@@ -20,12 +18,9 @@
 //! exclusive `before` and meets nothing twice.
 //!
 //! The base tier pins both page sizes to 19 (`ANDROMEDA__TEMPORAL__DEFAULT_LAST_N`
-//! and `ANDROMEDA__TEMPORAL__MAX_LAST_N` in `docker/compose/test/base` and the
-//! xtask host broker), which is what [`DEFAULT_PAGE`] and [`MAXIMUM`] mirror;
-//! the shipped defaults of 100 and 1,000 are asserted by the unit tests of
-//! `andromeda-temporal`.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! and `ANDROMEDA__TEMPORAL__MAX_LAST_N`), which is what [`DEFAULT_PAGE`] and
+//! [`MAXIMUM`] mirror; the shipped defaults of 100 and 1,000 are asserted by
+//! unit tests.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -435,9 +430,9 @@ async fn regression_temporal_pagination_a_query_page_is_cut_at_one_instant_acros
 /// Clause 4.5.9 renders an attribute in `temporalValues` as its family's member
 /// holding "as many array elements as Property instances ... being
 /// represented", so the attribute of an entity whose history lies entirely
-/// beyond the common cut stays, with its `type` and no pair. The renderer
-/// dropped it, so a client reading every entity of the page by attribute -- ETSI
-/// `021_15_07` -- found no `speed` on the later entity.
+/// beyond the common cut stays, with its `type` and no pair. Dropping it would
+/// leave a client reading every entity of the page by attribute with no `speed`
+/// on the later entity.
 #[tokio::test]
 async fn regression_temporal_pagination_a_temporal_values_page_keeps_an_emptied_attribute_with_its_type() {
     let scope = TestEnvironment::from_suite("regression").await.expect("isolated test environment");

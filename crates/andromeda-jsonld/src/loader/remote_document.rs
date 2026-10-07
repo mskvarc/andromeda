@@ -457,8 +457,8 @@ mod tests {
 
     /// Clause 5.13.2.3: a downloaded `@context` is a referenced object, so
     /// "all extra information located outside of the @context subtree" is gone
-    /// before the document reaches either cache tier. A document whose extras
-    /// survived was stored whole, and clause 5.13.4 would have served them back.
+    /// before the document reaches either cache tier; otherwise the extras
+    /// would be stored whole and served back (clause 5.13.4).
     #[test]
     fn a_downloaded_document_is_reduced_to_its_context_subtree() {
         let downloaded = json!({

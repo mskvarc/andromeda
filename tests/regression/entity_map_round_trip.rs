@@ -10,8 +10,6 @@
 //!
 //! Needs the host broker: the case drives the HTTP API and is not run without
 //! one.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

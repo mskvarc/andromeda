@@ -8,8 +8,6 @@
 //! so its deletion is the shape a typed reading of a temporal evolution is most
 //! likely to refuse. The retrieval has to answer it, in both temporal
 //! representations, rather than fail the whole evolution as invalid.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

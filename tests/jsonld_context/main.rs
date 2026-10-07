@@ -9,8 +9,8 @@
 //!
 //! The suite runs against the base tier: the broker under test and a second
 //! one on the same database (`ANDROMEDA_TEST_TRUSTED_PROXY_BROKER_URL`, default
-//! port 1057), both started with a short `hosted_context_revalidation`
-//! (`docker/compose/test/base/docker-compose.yaml`). A broker run on the host
+//! port 1057), both started with a short `hosted_context_revalidation`.
+//! A broker run on the host
 //! needs `ANDROMEDA_TEST_CALLBACK_HOST=127.0.0.1` in the test process, so the
 //! origins the tests serve contexts from are reachable. No case touches the
 //! network: every remote `@context` is served by the test's own origin, and the

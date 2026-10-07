@@ -8,10 +8,6 @@
 //! `q` -- an unbalanced parenthesis -- fails that body validation, so both
 //! resources answer `BadRequestData` rather than the `InvalidRequest` clause
 //! 6.3.20 reserves for incompatible request *parameters*.
-//!
-//! Corresponds to the official suite case `038_08_03`.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

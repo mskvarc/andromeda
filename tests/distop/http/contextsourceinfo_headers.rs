@@ -1,8 +1,4 @@
-//! `contextSourceInfo`-derived request headers on forwarded requests (clause
-//! 6.3.19 / 4.3.6.5): a `jsonldContext` entry sets the JSON-LD `Link` and JSON
-//! content type, other keys become custom headers, the `urn:ngsi-ld:request`
-//! token copies a value from the triggering request, and neither `NGSILD-Tenant`
-//! nor `Content-Length` can be overridden. All `T-MOCK`.
+//! `contextSourceInfo`-derived request headers on forwarded requests (clause 6.3.19 / 4.3.6.5): a `jsonldContext` entry sets the JSON-LD `Link` and JSON content type, other keys become custom headers, the `urn:ngsi-ld:request` token copies a value from the triggering request, and neither `NGSILD-Tenant` nor `Content-Length` can be overridden.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -17,9 +13,7 @@ use reqwest::Method;
 use serde_json::json;
 use std::time::Duration;
 
-/// A `jsonldContext` contextSourceInfo entry makes the forwarded request carry a
-/// JSON-LD `Link` header and a JSON content type (clause 6.3.19). Confirms
-/// REQ-HTTP-40.
+/// A `jsonldContext` contextSourceInfo entry makes the forwarded request carry a JSON-LD `Link` header and a JSON content type (clause 6.3.19).
 #[tokio::test]
 async fn dist_http_forwarded_jsonld_context_sets_link_and_json_content_type() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -75,8 +69,7 @@ async fn dist_http_forwarded_jsonld_context_sets_link_and_json_content_type() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A non-reserved contextSourceInfo key becomes a custom header on the forwarded
-/// request (clause 6.3.19). Confirms REQ-HTTP-41.
+/// A non-reserved contextSourceInfo key becomes a custom header on the forwarded request (clause 6.3.19).
 #[tokio::test]
 async fn dist_http_forwarded_context_source_info_keys_become_custom_headers() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -125,9 +118,7 @@ async fn dist_http_forwarded_context_source_info_keys_become_custom_headers() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A `urn:ngsi-ld:request` contextSourceInfo value copies the same-named header
-/// from the triggering request onto the forwarded request (clause 4.3.6.5).
-/// Confirms REQ-HTTP-42.
+/// A `urn:ngsi-ld:request` contextSourceInfo value copies the same-named header from the triggering request onto the forwarded request (clause 4.3.6.5).
 #[tokio::test]
 async fn dist_http_forwarded_context_source_info_request_value_copied_from_request() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -178,8 +169,7 @@ async fn dist_http_forwarded_context_source_info_request_value_copied_from_reque
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A contextSourceInfo entry cannot override the tenant or the content length of
-/// the forwarded request (clause 4.3.6.5). Confirms REQ-HTTP-43.
+/// A contextSourceInfo entry cannot override the tenant or the content length of the forwarded request (clause 4.3.6.5).
 #[tokio::test]
 async fn dist_http_forwarded_context_source_info_cannot_override_tenant_or_content_length() {
     let topology = topology::single().await.expect("single-broker topology");

@@ -11,7 +11,7 @@
 //!
 //! This module is the same policy one layer deeper. A context *document* the
 //! loader fetches, or the operator preloads, may itself import the Core
-//! @context — a user context written as `["<core-url>", { ...user terms... }]`.
+//! @context: a user context written as `["<core-url>", { ...user terms... }]`.
 //! The array-level policy above only ever sees the URL of such a document, not
 //! the core reference nested inside it, so once the broker appends the
 //! authoritative Core last, the document's embedded copy is an *earlier*,
@@ -19,8 +19,8 @@
 //! authoritative copy as a `ProtectedTermRedefinition` instead of letting it
 //! take precedence. Removing the embedded reference at load time is what keeps
 //! the Core singular and last, so a user context that redefines a core term
-//! resolves to the Core's definition — the Core wins, exactly as 5.5.7 requires
-//! — rather than failing.
+//! resolves to the Core's definition (the Core wins, exactly as 5.5.7 requires)
+//! rather than failing.
 //!
 //! This is the spec-mandated Core-precedence obligation, not a workaround: it is
 //! how a broker built on an off-the-shelf JSON-LD processor meets clause 5.5.7.
@@ -31,8 +31,8 @@
 //! processed copy as its [`crate::context_tail::ContextTail`].
 //!
 //! The rules live here; the walk that applies them to a document the processor
-//! reads is `engine::context_document`'s, and the one that applies them to the
-//! contexts a request named is [`crate::context_value`]'s.
+//! reads belongs to the engine's context document, and the one that applies
+//! them to the contexts a request named is [`crate::context_value`]'s.
 
 use crate::core_context::is_ngsi_ld_core_context_url;
 use iri_rs::Iri;

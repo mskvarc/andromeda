@@ -113,7 +113,7 @@ async fn under_commit_synchronous_an_enqueued_batch_create_is_a_candidate_before
 
 /// Clause 5.7.2.4: any `location` instance meeting the restriction is enough.
 /// The index holds the default instance alone, which here lies far outside the
-/// area, so it finds no candidate -- and that narrows the default instance
+/// area, so it finds no candidate, and that narrows the default instance
 /// only: the request's identifiers and the geo-query reach the store intact,
 /// and the store evaluates the `datasetId` instance that does lie inside.
 #[tokio::test]

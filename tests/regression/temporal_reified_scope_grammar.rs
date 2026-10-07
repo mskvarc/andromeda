@@ -5,12 +5,10 @@
 //! Evolution as "a temporal representation of a Property", and clause 4.18
 //! gives every Scope one grammar, which "shall be supported by
 //! implementations": a `ScopeLevel` is a letter followed by letters, digits and
-//! `_`. The broker read each value of a reified Scope instance as a scope path
-//! and silently left out any value that was not one, so `"value": "/a-b"` or
-//! `"value": 7` recorded no Scope at all and the request still answered with
-//! success. Clause 5.5.4 answers such a value with `BadRequestData`.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! `_`. A value of a reified Scope instance that is not a scope path is not
+//! silently left out, which would record no Scope for `"value": "/a-b"` or
+//! `"value": 7` while the request answered with success: clause 5.5.4 answers
+//! such a value with `BadRequestData`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -138,7 +136,7 @@ async fn regression_r54_append_refuses_a_reified_scope_outside_the_grammar() {
     scope.finish().await.expect("cleanup");
 }
 
-/// The fix refuses what is no Scope, not the reified Scope itself: a path and
+/// The refusal covers what is no Scope, not the reified Scope itself: a path and
 /// the deletion clause 4.18 spells with the NGSI-LD Null are both recorded.
 #[tokio::test]
 async fn regression_r54_a_reified_scope_within_the_grammar_is_recorded() {

@@ -1,4 +1,4 @@
-//! Conformance-mode gate-leak coverage (extension-strategy.md 6.4).
+//! Conformance-mode gate-leak coverage.
 //!
 //! A broker started with `ANDROMEDA__EXTENSIONS__CONFORMANCE_MODE=enabled` must
 //! serve no extension even when the individual feature flags are also on. A

@@ -1,8 +1,7 @@
 //! `DELETE /temporal/entities` — the temporal history delete-by-query extension.
 //!
 //! Runs against a broker started with `ANDROMEDA__EXTENSIONS__TEMPORAL_DELETE_BY_QUERY=enabled`
-//! and a small `ANDROMEDA__EXTENSIONS__TEMPORAL_DELETE_BY_QUERY_MAX_MATCHES` (see
-//! `docker/compose/test/extensions/env`).
+//! and a small `ANDROMEDA__EXTENSIONS__TEMPORAL_DELETE_BY_QUERY_MAX_MATCHES`.
 
 use crate::seeding::{T3, seed_three_instant_history, surviving_speed_instants};
 use andromeda_test_client::{header::jsonld_link_header, response::TestResponse, test_client::TestClient};

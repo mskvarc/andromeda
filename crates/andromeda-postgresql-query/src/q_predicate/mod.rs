@@ -1,18 +1,11 @@
 //! Compiler from NGSI-LD `q` filter expressions (ETSI GS CIM 009 v1.9.1
 //! clause 4.9) to SQL predicates, shared by the entity and temporal builders.
 //!
-//! # Why this exists
+//! # Probes
 //!
-//! Value predicates used to compile to
-//! `jsonb_path_query_first(payload, '$[0]."<iri>"[0]."hasValue"[0]."@value"')`
-//! with a text cast. That is a functional expression over a JSONB column: no
-//! index can serve it, so every filtered query degraded to a sequential scan
-//! over `entities`.
+//! Value predicates compile to an `EXISTS` probe against the `current_attribute_values` projection, whose typed partial indexes are keyed `(attribute_name_key, value_*)`. A functional jsonpath expression over the JSONB payload can be served by no index and would degrade every filtered query to a sequential scan over `entities`.
 //!
-//! Predicates now compile to an `EXISTS` probe against the
-//! `current_attribute_values` projection, whose typed partial indexes are keyed
-//! `(attribute_name_key, value_*)`. The planner scans the typed index, fetches
-//! `entity_key` from the heap, and semi-joins back to the driving table.
+//! The planner scans the typed index, fetches `entity_key` from the heap, and semi-joins back to the driving table.
 //!
 //! Every probe correlates on `entity_key`, the surrogate the projection is keyed
 //! on, so a statement that reaches entities through an alias hands over the
@@ -35,9 +28,7 @@
 //! | a deeper value path (`attr[a.b]`) | JSONB jsonpath fallback |
 //! | attribute IRI absent from `attribute_names` | constant `FALSE` |
 //!
-//! The fallback keeps the previous semantics for the shapes the projection
-//! cannot answer. It is still unindexed; it is now the exception rather than
-//! the rule.
+//! The jsonpath fallback answers the shapes the projection cannot. It is unindexed.
 //!
 //! # Attribute families beyond Property and Relationship
 //!
@@ -106,8 +97,7 @@
 //!
 //! `EXISTS` matches when *any* row for the attribute satisfies the predicate.
 //! That is what clause 4.9 requires (p. 86: "the target value shall be any
-//! Value of such instances"). The previous `jsonb_path_query_first` shape only
-//! ever examined the first instance, which was a spec bug.
+//! Value of such instances").
 
 pub mod attribute_names;
 pub mod equality_term;

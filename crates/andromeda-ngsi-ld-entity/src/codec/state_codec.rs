@@ -2,8 +2,8 @@
 //! `[{"@id": .., "@type": [..], <members>}]`, to and from bytes.
 //!
 //! Decoding reads the written document and converts it with the same rules a
-//! create applies, so a document the store could never hold — one carrying the
-//! NGSI-LD Null, a repeated `datasetId`, a `GeometryCollection` — is refused
+//! create applies, so a document the store could never hold (one carrying the
+//! NGSI-LD Null, a repeated `datasetId`, a `GeometryCollection`) is refused
 //! with a typed [`EntityRefusal`] naming the attribute and the dataset.
 
 use crate::{

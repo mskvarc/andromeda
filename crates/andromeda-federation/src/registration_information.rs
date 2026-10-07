@@ -129,11 +129,7 @@ mod tests {
         "urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")
     }
 
-    /// An absent entity type satisfies a type-scoped information entry: the
-    /// read/purge-by-id paths pass no type on purpose, so a registration scoped
-    /// to a type still covers an id-only read. The write path must therefore
-    /// resolve the entity's actual type (see `crate::local_entity_type`), or this
-    /// permissive match refuses writes to unrelated entities.
+    /// An absent entity type satisfies a type-scoped information entry: the read and purge-by-id paths pass no type on purpose, so a registration scoped to a type still covers an id-only read. The write path must therefore resolve the entity's actual type, or this permissive match refuses writes to unrelated entities.
     #[test]
     fn an_absent_entity_type_satisfies_a_type_scoped_information_entry() {
         let csr = registration(&json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
@@ -141,10 +137,7 @@ mod tests {
         assert!(information_matches_entity(info, &[], Some(&vehicle_id())));
     }
 
-    /// A known entity type that differs from the one a registration covers does
-    /// not match it. This is exactly what supplying the resolved local type buys
-    /// the write path: a registration scoped to another type stops covering the
-    /// write, so it is no longer wrongly refused.
+    /// A known entity type that differs from the one a registration covers does not match it, so a registration scoped to another type stops covering the write.
     #[test]
     fn a_differing_known_entity_type_does_not_match_a_type_scoped_information_entry() {
         let csr = registration(&json!({"entities": [{"type": "https://example.org/Device"}]}));
@@ -162,10 +155,7 @@ mod tests {
         let vehicle = IriBuf::new("https://example.org/Vehicle".to_string()).expect("valid IRI");
         let csr = registration(&json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
         let info = &csr.coverage.information[0];
-        // The entity is a Device first, a Vehicle second; the Vehicle registration
-        // must still match it.
         assert!(information_matches_entity(info, &[device.clone(), vehicle.clone()], Some(&vehicle_id())));
-        // Order must not matter.
         assert!(information_matches_entity(info, &[vehicle, device], Some(&vehicle_id())));
     }
 

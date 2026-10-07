@@ -8,8 +8,7 @@
 //!
 //! Clause C.5.10 and C.5.11 print attribute lists that omit the parking
 //! Attributes clause C.5.8 puts on the very same tenant. The corpus completes
-//! them rather than reproducing the omission; the repair is recorded in
-//! `docs/annex-c-corpus.md`.
+//! them rather than reproducing the omission.
 
 use crate::{
     clean_tenant,

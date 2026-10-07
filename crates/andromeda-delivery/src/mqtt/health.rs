@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 ///
 /// `Degraded` is not a failure: it means nothing has arrived from the broker
 /// for twice the keep-alive interval, which is suspicious but not yet a reason
-/// to tear the connection down. Only `Unhealthy` — the event loop reporting an
-/// error, or a publish failing — takes a connection out of the fast path and
+/// to tear the connection down. Only `Unhealthy` (the event loop reporting an
+/// error, or a publish failing) takes a connection out of the fast path and
 /// puts it behind the reconnect backoff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
 #[strum(serialize_all = "kebab-case")]

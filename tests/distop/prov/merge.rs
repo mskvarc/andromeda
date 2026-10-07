@@ -1,4 +1,4 @@
-//! Merge Entity forwarding — REQ-PROV-108..112 (clause 5.6.17.4).
+//! Merge Entity forwarding (clause 5.6.17.4).
 //!
 //! A merge with no local entity and no matching registration is `404`, but a
 //! matching registration makes it forwardable rather than not-found. An
@@ -43,7 +43,7 @@ async fn seed_local(client: &TestClient, payload: &Value) {
 }
 
 /// A merge for an absent entity with no matching registration is
-/// `404 ResourceNotFound`. Confirms REQ-PROV-108 (positive).
+/// `404 ResourceNotFound`.
 #[tokio::test]
 async fn merge_entity_absent_and_no_registration_returns_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -61,7 +61,7 @@ async fn merge_entity_absent_and_no_registration_returns_404() {
 }
 
 /// A merge for an absent entity that a registration matches is forwarded rather
-/// than answered `404`. Confirms REQ-PROV-108 (negative).
+/// than answered `404`.
 #[tokio::test]
 async fn merge_entity_registration_matches_entity_absent_not_404() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -96,7 +96,7 @@ async fn merge_entity_registration_matches_entity_absent_not_404() {
 }
 
 /// An exclusive registration forwards the owned `speed`, strips it from the local
-/// merge, and keeps the unowned `brandName`. Confirms REQ-PROV-109, 111.
+/// merge, and keeps the unowned `brandName`.
 #[tokio::test]
 async fn merge_entity_exclusive_match_forwards_and_strips() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -149,8 +149,7 @@ async fn merge_entity_exclusive_match_forwards_and_strips() {
 }
 
 /// An exclusive registration that does not advertise `mergeEntity` rejects a
-/// merge it wholly owns with a bare `409 Conflict` and no forwarding. Confirms
-/// REQ-PROV-110.
+/// merge it wholly owns with a bare `409 Conflict` and no forwarding.
 #[tokio::test]
 async fn merge_entity_op_unsupported_returns_409() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -182,7 +181,6 @@ async fn merge_entity_op_unsupported_returns_409() {
 }
 
 /// An inclusive registration forwards the remainder and also merges locally.
-/// Confirms REQ-PROV-112.
 #[tokio::test]
 async fn merge_entity_inclusive_forwards_remainder_and_merges_local() {
     let topology = topology::single().await.expect("single-broker topology");

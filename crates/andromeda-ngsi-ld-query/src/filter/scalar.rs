@@ -207,13 +207,7 @@ mod tests {
         assert!(matches!(error, QueryError::QInvalidTime { .. }), "got {error:?}");
     }
 
-    /// Clause 4.9's grammar defines `dateTime` and `time` as values "as
-    /// mandated by clause 4.6.3", and clause 4.6.3 requires the literal `Z`
-    /// designator for `DateTime` and states that a `Time` string "shall not
-    /// contain expressions of the difference between local time and UTC". A
-    /// filter operand carrying a numeric offset was previously resolved to UTC
-    /// and compared, so a spelling the write path refuses could still be
-    /// queried with.
+    /// Clause 4.9's grammar defines `dateTime` and `time` as values "as mandated by clause 4.6.3", and clause 4.6.3 requires the literal `Z` designator for `DateTime` and states that a `Time` string "shall not contain expressions of the difference between local time and UTC". A filter operand carrying a numeric offset is refused.
     #[test]
     fn an_offset_bearing_operand_is_rejected_rather_than_normalised() {
         let date_time_error = parse_date_time("2017-12-24T13:00:00+01:00").expect_err("a numeric offset is forbidden");
@@ -318,11 +312,7 @@ mod tests {
         matches!(error, QueryError::QInvalidTime { .. })
     }
 
-    /// Clause 4.9's `quotedStr` is a JSON string, so free-form text carrying
-    /// colons is compared as the text it is in either spelling. Classifying an
-    /// operand by three byte positions alone made `note=="12:00:00 in the
-    /// morning"` a malformed `time` operand and answered a conformant filter
-    /// with `BadRequestData`.
+    /// Clause 4.9's `quotedStr` is a JSON string, so free-form text carrying colons is compared as the text it is in either spelling.
     #[test]
     fn free_form_text_is_a_string_operand_however_much_punctuation_it_carries() {
         for literal in ["12:00:00 in the morning", "ab:cd:ef", "urn:ngsi-ld:Vehicle:A4567", "1999-2000"] {

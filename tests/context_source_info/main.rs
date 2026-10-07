@@ -4,15 +4,11 @@
 //! key/value pairs that the broker must forward as request metadata when
 //! calling the registered Context Source. This suite covers:
 //!
-//! - reserved keys (`accept`, `contentType`, `jsonldContext`,
-//!   `ngsiLdConformance`) map to the corresponding outbound HTTP semantics,
-//! - custom keys are forwarded verbatim as headers,
-//! - per-registration `@context` overrides the broker default.
-//!
-//! Full coverage is substantial; this initial test asserts the broker
-//! round-trips `contextSourceInfo` through CSR registration + retrieval
-//! unchanged. Exercising the forwarding semantics requires the
-//! `ContextSourceMock` infrastructure and is deferred to follow-up work.
+//! - the array round-trips through registration creation and retrieval
+//!   unchanged,
+//! - reserved keys (`accept`, `contentType`, `jsonldContext`) map to the
+//!   corresponding outbound HTTP semantics,
+//! - custom keys are forwarded verbatim as headers.
 //!
 //! Naming convention: `context_source_info_<area>_<scenario>_<expected_outcome>`.
 

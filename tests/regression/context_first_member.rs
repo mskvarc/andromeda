@@ -7,13 +7,10 @@
 //! member order, so these cases read the raw response text: it has to open
 //! with `{"@context"` for a single resource, and every item of a collection
 //! (clauses 5.8.4 and 5.9.4, which answer an array of resources) has to open
-//! that way too. The Snapshot half of the family is in the snapshot suite,
-//! which owns the client a Snapshot needs.
+//! that way too.
 //!
 //! Needs the host broker: the cases drive the HTTP API and are not run without
 //! one.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 

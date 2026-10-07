@@ -1,7 +1,4 @@
-//! Query-CSR entity and attribute selection (clause 5.10.2 over the 5.12
-//! matching rules): term expansion, the entity spec, attribute-name matching,
-//! the unconstrained sub-cases, conjunction of conditions, and `RegistrationInfo`
-//! trimming. All `T-LOCAL`.
+//! Query-CSR entity and attribute selection (clause 5.10.2 over the 5.12 matching rules): term expansion, the entity spec, attribute-name matching, the unconstrained sub-cases, conjunction of conditions, and `RegistrationInfo` trimming.
 
 use crate::{
     disc::{
@@ -16,9 +13,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use urlencoding::encode;
 
-/// Attribute names that appear only inside `q` are used as the attribute list:
-/// `q=speed>10` matches the registration that covers `speed` and excludes the
-/// one that covers a different property (clause 5.10.2). Confirms REQ-DISC-19.
+/// Attribute names that appear only inside `q` are used as the attribute list: `q=speed>10` matches the registration that covers `speed` and excludes the one that covers a different property (clause 5.10.2).
 #[tokio::test]
 async fn query_csr_attributes_referenced_only_in_q_used_as_attribute_list() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -48,10 +43,7 @@ async fn query_csr_attributes_referenced_only_in_q_used_as_attribute_list() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Short-hand type terms are expanded before matching: a `Vehicle` query with
-/// the compound context matches the registration, while the same query without
-/// a context expands differently and does not (clause 5.5.7). Confirms
-/// REQ-DISC-22.
+/// Short-hand type terms are expanded before matching: a `Vehicle` query with the compound context matches the registration, while the same query without a context expands differently and does not (clause 5.5.7).
 #[serial_test::serial(distop_shared_type)]
 #[tokio::test]
 async fn query_csr_expands_shorthand_type_and_attr_terms_before_matching() {
@@ -90,9 +82,7 @@ async fn query_csr_expands_shorthand_type_and_attr_terms_before_matching() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A Query-CSR returns only registrations meeting every condition: the
-/// conjunction of type and attribute list excludes a registration that fails
-/// one part (clause 5.10.2). Confirms REQ-DISC-23.
+/// A Query-CSR returns only registrations meeting every condition: the conjunction of type and attribute list excludes a registration that fails one part (clause 5.10.2).
 #[tokio::test]
 async fn query_csr_returns_only_csrs_meeting_all_conditions() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -116,9 +106,7 @@ async fn query_csr_returns_only_csrs_meeting_all_conditions() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The entity spec matches `EntityInfo` on type and idPattern: an id covered by
-/// the registered pattern matches, an id outside it does not (clause 5.12).
-/// Confirms REQ-DISC-24.
+/// The entity spec matches `EntityInfo` on type and idPattern: an id covered by the registered pattern matches, an id outside it does not (clause 5.12).
 #[tokio::test]
 async fn query_csr_entity_spec_matches_entityinfo() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -143,8 +131,7 @@ async fn query_csr_entity_spec_matches_entityinfo() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration with no `EntityInfo` is unconstrained on the entity part and
-/// matches any entity condition (clause 5.12). Confirms REQ-DISC-25.
+/// A registration with no `EntityInfo` is unconstrained on the entity part and matches any entity condition (clause 5.12).
 #[tokio::test]
 async fn query_csr_no_entityinfo_entity_spec_considered_matching() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -164,8 +151,7 @@ async fn query_csr_no_entityinfo_entity_spec_considered_matching() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An attribute name matches whether the registration covers it as a Property
-/// or a Relationship (clause 5.12). Confirms REQ-DISC-26.
+/// An attribute name matches whether the registration covers it as a Property or a Relationship (clause 5.12).
 #[tokio::test]
 async fn query_csr_attribute_name_matches_property_or_relationship() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -186,9 +172,7 @@ async fn query_csr_attribute_name_matches_property_or_relationship() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration that registers no attribute names is unconstrained on the
-/// attribute part and matches any attribute list (clause 5.12). Confirms
-/// REQ-DISC-27.
+/// A registration that registers no attribute names is unconstrained on the attribute part and matches any attribute list (clause 5.12).
 #[tokio::test]
 async fn query_csr_no_registered_attrs_attribute_names_considered_matching() {
     let topology = topology::single().await.expect("single-broker topology");
@@ -201,8 +185,7 @@ async fn query_csr_no_registered_attrs_attribute_names_considered_matching() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A returned registration is trimmed to only the `RegistrationInfo` entries that
-/// match the query (clause 5.10.2, SHOULD). Confirms REQ-DISC-41.
+/// A returned registration is trimmed to only the `RegistrationInfo` entries that match the query (clause 5.10.2, SHOULD).
 #[tokio::test]
 async fn query_csr_returns_registrationinfo_trimmed_to_matching() {
     let topology = topology::single().await.expect("single-broker topology");

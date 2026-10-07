@@ -114,7 +114,7 @@ impl MqttTransportPool {
     ///
     /// Returns [`TransportError::ConnectionFailed`] when the broker is still
     /// inside its reconnect backoff, so no dial is attempted at all, and
-    /// otherwise whatever the dial reports —
+    /// otherwise whatever the dial reports:
     /// [`TransportError::ConnectionFailed`] for a refused or rejected
     /// handshake, [`TransportError::Timeout`] when the broker does not answer
     /// within the configured connect timeout. A failed dial advances the
@@ -395,17 +395,17 @@ mod tests {
         let endpoint = refused_endpoint();
 
         // First dial: the broker refuses, so the connection fails and the backoff
-        // arms — even though no connection was ever inserted under the key.
+        // arms, even though no connection was ever inserted under the key.
         assert!(pool.get_or_create_connection(&endpoint).await.is_err());
 
         // Second dial, immediately: inside the backoff window, refused without a
-        // dial. This is the case the pre-fix code let through, because the backoff
-        // state lived on a connection that never existed.
+        // dial. The backoff is keyed by broker, so it holds although no connection
+        // was ever inserted.
         let refused = pool.get_or_create_connection(&endpoint).await.map(drop).expect_err("the backoff refuses");
         assert!(refused.to_string().contains("backoff active"), "{refused}");
 
         // Once the backoff elapses, a dial is permitted again (and fails on its
-        // own terms — the broker is still not there).
+        // own terms, since the broker is still not there).
         sleep(Duration::from_millis(500)).await;
         let permitted = pool.get_or_create_connection(&endpoint).await.map(drop).expect_err("the broker is still down");
         assert!(!permitted.to_string().contains("backoff active"), "{permitted}");

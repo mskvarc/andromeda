@@ -5,9 +5,9 @@
 //! [`andromeda_ngsi_ld_model::entity::Entity`], with the clause 4.21
 //! structural rule, the clause 4.15 language negotiation, the clause 4.5.23
 //! inline join, the clause 4.3.6.8 version fallback and the
-//! presentation-boundary URI decoding applied on the way,
-//! so a response never holds a second, untyped copy of the entity and a
-//! `GeoProperty` geometry goes to the wire from its positions.
+//! presentation-boundary URI decoding applied on the way, so a response never
+//! holds a second, untyped copy of the entity and a `GeoProperty` geometry goes
+//! to the wire from its positions.
 
 pub(crate) mod common_members;
 pub(crate) mod entity_collection;

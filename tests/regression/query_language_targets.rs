@@ -1,18 +1,6 @@
-//! Clause 4.9 Query Terms whose target element is not a plain Property.
+//! Clause 4.9 Query Terms whose target element is not a plain Property: `languageMap` with or without a target language, `valueList`, `objectList` and `vocab`.
 //!
-//! Clause 4.9 defines a target value for every attribute family, not only for a
-//! Property's `value` and a Relationship's `object`: a `LanguageProperty`'s
-//! `languageMap` with or without a target language, a `ListProperty`'s
-//! `valueList`, a `ListRelationship`'s `objectList`, a `VocabProperty`'s
-//! `vocab`. The PostgreSQL pushdown that answers an ordinary (non-local) entity
-//! query matched none of them, while the in-memory evaluator did — so the same
-//! `q` gave two different answers depending on which path ran.
-//!
-//! Every query below is an ordinary `GET /entities` with `q`, which is the
-//! request the pushdown answers, and every assertion states what ETSI GS CIM
-//! 009 v1.9.1 requires rather than what the broker happened to do.
-//!
-//! Naming convention: `regression_<finding>_<scenario>`.
+//! Every query is an ordinary `GET /entities` with `q`, the request the PostgreSQL pushdown answers, and every assertion states what ETSI GS CIM 009 v1.9.1 requires.
 
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
@@ -22,31 +10,17 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 
-/// A clause 4.6.3 `DateTime` carrying a fractional second, held inside a
-/// `valueList`.
+/// A clause 4.6.3 `DateTime` carrying a fractional second, held inside a `valueList`.
 ///
-/// Clause 4.6.3 makes the fraction part of the value — "the string shall contain
-/// two integer digits, followed by a decimal point and then one or more
-/// fractional digits" — so the array holds this exact text and an operand that
-/// names the value has to carry it too.
+/// Clause 4.6.3 makes the fraction part of the value, so the array holds this exact text and an operand naming it must carry it too.
 const FRACTIONAL_INSTANT: &str = "2024-01-01T00:00:00.250Z";
 
 /// The same for clause 4.6.3's `Time` form.
 const FRACTIONAL_TIME: &str = "09:30:00.250Z";
 
-/// One entity carrying every attribute family whose clause 4.9 target value is
-/// not a single scalar, plus the two plain Properties whose target value is one.
+/// One entity carrying every attribute family whose clause 4.9 target value is not a single scalar, plus the plain Properties whose target value is one.
 ///
-/// The language maps deliberately hold the queried value under a key that is
-/// not the first one, and one of them holds arrays rather than single strings,
-/// so a reader that only ever saw the first entry — or only ever saw a string —
-/// cannot pass by accident.
-///
-/// `roomTemp` and `roomName` are the scalar targets: clause 4.9's datatype rules
-/// are stated over the target value's type, and a suite holding only structured
-/// targets never exercises them. `roomExtras` is the array a client wrote as a
-/// plain Property value, which clause 4.9 makes an array target exactly as it
-/// makes a `valueList` one.
+/// The language maps hold the queried value under a key that is not the first one, and one holds arrays rather than strings, so a reader that only saw the first entry or only strings cannot pass by accident. `roomTemp` and `roomName` are the scalar targets the clause 4.9 datatype rules are stated over; `roomExtras` is an array written as a plain Property value, which clause 4.9 treats like a `valueList`.
 fn structured_entity(id: &str) -> serde_json::Value {
     json!({
         "id": id,
@@ -75,10 +49,7 @@ async fn seeded(local: &str) -> (TestEnvironment, String) {
     (scope, id)
 }
 
-/// Whether the seeded entity satisfies one `q` expression.
-///
-/// The query names the entity by `id` as well, so the answer is about this
-/// entity alone and no concurrently running suite can contribute a row.
+/// The query names the entity by `id` as well, so no concurrently running suite can contribute a row.
 async fn matches(scope: &TestEnvironment, id: &str, q: &str) -> bool {
     let query = format!("id={}&q={}", urlencoding::encode(id), urlencoding::encode(q));
     let response = scope
@@ -205,16 +176,7 @@ async fn regression_query_targets_list_property_matches_a_member_of_its_value_li
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 4.9 p. 87 names "the valueList array associated to such a
-/// `ListProperty`" as the target value, and clause 4.6.3 gives a `DateTime`'s
-/// Seconds component "one or more fractional digits, up to a maximum of six".
-/// The two together mean the array holds the client's text, fraction included,
-/// and the operand that names one of its members is compared against that text.
-///
-/// The `DateTime` operand was rendered at whole seconds for every backend
-/// binding, so `roomInstants=="2024-01-01T00:00:00.250Z"` reached the JSONB
-/// containment probe as `"2024-01-01T00:00:00Z"` — a value no stored list holds,
-/// and a filter that could never match whatever the client wrote.
+/// Clause 4.9 p. 87 names "the valueList array associated to such a `ListProperty`" as the target value, and clause 4.6.3 gives a `DateTime`'s Seconds component "one or more fractional digits, up to a maximum of six". The array therefore holds the client's text, fraction included, and an operand naming a member is compared against that text, so `roomInstants=="2024-01-01T00:00:00.250Z"` must reach the JSONB containment probe with its fraction.
 #[tokio::test]
 async fn regression_query_targets_a_fractional_temporal_operand_matches_a_value_list_member() {
     let (scope, id) = seeded("Building:q-fractional-list").await;
@@ -403,7 +365,6 @@ async fn regression_query_targets_a_datatype_mismatch_fails_equal_and_satisfies_
             ("roomSpeeds==\"2\"", false),
             ("roomSpeeds!=\"2\"", true),
             ("roomSpeeds!=2", false),
-            // A boolean against the same numeric list is the same rule.
             ("roomSpeeds==true", false),
             ("roomSpeeds!=true", true),
         ],
@@ -454,15 +415,11 @@ async fn regression_query_targets_a_mistyped_query_term_is_unequal_to_a_scalar_p
             ("roomTemp==true", false),
             ("roomTemp!=\"2020-01-01T00:00:00Z\"", true),
             ("roomTemp==\"2020-01-01T00:00:00Z\"", false),
-            // The same rule with the types the other way round: a number is not
-            // the data type of a string target.
             ("roomName!=5", true),
             ("roomName==5", false),
             ("roomName!=\"atrium\"", false),
             ("roomName!=\"foyer\"", true),
-            // And against a structured target of another data type: the
-            // `valueList` holds strings, so a numeric Query Term is unequal to
-            // it rather than simply unmatched.
+            // The `valueList` holds strings, so a numeric Query Term is unequal to it rather than unmatched.
             ("roomTags!=5", true),
             ("roomTags==5", false),
         ],
