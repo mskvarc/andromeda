@@ -269,13 +269,13 @@ mod tests {
 
     #[test]
     fn semicolon_separated_scopes_render_a_conjunction() {
-        let sql = render(condition(&scope("/A;/B"), &current()));
+        let sql = render(condition(&scope("(/A;/B)"), &current()));
         assert!(sql.contains(" AND "), "{sql}");
     }
 
     #[test]
     fn scope_history_renders_one_probe_per_term() {
-        let sql = render(condition(&scope("/A;/B,/C"), &history(TimeInterval::Unbounded)));
+        let sql = render(condition(&scope("(/A;/B),/C"), &history(TimeInterval::Unbounded)));
         assert_eq!(sql.matches("EXISTS").count(), 3, "{sql}");
         assert!(sql.contains("scope_history"), "{sql}");
     }
@@ -358,7 +358,7 @@ mod tests {
     /// of `,` and `;` cannot reach one and miss the others.
     #[test]
     fn every_target_renders_the_same_boolean_structure() {
-        let scope_q = scope("/A;/B,/C");
+        let scope_q = scope("(/A;/B),/C");
         let current_sql = render(condition(&scope_q, &current()));
         let history_sql = render(condition(&scope_q, &history(TimeInterval::Unbounded)));
         let valid_at_sql = render(condition(&scope_q, &instant_valid_at()));

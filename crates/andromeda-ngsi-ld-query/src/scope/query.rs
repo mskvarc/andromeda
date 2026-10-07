@@ -34,12 +34,12 @@ enum ScopeToken {
 
 /// NGSI-LD scope query expression, parsed.
 ///
-/// The grammar is a disjunction of conjunctions: `,` and `|` are both OR, `;`
-/// is AND (AND binds tighter), and parentheses group sub-expressions (clause
-/// 4.19). It is parsed once and normalised to disjunctive normal form — a list
-/// of alternatives, each a conjunction of patterns — so every rendering walks
-/// one representation, and a malformed pattern is a rejected request rather than
-/// an `lquery` cast that fails inside PostgreSQL.
+/// The clause 4.19 grammar is a disjunction (`,` or `|`) of alternatives, each
+/// either one pattern or a parenthesised conjunction (`;`) of patterns:
+/// `ScopesQ = OrScopeQ *(orOp OrScopeQ)`, `OrScopeQ = "(" ScopeQ *(andOp
+/// ScopeQ) ")" / ScopeQ`. It is already in disjunctive normal form, so every
+/// rendering walks one list of alternatives, and a malformed expression is a
+/// rejected request rather than an `lquery` cast that fails inside PostgreSQL.
 ///
 /// The wire form is the clause 4.19 expression, so a Subscription or Snapshot
 /// query that stores one gives back an equivalent expression.
@@ -57,7 +57,8 @@ impl ScopeQuery {
     /// # Errors
     ///
     /// Returns [`QueryError::ScopePatternInvalid`] when the expression is
-    /// unbalanced, ends on an operator, or contains a pattern outside the
+    /// unbalanced, ends on an operator, conjoins outside parentheses, nests a
+    /// group or a disjunction inside one, or contains a pattern outside the
     /// clause 4.19 grammar.
     pub fn parse(raw: &str) -> Result<ScopeQuery, QueryError> {
         let tokens = tokenize_scope_query(raw);
@@ -145,7 +146,7 @@ fn tokenize_scope_query(raw: &str) -> Vec<ScopeToken> {
     tokens
 }
 
-/// A recursive-descent parser over a tokenised `scopeQ`, normalising to DNF.
+/// A parser over a tokenised `scopeQ`, following the clause 4.19 grammar.
 struct ScopeQueryParser<'a> {
     /// The tokens to consume.
     tokens: &'a [ScopeToken],
@@ -164,65 +165,64 @@ impl ScopeQueryParser<'_> {
         self.position >= self.tokens.len()
     }
 
-    /// Parse a disjunction: the union of its conjunctions' alternatives.
+    /// Parse `OrScopeQ *(orOp OrScopeQ)`.
     fn parse_or(&mut self) -> Result<Vec<Vec<ScopePattern>>, QueryError> {
-        let mut alternatives = self.parse_and()?;
+        let mut alternatives = vec![self.parse_alternative()?];
         while matches!(self.peek(), Some(ScopeToken::Or)) {
             self.position += 1;
-            alternatives.extend(self.parse_and()?);
+            alternatives.push(self.parse_alternative()?);
         }
         Ok(alternatives)
     }
 
-    /// Parse a conjunction: the cartesian product of its terms' alternatives,
-    /// which distributes AND over the OR inside any grouped sub-expression.
-    fn parse_and(&mut self) -> Result<Vec<Vec<ScopePattern>>, QueryError> {
-        let mut conjunction = self.parse_term()?;
-        while matches!(self.peek(), Some(ScopeToken::And)) {
-            self.position += 1;
-            conjunction = distribute_and(&conjunction, &self.parse_term()?);
-        }
-        Ok(conjunction)
-    }
-
-    /// Parse one term: a parenthesised sub-expression or a single pattern.
-    fn parse_term(&mut self) -> Result<Vec<Vec<ScopePattern>>, QueryError> {
-        match self.peek().cloned() {
+    /// Parse one `OrScopeQ`: a parenthesised conjunction or a single pattern.
+    /// A `;` after either is a conjunction outside parentheses.
+    fn parse_alternative(&mut self) -> Result<Vec<ScopePattern>, QueryError> {
+        let alternative = match self.peek() {
             Some(ScopeToken::Open) => {
                 self.position += 1;
-                let inner = self.parse_or()?;
-                match self.peek() {
-                    Some(ScopeToken::Close) => {
-                        self.position += 1;
-                        Ok(inner)
-                    }
-                    _ => Err(QueryError::ScopePatternInvalid(ScopePatternFault::UnclosedGroup)),
+                self.parse_group()?
+            }
+            Some(ScopeToken::Pattern(_) | ScopeToken::Or | ScopeToken::And | ScopeToken::Close) | None => vec![self.parse_pattern()?],
+        };
+        match self.peek() {
+            Some(ScopeToken::And) => Err(QueryError::ScopePatternInvalid(ScopePatternFault::UngroupedConjunction)),
+            Some(ScopeToken::Pattern(_) | ScopeToken::Or | ScopeToken::Open | ScopeToken::Close) | None => Ok(alternative),
+        }
+    }
+
+    /// Parse `ScopeQ *(andOp ScopeQ) ")"` after its opening parenthesis.
+    fn parse_group(&mut self) -> Result<Vec<ScopePattern>, QueryError> {
+        let mut conjunction = vec![self.parse_pattern()?];
+        loop {
+            match self.peek() {
+                Some(ScopeToken::And) => {
+                    self.position += 1;
+                    conjunction.push(self.parse_pattern()?);
                 }
+                Some(ScopeToken::Close) => {
+                    self.position += 1;
+                    return Ok(conjunction);
+                }
+                Some(ScopeToken::Or | ScopeToken::Open) => return Err(QueryError::ScopePatternInvalid(ScopePatternFault::NestedGroup)),
+                Some(ScopeToken::Pattern(_)) | None => return Err(QueryError::ScopePatternInvalid(ScopePatternFault::UnclosedGroup)),
             }
+        }
+    }
+
+    /// Parse one `ScopeQ` pattern.
+    fn parse_pattern(&mut self) -> Result<ScopePattern, QueryError> {
+        match self.peek() {
             Some(ScopeToken::Pattern(pattern)) => {
+                let pattern = ScopePattern::parse(pattern)?;
                 self.position += 1;
-                Ok(vec![vec![ScopePattern::parse(&pattern)?]])
+                Ok(pattern)
             }
-            // An operator, a `)`, or the end of input where a term was expected.
+            Some(ScopeToken::Open) => Err(QueryError::ScopePatternInvalid(ScopePatternFault::NestedGroup)),
+            // An operator, a `)`, or the end of input where a pattern was expected.
             Some(ScopeToken::Or | ScopeToken::And | ScopeToken::Close) | None => Err(QueryError::ScopePatternInvalid(ScopePatternFault::MissingPattern)),
         }
     }
-}
-
-/// The DNF of `left AND right`: every alternative of one conjoined with every
-/// alternative of the other.
-fn distribute_and(left: &[Vec<ScopePattern>], right: &[Vec<ScopePattern>]) -> Vec<Vec<ScopePattern>> {
-    let mut product = Vec::with_capacity(left.len() * right.len());
-    for left_alternative in left {
-        for right_alternative in right {
-            // clone: each combined alternative owns its patterns, which the
-            // source alternatives keep for the other combinations
-            let mut combined = left_alternative.clone();
-            combined.extend(right_alternative.iter().cloned());
-            product.push(combined);
-        }
-    }
-    product
 }
 
 impl FromStr for ScopeQuery {
@@ -247,11 +247,9 @@ impl TryFrom<String> for ScopeQuery {
 // separators, which `derive_more::Display`'s format string cannot express.
 //
 // Clause 4.19's grammar is `OrScopeQ = "(" ScopeQ *(andOp ScopeQ) ")" / ScopeQ`:
-// a conjunction is legal *only* parenthesised, with no unparenthesised form. So
-// an alternative of two or more requirements is wrapped — a bare `/A;/B` is text
-// outside the grammar that a conforming parser rejects — while a
-// single-requirement alternative, and the top-level `,` between alternatives,
-// stand unparenthesised.
+// a conjunction is legal only parenthesised, so an alternative of two or more
+// requirements is wrapped, while a single-requirement alternative and the
+// top-level `,` between alternatives stand unparenthesised.
 impl fmt::Display for ScopeQuery {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (index, alternative) in self.alternatives.iter().enumerate() {
@@ -311,19 +309,45 @@ mod tests {
     }
 
     #[test]
-    fn semicolons_separate_requirements_within_an_alternative() {
-        assert_eq!(shape("/A;/B"), vec![vec!["/A".to_string(), "/B".to_string()]]);
+    fn semicolons_separate_requirements_within_a_group() {
+        assert_eq!(shape("(/A;/B)"), vec![vec!["/A".to_string(), "/B".to_string()]]);
     }
 
     #[test]
-    fn and_binds_tighter_than_or() {
-        // Clause 4.19: `/A;/B,/C` is `(/A AND /B) OR /C`.
-        assert_eq!(shape("/A;/B,/C"), vec![vec!["/A".to_string(), "/B".to_string()], vec!["/C".to_string()]]);
+    fn a_group_and_a_pattern_are_alternatives() {
+        assert_eq!(shape("(/A;/B),/C"), vec![vec!["/A".to_string(), "/B".to_string()], vec!["/C".to_string()]]);
     }
 
     #[test]
     fn surrounding_whitespace_is_trimmed_from_every_pattern() {
-        assert_eq!(shape(" /A ; /B "), vec![vec!["/A".to_string(), "/B".to_string()]]);
+        assert_eq!(shape(" ( /A ; /B ) "), vec![vec!["/A".to_string(), "/B".to_string()]]);
+    }
+
+    /// Clause 4.19: "For logical and grouping parenthesis are needed", and
+    /// `OrScopeQ` admits `;` only inside `( )`.
+    #[test]
+    fn a_conjunction_outside_parentheses_is_rejected() {
+        for raw in ["/A;/B", "/A;/B,/C", "/C,/A;/B", "/A;/B|/C", "(/A;/B);/C", "/A/#;/B"] {
+            assert!(
+                matches!(
+                    ScopeQuery::parse(raw),
+                    Err(QueryError::ScopePatternInvalid(ScopePatternFault::UngroupedConjunction))
+                ),
+                "{raw}"
+            );
+        }
+    }
+
+    /// Clause 4.19: a parenthesised `OrScopeQ` holds `ScopeQ *(andOp ScopeQ)`
+    /// only, never a disjunction or another group.
+    #[test]
+    fn a_disjunction_or_a_group_inside_a_group_is_rejected() {
+        for raw in ["(/A,/B)", "(/A|/B);/C", "((/A;/B))", "(/A;(/B;/C))"] {
+            assert!(
+                matches!(ScopeQuery::parse(raw), Err(QueryError::ScopePatternInvalid(ScopePatternFault::NestedGroup))),
+                "{raw}"
+            );
+        }
     }
 
     #[test]
@@ -341,13 +365,13 @@ mod tests {
             ScopeQuery::parse("/A,"),
             Err(QueryError::ScopePatternInvalid(ScopePatternFault::MissingPattern))
         ));
-        assert!(ScopeQuery::parse("/A;;/B").is_err());
+        assert!(ScopeQuery::parse("(/A;;/B)").is_err());
     }
 
     #[test]
     fn an_unclosed_group_and_a_dangling_parenthesis_are_told_apart() {
         assert!(matches!(
-            ScopeQuery::parse("(/A,/B"),
+            ScopeQuery::parse("(/A;/B"),
             Err(QueryError::ScopePatternInvalid(ScopePatternFault::UnclosedGroup))
         ));
         assert!(matches!(
@@ -360,7 +384,7 @@ mod tests {
     fn a_conjunction_needs_every_requirement_met_by_some_scope() {
         // Clause 4.19: `;` is AND across the entity's whole scope set, not
         // within one scope.
-        let query = ScopeQuery::parse("/Spain;/Madrid/Gardens").expect("valid scope query");
+        let query = ScopeQuery::parse("(/Spain;/Madrid/Gardens)").expect("valid scope query");
         assert!(query.matches(&paths(&["/Spain", "/Madrid/Gardens"])));
         assert!(!query.matches(&paths(&["/Spain"])));
     }
@@ -379,23 +403,13 @@ mod tests {
         assert_eq!(shape("/A|/B"), vec![vec!["/A".to_string()], vec!["/B".to_string()]]);
     }
 
+    /// Clause 4.19 EXAMPLE 5: `(/Madrid/Districts;/CompanyA)|/CompanyB`.
     #[test]
-    fn parentheses_group_a_disjunction_and_distribute_the_conjunction() {
-        // Clause 4.19 Examples 4/5: `(/A,/B);/C` is `(/A OR /B) AND /C`, which in
-        // disjunctive normal form is `(/A AND /C) OR (/B AND /C)`.
-        assert_eq!(
-            shape("(/A,/B);/C"),
-            vec![vec!["/A".to_string(), "/C".to_string()], vec!["/B".to_string(), "/C".to_string()]]
-        );
-    }
-
-    #[test]
-    fn a_grouped_query_matches_by_its_distributed_meaning() {
-        let query = ScopeQuery::parse("(/A|/B);/C").expect("valid scope query");
-        assert!(query.matches(&paths(&["/A", "/C"])));
-        assert!(query.matches(&paths(&["/B", "/C"])));
+    fn a_grouped_conjunction_or_a_pattern_matches_either() {
+        let query = ScopeQuery::parse("(/A;/B)|/C").expect("valid scope query");
+        assert!(query.matches(&paths(&["/A", "/B"])));
+        assert!(query.matches(&paths(&["/C"])));
         assert!(!query.matches(&paths(&["/A"])));
-        assert!(!query.matches(&paths(&["/C"])));
     }
 
     /// Clause 4.19 spells rooted patterns only; a clause 4.18 Scope written
@@ -408,22 +422,20 @@ mod tests {
 
     #[test]
     fn an_unbalanced_parenthesis_is_rejected() {
-        assert!(ScopeQuery::parse("(/A,/B").is_err());
+        assert!(ScopeQuery::parse("(/A;/B").is_err());
         assert!(ScopeQuery::parse("/A,/B)").is_err());
     }
 
     #[test]
     fn a_conjunction_always_renders_parenthesised_per_clause_4_19() {
         // `OrScopeQ = "(" ScopeQ *(andOp ScopeQ) ")" / ScopeQ`: a conjunction is
-        // legal only parenthesised, a single requirement stands alone, and the
-        // conjunction distributes over a grouped disjunction into DNF.
+        // legal only parenthesised and a single requirement stands alone.
         let cases = [
             ("/A", "/A"),
             ("/A,/B", "/A,/B"),
-            ("/A;/B", "(/A;/B)"),
+            ("(/A)", "/A"),
             ("(/A;/B)", "(/A;/B)"),
-            ("(/A;/B),/C", "(/A;/B),/C"),
-            ("(/A,/B);/C", "(/A;/C),(/B;/C)"),
+            ("(/A;/B)|/C", "(/A;/B),/C"),
         ];
         for (input, expected) in cases {
             let rendered = ScopeQuery::parse(input).expect("valid scope query").to_string();
@@ -435,9 +447,7 @@ mod tests {
 
     #[test]
     fn a_scope_query_round_trips_through_its_clause_4_19_text() {
-        // Clause 4.19 admits a conjunction only parenthesised, so the canonical
-        // rendering of `/A;/B,/C/#` wraps its conjunction: `(/A;/B),/C/#`.
-        let raw = "/A;/B,/C/#";
+        let raw = "(/A;/B),/C/#";
         let query = ScopeQuery::parse(raw).expect("valid scope query");
         let json = serde_json::to_string(&query).expect("serialises");
         pretty_assertions::assert_eq!(json, "\"(/A;/B),/C/#\"");
@@ -468,7 +478,7 @@ mod tests {
     /// alternative met by some scope, and no scope at all meeting nothing.
     #[test]
     fn an_entity_is_matched_by_the_scopes_it_carries() {
-        let query = ScopeQuery::parse("/Madrid/#;/Spain").expect("parses");
+        let query = ScopeQuery::parse("(/Madrid/#;/Spain)").expect("parses");
         assert!(query.matches_entity(&scoped(&["/Spain", "/Madrid/Gardens"])));
         assert!(!query.matches_entity(&scoped(&["/Spain"])));
         assert!(!query.matches_entity(&scoped(&[])));

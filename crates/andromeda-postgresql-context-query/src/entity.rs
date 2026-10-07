@@ -1463,7 +1463,7 @@ mod tests {
     #[test]
     fn scope_complex_generates_mixed() {
         let mut q = empty_query();
-        q.selection.scope_q = Some(ScopeQuery::parse("/A;/B,/C/#").expect("valid scope query"));
+        q.selection.scope_q = Some(ScopeQuery::parse("(/A;/B),/C/#").expect("valid scope query"));
         let built = build(&q, &known_types());
         assert!(built.sql.contains(" AND "), "SQL should contain AND");
         assert!(built.sql.contains(" OR "), "SQL should contain OR");

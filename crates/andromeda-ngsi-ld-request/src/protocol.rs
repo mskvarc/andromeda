@@ -264,13 +264,13 @@ mod tests {
     #[test]
     fn a_scope_header_fills_in_an_absent_scope_query() {
         let mut params: EntityQueryParameters = serde_urlencoded::from_str("type=Vehicle").expect("query parses");
-        let scope_header = scope("/A;/B");
+        let scope_header = scope("(/A;/B)");
         let extensions = ProtocolExtensions {
             scope: Some(&scope_header),
             ..ProtocolExtensions::default()
         };
         extensions.apply_to_entity_query(&mut params).expect("headers apply");
-        pretty_assertions::assert_eq!(params.scope_q, Some("/A;/B".parse().expect("valid scope query")));
+        pretty_assertions::assert_eq!(params.scope_q, Some("(/A;/B)".parse().expect("valid scope query")));
     }
 
     #[test]

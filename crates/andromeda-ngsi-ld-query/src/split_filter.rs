@@ -309,7 +309,7 @@ mod tests {
         let selection = selection(
             Some("\"https://example.com/a\">1|\"https://example.com/b\"<2;\"https://example.com/c\""),
             Some(within_berlin()),
-            Some("/A;/B,/C"),
+            Some("(/A;/B),/C"),
         );
         let leaves: Vec<String> = SplitFilter::of(&selection)
             .leaves()
@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn a_scope_alternative_needs_every_requirement() {
-        let selection = selection(None, None, Some("/A;/B,/C"));
+        let selection = selection(None, None, Some("(/A;/B),/C"));
         let filter = SplitFilter::of(&selection);
         assert!(!filter.holds(&LeafTruths::from_vec(vec![true, false, false])));
         assert!(filter.holds(&LeafTruths::from_vec(vec![true, true, false])));
@@ -380,7 +380,7 @@ mod tests {
             part(None, None, &[]),
         ];
         let filters = [
-            selection(Some("\"https://example.com/speed\">50"), Some(within_berlin()), Some("/Madrid;/Spain")),
+            selection(Some("\"https://example.com/speed\">50"), Some(within_berlin()), Some("(/Madrid;/Spain)")),
             selection(
                 Some("\"https://example.com/speed\">50|\"https://example.com/speed\"<45"),
                 None,

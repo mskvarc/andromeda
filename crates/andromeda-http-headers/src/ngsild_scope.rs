@@ -64,8 +64,8 @@ mod tests {
 
     #[test]
     fn a_header_and_scope_query_parameter_decode_to_the_same_query() {
-        let header = decode_from(" /A ; /B , /C/# ").expect("valid scope header");
-        let parameter = "/A;/B,/C/#".parse::<ScopeQuery>().expect("valid scope query");
+        let header = decode_from(" ( /A ; /B ) , /C/# ").expect("valid scope header");
+        let parameter = "(/A;/B),/C/#".parse::<ScopeQuery>().expect("valid scope query");
         pretty_assertions::assert_eq!(header.query(), &parameter);
     }
 
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn encoding_uses_the_query_grammar_canonical_rendering() {
-        let scope = decode_from("(/A|/B);/C").expect("valid scope header");
+        let scope = decode_from("(/A;/C)|(/B;/C)").expect("valid scope header");
         let mut values = Vec::new();
         scope.encode(&mut values);
         pretty_assertions::assert_eq!(values, vec![HeaderValue::from_static("(/A;/C),(/B;/C)")]);

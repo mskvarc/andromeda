@@ -701,7 +701,7 @@ mod tests {
     #[test]
     fn matches_entity_filters_scope_and() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_scope_q = Some(ScopeQuery::parse("/Spain;/Madrid/Gardens").expect("valid scope query"));
+        sub.compiled_scope_q = Some(ScopeQuery::parse("(/Spain;/Madrid/Gardens)").expect("valid scope query"));
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 

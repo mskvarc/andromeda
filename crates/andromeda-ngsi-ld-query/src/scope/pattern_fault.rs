@@ -21,6 +21,14 @@ pub enum ScopePatternFault {
     /// The `#` wildcard stands anywhere but last.
     #[error("the # wildcard may only end a scope pattern")]
     MultiLevelNotLast,
+    /// Two requirements are conjoined outside parentheses; clause 4.19 admits a
+    /// conjunction only as `(ScopeQ;ScopeQ)`.
+    #[error("a conjunction of scopes must be parenthesised")]
+    UngroupedConjunction,
+    /// A parenthesised group holds a disjunction or another group; clause 4.19
+    /// admits only a conjunction of scope patterns inside one.
+    #[error("a parenthesised group may only hold scope patterns joined by ;")]
+    NestedGroup,
     /// A parenthesised group is not closed.
     #[error("a parenthesised group is not closed")]
     UnclosedGroup,

@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn stage1_scope_q_with_or_and_semantics() {
         let mut compiled = minimal_compiled();
-        compiled.entities.scope_q = Some(ScopeQuery::parse("/A;/B,/C").expect("valid scope query"));
+        compiled.entities.scope_q = Some(ScopeQuery::parse("(/A;/B),/C").expect("valid scope query"));
         let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(sql.contains("AND"), "SQL should contain AND for semicolon-separated scopes: {sql}");
         assert!(sql.contains("OR"), "SQL should contain OR for comma-separated scopes: {sql}");
@@ -548,7 +548,7 @@ mod tests {
     #[test]
     fn temporal_scope_q_compound() {
         let mut compiled = minimal_compiled();
-        compiled.entities.scope_q = Some(ScopeQuery::parse("/A;/B,/C").expect("valid scope query"));
+        compiled.entities.scope_q = Some(ScopeQuery::parse("(/A;/B),/C").expect("valid scope query"));
         compiled.window.interval = TimeInterval::Before(instant("2024-06-01T00:00:00Z"));
         let (sql, _) = built(&compiled, &QueryNames::default());
         // /A;/B -> AND, ,/C -> OR

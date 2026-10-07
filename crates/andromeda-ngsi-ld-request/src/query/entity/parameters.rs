@@ -640,7 +640,7 @@ mod tests {
         assert!(serde_urlencoded::from_str::<EntityQueryParameters>("type=(Building").is_err());
         assert!(serde_urlencoded::from_str::<EntityQueryParameters>("scopeQ=(/A;/B").is_err());
         assert!(
-            params_from_query("type=Vehicle&scopeQ=/A;/B&q=speed%3E50")
+            params_from_query("type=Vehicle&scopeQ=(/A;/B)&q=speed%3E50")
                 .validate(EntityQueryOperation::Query)
                 .is_ok()
         );
