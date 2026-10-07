@@ -15,10 +15,7 @@ use crate::{
 };
 use andromeda_federation::{outcome::ForwardedWriteResult, single_source_failure::single_source_failure};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_problem_details::{
-    batch_operation::{BatchEntityError, BatchOperationResult},
-    error_type::NgsiLdErrorType,
-};
+use andromeda_ngsi_ld_problem_details::batch_operation::{BatchEntityError, BatchOperationResult};
 use axum::{
     Json,
     http::{StatusCode, Uri as HttpUri},
@@ -84,18 +81,7 @@ pub fn provision_response(
             if !remote_succeeded {
                 return Err(report.clone().with_instance(instance.clone())); // clone: the report is owned by the outcome the caller still holds
             }
-            // Table 6.6.3.1-2 reserves 207 for a partial failure. An inclusive
-            // registration's local part always runs, even over an Attribute the
-            // broker does not hold locally, so a local "not found" there means
-            // nothing local remained to do rather than that a part failed: with
-            // a source having succeeded, the operation succeeded completely
-            // (204/201). A genuine local failure -- a Conflict, say -- standing
-            // beside a remote success is the partial case and still answers 207.
-            if report.error_type() == NgsiLdErrorType::ResourceNotFound {
-                Ok(success)
-            } else {
-                Ok(multi_status(multi_status_result(entity_id, local, forwarded)))
-            }
+            Ok(multi_status(multi_status_result(entity_id, local, forwarded)))
         }
     }
 }
@@ -296,12 +282,11 @@ mod tests {
         pretty_assertions::assert_eq!(status_of(remote_only), 204);
     }
 
-    /// Table 6.6.3.1-2: an inclusive registration's local part always runs, so
-    /// a local `ResourceNotFound` over an Attribute the broker does not hold is
-    /// "nothing remained locally", not a failed part. With a source having
-    /// succeeded, the operation succeeded completely and answers 204, not 207.
+    /// Clause 5.6.4.4: the inclusive forward does not end local processing, so
+    /// a missing local Attribute instance is a failed part beside the source's
+    /// success, and Table 6.7.3.1-2 reserves 204 for "updated successfully".
     #[test]
-    fn a_local_not_found_beside_a_remote_success_is_a_complete_success() {
+    fn a_local_not_found_beside_a_remote_success_is_a_partial_success() {
         let response = provision_response(
             &uri("urn:test:1"),
             &[result(ForwardingMode::Inclusive, 204)],
@@ -309,14 +294,11 @@ mod tests {
             StatusCode::NO_CONTENT.into_response(),
             &instance(),
         );
-        pretty_assertions::assert_eq!(status_of(response), 204);
+        pretty_assertions::assert_eq!(status_of(response), 207);
     }
 
-    /// The exclusion is only for "not found": a genuine local failure -- a
-    /// Conflict -- standing beside a remote success is the partial case Table
-    /// 6.6.3.1-2 answers with 207.
     #[test]
-    fn a_genuine_local_failure_beside_a_remote_success_is_a_partial_success() {
+    fn a_local_conflict_beside_a_remote_success_is_a_partial_success() {
         let response = provision_response(
             &uri("urn:test:1"),
             &[result(ForwardingMode::Inclusive, 204)],

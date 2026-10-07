@@ -21,8 +21,8 @@ use crate::{
         StatusCode,
         TypedPath,
         ValidatedQuery,
-        classify_entity_error,
         collect_proxied_attrs,
+        local_entity_outcome,
         provision_response,
     },
     written_payload_admission::admit_written_entity,
@@ -114,11 +114,11 @@ pub(crate) async fn merge(
     // fragment; whatever remains is merged here.
     let proxied = collect_proxied_attrs(&forwarded);
     let local = match admitted.local_remainder(&proxied) {
-        Some(remainder) => LocalOutcome::processed(
+        Some(remainder) => local_entity_outcome(
             service
                 .merge(&target, entity, &patch, remainder, &context, MergeOptions { claimed: &proxied, ..options })
                 .await,
-            classify_entity_error,
+            &forwarded,
         ),
         None => LocalOutcome::NothingRemained,
     };

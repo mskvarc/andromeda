@@ -19,8 +19,8 @@ use crate::{
         StatusCode,
         TypedPath,
         ValidatedQuery,
-        classify_entity_error,
         collect_proxied_attrs,
+        local_entity_outcome,
         provision_response,
     },
     forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
@@ -101,7 +101,7 @@ pub(crate) async fn partial_update_attr(
     // Clause 5.6.4.4: an attribute a proxied registration covers is updated at
     // the source, never here; an inclusive one is updated in both places.
     let local = if collect_proxied_attrs(&forwarded).is_empty() {
-        LocalOutcome::processed(service.partial_update_attr(&target, entity, admitted).await, classify_entity_error)
+        local_entity_outcome(service.partial_update_attr(&target, entity, admitted).await, &forwarded)
     } else {
         LocalOutcome::NothingRemained
     };

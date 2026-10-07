@@ -20,12 +20,12 @@ use crate::{
         StatusCode,
         TypedPath,
         ValidatedQuery,
-        classify_entity_error,
+        local_entity_outcome,
         provision_response,
     },
     forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
 };
-use andromeda_entity::{error::EntityError, write_target::WriteTarget};
+use andromeda_entity::write_target::WriteTarget;
 use andromeda_federation::{outcome::ForwardedWriteOutcome, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
@@ -106,8 +106,8 @@ pub(crate) async fn delete(
     let unsupported_only = forwarded.iter().all(|result| matches!(result.outcome, ForwardedWriteOutcome::NotAdvertised));
     let local = match service.delete(&target, entity).await {
         Ok(()) if proxied && unsupported_only => LocalOutcome::Processed(Ok(())),
-        Ok(()) | Err(EntityError::NotFound { .. }) if proxied => LocalOutcome::NothingRemained,
-        other => LocalOutcome::processed(other, classify_entity_error),
+        Ok(()) if proxied => LocalOutcome::NothingRemained,
+        other => local_entity_outcome(other, &forwarded),
     };
     provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

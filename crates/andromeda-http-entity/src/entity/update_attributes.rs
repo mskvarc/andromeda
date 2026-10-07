@@ -20,8 +20,8 @@ use crate::{
         TypedPath,
         UpdateAttributesParams,
         ValidatedQuery,
-        classify_entity_error,
         collect_proxied_attrs,
+        local_entity_outcome,
         provision_response,
         update_result::{NotUpdatedReason, update_result_response},
     },
@@ -137,7 +137,7 @@ pub(crate) async fn update_attrs(
 
     let local = match local_update {
         None => LocalOutcome::NothingRemained,
-        Some(result) => LocalOutcome::processed(result, classify_entity_error),
+        Some(result) => local_entity_outcome(result, &forwarded),
     };
     provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

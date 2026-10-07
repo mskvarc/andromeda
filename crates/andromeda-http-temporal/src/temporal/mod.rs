@@ -39,7 +39,12 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 use andromeda_ngsi_ld_request::{attribute_deletion::DeleteAttrParams, local::LocalOnlyParams, query::temporal::TemporalQueryParameters};
-use andromeda_temporal::{error::TemporalError, port::mutator::TemporalDeleteScope as DeleteScope, service::CreateOrUpdateResult};
+use andromeda_temporal::{
+    error::TemporalError,
+    port::mutator::TemporalDeleteScope as DeleteScope,
+    service::CreateOrUpdateResult,
+    temporal_not_found_reason::TemporalNotFoundReason,
+};
 use axum::{
     extract::OriginalUri,
     http::{HeaderMap, Method, StatusCode},
@@ -47,12 +52,16 @@ use axum::{
 };
 
 /// The local outcome of a temporal write on an entity registrations also
-/// hold: clauses 5.6.12.4 to 5.6.16.4 raise `ResourceNotFound` only when the
-/// entity is held neither locally nor by a matching registration, so a local
-/// not-found beside a matching registration is nothing left to do here.
+/// hold: clauses 5.6.12.4 to 5.6.16.4 raise `ResourceNotFound` for an unknown
+/// entity only when it is held neither locally nor by a matching registration,
+/// so an entity without a local Temporal Evolution beside a matching
+/// registration is nothing left to do here. A missing Attribute or instance of
+/// an entity held here stays a failed part.
 fn local_temporal_outcome<T>(result: Result<T, TemporalError>, forwarded: &[ForwardedWriteResult]) -> LocalOutcome {
     match result {
-        Err(TemporalError::NotFound(_)) if !forwarded.is_empty() => LocalOutcome::NothingRemained,
+        Err(TemporalError::NotFound(TemporalNotFoundReason::Entity { .. } | TemporalNotFoundReason::UntypedEvolution { .. })) if !forwarded.is_empty() => {
+            LocalOutcome::NothingRemained
+        }
         other => LocalOutcome::processed(other, classify_temporal_error),
     }
 }
@@ -82,3 +91,47 @@ pub mod retrieve;
 mod retrieve_forwarding;
 /// Temporal update attribute instance handling.
 pub mod update_attribute_instance;
+
+#[cfg(test)]
+mod tests {
+    use crate::temporal::local_temporal_outcome;
+    use andromeda_federation::{
+        answer_body::AnswerBody,
+        outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
+    };
+    use andromeda_http_response::provision::LocalOutcome;
+    use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
+    use andromeda_temporal::{error::TemporalError, temporal_not_found_reason::TemporalNotFoundReason};
+
+    fn inclusive_success() -> ForwardedWriteResult {
+        ForwardedWriteResult {
+            registration_id: "urn:ngsi-ld:ContextSourceRegistration:test".parse().expect("valid URI"),
+            mode: ForwardingMode::Inclusive,
+            outcome: ForwardedWriteOutcome::Completed {
+                status: 204,
+                body: AnswerBody::Absent,
+            },
+            proxied_attrs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn an_entity_without_a_local_temporal_evolution_beside_a_registration_leaves_nothing_local() {
+        let missing: Result<(), TemporalError> = Err(TemporalError::NotFound(TemporalNotFoundReason::Entity {
+            id: "urn:ngsi-ld:Vehicle:1".parse().expect("valid URI"),
+        }));
+        assert!(matches!(local_temporal_outcome(missing, &[inclusive_success()]), LocalOutcome::NothingRemained));
+    }
+
+    #[test]
+    fn a_missing_attribute_of_a_local_temporal_evolution_is_a_failed_local_part() {
+        let missing: Result<(), TemporalError> = Err(TemporalError::NotFound(TemporalNotFoundReason::AttributeOnEntity {
+            attribute: "speed".parse().expect("valid name"),
+            entity: "urn:ngsi-ld:Vehicle:1".parse().expect("valid URI"),
+        }));
+        assert!(matches!(
+            local_temporal_outcome(missing, &[inclusive_success()]),
+            LocalOutcome::Processed(Err(_))
+        ));
+    }
+}

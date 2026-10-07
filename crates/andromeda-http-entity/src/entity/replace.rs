@@ -19,8 +19,8 @@ use crate::{
         StatusCode,
         TypedPath,
         ValidatedQuery,
-        classify_entity_error,
         collect_proxied_attrs,
+        local_entity_outcome,
         provision_response,
     },
     forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
@@ -99,7 +99,7 @@ pub(crate) async fn update(
     // Clause 5.6.18.4: the attributes proxied registrations cover leave the
     // fragment; whatever remains replaces the entity here.
     let local = match admitted.local_remainder(&collect_proxied_attrs(&forwarded)) {
-        Some(remainder) => LocalOutcome::processed(service.replace_entity(&target, entity, remainder).await, classify_entity_error),
+        Some(remainder) => local_entity_outcome(service.replace_entity(&target, entity, remainder).await, &forwarded),
         None => LocalOutcome::NothingRemained,
     };
     provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
