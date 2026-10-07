@@ -34,13 +34,14 @@ use andromeda_ngsi_ld_number::JsonNumber;
 /// required, and one of the literal-typing variants when an operand satisfies
 /// no clause 4.9 production.
 pub fn parse_compare_value(cursor: &mut TokenCursor<'_>) -> Result<CompareValue, QueryError> {
-    let first = parse_scalar(cursor)?;
-
-    if cursor.peek() == Some(&Token::Dots) {
+    if cursor.peek_ahead(1) == Some(&Token::Dots) {
+        let min = parse_comparable_value(cursor)?;
         cursor.advance();
-        let second = parse_scalar(cursor)?;
-        return Ok(CompareValue::Range { min: first, max: second });
+        let max = parse_comparable_value(cursor)?;
+        return Ok(CompareValue::Range { min, max });
     }
+
+    let first = parse_scalar(cursor)?;
 
     if cursor.peek() == Some(&Token::Comma) {
         let mut values = vec![first];
@@ -100,7 +101,7 @@ fn uri_equivalent_spellings(operand: Scalar) -> CompareValue {
 /// [`QueryError::QInvalidDateTime`], [`QueryError::QInvalidDate`] or
 /// [`QueryError::QInvalidTime`] for a bare literal written in a clause 4.6.3
 /// form it does not satisfy.
-pub fn parse_scalar(cursor: &mut TokenCursor<'_>) -> Result<Scalar, QueryError> {
+fn parse_scalar(cursor: &mut TokenCursor<'_>) -> Result<Scalar, QueryError> {
     match cursor.advance() {
         Some(Token::NumberLit(literal)) => {
             let number = literal.parse::<JsonNumber>().map_err(QueryError::QInvalidNumber)?;
@@ -117,6 +118,34 @@ pub fn parse_scalar(cursor: &mut TokenCursor<'_>) -> Result<Scalar, QueryError> 
             expected: QExpectation::Value,
             found: QFound::of(other),
         }),
+    }
+}
+
+/// Parse a clause 4.9 `ComparableValue`, the operand of an ordering operator
+/// and either bound of a `Range`.
+///
+/// `ComparableValue = Number / quotedStr / dateTime / date / time` leaves out
+/// `true`, `false` and a bare `URI`: those derive only from `OtherValue` and
+/// `URI`, which the grammar admits after `==` and `!=` alone.
+///
+/// # Errors
+///
+/// Returns [`QueryError::QExpected`] naming [`QExpectation::ComparableValue`]
+/// when the operand is a boolean or a bare word, and the [`parse_scalar`]
+/// failures otherwise.
+pub fn parse_comparable_value(cursor: &mut TokenCursor<'_>) -> Result<Scalar, QueryError> {
+    let token = cursor.peek();
+    let scalar = parse_scalar(cursor)?;
+    let refused = || QueryError::QExpected {
+        expected: QExpectation::ComparableValue,
+        found: QFound::of(token),
+    };
+    match scalar {
+        Scalar::Bool(_) => Err(refused()),
+        // A bare literal in none of the clause 4.6.3 forms reads as text, and
+        // only `quotedStr` derives text, quotes included.
+        Scalar::Str(_) if matches!(token, Some(Token::Ident(_))) => Err(refused()),
+        Scalar::Str(_) | Scalar::Number(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => Ok(scalar),
     }
 }
 
@@ -228,5 +257,43 @@ mod tests {
             panic!("a value list");
         };
         assert_eq!(values.len(), 2);
+    }
+
+    /// Clause 4.9 `ComparableValue = Number / quotedStr / dateTime / date /
+    /// time`: a boolean and a bare word derive only from `OtherValue` and
+    /// `URI`, which follow `==` and `!=` alone.
+    #[test]
+    fn a_boolean_or_a_bare_word_after_an_ordering_operator_or_in_a_range_is_refused() {
+        for q in [
+            "b>true",
+            "b<=false",
+            "b>=true",
+            "b<false",
+            "ref>urn:ngsi-ld:Target:a",
+            "n==true..false",
+            "n==a..b",
+            "n==1..true",
+        ] {
+            assert!(parse(q).is_err(), "{q} is outside the grammar");
+        }
+    }
+
+    /// Every `ComparableValue` alternative still stands after an ordering
+    /// operator and in a range, and `OtherValue` still stands after `==`.
+    #[test]
+    fn every_comparable_value_after_an_ordering_operator_or_in_a_range_is_accepted() {
+        for q in [
+            "n>1",
+            "n<\"text\"",
+            "n>=2024-01-01T00:00:00Z",
+            "n<=2024-01-01",
+            "n>12:00:00Z",
+            "n==1..2",
+            "n==\"a\"..\"b\"",
+            "b==true",
+            "b!=false",
+        ] {
+            assert!(parse(q).is_ok(), "{q} is inside the grammar");
+        }
     }
 }

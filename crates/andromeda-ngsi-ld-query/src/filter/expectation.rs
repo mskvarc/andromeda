@@ -16,6 +16,10 @@ pub enum QExpectation {
     /// temporal literal.
     #[strum(serialize = "value")]
     Value,
+    /// An operand of an ordering operator or a bound of a range: a number, a
+    /// quoted string or a bare temporal literal.
+    #[strum(serialize = "comparable value")]
+    ComparableValue,
     /// The operand of `~=` or `!~=`.
     #[strum(serialize = "pattern string")]
     PatternString,
@@ -70,6 +74,7 @@ mod tests {
     #[test]
     fn a_production_expectation_is_spelled_as_its_name() {
         pretty_assertions::assert_eq!(QExpectation::Value.to_string(), "value");
+        pretty_assertions::assert_eq!(QExpectation::ComparableValue.to_string(), "comparable value");
         pretty_assertions::assert_eq!(QExpectation::PatternString.to_string(), "pattern string");
         pretty_assertions::assert_eq!(QExpectation::EntityType.to_string(), "entity type");
         pretty_assertions::assert_eq!(QExpectation::GuardTerminator.to_string(), ":");

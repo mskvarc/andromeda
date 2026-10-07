@@ -17,7 +17,7 @@ use crate::{
         expression::Expr,
         lexer::{Token, tokenize},
         linked_entity::parse_linked_entity_relation,
-        operand::{parse_compare_value, parse_pattern_string, parse_scalar},
+        operand::{parse_comparable_value, parse_compare_value, parse_pattern_string},
         path::QueryPath,
         predicate::{OrderingOp, Predicate, SetMembership},
         token_cursor::TokenCursor,
@@ -132,7 +132,7 @@ fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: QueryPath) -> 
         }
         Some(Token::Gt) => {
             cursor.advance();
-            let rhs = parse_scalar(cursor)?;
+            let rhs = parse_comparable_value(cursor)?;
             Ok(Predicate::Ordering {
                 path,
                 op: OrderingOp::Greater,
@@ -141,7 +141,7 @@ fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: QueryPath) -> 
         }
         Some(Token::Ge) => {
             cursor.advance();
-            let rhs = parse_scalar(cursor)?;
+            let rhs = parse_comparable_value(cursor)?;
             Ok(Predicate::Ordering {
                 path,
                 op: OrderingOp::GreaterEq,
@@ -150,7 +150,7 @@ fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: QueryPath) -> 
         }
         Some(Token::Lt) => {
             cursor.advance();
-            let rhs = parse_scalar(cursor)?;
+            let rhs = parse_comparable_value(cursor)?;
             Ok(Predicate::Ordering {
                 path,
                 op: OrderingOp::Less,
@@ -159,7 +159,7 @@ fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: QueryPath) -> 
         }
         Some(Token::Le) => {
             cursor.advance();
-            let rhs = parse_scalar(cursor)?;
+            let rhs = parse_comparable_value(cursor)?;
             Ok(Predicate::Ordering {
                 path,
                 op: OrderingOp::LessEq,
