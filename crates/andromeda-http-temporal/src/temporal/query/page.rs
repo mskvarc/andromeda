@@ -16,6 +16,7 @@
 //! each of them carries, so a response may carry either, both or neither.
 
 use crate::temporal::query::forwarding::ForwardedHistory;
+use andromeda_http_extraction::pagination_policy::RequestPagination;
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::pagination::{PageOutcome, append_page_links};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -23,9 +24,9 @@ use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
     pagination::{
+        page_context::PageContext,
         page_pointers::PagePointers,
         page_request::{CollectionOrder, PageRequest},
-        policy::PaginationPolicy,
     },
     query::{QUERY_PAGE_SIZE, temporal::TemporalQueryParameters},
 };
@@ -42,6 +43,9 @@ pub(crate) struct QueriedPage {
     /// Whether the binding the query arrived on can carry a pointer to the
     /// neighbouring pages at all.
     pointers: PagePointers,
+    /// The `@context` the query is paged under, which every pointer carries
+    /// (clause 5.5.9.1).
+    context: PageContext,
 }
 
 /// What the local temporal store reads for one query.
@@ -57,9 +61,14 @@ pub(crate) struct LocalRead<'page> {
 
 impl QueriedPage {
     /// The element page `window` selects, counted as `count` says, on a binding
-    /// whose pointers `pointers` describes.
-    pub(crate) const fn of(window: PageWindow, count: CountPolicy, pointers: PagePointers) -> QueriedPage {
-        QueriedPage { window, count, pointers }
+    /// whose pointers `pointers` describes, paged under `context`.
+    pub(crate) const fn of(window: PageWindow, count: CountPolicy, pointers: PagePointers, context: PageContext) -> QueriedPage {
+        QueriedPage {
+            window,
+            count,
+            pointers,
+            context,
+        }
     }
 
     /// The element page `params` asks for under `pagination`, on a binding
@@ -73,7 +82,7 @@ impl QueriedPage {
     ///
     /// Returns whatever the pagination policy refuses (clauses 5.5.9 and
     /// 6.3.10).
-    pub(crate) fn requested(pagination: PaginationPolicy, params: &TemporalQueryParameters, pointers: PagePointers) -> Result<QueriedPage, ParameterError> {
+    pub(crate) fn requested(pagination: RequestPagination, params: &TemporalQueryParameters, pointers: PagePointers) -> Result<QueriedPage, ParameterError> {
         let count = match params.count {
             Some(true) => CountPolicy::Emit,
             Some(false) | None => CountPolicy::Omit,
@@ -83,8 +92,10 @@ impl QueriedPage {
             order: CollectionOrder::of(&params.ordering),
             count,
             pointers,
+            context: &pagination.context,
         };
-        Ok(QueriedPage::of(pagination.window(&params.page, request)?, count, pointers))
+        let window = pagination.policy.window(&params.page, request)?;
+        Ok(QueriedPage::of(window, count, pointers, pagination.context))
     }
 
     /// Whether the client asked for the total (clause 6.3.13).
@@ -144,7 +155,14 @@ impl QueriedPage {
             PagePointers::NotDereferenceable => {}
             PagePointers::OverRequestUri => {
                 let total = total.map(|count| i64::try_from(count).unwrap_or(i64::MAX));
-                append_page_links(response, instance, &self.window, PageOutcome { total, returned, boundary }, media_type);
+                append_page_links(
+                    response,
+                    instance,
+                    &self.context,
+                    &self.window,
+                    PageOutcome { total, returned, boundary },
+                    media_type,
+                );
             }
         }
     }
@@ -160,7 +178,7 @@ mod tests {
         cursor::PageCursor,
         page_window::{PageStart, PageWindow},
     };
-    use andromeda_ngsi_ld_request::pagination::page_pointers::PagePointers;
+    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers};
     use axum::{
         http::{StatusCode, Uri},
         response::{IntoResponse, Response},
@@ -179,7 +197,12 @@ mod tests {
 
     /// An offset element page of `limit` matches starting at `offset`.
     fn offset_page(limit: u32, offset: u32, pointers: PagePointers) -> QueriedPage {
-        QueriedPage::of(PageWindow::offset(limit, offset), CountPolicy::Omit, pointers)
+        QueriedPage::of(
+            PageWindow::offset(limit, offset),
+            CountPolicy::Omit,
+            pointers,
+            PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
+        )
     }
 
     /// A cursor element page of 2 matches starting at `cursor`.
@@ -191,6 +214,7 @@ mod tests {
             },
             CountPolicy::Omit,
             PagePointers::OverRequestUri,
+            PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
         )
     }
 

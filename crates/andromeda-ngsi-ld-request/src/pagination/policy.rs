@@ -72,13 +72,16 @@ impl PaginationPolicy {
 
     /// The window `page` asks for of the collection `request` describes.
     ///
-    /// Every pagination rule is applied here, in this order: a cursor where
-    /// none can be followed, a cursor beside an offset, a cursor over a
-    /// requested ordering, then `limit=0` without a count; then the limit is
-    /// bounded and the start decided.
+    /// Every pagination rule is applied here, in this order: a followed pointer
+    /// under another `@context`, a cursor where none can be followed, a cursor
+    /// beside an offset, a cursor over a requested ordering, then `limit=0`
+    /// without a count; then the limit is bounded and the start decided.
     ///
     /// # Errors
     ///
+    /// - [`ParameterError::PageContextChanged`] for a followed pointer whose
+    ///   `@context` is not the request's (clause 5.5.9.1), by offset or by
+    ///   cursor alike.
     /// - [`ParameterError::CursorUnavailable`] for a `cursor` under
     ///   [`PaginationPolicy::OffsetOnly`] or on a binding whose pointers cannot
     ///   be dereferenced: a parameter the operation does not offer
@@ -89,7 +92,10 @@ impl PaginationPolicy {
     ///   4.23 ordering, which a cursor's identifier position cannot walk.
     /// - [`ParameterError::LimitZeroWithoutCount`] for `limit=0` without a
     ///   count (Table 6.3.10-1).
-    pub fn window(self, page: &PageParameters, request: PageRequest) -> Result<PageWindow, ParameterError> {
+    pub fn window(self, page: &PageParameters, request: PageRequest<'_>) -> Result<PageWindow, ParameterError> {
+        if page.context.as_ref().is_some_and(|walked| walked != request.context) {
+            return Err(ParameterError::PageContextChanged);
+        }
         if page.cursor.is_some() {
             refuse_unwalkable_cursor(self, page, request)?;
         }
@@ -114,7 +120,7 @@ impl PaginationPolicy {
     /// A collection in a requested order, or one whose pointers cannot be
     /// followed, can only be paged by offset; any other follows the policy's
     /// default.
-    const fn fresh_start(self, request: PageRequest) -> PageStart {
+    const fn fresh_start(self, request: PageRequest<'_>) -> PageStart {
         match (request.pointers, request.order) {
             (PagePointers::NotDereferenceable, CollectionOrder::Identifier | CollectionOrder::Requested)
             | (PagePointers::OverRequestUri, CollectionOrder::Requested) => PageStart::Offset(0),
@@ -127,7 +133,7 @@ impl PaginationPolicy {
 }
 
 /// Refuse a `cursor` the collection cannot be walked by.
-const fn refuse_unwalkable_cursor(policy: PaginationPolicy, page: &PageParameters, request: PageRequest) -> Result<(), ParameterError> {
+const fn refuse_unwalkable_cursor(policy: PaginationPolicy, page: &PageParameters, request: PageRequest<'_>) -> Result<(), ParameterError> {
     match (policy, request.pointers) {
         (PaginationPolicy::OffsetOnly, PagePointers::OverRequestUri | PagePointers::NotDereferenceable)
         | (PaginationPolicy::CursorDefault | PaginationPolicy::OffsetDefault, PagePointers::NotDereferenceable) => {
@@ -151,6 +157,7 @@ mod tests {
         pagination::{
             cursor_availability::CursorAvailability,
             cursor_request::CursorRequest,
+            page_context::PageContext,
             page_pointers::PagePointers,
             page_request::{CollectionOrder, PageRequest},
             page_size::{PageSizeBounds, PageSizeCap},
@@ -165,6 +172,7 @@ mod tests {
         page_window::{PageStart, PageWindow},
     };
     use pretty_assertions::assert_eq;
+    use std::sync::LazyLock;
 
     const CAPPED: PageSizeBounds = PageSizeBounds {
         default: 20,
@@ -176,23 +184,39 @@ mod tests {
         cap: PageSizeCap::Uncapped,
     };
 
-    /// A query-string request over an identifier-ordered, uncounted collection.
-    const IDENTIFIER: PageRequest = PageRequest {
-        size: CAPPED,
-        order: CollectionOrder::Identifier,
-        count: CountPolicy::Omit,
-        pointers: PagePointers::OverRequestUri,
-    };
+    /// The context a request naming none pages under.
+    static CORE: LazyLock<PageContext> = LazyLock::new(|| PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"));
+
+    /// A query-string request under the core context over an
+    /// identifier-ordered, uncounted collection.
+    fn identifier() -> PageRequest<'static> {
+        PageRequest {
+            size: CAPPED,
+            order: CollectionOrder::Identifier,
+            count: CountPolicy::Omit,
+            pointers: PagePointers::OverRequestUri,
+            context: &CORE,
+        }
+    }
+
+    fn user_context() -> PageContext {
+        PageContext::try_from("https://example.com/a.jsonld").expect("an IRI")
+    }
 
     fn after(id: &str) -> PageCursor {
         PageCursor::After(id.parse().expect("valid URI"))
     }
 
     fn page(limit: Option<u32>, offset: Option<u32>, cursor: Option<CursorRequest>) -> PageParameters {
-        PageParameters { limit, offset, cursor }
+        PageParameters {
+            limit,
+            offset,
+            cursor,
+            context: None,
+        }
     }
 
-    fn window(policy: PaginationPolicy, page: &PageParameters, request: PageRequest) -> Result<PageWindow, ParameterError> {
+    fn window(policy: PaginationPolicy, page: &PageParameters, request: PageRequest<'_>) -> Result<PageWindow, ParameterError> {
         policy.window(page, request)
     }
 
@@ -243,7 +267,7 @@ mod tests {
     #[test]
     fn a_fresh_query_under_cursor_default_walks_by_cursor() {
         assert_eq!(
-            window(PaginationPolicy::CursorDefault, &page(None, None, None), IDENTIFIER).ok(),
+            window(PaginationPolicy::CursorDefault, &page(None, None, None), identifier()).ok(),
             Some(PageWindow {
                 limit: 20,
                 start: PageStart::Cursor(None),
@@ -254,7 +278,7 @@ mod tests {
     #[test]
     fn a_fresh_query_under_offset_default_pages_by_offset() {
         assert_eq!(
-            window(PaginationPolicy::OffsetDefault, &page(None, None, None), IDENTIFIER).ok(),
+            window(PaginationPolicy::OffsetDefault, &page(None, None, None), identifier()).ok(),
             Some(PageWindow::offset(20, 0))
         );
     }
@@ -262,14 +286,14 @@ mod tests {
     #[test]
     fn a_fresh_query_under_offset_only_pages_by_offset() {
         assert_eq!(
-            window(PaginationPolicy::OffsetOnly, &page(None, None, None), IDENTIFIER).ok(),
+            window(PaginationPolicy::OffsetOnly, &page(None, None, None), identifier()).ok(),
             Some(PageWindow::offset(20, 0))
         );
     }
 
     #[test]
     fn an_empty_cursor_opts_into_a_walk_under_offset_default() {
-        let start = window(PaginationPolicy::OffsetDefault, &page(None, None, Some(CursorRequest::Start)), IDENTIFIER)
+        let start = window(PaginationPolicy::OffsetDefault, &page(None, None, Some(CursorRequest::Start)), identifier())
             .ok()
             .map(|window| window.start);
         assert_eq!(start, Some(PageStart::Cursor(None)));
@@ -280,7 +304,7 @@ mod tests {
         let start = window(
             PaginationPolicy::CursorDefault,
             &page(None, None, Some(CursorRequest::Continue(after("urn:e:1")))),
-            IDENTIFIER,
+            identifier(),
         )
         .ok()
         .map(|window| window.start);
@@ -289,7 +313,7 @@ mod tests {
 
     #[test]
     fn an_explicit_offset_pages_by_offset() {
-        let start = window(PaginationPolicy::CursorDefault, &page(None, Some(40), None), IDENTIFIER)
+        let start = window(PaginationPolicy::CursorDefault, &page(None, Some(40), None), identifier())
             .ok()
             .map(|window| window.start);
         assert_eq!(start, Some(PageStart::Offset(40)));
@@ -299,7 +323,7 @@ mod tests {
     fn a_requested_ordering_pages_by_offset() {
         let request = PageRequest {
             order: CollectionOrder::Requested,
-            ..IDENTIFIER
+            ..identifier()
         };
         let start = window(PaginationPolicy::CursorDefault, &page(None, None, None), request)
             .ok()
@@ -311,7 +335,7 @@ mod tests {
     fn a_body_binding_pages_by_offset() {
         let request = PageRequest {
             pointers: PagePointers::NotDereferenceable,
-            ..IDENTIFIER
+            ..identifier()
         };
         let start = window(PaginationPolicy::CursorDefault, &page(None, None, None), request)
             .ok()
@@ -321,7 +345,7 @@ mod tests {
 
     #[test]
     fn a_cursor_under_offset_only_is_unavailable() {
-        let error = window(PaginationPolicy::OffsetOnly, &page(None, None, Some(CursorRequest::Start)), IDENTIFIER).expect_err("refused");
+        let error = window(PaginationPolicy::OffsetOnly, &page(None, None, Some(CursorRequest::Start)), identifier()).expect_err("refused");
         assert!(matches!(error, ParameterError::CursorUnavailable), "{error}");
     }
 
@@ -329,7 +353,7 @@ mod tests {
     fn a_cursor_on_a_body_binding_is_unavailable() {
         let request = PageRequest {
             pointers: PagePointers::NotDereferenceable,
-            ..IDENTIFIER
+            ..identifier()
         };
         let error = window(
             PaginationPolicy::CursorDefault,
@@ -345,7 +369,7 @@ mod tests {
         let error = window(
             PaginationPolicy::CursorDefault,
             &page(None, Some(1), Some(CursorRequest::Continue(after("urn:e:1")))),
-            IDENTIFIER,
+            identifier(),
         )
         .expect_err("refused");
         assert!(matches!(error, ParameterError::CursorWithOffset), "{error}");
@@ -355,7 +379,7 @@ mod tests {
     fn cursor_with_requested_ordering_is_refused() {
         let request = PageRequest {
             order: CollectionOrder::Requested,
-            ..IDENTIFIER
+            ..identifier()
         };
         let error = window(
             PaginationPolicy::CursorDefault,
@@ -369,7 +393,7 @@ mod tests {
     /// Table 6.3.10-1: `limit=0` is only valid alongside a count.
     #[test]
     fn limit_zero_without_count_is_refused() {
-        let error = window(PaginationPolicy::CursorDefault, &page(Some(0), None, None), IDENTIFIER).expect_err("refused");
+        let error = window(PaginationPolicy::CursorDefault, &page(Some(0), None, None), identifier()).expect_err("refused");
         assert!(matches!(error, ParameterError::LimitZeroWithoutCount), "{error}");
     }
 
@@ -377,7 +401,7 @@ mod tests {
     fn limit_zero_with_count_is_admitted() {
         let request = PageRequest {
             count: CountPolicy::Emit,
-            ..IDENTIFIER
+            ..identifier()
         };
         let limit = window(PaginationPolicy::CursorDefault, &page(Some(0), None, None), request)
             .ok()
@@ -387,7 +411,7 @@ mod tests {
 
     #[test]
     fn the_cap_bounds_the_limit() {
-        let limit = window(PaginationPolicy::CursorDefault, &page(Some(5000), None, None), IDENTIFIER)
+        let limit = window(PaginationPolicy::CursorDefault, &page(Some(5000), None, None), identifier())
             .ok()
             .map(|window| window.limit);
         assert_eq!(limit, Some(1000));
@@ -395,7 +419,10 @@ mod tests {
 
     #[test]
     fn an_uncapped_collection_keeps_a_large_limit() {
-        let request = PageRequest { size: UNCAPPED, ..IDENTIFIER };
+        let request = PageRequest {
+            size: UNCAPPED,
+            ..identifier()
+        };
         let limit = window(PaginationPolicy::CursorDefault, &page(Some(5000), None, None), request)
             .ok()
             .map(|window| window.limit);
@@ -404,10 +431,51 @@ mod tests {
 
     #[test]
     fn the_default_applies_when_no_limit_is_asked() {
-        let request = PageRequest { size: UNCAPPED, ..IDENTIFIER };
+        let request = PageRequest {
+            size: UNCAPPED,
+            ..identifier()
+        };
         let limit = window(PaginationPolicy::CursorDefault, &page(None, None, None), request)
             .ok()
             .map(|window| window.limit);
         assert_eq!(limit, Some(100));
+    }
+
+    /// Clause 5.5.9.1: an offset pointer followed under another `@context` is
+    /// `BadRequestData`.
+    #[test]
+    fn an_offset_pointer_followed_under_another_context_is_refused() {
+        let followed = PageParameters {
+            context: Some(user_context()),
+            ..page(Some(1), Some(1), None)
+        };
+        let error = window(PaginationPolicy::OffsetDefault, &followed, identifier()).expect_err("refused");
+        assert!(matches!(error, ParameterError::PageContextChanged), "{error}");
+    }
+
+    /// Clause 5.5.9.1: a cursor pointer followed under another `@context` is
+    /// refused by the same rule.
+    #[test]
+    fn a_cursor_pointer_followed_under_another_context_is_refused() {
+        let followed = PageParameters {
+            context: Some(user_context()),
+            ..page(Some(1), None, Some(CursorRequest::Continue(after("urn:e:1"))))
+        };
+        let error = window(PaginationPolicy::CursorDefault, &followed, identifier()).expect_err("refused");
+        assert!(matches!(error, ParameterError::PageContextChanged), "{error}");
+    }
+
+    #[test]
+    fn a_pointer_followed_under_its_own_context_is_admitted() {
+        let context = user_context();
+        let followed = PageParameters {
+            context: Some(user_context()),
+            ..page(Some(1), Some(1), None)
+        };
+        let request = PageRequest {
+            context: &context,
+            ..identifier()
+        };
+        assert_eq!(window(PaginationPolicy::OffsetDefault, &followed, request).ok(), Some(PageWindow::offset(1, 1)));
     }
 }

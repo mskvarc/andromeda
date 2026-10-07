@@ -1504,6 +1504,7 @@ dependencies = [
  "derive_more",
  "headers",
  "http",
+ "iri-rs",
  "iso8601-duration",
  "langtag",
  "pretty_assertions",

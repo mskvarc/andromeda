@@ -162,6 +162,7 @@ mod tests {
                 limit: Some(3),
                 offset: Some(6),
                 cursor: None,
+                context: None,
             }
         );
         pretty_assertions::assert_eq!(query.count, Some(true));

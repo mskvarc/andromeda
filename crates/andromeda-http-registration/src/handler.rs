@@ -102,7 +102,10 @@ pub(crate) async fn query(
     accept: AcceptFormatNoGeo,
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     IncomingVia(incoming_via): IncomingVia,
-    RequestPagination(pagination): RequestPagination,
+    RequestPagination {
+        policy: pagination,
+        context: page_context,
+    }: RequestPagination,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
     let options = params.parse_options().with_registration_instance(&uri)?;
@@ -117,6 +120,7 @@ pub(crate) async fn query(
                 order: CollectionOrder::Identifier,
                 count: CountPolicy::Emit,
                 pointers: PagePointers::OverRequestUri,
+                context: &page_context,
             },
         )
         .with_registration_instance(&uri)?;
@@ -172,6 +176,7 @@ pub(crate) async fn query(
     append_page_links(
         &mut response,
         &uri,
+        &page_context,
         &window,
         PageOutcome {
             total: Some(pagination_total),

@@ -27,7 +27,7 @@ pub(crate) async fn query(
     NgsiLdRequestEnvelope { uri, incoming_via: _, headers }: NgsiLdRequestEnvelope,
     api_root: ApiRoot,
     protocol: NgsiLdProtocolHeaders,
-    RequestPagination(pagination): RequestPagination,
+    pagination: RequestPagination,
     // Clause 6.3.5: the query is read against the one context the body
     // extractor resolved -- the body's own `@context` for `application/ld+json`,
     // the `Link` context for `application/json`.

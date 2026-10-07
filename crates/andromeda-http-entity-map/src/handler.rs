@@ -214,14 +214,14 @@ pub async fn create_from_query(
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     prefer: PreferHeader,
-    RequestPagination(pagination): RequestPagination,
+    pagination: RequestPagination,
     EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(state.entity_query.engine(), SubmittedContext::from(context))
         .await
         .with_entity_map_instance(&uri)?;
     validate_entity_map_query(&query, accept.media_type(), &uri)?;
-    let window = membership_window(pagination, &query.page, &query.ordering, &uri)?;
+    let window = membership_window(&pagination, &query.page, &query.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
     let forwarded_query = forwarded_query_string(&uri, filters);
     create_from_entity_query(
@@ -251,7 +251,7 @@ pub async fn create_from_query_post(
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     api_root: ApiRoot,
     prefer: PreferHeader,
-    RequestPagination(pagination): RequestPagination,
+    pagination: RequestPagination,
     JsonLd { body, context }: JsonLd<Query>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 6.3.5: the query is read against the one context the body
@@ -260,7 +260,7 @@ pub async fn create_from_query_post(
     let body = body.admitted(&context)?;
     let mut query = EntityQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
     validate_entity_map_query(&query, accept.media_type(), &uri)?;
-    let window = membership_window(pagination, &query.page, &query.ordering, &uri)?;
+    let window = membership_window(&pagination, &query.page, &query.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
     let forwarded_query = body_query_string(&query, filters, &uri);
     create_from_entity_query(
@@ -290,14 +290,14 @@ pub async fn create_temporal_from_query(
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     prefer: PreferHeader,
-    RequestPagination(pagination): RequestPagination,
+    pagination: RequestPagination,
     TemporalQuery(params): TemporalQuery,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(state.entity_query.engine(), SubmittedContext::from(context))
         .await
         .with_entity_map_instance(&uri)?;
     validate_temporal_entity_map_query(&params, state.temporal.linked_retrieval(), &uri)?;
-    let window = membership_window(pagination, &params.page, &params.ordering, &uri)?;
+    let window = membership_window(&pagination, &params.page, &params.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(params.split_entities).is_split());
     let forwarded_query = forwarded_temporal_query_string(&uri, filters);
     create_from_temporal_query(
@@ -327,7 +327,7 @@ pub async fn create_temporal_from_query_post(
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
     api_root: ApiRoot,
     prefer: PreferHeader,
-    RequestPagination(pagination): RequestPagination,
+    pagination: RequestPagination,
     JsonLd { body, context }: JsonLd<Query>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 6.3.5: the query is read against the one context the body
@@ -336,7 +336,7 @@ pub async fn create_temporal_from_query_post(
     let body = body.admitted(&context)?;
     let params = TemporalQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
     validate_temporal_entity_map_query(&params, state.temporal.linked_retrieval(), &uri)?;
-    let window = membership_window(pagination, &params.page, &params.ordering, &uri)?;
+    let window = membership_window(&pagination, &params.page, &params.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(params.split_entities).is_split());
     let forwarded_query = temporal_body_query_string(&params, filters);
     create_from_temporal_query(

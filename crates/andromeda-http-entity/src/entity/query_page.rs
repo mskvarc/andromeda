@@ -10,6 +10,7 @@
 //! pointer family its window carries.
 
 use crate::entity::query_forwarding::ForwardedQueryResults;
+use andromeda_http_extraction::pagination_policy::RequestPagination;
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::pagination::{PageOutcome, append_page_links};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -17,9 +18,9 @@ use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
     pagination::{
+        page_context::PageContext,
         page_pointers::PagePointers,
         page_request::{CollectionOrder, PageRequest},
-        policy::PaginationPolicy,
     },
     query::{QUERY_PAGE_SIZE, entity::parameters::EntityQueryParameters},
 };
@@ -51,6 +52,9 @@ pub(crate) struct QueryPage {
     /// Whether the binding the query arrived on can carry a pointer to the
     /// neighbouring pages at all.
     pointers: PagePointers,
+    /// The `@context` the query is paged under, which every pointer carries
+    /// (clause 5.5.9.1).
+    context: PageContext,
 }
 
 /// The window `query` asks for under `pagination`, on a binding whose pointers
@@ -63,7 +67,7 @@ pub(crate) struct QueryPage {
 ///
 /// Returns whatever the pagination policy refuses (clauses 5.5.9 and 6.3.10).
 pub(crate) fn requested_window(
-    pagination: PaginationPolicy,
+    pagination: &RequestPagination,
     query: &EntityQueryParameters,
     count: CountPolicy,
     pointers: PagePointers,
@@ -73,12 +77,14 @@ pub(crate) fn requested_window(
         order: CollectionOrder::of(&query.ordering),
         count,
         pointers,
+        context: &pagination.context,
     };
-    pagination.window(&query.page, request)
+    pagination.policy.window(&query.page, request)
 }
 
 impl QueryPage {
-    /// The page `window` selects, counted as `count` says.
+    /// The page `window` selects, counted as `count` says and paged under
+    /// `context`.
     ///
     /// Clause 5.5.9: once sources contribute entities the page is cut from the
     /// merged collection rather than from the local rows, in the same `id`
@@ -86,7 +92,13 @@ impl QueryPage {
     /// as well as the local one. Clause 4.23.1's "sort ordering is never
     /// applied to distributed operations" concerns the clause 4.23 ordering a
     /// client requests with `orderBy`, which pages by offset.
-    pub(crate) fn of(window: PageWindow, count: CountPolicy, forwarded: Option<&ForwardedQueryResults>, pointers: PagePointers) -> QueryPage {
+    pub(crate) fn of(
+        window: PageWindow,
+        count: CountPolicy,
+        forwarded: Option<&ForwardedQueryResults>,
+        pointers: PagePointers,
+        context: PageContext,
+    ) -> QueryPage {
         let cut_at = match forwarded.filter(|results| results.holds_remote_entities()) {
             Some(results) => PageCut::AfterMerge {
                 local_rows: results.local_row_limit(),
@@ -98,6 +110,7 @@ impl QueryPage {
             count,
             cut_at,
             pointers,
+            context,
         }
     }
 
@@ -161,7 +174,14 @@ impl QueryPage {
     ) {
         match self.pointers {
             PagePointers::NotDereferenceable => {}
-            PagePointers::OverRequestUri => append_page_links(response, instance, &self.window, PageOutcome { total, returned, boundary }, media_type),
+            PagePointers::OverRequestUri => append_page_links(
+                response,
+                instance,
+                &self.context,
+                &self.window,
+                PageOutcome { total, returned, boundary },
+                media_type,
+            ),
         }
     }
 }
@@ -176,7 +196,7 @@ mod tests {
         cursor::PageCursor,
         page_window::{PageStart, PageWindow},
     };
-    use andromeda_ngsi_ld_request::pagination::page_pointers::PagePointers;
+    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers};
     use serde_json::json;
     use std::borrow::Cow;
 
@@ -194,6 +214,7 @@ mod tests {
             count,
             cut_at: PageCut::AfterMerge { local_rows: 101 },
             pointers: PagePointers::OverRequestUri,
+            context: PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
         }
     }
 
@@ -263,7 +284,13 @@ mod tests {
     #[test]
     fn a_local_page_reads_the_requested_window() {
         let window = PageWindow::after(5, uri("urn:b"));
-        let page = QueryPage::of(window.clone(), CountPolicy::Emit, None, PagePointers::OverRequestUri); // clone: the expectation keeps the window
+        let page = QueryPage::of(
+            window.clone(),
+            CountPolicy::Emit,
+            None,
+            PagePointers::OverRequestUri,
+            PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
+        ); // clone: the expectation keeps the window
         pretty_assertions::assert_eq!(page.local_read(), (Cow::Borrowed(&window), CountPolicy::Emit));
     }
 

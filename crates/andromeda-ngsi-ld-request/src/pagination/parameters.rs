@@ -3,7 +3,10 @@
 
 use crate::{
     error::ParameterError,
-    pagination::cursor_request::{CursorRequest, CursorRequestError},
+    pagination::{
+        cursor_request::{CursorRequest, CursorRequestError},
+        page_context::{PageContext, PageContextError},
+    },
 };
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 use strum::Display;
@@ -25,13 +28,16 @@ pub struct PageParameters {
     /// The opaque pointer a followed `Link` carried, or the empty value that
     /// starts a cursor walk (clause 5.5.9.1).
     pub cursor: Option<CursorRequest>,
+    /// The `@context` the walk a followed pointer belongs to is read under,
+    /// absent on a request that follows no pointer (clause 5.5.9.1).
+    pub context: Option<PageContext>,
 }
 
 impl PageParameters {
     /// Whether the request named none of the pagination parameters.
     #[must_use]
     pub const fn is_absent(&self) -> bool {
-        self.limit.is_none() && self.offset.is_none() && self.cursor.is_none()
+        self.limit.is_none() && self.offset.is_none() && self.cursor.is_none() && self.context.is_none()
     }
 
     /// Refuse every pagination parameter, for an operation that acts on all
@@ -66,6 +72,7 @@ impl From<OffsetPageParameters> for PageParameters {
             limit: page.limit,
             offset: page.offset,
             cursor: None,
+            context: None,
         }
     }
 }
@@ -92,6 +99,9 @@ pub enum PageParameterError {
     /// A `cursor` that is not a token the broker emitted.
     #[error(transparent)]
     Cursor(#[from] CursorRequestError),
+    /// A `pageContext` that is not a context the broker emitted.
+    #[error(transparent)]
+    Context(#[from] PageContextError),
 }
 
 /// The wire form of [`PageParameters`].
@@ -103,6 +113,9 @@ struct PageParametersWire {
     offset: Option<String>,
     /// The raw `cursor`.
     cursor: Option<String>,
+    /// The raw `pageContext`.
+    #[serde(rename = "pageContext")]
+    context: Option<String>,
 }
 
 /// The wire form of [`OffsetPageParameters`].
@@ -130,6 +143,12 @@ impl<'de> Deserialize<'de> for PageParameters {
                 .cursor
                 .as_deref()
                 .map(CursorRequest::try_from)
+                .transpose()
+                .map_err(|error| DeserializeError::custom(PageParameterError::from(error)))?,
+            context: wire
+                .context
+                .as_deref()
+                .map(PageContext::try_from)
                 .transpose()
                 .map_err(|error| DeserializeError::custom(PageParameterError::from(error)))?,
         })
@@ -203,6 +222,7 @@ mod tests {
                 limit: Some(10),
                 offset: Some(5),
                 cursor: None,
+                context: None,
             }
         );
     }
@@ -262,8 +282,27 @@ mod tests {
                 limit: Some(3),
                 offset: Some(6),
                 cursor: None,
+                context: None,
             }
         );
+    }
+
+    /// A followed pointer's `pageContext` is read as the context it spells.
+    #[test]
+    fn a_page_context_is_read_from_the_pointer() {
+        let page = parsed("limit=1&offset=1&pageContext=https%3A%2F%2Fexample.com%2Fa.jsonld");
+        assert_eq!(
+            page.context.map(|context| context.as_str().to_owned()),
+            Some("https://example.com/a.jsonld".to_owned())
+        );
+    }
+
+    /// A `pageContext` that is not an IRI is bad data, not an unknown parameter.
+    #[test]
+    fn a_malformed_page_context_is_refused_as_bad_data() {
+        let message = rejection("pageContext=not%20an%20iri");
+        assert!(!message.contains("unknown field"), "{message}");
+        assert!(message.contains("pageContext"), "{message}");
     }
 
     /// A request naming none of the parameters is absent of pagination.

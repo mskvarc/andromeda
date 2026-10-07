@@ -55,11 +55,7 @@ use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selection::ConsideredEntities};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::{
-    geometry_media_type::require_geojson_for_geometry_property,
-    pagination::policy::PaginationPolicy,
-    query::entity::parameters::EntityQueryParameters,
-};
+use andromeda_ngsi_ld_request::{geometry_media_type::require_geojson_for_geometry_property, query::entity::parameters::EntityQueryParameters};
 use axum::http::{HeaderMap, Uri as HttpUri};
 use futures::future::OptionFuture;
 use std::sync::Arc;
@@ -101,8 +97,9 @@ pub(crate) struct EntityQueryRequest {
     /// Which binding decoded it, which decides how the query is forwarded and
     /// whether the response can point at its neighbouring pages.
     pub(crate) binding: QueryBinding,
-    /// How the broker pages its collections (clause 5.5.9).
-    pub(crate) pagination: PaginationPolicy,
+    /// How the broker pages its collections (clause 5.5.9), and the
+    /// `@context` the query is paged under.
+    pub(crate) pagination: RequestPagination,
 }
 
 pub(crate) async fn query(
@@ -111,7 +108,7 @@ pub(crate) async fn query(
     NgsiLdRequestEnvelope { uri, incoming_via: _, headers }: NgsiLdRequestEnvelope,
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     protocol: NgsiLdProtocolHeaders,
-    RequestPagination(pagination): RequestPagination,
+    pagination: RequestPagination,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.7 addresses the request's `@context` on every operation that
@@ -172,7 +169,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         require_geojson_for_geometry_property(query.geometry_property.as_ref(), accept.media_type()).with_entity_instance(&uri)?;
 
         let count = if opts.count { CountPolicy::Emit } else { CountPolicy::Omit };
-        let window = requested_window(pagination, &query, count, binding.page_pointers()).with_entity_instance(&uri)?;
+        let window = requested_window(&pagination, &query, count, binding.page_pointers()).with_entity_instance(&uri)?;
 
         let is_local = !target.permits_federation() || query.is_local();
         let split = state.forwarding.split_entities(query.split_entities);
@@ -207,7 +204,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         // Clause 5.7.2.4: with `splitEntities`, `q`, the geoquery and `scopeQ`
         // are decided on the merged entities rather than by any one source.
         let deferred = split_entities.then(|| query.defer_split_filters());
-        let page = QueryPage::of(window, count, forwarded.as_ref(), binding.page_pointers());
+        let page = QueryPage::of(window, count, forwarded.as_ref(), binding.page_pointers(), pagination.context);
 
         let (local_versions, local_total) = local_versions(service, &target, &query, &page, &context, &uri).await?;
         let merged = merge_contributions(service, local_versions, forwarded, &query, &context, &uri).await?;

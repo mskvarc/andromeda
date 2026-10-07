@@ -20,6 +20,7 @@ use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow
 use andromeda_ngsi_ld_request::{
     options::ListOptions,
     pagination::{
+        page_context::PageContext,
         page_pointers::PagePointers,
         page_request::{CollectionOrder, PageRequest},
         policy::PaginationPolicy,
@@ -38,10 +39,12 @@ pub(crate) struct ListingRequest {
     pub(crate) window: PageWindow,
     /// The `count` and `sysAttrs` options (clauses 6.3.11 and 6.3.13).
     pub(crate) options: ListOptions,
+    /// The `@context` the listing is paged under (clause 5.5.9.1).
+    context: PageContext,
 }
 
 impl ListingRequest {
-    /// The page `params` asks for under `pagination`.
+    /// The page `params` asks for under `pagination`, paged under `context`.
     ///
     /// The subscriptions are listed in identifier order in either pagination
     /// mode, so a cursor can always walk them.
@@ -50,7 +53,7 @@ impl ListingRequest {
     ///
     /// Returns the `InvalidRequest` of an `options` value clauses 6.3.11 and
     /// 6.3.13 do not define, and whatever the pagination policy refuses.
-    pub(crate) fn of(pagination: PaginationPolicy, params: &ListParams, instance: &Uri) -> Result<ListingRequest, ProblemResponse> {
+    pub(crate) fn of(pagination: PaginationPolicy, context: PageContext, params: &ListParams, instance: &Uri) -> Result<ListingRequest, ProblemResponse> {
         let options = params.list_options().with_subscription_instance(instance)?;
         let window = pagination
             .window(
@@ -60,10 +63,11 @@ impl ListingRequest {
                     order: CollectionOrder::Identifier,
                     count: options.count,
                     pointers: PagePointers::OverRequestUri,
+                    context: &context,
                 },
             )
             .with_subscription_instance(instance)?;
-        Ok(ListingRequest { window, options })
+        Ok(ListingRequest { window, options, context })
     }
 
     /// The collection response of a rendered page: the clause 6.3.13 count
@@ -97,6 +101,7 @@ impl ListingRequest {
         append_page_links(
             &mut response,
             instance,
+            &self.context,
             &self.window,
             PageOutcome {
                 total: Some(total),

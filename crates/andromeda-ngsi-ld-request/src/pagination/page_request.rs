@@ -1,13 +1,13 @@
 //! What one collection contributes to the decision of which page it answers
 //! with.
 
-use crate::pagination::{page_pointers::PagePointers, page_size::PageSizeBounds};
+use crate::pagination::{page_context::PageContext, page_pointers::PagePointers, page_size::PageSizeBounds};
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, ordering::parameters::OrderingParameters};
 
 /// The facts about one paged request that the pagination policy cannot learn
 /// from its `limit`/`offset`/`cursor` alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PageRequest {
+pub struct PageRequest<'context> {
     /// The collection's default and maximum page size.
     pub size: PageSizeBounds,
     /// The order the collection is read in.
@@ -16,6 +16,9 @@ pub struct PageRequest {
     pub count: CountPolicy,
     /// Whether the response can carry pointers to its neighbouring pages.
     pub pointers: PagePointers,
+    /// The `@context` the request itself is read under, which a followed
+    /// pointer's must equal (clause 5.5.9.1).
+    pub context: &'context PageContext,
 }
 
 /// The order a paged collection is read in.

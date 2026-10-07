@@ -9,6 +9,7 @@
 //! here before anything is forwarded to a context source.
 
 use crate::error::EntityMapResultExt;
+use andromeda_http_extraction::pagination_policy::RequestPagination;
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, ordering::parameters::OrderingParameters, page_window::PageWindow};
 use andromeda_ngsi_ld_request::pagination::{
@@ -16,7 +17,6 @@ use andromeda_ngsi_ld_request::pagination::{
     page_request::{CollectionOrder, PageRequest},
     page_size::{PageSizeBounds, PageSizeCap},
     parameters::PageParameters,
-    policy::PaginationPolicy,
 };
 use axum::http::Uri;
 
@@ -36,12 +36,13 @@ const ENTITY_MAP_PAGE_SIZE: PageSizeBounds = PageSizeBounds {
 /// that hands out no page pointer (clause 6.3.20), and whatever else the
 /// pagination policy refuses.
 pub(crate) fn membership_window(
-    pagination: PaginationPolicy,
+    pagination: &RequestPagination,
     page: &PageParameters,
     ordering: &OrderingParameters,
     uri: &Uri,
 ) -> Result<PageWindow, ProblemResponse> {
     pagination
+        .policy
         .window(
             page,
             PageRequest {
@@ -49,6 +50,7 @@ pub(crate) fn membership_window(
                 order: CollectionOrder::of(ordering),
                 count: CountPolicy::Emit,
                 pointers: PagePointers::NotDereferenceable,
+                context: &pagination.context,
             },
         )
         .with_entity_map_instance(uri)
@@ -57,13 +59,26 @@ pub(crate) fn membership_window(
 #[cfg(test)]
 mod tests {
     use crate::membership_window::membership_window;
+    use andromeda_http_extraction::pagination_policy::RequestPagination;
     use andromeda_ngsi_ld_query::{ordering::parameters::OrderingParameters, page_window::PageWindow};
-    use andromeda_ngsi_ld_request::pagination::{cursor_request::CursorRequest, parameters::PageParameters, policy::PaginationPolicy};
+    use andromeda_ngsi_ld_request::pagination::{
+        cursor_request::CursorRequest,
+        page_context::PageContext,
+        parameters::PageParameters,
+        policy::PaginationPolicy,
+    };
     use axum::{
         http::{StatusCode, Uri},
         response::IntoResponse,
     };
     use pretty_assertions::assert_eq;
+
+    fn cursor_default() -> RequestPagination {
+        RequestPagination {
+            policy: PaginationPolicy::CursorDefault,
+            context: PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
+        }
+    }
 
     fn uri() -> Uri {
         "/ngsi-ld/v1/entityMaps".parse().expect("valid URI")
@@ -72,13 +87,7 @@ mod tests {
     /// A creation naming no page fixes every match.
     #[test]
     fn an_unpaged_creation_fixes_every_match() {
-        let window = membership_window(
-            PaginationPolicy::CursorDefault,
-            &PageParameters::default(),
-            &OrderingParameters::default(),
-            &uri(),
-        )
-        .ok();
+        let window = membership_window(&cursor_default(), &PageParameters::default(), &OrderingParameters::default(), &uri()).ok();
         assert_eq!(window, Some(PageWindow::offset(u32::MAX, 0)));
     }
 
@@ -89,8 +98,9 @@ mod tests {
             limit: Some(5),
             offset: Some(10),
             cursor: None,
+            context: None,
         };
-        let window = membership_window(PaginationPolicy::CursorDefault, &page, &OrderingParameters::default(), &uri()).ok();
+        let window = membership_window(&cursor_default(), &page, &OrderingParameters::default(), &uri()).ok();
         assert_eq!(window, Some(PageWindow::offset(5, 10)));
     }
 
@@ -102,7 +112,7 @@ mod tests {
             cursor: Some(CursorRequest::Start),
             ..PageParameters::default()
         };
-        let refusal = membership_window(PaginationPolicy::CursorDefault, &page, &OrderingParameters::default(), &uri()).expect_err("refused");
+        let refusal = membership_window(&cursor_default(), &page, &OrderingParameters::default(), &uri()).expect_err("refused");
         assert_eq!(refusal.into_response().status(), StatusCode::BAD_REQUEST);
     }
 }

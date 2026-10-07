@@ -609,7 +609,7 @@ mod tests {
     async fn the_installed_pagination_policy_is_the_one_a_route_reads() -> Result<(), Box<dyn Error>> {
         let probe = Router::new().route(
             "/probe",
-            get(|RequestPagination(policy): RequestPagination| async move { format!("{policy:?}") }),
+            get(|RequestPagination { policy, .. }: RequestPagination| async move { format!("{policy:?}") }),
         );
         let routed = Router::new().nest(
             "/ngsi-ld/v1",

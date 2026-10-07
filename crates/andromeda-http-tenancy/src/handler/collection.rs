@@ -48,7 +48,7 @@ use headers::HeaderMapExt;
 pub async fn query(
     State(state): State<TenancyRouteState>,
     OriginalUri(uri): OriginalUri,
-    RequestPagination(pagination): RequestPagination,
+    RequestPagination { policy: pagination, context }: RequestPagination,
     ValidatedQuery(params): ValidatedQuery<TenantListParams>,
 ) -> Result<Response, ProblemResponse> {
     let options = TenantOptions::parse(params.options.as_deref()).map_err(|error| error.classify().with_instance(uri.clone()))?;
@@ -62,6 +62,7 @@ pub async fn query(
                 order: CollectionOrder::Identifier,
                 count: CountPolicy::Emit,
                 pointers: PagePointers::OverRequestUri,
+                context: &context,
             },
         )
         .map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?;
@@ -91,6 +92,7 @@ pub async fn query(
     append_page_links(
         &mut response,
         &uri,
+        &context,
         &window,
         PageOutcome {
             total: Some(listing.total),

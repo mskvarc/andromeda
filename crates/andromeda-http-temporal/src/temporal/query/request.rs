@@ -90,7 +90,7 @@ pub async fn query(
     NgsiLdRequestEnvelope { uri, incoming_via: _, headers }: NgsiLdRequestEnvelope,
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     protocol: NgsiLdProtocolHeaders,
-    RequestPagination(pagination): RequestPagination,
+    pagination: RequestPagination,
     AdmittedTemporalQuery { params, .. }: AdmittedTemporalQuery<TemporalExtensionGate>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.5.7: the request `@context` is admitted before the query is

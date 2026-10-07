@@ -35,6 +35,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::LimitZeroWithoutCount
         | ParameterError::CursorWithOffset
         | ParameterError::CursorWithOrdering
+        | ParameterError::PageContextChanged
         | ParameterError::ProjectionLinkedTermsWithoutJoin
         | ParameterError::ProjectionDepthExceedsJoinLevel { .. }
         | ParameterError::FilterTraversalWithoutJoin

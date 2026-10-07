@@ -10,7 +10,10 @@
 //! `cursor` token the client only follows. The window decides which. Clause
 //! 5.5.9.1 forbids a page pointing at
 //! itself, so `first` is dropped on the first page and `last` on the last in
-//! both modes.
+//! both modes. Clause 5.5.9.1 also keeps one `@context` throughout a
+//! pagination, so every pointer of either family carries the `@context` the
+//! page was read under, which the pagination policy holds the followed request
+//! to.
 
 use andromeda_http_headers::{
     link::{header::Link, relation_type::RelationType, value::LinkValue},
@@ -22,6 +25,7 @@ use andromeda_ngsi_ld_query::{
     page_fullness::PageFullness,
     page_window::{PageStart, PageWindow},
 };
+use andromeda_ngsi_ld_request::pagination::page_context::{PAGE_CONTEXT_PARAMETER, PageContext};
 use axum::{
     http::{Uri, header::LINK},
     response::Response,
@@ -53,12 +57,14 @@ pub struct PageOutcome {
 /// from, so it carries no pointer, just as an empty offset collection carries
 /// none; neither does a `limit=0` page, which asked for no element at all.
 ///
+/// Every pointer carries `context`, the `@context` the page was read under.
+///
 /// The pointers are appended rather than inserted: a response rendered with
 /// the `@context` in the headers (clause 6.3.5) already carries a `Link`
 /// header, and replacing it would drop the context the client needs.
-pub fn append_page_links(response: &mut Response, uri: &Uri, window: &PageWindow, outcome: PageOutcome, media_type: ResponseMediaType) {
+pub fn append_page_links(response: &mut Response, uri: &Uri, context: &PageContext, window: &PageWindow, outcome: PageOutcome, media_type: ResponseMediaType) {
     if let Some(links) = PageLinks::of_window(window, outcome) {
-        append_pagination_links(response, uri, window, links, media_type);
+        append_pagination_links(response, &PageUri { uri, context }, window, links, media_type);
     }
 }
 
@@ -153,15 +159,26 @@ impl From<NeighbourCursors> for CursorPointers {
 
 /// Pagination parameter keys a rebuilt link replaces; every other query-string
 /// parameter is preserved so the pointer pages the same query.
-const PAGINATION_PARAMS: &[&str] = &["limit", "offset", "cursor"];
+const PAGINATION_PARAMS: &[&str] = &["limit", "offset", "cursor", PAGE_CONTEXT_PARAMETER];
+
+/// The request a page answered, as every pointer of the page is built from it.
+#[derive(Debug, Clone, Copy)]
+struct PageUri<'request> {
+    /// The URI the client addressed.
+    uri: &'request Uri,
+    /// The `@context` the page was read under.
+    context: &'request PageContext,
+}
 
 /// Build a pagination link URL by replacing the pagination parameters in the
-/// query string with `set` and preserving everything else.
+/// query string with `set` and the page's `@context`, preserving everything
+/// else.
 ///
 /// NGSI-LD pagination is `limit`/`offset` (clause 5.5.9.2) or an opaque `cursor`
-/// (clause 5.5.9.1), so a rebuilt link replaces exactly those three parameters
-/// and keeps the rest of the query intact.
-fn build_page_link(uri: &Uri, set: &[(&str, &str)]) -> String {
+/// (clause 5.5.9.1), so a rebuilt link replaces exactly those parameters and
+/// the context the walk is held to, and keeps the rest of the query intact.
+fn build_page_link(page: PageUri<'_>, set: &[(&str, &str)]) -> String {
+    let PageUri { uri, context } = page;
     let mut pairs: Vec<(String, String)> = Vec::new();
     if let Some(query) = uri.query() {
         for (k, v) in form_urlencoded::parse(query.as_bytes()) {
@@ -174,6 +191,7 @@ fn build_page_link(uri: &Uri, set: &[(&str, &str)]) -> String {
     for (key, value) in set {
         pairs.push(((*key).to_string(), (*value).to_string()));
     }
+    pairs.push((PAGE_CONTEXT_PARAMETER.to_owned(), context.as_str().to_owned()));
 
     let query = form_urlencoded::Serializer::new(String::new()).extend_pairs(pairs).finish();
 
@@ -195,7 +213,7 @@ fn build_page_link(uri: &Uri, set: &[(&str, &str)]) -> String {
 /// dropped on the first page and `last` on the last, and a single page carries
 /// neither. Every pointer carries the window's own `limit`, so a followed link
 /// pages by the size the page was cut by.
-fn append_pagination_links(response: &mut Response, uri: &Uri, window: &PageWindow, links: PageLinks, media_type: ResponseMediaType) {
+fn append_pagination_links(response: &mut Response, uri: &PageUri<'_>, window: &PageWindow, links: PageLinks, media_type: ResponseMediaType) {
     let limit = i64::from(window.limit);
     if limit <= 0 {
         return;
@@ -207,8 +225,8 @@ fn append_pagination_links(response: &mut Response, uri: &Uri, window: &PageWind
     let mt = MediaTypeBuf::from(&media_type.media_type());
 
     let targets = match links {
-        PageLinks::Offset { offset, extent } => offset_targets(uri, limit, offset, extent),
-        PageLinks::Cursor(cursors) => cursor_targets(uri, limit, &cursors),
+        PageLinks::Offset { offset, extent } => offset_targets(*uri, limit, offset, extent),
+        PageLinks::Cursor(cursors) => cursor_targets(*uri, limit, &cursors),
     };
 
     let values = targets
@@ -227,7 +245,7 @@ fn append_pagination_links(response: &mut Response, uri: &Uri, window: &PageWind
 
 /// The offset-mode pointer targets: `first`/`last` when a total is known, and
 /// `prev`/`next` as clause 6.3.10 applies.
-fn offset_targets(uri: &Uri, limit: i64, offset: i64, extent: PageExtent) -> Vec<(RelationType, String)> {
+fn offset_targets(uri: PageUri<'_>, limit: i64, offset: i64, extent: PageExtent) -> Vec<(RelationType, String)> {
     if matches!(extent, PageExtent::Total(total) if total <= 0) {
         return Vec::new();
     }
@@ -287,7 +305,7 @@ fn offset_targets(uri: &Uri, limit: i64, offset: i64, extent: PageExtent) -> Vec
 /// `next` exactly on the last (`CursorPointers` mirrors `PageCursor::neighbours`).
 /// `first` is therefore suppressed on the first page -- where it would self-point
 /// -- and `last` on the last page, leaving a single page with neither.
-fn cursor_targets(uri: &Uri, limit: i64, cursors: &CursorPointers) -> Vec<(RelationType, String)> {
+fn cursor_targets(uri: PageUri<'_>, limit: i64, cursors: &CursorPointers) -> Vec<(RelationType, String)> {
     let limit_str = limit.to_string();
     let mut links: Vec<(RelationType, String)> = Vec::new();
     // Only a page that has a previous page is not itself the first, so only
@@ -312,7 +330,7 @@ fn cursor_targets(uri: &Uri, limit: i64, cursors: &CursorPointers) -> Vec<(Relat
 
 #[cfg(test)]
 mod tests {
-    use crate::pagination::{CursorPointers, PageExtent, PageLinks, PageOutcome, append_page_links, append_pagination_links};
+    use crate::pagination::{CursorPointers, PageExtent, PageLinks, PageOutcome, PageUri, append_page_links, append_pagination_links};
     use andromeda_http_headers::{link::header::Link, media_type::ResponseMediaType};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{
@@ -320,6 +338,7 @@ mod tests {
         page_fullness::PageFullness,
         page_window::{PageStart, PageWindow},
     };
+    use andromeda_ngsi_ld_request::pagination::page_context::PageContext;
     use axum::{
         http::{StatusCode, Uri, header::LINK},
         response::{IntoResponse, Response},
@@ -413,6 +432,10 @@ mod tests {
         pretty_assertions::assert_eq!(PageLinks::of_window(&window, outcome), None);
     }
 
+    fn core() -> PageContext {
+        PageContext::try_from("https://example.com/core.jsonld").expect("an IRI")
+    }
+
     fn empty_response() -> Response {
         StatusCode::OK.into_response()
     }
@@ -437,7 +460,7 @@ mod tests {
         let uri = parse_uri("/subscriptions?limit=10&offset=0");
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             offset(0, PageExtent::Total(25)),
             ResponseMediaType::JsonLd,
@@ -455,7 +478,7 @@ mod tests {
         let uri = parse_uri("/subscriptions?limit=10&offset=10");
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             offset(10, PageExtent::Total(25)),
             ResponseMediaType::JsonLd,
@@ -477,7 +500,7 @@ mod tests {
         let uri = parse_uri("/subscriptions");
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             offset(0, PageExtent::Total(5)),
             ResponseMediaType::JsonLd,
@@ -493,7 +516,7 @@ mod tests {
         let uri = parse_uri("/csourceSubscriptions?limit=10&offset=10");
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             offset(10, PageExtent::Total(50)),
             ResponseMediaType::JsonLd,
@@ -510,7 +533,7 @@ mod tests {
         let uri = parse_uri("/csourceRegistrations?limit=10&offset=10");
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             offset(10, PageExtent::Total(50)),
             ResponseMediaType::JsonLd,
@@ -528,7 +551,7 @@ mod tests {
         let uri = parse_uri("/subscriptions");
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             offset(0, PageExtent::Total(0)),
             ResponseMediaType::JsonLd,
@@ -544,7 +567,7 @@ mod tests {
         let uri = parse_uri("/subscriptions?limit=1&offset=1");
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(1, 0),
             offset(1, PageExtent::Total(3)),
             ResponseMediaType::JsonLd,
@@ -567,7 +590,7 @@ mod tests {
         let uri = parse_uri("/subscriptions");
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(0, 0),
             offset(0, PageExtent::Total(10)),
             ResponseMediaType::JsonLd,
@@ -583,7 +606,7 @@ mod tests {
         let uri = parse_uri("/entities?limit=10&offset=0");
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             offset(0, PageExtent::Total(25)),
             ResponseMediaType::Json,
@@ -601,7 +624,7 @@ mod tests {
         let uri = parse_uri("/entities?limit=10&offset=0");
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             offset(0, PageExtent::Fullness(PageFullness::Full)),
             ResponseMediaType::JsonLd,
@@ -648,7 +671,7 @@ mod tests {
         let uri = parse_uri("/entities?limit=10&offset=10");
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             offset(10, PageExtent::Fullness(PageFullness::Short)),
             ResponseMediaType::JsonLd,
@@ -672,7 +695,7 @@ mod tests {
         };
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             PageLinks::Cursor(cursors),
             ResponseMediaType::JsonLd,
@@ -705,7 +728,7 @@ mod tests {
         };
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             PageLinks::Cursor(cursors),
             ResponseMediaType::JsonLd,
@@ -730,7 +753,7 @@ mod tests {
         };
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             PageLinks::Cursor(cursors),
             ResponseMediaType::JsonLd,
@@ -755,7 +778,7 @@ mod tests {
         };
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             PageLinks::Cursor(cursors),
             ResponseMediaType::JsonLd,
@@ -779,13 +802,13 @@ mod tests {
         };
         append_pagination_links(
             &mut response,
-            &uri,
+            &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
             PageLinks::Cursor(cursors),
             ResponseMediaType::JsonLd,
         );
         let link_str = link_header(&response);
-        assert!(link_str.contains("</entities?type=V&limit=10&cursor=>; rel=\"first\""), "{link_str}");
+        assert!(link_str.contains("</entities?type=V&limit=10&cursor=&pageContext="), "{link_str}");
     }
 
     /// Every pointer carries the limit the window was cut by, not the one the
@@ -800,9 +823,51 @@ mod tests {
             returned: 1000,
             boundary: None,
         };
-        append_page_links(&mut response, &uri, &window, outcome, ResponseMediaType::JsonLd);
+        append_page_links(&mut response, &uri, &core(), &window, outcome, ResponseMediaType::JsonLd);
         let link_str = link_header(&response);
         assert!(link_str.contains("limit=1000&offset=1000"), "{link_str}");
         assert!(!link_str.contains("limit=5000"), "{link_str}");
+    }
+
+    /// Clause 5.5.9.1: every pointer of an offset page carries the `@context`
+    /// the page was read under, replacing whatever the request carried.
+    #[test]
+    fn every_offset_pointer_carries_the_page_context() {
+        let mut response = empty_response();
+        let uri = parse_uri("/entities?type=V&limit=10&offset=10&pageContext=https%3A%2F%2Fexample.com%2Fold.jsonld");
+        let context = PageContext::try_from("https://example.com/a.jsonld").expect("an IRI");
+        let window = PageWindow::offset(10, 10);
+        let outcome = PageOutcome {
+            total: Some(50),
+            returned: 10,
+            boundary: None,
+        };
+        append_page_links(&mut response, &uri, &context, &window, outcome, ResponseMediaType::JsonLd);
+        let link_str = link_header(&response);
+        assert_eq!(link_str.matches("pageContext=https%3A%2F%2Fexample.com%2Fa.jsonld").count(), 4, "{link_str}");
+        assert!(!link_str.contains("old.jsonld"), "{link_str}");
+    }
+
+    /// Clause 5.5.9.1: every pointer of a cursor page carries the `@context`
+    /// too, by the same rule.
+    #[test]
+    fn every_cursor_pointer_carries_the_page_context() {
+        let mut response = empty_response();
+        let uri = parse_uri("/entities?type=V&limit=2&cursor=AURN");
+        let context = PageContext::try_from("https://example.com/a.jsonld").expect("an IRI");
+        let cursors = CursorPointers {
+            prev: Some("cHJldg".to_string()),
+            next: Some("bmV4dA".to_string()),
+            last: Some("ZQ".to_string()),
+        };
+        append_pagination_links(
+            &mut response,
+            &PageUri { uri: &uri, context: &context },
+            &PageWindow::offset(2, 0),
+            PageLinks::Cursor(cursors),
+            ResponseMediaType::JsonLd,
+        );
+        let link_str = link_header(&response);
+        assert_eq!(link_str.matches("pageContext=https%3A%2F%2Fexample.com%2Fa.jsonld").count(), 4, "{link_str}");
     }
 }
