@@ -14,14 +14,15 @@
 //! above each behaviour clause says why: "it is not possible to retrieve a set
 //! of entities by only specifying desired Entity identifiers, without further
 //! specifying restrictions on the entities' types or attributes". `id`,
-//! `idPattern` and `scopeQ` are therefore not narrowings -- a request carrying
-//! only them is still too wide. `pick` is, though: Table 6.4.3.2-1 calls the
-//! deprecated `attrs` "a synonym for a combination of the pick and q
-//! parameters", so a `pick` naming an Attribute is input (b) in its current
-//! spelling. `omit` is not, because it names what a response drops rather than
-//! what the entities it selects must carry. Purge Entities has neither: clause
-//! 5.6.21.3 gives it `drop` and `keep` instead of `attrs`, and those are the
-//! lists of Attribute names input (b) names there.
+//! `idPattern` and `scopeQ` are therefore not narrowings: a request carrying
+//! only them is still too wide. Nor are `pick` and `omit`: clause 5.7.2.3 lists
+//! them as projections, apart from the deprecated "list (one or more) of
+//! Attribute names of which at least one shall exist in order for an Entity to
+//! be selected", which is input (b). Table 6.4.3.2-1 calls `attrs` "a synonym
+//! for a combination of the pick and q parameters", and the selecting half of
+//! that combination is the `q`, not the `pick`. Purge Entities has no `attrs`:
+//! clause 5.6.21.3 gives it `drop` and `keep`, and those are the lists of
+//! Attribute names input (b) names there.
 //!
 //! Input (a) reaches a POST binding differently: clause 5.2.23's body carries
 //! one clause 5.2.11 selector per entry of `entities`, each with its own type
@@ -38,7 +39,6 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimePr
 use andromeda_ngsi_ld_query::{
     filter::{expression::Expr, referenced_attributes::referenced_attributes},
     geo::input::GeoQueryInput,
-    projection::grammar::RawProjectionTerm,
     type_selection::grammar::TypeExprRaw,
 };
 use strum::{Display, IntoEnumIterator};
@@ -84,11 +84,6 @@ pub struct NarrowingInputs<'a> {
     /// Input (b): the list of Attribute names, in its deprecated spelling.
     #[builder(default = Default::default())]
     attrs: Option<&'a [AttributeName]>,
-    /// Input (b) in its current spelling: Table 6.4.3.2-1 calls `attrs` "a
-    /// synonym for a combination of the pick and q parameters", so the list of
-    /// Attribute names is what `pick` names when it names any.
-    #[builder(default = Default::default())]
-    pick: Option<&'a [RawProjectionTerm]>,
     /// Input (b) as Purge Entities writes it. Clause 5.6.21.3 gives the
     /// operation no `attrs`: its lists of Attribute names are "a restrictive
     /// list of Attribute names to be deleted" and "an exclusionary list
@@ -146,7 +141,6 @@ impl NarrowingInputs<'_> {
             || self.entity_selectors.iter().any(|selector| selector.type_.is_some())
             || self.geo.is_some()
             || self.attrs.is_some_and(|attrs| self.counts_any(attrs.iter()))
-            || self.pick.is_some_and(|pick| self.counts_any(pick.iter().map(|term| &term.name)))
             || self.purged.is_some_and(|purged| self.counts_any(purged.iter()))
             || self.q.is_some_and(|q| self.counts_any(referenced_attributes(q).into_iter()))
             || matches!(self.admitted.local_scope, LocalScopeNarrowing::Listed) && self.local_scope == ExecutionScope::Local
@@ -164,11 +158,9 @@ impl NarrowingInputs<'_> {
 
 /// Whether a name addresses an Attribute at all.
 ///
-/// Inputs (b) and (c) are lists of *Attribute* names, and `pick` may name an
-/// Entity member instead: Table 6.4.3.2-1 admits "id", "type" and "scope"
-/// there while restricting `attrs` to "an Attribute (Property or Relationship)
-/// name". `id` and `type` are structural in every representation and name no
-/// Attribute; `scope` is "a special scope Property" (clause 4.18), so it does.
+/// Inputs (b) and (c) are lists of *Attribute* names. `id` and `type` are
+/// structural in every representation and name no Attribute; `scope` is "a
+/// special scope Property" (clause 4.18), so it does.
 fn names_an_attribute(name: &AttributeName) -> bool {
     !matches!(name.as_str(), "id" | "type")
 }
@@ -204,12 +196,7 @@ mod tests {
         query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing},
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::{
-        filter::expression::Expr,
-        geo::input::GeoQueryInput,
-        projection::grammar::ProjectionList,
-        type_selection::grammar::TypeExprRaw,
-    };
+    use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::input::GeoQueryInput, type_selection::grammar::TypeExprRaw};
 
     fn attrs(names: &[&str]) -> Vec<AttributeName> {
         names.iter().map(|name| name.parse().expect("a valid Attribute name")).collect()
@@ -300,20 +287,6 @@ mod tests {
         let mixed = attrs(&["createdAt", "speed"]);
         let inputs = NarrowingInputs::builder().admitted(AdmittedNarrowings::ENTITIES).attrs(Some(&mixed)).build();
         assert!(require_narrowing(&inputs).is_ok());
-    }
-
-    /// Table 6.4.3.2-1 makes `attrs` "a synonym for a combination of the pick
-    /// and q parameters", so a `pick` naming an Attribute is input (b); one
-    /// naming only the structural Entity members names no Attribute at all and
-    /// narrows nothing.
-    #[test]
-    fn a_pick_naming_an_attribute_narrows_and_one_naming_only_members_does_not() {
-        let named = Vec::from("id,type,speed".parse::<ProjectionList>().expect("a valid pick"));
-        let members = Vec::from("id,type".parse::<ProjectionList>().expect("a valid pick"));
-        let narrowing = NarrowingInputs::builder().admitted(AdmittedNarrowings::ENTITIES).pick(Some(&named)).build();
-        assert!(require_narrowing(&narrowing).is_ok());
-        let too_wide = NarrowingInputs::builder().admitted(AdmittedNarrowings::ENTITIES).pick(Some(&members)).build();
-        assert!(matches!(require_narrowing(&too_wide), Err(ParameterError::SelectorRequired(_))));
     }
 
     /// An empty `attrs` names no Attribute at all and narrows nothing.

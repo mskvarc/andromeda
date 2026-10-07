@@ -142,7 +142,6 @@ impl CsrQueryParameters {
             .admitted(AdmittedNarrowings::REGISTRATIONS)
             .entity_type(self.entity_type.as_ref())
             .attrs(self.attrs.as_deref())
-            .pick(self.pick.as_deref())
             .q(self.q.as_ref())
             .geo(self.geo.0.as_ref())
             .build()

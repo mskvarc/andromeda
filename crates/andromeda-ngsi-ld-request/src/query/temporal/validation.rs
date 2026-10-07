@@ -108,7 +108,6 @@ impl TemporalQueryParameters {
             .entity_type(self.entity_type.as_ref())
             .entity_selectors(&self.entity_selectors)
             .attrs(self.attrs.as_deref())
-            .pick(self.pick.as_deref())
             .q(self.q.as_ref())
             .geo(self.geo.0.as_ref())
             .local_scope(self.execution_scope())
