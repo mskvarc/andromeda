@@ -75,7 +75,7 @@ pub fn parse_compare_value(cursor: &mut TokenCursor<'_>) -> Result<CompareValue,
 /// An operand that is not a URI, or one already in its normalised spelling, is
 /// left exactly as it was.
 fn uri_equivalent_spellings(operand: Scalar) -> CompareValue {
-    let Scalar::Str(ref written) = operand else {
+    let (Scalar::Str(ref written) | Scalar::Uri(ref written)) = operand else {
         return CompareValue::Scalar(operand);
     };
     let Ok(parsed) = written.parse::<Identifier>() else {
@@ -84,7 +84,12 @@ fn uri_equivalent_spellings(operand: Scalar) -> CompareValue {
     if parsed.as_str() == written {
         return CompareValue::Scalar(operand);
     }
-    let normalised = Scalar::Str(parsed.as_str().to_owned());
+    let normalised = match operand {
+        Scalar::Uri(_) => Scalar::Uri(parsed.as_str().to_owned()),
+        Scalar::Str(_) | Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => {
+            Scalar::Str(parsed.as_str().to_owned())
+        }
+    };
     CompareValue::ValueList(vec![operand, normalised])
 }
 
@@ -141,7 +146,7 @@ pub fn parse_comparable_value(cursor: &mut TokenCursor<'_>) -> Result<Scalar, Qu
         found: QFound::of(token),
     };
     match scalar {
-        Scalar::Bool(_) => Err(refused()),
+        Scalar::Bool(_) | Scalar::Uri(_) => Err(refused()),
         // A bare literal in none of the clause 4.6.3 forms reads as text, and
         // only `quotedStr` derives text, quotes included.
         Scalar::Str(_) if matches!(token, Some(Token::Ident(_))) => Err(refused()),

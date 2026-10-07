@@ -4,6 +4,7 @@ use crate::{error::QueryError, filter::quoting::Quoting};
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_date_time::NgsiLdDateTime, ngsi_ld_time::NgsiLdTime, time_value::TimeValueForm};
 use andromeda_ngsi_ld_number::JsonNumber;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+use iri_rs::Iri;
 
 /// The right-hand side of a comparison predicate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,8 +36,14 @@ pub enum Scalar {
     Number(JsonNumber),
     /// A boolean value (`true` or `false`).
     Bool(bool),
-    /// A quoted string value.
+    /// A string value: a `quotedStr`, or a bare word that is no `URI`.
     Str(String),
+    /// A bare clause 4.9 `URI` operand, admitted only by `CompEqualityValue`.
+    ///
+    /// Compared exactly as a [`Scalar::Str`] holding the same text (clause 4.9
+    /// EXAMPLE 3 matches a quoted URI against a Relationship object), and kept
+    /// apart so that a stored `q` reads back in the production it was written in.
+    Uri(String),
     /// An RFC 3339 `date-time`, normalised to UTC.
     DateTime(DateTime<Utc>),
     /// An RFC 3339 `full-date`.
@@ -82,7 +89,10 @@ impl Scalar {
     /// clause 4.6.3 form but is not a well-formed value of it.
     pub fn from_literal(raw: &str, quoting: Quoting) -> Result<Scalar, QueryError> {
         let Some(form) = TimeValueForm::of(raw) else {
-            return Ok(Scalar::Str(raw.to_string()));
+            return Ok(match quoting {
+                Quoting::Bare if Iri::new(raw).is_ok() => Scalar::Uri(raw.to_string()),
+                Quoting::Bare | Quoting::Quoted => Scalar::Str(raw.to_string()),
+            });
         };
         match (form, quoting) {
             (TimeValueForm::DateTime, Quoting::Bare) => Ok(Scalar::DateTime(parse_date_time(raw)?)),
@@ -113,7 +123,7 @@ impl Scalar {
             Scalar::Number(number) => number.to_string(),
             Scalar::Bool(value) => value.to_string(),
             // clone: callers own the rendered literal
-            Scalar::Str(value) => value.clone(),
+            Scalar::Str(value) | Scalar::Uri(value) => value.clone(),
             Scalar::DateTime(value) => value.format(DATE_TIME_FORMAT).to_string(),
             Scalar::Date(value) => value.to_string(),
             Scalar::Time(value) => value.format(TIME_FORMAT).to_string(),
@@ -179,6 +189,19 @@ mod tests {
 
     fn date_time(raw: &str) -> Scalar {
         Scalar::DateTime(parse_date_time(raw).expect("valid date-time"))
+    }
+
+    #[test]
+    fn a_bare_uri_is_a_uri_and_a_quoted_one_or_a_bare_word_is_a_string() {
+        pretty_assertions::assert_eq!(
+            Scalar::from_literal("http://example.org/a", Quoting::Bare).unwrap(),
+            Scalar::Uri("http://example.org/a".to_owned())
+        );
+        pretty_assertions::assert_eq!(
+            Scalar::from_literal("http://example.org/a", Quoting::Quoted).unwrap(),
+            Scalar::Str("http://example.org/a".to_owned())
+        );
+        pretty_assertions::assert_eq!(Scalar::from_literal("active", Quoting::Bare).unwrap(), Scalar::Str("active".to_owned()));
     }
 
     #[test]
@@ -312,14 +335,21 @@ mod tests {
         matches!(error, QueryError::QInvalidTime { .. })
     }
 
-    /// Clause 4.9's `quotedStr` is a JSON string, so free-form text carrying colons is compared as the text it is in either spelling.
+    /// Clause 4.9's `quotedStr` is a JSON string, so free-form text carrying colons is compared as the text it is; bare, a word with a scheme is a `URI`.
     #[test]
     fn free_form_text_is_a_string_operand_however_much_punctuation_it_carries() {
         for literal in ["12:00:00 in the morning", "ab:cd:ef", "urn:ngsi-ld:Vehicle:A4567", "1999-2000"] {
-            for quoting in [Quoting::Bare, Quoting::Quoted] {
-                let scalar = Scalar::from_literal(literal, quoting).expect("free-form text is never malformed");
-                pretty_assertions::assert_eq!(scalar, Scalar::Str(literal.to_owned()), "{literal} {quoting:?}");
-            }
+            let scalar = Scalar::from_literal(literal, Quoting::Quoted).expect("free-form text is never malformed");
+            pretty_assertions::assert_eq!(scalar, Scalar::Str(literal.to_owned()), "{literal}");
+        }
+        for literal in ["12:00:00 in the morning", "1999-2000"] {
+            let scalar = Scalar::from_literal(literal, Quoting::Bare).expect("free-form text is never malformed");
+            pretty_assertions::assert_eq!(scalar, Scalar::Str(literal.to_owned()), "{literal}");
+        }
+        // Bare, both derive the clause 4.9 `URI` production: each has a scheme.
+        for literal in ["ab:cd:ef", "urn:ngsi-ld:Vehicle:A4567"] {
+            let scalar = Scalar::from_literal(literal, Quoting::Bare).expect("a URI is never malformed");
+            pretty_assertions::assert_eq!(scalar, Scalar::Uri(literal.to_owned()), "{literal}");
         }
     }
 

@@ -3,6 +3,7 @@
 use crate::{
     filter::{
         expression::Expr,
+        lexer::is_bare_uri,
         path::{AttrPath, QueryPath},
         predicate::Predicate,
         scalar::{CompareValue, Scalar},
@@ -245,6 +246,11 @@ fn write_scalar(buf: &mut String, scalar: &Scalar) {
         // whole. Quoting costs the `Time` nothing, because a quoted literal
         // that satisfies a clause 4.6.3 form is read back as that form.
         Scalar::Str(_) | Scalar::Time(_) => write_quoted(buf, &scalar.literal_text()),
+        // A `URI` an expansion produced can hold characters the tokeniser reads
+        // as query syntax; quoted, it reads back as the same text and compares
+        // the same.
+        Scalar::Uri(uri) if is_bare_uri(uri) => buf.push_str(uri),
+        Scalar::Uri(uri) => write_quoted(buf, uri),
         Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) => buf.push_str(&scalar.literal_text()),
     }
 }
@@ -278,6 +284,32 @@ mod tests {
         let expr = parse("speed>50").unwrap();
         let s = serialize(&expr);
         pretty_assertions::assert_eq!(s, "speed>50");
+    }
+
+    #[test]
+    fn a_bare_uri_operand_reads_back_bare_and_a_quoted_one_quoted() {
+        for written in [
+            "link==http://example.org/a",
+            "ref!=https://sub.example.org/dir.v2/target.json",
+            "ref==urn:example:release:1.5",
+            "ref==urn:a,urn:b.c",
+            "ref==\"http://example.org/a\"",
+        ] {
+            pretty_assertions::assert_eq!(serialize(&parse(written).unwrap()), written);
+        }
+    }
+
+    #[test]
+    fn a_uri_holding_query_syntax_is_quoted_to_read_back_whole() {
+        let Expr::Pred(Predicate::Equality { path, membership, .. }) = parse("p==urn:x").unwrap() else {
+            panic!("expected an equality");
+        };
+        let expr = Expr::Pred(Predicate::Equality {
+            path,
+            membership,
+            rhs: CompareValue::Scalar(Scalar::Uri("https://example.org/a;b".to_owned())),
+        });
+        pretty_assertions::assert_eq!(serialize(&expr), "p==\"https://example.org/a;b\"");
     }
 
     #[test]

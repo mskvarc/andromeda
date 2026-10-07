@@ -117,7 +117,7 @@ async fn revert_compare_values<S: BuildHasher + Sync>(pred: Predicate, expand_at
 
 /// Put one coerced scalar operand back in the client's terms.
 ///
-/// Only a string can have been coerced; every other scalar kind was already a
+/// Only a string or a `URI` can have been coerced; every other scalar kind was already a
 /// value. A string the coercion could not have produced -- one that is not a
 /// usable attribute name -- is the client's own literal and is left alone.
 async fn revert_scalar(scalar: Scalar, compactor: &impl TermCompactor) -> Scalar {
@@ -125,6 +125,10 @@ async fn revert_scalar(scalar: Scalar, compactor: &impl TermCompactor) -> Scalar
         Scalar::Str(text) => match text.parse::<AttributeName>() {
             Ok(coerced) => Scalar::Str(compactor.compact_term(&coerced).await.as_str().to_owned()),
             Err(_not_a_name) => Scalar::Str(text),
+        },
+        Scalar::Uri(text) => match text.parse::<AttributeName>() {
+            Ok(coerced) => Scalar::Uri(compactor.compact_term(&coerced).await.as_str().to_owned()),
+            Err(_not_a_name) => Scalar::Uri(text),
         },
         other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => other,
     }

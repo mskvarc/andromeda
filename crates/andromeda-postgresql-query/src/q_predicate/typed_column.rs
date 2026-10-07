@@ -62,7 +62,7 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, scan: &InstanceScan<'_
         // clone between the borrowed query domain value and the NUMERIC bind.
         Scalar::Number(number) => compare(scan.value(ValueColumn::Number), op, SeaExpr::val(number.decimal().clone())),
         Scalar::Bool(value) => compare(scan.value(ValueColumn::Boolean), op, SeaExpr::val(*value)),
-        Scalar::Str(value) => {
+        Scalar::Str(value) | Scalar::Uri(value) => {
             let string_test = string_condition(value.as_str(), op, scan);
             match relationship_object_is_comparable(op) {
                 RelationshipObjects::Comparable => {

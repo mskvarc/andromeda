@@ -272,11 +272,12 @@ async fn expand_compare_values<S: BuildHasher + Sync>(
     }
 }
 
-/// Expand a single scalar operand: a string is a term to expand, every other
+/// Expand a single scalar operand: a string or a `URI` is a term to expand, every other
 /// scalar kind is already a value.
 async fn expand_scalar(scalar: Scalar, expander: &impl TermExpander) -> Result<Scalar, QueryError> {
     match scalar {
         Scalar::Str(s) => Ok(Scalar::Str(expander.expand_term(&s).await?.to_string())),
+        Scalar::Uri(s) => Ok(Scalar::Uri(expander.expand_term(&s).await?.to_string())),
         other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => Ok(other),
     }
 }

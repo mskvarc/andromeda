@@ -204,7 +204,7 @@ fn compare_in_domain(value: &TargetValue<'_>, op: CmpOp, scalar: &Scalar) -> Opt
     match scalar {
         Scalar::Number(rhs) => Some(cmp_op(value.as_number()?.as_ref().cmp(rhs), op)),
         Scalar::Bool(rhs) => Some(cmp_op(value.as_boolean()?.cmp(rhs), op)),
-        Scalar::Str(rhs) => Some(cmp_op(value.as_lexical()?.as_ref().cmp(rhs.as_str()), op)),
+        Scalar::Str(rhs) | Scalar::Uri(rhs) => Some(cmp_op(value.as_lexical()?.as_ref().cmp(rhs.as_str()), op)),
         // A stored temporal value is compared in its own domain, not as text:
         // clause 4.6.3 lets the same instant be written with any offset, and
         // lexicographic order over those renderings is not chronological order.

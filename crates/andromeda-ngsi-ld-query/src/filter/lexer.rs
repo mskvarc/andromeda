@@ -105,13 +105,15 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
     let chars: Vec<char> = input.chars().collect();
     let mut tokens = Vec::new();
     let mut cursor = 0;
+    let mut position = OperandPosition::Other;
 
     while cursor < chars.len() {
         if matches!(chars[cursor], ' ' | '\t' | '\n' | '\r') {
             cursor += 1;
             continue;
         }
-        let (token, next) = scan_token(&chars, cursor)?;
+        let (token, next) = scan_token(&chars, cursor, position)?;
+        position = position.after(&token);
         tokens.push(token);
         cursor = next;
     }
@@ -124,7 +126,7 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
 ///
 /// The multi-character operators are matched before their prefixes, because
 /// clause 4.9 spells `!~=` with a `!` that does not open a `!=`.
-fn scan_token(chars: &[char], start: usize) -> Result<(Token, usize), QueryError> {
+fn scan_token(chars: &[char], start: usize, position: OperandPosition) -> Result<(Token, usize), QueryError> {
     match chars[start] {
         ';' => Ok((Token::Semi, start + 1)),
         '|' => Ok((Token::Pipe, start + 1)),
@@ -149,7 +151,7 @@ fn scan_token(chars: &[char], start: usize) -> Result<(Token, usize), QueryError
         '"' => scan_quoted_string(chars, start),
         '-' if starts_digit(chars, start + 1) => Ok(scan_signed_number(chars, start)),
         digit if digit.is_ascii_digit() => Ok(scan_digit_run(chars, start)),
-        name if name.is_alphanumeric() || matches!(name, '_' | ':' | '/') => Ok(scan_identifier(chars, start)),
+        name if name.is_alphanumeric() || matches!(name, '_' | ':' | '/') => Ok(scan_identifier(chars, start, position)),
         other => Err(QueryError::QUnexpectedChar { ch: other, position: start }),
     }
 }
@@ -252,9 +254,13 @@ fn is_temporal_char(current: char) -> bool {
 
 /// Scan a bare identifier — an attribute name, a prefixed name, or an IRI a
 /// client wrote unquoted — and recognise the two boolean keywords.
-fn scan_identifier(chars: &[char], start: usize) -> (Token, usize) {
+fn scan_identifier(chars: &[char], start: usize, position: OperandPosition) -> (Token, usize) {
     let mut cursor = start;
-    while chars.get(cursor).copied().is_some_and(is_identifier_char) {
+    while chars
+        .get(cursor)
+        .copied()
+        .is_some_and(|current| position.continues_identifier(chars, cursor, current))
+    {
         cursor += 1;
     }
     let word: String = chars[start..cursor].iter().collect();
@@ -273,6 +279,74 @@ fn scan_identifier(chars: &[char], start: usize) -> (Token, usize) {
 /// `.` is excluded because clause 4.9 makes it the sub-attribute separator.
 fn is_identifier_char(current: char) -> bool {
     current.is_alphanumeric() || matches!(current, '_' | ':' | '/' | '-' | '#')
+}
+
+/// Whether `current` may appear inside a bare `URI` operand (RFC 3986 section 2).
+///
+/// The URI characters that clause 4.9 also uses as query syntax (`;`, `|`, `(`,
+/// `)`, `,`, `[`, `]`) keep their query meaning, and a `.` that opens `..`
+/// stays the range separator.
+fn is_uri_char(chars: &[char], index: usize, current: char) -> bool {
+    match current {
+        '.' => !is_at(chars, index + 1, '.'),
+        other => is_identifier_char(other) || matches!(other, '~' | '%' | '?' | '@' | '!' | '$' | '&' | '\'' | '*' | '+' | '='),
+    }
+}
+
+/// Whether `text` tokenises back, after `==`, as the one identifier it is.
+#[must_use]
+pub fn is_bare_uri(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    chars.first().is_some_and(|first| first.is_alphabetic())
+        && chars.iter().enumerate().all(|(index, current)| is_uri_char(&chars, index, *current))
+        && !matches!(text, "true" | "false")
+}
+
+/// What the token being scanned can stand for.
+///
+/// Clause 4.9 lets a bare `URI` stand only in a `CompEqualityValue`, after `==`
+/// or `!=` and through the `,` and `..` that continue it. Everywhere else a `.`
+/// separates sub-attributes, so a dotted word splits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OperandPosition {
+    /// The right-hand side of an equality operator.
+    EqualityValue,
+    /// An attribute path, an ordering or pattern operand, or a connective.
+    Other,
+}
+
+impl OperandPosition {
+    /// The position that follows `token`.
+    const fn after(self, token: &Token) -> OperandPosition {
+        match token {
+            Token::Eq | Token::Neq => OperandPosition::EqualityValue,
+            Token::Comma | Token::Dots | Token::Ident(_) | Token::QuotedStr(_) | Token::NumberLit(_) | Token::True | Token::False => self,
+            Token::Gt
+            | Token::Ge
+            | Token::Lt
+            | Token::Le
+            | Token::Match
+            | Token::NotMatch
+            | Token::Semi
+            | Token::Pipe
+            | Token::LParen
+            | Token::RParen
+            | Token::LBracket
+            | Token::RBracket
+            | Token::LBrace
+            | Token::RBrace
+            | Token::Star
+            | Token::Dot => OperandPosition::Other,
+        }
+    }
+
+    /// Whether `current`, at `index`, continues an identifier scanned here.
+    fn continues_identifier(self, chars: &[char], index: usize, current: char) -> bool {
+        match self {
+            OperandPosition::EqualityValue => is_uri_char(chars, index, current),
+            OperandPosition::Other => is_identifier_char(current),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -418,8 +492,8 @@ mod tests {
         assert_eq!(lex("urn:ngsi-ld:Vehicle:A4567"), vec![ident("urn:ngsi-ld:Vehicle:A4567")]);
     }
 
-    /// `.` is the sub-attribute separator (clause 4.9), which outranks its role
-    /// inside a hostname: an absolute IRI written unquoted splits at every dot.
+    /// In an attribute path `.` is the sub-attribute separator (clause 4.9),
+    /// which outranks its role inside a hostname: an IRI written there splits.
     /// That is not a limitation in practice, because an absolute IRI reaches the
     /// AST through term expansion rather than through this tokeniser — what a
     /// client writes is a compact name.
@@ -429,6 +503,52 @@ mod tests {
             lex("https://example.com/Vehicle#speed"),
             vec![ident("https://example"), Token::Dot, ident("com/Vehicle#speed")]
         );
+    }
+
+    #[test]
+    fn a_dotted_uri_after_an_equality_operator_is_one_identifier() {
+        assert_eq!(lex("p==http://example.org/a"), vec![ident("p"), Token::Eq, ident("http://example.org/a")]);
+        assert_eq!(
+            lex("p!=https://a.example/x?y=1&z=%20~@!$'*+"),
+            vec![ident("p"), Token::Neq, ident("https://a.example/x?y=1&z=%20~@!$'*+")]
+        );
+        assert_eq!(
+            lex("p==http://a.org/x,http://b.org/y;q.r==1"),
+            vec![
+                ident("p"),
+                Token::Eq,
+                ident("http://a.org/x"),
+                Token::Comma,
+                ident("http://b.org/y"),
+                Token::Semi,
+                ident("q"),
+                Token::Dot,
+                ident("r"),
+                Token::Eq,
+                number("1"),
+            ]
+        );
+        assert_eq!(
+            lex("(p==urn:a.b)|q==c"),
+            vec![
+                Token::LParen,
+                ident("p"),
+                Token::Eq,
+                ident("urn:a.b"),
+                Token::RParen,
+                Token::Pipe,
+                ident("q"),
+                Token::Eq,
+                ident("c"),
+            ]
+        );
+        assert_eq!(lex("p==a.b..c.d"), vec![ident("p"), Token::Eq, ident("a.b"), Token::Dots, ident("c.d")]);
+    }
+
+    #[test]
+    fn a_dotted_word_after_an_ordering_or_pattern_operator_still_splits() {
+        assert_eq!(lex("p>a.b"), vec![ident("p"), Token::Gt, ident("a"), Token::Dot, ident("b")]);
+        assert_eq!(lex("p~=a.b"), vec![ident("p"), Token::Match, ident("a"), Token::Dot, ident("b")]);
     }
 
     #[test]
