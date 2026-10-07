@@ -10,7 +10,7 @@
 //! This path is unindexed by construction.
 
 use crate::{
-    jsonb::{attribute_value_jsonpath, lift_comparison},
+    jsonb::{attribute_value_jsonpath, json_literal_member_jsonpath, lift_comparison},
     operator::{compare, pattern as pattern_predicate},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -31,7 +31,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{Condition, Expr as SeaExpr, Func, SimpleExpr};
+use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Func, SimpleExpr};
 
 /// Read a JSONB value out as its whole text: `(jsonb) #>> '{}'`.
 ///
@@ -47,8 +47,33 @@ fn whole_text(jsonb: SimpleExpr) -> SimpleExpr {
 /// only the payload can answer.
 #[must_use]
 pub fn fallback_exists(path: &AttrPath, document: &SimpleExpr) -> Condition {
-    let jsonpath = value_extraction_jsonpath(path, VALUE.as_str());
-    Condition::all().add(jsonb_path_exists(document.clone(), &jsonpath)) // clone: sea-query owns every operand
+    Condition::all().add(value_presence(path, document))
+}
+
+/// Whether the Property value this path addresses is present in `document`.
+///
+/// A trailing path is read both into an expanded Property value and into a
+/// `JsonProperty`'s raw JSON, and a member present under either one exists.
+fn value_presence(path: &AttrPath, document: &SimpleExpr) -> SimpleExpr {
+    let expanded = jsonb_path_exists(document.clone(), &value_extraction_jsonpath(path, VALUE.as_str())); // clone: sea-query owns every operand
+    match json_literal_extraction_jsonpath(path) {
+        Some(jsonpath) => expanded.or(jsonb_path_exists(document.clone(), &jsonpath)), // clone: sea-query owns every operand
+        None => expanded,
+    }
+}
+
+/// The Property value this path addresses in `document`.
+///
+/// Clause 4.9 evaluates a trailing path "as a `MemberExpression`" against the
+/// seed target value. An expanded Property value and a `JsonProperty`'s raw
+/// JSON (clause 4.9 EXAMPLE 11) are both seed target values, and an attribute
+/// holds at most one of them, so the two readings coalesce.
+fn value_extraction(path: &AttrPath, document: &SimpleExpr) -> SimpleExpr {
+    let expanded = payload_extraction(path, VALUE.as_str(), document);
+    match json_literal_extraction_jsonpath(path) {
+        Some(jsonpath) => Func::coalesce([expanded, jsonb_path_query_first(document.clone(), &jsonpath)]).into(), // clone: sea-query owns every operand
+        None => expanded,
+    }
 }
 
 /// The `jsonb_path_query_first` extraction reaching one member of this
@@ -84,7 +109,7 @@ fn equality_scalar_comparison(extract_value: SimpleExpr, extract_object: SimpleE
 /// Compile an equality predicate (`==`/`!=`) against the payload.
 #[must_use]
 pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, document: &SimpleExpr) -> Condition {
-    let extract_value = payload_extraction(path, VALUE.as_str(), document);
+    let extract_value = value_extraction(path, document);
 
     match rhs {
         CompareValue::Scalar(scalar) => {
@@ -140,7 +165,7 @@ pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &Compa
 /// make `owner>"a"` select entities the standard requires it to reject.
 #[must_use]
 pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, document: &SimpleExpr) -> Condition {
-    let extract_value = payload_extraction(path, VALUE.as_str(), document);
+    let extract_value = value_extraction(path, document);
     Condition::all().add(scalar_predicate(whole_text(extract_value), rhs, op.as_cmp_op()))
 }
 
@@ -156,11 +181,9 @@ pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, document
 /// string-shaped it is.
 #[must_use]
 pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, document: &SimpleExpr) -> Condition {
-    let jsonpath = value_extraction_jsonpath(path, VALUE.as_str());
-    let extract = whole_text(jsonb_path_query_first(document.clone(), &jsonpath)); // clone: the presence test reads the same document
+    let extract = whole_text(value_extraction(path, document));
     let value = pattern_predicate(cast_compound(extract, PostgresType::Text), polarity, SeaExpr::val(pattern.portable().as_str()));
-    let present = jsonb_path_exists(document.clone(), &jsonpath); // clone: sea-query owns every operand
-    Condition::all().add(present_and(present, value))
+    Condition::all().add(present_and(value_presence(path, document), value))
 }
 
 /// The jsonpath reaching this attribute's `terminal_iri` value in the payload,
@@ -171,6 +194,17 @@ fn value_extraction_jsonpath(path: &AttrPath, terminal_iri: &str) -> String {
     let sub_attrs: Vec<&str> = path.sub_attrs.iter().map(AttributeName::as_str).collect();
     let value_path: Vec<&str> = path.value_path.iter().map(AttributeName::as_str).collect();
     attribute_value_jsonpath(path.attr.as_str(), &sub_attrs, &value_path, terminal_iri)
+}
+
+/// The jsonpath reaching the member a trailing path names inside a
+/// `JsonProperty`'s raw JSON, or `None` when the path has no trailing members.
+fn json_literal_extraction_jsonpath(path: &AttrPath) -> Option<String> {
+    if path.value_path.is_empty() {
+        return None;
+    }
+    let sub_attrs: Vec<&str> = path.sub_attrs.iter().map(AttributeName::as_str).collect();
+    let value_path: Vec<&str> = path.value_path.iter().map(AttributeName::as_str).collect();
+    Some(json_literal_member_jsonpath(path.attr.as_str(), &sub_attrs, &value_path))
 }
 
 #[cfg(test)]
@@ -259,6 +293,28 @@ mod tests {
     /// A sub-attribute lives only in the payload, so nothing probes the
     /// projection: the Property-value reading and the `languageMap` reading of
     /// a `LanguageProperty` sub-attribute (clause 4.9) both read the payload.
+    /// Clause 4.9 EXAMPLE 11 reads the member of a `JsonProperty`'s raw JSON,
+    /// which the expanded-value reading never reaches.
+    #[test]
+    fn a_trailing_path_also_reads_the_member_of_a_json_property() {
+        let json_member = "$[0].\"https://example.com/parkingTickets\"[0].\"https://uri.etsi.org/ngsi-ld/hasJSON\"[0].\"@value\".\"value\"";
+        for expression in [
+            "\"https://example.com/parkingTickets\"[value]==\"Overstay 60 minutes\"",
+            "\"https://example.com/parkingTickets\"[value]>=10",
+            "\"https://example.com/parkingTickets\"[value]~=\"Over.*\"",
+            "\"https://example.com/parkingTickets\"[value]",
+        ] {
+            let sql = render(expression);
+            assert!(sql.contains(json_member), "{expression}: {sql}");
+        }
+    }
+
+    #[test]
+    fn a_path_without_trailing_members_never_reads_a_json_property() {
+        let sql = render("\"https://example.com/speed\"==10");
+        assert!(!sql.contains("hasJSON"), "{sql}");
+    }
+
     #[test]
     fn a_sub_attribute_path_compiles_to_the_payload_alone() {
         let sql = render("\"https://example.com/address\".\"https://example.com/sub\"==\"a\"");
@@ -278,7 +334,10 @@ mod tests {
             sql.contains("$[0].\"https://example.com/address\"[0].\"https://uri.etsi.org/ngsi-ld/hasValue\"[0].\"city\"[*].\"@value\""),
             "{sql}"
         );
-        assert!(!sql.contains("\"@value\".\"city\""), "the member must not be read out of the value node: {sql}");
+        assert!(
+            !sql.contains("hasValue\"[0].\"@value\".\"city\""),
+            "the member must not be read out of the value node: {sql}"
+        );
     }
 
     #[test]

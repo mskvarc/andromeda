@@ -4,7 +4,7 @@
 use crate::temporal_operand::{stored_date_time, stored_time};
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
-use andromeda_ngsi_ld_vocabulary::expanded::properties::{CREATED_AT, DELETED_AT, EXPIRES_AT, MODIFIED_AT, OBJECT, OBSERVED_AT, UNIT_CODE};
+use andromeda_ngsi_ld_vocabulary::expanded::properties::{CREATED_AT, DELETED_AT, EXPIRES_AT, JSON, MODIFIED_AT, OBJECT, OBSERVED_AT, UNIT_CODE};
 use andromeda_postgresql_seaquery::{
     cast::{cast, cast_compound},
     jsonb::escape_jsonpath_key,
@@ -106,14 +106,7 @@ pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedCompar
 /// — rather than one `@value` holding a raw JSON object.
 #[must_use]
 pub fn attribute_value_jsonpath(attr_iri: &str, sub_attrs: &[&str], value_path: &[&str], terminal_iri: &str) -> String {
-    let mut jsonpath = String::from("$[0].\"");
-    jsonpath.push_str(&escape_jsonpath_key(attr_iri));
-    jsonpath.push('"');
-    for sub in sub_attrs {
-        jsonpath.push_str("[0].\"");
-        jsonpath.push_str(&escape_jsonpath_key(sub));
-        jsonpath.push('"');
-    }
+    let mut jsonpath = attribute_jsonpath(attr_iri, sub_attrs);
     // A system sub-attribute (clause 4.9: `observedAt`, `unitCode`, and the
     // clause 4.8 timestamps) is stored as a bare value node
     // `[{"@type":…,"@value":…}]` rather than wrapped in a `hasValue`/`hasObject`
@@ -143,6 +136,41 @@ pub fn attribute_value_jsonpath(attr_iri: &str, sub_attrs: &[&str], value_path: 
     jsonpath.push_str(".\"");
     jsonpath.push_str(value_key);
     jsonpath.push('"');
+    jsonpath
+}
+
+/// Build the jsonpath that reaches one member of a `JsonProperty`'s value
+/// inside the expanded payload: `$[0]."<attr>"[0]."<sub>"…[0]."<hasJSON>"[0]."@value"."<member>"…`.
+///
+/// A `JsonProperty` value is one `@json` literal (clause 4.5.24), so JSON-LD
+/// expansion leaves its object whole under a single `@value`. Its members keep
+/// the keys the writer chose and hold plain JSON, so each member hop is a plain
+/// key and the path ends at the member itself rather than at a value node.
+#[must_use]
+pub fn json_literal_member_jsonpath(attr_iri: &str, sub_attrs: &[&str], value_path: &[&str]) -> String {
+    let mut jsonpath = attribute_jsonpath(attr_iri, sub_attrs);
+    jsonpath.push_str("[0].\"");
+    jsonpath.push_str(&escape_jsonpath_key(JSON.as_str()));
+    jsonpath.push_str("\"[0].\"@value\"");
+    for member in value_path {
+        jsonpath.push_str(".\"");
+        jsonpath.push_str(&escape_jsonpath_key(member));
+        jsonpath.push('"');
+    }
+    jsonpath
+}
+
+/// The jsonpath prefix reaching one attribute node, walking `sub_attrs` below
+/// it: `$[0]."<attr>"[0]."<sub>"…`.
+fn attribute_jsonpath(attr_iri: &str, sub_attrs: &[&str]) -> String {
+    let mut jsonpath = String::from("$[0].\"");
+    jsonpath.push_str(&escape_jsonpath_key(attr_iri));
+    jsonpath.push('"');
+    for sub in sub_attrs {
+        jsonpath.push_str("[0].\"");
+        jsonpath.push_str(&escape_jsonpath_key(sub));
+        jsonpath.push('"');
+    }
     jsonpath
 }
 
@@ -282,6 +310,16 @@ mod tests {
     /// The IRI a compact compound-value member expands to under the core
     /// context's `@vocab`, which is what a request-expanded path carries.
     const CITY: &str = "https://uri.etsi.org/ngsi-ld/default-context/city";
+
+    /// A `JsonProperty` value is one `@json` literal, so its members are plain
+    /// keys below that literal's `@value` and the path ends at the member.
+    #[test]
+    fn a_json_literal_member_path_hops_plain_keys_below_the_json_literal() {
+        pretty_assertions::assert_eq!(
+            json_literal_member_jsonpath("https://example.com/parkingTickets", &[], &["value", "id"]),
+            "$[0].\"https://example.com/parkingTickets\"[0].\"https://uri.etsi.org/ngsi-ld/hasJSON\"[0].\"@value\".\"value\".\"id\""
+        );
+    }
 
     #[test]
     fn a_plain_attribute_value_path_selects_the_value_node_directly() {
