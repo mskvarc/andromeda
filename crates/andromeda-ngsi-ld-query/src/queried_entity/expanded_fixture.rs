@@ -319,11 +319,12 @@ impl<'a> QueriedInstance<'a> for &'a FixtureInstance {
             .map(FixtureItem::view)
     }
 
-    fn sub_attribute(self, name: &AttributeName) -> Option<&'a FixtureInstance> {
+    fn sub_attribute_instances(self, name: &AttributeName) -> impl Iterator<Item = &'a FixtureInstance> {
         self.sub_attributes
             .iter()
             .find(|(sub_attribute, _)| sub_attribute == name)
-            .and_then(|(_, instances)| instances.first())
+            .into_iter()
+            .flat_map(|(_, instances)| instances)
     }
 
     fn metadata(self, member: InstanceMetadata) -> Option<Cow<'a, str>> {

@@ -73,8 +73,8 @@ impl<'a> QueriedInstance<'a> for NoLinkedEntity {
         empty()
     }
 
-    fn sub_attribute(self, _name: &AttributeName) -> Option<NoLinkedEntity> {
-        match self {}
+    fn sub_attribute_instances(self, _name: &AttributeName) -> impl Iterator<Item = NoLinkedEntity> {
+        empty()
     }
 
     fn metadata(self, _member: InstanceMetadata) -> Option<Cow<'a, str>> {

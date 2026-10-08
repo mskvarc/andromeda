@@ -139,8 +139,8 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
         empty()
     }
 
-    fn sub_attribute(self, name: &AttributeName) -> Option<PropertyValue<'a>> {
-        self.member(name.as_str())
+    fn sub_attribute_instances(self, name: &AttributeName) -> impl Iterator<Item = PropertyValue<'a>> {
+        self.member(name.as_str()).into_iter()
     }
 
     fn metadata(self, member: InstanceMetadata) -> Option<Cow<'a, str>> {

@@ -74,6 +74,11 @@ struct JsonbPathExists;
 #[iden = "jsonb_path_query_first"]
 struct JsonbPathQueryFirst;
 
+/// The `jsonb_path_query(target, jsonpath)` set-returning function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "jsonb_path_query"]
+struct JsonbPathQuery;
+
 /// The `jsonb_path_query_array(target, jsonpath)` function.
 #[derive(Iden, Clone, Copy)]
 #[iden = "jsonb_path_query_array"]
@@ -204,6 +209,17 @@ pub fn jsonb_path_query_first(target: SimpleExpr, jsonpath: &str) -> SimpleExpr 
     Func::cust(JsonbPathQueryFirst).args([target, text_literal(jsonpath)]).into()
 }
 
+/// JSONB: `jsonb_path_query(target, 'jsonpath')` as a table source, one row
+/// per value in `target` the `jsonpath` matches.
+///
+/// Returned as a [`FunctionCall`] so it stands in a `FROM` position; its one
+/// output column carries the name of the alias it is given there. The jsonpath
+/// is inlined for the same reason [`jsonb_path_exists`] inlines it.
+#[must_use]
+pub fn jsonb_path_query(target: SimpleExpr, jsonpath: &str) -> FunctionCall {
+    Func::cust(JsonbPathQuery).args([target, text_literal(jsonpath)])
+}
+
 /// JSONB: `jsonb_path_query_array(target, 'jsonpath')` - every value in
 /// `target` the `jsonpath` matches, gathered into one JSONB array, which is
 /// empty when it matches nothing.
@@ -264,6 +280,16 @@ mod tests {
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("jsonb_path_query_array(\"payload\", '$[0].\"name\"[*]')"), "{sql}");
+    }
+
+    #[test]
+    fn jsonb_path_query_is_a_table_source_with_the_jsonpath_inlined() {
+        let sql = Query::select()
+            .expr(Expr::val(1))
+            .from_function(jsonb_path_query(Expr::col(Alias::new("payload")), "$[0].\"name\"[*]"), Alias::new("node"))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains("FROM jsonb_path_query(\"payload\", '$[0].\"name\"[*]') AS \"node\""), "{sql}");
     }
 
     #[test]

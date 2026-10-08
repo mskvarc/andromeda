@@ -76,11 +76,8 @@ impl<'a> QueriedInstance<'a> for HeldInstance<'a> {
         language_strings(entries, language)
     }
 
-    fn sub_attribute(self, name: &AttributeName) -> Option<HeldInstance<'a>> {
-        self.instance
-            .sub_attributes()
-            .get(name.as_str())
-            .and_then(|instances| HeldInstance::every(instances).next())
+    fn sub_attribute_instances(self, name: &AttributeName) -> impl Iterator<Item = HeldInstance<'a>> {
+        self.instance.sub_attributes().get(name.as_str()).into_iter().flat_map(HeldInstance::every)
     }
 
     fn metadata(self, member: InstanceMetadata) -> Option<Cow<'a, str>> {

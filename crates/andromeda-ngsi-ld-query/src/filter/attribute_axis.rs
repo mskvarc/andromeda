@@ -103,9 +103,14 @@ pub fn addresses_element<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity
 /// With a target language the element is the key-value pair of that language
 /// (clause 4.9), so it exists when the language holds a string.
 fn instance_holds_element<'a, I: QueriedInstance<'a>>(instance: I, path: &AttrPath) -> bool {
-    let Some(position) = path.sub_attrs.iter().try_fold(AxisPosition::Instance(instance), AxisPosition::step) else {
-        return false;
-    };
+    axis_positions(instance, &path.sub_attrs)
+        .into_iter()
+        .any(|position| position_holds_element(position, path))
+}
+
+/// Whether the element a path addresses is held at one position the
+/// sub-attribute chain reaches.
+fn position_holds_element<'a, I: QueriedInstance<'a>>(position: AxisPosition<'a, I>, path: &AttrPath) -> bool {
     if path.value_path.is_empty() {
         return true;
     }
@@ -146,17 +151,28 @@ fn admitted_by_guard<'a, E: QueriedEntity<'a>>(linked: E, guard_types: &[Attribu
 fn resolve_values<'a, E: QueriedEntity<'a>>(entity: E, path: &AttrPath) -> Vec<ResolvedTarget<'a>> {
     entity
         .attribute_instances(&path.attr)
-        .filter_map(|instance| resolve_instance_value(instance, path))
+        .flat_map(|instance| axis_positions(instance, &path.sub_attrs))
+        .filter_map(|position| resolve_position_value(position, path))
         .collect()
 }
 
-/// Resolve one attribute instance down to the target value the predicate
+/// Every position the sub-attribute chain `sub_attrs` reaches from one
+/// attribute instance, one per instance of each sub-attribute on the way.
+///
+/// Clause 4.9: "If a Property has multiple instances (identified by its
+/// respective datasetId), and no datasetId is explicitly addressed, the target
+/// value shall be any Value of such instances". The `q` grammar addresses no
+/// datasetId, so a sub-attribute's instances fan out exactly as an attribute's
+/// do.
+fn axis_positions<'a, I: QueriedInstance<'a>>(instance: I, sub_attrs: &[AttributeName]) -> Vec<AxisPosition<'a, I>> {
+    sub_attrs.iter().fold(vec![AxisPosition::Instance(instance)], |positions, name| {
+        positions.into_iter().flat_map(|position| position.step(name)).collect()
+    })
+}
+
+/// Resolve one position of the axis down to the target value the predicate
 /// compares.
-fn resolve_instance_value<'a, I: QueriedInstance<'a>>(instance: I, path: &AttrPath) -> Option<ResolvedTarget<'a>> {
-    let mut position = AxisPosition::Instance(instance);
-    for name in &path.sub_attrs {
-        position = position.step(name)?;
-    }
+fn resolve_position_value<'a, I: QueriedInstance<'a>>(position: AxisPosition<'a, I>, path: &AttrPath) -> Option<ResolvedTarget<'a>> {
     if path.value_path.is_empty() {
         return position.terminal();
     }
@@ -195,8 +211,8 @@ fn language_target<'a, I: QueriedInstance<'a>>(instance: I, language: &str) -> R
 
 /// Where a walk down the `.` axis stands.
 ///
-/// A `.` segment names a sub-attribute, and the walk stands on its first
-/// instance. It may instead name a member the instance carries as data of its
+/// A `.` segment names a sub-attribute, and the walk stands on each of its
+/// instances. It may instead name a member the instance carries as data of its
 /// own: an [`InstanceMetadata`] member, which ends the walk on its lexical
 /// form, or the family's value member itself (`speed.value`), which lands on
 /// the first value. From a structured value the walk continues into its
@@ -211,22 +227,26 @@ enum AxisPosition<'a, I: QueriedInstance<'a>> {
 }
 
 impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
-    /// The position one `.` segment further down, or `None` when the segment
-    /// names nothing there.
-    fn step(self, name: &AttributeName) -> Option<AxisPosition<'a, I>> {
-        match self {
+    /// The positions one `.` segment further down: one per instance of a
+    /// sub-attribute, at most one for any other member, and none when the
+    /// segment names nothing there.
+    fn step(self, name: &AttributeName) -> impl Iterator<Item = AxisPosition<'a, I>> {
+        let (member, sub_attribute) = match self {
             AxisPosition::Instance(instance) => {
                 if let Some(member) = InstanceMetadata::named(name) {
-                    return instance.metadata(member).map(AxisPosition::Metadata);
+                    (instance.metadata(member).map(AxisPosition::Metadata), None)
+                } else if instance.family().value_key().as_str() == name.as_str() {
+                    (first_family_value(instance).map(AxisPosition::Value), None)
+                } else {
+                    (None, Some(instance.sub_attribute_instances(name).map(AxisPosition::Instance)))
                 }
-                if instance.family().value_key().as_str() == name.as_str() {
-                    return first_family_value(instance).map(AxisPosition::Value);
-                }
-                instance.sub_attribute(name).map(AxisPosition::Instance)
             }
-            AxisPosition::Value(ValueItem::Node(node)) => node.first_member_value(name).map(AxisPosition::Value),
-            AxisPosition::Value(ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Opaque) | AxisPosition::Metadata(_) => None,
-        }
+            AxisPosition::Value(ValueItem::Node(node)) => (node.first_member_value(name).map(AxisPosition::Value), None),
+            AxisPosition::Value(ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Opaque) | AxisPosition::Metadata(_) => {
+                (None, None)
+            }
+        };
+        member.into_iter().chain(sub_attribute.into_iter().flatten())
     }
 
     /// The `LanguageProperty` instance at this position with the target
@@ -471,9 +491,11 @@ mod tests {
         );
     }
 
-    /// A sub-attribute chain reads the first instance of each sub-attribute.
+    /// Clause 4.9 makes the target value any Value of the instances when no
+    /// datasetId is addressed, so a sub-attribute chain reads every instance
+    /// of each hop.
     #[test]
-    fn a_sub_attribute_chain_reads_the_first_instance_of_each_hop() {
+    fn a_sub_attribute_chain_reads_every_instance_of_each_hop() {
         let entity = json!({
             "https://example.com/temp": [{
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 20}],
@@ -488,7 +510,10 @@ mod tests {
         });
         pretty_assertions::assert_eq!(
             targets_along(&entity, &through("https://example.com/temp", &["https://example.com/sensor"])),
-            vec![(json!("urn:ngsi-ld:Sensor:1"), TargetOrigin::RelationshipObject)]
+            vec![
+                (json!("urn:ngsi-ld:Sensor:1"), TargetOrigin::RelationshipObject),
+                (json!("urn:ngsi-ld:Sensor:2"), TargetOrigin::RelationshipObject)
+            ]
         );
         pretty_assertions::assert_eq!(
             targets_along(

@@ -55,10 +55,12 @@ pub trait QueriedInstance<'a>: Copy {
     /// `@language` of an expanded `languageMap` entry.
     fn language_values(self, language: &str) -> impl Iterator<Item = ValueItem<'a, Self::Node>>;
 
-    /// The sub-attribute keyed by the expanded name `name`: its first instance
-    /// in the order the instance holds them, which is the one clause 4.9's `.`
-    /// reads, or `None` when the instance carries no such sub-attribute.
-    fn sub_attribute(self, name: &AttributeName) -> Option<Self>;
+    /// Every instance of the sub-attribute keyed by the expanded name `name`,
+    /// default and `datasetId` instances alike, in the order the instance holds
+    /// them, and none when the instance carries no such sub-attribute. Clause
+    /// 4.9 reads "any Value of such instances" at every level of the `.` axis,
+    /// so each instance is read.
+    fn sub_attribute_instances(self, name: &AttributeName) -> impl Iterator<Item = Self>;
 
     /// The lexical form of what the instance holds as `member`, or `None` when
     /// it holds nothing there.

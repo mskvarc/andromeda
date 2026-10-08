@@ -9,6 +9,7 @@
 use crate::{
     date_time_text::DateTimeText,
     document::{
+        attribute_member::AttributeMember,
         instance_document::InstanceDocument,
         slot::Slot,
         written_value::{ValueSlot, WrittenValue},
@@ -60,8 +61,8 @@ impl<'a> QueriedInstance<'a> for &'a InstanceDocument {
         language_strings(entries, language)
     }
 
-    fn sub_attribute(self, name: &AttributeName) -> Option<&'a InstanceDocument> {
-        self.sub_attributes().get(name.as_str()).and_then(|member| member.instances().first())
+    fn sub_attribute_instances(self, name: &AttributeName) -> impl Iterator<Item = &'a InstanceDocument> {
+        self.sub_attributes().get(name.as_str()).into_iter().flat_map(AttributeMember::instances)
     }
 
     fn metadata(self, member: InstanceMetadata) -> Option<Cow<'a, str>> {
