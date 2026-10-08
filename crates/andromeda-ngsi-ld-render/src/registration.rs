@@ -82,8 +82,7 @@ impl MemberSelection<'_> {
     /// Whether the member `name` is part of the response.
     ///
     /// Clause 4.8: `sysAttrs` governs only the system timestamps. Clause 4.21:
-    /// the two projections are mutually exclusive; each is applied on its own
-    /// so a caller that supplies both still gets a well-defined result. Member
+    /// a member is kept when `pick` is empty or names it and `omit` does not. Member
     /// names are matched by the compact term the client wrote, which the
     /// rendered registration is keyed by under the same negotiated `@context`.
     /// `id` and `type` are retained whatever the projection names, since a

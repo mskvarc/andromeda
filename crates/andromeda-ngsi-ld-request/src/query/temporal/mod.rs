@@ -383,19 +383,11 @@ mod tests {
         assert!(p.omit.is_none());
     }
 
-    /// Clause 4.21: `pick` and `omit` name opposite ends of one projection.
-    /// A temporal query carrying both is contradictory, and is rejected with
-    /// the same error the entity query raises.
+    /// No clause forbids `pick` beside `omit` on a temporal query.
     #[test]
-    fn pick_and_omit_together_are_rejected() {
+    fn pick_and_omit_together_are_admitted() {
         let p = params_from_query("pick=speed&omit=fuel");
-
-        let err = p
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
-            .expect_err("pick and omit are mutually exclusive");
-
-        assert!(matches!(err, ParameterError::Projection(ProjectionConflict::PickWithOmit)));
-        assert!(err.to_string().contains("mutually exclusive"));
+        assert!(p.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended).is_ok());
     }
 
     #[test]

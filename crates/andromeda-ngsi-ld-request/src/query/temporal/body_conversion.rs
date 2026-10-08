@@ -98,10 +98,9 @@ impl TryFrom<Query> for TemporalQueryParameters {
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::ParameterError, query::temporal::TemporalQueryParameters};
+    use crate::query::temporal::TemporalQueryParameters;
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, time_prop::TimeProp, time_rel::TimeRel};
     use andromeda_ngsi_ld_model::query::body::Query;
-    use andromeda_ngsi_ld_query::projection::exclusivity::ProjectionConflict;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
 
@@ -109,13 +108,13 @@ mod tests {
         serde_json::from_str::<Query>(body).expect("valid canonical temporal query")
     }
 
-    /// The same rule governs the POST body's projection: clause 4.21 is a
-    /// property of the projection, not of the binding that carried it.
+    /// The POST body carries both ends of the projection as the query string
+    /// does (clause 5.2.23 `Query`).
     #[test]
-    fn a_canonical_temporal_query_naming_pick_and_omit_is_rejected() {
+    fn a_canonical_temporal_query_naming_pick_and_omit_keeps_both() {
         let request = canonical(r#"{"type":"Query","pick":["speed"],"omit":["fuel"],"temporalQ":{"timerel":"after","timeAt":"2024-01-01T00:00:00Z"}}"#);
-        let err = TemporalQueryParameters::try_from(request).expect_err("pick and omit are mutually exclusive");
-        assert!(matches!(err, ParameterError::Projection(ProjectionConflict::PickWithOmit)));
+        let params = TemporalQueryParameters::try_from(request).expect("pick and omit may be combined");
+        assert!(params.pick.is_some() && params.omit.is_some());
     }
 
     /// The POST body carries the join the same way the query string does

@@ -12,6 +12,14 @@ pub enum ListTerms<'p> {
     Pick(&'p [ProjectionTerm]),
     /// The named members are removed.
     Omit(&'p [ProjectionTerm]),
+    /// `pick` and `omit` together: the picked members minus the omitted ones
+    /// (clause 4.21 forbids neither beside the other).
+    PickAndOmit {
+        /// The members kept.
+        pick: &'p [ProjectionTerm],
+        /// The members then removed.
+        omit: &'p [ProjectionTerm],
+    },
     /// `attrs` or `notification.attributes`: only the named Attributes are
     /// kept, with `id` and `type`.
     Attributes(&'p [IriBuf]),
@@ -26,6 +34,7 @@ impl<'p> ListTerms<'p> {
             // Clause 4.21: `omit=R{N}` omits `N` inside what `R` links to, so
             // only a bare term removes `R` itself.
             ListTerms::Omit(terms) => matching_term(key, terms, index).is_none_or(|term| !term.linked_terms().is_empty()),
+            ListTerms::PickAndOmit { pick, omit } => ListTerms::Pick(pick).returns_attribute(key, index) && ListTerms::Omit(omit).returns_attribute(key, index),
             ListTerms::Attributes(iris) => match index.expanded(key) {
                 Some(expanded) => iris.contains(expanded),
                 None => iris.iter().any(|iri| iri.as_str() == key),
@@ -45,6 +54,7 @@ impl<'p> ListTerms<'p> {
             ListTerms::Attributes(_) => keyword != Keyword::Scope,
             ListTerms::Pick(terms) => terms.contains(&keyword.term()),
             ListTerms::Omit(terms) => !terms.contains(&keyword.term()),
+            ListTerms::PickAndOmit { pick, omit } => ListTerms::Pick(pick).keeps_keyword(keyword) && ListTerms::Omit(omit).keeps_keyword(keyword),
         }
     }
 
@@ -60,6 +70,12 @@ impl<'p> ListTerms<'p> {
         match *self {
             ListTerms::Pick(terms) => group(terms).map(ListTerms::Pick),
             ListTerms::Omit(terms) => group(terms).map(ListTerms::Omit),
+            ListTerms::PickAndOmit { pick, omit } => match (group(pick), group(omit)) {
+                (Some(pick), Some(omit)) => Some(ListTerms::PickAndOmit { pick, omit }),
+                (Some(pick), None) => Some(ListTerms::Pick(pick)),
+                (None, Some(omit)) => Some(ListTerms::Omit(omit)),
+                (None, None) => None,
+            },
             ListTerms::Attributes(_) => None,
         }
     }
@@ -69,6 +85,7 @@ impl<'p> ListTerms<'p> {
     pub fn holds_a_group(&self) -> bool {
         match self {
             ListTerms::Pick(terms) | ListTerms::Omit(terms) => terms.iter().any(|term| !term.linked_terms().is_empty()),
+            ListTerms::PickAndOmit { pick, omit } => ListTerms::Pick(pick).holds_a_group() || ListTerms::Omit(omit).holds_a_group(),
             ListTerms::Attributes(_) => false,
         }
     }
@@ -150,6 +167,37 @@ mod tests {
         assert!(!ListTerms::Pick(&[leaf("name")]).keeps_keyword(Keyword::Id));
         assert!(ListTerms::Pick(&[ProjectionTerm::Id, leaf("name")]).keeps_keyword(Keyword::Id));
         assert!(!ListTerms::Omit(&[ProjectionTerm::Id]).keeps_keyword(Keyword::Id));
+    }
+
+    /// Clause 4.21: `pick` with `omit` keeps the picked members minus the
+    /// omitted ones, keywords included.
+    #[test]
+    fn pick_and_omit_together_keep_the_picked_members_minus_the_omitted_ones() {
+        let pick = [ProjectionTerm::Id, ProjectionTerm::Type, leaf("name"), leaf("email")];
+        let omit = [ProjectionTerm::Type, leaf("email")];
+        let terms = ListTerms::PickAndOmit { pick: &pick, omit: &omit };
+        assert!(terms.returns_attribute("name", &index()));
+        assert!(!terms.returns_attribute("email", &index()));
+        assert!(!terms.returns_attribute("owner", &index()));
+        assert!(terms.keeps_keyword(Keyword::Id));
+        assert!(!terms.keeps_keyword(Keyword::Type));
+    }
+
+    /// Each side of `pick` with `omit` hands its own group to the target.
+    #[test]
+    fn pick_and_omit_together_name_the_groups_of_both_sides() {
+        let pick = [nested("owner", vec![leaf("name"), leaf("email")]), leaf("employer")];
+        let omit = [nested("owner", vec![leaf("email")])];
+        let terms = ListTerms::PickAndOmit { pick: &pick, omit: &omit };
+        assert!(terms.holds_a_group());
+        assert_eq!(
+            terms.group("owner", &index()),
+            Some(ListTerms::PickAndOmit {
+                pick: &[leaf("name"), leaf("email")],
+                omit: &[leaf("email")]
+            })
+        );
+        assert_eq!(terms.group("employer", &index()), None);
     }
 
     /// Table 6.5.3.1-1: `attrs` is the `pick` synonym that keeps the identity.

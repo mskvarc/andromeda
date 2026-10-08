@@ -1,6 +1,6 @@
 //! The projection list in force for one entity of a joined payload.
 //!
-//! The roots are narrowed by the request's list: `pick`, `omit`, or `attrs` as
+//! The roots are narrowed by the request's list: `pick`, `omit`, both, or `attrs` as
 //! the `pick` synonym that keeps `id` and `type` (Tables 6.4.3.2-1, 6.5.3.1-1
 //! and 5.2.14.1-1). How far a list reaches depends on whether it holds a Linked
 //! Entity Term:
@@ -42,6 +42,7 @@ impl<'p> ListInForce<'p> {
     #[must_use]
     pub fn of(projection: Option<&'p Projection>, attrs: &'p [IriBuf]) -> ListInForce<'p> {
         let terms = match projection {
+            Some(Projection { pick, omit }) if !pick.is_empty() && !omit.is_empty() => ListTerms::PickAndOmit { pick, omit },
             Some(projection) if !projection.pick.is_empty() => ListTerms::Pick(&projection.pick),
             Some(projection) if !projection.omit.is_empty() => ListTerms::Omit(&projection.omit),
             Some(_) | None if !attrs.is_empty() => ListTerms::Attributes(attrs),
@@ -141,6 +142,18 @@ mod tests {
             .omit(vec![ProjectionTerm::Type, nested("owner", vec![leaf("name")])])
             .build();
         assert_eq!(ListInForce::of(Some(&omit), &[]), ListInForce::Addressed(ListTerms::Omit(&omit.omit)));
+    }
+
+    #[test]
+    fn a_request_naming_pick_and_omit_narrows_by_both() {
+        let projection = Projection::builder().pick(vec![leaf("name"), leaf("email")]).omit(vec![leaf("email")]).build();
+        assert_eq!(
+            ListInForce::of(Some(&projection), &[]),
+            ListInForce::Payload(ListTerms::PickAndOmit {
+                pick: &projection.pick,
+                omit: &projection.omit
+            })
+        );
     }
 
     #[test]

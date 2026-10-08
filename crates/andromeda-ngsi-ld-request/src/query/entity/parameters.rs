@@ -358,12 +358,12 @@ mod tests {
         assert!(p.omit.is_none());
     }
 
+    /// No clause forbids `pick` beside `omit`; Table 6.4.3.2-1 defines them
+    /// side by side.
     #[test]
-    fn pick_and_omit_together_rejected() {
+    fn pick_and_omit_together_are_admitted() {
         let p = params_from_query("type=Vehicle&pick=speed&omit=scope");
-        let err = p.validate(EntityQueryOperation::Query).expect_err("expected mutual exclusivity error");
-        assert!(matches!(err, ParameterError::Projection(ProjectionConflict::PickWithOmit)));
-        assert!(err.to_string().contains("mutually exclusive"));
+        assert!(p.validate(EntityQueryOperation::Query).is_ok());
     }
 
     #[test]

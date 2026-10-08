@@ -149,12 +149,11 @@ mod tests {
         }
     }
 
-    /// Clause 4.21: `pick`, `omit` and the deprecated `attributes` shape one
-    /// projection, so a notification may name only one of them.
+    /// The deprecated `attributes`, "a synonym for pick", cannot stand beside
+    /// `pick` or `omit`.
     #[test]
-    fn selectors_shaping_the_same_projection_are_refused() {
+    fn the_deprecated_attributes_beside_pick_or_omit_are_refused() {
         for wire in [
-            json!({"pick": ["id"], "omit": ["type"]}),
             json!({"pick": ["id"], "attributes": ["speed"]}),
             json!({"omit": ["type"], "attributes": ["speed"]}),
         ] {

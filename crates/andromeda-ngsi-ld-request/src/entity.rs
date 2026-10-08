@@ -412,13 +412,12 @@ mod tests {
         assert_eq!(terms[1].linked, [] as [RawProjectionTerm; 0]);
     }
 
-    /// Clause 4.21 declares `pick` and `omit` mutually exclusive on every
-    /// binding that accepts them, the single-entity retrieval included.
+    /// No clause forbids `pick` beside `omit`; Table 6.5.3.1-1 defines them
+    /// side by side.
     #[test]
-    fn get_validate_rejects_pick_and_omit_together() {
+    fn get_validate_admits_pick_and_omit_together() {
         let params: GetEntityParams = serde_urlencoded::from_str("pick=speed&omit=scope").expect("valid projection terms");
-        let error = params.validate().expect_err("expected mutual exclusivity error");
-        assert!(matches!(error, ParameterError::Projection(ProjectionConflict::PickWithOmit)));
+        assert!(params.validate().is_ok());
     }
 
     #[test]

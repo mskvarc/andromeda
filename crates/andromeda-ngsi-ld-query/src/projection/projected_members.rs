@@ -61,7 +61,8 @@ pub enum ProjectedMembers {
     /// A `pick` that keeps neither `id` nor `type`: the Entity keeps a member
     /// when it carries one of these Attributes, or a `scope` the pick keeps.
     AnyOf {
-        /// The expanded names of the Attributes the pick keeps.
+        /// The expanded names of the Attributes the pick keeps, less those an
+        /// `omit` beside it removes.
         attributes: Vec<IriBuf>,
         /// Whether the pick keeps `scope`.
         scope: ScopeRetention,
@@ -99,10 +100,19 @@ impl ProjectedMembers {
                 .collect();
             ProjectedMembers::AnyBesides { attributes, scope }
         } else {
+            // Clause 4.21: an Attribute both picked and omitted bare does not
+            // reach the response, so it cannot keep the Entity a member.
+            let omitted_bare = |iri: &&IriBuf| {
+                projection
+                    .omit
+                    .iter()
+                    .any(|term| term.linked_terms().is_empty() && attribute_iri(term) == Some(*iri))
+            };
             let attributes = projection
                 .pick
                 .iter()
                 .filter_map(attribute_iri)
+                .filter(|iri| !omitted_bare(iri))
                 .cloned() // clone: as above
                 .collect();
             ProjectedMembers::AnyOf { attributes, scope }
@@ -207,6 +217,23 @@ mod tests {
         assert_eq!(
             members.names().collect::<Vec<_>>(),
             vec!["https://example.com/name", "https://example.com/owner"]
+        );
+    }
+
+    /// Clause 4.21: beside a `pick`, a bare `omit` term takes its Attribute
+    /// out of what keeps an Entity, and a linked one does not.
+    #[test]
+    fn a_pick_with_an_omit_selects_through_the_picked_attributes_it_leaves() {
+        let projection = Projection::builder()
+            .pick(vec![attribute("name"), attribute("email"), linked("owner", "name")])
+            .omit(vec![attribute("email"), linked("owner", "name")])
+            .build();
+        assert_eq!(
+            ProjectedMembers::of(&projection),
+            ProjectedMembers::AnyOf {
+                attributes: vec![iri("https://example.com/name"), iri("https://example.com/owner")],
+                scope: ScopeRetention::Removed,
+            }
         );
     }
 
