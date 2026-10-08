@@ -153,8 +153,7 @@ fn stand(
         }
         (None, Some(_)) => {}
         (Some(_) | None, None) => {
-            let mut instance = new_instance(name, candidate, None)?;
-            instance.set_instance_id(None);
+            let instance = new_instance(name, candidate, None)?;
             match state.attributes_mut().get_mut(name) {
                 // clone: the instance is keyed by its own copy of the written identity.
                 Some(instances) => {

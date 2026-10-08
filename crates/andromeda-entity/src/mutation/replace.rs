@@ -14,7 +14,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{
     document::{EntityDocument, EntityDocumentParts},
     entity_state::EntityState,
-    history::written_observation::AddressedInstances,
+    history::{written_observation::AddressedInstances, written_state::WrittenState},
     system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -60,9 +60,10 @@ impl EntityService {
                     // the replacement is copied only while an earlier attempt's
                     // write still shares it.
                     Arc::make_mut(&mut replacement).stamp_attribute_instants(Some(previous), now);
-                    let replaced = Arc::clone(&replacement); // clone: Arc ref-count bump; the write stores the replacement
-                    let history = mutation_history(AddressedInstances::Replacement, previous, &replaced);
-                    let ModificationWrite { write, events } = self.modification_write(target, id, previous, replaced, history)?;
+                    // clone: Arc ref-count bump; the write stores the replacement
+                    let WrittenState { held, observed } = WrittenState::of(Arc::clone(&replacement));
+                    let history = mutation_history(AddressedInstances::Replacement, previous, &observed);
+                    let ModificationWrite { write, events } = self.modification_write(target, id, previous, held, history)?;
                     Ok((Some(write), events))
                 })
                 .await?;

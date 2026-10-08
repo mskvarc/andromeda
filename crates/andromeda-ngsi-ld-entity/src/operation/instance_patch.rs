@@ -148,16 +148,15 @@ pub(crate) fn patch_instance(
 ///
 /// `createdAt` and `modifiedAt` are never taken from a fragment: clause 5.2.5
 /// ignores them in a write, and the write stamps attribute instances itself
-/// (clause 4.8).
+/// (clause 4.8). Nor is `instanceId`: Table 5.2.5-2 uses it only in the
+/// temporal representation, so the observation of the write carries it and
+/// current state holds none.
 fn apply_instance_members(instance: &mut Instance, document: &InstanceDocument, observed_at: Option<&Slot<DateTimeText>>) {
     if let Some(slot) = observed_at.or_else(|| document.observed_at()) {
         instance.set_observed_at(slot.as_set().cloned()); // clone: the stored instance owns its copy of the borrowed fragment.
     }
     if let Some(slot) = document.expires_at() {
         instance.set_expires_at(slot.as_set().cloned()); // clone: the stored instance owns its copy of the borrowed fragment.
-    }
-    if let Some(instance_id) = document.instance_id() {
-        instance.set_instance_id(Some(instance_id.clone())); // clone: the stored instance owns its copy of the borrowed fragment.
     }
     let written_seals = document.proof_seals();
     if !written_seals.is_empty() {
@@ -229,5 +228,16 @@ mod tests {
             matches!(refused, MutationError::Refused(ref refusal) if matches!(**refusal, EntityRefusal::ReservedNullValue { .. })),
             "{refused:?}"
         );
+    }
+
+    /// Table 5.2.5-2 uses `instanceId` only in the temporal representation.
+    #[test]
+    fn a_written_instance_id_never_reaches_the_held_instance() {
+        let written = InstanceDocument::builder()
+            .value(ValueSlot::Set(WrittenValue::Value(vec![number(1)])))
+            .instance_id(Some("urn:ngsi-ld:Instance:1".parse().expect("a valid identifier")))
+            .build();
+        let instance = new_instance(&name("https://example.org/p"), &written, None).expect("an instance");
+        pretty_assertions::assert_eq!(instance.instance_id(), None);
     }
 }

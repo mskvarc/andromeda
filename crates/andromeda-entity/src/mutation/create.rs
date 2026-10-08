@@ -10,7 +10,7 @@ use andromeda_context_commit::{
     write_outcome::single,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
+use andromeda_ngsi_ld_entity::{entity_state::EntityState, history::written_state::WrittenState, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::Utc;
@@ -36,7 +36,7 @@ impl EntityService {
             // instant as both createdAt and modifiedAt.
             let mut created = EntityState::try_from(admitted.into_document())?;
             created.stamp_attribute_instants(None, SystemInstant::new(Utc::now()));
-            let created = Arc::new(created);
+            let WrittenState { held: created, observed } = WrittenState::of(Arc::new(created));
             let plan = self
                 .notifier
                 .plan(target, id, created.types().as_slice(), creation(&created), Some(&created), None);
@@ -44,7 +44,7 @@ impl EntityService {
             let write = AtomicWrite::builder()
                 .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
                 .entity(EntityMutation::Insert(EntityRecord::from_state(Arc::clone(&created))?)) // clone: Arc ref-count bump; the state is also the change event's
-                .history(vec![HistoryRecord::Observations(Arc::clone(&created))]) // clone: Arc ref-count bump
+                .history(vec![HistoryRecord::Observations(observed)])
                 .subscription_matches(plan.matches)
                 .precondition(Precondition::MustNotExist)
                 .build();

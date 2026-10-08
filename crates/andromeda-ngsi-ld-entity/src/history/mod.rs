@@ -5,3 +5,4 @@
 pub mod current_state_fold;
 pub mod instance_recency;
 pub mod written_observation;
+pub mod written_state;

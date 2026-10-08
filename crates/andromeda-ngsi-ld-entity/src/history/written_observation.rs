@@ -176,10 +176,9 @@ fn written_scope<'a>(current: &'a EntityState, previous: Option<&EntityState>, o
 ///
 /// Clause 4.5.7 has a system "maintain an instanceId for each such Property
 /// instance", and every write adds a new instance to the Temporal Evolution.
-/// An `instanceId` the stored instance still carries names the instance an
-/// earlier write added, so the observation keeps only the one the request's
-/// own fragment supplied; without one, the instance is given a fresh identity
-/// when it is recorded.
+/// The observation carries only the `instanceId` the request's own fragment
+/// supplied, never one the stored instance holds; without one, the instance
+/// is given a fresh identity when it is recorded.
 fn observed_instance(resulting: &Instance, requested: &InstanceDocument) -> Instance {
     // clone: the observation owns a copy of the instance the entity holds.
     let mut instance = resulting.clone();
