@@ -74,9 +74,17 @@ impl<'a> ResponseRenderer<'a> {
     }
 
     /// Set the `Prefer: ngsi-ld=` version the payload is adapted to, if any.
+    ///
+    /// A `GeoJSON` response keeps none: clauses 5.7.1.4 and 6.3.6 amend only
+    /// `application/json` and `application/ld+json` payloads and echo
+    /// `Preference-Applied` only for them, and the operation tables answer a
+    /// `GeoJSON` `Feature` or `FeatureCollection` with 200 alone.
     #[must_use]
     pub const fn with_requested_version(mut self, requested_version: Option<SpecVersion>) -> Self {
-        self.requested_version = requested_version;
+        self.requested_version = match self.media_type {
+            ResponseMediaType::Json | ResponseMediaType::JsonLd => requested_version,
+            ResponseMediaType::GeoJson => None,
+        };
         self
     }
 
@@ -127,6 +135,12 @@ mod tests {
     fn an_older_target_version_is_reported_as_applied() {
         let renderer = ResponseRenderer::new(ResponseMediaType::Json, ResponseContext::Absent).with_requested_version(Some(SpecVersion::V1_4));
         pretty_assertions::assert_eq!(renderer.version_adaptation(), VersionAdaptation::Applied { version: SpecVersion::V1_4 });
+    }
+
+    #[test]
+    fn a_geojson_response_ignores_an_older_target_version() {
+        let renderer = ResponseRenderer::new(ResponseMediaType::GeoJson, ResponseContext::Absent).with_requested_version(Some(SpecVersion::V1_3));
+        pretty_assertions::assert_eq!(renderer.version_adaptation(), VersionAdaptation::None);
     }
 
     #[test]

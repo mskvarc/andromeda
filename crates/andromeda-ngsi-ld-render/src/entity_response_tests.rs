@@ -456,7 +456,8 @@ fn a_response_context_member_comes_first_in_every_entity_body() {
 
 /// Clause 4.3.6.8: a conformant or newer version leaves the body as it is
 /// (200), an older one adapts it (203), at every version the fallback tables
-/// name, in every representation.
+/// name, in every representation. Clauses 5.7.1.4 and 6.3.6 adapt JSON and
+/// JSON-LD only, so a `GeoJSON` body is never adapted.
 #[test]
 fn a_requested_version_decides_the_outcome_and_a_current_one_changes_nothing() {
     let entities = entities();
@@ -471,13 +472,12 @@ fn a_requested_version_decides_the_outcome_and_a_current_one_changes_nothing() {
                 let plain = Writing::of(carrier, format);
                 for entity in &entities {
                     let (body, head) = adapted.single(entity);
-                    pretty_assertions::assert_eq!(
-                        head.version_adaptation,
-                        VersionAdaptation::requested(version),
-                        "{} {version:?} {format:?}",
-                        entity.id
-                    );
-                    if head.version_adaptation == VersionAdaptation::Unchanged {
+                    let expected = match carrier.0 {
+                        ResponseMediaType::Json | ResponseMediaType::JsonLd => VersionAdaptation::requested(version),
+                        ResponseMediaType::GeoJson => VersionAdaptation::None,
+                    };
+                    pretty_assertions::assert_eq!(head.version_adaptation, expected, "{} {version:?} {format:?}", entity.id);
+                    if !head.version_adaptation.is_amended() {
                         pretty_assertions::assert_eq!(body, plain.single(entity).0, "{} {version:?} {format:?}", entity.id);
                     }
                 }

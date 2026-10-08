@@ -395,29 +395,27 @@ fn concise_collapses_once_suppressed_members_are_gone() {
     assert_eq!(attribute(document, "speed", ResponseFormat::Concise, SpecVersion::V1_0), json!(5));
 }
 
-/// Clause 4.5.16.1 with Table 4.3.6.8-1 note 2: the Feature's geometry is the
-/// instance its `properties` keep.
+/// Clauses 5.7.1.4 and 6.3.6 amend only JSON and JSON-LD payloads: a Feature
+/// requested at an older version is the Feature written without a preference.
 #[test]
-fn geojson_takes_the_geometry_of_the_kept_instance() {
+fn a_geojson_feature_is_not_amended_to_a_requested_version() {
     let building = entity(carrying(json!({
         "location": [
             {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 1.0]}, "datasetId": "urn:ngsi-ld:Dataset:a"},
             {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [2.0, 2.0]}}
         ]
     })));
-    let (feature, _) = written(&building, ResponseMediaType::GeoJson, ResponseFormat::Normalized, Some(SpecVersion::V1_0), None);
-    assert_eq!(feature["geometry"], json!({"type": "Point", "coordinates": [2.0, 2.0]}));
-    assert_eq!(
-        feature["properties"]["location"],
-        json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [2.0, 2.0]}})
-    );
+    let (unprefixed, _) = written(&building, ResponseMediaType::GeoJson, ResponseFormat::Normalized, None, None);
+    let (feature, head) = written(&building, ResponseMediaType::GeoJson, ResponseFormat::Normalized, Some(SpecVersion::V1_0), None);
+    assert_eq!(feature, unprefixed);
+    assert_eq!(head.version_adaptation, VersionAdaptation::None);
 }
 
 /// Clause 4.6.3 admits at most six fractional digits, yet a clock may read
-/// nanoseconds: a Feature written under a version fallback carries the entity
-/// times of such a reading without failing.
+/// nanoseconds: an entity written under a version fallback carries the
+/// entity times of such a reading without failing.
 #[test]
-fn a_geojson_feature_under_fallback_writes_nanosecond_entity_times() {
+fn an_entity_under_fallback_writes_nanosecond_entity_times() {
     let building = entity(json!({
         "id": "urn:ngsi-ld:Building:1",
         "type": "Building",
@@ -430,8 +428,8 @@ fn a_geojson_feature_under_fallback_writes_nanosecond_entity_times() {
             "modifiedAt": "2026-10-06T13:29:28.000090386Z"
         }
     }));
-    let (feature, head) = written(&building, ResponseMediaType::GeoJson, ResponseFormat::Normalized, Some(SpecVersion::V1_3), None);
-    assert_eq!(feature["geometry"], json!({"type": "Point", "coordinates": [13.3986, 52.5547]}));
+    let (written, head) = written(&building, ResponseMediaType::Json, ResponseFormat::Normalized, Some(SpecVersion::V1_3), None);
+    assert_eq!(written["location"]["value"], json!({"type": "Point", "coordinates": [13.3986, 52.5547]}));
     assert_eq!(head.version_adaptation, VersionAdaptation::Applied { version: SpecVersion::V1_3 });
 }
 
