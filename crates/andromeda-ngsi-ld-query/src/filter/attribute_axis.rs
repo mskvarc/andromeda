@@ -161,7 +161,7 @@ fn resolve_instance_value<'a, I: QueriedInstance<'a>>(instance: I, path: &AttrPa
         return position.terminal();
     }
     if let Some((language_instance, language)) = position.target_language(path) {
-        return language_target(language_instance, language);
+        return Some(language_target(language_instance, language));
     }
     resolve_compound_member(position, path)
 }
@@ -172,21 +172,25 @@ fn resolve_instance_value<'a, I: QueriedInstance<'a>>(instance: I, path: &AttrPa
 ///
 /// A language holding several strings is matched "as a single element from the
 /// array of values of the key-value pair", which is the any-one reading the
-/// language map has with no target language. A language the map does not hold
-/// is no target element at all, so no operator — `!=` and `!~=` included —
-/// matches it.
-fn language_target<'a, I: QueriedInstance<'a>>(instance: I, language: &str) -> Option<ResolvedTarget<'a>> {
+/// language map has with no target language.
+///
+/// A language the map does not hold yields an empty array: the entity still
+/// contains the target element, the `LanguageProperty`, and clause 4.9 makes
+/// `!=` match it where "No matching value is found as the value of the
+/// specified language key". No positive operator matches an empty array, and
+/// `!~=` asks for a String to test.
+fn language_target<'a, I: QueriedInstance<'a>>(instance: I, language: &str) -> ResolvedTarget<'a> {
     let mut strings = instance.language_values(language).filter_map(|item| TerminalKeyword::Literal.read(item));
-    let first = strings.next()?;
-    let value = match strings.next() {
-        None => first,
-        Some(second) => TargetValue::Array([first, second].into_iter().chain(strings).collect()),
+    let value = match (strings.next(), strings.next()) {
+        (Some(only), None) => only,
+        (None, _) => TargetValue::Array(Vec::new()),
+        (Some(first), Some(second)) => TargetValue::Array([first, second].into_iter().chain(strings).collect()),
     };
-    Some(ResolvedTarget {
+    ResolvedTarget {
         value,
         origin: TargetOrigin::AttributeValue,
         reading: MultiValueReading::AnyOneValue,
-    })
+    }
 }
 
 /// Where a walk down the `.` axis stands.
@@ -384,7 +388,10 @@ mod tests {
             targets_along(&entity, &bracketed("https://example.com/tags", "en")),
             vec![(json!(["red", "cat"]), TargetOrigin::AttributeValue)]
         );
-        pretty_assertions::assert_eq!(targets_along(&entity, &bracketed("https://example.com/name", "fr")), Vec::new());
+        pretty_assertions::assert_eq!(
+            targets_along(&entity, &bracketed("https://example.com/name", "fr")),
+            vec![(json!([]), TargetOrigin::AttributeValue)]
+        );
     }
 
     /// The target values one bare attribute path resolves to.

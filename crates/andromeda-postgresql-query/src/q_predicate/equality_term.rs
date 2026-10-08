@@ -13,7 +13,7 @@ use crate::{
         language_term::{StringComparability, some_string_in_range, string_comparability},
         local_target::LocalTarget,
         projection::{unsatisfiable, unsatisfiable_term},
-        structured_target::{StructuredTarget, carries_operand, omits_operand},
+        structured_target::{StructuredTarget, carries_operand},
         typed_column::typed_column_condition,
         value_column::ValueColumn,
     },
@@ -121,10 +121,11 @@ fn compile_equality_on_projection(
 ///
 /// With a target language the typed columns are left out entirely. A
 /// language-selected path addresses a `languageMap` key, and a scalar-valued
-/// attribute of the same name carries no such key: comparing its typed column
-/// would let `attr[en]!=5` match a plain numeric Property, whose target element
-/// for that path does not exist at all. That polarity keeps its own compilation
-/// for the same reason — it has to require the key to be present.
+/// attribute of the same name carries no map: comparing its typed column would
+/// let `attr[en]!=5` match a plain numeric Property, whose target element for
+/// that path does not exist at all. That polarity therefore requires a
+/// `LanguageProperty`, though not the key: clause 4.9 matches a map where "No
+/// matching value is found as the value of the specified language key".
 fn equality_condition(target: StructuredTarget<'_>, scalar: &Scalar, membership: SetMembership, scan: &InstanceScan<'_>) -> Condition {
     let column = scan.value(ValueColumn::Object);
     match target {
@@ -134,7 +135,9 @@ fn equality_condition(target: StructuredTarget<'_>, scalar: &Scalar, membership:
         },
         StructuredTarget::TargetLanguage(language) => match membership {
             SetMembership::Within => carries_operand(&column, target, scalar),
-            SetMembership::Outside => omits_operand(&column, language, scalar),
+            SetMembership::Outside => Condition::all()
+                .add(LanguageMap::of_instance(scan).holds(LanguageSelection::AnyLanguage))
+                .add(does_not_hold(carries_operand(&column, StructuredTarget::TargetLanguage(language), scalar))),
         },
     }
 }
@@ -160,8 +163,7 @@ fn carries_any_target_value(column: &SimpleExpr, scalar: &Scalar, scan: &Instanc
 /// the column cannot even evaluate is unknown rather than false. A language
 /// map's strings take part in that interval test, so a map holding a string in
 /// the interval is not outside it. With a target language the excluded range
-/// requires the language to hold a string, as every language-selected operator
-/// does.
+/// requires the `LanguageProperty`, as `!=` does, not the language.
 fn range_condition(target: StructuredTarget<'_>, min: &Scalar, max: &Scalar, membership: SetMembership, scan: &InstanceScan<'_>) -> Condition {
     match target {
         StructuredTarget::AnyValue => {
@@ -177,7 +179,9 @@ fn range_condition(target: StructuredTarget<'_>, min: &Scalar, max: &Scalar, mem
             let in_range = some_string_in_range(&map, selection, min, max);
             match membership {
                 SetMembership::Within => Condition::all().add(in_range),
-                SetMembership::Outside => Condition::all().add(map.holds(selection)).add(Condition::all().add(in_range).not()),
+                SetMembership::Outside => Condition::all()
+                    .add(map.holds(LanguageSelection::AnyLanguage))
+                    .add(Condition::all().add(in_range).not()),
             }
         }
     }

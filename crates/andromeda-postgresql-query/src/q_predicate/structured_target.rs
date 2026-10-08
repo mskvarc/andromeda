@@ -97,33 +97,6 @@ pub fn carries_operand(column: &SimpleExpr, target: StructuredTarget<'_>, scalar
     }
 }
 
-/// Whether the `languageMap` in `column` holds an entry under one target
-/// language whose value is not this operand.
-///
-/// Clause 4.9's `unequal`, language-selected form: "No matching value is found
-/// as the value of the specified language key of a languageMap where a language
-/// filter is specified", and, over an array-valued entry, "No matching value is
-/// found as a single element from the array of values of the key-value pair
-/// corresponding to the specified natural language".
-///
-/// The entry has to be present, which clause 4.9 demands of every operator: a
-/// `languageMap` that holds no such key carries no target value to be unequal
-/// to. Requiring the key is also what keeps this off a compound value member: an
-/// `attr[member]` path over a Property addresses a member of its value, and no
-/// member of one carries `@language`.
-///
-/// There is no unselected counterpart here. With no target language the target
-/// value may sit in any of the typed columns as well, and clause 4.9 makes a
-/// target of another datatype unequal rather than unmatched, so that polarity is
-/// compiled as the total negation of the whole `equal` condition — see
-/// `crate::q_predicate::projection`.
-#[must_use]
-pub fn omits_operand(column: &SimpleExpr, language: &AttributeName, scalar: &Scalar) -> Condition {
-    Condition::all()
-        .add(carries_target_language(column, language))
-        .add(Condition::all().add(contains(column, tagged_element(language, scalar))).not())
-}
-
 /// Whether the structured value in `column` holds a `languageMap` entry under
 /// one target language.
 ///
@@ -206,12 +179,11 @@ fn operand(scalar: &Scalar) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::q_predicate::structured_target::{StructuredTarget, carries_operand, carries_target_language, omits_operand};
+    use crate::q_predicate::structured_target::{StructuredTarget, carries_operand, carries_target_language};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::filter::scalar::{Scalar, parse_date_time};
     use andromeda_postgresql_seaquery::literal::int_literal;
-    use pretty_assertions::assert_eq;
     use sea_query::{Alias, Condition, Expr as SeaExpr, PostgresQueryBuilder, Query, SimpleExpr, Value};
 
     /// A stand-in for the probe's `"cav"."value_object"` reference.
@@ -263,19 +235,6 @@ mod tests {
             "the target language binds first: {binds:?}"
         );
         assert!(matches!(&binds[1], Value::String(Some(text)) if text.as_str() == "red"), "{binds:?}");
-    }
-
-    #[test]
-    fn a_language_selected_unequal_requires_the_key_to_be_present() {
-        // Clause 4.9 requires a matching Entity to contain the target element,
-        // which with a target language specified is the key-value pair itself:
-        // a languageMap holding no such key has no target value to differ from.
-        // It is also what keeps the test off a compound value member, whose
-        // nodes never carry `@language`.
-        let (sql, _) = render(omits_operand(&column(), &language("en"), &Scalar::Str("red".to_owned())));
-        assert!(sql.contains("jsonb_build_object('@language', $1::text)"), "the key guard: {sql}");
-        assert!(sql.contains("jsonb_build_object('@language', $2::text, '@value', $3::text)"), "{sql}");
-        assert_eq!(sql.matches("NOT (").count(), 1, "{sql}");
     }
 
     #[test]

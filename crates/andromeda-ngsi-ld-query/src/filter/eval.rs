@@ -1047,14 +1047,18 @@ mod tests {
         assert!(door_holds("\"https://example.com/description\"[de]==\"Tuer\""));
     }
 
-    /// Clause 4.9 `unequal`: "No matching value is found as the value of the
-    /// specified language key", and the entity "shall contain the target
-    /// element", which with a target language is the key-value pair itself.
+    /// Clause 4.9 `unequal`: the entity "shall contain the target element", the
+    /// `LanguageProperty`, and match where "No matching value is found as the
+    /// value of the specified language key", which a language the map does not
+    /// hold satisfies.
     #[test]
-    fn a_target_language_inequality_requires_the_language() {
+    fn a_target_language_inequality_matches_a_map_without_the_language() {
         assert!(door_holds("\"https://example.com/description\"[en]!=\"Tuer\""));
         assert!(!door_holds("\"https://example.com/description\"[en]!=\"Door\""));
-        assert!(!door_holds("\"https://example.com/description\"[fr]!=\"Door\""));
+        assert!(door_holds("\"https://example.com/description\"[fr]!=\"Door\""));
+        assert!(door_holds("\"https://example.com/description\"[fr]!=\"Door\",\"Tuer\""));
+        assert!(!door_holds("\"https://example.com/description\"[fr]==\"Door\""));
+        assert!(!door_holds("\"https://example.com/absent\"[fr]!=\"Door\""));
     }
 
     #[test]
@@ -1095,7 +1099,8 @@ mod tests {
         assert!(!door_holds("\"https://example.com/tags\"[en]==\"x\"..\"z\""));
         assert!(!door_holds("\"https://example.com/tags\"[en]!=\"c\"..\"d\""));
         assert!(door_holds("\"https://example.com/tags\"[en]!=\"x\"..\"z\""));
-        assert!(!door_holds("\"https://example.com/tags\"[pt]!=\"x\"..\"z\""));
+        assert!(door_holds("\"https://example.com/tags\"[pt]!=\"x\"..\"z\""));
+        assert!(!door_holds("\"https://example.com/tags\"[pt]==\"a\"..\"z\""));
         assert!(door_holds("\"https://example.com/tags\"==\"c\"..\"d\""));
         assert!(!door_holds("\"https://example.com/tags\"!=\"c\"..\"d\""));
     }

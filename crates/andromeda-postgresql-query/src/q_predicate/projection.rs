@@ -440,13 +440,18 @@ mod tests {
     }
 
     /// A language-selected inequality keeps its own compilation: clause 4.9
-    /// requires the entity to contain the target element, which for that path is
-    /// the key-value pair itself, so a `languageMap` without the key is not a
-    /// match and neither is a scalar-valued attribute of the same name.
+    /// requires the entity to contain the target element, the
+    /// `LanguageProperty`, so a scalar-valued attribute of the same name is no
+    /// match, while a `languageMap` without the key is one ("No matching value
+    /// is found as the value of the specified language key").
     #[test]
-    fn a_language_selected_inequality_still_requires_the_key_rather_than_negating_totally() {
+    fn a_language_selected_inequality_requires_a_language_property_rather_than_the_key() {
         let (sql, _) = render("\"https://example.com/color\"[en]!=\"red\"");
-        assert!(sql.contains("jsonb_build_object('@language', $2::text)"), "the key guard: {sql}");
+        assert!(
+            sql.contains("(EXISTS(SELECT 1 FROM jsonb_array_elements((CASE WHEN (\"cav\".\"attribute_kind\" = (5))"),
+            "the LanguageProperty guard: {sql}"
+        );
+        assert!(!sql.contains("jsonb_build_object('@language', $2::text)) "), "no key guard: {sql}");
         assert!(
             !sql.contains("\"cav\".\"value_string\" = "),
             "no typed column answers a language-selected path: {sql}"
