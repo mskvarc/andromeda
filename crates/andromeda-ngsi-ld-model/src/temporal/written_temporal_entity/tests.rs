@@ -98,25 +98,6 @@ fn a_geometry_pair_unfolds_into_a_geo_property_instance() {
     pretty_assertions::assert_eq!(unfolded[0]["observedAt"], json!("2022-08-09T18:25:02Z"));
 }
 
-/// Clause 4.5.5: a temporal representation gives each `datasetId` its own
-/// object, whose pairs are instances of that dataset; an instance written in
-/// full beside them is left as it is.
-#[test]
-fn every_pair_takes_the_dataset_of_its_object() {
-    let attribute = json!([
-        {"type": "Property", "datasetId": "urn:ngsi-ld:Dataset:a", "values": [[1, "2022-08-09T18:25:02Z"], [2, "2022-08-10T18:25:02Z"]]},
-        {"type": "Property", "value": 3, "observedAt": "2022-08-11T18:25:02Z"}
-    ]);
-    pretty_assertions::assert_eq!(
-        unfolded(&attribute),
-        json!([
-            {"type": "Property", "value": 1, "datasetId": "urn:ngsi-ld:Dataset:a", "observedAt": "2022-08-09T18:25:02Z"},
-            {"type": "Property", "value": 2, "datasetId": "urn:ngsi-ld:Dataset:a", "observedAt": "2022-08-10T18:25:02Z"},
-            {"type": "Property", "value": 3, "observedAt": "2022-08-11T18:25:02Z"}
-        ])
-    );
-}
-
 /// Clause 4.5.9 has the object "only contain" its plural member: an instance
 /// member beside the pairs, which no element could carry, is refused rather
 /// than copied into every instance.
@@ -124,6 +105,7 @@ fn every_pair_takes_the_dataset_of_its_object() {
 fn a_member_beside_the_pairs_is_refused() {
     for attribute in [
         json!({"type": "Property", "unitCode": "KMH", "values": [[60, "2020-08-01T12:00:00Z"]]}),
+        json!({"type": "Property", "datasetId": "urn:ngsi-ld:Dataset:a", "values": [[60, "2020-08-01T12:00:00Z"]]}),
         json!({"type": "Property", "accuracy": {"type": "Property", "value": 1}, "values": [[60, "2020-08-01T12:00:00Z"]]}),
     ] {
         assert!(matches!(refusal(&attribute), PluralMemberRefusal::MemberBesidePairs { .. }), "{attribute}");

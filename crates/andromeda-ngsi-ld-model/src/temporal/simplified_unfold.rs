@@ -6,11 +6,10 @@
 //! (`values`, `objects`, `languageMaps`, `vocabs`, `jsons`, `valueLists`,
 //! `objectLists`), whose every element is a `[value, instant]` pair. Clause
 //! 4.5.9 has the object "only contain" that member; besides it the object
-//! carries its `type`, which names the family, and the `datasetId` of the
-//! instances it gathers, since a temporal representation gives each `datasetId`
-//! its own object (clause 4.5.5). Anything else is refused.
+//! carries only its `type`, which names the family. Anything else, a
+//! `datasetId` included, is refused.
 //!
-//! Each pair becomes one instance: the object's `type` and `datasetId`, the
+//! Each pair becomes one instance: the object's `type`, the
 //! family's value member holding the pair's value -- taken out of the
 //! one-member object clause 4.5.9 wraps the value of a `LanguageProperty`, a
 //! `JsonProperty` and a `VocabProperty` in -- and the pair's instant as
@@ -76,12 +75,10 @@ pub(crate) fn unfold<'n, N: CompactNode<'n>>(
     let refused = |fault| refusal::<N>(attribute, family, fault);
     let plural = family.temporal_values_key();
     let mut pairs = None;
-    let mut dataset = None;
     let mut beside: Option<Cow<'n, str>> = None;
     for (member, node) in members {
         match member.as_ref() {
             TYPE_MEMBER => {}
-            compact_properties::DATASET_ID => dataset = Some(node),
             key if key == plural => pairs = Some(node),
             _other => beside = beside.or(Some(member)),
         }
@@ -92,11 +89,10 @@ pub(crate) fn unfold<'n, N: CompactNode<'n>>(
     if let Some(member) = &beside {
         return Err(refused(PairFault::MemberBesidePairs(member)));
     }
-    let dataset = dataset.map(|node| literal_text(node, RefusedMember::DatasetId)).transpose()?;
     out.reserve(pair_nodes.len());
     for (index, pair) in pair_nodes.into_iter().enumerate() {
         let within = |error: ReadError<'n, N>| error.within_member(plural).within_element(index);
-        let text = pair_text(attribute, family, dataset.as_deref(), pair).map_err(within)?;
+        let text = pair_text(attribute, family, pair).map_err(within)?;
         let raw = RawValue::from_string(text).map_err(|source| {
             within(
                 NodeRefusal::Member {
@@ -142,7 +138,7 @@ pub(crate) fn instances_of<'n, N: CompactNode<'n>>(name: &str, node: N) -> Resul
 
 /// The JSON text of the instance one `[value, instant]` pair of a `family`
 /// object stands for.
-fn pair_text<'n, N: CompactNode<'n>>(attribute: &str, family: AttributeType, dataset: Option<&str>, pair: N) -> Result<String, ReadError<'n, N>> {
+fn pair_text<'n, N: CompactNode<'n>>(attribute: &str, family: AttributeType, pair: N) -> Result<String, ReadError<'n, N>> {
     let refused = |fault| refusal::<N>(attribute, family, fault);
     let NodeShape::Array(elements) = pair.shape() else {
         return Err(refused(PairFault::NotAPair));
@@ -171,11 +167,8 @@ fn pair_text<'n, N: CompactNode<'n>>(attribute: &str, family: AttributeType, dat
         return Err(refused(PairFault::InstantNotAString));
     };
     let observed_at = literal_text(*instant, RefusedMember::ObservedAt)?;
-    let dataset = dataset
-        .map(|text| format!(r#","{}":{text}"#, compact_properties::DATASET_ID))
-        .unwrap_or_default();
     Ok(format!(
-        r#"{{"{TYPE_MEMBER}":"{}"{dataset},"{value_member}":{value},"{}":{observed_at}}}"#,
+        r#"{{"{TYPE_MEMBER}":"{}","{value_member}":{value},"{}":{observed_at}}}"#,
         family.short_name(),
         compact_properties::OBSERVED_AT
     ))
