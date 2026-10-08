@@ -7,7 +7,9 @@
 //! more, so a geometry that decoded is one every consumer can use as it stands.
 
 use crate::{
+    coordinate_path::CoordinatePath,
     dimension::GeometryDimension,
+    geojson::GeometryError,
     geometry_census::PositionCount,
     geometry_type::GeometryType,
     line_string_coordinates::LineStringCoordinates,
@@ -96,6 +98,65 @@ impl GeometryForm {
         census.dimension()
     }
 
+    /// The geometry itself when every position carries as many ordinates as
+    /// its first.
+    ///
+    /// IETF RFC 7946 section 3.1.1 makes altitude optional per position, but a
+    /// geometry only partly elevated describes no shape a broker can index or
+    /// compare by height, so it is refused.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GeometryError::MixedArity`] naming the first position whose
+    /// ordinate count differs from the first position's.
+    pub fn with_uniform_arity(self) -> Result<GeometryForm, GeometryError> {
+        match self.mixed_arity() {
+            Some(at) => Err(GeometryError::MixedArity { at }),
+            None => Ok(self),
+        }
+    }
+
+    /// Where the first position whose dimension differs from the first
+    /// position's sits, if any.
+    fn mixed_arity(&self) -> Option<CoordinatePath> {
+        let lead = self.first_position()?.dimension();
+        let stray = |positions: &[Position]| positions.iter().position(|position| position.dimension() != lead);
+        let stray_in_rings = |rings: &PolygonRings| {
+            rings
+                .rings()
+                .iter()
+                .enumerate()
+                .find_map(|(ring, positions)| stray(positions.positions()).map(|index| [ring, index]))
+        };
+        let indices = match self {
+            GeometryForm::Point(_) => None,
+            GeometryForm::MultiPoint(positions) => stray(positions).map(|index| vec![index]),
+            GeometryForm::LineString(line) => stray(line.positions()).map(|index| vec![index]),
+            GeometryForm::MultiLineString(lines) => lines
+                .iter()
+                .enumerate()
+                .find_map(|(line, positions)| stray(positions.positions()).map(|index| vec![line, index])),
+            GeometryForm::Polygon(rings) => stray_in_rings(rings).map(Vec::from),
+            GeometryForm::MultiPolygon(polygons) => polygons
+                .iter()
+                .enumerate()
+                .find_map(|(polygon, rings)| stray_in_rings(rings).map(|[ring, index]| vec![polygon, ring, index])),
+        };
+        indices.map(CoordinatePath::new)
+    }
+
+    /// The first position of this geometry, `None` when it holds none.
+    fn first_position(&self) -> Option<&Position> {
+        match self {
+            GeometryForm::Point(position) => Some(position),
+            GeometryForm::MultiPoint(positions) => positions.first(),
+            GeometryForm::LineString(line) => line.positions().first(),
+            GeometryForm::MultiLineString(lines) => lines.iter().flat_map(LineStringCoordinates::positions).next(),
+            GeometryForm::Polygon(rings) => rings.positions().next(),
+            GeometryForm::MultiPolygon(polygons) => polygons.iter().flat_map(PolygonRings::positions).next(),
+        }
+    }
+
     /// How many positions this geometry holds, every ring and member counted.
     #[must_use]
     pub fn position_count(&self) -> PositionCount {
@@ -153,8 +214,10 @@ impl PositionCensus {
 #[cfg(test)]
 mod tests {
     use crate::{
+        coordinate_path::CoordinatePath,
         dimension::GeometryDimension,
         form::{GeometryForm, PolygonRings},
+        geojson::GeometryError,
         line_string_coordinates::LineStringCoordinates,
         linear_ring::LinearRing,
         position::Position,
@@ -187,6 +250,82 @@ mod tests {
     fn a_geometry_with_mixed_position_arity_is_two_dimensional() {
         let line = LineStringCoordinates::try_new(vec![flat(0.0, 0.0), tall(1.0, 1.0, 50.0)]).expect("two positions trace a line");
         pretty_assertions::assert_eq!(GeometryForm::LineString(line).dimension(), GeometryDimension::TwoD);
+    }
+
+    fn stray_at(form: GeometryForm) -> Option<CoordinatePath> {
+        match form.with_uniform_arity() {
+            Ok(_) => None,
+            Err(GeometryError::MixedArity { at }) => Some(at),
+            Err(other) => panic!("expected a mixed-arity refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_line_whose_second_position_adds_an_altitude_is_refused_at_that_position() {
+        let line = LineStringCoordinates::try_new(vec![flat(0.0, 0.0), tall(1.0, 1.0, 50.0)]).expect("two positions trace a line");
+        pretty_assertions::assert_eq!(stray_at(GeometryForm::LineString(line)), Some(CoordinatePath::new(vec![1])));
+    }
+
+    #[test]
+    fn a_line_that_drops_its_altitude_after_the_first_position_is_refused() {
+        let line = LineStringCoordinates::try_new(vec![tall(0.0, 0.0, 5.0), tall(1.0, 0.0, 5.0), flat(1.0, 1.0)]).expect("three positions trace a line");
+        pretty_assertions::assert_eq!(stray_at(GeometryForm::LineString(line)), Some(CoordinatePath::new(vec![2])));
+    }
+
+    #[test]
+    fn a_multi_point_mixing_arity_is_refused_at_the_first_disagreeing_point() {
+        let form = GeometryForm::MultiPoint(vec![tall(0.0, 0.0, 1.0), tall(1.0, 0.0, 1.0), flat(2.0, 0.0), flat(3.0, 0.0)]);
+        pretty_assertions::assert_eq!(stray_at(form), Some(CoordinatePath::new(vec![2])));
+    }
+
+    #[test]
+    fn a_second_line_disagreeing_with_the_first_is_refused_at_its_own_position() {
+        let first = LineStringCoordinates::try_new(vec![flat(0.0, 0.0), flat(1.0, 0.0)]).expect("two positions trace a line");
+        let second = LineStringCoordinates::try_new(vec![tall(0.0, 1.0, 3.0), tall(1.0, 1.0, 3.0)]).expect("two positions trace a line");
+        pretty_assertions::assert_eq!(
+            stray_at(GeometryForm::MultiLineString(vec![first, second])),
+            Some(CoordinatePath::new(vec![1, 0]))
+        );
+    }
+
+    #[test]
+    fn a_polygon_hole_disagreeing_with_the_exterior_ring_is_refused_at_its_vertex() {
+        let exterior = ring(vec![flat(0.0, 0.0), flat(4.0, 0.0), flat(4.0, 4.0), flat(0.0, 0.0)]);
+        let hole = ring(vec![tall(1.0, 1.0, 2.0), tall(2.0, 1.0, 2.0), tall(2.0, 2.0, 2.0), tall(1.0, 1.0, 2.0)]);
+        pretty_assertions::assert_eq!(
+            stray_at(GeometryForm::Polygon(PolygonRings::new(vec![exterior, hole]))),
+            Some(CoordinatePath::new(vec![1, 0]))
+        );
+    }
+
+    #[test]
+    fn a_later_polygon_of_a_multi_polygon_is_refused_at_its_vertex() {
+        let flat_square = PolygonRings::new(vec![ring(vec![flat(0.0, 0.0), flat(1.0, 0.0), flat(1.0, 1.0), flat(0.0, 0.0)])]);
+        let mixed_square = PolygonRings::new(vec![ring(vec![flat(5.0, 5.0), tall(6.0, 5.0, 1.0), flat(6.0, 6.0), flat(5.0, 5.0)])]);
+        pretty_assertions::assert_eq!(
+            stray_at(GeometryForm::MultiPolygon(vec![flat_square, mixed_square])),
+            Some(CoordinatePath::new(vec![1, 0, 1]))
+        );
+    }
+
+    #[test]
+    fn geometries_of_one_arity_or_no_positions_are_kept() {
+        let elevated = LineStringCoordinates::try_new(vec![tall(0.0, 0.0, 1.0), tall(1.0, 1.0, 2.0)]).expect("two positions trace a line");
+        pretty_assertions::assert_eq!(stray_at(GeometryForm::LineString(elevated)), None);
+        pretty_assertions::assert_eq!(stray_at(GeometryForm::MultiPoint(vec![flat(0.0, 0.0), flat(1.0, 1.0)])), None);
+        pretty_assertions::assert_eq!(stray_at(GeometryForm::Point(tall(0.0, 0.0, 1.0))), None);
+        pretty_assertions::assert_eq!(stray_at(GeometryForm::MultiPoint(Vec::new())), None);
+    }
+
+    #[test]
+    fn the_mixed_arity_refusal_names_the_position() {
+        pretty_assertions::assert_eq!(
+            GeometryError::MixedArity {
+                at: CoordinatePath::new(vec![0, 2])
+            }
+            .to_string(),
+            "GeoJSON position carries a different number of ordinates than the geometry's first position; every position of one geometry is two-dimensional or every one carries an altitude (at coordinates[0][2])"
+        );
     }
 
     #[test]

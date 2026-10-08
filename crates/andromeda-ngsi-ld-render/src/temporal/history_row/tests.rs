@@ -263,7 +263,7 @@ fn a_structured_property_renders_the_values_it_was_stored_as() {
 /// altitude included.
 #[test]
 fn a_history_geometry_renders_the_expanded_geojson_node() {
-    let polygon = json!({"type": "Polygon", "coordinates": [[[0.0, 0.0], [4.0, 0.0], [4.0, 4.0, 12.5], [0.0, 0.0]]]});
+    let polygon = json!({"type": "Polygon", "coordinates": [[[0.0, 0.0, 12.5], [4.0, 0.0, 12.5], [4.0, 4.0, 12.5], [0.0, 0.0, 12.5]]]});
     let geometry = serde_json::from_value::<Geometry>(polygon).expect("a polygon");
     let rendered = rendered(
         row_of(AttributeType::GeoProperty, TemporalValue::Geometry(GeometryValue::new(geometry.into_parts().0))),
@@ -273,10 +273,10 @@ fn a_history_geometry_renders_the_expanded_geojson_node() {
     let expected = json!([{
         "@type": ["https://purl.org/geojson/vocab#Polygon"],
         "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@list": [
-            position(&[0.0, 0.0]),
-            position(&[4.0, 0.0]),
+            position(&[0.0, 0.0, 12.5]),
+            position(&[4.0, 0.0, 12.5]),
             position(&[4.0, 4.0, 12.5]),
-            position(&[0.0, 0.0])
+            position(&[0.0, 0.0, 12.5])
         ]}]}]
     }]);
     let rendered_geometry = member(&rendered, AttributeType::GeoProperty.value_key_str()).expect("the geometry is rendered");

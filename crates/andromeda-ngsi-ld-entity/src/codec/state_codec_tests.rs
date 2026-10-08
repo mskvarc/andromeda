@@ -146,14 +146,14 @@ fn numbers_are_written_in_their_canonical_exact_spelling() {
 }
 
 #[test]
-fn every_geometry_type_round_trips_including_altitude_and_mixed_arity() {
+fn every_geometry_type_round_trips_including_altitude() {
     let point = |coordinates: Value| json!({"@list": coordinates});
     let position = |ordinates: &[f64]| point(Value::Array(ordinates.iter().map(|ordinate| json!({"@value": ordinate})).collect()));
-    let ring = json!({"@list": [position(&[0.0, 0.0]), position(&[1.0, 0.0]), position(&[1.0, 1.0, 5.0]), position(&[0.0, 0.0])]});
+    let ring = json!({"@list": [position(&[0.0, 0.0, 5.0]), position(&[1.0, 0.0, 5.0]), position(&[1.0, 1.0, 5.0]), position(&[0.0, 0.0, 5.0])]});
     let geometries = [
         ("Point", position(&[1.5, 2.25])),
-        ("MultiPoint", json!({"@list": [position(&[1.0, 2.0]), position(&[3.0, 4.0, 5.0])]})),
-        ("LineString", json!({"@list": [position(&[0.0, 0.0]), position(&[1.0, 1.0, 50.0])]})),
+        ("MultiPoint", json!({"@list": [position(&[1.0, 2.0, 5.0]), position(&[3.0, 4.0, 5.0])]})),
+        ("LineString", json!({"@list": [position(&[0.0, 0.0, 10.0]), position(&[1.0, 1.0, 50.0])]})),
         ("MultiLineString", json!({"@list": [{"@list": [position(&[0.0, 0.0]), position(&[1.0, 1.0])]}]})),
         ("Polygon", json!({"@list": [&ring]})),
         ("MultiPolygon", json!({"@list": [{"@list": [&ring]}, {"@list": []}]})),

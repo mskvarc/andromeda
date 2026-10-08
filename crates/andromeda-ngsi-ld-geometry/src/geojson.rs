@@ -72,6 +72,16 @@ pub enum GeometryError {
         #[source]
         source: LinearRingError,
     },
+    /// A position carried a different number of ordinates than the first
+    /// position of the same geometry.
+    #[error(
+        "GeoJSON position carries a different number of ordinates than the geometry's first position; every position of one geometry is two-dimensional or every one carries an altitude (at {at})"
+    )]
+    MixedArity {
+        /// Where the first disagreeing position sits in the geometry's
+        /// `coordinates`.
+        at: CoordinatePath,
+    },
     /// An expanded `coordinates` member did not nest the way its geometry type
     /// requires: a number where a position list belongs, or a list where a
     /// number does.
@@ -180,7 +190,6 @@ mod tests {
         linear_ring::LinearRingError,
         position::PositionError,
     };
-    use geojson::{GeometryValue, Position as GeoJsonPosition};
 
     /// Read `value` as the compact `GeoJSON` geometry every write path reads.
     fn decode(value: &serde_json::Value) -> Result<GeometryForm, GeometryError> {
@@ -239,14 +248,13 @@ mod tests {
     }
 
     #[test]
-    fn a_mixed_arity_line_string_keeps_the_arity_of_each_position() {
-        let form = decode(&serde_json::json!({ "type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0, 50.0]] })).expect("mixed arity is valid GeoJSON");
-        pretty_assertions::assert_eq!(form.dimension(), GeometryDimension::TwoD);
-        let GeometryValue::LineString { coordinates } = form.to_geojson() else {
-            panic!("expected a LineString");
-        };
-        pretty_assertions::assert_eq!(coordinates.first().map(GeoJsonPosition::as_slice), Some(&[0.0, 0.0][..]));
-        pretty_assertions::assert_eq!(coordinates.last().map(GeoJsonPosition::as_slice), Some(&[1.0, 1.0, 50.0][..]));
+    fn a_mixed_arity_line_string_is_refused_at_the_disagreeing_position() {
+        let error =
+            decode(&serde_json::json!({ "type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0, 50.0]] })).expect_err("positions disagree on altitude");
+        assert!(
+            matches!(error, GeometryError::MixedArity { ref at } if *at == CoordinatePath::new(vec![1])),
+            "got {error:?}"
+        );
     }
 
     #[test]

@@ -156,6 +156,7 @@ mod tests {
             GeometryError::Position { at, source } => (at.clone(), *source), // clone: the assertion owns the path it compares
             other @ (GeometryError::LineString { .. }
             | GeometryError::LinearRing { .. }
+            | GeometryError::MixedArity { .. }
             | GeometryError::Misnested { .. }
             | GeometryError::NotAnObject
             | GeometryError::EncodedNotJson(_)
@@ -331,6 +332,16 @@ mod tests {
     fn a_malformed_geometry_value_is_a_typed_error() {
         let error = read(&serde_json::json!({ "type": "Nonsense", "coordinates": [] })).expect_err("must reject");
         assert!(matches!(error, GeometryError::UnknownType(_)), "got {error:?}");
+    }
+
+    #[test]
+    fn a_line_string_mixing_two_and_three_ordinate_positions_is_refused() {
+        let error = Geometry::from_geojson_text(r#"{"type": "LineString", "coordinates": [[13.4, 52.52], [13.5, 52.53, 250.0]]}"#)
+            .expect_err("positions disagreeing on altitude make no geometry");
+        assert!(
+            matches!(error, GeometryError::MixedArity { ref at } if *at == CoordinatePath::new(vec![1])),
+            "got {error:?}"
+        );
     }
 
     #[test]

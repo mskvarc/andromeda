@@ -223,12 +223,12 @@ async fn a_three_dimensional_location_is_accepted() {
         .expect("a three-dimensional position");
 }
 
-/// RFC 7946 nowhere requires a uniform arity within one geometry.
 #[tokio::test]
-async fn a_location_mixing_two_and_three_ordinate_positions_is_accepted() {
-    admit_located("location", &json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0, 50.0]]}))
+async fn a_location_mixing_two_and_three_ordinate_positions_is_rejected() {
+    let error = admit_located("location", &json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0, 50.0]]}))
         .await
-        .expect("positions of either arity");
+        .expect_err("positions disagreeing on altitude make no geometry");
+    assert!(error.contains("different number of ordinates"), "{error}");
 }
 
 /// Clause 5.5.4: an unreadable `GeoProperty` is `BadRequestData`.
@@ -326,7 +326,7 @@ fn a_valid_geo_property_in_the_fully_expanded_node_form_is_accepted() {
     let entity = entity_with_expanded_node(&json!({"@list": [
         {"@list": [
             {"@list": [ordinate(0.0), ordinate(0.0)]},
-            {"@list": [ordinate(4.0), ordinate(0.0), ordinate(12.0)]},
+            {"@list": [ordinate(4.0), ordinate(0.0)]},
             {"@list": [ordinate(4.0), ordinate(4.0)]},
             {"@list": [ordinate(0.0), ordinate(0.0)]}
         ]}

@@ -312,7 +312,7 @@ mod tests {
     fn the_position_count_of_a_built_geometry_matches_the_census() {
         for geometry in [
             json!({"type": "Point", "coordinates": [1.0, 2.0]}),
-            json!({"type": "MultiPoint", "coordinates": [[1.0, 2.0], [3.0, 4.0, 5.0]]}),
+            json!({"type": "MultiPoint", "coordinates": [[1.0, 2.0, 5.0], [3.0, 4.0, 5.0]]}),
             json!({"type": "LineString", "coordinates": [[0, 0], [1, 1], [2, 2]]}),
             json!({"type": "MultiLineString", "coordinates": [[[0, 0], [1, 1]], [[2, 2], [3, 3], [4, 4]]]}),
             json!({"type": "Polygon", "coordinates": [ring(7), ring(4)]}),

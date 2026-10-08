@@ -96,16 +96,17 @@ fn the_altitude_of_a_three_ordinate_position_is_kept() {
     pretty_assertions::assert_eq!(form.dimension(), GeometryDimension::ThreeD);
 }
 
-/// RFC 7946 does not require a uniform arity.
 #[test]
-fn mixed_position_arity_within_one_geometry_is_kept() {
+fn mixed_position_arity_within_one_geometry_is_refused_at_the_disagreeing_position() {
     let node = expanded_node(
         "LineString",
         &json!({"@list": [{"@list": [{"@value": 0}, {"@value": 0}]}, {"@list": [{"@value": 1}, {"@value": 1}, {"@value": 50}]}]}),
     );
-    let form = decode(&node).expect("a mixed-arity line");
-    pretty_assertions::assert_eq!(form, compact(&json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0, 50.0]]})));
-    pretty_assertions::assert_eq!(form.dimension(), GeometryDimension::TwoD);
+    let error = geometry_error(&node);
+    assert!(
+        matches!(error, GeometryError::MixedArity { ref at } if *at == CoordinatePath::new(vec![1])),
+        "got {error:?}"
+    );
 }
 
 /// Clause 4.7.1: every RFC 7946 geometry except `GeometryCollection`.

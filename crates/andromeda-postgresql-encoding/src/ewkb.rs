@@ -354,8 +354,14 @@ mod tests {
 
     #[test]
     fn a_geometry_of_mixed_position_arity_encodes_as_two_dimensional() {
-        let original = parse(&json!({ "type": "LineString", "coordinates": [[1.0, 2.0, 3.0], [4.0, 5.0]] }));
-        let ewkb = Ewkb::try_from(original.form()).expect("encodes");
+        let original = GeometryForm::LineString(
+            LineStringCoordinates::try_new(vec![
+                Position::try_new(1.0, 2.0, Some(3.0)).expect("a test position lies on the CRS84 axes"),
+                Position::try_new(4.0, 5.0, None).expect("a test position lies on the CRS84 axes"),
+            ])
+            .expect("two positions trace a line"),
+        );
+        let ewkb = Ewkb::try_from(&original).expect("encodes");
         pretty_assertions::assert_eq!(type_word(&ewkb) & EWKB_Z_FLAG, 0, "a partly elevated geometry sets no Z flag");
         let decoded = Geometry::try_from(&ewkb).expect("decodes");
         pretty_assertions::assert_eq!(

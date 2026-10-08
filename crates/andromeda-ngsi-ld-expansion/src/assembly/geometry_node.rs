@@ -121,7 +121,7 @@ fn geometry_form(node: &ExpandedNode) -> Result<GeometryForm, GeometryError> {
     };
     let reader = CoordinateReader { geometry_type };
     let enclosing = &mut Vec::new();
-    Ok(match geometry_type {
+    let form = match geometry_type {
         GeometryType::Point => GeometryForm::Point(reader.position(coordinates, enclosing)?),
         GeometryType::MultiPoint => GeometryForm::MultiPoint(reader.each(coordinates, enclosing, |reader, item, enclosing: &mut Vec<usize>| {
             reader.position(item, enclosing)
@@ -130,7 +130,8 @@ fn geometry_form(node: &ExpandedNode) -> Result<GeometryForm, GeometryError> {
         GeometryType::MultiLineString => GeometryForm::MultiLineString(reader.each(coordinates, enclosing, CoordinateReader::line_string)?),
         GeometryType::Polygon => GeometryForm::Polygon(reader.rings(coordinates, enclosing)?),
         GeometryType::MultiPolygon => GeometryForm::MultiPolygon(reader.each(coordinates, enclosing, CoordinateReader::rings)?),
-    })
+    };
+    form.with_uniform_arity()
 }
 
 /// Reads the expanded `coordinates` of one geometry the way its type nests

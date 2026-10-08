@@ -192,7 +192,11 @@ impl GeoParts<'_> {
         let members = members.finish();
         // A value object carries no member beside its `@value`.
         let beside_value = members.is_some();
-        let geometry = |form| GeoDecoded::Value(GeoValue::Geometry(GeometryValue::with_members(form, members)));
+        let geometry = |form: GeometryForm| {
+            form.with_uniform_arity()
+                .map(|form| GeoDecoded::Value(GeoValue::Geometry(GeometryValue::with_members(form, members))))
+                .map_err(|source| seed.geometry(source))
+        };
         match (value, geometry_type, form, pending) {
             (Some(_), None, None, None) if beside_value => Err(seed.malformed(MemberShape::Geometry)),
             (Some(value), None, None, None) => match value.into_text() {
@@ -202,8 +206,8 @@ impl GeoParts<'_> {
                     .map_err(|source| seed.geometry(source)),
                 None => Err(seed.geometry(GeometryError::NotAnObject)),
             },
-            (None, Some(_), Some(form), None) => Ok(geometry(form)),
-            (None, Some(geometry_type), None, Some(pending)) => read_pending(seed, geometry_type, &pending).map(geometry),
+            (None, Some(_), Some(form), None) => geometry(form),
+            (None, Some(geometry_type), None, Some(pending)) => read_pending(seed, geometry_type, &pending).and_then(geometry),
             (None, Some(_), None, None) => Err(seed.geometry(GeometryError::MissingCoordinates)),
             (None, None, None, _) => Err(seed.geometry(GeometryError::MissingType)),
             (Some(_), _, _, _) | (None, None, Some(_), _) | (None, Some(_), Some(_), Some(_)) => Err(seed.malformed(MemberShape::Geometry)),

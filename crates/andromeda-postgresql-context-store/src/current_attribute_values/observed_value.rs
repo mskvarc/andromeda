@@ -120,15 +120,15 @@ mod tests {
     }
 
     /// The observation carries the geometry already built, so the projection
-    /// writes exactly that geometry: a hole, an elevated position and the
-    /// ordinate count each position arrived with all reach the column.
+    /// writes exactly that geometry: a hole and the altitude of every
+    /// position reach the column.
     #[test]
     fn a_geometry_observation_projects_to_the_same_geometry() {
         let geometry = serde_json::from_value::<Geometry>(json!({
             "type": "Polygon",
             "coordinates": [
-                [[0.0, 0.0, 12.5], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0], [0.0, 0.0, 12.5]],
-                [[1.0, 1.0], [1.0, 2.0], [2.0, 2.0], [1.0, 1.0]]
+                [[0.0, 0.0, 12.5], [4.0, 0.0, 12.5], [4.0, 4.0, 12.5], [0.0, 4.0, 12.5], [0.0, 0.0, 12.5]],
+                [[1.0, 1.0, 12.5], [1.0, 2.0, 12.5], [2.0, 2.0, 12.5], [1.0, 1.0, 12.5]]
             ]
         }))
         .expect("a valid Polygon with a hole");

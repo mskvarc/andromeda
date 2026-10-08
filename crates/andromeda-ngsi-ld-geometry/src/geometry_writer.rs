@@ -162,7 +162,7 @@ mod tests {
             json!({"type": "Point", "coordinates": [13.4, 52.5]}),
             json!({"type": "Point", "coordinates": [13.0, 52.0, 34.5]}),
             json!({"type": "MultiPoint", "coordinates": [[1.0, 2.0], [3.5, 4.25]]}),
-            json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0, 7.0]]}),
+            json!({"type": "LineString", "coordinates": [[0.0, 0.0, 3.0], [1.0, 1.0, 7.0]]}),
             json!({"type": "MultiLineString", "coordinates": [[[0.0, 0.0], [1.0, 1.0]], [[2.0, 2.0], [3.0, 3.0]]]}),
             json!({"type": "Polygon", "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]]}),
             json!({"type": "MultiPolygon", "coordinates": [[[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]], [[[5.0, 5.0], [6.0, 5.0], [6.0, 6.0], [5.0, 5.0]]]]}),

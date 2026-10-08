@@ -189,7 +189,7 @@ fn geometries() -> Value {
             {"type": "GeoProperty", "datasetId": "urn:ngsi-ld:Dataset:gps", "value": {"type": "Point", "coordinates": [13.4, 52.55]}}
         ],
         "observationSpace": {"type": "GeoProperty", "value": {"type": "Polygon", "coordinates": [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]], [[2, 2], [3, 2], [3, 3], [2, 2]]]}},
-        "operationSpace": {"type": "GeoProperty", "value": {"type": "MultiPolygon", "coordinates": [[[[0, 0], [1, 0], [1, 1], [0, 0]]], [[[5, 5, 1], [6, 5, 1], [6, 6, 1], [5, 5, 1]]]]}},
+        "operationSpace": {"type": "GeoProperty", "value": {"type": "MultiPolygon", "coordinates": [[[[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 0, 1]]], [[[5, 5, 1], [6, 5, 1], [6, 6, 1], [5, 5, 1]]]]}},
         "route": {"type": "GeoProperty", "value": {"type": "MultiLineString", "coordinates": [[[0, 0], [1, 1]], [[2, 2], [3, 3], [4, 4]]]}, "unitCode": "MTR"},
         "stops": {"type": "GeoProperty", "value": {"type": "MultiPoint", "coordinates": [[0.25, 0.5], [1.75, -2.125]]}, "valueType": "geojson:MultiPoint"},
         "path": {"type": "GeoProperty", "value": {"type": "LineString", "coordinates": [[-8.5, 41.2], [-8.6, 41.3]]},

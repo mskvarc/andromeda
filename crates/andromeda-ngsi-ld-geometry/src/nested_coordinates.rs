@@ -27,20 +27,22 @@ impl CoordinateTape {
     /// [`GeometryError::NonNumericOrdinate`] for a member that breaks the
     /// nesting, [`GeometryError::Position`] for a position RFC 7946 section
     /// 3.1.1 or section 4 gives no meaning, [`GeometryError::LineString`] for a
-    /// `LineString` of fewer than two positions, and
+    /// `LineString` of fewer than two positions,
     /// [`GeometryError::LinearRing`] for a Polygon ring that is open or holds
-    /// fewer than four.
+    /// fewer than four, and [`GeometryError::MixedArity`] for positions that
+    /// disagree on altitude.
     pub(crate) fn read_as(&self, geometry_type: GeometryType) -> Result<GeometryForm, GeometryError> {
         let reader = &mut self.reader();
         let mut enclosing = Vec::new();
-        match geometry_type {
+        let form = match geometry_type {
             GeometryType::Point => position(reader, &enclosing).map(GeometryForm::Point),
             GeometryType::MultiPoint => positions(reader, &mut enclosing).map(GeometryForm::MultiPoint),
             GeometryType::LineString => line_string(reader, &mut enclosing).map(GeometryForm::LineString),
             GeometryType::MultiLineString => each(reader, &mut enclosing, line_string).map(GeometryForm::MultiLineString),
             GeometryType::Polygon => rings(reader, &mut enclosing).map(GeometryForm::Polygon),
             GeometryType::MultiPolygon => each(reader, &mut enclosing, rings).map(GeometryForm::MultiPolygon),
-        }
+        };
+        form?.with_uniform_arity()
     }
 }
 
