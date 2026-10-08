@@ -76,27 +76,16 @@ pub async fn expand_q_expr(expr: Expr, json_keys: &JsonKeyAttributes, expander: 
 /// [`QueryError::AttributeNameInvalid`] when a term does not expand to a usable
 /// attribute name.
 pub async fn expand_csf_expr(expr: Expr, expander: &impl TermExpander) -> Result<Expr, QueryError> {
-    walk_predicates(expr, &|pred| expand_csf_pred(pred, expander)).await
-}
-
-/// Expand the property terms of one `csf` predicate, which has no
-/// `expandValues` to admit a bare word.
-async fn expand_csf_pred(pred: Predicate, expander: &impl TermExpander) -> Result<Predicate, QueryError> {
-    refuse_bare_word(expand_pred_terms(pred, TrailingMembers::Verbatim, expander).await?)
+    walk_predicates(expr, &|pred| expand_pred_terms(pred, TrailingMembers::Verbatim, expander)).await
 }
 
 /// Apply `expandValues`: for attributes in `expand_attrs`, expand string scalar
 /// right-hand-side values through the `@context` (clause 6.4.3.2).
 ///
-/// A bare word is a value only of an attribute `expandValues` names (clause
-/// 4.9 EXAMPLE 12), so a filter is passed through here even when the request
-/// names none, and leaves with no [`Scalar::Term`] in it.
-///
 /// # Errors
 ///
 /// Returns [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`] when a
-/// string operand of an opted-in attribute does not expand, and
-/// [`QueryError::QBareWord`] for a bare word of any other attribute.
+/// string operand of an opted-in attribute does not expand.
 pub async fn apply_expand_values<S: BuildHasher + Sync>(
     expr: Expr,
     expand_attrs: &HashSet<AttributeName, S>,
@@ -278,34 +267,17 @@ async fn expand_compare_values<S: BuildHasher + Sync>(
             rhs: expand_scalar(rhs, expander).await?,
         }),
         Predicate::Exists(_) | Predicate::Equality { .. } | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. } => {
-            refuse_bare_word(pred)
+            Ok(pred)
         }
     }
 }
 
-/// Refuse a predicate holding a bare word: clause 4.9 derives one from no
-/// production, and `BadRequestData` is what clause 5.7.2.4 raises for a `q`
-/// outside the grammar.
-fn refuse_bare_word(pred: Predicate) -> Result<Predicate, QueryError> {
-    let holds_bare_word = match &pred {
-        Predicate::Equality { rhs, .. } => match rhs {
-            CompareValue::Scalar(scalar) => matches!(scalar, Scalar::Term(_)),
-            CompareValue::ValueList(values) => values.iter().any(|value| matches!(value, Scalar::Term(_))),
-            CompareValue::Range { min, max } => matches!(min, Scalar::Term(_)) || matches!(max, Scalar::Term(_)),
-        },
-        Predicate::Ordering { rhs, .. } => matches!(rhs, Scalar::Term(_)),
-        Predicate::Exists(_) | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. } => false,
-    };
-    if holds_bare_word { Err(QueryError::QBareWord) } else { Ok(pred) }
-}
-
-/// Expand a single scalar operand: a string, a term or a `URI` is a term to
-/// expand, every other scalar kind is already a value. A term expands to the
-/// `URI` it names.
+/// Expand a single scalar operand: a string or a `URI` is a term to expand,
+/// every other scalar kind is already a value.
 async fn expand_scalar(scalar: Scalar, expander: &impl TermExpander) -> Result<Scalar, QueryError> {
     match scalar {
         Scalar::Str(s) => Ok(Scalar::Str(expander.expand_term(&s).await?.to_string())),
-        Scalar::Term(s) | Scalar::Uri(s) => Ok(Scalar::Uri(expander.expand_term(&s).await?.to_string())),
+        Scalar::Uri(s) => Ok(Scalar::Uri(expander.expand_term(&s).await?.to_string())),
         other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => Ok(other),
     }
 }
@@ -524,48 +496,41 @@ mod tests {
         );
     }
 
-    /// Clause 4.9 EXAMPLE 12, `?q=gender==Male&expandValues=gender`: a bare
-    /// word of an attribute `expandValues` names is a term, and expands to the
-    /// `URI` it names, alone or in a value list.
-    #[tokio::test]
-    async fn expand_values_expands_a_bare_word_to_the_uri_it_names() {
-        let opted_in = opted_in(&["gender"]);
-        let single = apply_expand_values(parser::parse("gender==Male").expect("parses"), &opted_in, &PrefixExpander)
-            .await
-            .expect("expands");
-        assert_eq!(
-            equality_rhs(&single),
-            &CompareValue::Scalar(Scalar::Uri("https://example.com/Male".to_string()))
-        );
-        let list = apply_expand_values(parser::parse("gender==Male,\"Female\"").expect("parses"), &opted_in, &PrefixExpander)
-            .await
-            .expect("expands");
-        assert_eq!(
-            equality_rhs(&list),
-            &CompareValue::ValueList(vec![
-                Scalar::Uri("https://example.com/Male".to_string()),
-                Scalar::Str("https://example.com/Female".to_string()),
-            ])
-        );
-    }
-
     /// Clause 4.9 derives a bare word that is no `URI` from no production, so
-    /// outside `expandValues` it is `BadRequestData` (clause 5.7.2.4), alone,
-    /// in a value list, under `!=` and inside a logical combination.
-    #[tokio::test]
-    async fn a_bare_word_of_an_attribute_expand_values_does_not_name_is_refused() {
+    /// it is `BadRequestData` (clause 5.7.2.4) whatever `expandValues` names,
+    /// alone, in a value list, under `!=` and inside a logical combination; the
+    /// spelling EXAMPLE 12 writes, `gender==Male`, included.
+    #[test]
+    fn a_bare_word_is_refused_whatever_expand_values_names() {
         for q in [
             "status==active",
             "status==\"on\",active",
             "status!=active",
             "speed>1;(status==active|name==\"x\")",
             "gender==Male",
+            "tier==gold",
         ] {
-            let error = apply_expand_values(parser::parse(q).expect("parses"), &opted_in(&["colour"]), &PrefixExpander)
-                .await
-                .expect_err("a bare word is no value");
+            let error = parser::parse(q).expect_err("a bare word is no value");
             assert!(matches!(error, QueryError::QBareWord), "{q}: {error:?}");
         }
+    }
+
+    /// Clause 6.4.3.2 with clause 4.9: a quoted word of an attribute
+    /// `expandValues` names expands to the `URI` it names, alone or in a value
+    /// list.
+    #[tokio::test]
+    async fn expand_values_expands_a_quoted_word_to_the_uri_it_names() {
+        let opted_in = opted_in(&["gender"]);
+        let list = apply_expand_values(parser::parse("gender==\"Male\",\"Female\"").expect("parses"), &opted_in, &PrefixExpander)
+            .await
+            .expect("expands");
+        assert_eq!(
+            equality_rhs(&list),
+            &CompareValue::ValueList(vec![
+                Scalar::Str("https://example.com/Male".to_string()),
+                Scalar::Str("https://example.com/Female".to_string()),
+            ])
+        );
     }
 
     /// A quoted word and a bare `URI` are values whatever `expandValues` names.
@@ -578,15 +543,6 @@ mod tests {
                 .expect("a value");
             assert_eq!(kept, expr, "{q}");
         }
-    }
-
-    /// A `csf` has no `expandValues`, so a bare word in it is never a value.
-    #[tokio::test]
-    async fn a_bare_word_in_a_csf_is_refused() {
-        let error = expand_csf_expr(parser::parse("tier==gold").expect("parses"), &PrefixExpander)
-            .await
-            .expect_err("a bare word is no value");
-        assert!(matches!(error, QueryError::QBareWord), "{error:?}");
     }
 
     /// JSON-LD expansion of a structured Property value turns its members into IRI-keyed nodes, so a compound-value member has to be expanded through the same `@context` the attribute name is.

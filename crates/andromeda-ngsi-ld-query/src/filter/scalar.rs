@@ -38,14 +38,6 @@ pub enum Scalar {
     Bool(bool),
     /// A string value: a `quotedStr`.
     Str(String),
-    /// A bare word that is no `URI`: a term, as clause 4.9 EXAMPLE 12
-    /// (`?q=gender==Male&expandValues=gender`) writes one.
-    ///
-    /// The grammar has no production for it, so it stands only where
-    /// `expandValues` names the attribute and expands to a `URI` there. Every
-    /// other position refuses it as `BadRequestData` (clause 5.7.2.4), which
-    /// leaves no `Term` in a compiled filter.
-    Term(String),
     /// A bare clause 4.9 `URI` operand, admitted only by `CompEqualityValue`.
     ///
     /// Compared exactly as a [`Scalar::Str`] holding the same text (clause 4.9
@@ -94,13 +86,15 @@ impl Scalar {
     ///
     /// Returns [`QueryError::QInvalidDateTime`], [`QueryError::QInvalidDate`] or
     /// [`QueryError::QInvalidTime`] when a bare literal is written in that
-    /// clause 4.6.3 form but is not a well-formed value of it.
+    /// clause 4.6.3 form but is not a well-formed value of it, and
+    /// [`QueryError::QBareWord`] when a bare literal is in no clause 4.6.3 form
+    /// and is no `URI`.
     pub fn from_literal(raw: &str, quoting: Quoting) -> Result<Scalar, QueryError> {
         let Some(form) = TimeValueForm::of(raw) else {
-            return Ok(match quoting {
-                Quoting::Bare => Scalar::bare_word(raw.to_string()),
-                Quoting::Quoted => Scalar::Str(raw.to_string()),
-            });
+            return match quoting {
+                Quoting::Bare => Scalar::bare_word(raw),
+                Quoting::Quoted => Ok(Scalar::Str(raw.to_string())),
+            };
         };
         match (form, quoting) {
             (TimeValueForm::DateTime, Quoting::Bare) => Ok(Scalar::DateTime(parse_date_time(raw)?)),
@@ -112,15 +106,18 @@ impl Scalar {
         }
     }
 
-    /// Classify a word written without quotes and in no clause 4.6.3 form: a
-    /// `URI` when it is one, a [`Scalar::Term`] otherwise.
-    #[must_use]
-    pub fn bare_word(word: String) -> Scalar {
-        if Iri::new(word.as_str()).is_ok() {
-            Scalar::Uri(word)
-        } else {
-            Scalar::Term(word)
-        }
+    /// Classify a word written without quotes and in no clause 4.6.3 form.
+    ///
+    /// Clause 4.9 derives such a word only from `URI`, `true` and `false`, so
+    /// one that is no `URI` is refused whatever `expandValues` names: the
+    /// grammar outranks EXAMPLE 12, which writes `gender==Male`, and a term
+    /// to expand is written as a `quotedStr`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::QBareWord`] when the word is no `URI`.
+    pub fn bare_word(word: &str) -> Result<Scalar, QueryError> {
+        Iri::new(word).map(|_| Scalar::Uri(word.to_owned())).map_err(|_not_a_uri| QueryError::QBareWord)
     }
 
     /// The operand's canonical text form.
@@ -142,7 +139,7 @@ impl Scalar {
             Scalar::Number(number) => number.to_string(),
             Scalar::Bool(value) => value.to_string(),
             // clone: callers own the rendered literal
-            Scalar::Str(value) | Scalar::Term(value) | Scalar::Uri(value) => value.clone(),
+            Scalar::Str(value) | Scalar::Uri(value) => value.clone(),
             Scalar::DateTime(value) => value.format(DATE_TIME_FORMAT).to_string(),
             Scalar::Date(value) => value.to_string(),
             Scalar::Time(value) => value.format(TIME_FORMAT).to_string(),
@@ -211,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_uri_is_a_uri_a_quoted_one_a_string_and_a_bare_word_a_term() {
+    fn a_bare_uri_is_a_uri_a_quoted_one_a_string_and_a_bare_word_refused() {
         pretty_assertions::assert_eq!(
             Scalar::from_literal("http://example.org/a", Quoting::Bare).unwrap(),
             Scalar::Uri("http://example.org/a".to_owned())
@@ -220,7 +217,7 @@ mod tests {
             Scalar::from_literal("http://example.org/a", Quoting::Quoted).unwrap(),
             Scalar::Str("http://example.org/a".to_owned())
         );
-        pretty_assertions::assert_eq!(Scalar::from_literal("active", Quoting::Bare).unwrap(), Scalar::Term("active".to_owned()));
+        assert!(matches!(Scalar::from_literal("active", Quoting::Bare), Err(QueryError::QBareWord)));
     }
 
     #[test]
@@ -354,16 +351,16 @@ mod tests {
         matches!(error, QueryError::QInvalidTime { .. })
     }
 
-    /// Clause 4.9's `quotedStr` is a JSON string, so free-form text carrying colons is compared as the text it is; bare, a word with a scheme is a `URI` and any other a term.
+    /// Clause 4.9's `quotedStr` is a JSON string, so free-form text carrying colons is compared as the text it is; bare, a word with a scheme is a `URI` and any other derives from no production.
     #[test]
-    fn free_form_text_is_a_string_quoted_and_a_term_or_a_uri_bare() {
+    fn free_form_text_is_a_string_quoted_and_a_uri_or_refused_bare() {
         for literal in ["12:00:00 in the morning", "ab:cd:ef", "urn:ngsi-ld:Vehicle:A4567", "1999-2000"] {
             let scalar = Scalar::from_literal(literal, Quoting::Quoted).expect("free-form text is never malformed");
             pretty_assertions::assert_eq!(scalar, Scalar::Str(literal.to_owned()), "{literal}");
         }
         for literal in ["12:00:00 in the morning", "1999-2000"] {
-            let scalar = Scalar::from_literal(literal, Quoting::Bare).expect("free-form text is never malformed");
-            pretty_assertions::assert_eq!(scalar, Scalar::Term(literal.to_owned()), "{literal}");
+            let refused = Scalar::from_literal(literal, Quoting::Bare);
+            assert!(matches!(refused, Err(QueryError::QBareWord)), "{literal}: {refused:?}");
         }
         // Bare, both derive the clause 4.9 `URI` production: each has a scheme.
         for literal in ["ab:cd:ef", "urn:ngsi-ld:Vehicle:A4567"] {

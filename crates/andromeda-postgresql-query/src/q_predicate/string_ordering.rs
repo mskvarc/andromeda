@@ -26,7 +26,7 @@ pub fn string_ordering_collation(scalar: &Scalar, op: CmpOp) -> Option<PostgresC
     match (scalar, op) {
         (Scalar::Str(_), CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq) => Some(PostgresCollation::new(IcuCollation::ROOT)),
         (Scalar::Str(_), CmpOp::Equal | CmpOp::Unequal)
-        | (Scalar::Term(_) | Scalar::Uri(_) | Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_), _) => None,
+        | (Scalar::Uri(_) | Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_), _) => None,
     }
 }
 

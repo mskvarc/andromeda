@@ -172,7 +172,7 @@ fn operand(scalar: &Scalar) -> SimpleExpr {
         // comparison clones it.
         Scalar::Number(number) => cast(SeaExpr::val(number.decimal().clone()), PostgresType::Numeric),
         Scalar::Bool(value) => cast(SeaExpr::val(*value), PostgresType::Boolean),
-        Scalar::Str(value) | Scalar::Term(value) | Scalar::Uri(value) => cast(SeaExpr::val(value.as_str()), PostgresType::Text),
+        Scalar::Str(value) | Scalar::Uri(value) => cast(SeaExpr::val(value.as_str()), PostgresType::Text),
         Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => cast(SeaExpr::val(scalar.literal_text()), PostgresType::Text),
     }
 }

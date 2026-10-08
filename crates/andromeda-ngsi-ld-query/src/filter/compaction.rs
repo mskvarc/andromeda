@@ -23,6 +23,7 @@ use crate::{
     term_compactor::TermCompactor,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use iri_rs::Iri;
 use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 
 /// Recursively compact every attribute term of a `q` expression.
@@ -127,10 +128,19 @@ async fn revert_scalar(scalar: Scalar, compactor: &impl TermCompactor) -> Scalar
             Err(_not_a_name) => Scalar::Str(text),
         },
         Scalar::Uri(text) => match text.parse::<AttributeName>() {
-            Ok(coerced) => Scalar::bare_word(compactor.compact_term(&coerced).await.as_str().to_owned()),
+            Ok(coerced) => {
+                let compact = compactor.compact_term(&coerced).await.as_str().to_owned();
+                // A term the compaction leaves is no `URI`, and clause 4.9
+                // writes such a value only as a `quotedStr`.
+                if Iri::new(compact.as_str()).is_ok() {
+                    Scalar::Uri(compact)
+                } else {
+                    Scalar::Str(compact)
+                }
+            }
             Err(_not_a_name) => Scalar::Uri(text),
         },
-        other @ (Scalar::Term(_) | Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => other,
+        other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => other,
     }
 }
 
@@ -419,12 +429,11 @@ mod tests {
         );
     }
 
-    /// Clause 4.9 EXAMPLE 12: a bare word `expandValues` expanded reads back
-    /// bare, as the client wrote it, so a stored filter is answered in the
-    /// form it was written in.
+    /// A quoted word `expandValues` expanded reads back quoted, as the client
+    /// wrote it, so a stored filter is answered in the form it was written in.
     #[tokio::test]
-    async fn an_expanded_bare_word_reverts_to_the_bare_word() {
-        let written = "gender==Male";
+    async fn an_expanded_quoted_word_reverts_to_the_quoted_word() {
+        let written = "gender==\"Male\"";
         let parsed = parser::parse(written).expect("parses");
         let expanded = expand_q_expr(parsed, &JsonKeyAttributes::default(), &PrefixExpander).await.expect("expands");
         let opted_in: HashSet<AttributeName> = HashSet::from([format!("{TERM_PREFIX}gender").parse().expect("a valid name")]);

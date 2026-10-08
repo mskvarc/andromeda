@@ -250,8 +250,6 @@ fn write_scalar(buf: &mut String, scalar: &Scalar) {
         // as query syntax; quoted, it reads back as the same text and compares
         // the same.
         Scalar::Uri(uri) if is_bare_uri(uri) => buf.push_str(uri),
-        // A term is written bare, as clause 4.9 EXAMPLE 12 writes it.
-        Scalar::Term(term) => buf.push_str(term),
         Scalar::Uri(uri) => write_quoted(buf, uri),
         Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) => buf.push_str(&scalar.literal_text()),
     }
@@ -289,14 +287,13 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_uri_or_term_operand_reads_back_bare_and_a_quoted_one_quoted() {
+    fn a_bare_uri_operand_reads_back_bare_and_a_quoted_one_quoted() {
         for written in [
             "link==http://example.org/a",
             "ref!=https://sub.example.org/dir.v2/target.json",
             "ref==urn:example:release:1.5",
             "ref==urn:a,urn:b.c",
             "ref==\"http://example.org/a\"",
-            "gender==Male",
         ] {
             pretty_assertions::assert_eq!(serialize(&parse(written).unwrap()), written);
         }

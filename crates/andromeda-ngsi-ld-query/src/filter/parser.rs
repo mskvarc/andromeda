@@ -454,7 +454,7 @@ mod tests {
                     Scalar::DateTime(dt) => {
                         pretty_assertions::assert_eq!(dt.to_rfc3339_opts(SecondsFormat::Secs, true), "2017-12-24T12:00:00Z");
                     }
-                    other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Term(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_)) => {
+                    other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_)) => {
                         panic!("expected DateTime scalar, got {other:?}")
                     }
                 }
@@ -539,7 +539,7 @@ mod tests {
                 Scalar::Number(n) => {
                     pretty_assertions::assert_eq!(n, JsonNumber::from(-5));
                 }
-                other @ (Scalar::Bool(_) | Scalar::Str(_) | Scalar::Term(_) | Scalar::Uri(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => {
+                other @ (Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => {
                     panic!("expected Number, got {other:?}")
                 }
             },
