@@ -127,15 +127,11 @@ impl EntityQueryService {
         };
         let q_expr = expand_q_expr(q_expr, &json_keys, &expander).await?;
 
-        let q_expr = match params.expand_values {
-            Some(ref raw) => {
-                let opted_in: HashSet<AttributeName> = expand_attribute_names(raw, &expander).await?.into_iter().collect();
-                apply_expand_values(q_expr, &opted_in, &expander).await?
-            }
-            None => q_expr,
+        let opted_in: HashSet<AttributeName> = match params.expand_values {
+            Some(ref raw) => expand_attribute_names(raw, &expander).await?.into_iter().collect(),
+            None => HashSet::new(),
         };
-
-        Ok(Some(q_expr))
+        Ok(Some(apply_expand_values(q_expr, &opted_in, &expander).await?))
     }
 
     /// Compile the `orderBy` terms against the active context (clause 4.23).

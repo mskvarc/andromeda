@@ -34,6 +34,10 @@ pub struct DeferredSplitFilters {
     /// literal `value` key, and every entity the client asked for would be
     /// dropped after the merge.
     pub json_keys: Option<Vec<AttributeName>>,
+    /// The request's `expandValues` list, which travels with the deferred `q`
+    /// because it decides which operands are terms to expand, and so where a
+    /// bare word may stand (clause 4.9 EXAMPLE 12).
+    pub expand_values: Option<Vec<AttributeName>>,
 }
 
 impl EntityQueryParameters {
@@ -45,14 +49,16 @@ impl EntityQueryParameters {
     /// context sources, so no single reader can decide whether the entity
     /// matches: `q`, the geoquery and `scopeQ` are held back and evaluated once
     /// over the merged result. `jsonKeys` leaves with `q`, the filter whose
-    /// term expansion it governs (clause 4.9 EXAMPLE 11); with `q` deferred it
-    /// has nothing left to say to the local query.
+    /// term expansion it governs (clause 4.9 EXAMPLE 11), and so does
+    /// `expandValues`, which governs its operands; with `q` deferred neither
+    /// has anything left to say to the local query.
     pub const fn defer_split_filters(&mut self) -> DeferredSplitFilters {
         DeferredSplitFilters {
             q: self.q.take(),
             geo: self.geo.0.take(),
             scope_q: self.scope_q.take(),
             json_keys: self.json_keys.take(),
+            expand_values: self.expand_values.take(),
         }
     }
 }

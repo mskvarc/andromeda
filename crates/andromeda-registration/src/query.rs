@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
     filter::{
-        expansion::{expand_csf_expr, expand_q_expr},
+        expansion::{apply_expand_values, expand_csf_expr, expand_q_expr},
         json_key_attributes::JsonKeyAttributes,
         path::expanded_attribute_name,
         referenced_attributes::referenced_attributes,
@@ -33,6 +33,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
 use iri_rs::IriBuf;
+use std::collections::HashSet;
 
 /// The registrations a discovery query answers with, and the pagination it
 /// reports around them (clause 5.10.2).
@@ -139,6 +140,8 @@ impl RegistrationService {
         if let Some(expression) = params.q.clone() {
             // clone: expansion owns and rewrites the request expression without mutating cached parameters.
             let expanded_filter = expand_q_expr(expression, &JsonKeyAttributes::default(), &expander).await?;
+            // Discovery takes no `expandValues`, so no attribute admits a bare word.
+            let expanded_filter = apply_expand_values(expanded_filter, &HashSet::<AttributeName>::new(), &expander).await?;
             for name in referenced_attributes(&expanded_filter) {
                 let iri = IriBuf::new(name.as_str().to_owned())
                     .map_err(|source| RegistrationError::Validation(RegistrationValidationReason::QNonIriAttribute { source }))?;

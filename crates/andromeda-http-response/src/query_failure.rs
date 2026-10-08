@@ -35,6 +35,7 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::QInvalidDateTime { .. }
         | QueryError::QInvalidDate { .. }
         | QueryError::QInvalidTime { .. }
+        | QueryError::QBareWord
         | QueryError::PatternRegex(_)
         | QueryError::PatternRepeatedQuantifier
         | QueryError::PatternNonPosixConstruct { .. }

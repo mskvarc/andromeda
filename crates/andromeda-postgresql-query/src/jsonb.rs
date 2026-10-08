@@ -67,7 +67,7 @@ pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedCompar
             stored: cast_compound(stored_text, PostgresType::Boolean),
             operand: cast(SeaExpr::val(scalar.literal_text()), PostgresType::Boolean),
         },
-        Scalar::Str(_) | Scalar::Uri(_) => LiftedComparison {
+        Scalar::Str(_) | Scalar::Term(_) | Scalar::Uri(_) => LiftedComparison {
             stored: stored_text,
             operand: SeaExpr::val(scalar.literal_text()),
         },

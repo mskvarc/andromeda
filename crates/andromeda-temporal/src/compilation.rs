@@ -157,15 +157,12 @@ async fn compile_q_filter(params: &TemporalQueryParameters, expander: &impl Term
     let expr = expand_q_expr(expr, &json_keys, expander).await?;
 
     // `expandValues`: expand string right-hand-side values for the attributes
-    // that opted in.
-    let expr = match params.expand_values.as_deref() {
-        Some(attributes) => {
-            let opted_in: HashSet<AttributeName> = expand_attribute_names(attributes, expander).await?.into_iter().collect();
-            apply_expand_values(expr, &opted_in, expander).await?
-        }
-        None => expr,
+    // that opted in, and refuse a bare word of any other.
+    let opted_in: HashSet<AttributeName> = match params.expand_values.as_deref() {
+        Some(attributes) => expand_attribute_names(attributes, expander).await?.into_iter().collect(),
+        None => HashSet::new(),
     };
-    Ok(Some(expr))
+    Ok(Some(apply_expand_values(expr, &opted_in, expander).await?))
 }
 
 /// Resolve `lastN` against the broker's page sizes (clause 6.3.10).

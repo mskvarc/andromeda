@@ -68,9 +68,6 @@ impl FilterOptIns {
     /// does not expand.
     pub(crate) async fn expand_q(&self, q: Expr, expander: &impl TermExpander) -> Result<Expr, SubscriptionError> {
         let filter = expand_q_expr(q, &self.json_keys, expander).await?;
-        if self.expand_values.is_empty() {
-            return Ok(filter);
-        }
         Ok(apply_expand_values(filter, &self.expand_values, expander).await?)
     }
 }

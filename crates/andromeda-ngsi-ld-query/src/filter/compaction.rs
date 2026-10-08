@@ -127,10 +127,10 @@ async fn revert_scalar(scalar: Scalar, compactor: &impl TermCompactor) -> Scalar
             Err(_not_a_name) => Scalar::Str(text),
         },
         Scalar::Uri(text) => match text.parse::<AttributeName>() {
-            Ok(coerced) => Scalar::Uri(compactor.compact_term(&coerced).await.as_str().to_owned()),
+            Ok(coerced) => Scalar::bare_word(compactor.compact_term(&coerced).await.as_str().to_owned()),
             Err(_not_a_name) => Scalar::Uri(text),
         },
-        other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => other,
+        other @ (Scalar::Term(_) | Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => other,
     }
 }
 
@@ -258,8 +258,8 @@ mod tests {
     use crate::{
         error::QueryError,
         filter::{
-            compaction::{compact_csf_expr, compact_q_expr},
-            expansion::{expand_csf_expr, expand_q_expr},
+            compaction::{compact_csf_expr, compact_q_expr, revert_expand_values},
+            expansion::{apply_expand_values, expand_csf_expr, expand_q_expr},
             json_key_attributes::JsonKeyAttributes,
             parser,
             serialize::serialize,
@@ -269,7 +269,10 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use iri_rs::IriBuf;
-    use std::future::{Future, ready};
+    use std::{
+        collections::HashSet,
+        future::{Future, ready},
+    };
 
     const TERM_PREFIX: &str = "https://example.com/";
     const TYPE_PREFIX: &str = "https://example.com/types/";
@@ -414,5 +417,21 @@ mod tests {
             parsed,
             "an Entity filter compacts the same member as a term"
         );
+    }
+
+    /// Clause 4.9 EXAMPLE 12: a bare word `expandValues` expanded reads back
+    /// bare, as the client wrote it, so a stored filter is answered in the
+    /// form it was written in.
+    #[tokio::test]
+    async fn an_expanded_bare_word_reverts_to_the_bare_word() {
+        let written = "gender==Male";
+        let parsed = parser::parse(written).expect("parses");
+        let expanded = expand_q_expr(parsed, &JsonKeyAttributes::default(), &PrefixExpander).await.expect("expands");
+        let opted_in: HashSet<AttributeName> = HashSet::from([format!("{TERM_PREFIX}gender").parse().expect("a valid name")]);
+        let coerced = apply_expand_values(expanded, &opted_in, &PrefixExpander).await.expect("expands");
+
+        let reverted = compact_q_expr(revert_expand_values(coerced, &opted_in, &PrefixCompactor).await, &PrefixCompactor).await;
+
+        pretty_assertions::assert_eq!(serialize(&reverted), written);
     }
 }

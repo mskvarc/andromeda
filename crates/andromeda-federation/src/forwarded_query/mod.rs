@@ -497,7 +497,7 @@ mod tests {
     async fn split_entities_drop_the_client_filters_but_keep_the_block_attributes() {
         let block = registration(&json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]));
         let query = entity_query(
-            "type=Vehicle&q=speed%3E50&georel=near%3BmaxDistance%3D%3D1000&geometry=Point&coordinates=%5B8.0%2C44.0%5D&scopeQ=%2FMadrid&attrs=fuel&csf=mode%3D%3Dinclusive&datasetId=%40none",
+            "type=Vehicle&q=speed%3E50&georel=near%3BmaxDistance%3D%3D1000&geometry=Point&coordinates=%5B8.0%2C44.0%5D&scopeQ=%2FMadrid&attrs=fuel&csf=mode%3D%3D%22inclusive%22&datasetId=%40none",
         );
         let forwarded = narrow(ClientQuery::EntityQuery(&query), &block, SplitEntities::Split).await;
         pretty_assertions::assert_eq!(forwarded.len(), 1);
@@ -519,7 +519,7 @@ mod tests {
     async fn complete_entities_forward_the_value_geo_scope_and_source_filters() {
         let block = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let query = entity_query(
-            "type=Vehicle&q=speed%3E50&georel=near%3BmaxDistance%3D%3D1000&geometry=Point&coordinates=%5B8.0%2C44.0%5D&geoproperty=location&scopeQ=%2FMadrid&attrs=speed&csf=mode%3D%3Dinclusive&lang=en&options=sysAttrs",
+            "type=Vehicle&q=speed%3E50&georel=near%3BmaxDistance%3D%3D1000&geometry=Point&coordinates=%5B8.0%2C44.0%5D&geoproperty=location&scopeQ=%2FMadrid&attrs=speed&csf=mode%3D%3D%22inclusive%22&lang=en&options=sysAttrs",
         );
         let forwarded = narrow(ClientQuery::EntityQuery(&query), &block, SplitEntities::Complete).await;
         pretty_assertions::assert_eq!(forwarded.len(), 1);

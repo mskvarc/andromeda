@@ -48,7 +48,7 @@ pub enum StringComparability {
 #[must_use]
 pub const fn string_comparability(scalar: &Scalar) -> StringComparability {
     match scalar {
-        Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::DateTime(_) => StringComparability::Comparable,
+        Scalar::Str(_) | Scalar::Term(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::DateTime(_) => StringComparability::Comparable,
         Scalar::Number(_) | Scalar::Bool(_) => StringComparability::Incomparable,
     }
 }
@@ -117,10 +117,10 @@ fn string_comparison(text: SimpleExpr, op: CmpOp, scalar: &Scalar) -> SimpleExpr
     let lifted = lift_comparison(scalar, text);
     let stored = match (scalar, string_ordering_collation(scalar, op)) {
         (Scalar::DateTime(_), _) => lifted.stored,
-        (Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::Number(_) | Scalar::Bool(_), Some(collation)) => {
+        (Scalar::Str(_) | Scalar::Term(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::Number(_) | Scalar::Bool(_), Some(collation)) => {
             collate(lifted.stored, &collation)
         }
-        (Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::Number(_) | Scalar::Bool(_), None) => {
+        (Scalar::Str(_) | Scalar::Term(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::Number(_) | Scalar::Bool(_), None) => {
             collate(lifted.stored, &PostgresCollation::new(BYTE_ORDER))
         }
     };

@@ -13,10 +13,11 @@ use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     filter::{
         eval::evaluate,
-        expansion::{expand_attribute_names, expand_q_expr},
+        expansion::{apply_expand_values, expand_attribute_names, expand_q_expr},
         json_key_attributes::JsonKeyAttributes,
     },
     geo::compile::compile_geo_query,
@@ -24,6 +25,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_request::deferred_split_filters::DeferredSplitFilters;
 use axum::http::Uri as HttpUri;
 use chrono::Utc;
+use std::collections::HashSet;
 
 /// Keep the merged entities the deferred filters match, with the warnings and
 /// contributions of the merge; a query that deferred nothing keeps every
@@ -73,7 +75,16 @@ pub(crate) async fn retain_matching(
                     .collect(),
                 None => JsonKeyAttributes::default(),
             };
-            Some(expand_q_expr(q_expr, &json_keys, &term_expander).await.with_entity_instance(instance)?)
+            let opted_in: HashSet<AttributeName> = match deferred.expand_values {
+                Some(ref declared) => expand_attribute_names(declared, &term_expander)
+                    .await
+                    .with_entity_instance(instance)?
+                    .into_iter()
+                    .collect(),
+                None => HashSet::new(),
+            };
+            let expanded = expand_q_expr(q_expr, &json_keys, &term_expander).await.with_entity_instance(instance)?;
+            Some(apply_expand_values(expanded, &opted_in, &term_expander).await.with_entity_instance(instance)?)
         }
         None => None,
     };

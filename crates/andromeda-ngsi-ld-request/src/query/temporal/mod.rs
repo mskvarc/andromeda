@@ -603,9 +603,7 @@ mod tests {
     /// grammar the entity query uses, and is absent by default.
     #[test]
     fn the_context_source_filter_parses_as_a_clause_4_9_expression() {
-        let p = params_from_query("type=Vehicle&csf=mode%3D%3Dinclusive");
-        // The canonical clause 4.9 text spells a bare token as the string
-        // literal it is.
+        let p = params_from_query("type=Vehicle&csf=mode%3D%3D%22inclusive%22");
         pretty_assertions::assert_eq!(p.csf.as_ref().map(ToString::to_string).as_deref(), Some("mode==\"inclusive\""));
         assert!(params_from_query("type=Vehicle").csf.is_none());
         assert!(serde_urlencoded::from_str::<TemporalQueryParameters>("csf=%20").is_err());

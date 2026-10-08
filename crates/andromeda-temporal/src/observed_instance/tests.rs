@@ -244,7 +244,7 @@ fn queried_as(literal: &str, quoting: Quoting) -> ReadAs {
         Ok(Scalar::DateTime(_)) => ReadAs::DateTime,
         Ok(Scalar::Date(_)) => ReadAs::Date,
         Ok(Scalar::Time(_)) => ReadAs::Time,
-        Ok(Scalar::Str(_) | Scalar::Uri(_)) => ReadAs::PlainString,
+        Ok(Scalar::Str(_) | Scalar::Term(_) | Scalar::Uri(_)) => ReadAs::PlainString,
         Ok(other @ (Scalar::Number(_) | Scalar::Bool(_))) => panic!("a string literal is not {other:?}"),
         Err(_) => ReadAs::Refused,
     }
