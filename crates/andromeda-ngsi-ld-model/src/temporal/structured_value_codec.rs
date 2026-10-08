@@ -10,7 +10,7 @@
 //! | family | stored JSON |
 //! |---|---|
 //! | Property, one structured value | the expanded value: a node object, `{"@list": [..]}`, or `{"@value": .., "@type": "@json"}` |
-//! | Property, several values | an array, a scalar value object as its bare scalar, any other value as its expanded form |
+//! | Property, several values | an array, a plain scalar value object as its bare scalar, any other value (a typed or tagged scalar included) as its expanded form |
 //! | Relationship, several targets | `["urn:a", "urn:b"]` |
 //! | `VocabProperty`, several terms | `["iri1", "iri2"]` |
 //! | `LanguageProperty` | the expanded language map, `[{"@value": .., "@language": ..}]` |
@@ -100,20 +100,25 @@ impl Serialize for StructuredValue {
     }
 }
 
-/// One element of an array-valued Property as the array stores it: a scalar
-/// value object as its bare scalar, so an array of scalars is the plain JSON
-/// array it was written as, and any other value in its expanded form.
+/// One element of an array-valued Property as the array stores it: a plain
+/// scalar value object as its bare scalar, so an array of scalars is the plain
+/// JSON array it was written as, and any other value, a typed or tagged scalar
+/// included, in its expanded form. Clause 4.5.7 records each instance as the
+/// Property it was, so a datatype or a language written on an element is part
+/// of the value and survives the history.
 struct ArrayElement<'a>(&'a ExpandedValue<Fragment>);
 
 impl Serialize for ArrayElement<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self.0 {
-            ExpandedValue::Literal(literal) => match literal.value() {
-                LiteralValue::Number(number) => number.serialize(serializer),
-                LiteralValue::String(text) => serializer.serialize_str(text),
-                LiteralValue::Boolean(flag) => serializer.serialize_bool(*flag),
-            },
-            expanded @ (ExpandedValue::Json(_) | ExpandedValue::Node(_) | ExpandedValue::List(_)) => expanded.serialize(serializer),
+            ExpandedValue::Literal(literal) if literal.datatype().is_none() && literal.language().is_none() && literal.direction().is_none() => {
+                match literal.value() {
+                    LiteralValue::Number(number) => number.serialize(serializer),
+                    LiteralValue::String(text) => serializer.serialize_str(text),
+                    LiteralValue::Boolean(flag) => serializer.serialize_bool(*flag),
+                }
+            }
+            expanded @ (ExpandedValue::Literal(_) | ExpandedValue::Json(_) | ExpandedValue::Node(_) | ExpandedValue::List(_)) => expanded.serialize(serializer),
         }
     }
 }

@@ -50,6 +50,11 @@ fn every_stored_shape_reads_and_writes_back_unchanged() {
         (AttributeType::Property, json!([3, {"@value": {"k": [1, 2]}, "@type": "@json"}])),
         (
             AttributeType::Property,
+            json!(["a", {"@value": "2024-01-01T00:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]),
+        ),
+        (AttributeType::Property, json!(["a", {"@value": "rot", "@language": "de"}])),
+        (
+            AttributeType::Property,
             json!({"https://uri.etsi.org/ngsi-ld/default-context/unit": [{"@value": "km"}]}),
         ),
         (AttributeType::Property, json!({"@list": [{"@value": 1}, {"@value": 2}]})),
