@@ -205,6 +205,63 @@ impl SubscriptionRequest {
         .into_iter()
         .find_map(|(member, written_null)| written_null.then_some(member))
     }
+
+    /// Whether the body carries no member to apply beyond its `id` and
+    /// `type`, as the empty Fragment `{}` does: clause 5.5.8 acts only for
+    /// each member of the Fragment, so such an update modifies nothing.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        let SubscriptionRequest {
+            id: _,
+            type_: _,
+            subscription_name,
+            description,
+            entities,
+            watched_attributes,
+            notification_trigger,
+            time_interval,
+            q,
+            geo_q,
+            scope_q,
+            csf,
+            dataset_id,
+            temporal_q,
+            expand_values,
+            json_keys,
+            notification,
+            throttling,
+            expires_at,
+            is_active,
+            lang,
+            jsonld_context,
+            local_only,
+            split_entities,
+            ngsild_conformance,
+        } = self;
+        subscription_name.is_absent()
+            && description.is_absent()
+            && entities.is_absent()
+            && watched_attributes.is_absent()
+            && notification_trigger.is_absent()
+            && time_interval.is_absent()
+            && q.is_absent()
+            && geo_q.is_absent()
+            && scope_q.is_absent()
+            && csf.is_absent()
+            && dataset_id.is_absent()
+            && temporal_q.is_absent()
+            && expand_values.is_absent()
+            && json_keys.is_absent()
+            && notification.is_none()
+            && throttling.is_absent()
+            && expires_at.is_absent()
+            && is_active.is_absent()
+            && lang.is_absent()
+            && jsonld_context.is_absent()
+            && local_only.is_absent()
+            && split_entities.is_absent()
+            && ngsild_conformance.is_absent()
+    }
 }
 
 #[cfg(test)]

@@ -42,6 +42,10 @@ impl RegistrationService {
         let mut fragment = body.into_update_fragment()?;
         fragment.additional_properties = properties;
         let existing = self.repo.get(id).await?.ok_or_else(|| RegistrationError::not_found(id))?;
+        // Nothing is modified, so `modifiedAt` stays and no change is announced (clause 4.8).
+        if fragment.is_empty() {
+            return Ok(());
+        }
         // clone: the change event carries the registration as it stood, and the merge consumes it
         let pre_update_snapshot = Box::new(existing.clone());
         let resolved = apply_fragment(existing, &fragment);
@@ -181,6 +185,35 @@ mod tests {
         let context = admitted(&service, ContextSpec::none()).await;
         let error = service
             .update(&registration_id(), body_of(&fragment), &context)
+            .await
+            .expect_err("the registration is unknown");
+
+        assert!(matches!(error, RegistrationError::NotFound { .. }), "{error:?}");
+    }
+
+    /// Clause 5.5.8 acts only for each member of the Fragment, so the empty
+    /// Fragment modifies nothing and the store is asked to write nothing.
+    #[tokio::test]
+    async fn the_empty_fragment_writes_nothing() {
+        let store = baseline_store();
+        let service = service(&store);
+        let context = admitted(&service, ContextSpec::none()).await;
+
+        service
+            .update(&registration_id(), body_of(&json!({})), &context)
+            .await
+            .expect("the empty fragment applies");
+
+        assert!(store.updated_information().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_empty_fragment_on_an_unknown_registration_is_not_found() {
+        let service = service(&Arc::new(FixedStore::new(Vec::new())));
+        let context = admitted(&service, ContextSpec::none()).await;
+
+        let error = service
+            .update(&registration_id(), body_of(&json!({})), &context)
             .await
             .expect_err("the registration is unknown");
 

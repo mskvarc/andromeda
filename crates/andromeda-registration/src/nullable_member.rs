@@ -40,6 +40,12 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for NullableMember<T> {
 }
 
 impl<T> NullableMember<T> {
+    /// Whether the body leaves the member out.
+    #[must_use]
+    pub const fn is_absent(&self) -> bool {
+        matches!(self, NullableMember::Absent)
+    }
+
     /// The replacement value the member carries, borrowed mutably; nothing for
     /// a member the body omits or removes.
     pub const fn as_set_mut(&mut self) -> Option<&mut T> {

@@ -100,3 +100,58 @@ pub struct CsrUpdateFragment {
     #[builder(default = Default::default())]
     pub additional_properties: IndexMap<AttributeName, JsonLiteral>,
 }
+
+impl CsrUpdateFragment {
+    /// Whether the fragment carries no member to apply, as the empty Fragment
+    /// `{}` does: clause 5.5.8 acts only for each member of the Fragment, so
+    /// such an update modifies nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        let CsrUpdateFragment {
+            registration_name,
+            description,
+            information,
+            dataset_id,
+            tenant,
+            observation_interval,
+            management_interval,
+            location,
+            observation_space,
+            operation_space,
+            expires_at,
+            endpoint,
+            accept,
+            mode,
+            operations,
+            scope,
+            refresh_rate,
+            management,
+            context_source_info,
+            jsonld_context,
+            context_source_alias,
+            additional_properties,
+        } = self;
+        registration_name.is_absent()
+            && description.is_absent()
+            && information.is_none()
+            && dataset_id.is_absent()
+            && tenant.is_absent()
+            && observation_interval.is_absent()
+            && management_interval.is_absent()
+            && location.is_absent()
+            && observation_space.is_absent()
+            && operation_space.is_absent()
+            && expires_at.is_absent()
+            && endpoint.is_none()
+            && accept.is_absent()
+            && mode.is_none()
+            && operations.is_absent()
+            && scope.is_absent()
+            && refresh_rate.is_absent()
+            && management.is_absent()
+            && context_source_info.is_absent()
+            && jsonld_context.is_absent()
+            && context_source_alias.is_absent()
+            && additional_properties.is_empty()
+    }
+}

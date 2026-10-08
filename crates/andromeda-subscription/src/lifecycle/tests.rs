@@ -384,6 +384,13 @@ fn subscription_with_chosen_context() -> Subscription {
 /// Update the stored subscription with `fragment` under `context`, answering
 /// the `jsonldContext` the update wrote back.
 async fn written_context_after_update(fragment: Value, context: &ContextSpec) -> Option<IriBuf> {
+    written_after_update(fragment, context).await.expect("the update wrote the subscription back")
+}
+
+/// Update the stored subscription with `fragment` under `context`, answering
+/// the `jsonldContext` of the write the store was asked for, or nothing when
+/// the update asked for no write.
+async fn written_after_update(fragment: Value, context: &ContextSpec) -> Option<Option<IriBuf>> {
     let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
     // clone: the admission consumes the spec, and the caller keeps its own
     let context = admit_user_context(&engine, SubmittedContext::from(context.clone()))
@@ -411,11 +418,20 @@ async fn written_context_after_update(fragment: Value, context: &ContextSpec) ->
         .update(&ContextTarget::Live, &uri("urn:ngsi-ld:Subscription:stored"), request, &context)
         .await;
     assert!(updated.is_ok(), "{updated:?}");
-    written
-        .lock()
-        .expect("the written context is never poisoned")
-        .clone() // clone: the lock guard is released before the answer is returned.
-        .expect("the update wrote the subscription back")
+    written.lock().expect("the written context is never poisoned").clone() // clone: the lock guard is released before the answer is returned.
+}
+
+/// Clause 5.5.8 acts only for each member of the Fragment, so the empty
+/// Fragment modifies nothing and the store is asked to write nothing.
+#[tokio::test]
+async fn the_empty_fragment_writes_nothing() {
+    assert_eq!(written_after_update(json!({}), &ContextSpec::none()).await, None);
+}
+
+/// A fragment holding only its `type` names no member to apply either.
+#[tokio::test]
+async fn a_fragment_holding_only_its_type_writes_nothing() {
+    assert_eq!(written_after_update(json!({ "type": "Subscription" }), &ContextSpec::none()).await, None);
 }
 
 /// Clauses 5.8.2.4 and 5.5.8: an update whose fragment names no

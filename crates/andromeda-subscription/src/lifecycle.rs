@@ -242,6 +242,10 @@ where
 
             let deleted = DeletedMembers::of(&request);
             let existing = self.get(target, id).await?;
+            // Nothing is modified, so `modifiedAt` stays and no change is announced (clause 4.8).
+            if request.is_empty() {
+                return Ok(());
+            }
             let existing_status = existing.lifecycle.status;
             let status = compute_updated_status(existing_status, &requested_status_change(&request));
             let merged = SubscriptionWriteValues::merged(request, existing, self.variant.dataset_id_policy())?;
