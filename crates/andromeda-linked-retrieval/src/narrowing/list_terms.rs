@@ -2,7 +2,11 @@
 //! narrow.
 
 use crate::keyword::Keyword;
-use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, matching::matching_term, term::ProjectionTerm};
+use andromeda_ngsi_ld_query::projection::{
+    attribute_iri_index::AttributeIriIndex,
+    matching::{matching_position, matching_term},
+    term::ProjectionTerm,
+};
 use iri_rs::IriBuf;
 
 /// The terms of a `pick`, `omit` or `attrs` list.
@@ -77,6 +81,21 @@ impl<'p> ListTerms<'p> {
                 (None, None) => None,
             },
             ListTerms::Attributes(_) => None,
+        }
+    }
+
+    /// Where the attribute keyed `key` stands in the list naming what is kept,
+    /// or `None` when the terms name no such order (an `omit` alone, or a key
+    /// the list does not name).
+    #[must_use]
+    pub fn pick_position(&self, key: &str, index: &AttributeIriIndex) -> Option<usize> {
+        match self {
+            ListTerms::Pick(pick) | ListTerms::PickAndOmit { pick, .. } => matching_position(key, pick, index),
+            ListTerms::Omit(_) => None,
+            ListTerms::Attributes(iris) => {
+                let expanded = index.expanded(key);
+                iris.iter().position(|iri| expanded.map_or(iri.as_str() == key, |expanded| iri == expanded))
+            }
         }
     }
 
@@ -198,6 +217,18 @@ mod tests {
             })
         );
         assert_eq!(terms.group("employer", &index()), None);
+    }
+
+    /// Only a list naming what is kept orders its attributes.
+    #[test]
+    fn the_pick_position_follows_the_list_naming_what_is_kept() {
+        let pick = [ProjectionTerm::Id, nested("owner", vec![leaf("name")]), leaf("employer")];
+        let omit = [leaf("owner")];
+        assert_eq!(ListTerms::Pick(&pick).pick_position("employer", &index()), Some(2));
+        assert_eq!(ListTerms::PickAndOmit { pick: &pick, omit: &omit }.pick_position("owner", &index()), Some(1));
+        assert_eq!(ListTerms::Pick(&pick).pick_position("email", &index()), None);
+        assert_eq!(ListTerms::Omit(&omit).pick_position("owner", &index()), None);
+        assert_eq!(ListTerms::Attributes(&[iri("email"), iri("owner")]).pick_position("owner", &index()), Some(1));
     }
 
     /// Table 6.5.3.1-1: `attrs` is the `pick` synonym that keeps the identity.

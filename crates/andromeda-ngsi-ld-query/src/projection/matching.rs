@@ -7,7 +7,13 @@ use crate::projection::{attribute_iri_index::AttributeIriIndex, term::Projection
 /// The term in `terms` naming the attribute keyed `key`, if any. A key the index does not cover can still be matched when the term's own IRI is spelled exactly as the key, as with an entity whose attributes are keyed by expanded IRI.
 #[must_use]
 pub fn matching_term<'t>(key: &str, terms: &'t [ProjectionTerm], index: &AttributeIriIndex) -> Option<&'t ProjectionTerm> {
-    terms.iter().find(|term| match index.expanded(key) {
+    matching_position(key, terms, index).and_then(|position| terms.get(position))
+}
+
+/// The position in `terms` of the term naming the attribute keyed `key`, matched as [`matching_term`] matches it.
+#[must_use]
+pub fn matching_position(key: &str, terms: &[ProjectionTerm], index: &AttributeIriIndex) -> Option<usize> {
+    terms.iter().position(|term| match index.expanded(key) {
         Some(expanded) => term.matches_attribute(key, expanded),
         None => matches!(term, ProjectionTerm::Attribute { iri, .. } if iri.as_str() == key),
     })
@@ -62,5 +68,16 @@ mod tests {
         let terms = [leaf("category")];
 
         assert!(matching_term("name", &terms, &index).is_none());
+    }
+
+    /// The position is that of the first term naming the key.
+    #[test]
+    fn a_matching_position_counts_from_the_start_of_the_list() {
+        let mut index = AttributeIriIndex::new();
+        index.insert(attribute_name("name"), iri("name"));
+        let terms = [ProjectionTerm::Id, leaf("category"), leaf("name")];
+
+        assert_eq!(matching_position("name", &terms, &index), Some(2));
+        assert_eq!(matching_position("size", &terms, &index), None);
     }
 }

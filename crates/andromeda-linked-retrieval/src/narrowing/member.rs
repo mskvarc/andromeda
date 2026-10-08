@@ -73,6 +73,13 @@ impl<'p> MemberRule<'p> {
         self.list
     }
 
+    /// Where the attribute keyed `key` stands in the list naming what is kept,
+    /// if the rule's list names one.
+    #[must_use]
+    pub fn pick_position(&self, key: &str) -> Option<usize> {
+        self.list.pick_position(key, self.index)
+    }
+
     /// The rule for whatever the returned attribute keyed `key` links to.
     #[must_use]
     pub fn through(&self, key: &str) -> MemberRule<'p> {

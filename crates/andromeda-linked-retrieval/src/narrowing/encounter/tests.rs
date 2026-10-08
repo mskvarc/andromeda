@@ -50,6 +50,24 @@ fn the_first_encounter_decides_the_list() {
     );
 }
 
+/// The pick list, not the stored member order, decides which Relationship
+/// reaching a shared target is its first encounter.
+#[test]
+fn the_pick_list_orders_the_encounters_of_one_entity() {
+    let (graph, index) = (building(), keys());
+    let pick = [term("manager", vec![leaf("email")]), term("owner", vec![leaf("name")])];
+    let email = [leaf("email")];
+    assert_eq!(
+        written(&graph, ListInForce::Addressed(ListTerms::Pick(&pick)), &index),
+        vec![("urn:ngsi-ld:T:P", ListInForce::Addressed(ListTerms::Pick(&email)))]
+    );
+    let bare_first = [leaf("manager"), term("owner", vec![leaf("name")])];
+    assert_eq!(
+        written(&graph, ListInForce::Addressed(ListTerms::Pick(&bare_first)), &index),
+        vec![("urn:ngsi-ld:T:P", ListInForce::Unrestricted), ("urn:ngsi-ld:T:K", ListInForce::Unrestricted)]
+    );
+}
+
 /// Clause 5.7.1.5: only the returned Attributes bring their targets.
 #[test]
 fn a_relationship_the_list_removes_reaches_nothing() {

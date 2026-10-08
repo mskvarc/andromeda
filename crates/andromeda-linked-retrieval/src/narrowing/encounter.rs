@@ -7,7 +7,10 @@
 //! writes each Linked Entity once, "unless a target URI has been previously
 //! encountered" (clause 4.5.23.3), so the first encounter decides its list. The
 //! walk is breadth-first, so the first encounter is the shallowest, which
-//! leaves the entity's own Relationships the most `joinLevel` budget.
+//! leaves the entity's own Relationships the most `joinLevel` budget. Within
+//! one entity the Relationships are taken in the order of the list naming what
+//! is kept: an entity's members have no order in JSON-LD, so that list is the
+//! only order the request defines.
 
 use crate::{edge::LinkedEdge, graph::LinkedGraph, narrowing::member::MemberRule, representation::LinkedRepresentation};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -44,8 +47,9 @@ pub struct FlatEncounters<'g> {
 impl<'g> FlatEncounters<'g> {
     /// Walk `graph` breadth-first from its roots, narrowed by `rule`.
     ///
-    /// Within one entity, edges are taken in member, instance and object
-    /// order, and no entity is reached deeper than the graph was traversed.
+    /// Within one entity, edges are taken in the order the list naming what is
+    /// kept names their Relationships, and otherwise in member, instance and
+    /// object order; no entity is reached deeper than the graph was traversed.
     #[must_use]
     pub fn walk<R: LinkedRepresentation>(graph: &'g LinkedGraph<R::Node>, rule: MemberRule<'g>) -> FlatEncounters<'g> {
         let mut leaving: HashMap<&Identifier, Vec<&LinkedEdge>> = HashMap::new();
@@ -60,7 +64,13 @@ impl<'g> FlatEncounters<'g> {
             if depth >= graph.depth.get() {
                 continue;
             }
-            for edge in leaving.get(entity).into_iter().flatten() {
+            let mut edges: Vec<&LinkedEdge> = leaving.get(entity).into_iter().flatten().copied().collect();
+            edges.sort_by_key(|edge| {
+                let position = rule.pick_position(edge.attribute.as_str());
+                (position.is_none(), position)
+            });
+            let edges = edges;
+            for edge in edges {
                 let attribute = edge.attribute.as_str();
                 if rule.member(attribute).is_skip() || roots.contains(&edge.target) || encounters.contains_key(&edge.target) {
                     continue;

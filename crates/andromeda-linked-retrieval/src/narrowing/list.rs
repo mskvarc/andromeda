@@ -73,6 +73,16 @@ impl<'p> ListInForce<'p> {
         }
     }
 
+    /// Where the attribute keyed `key` stands in the list naming what is kept,
+    /// if this list names one.
+    #[must_use]
+    pub fn pick_position(&self, key: &str, index: &AttributeIriIndex) -> Option<usize> {
+        match self {
+            ListInForce::Unrestricted => None,
+            ListInForce::Payload(terms) | ListInForce::Addressed(terms) => terms.pick_position(key, index),
+        }
+    }
+
     /// The list in force for whatever the returned attribute keyed `key` links
     /// to.
     #[must_use]
