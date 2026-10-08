@@ -38,7 +38,7 @@ pub enum JsonLiteralError {
         path: JsonPointer,
     },
     /// A number is not one the broker keeps exactly.
-    #[error("invalid JSON number at {path}: {source}")]
+    #[error("the JSON number at {path} is refused: {source}")]
     Number {
         /// Where the number stands.
         path: JsonPointer,

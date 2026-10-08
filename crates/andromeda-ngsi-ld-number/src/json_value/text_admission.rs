@@ -43,7 +43,7 @@ use thiserror::Error;
 
 /// A rejected JSON number and its JSON Pointer location.
 #[derive(Debug, Error)]
-#[error("invalid JSON number at {path}: {source}")]
+#[error("the JSON number at {path} is refused: {source}")]
 pub struct JsonNumberPathError {
     /// JSON Pointer locating the rejected member.
     pub path: JsonPointer,
@@ -329,20 +329,30 @@ mod tests {
     /// A number outside the supported range is refused at its RFC 6901
     /// location, with the member names escaped.
     #[test]
-    fn an_out_of_range_number_is_refused_at_its_json_pointer() {
-        for (text, location) in [
-            (r#"{"property":{"value":[0,{"too/large":1e-16384}]}}"#, "/property/value/1/too~1large"),
-            ("1e-16384", "/"),
-            (r#"{"a~b":{"c/d~":[1,2,1e-16384]}}"#, "/a~0b/c~1d~0/2"),
+    fn an_out_of_range_number_is_refused_at_its_json_pointer_naming_the_broken_limit() {
+        for (text, location, limit) in [
+            (
+                r#"{"property":{"value":[0,{"too/large":1e-16384}]}}"#,
+                "/property/value/1/too~1large",
+                "16383 digits after",
+            ),
+            ("1e-16384", "/", "16383 digits after"),
+            (r#"{"a~b":{"c/d~":[1,2,1e-16384]}}"#, "/a~0b/c~1d~0/2", "16383 digits after"),
             (
                 r#"{"location":{"type":"GeoProperty","value":{"type":"Point","coordinates":[1e200000,2]}}}"#,
                 "/location/value/coordinates/0",
+                "131072 digits before",
             ),
-            (r#"[{"id":"x"},{"n":[[1e140000]]}]"#, "/1/n/0/0"),
+            (r#"[{"id":"x"},{"n":[[1e140000]]}]"#, "/1/n/0/0", "131072 digits before"),
         ] {
             let refused = text_refusal(text).unwrap_or_else(|| panic!("{text}: accepted"));
-            assert!(refused.starts_with(&format!("invalid JSON number at {location}: ")), "{text}: {refused}");
-            assert!(refused.contains("exceeds the supported range"), "{text}: {refused}");
+            pretty_assertions::assert_eq!(
+                refused,
+                format!(
+                    "the JSON number at {location} is refused: the number needs more than {limit} the decimal point; Andromeda stores numbers of at most 131072 digits before and 16383 digits after it"
+                ),
+                "{text}"
+            );
         }
     }
 

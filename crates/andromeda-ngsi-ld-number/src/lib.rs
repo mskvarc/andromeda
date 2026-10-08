@@ -8,7 +8,7 @@ use bigdecimal::{BigDecimal, ParseBigDecimalError, Zero, serde::json_num};
 use derive_more::Display;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError, ser::Error as SerializeError};
 use serde_json::Number;
-use std::{num::ParseIntError, str::FromStr};
+use std::str::FromStr;
 use thiserror::Error;
 
 pub mod float_spelling;
@@ -36,9 +36,18 @@ pub enum JsonNumberError {
         /// The decimal parsing error.
         source: ParseBigDecimalError,
     },
-    /// A non-zero value exceeds PostgreSQL's supported `NUMERIC` range.
-    #[error("JSON number exceeds the supported range of {MAX_INTEGRAL_DIGITS} integral digits and {MAX_FRACTIONAL_DIGITS} fractional digits")]
-    OutOfSupportedRange,
+    /// A non-zero value needs more digits before the decimal point than
+    /// PostgreSQL `NUMERIC` stores.
+    #[error(
+        "the number needs more than {MAX_INTEGRAL_DIGITS} digits before the decimal point; Andromeda stores numbers of at most {MAX_INTEGRAL_DIGITS} digits before and {MAX_FRACTIONAL_DIGITS} digits after it"
+    )]
+    TooManyIntegralDigits,
+    /// A non-zero value needs more digits after the decimal point than
+    /// PostgreSQL `NUMERIC` stores.
+    #[error(
+        "the number needs more than {MAX_FRACTIONAL_DIGITS} digits after the decimal point; Andromeda stores numbers of at most {MAX_INTEGRAL_DIGITS} digits before and {MAX_FRACTIONAL_DIGITS} digits after it"
+    )]
+    TooManyFractionalDigits,
     /// A floating-point value has no JSON number representation.
     #[error("a JSON number cannot carry the non-finite floating-point value {value}")]
     NotFinite {
@@ -61,8 +70,9 @@ impl JsonNumber {
     ///
     /// # Errors
     ///
-    /// Returns [`JsonNumberError::OutOfSupportedRange`] when the normalized
-    /// value cannot be stored in PostgreSQL `NUMERIC`.
+    /// Returns [`JsonNumberError::TooManyIntegralDigits`] or
+    /// [`JsonNumberError::TooManyFractionalDigits`] when the normalized value
+    /// cannot be stored in PostgreSQL `NUMERIC`.
     pub fn from_decimal(value: &BigDecimal) -> Result<JsonNumber, JsonNumberError> {
         let value = value.normalized();
         validate_decimal_range(&value)?;
@@ -157,13 +167,10 @@ impl_integer_conversion!(i8, i16, i32, i64, i128, u8, u16, u32, u64, u128);
 /// compact spelling. A zero bypasses exponent parsing because all spellings of
 /// zero normalize to the same supported value, including extreme exponents.
 fn checked_decimal_from_json(value: &str) -> Result<JsonNumber, JsonNumberError> {
-    let shape = DecimalShape::parse(value)?;
-    if shape.is_zero {
+    let Some(shape) = DecimalShape::parse(value) else {
         return Ok(JsonNumber(BigDecimal::zero()));
-    }
-    if shape.integral_digits > MAX_INTEGRAL_DIGITS || shape.fractional_digits > MAX_FRACTIONAL_DIGITS {
-        return Err(JsonNumberError::OutOfSupportedRange);
-    }
+    };
+    shape.check()?;
     let decimal = BigDecimal::from_str(value).map_err(|source| JsonNumberError::InvalidDecimal { source })?;
     Ok(JsonNumber(decimal.normalized()))
 }
@@ -174,67 +181,61 @@ fn validate_decimal_range(value: &BigDecimal) -> Result<(), JsonNumberError> {
     if value.is_zero() {
         return Ok(());
     }
-    let digits = i64::try_from(value.digits()).map_err(|_| JsonNumberError::OutOfSupportedRange)?;
+    let digits = i64::try_from(value.digits()).unwrap_or(i64::MAX);
     let scale = value.fractional_digit_count();
-    let integral_digits = digits.checked_sub(scale).unwrap_or(i64::MAX).max(0);
-    let fractional_digits = scale.max(0);
-    if integral_digits > MAX_INTEGRAL_DIGITS || fractional_digits > MAX_FRACTIONAL_DIGITS {
-        Err(JsonNumberError::OutOfSupportedRange)
-    } else {
-        Ok(())
+    DecimalShape {
+        integral_digits: digits.saturating_sub(scale).max(0),
+        fractional_digits: scale.max(0),
     }
+    .check()
 }
 
-/// Significant digit extents after applying a compact JSON exponent.
+/// Significant digit extents of a non-zero number after applying a compact
+/// JSON exponent. An extent too large for `i64` saturates, which every limit
+/// refuses.
 struct DecimalShape {
-    is_zero: bool,
     integral_digits: i64,
     fractional_digits: i64,
 }
 
 impl DecimalShape {
+    /// Refuse the shape by the first limit it breaks.
+    const fn check(&self) -> Result<(), JsonNumberError> {
+        if self.integral_digits > MAX_INTEGRAL_DIGITS {
+            Err(JsonNumberError::TooManyIntegralDigits)
+        } else if self.fractional_digits > MAX_FRACTIONAL_DIGITS {
+            Err(JsonNumberError::TooManyFractionalDigits)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Inspect syntax already accepted by `serde_json::Number` without
-    /// materializing the exponent as zero padding.
-    fn parse(value: &str) -> Result<DecimalShape, JsonNumberError> {
+    /// materializing the exponent as zero padding. `None` is a zero.
+    fn parse(value: &str) -> Option<DecimalShape> {
         let unsigned = value.strip_prefix('-').unwrap_or(value);
         let (mantissa, exponent_text) = unsigned
             .split_once(['e', 'E'])
             .map_or((unsigned, None), |(mantissa, exponent)| (mantissa, Some(exponent)));
         let integral_width = mantissa.find('.').unwrap_or(mantissa.len());
         let digits = mantissa.bytes().filter(u8::is_ascii_digit).collect::<Vec<_>>();
-        let Some(first_nonzero) = digits.iter().position(|digit| *digit != b'0') else {
-            return Ok(DecimalShape {
-                is_zero: true,
-                integral_digits: 0,
-                fractional_digits: 0,
-            });
-        };
-        let exponent = exponent_text
-            .map(parse_exponent)
-            .transpose()
-            .map_err(|_source| JsonNumberError::OutOfSupportedRange)?
-            .unwrap_or(0);
+        let first_nonzero = digits.iter().position(|digit| *digit != b'0')?;
+        let exponent = exponent_text.map_or(0, saturating_exponent);
         let last_nonzero = digits.iter().rposition(|digit| *digit != b'0').unwrap_or(first_nonzero);
-        let point = i64::try_from(integral_width)
-            .ok()
-            .and_then(|width| width.checked_add(exponent))
-            .ok_or(JsonNumberError::OutOfSupportedRange)?;
-        let first_nonzero = i64::try_from(first_nonzero).map_err(|_| JsonNumberError::OutOfSupportedRange)?;
-        let after_last_nonzero = i64::try_from(last_nonzero)
-            .ok()
-            .and_then(|index| index.checked_add(1))
-            .ok_or(JsonNumberError::OutOfSupportedRange)?;
-        Ok(DecimalShape {
-            is_zero: false,
-            integral_digits: point.checked_sub(first_nonzero).unwrap_or(i64::MAX).max(0),
-            fractional_digits: after_last_nonzero.checked_sub(point).unwrap_or(i64::MAX).max(0),
+        let point = i64::try_from(integral_width).unwrap_or(i64::MAX).saturating_add(exponent);
+        let first_nonzero = i64::try_from(first_nonzero).unwrap_or(i64::MAX);
+        let after_last_nonzero = i64::try_from(last_nonzero).unwrap_or(i64::MAX).saturating_add(1);
+        Some(DecimalShape {
+            integral_digits: point.saturating_sub(first_nonzero).max(0),
+            fractional_digits: after_last_nonzero.saturating_sub(point).max(0),
         })
     }
 }
 
-/// Parse a JSON exponent after stripping its optional sign.
-fn parse_exponent(value: &str) -> Result<i64, ParseIntError> {
-    value.parse::<i64>()
+/// Parse a grammar-checked JSON exponent. Its digits fail to parse only when
+/// they overflow `i64`, so the overflow saturates toward its sign.
+fn saturating_exponent(value: &str) -> i64 {
+    value.parse::<i64>().unwrap_or(if value.starts_with('-') { i64::MIN } else { i64::MAX })
 }
 
 #[cfg(test)]
@@ -284,13 +285,18 @@ mod tests {
         let largest_integral = "9".repeat(usize::try_from(MAX_INTEGRAL_DIGITS).expect("positive limit"));
         assert!(JsonNumber::from_str(&largest_integral).is_ok());
         let oversized_integral = format!("{largest_integral}9");
-        assert!(matches!(JsonNumber::from_str(&oversized_integral), Err(JsonNumberError::OutOfSupportedRange)));
+        assert!(matches!(JsonNumber::from_str(&oversized_integral), Err(JsonNumberError::TooManyIntegralDigits)));
+        assert!(matches!(JsonNumber::from_str("1e200000"), Err(JsonNumberError::TooManyIntegralDigits)));
         assert!(JsonNumber::from_str("1e-16383").is_ok());
-        assert!(matches!(JsonNumber::from_str("1e-16384"), Err(JsonNumberError::OutOfSupportedRange)));
+        assert!(matches!(JsonNumber::from_str("1e-16384"), Err(JsonNumberError::TooManyFractionalDigits)));
         assert!(JsonNumber::from_str("0e-999999999999999999999999999999999999").is_ok());
         assert!(matches!(
             JsonNumber::from_str("1e999999999999999999999999999999999999"),
-            Err(JsonNumberError::OutOfSupportedRange)
+            Err(JsonNumberError::TooManyIntegralDigits)
+        ));
+        assert!(matches!(
+            JsonNumber::from_str("1e-999999999999999999999999999999999999"),
+            Err(JsonNumberError::TooManyFractionalDigits)
         ));
         pretty_assertions::assert_eq!(MAX_FRACTIONAL_DIGITS, 16_383);
     }
