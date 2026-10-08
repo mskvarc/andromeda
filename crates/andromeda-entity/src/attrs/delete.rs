@@ -69,32 +69,7 @@ impl EntityService {
                 let mut remaining = EntityState::clone(previous); // clone: shares every attribute the deletion leaves alone
                 delete_member(&mut remaining, &attribute, selection)?;
 
-                // Clause 5.6.5.4 handles the Scope before the `deleteAll` and
-                // `datasetId` bullets, "If the target Attribute is scope,
-                // remove the scope Attribute from the target Entity", so the
-                // removal is unconditional, and clause 4.18 ends the Scope's
-                // validity at that delete operation. The Scope has no attribute
-                // stream to tombstone: clause 4.5.4 gives it no dataset
-                // dimension and no attribute family, so its history is the
-                // scope removal and nothing else.
-                let history = if attribute.as_str() == expanded_properties::SCOPE.as_str() {
-                    vec![HistoryRecord::ScopeRemoval]
-                } else {
-                    tombstone_targets
-                        .iter()
-                        .map(|target| {
-                            // The family is read from the state the deletion is
-                            // computed against, so the tombstone renders the null
-                            // member its family prescribes (clauses 4.5.7 and
-                            // 4.5.8). A target the catalogue knows and the state
-                            // does not is a Property by clause 4.5.2.
-                            let attribute_type = previous
-                                .attribute_instance_family(attribute.as_str(), target.as_ref())
-                                .unwrap_or(AttributeType::Property);
-                            tombstone(&attribute, target.as_ref(), attribute_type)
-                        })
-                        .collect()
-                };
+                let history = deletion_history(previous, &attribute, &tombstone_targets);
 
                 let ModificationWrite { write, events } = self.modification_write(target, id, previous, Arc::new(remaining), history)?;
                 Ok((Some(write), events))
@@ -117,6 +92,38 @@ impl EntityService {
 fn attribute_name_of(iri: &str) -> Result<AttributeName, EntityError> {
     iri.parse()
         .map_err(|source| EntityError::Validation(EntityValidationReason::AttributeName(source)))
+}
+
+/// What deleting `attribute` from `previous` records in the Temporal
+/// Evolution: one tombstone per instance in `tombstone_targets`.
+///
+/// Clause 5.6.5.4 handles the Scope before the `deleteAll` and `datasetId`
+/// bullets, "If the target Attribute is scope, remove the scope Attribute
+/// from the target Entity", so the removal is unconditional, and clause 4.18
+/// ends the Scope's validity at that delete operation. The Scope has no
+/// attribute stream to tombstone: clause 4.5.4 gives it no dataset dimension
+/// and no attribute family, so its history is the scope removal and nothing
+/// else. Clause 4.22 makes the entity `expiresAt` a system Property of the
+/// storage, not an Attribute, so its removal records no history at all.
+fn deletion_history(previous: &EntityState, attribute: &AttributeName, tombstone_targets: &[Option<Identifier>]) -> Vec<HistoryRecord> {
+    let name = attribute.as_str();
+    if name == expanded_properties::SCOPE.as_str() {
+        return vec![HistoryRecord::ScopeRemoval];
+    }
+    if name == expanded_properties::EXPIRES_AT.as_str() {
+        return Vec::new();
+    }
+    tombstone_targets
+        .iter()
+        .map(|target| {
+            // The family is read from the state the deletion is computed
+            // against, so the tombstone renders the null member its family
+            // prescribes (clauses 4.5.7 and 4.5.8). A target the catalogue
+            // knows and the state does not is a Property by clause 4.5.2.
+            let attribute_type = previous.attribute_instance_family(name, target.as_ref()).unwrap_or(AttributeType::Property);
+            tombstone(attribute, target.as_ref(), attribute_type)
+        })
+        .collect()
 }
 
 /// Delete the member `attribute` names from `state` (clause 5.6.5).
@@ -153,7 +160,8 @@ fn delete_member(state: &mut EntityState, attribute: &AttributeName, selection: 
 
 #[cfg(test)]
 mod tests {
-    use crate::attrs::delete::delete_member;
+    use crate::attrs::delete::{delete_member, deletion_history};
+    use andromeda_context_commit::history_record::HistoryRecord;
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
         operation::{mutation_error::MutationError, selection::DatasetSelection},
@@ -209,5 +217,25 @@ mod tests {
         delete_member(&mut state, &name("https://example.org/speed"), DatasetSelection::All).expect("the attribute is deleted");
         assert!(!state.attributes().contains("https://example.org/speed"));
         assert!(state.scope().is_some());
+    }
+
+    /// Clause 4.22: the entity `expiresAt` is a system Property of the
+    /// storage with no Temporal Evolution.
+    #[test]
+    fn deleting_the_expiry_records_no_history() {
+        let history = deletion_history(&scoped(), &name("https://uri.etsi.org/ngsi-ld/expiresAt"), &[None]);
+        assert!(history.is_empty(), "{history:?}");
+    }
+
+    #[test]
+    fn deleting_the_scope_records_its_removal() {
+        let history = deletion_history(&scoped(), &name("https://uri.etsi.org/ngsi-ld/scope"), &[None]);
+        assert!(matches!(history.as_slice(), [HistoryRecord::ScopeRemoval]), "{history:?}");
+    }
+
+    #[test]
+    fn deleting_an_attribute_tombstones_each_target() {
+        let history = deletion_history(&scoped(), &name("https://example.org/speed"), &[None]);
+        assert!(matches!(history.as_slice(), [HistoryRecord::Tombstone(_)]), "{history:?}");
     }
 }
