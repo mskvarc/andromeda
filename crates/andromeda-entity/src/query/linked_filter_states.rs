@@ -117,7 +117,13 @@ mod tests {
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
-    use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, filter::parser::parse, page_window::PageWindow};
+    use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
+        entity::compiled::CompiledEntityQuery,
+        filter::parser::parse,
+        geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
+        page_window::PageWindow,
+    };
     use andromeda_tenancy::tenant_ref::TenantRef;
     use async_trait::async_trait;
     use chrono::{DateTime, TimeZone, Utc};
@@ -251,7 +257,7 @@ mod tests {
             SpatialAcceleration::StoreVerified,
             TenantRef::UnnamedDefault,
             None,
-            EntityConfig::default().geometry_census_limits(),
+            GeoQueryAdmission::new(EntityConfig::default().geometry_census_limits(), NearDistanceBand::Refused),
         )
     }
 

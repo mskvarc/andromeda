@@ -22,11 +22,11 @@
 //! subscriber of everything.
 
 use crate::{error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason};
-use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry_census::GeometryCensusLimits, query_coordinates::WrittenCoordinates};
+use andromeda_ngsi_ld_geometry::{geojson::GeometryError, query_coordinates::WrittenCoordinates};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 use andromeda_ngsi_ld_query::{
     error::QueryError,
-    geo::{input::GeoQueryInput, query::GeoQuery, reference_geometry::ReferenceGeometry},
+    geo::{admission::GeoQueryAdmission, input::GeoQueryInput, query::GeoQuery, reference_geometry::ReferenceGeometry},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use thiserror::Error;
@@ -35,6 +35,13 @@ use tracing::warn;
 /// Why a `geoQ` is not a `GeoQuery` the broker can evaluate.
 #[derive(Debug, Error)]
 pub enum GeoQError {
+    /// The `georel` was refused when it was admitted.
+    #[error("geoQ georel: {source}")]
+    Relation {
+        /// What makes the relation unusable.
+        #[source]
+        source: Box<QueryError>,
+    },
     /// The reference geometry was refused when it was admitted.
     #[error("geoQ reference geometry: {source}")]
     Reference {
@@ -96,8 +103,8 @@ pub fn compile_geo_q(geo_q: &GeoQueryInput) -> Result<GeoQuery, GeoQError> {
 }
 
 /// Admit the `geoQ` a subscription create body or update fragment writes: a
-/// reference geometry within `limits`, whose string-encoded coordinates, if
-/// any, are a geometry.
+/// `georel` the broker admits under `admission`, and a reference geometry
+/// within its limits whose string-encoded coordinates, if any, are a geometry.
 ///
 /// Coordinates encoded as a string are counted from their text before
 /// anything parses them; coordinates given as JSON were counted with the
@@ -108,10 +115,15 @@ pub fn compile_geo_q(geo_q: &GeoQueryInput) -> Result<GeoQuery, GeoQError> {
 /// # Errors
 ///
 /// Returns [`SubscriptionError::GeoQTooLarge`] for a reference geometry past
-/// `limits`, and [`SubscriptionError::Validation`] carrying the [`GeoQError`]
-/// for coordinates that are no geometry.
-pub fn admit_geo_q(geo_q: &GeoQueryInput, limits: GeometryCensusLimits) -> Result<(), SubscriptionError> {
-    geo_q.reference.admit(limits).map(drop).map_err(|refused| {
+/// the limits, and [`SubscriptionError::Validation`] carrying the
+/// [`GeoQError`] for a distance band the broker refuses or coordinates that
+/// are no geometry.
+pub fn admit_geo_q(geo_q: &GeoQueryInput, admission: GeoQueryAdmission) -> Result<(), SubscriptionError> {
+    admission
+        .near_band
+        .admit(&geo_q.georel)
+        .map_err(|refused| SubscriptionError::Validation(SubscriptionValidationReason::GeoQ(GeoQError::Relation { source: Box::new(refused) })))?;
+    geo_q.reference.admit(admission.limits).map(drop).map_err(|refused| {
         if let QueryError::ReferenceGeometryTooComplex { over } = refused {
             SubscriptionError::GeoQTooLarge { over }
         } else {
@@ -180,19 +192,43 @@ mod tests {
     };
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryOverLimit, GeometryPositionLimit};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_query::geo::input::GeoQueryInput;
+    use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, input::GeoQueryInput, near_distance_band::NearDistanceBand};
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use serde_json::{Value, json};
     use std::num::NonZeroUsize;
 
     const SUBSCRIPTION: &str = "urn:ngsi-ld:Subscription:test";
 
-    /// Limits of `positions` positions and a hundred other values.
-    fn limits(positions: usize) -> GeometryCensusLimits {
-        GeometryCensusLimits {
-            positions: GeometryPositionLimit::new(NonZeroUsize::new(positions).expect("a positive limit")),
-            values: JsonValueLimit::new(NonZeroUsize::new(100).expect("a positive limit")),
+    /// Limits of `positions` positions and a hundred other values, with the
+    /// distance band refused.
+    fn limits(positions: usize) -> GeoQueryAdmission {
+        GeoQueryAdmission {
+            limits: GeometryCensusLimits {
+                positions: GeometryPositionLimit::new(NonZeroUsize::new(positions).expect("a positive limit")),
+                values: JsonValueLimit::new(NonZeroUsize::new(100).expect("a positive limit")),
+            },
+            near_band: NearDistanceBand::Refused,
         }
+    }
+
+    /// Clause 4.10 admits one distance modifier on `near`, so a `geoQ` with
+    /// both is refused unless the band extension is on.
+    #[test]
+    fn a_geo_q_distance_band_is_admitted_only_under_the_extension() {
+        let band = geo_q(json!({"georel": "near;minDistance==500;maxDistance==10000", "geometry": "Point", "coordinates": [13.4, 52.5]}));
+        let refused = admit_geo_q(&band, limits(4)).expect_err("the band is refused");
+        assert!(
+            matches!(
+                refused,
+                SubscriptionError::Validation(SubscriptionValidationReason::GeoQ(GeoQError::Relation { .. }))
+            ),
+            "{refused:?}"
+        );
+        let admitted = GeoQueryAdmission {
+            near_band: NearDistanceBand::Admitted,
+            ..limits(4)
+        };
+        assert!(admit_geo_q(&band, admitted).is_ok());
     }
 
     /// The coordinates of a `LineString` of `positions` positions.

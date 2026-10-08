@@ -56,6 +56,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
+    use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
     use futures::future::BoxFuture;
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -145,10 +146,13 @@ mod tests {
             Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
             engine,
             None,
-            GeometryCensusLimits {
-                positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-            },
+            GeoQueryAdmission::new(
+                GeometryCensusLimits {
+                    positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                    values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                },
+                NearDistanceBand::Refused,
+            ),
         )
         .with_removal_hook(Arc::clone(&hook) as Arc<dyn RegistrationRemovalHook>); // clone: the test reads the hook's log
 
@@ -185,10 +189,13 @@ mod tests {
             Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
             engine,
             None,
-            GeometryCensusLimits {
-                positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-            },
+            GeoQueryAdmission::new(
+                GeometryCensusLimits {
+                    positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                    values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                },
+                NearDistanceBand::Refused,
+            ),
         )
         .with_removal_hook(Arc::clone(&hook) as Arc<dyn RegistrationRemovalHook>); // clone: the test reads the hook's log
 

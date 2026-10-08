@@ -43,7 +43,7 @@ mod tests {
         entity::compiled::CompiledEntityQuery,
         entity_selection::{ConsideredEntities, EntitySelection},
         filter::{eval::evaluate, parser},
-        geo::query::GeoQuery,
+        geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand, query::GeoQuery},
         page_window::{PageStart, PageWindow},
         queried_entity::linked_entities::NoLinkedEntities,
         scope::query::ScopeQuery,
@@ -283,7 +283,7 @@ mod tests {
             SpatialAcceleration::StoreVerified,
             TenantRef::UnnamedDefault,
             None,
-            EntityConfig::default().geometry_census_limits(),
+            GeoQueryAdmission::new(EntityConfig::default().geometry_census_limits(), NearDistanceBand::Refused),
         )
     }
 

@@ -125,6 +125,16 @@ pub struct ExtensionsConfig {
     /// `InvalidRequest`.
     #[toml_comment(inline)]
     pub cursor_pagination: HttpFeatureMode,
+    /// A `near` geo-query bounded from both sides (non-standard).
+    ///
+    /// The clause 4.10 `nearRel` grammar admits one of `maxDistance` and
+    /// `minDistance`. When enabled, a `near` carrying both matches the
+    /// entities at least `minDistance` and at most `maxDistance` away, on
+    /// queries, temporal queries, Subscription `geoQ` and registration
+    /// discovery. When disabled, the pair is refused with `BadRequestData`
+    /// (clause 5.7.2.4).
+    #[toml_comment(inline)]
+    pub near_distance_band: HttpFeatureMode,
     /// The upper bound on the temporal history instances one delete-by-query may
     /// remove before it is refused with `TooManyResults` (403).
     ///
@@ -149,6 +159,7 @@ impl Default for ExtensionsConfig {
             temporal_linked_retrieval: HttpFeatureMode::Disabled,
             tenant_management: HttpFeatureMode::Disabled,
             cursor_pagination: HttpFeatureMode::Enabled,
+            near_distance_band: HttpFeatureMode::Disabled,
             temporal_delete_by_query_max_matches: DEFAULT_TEMPORAL_DELETE_MAX_MATCHES,
             temporal_aggregation_grouping_max_groups: DEFAULT_TEMPORAL_AGGREGATION_MAX_GROUPS,
         }
@@ -193,6 +204,7 @@ impl ExtensionsConfig {
             || matches!(self.temporal_linked_retrieval, HttpFeatureMode::Enabled)
             || matches!(self.tenant_management, HttpFeatureMode::Enabled)
             || matches!(self.cursor_pagination, HttpFeatureMode::Enabled)
+            || matches!(self.near_distance_band, HttpFeatureMode::Enabled)
     }
 }
 
@@ -211,6 +223,7 @@ mod tests {
         pretty_assertions::assert_eq!(config.temporal_aggregation_grouping, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(config.temporal_linked_retrieval, HttpFeatureMode::Disabled);
         pretty_assertions::assert_eq!(config.tenant_management, HttpFeatureMode::Disabled);
+        pretty_assertions::assert_eq!(config.near_distance_band, HttpFeatureMode::Disabled);
     }
 
     /// Clause 5.5.9.1 permits opaque pointers outright, so cursor pagination is
@@ -253,6 +266,7 @@ mod tests {
             temporal_linked_retrieval: HttpFeatureMode::Enabled,
             tenant_management: HttpFeatureMode::Enabled,
             cursor_pagination: HttpFeatureMode::Disabled,
+            near_distance_band: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 42,
             temporal_aggregation_grouping_max_groups: 7,
         };
@@ -263,6 +277,7 @@ mod tests {
         pretty_assertions::assert_eq!(parsed.temporal_aggregation_grouping, HttpFeatureMode::Enabled);
         pretty_assertions::assert_eq!(parsed.temporal_linked_retrieval, HttpFeatureMode::Enabled);
         pretty_assertions::assert_eq!(parsed.cursor_pagination, HttpFeatureMode::Disabled);
+        pretty_assertions::assert_eq!(parsed.near_distance_band, HttpFeatureMode::Enabled);
         pretty_assertions::assert_eq!(parsed.temporal_delete_by_query_max_matches, 42);
         pretty_assertions::assert_eq!(parsed.temporal_aggregation_grouping_max_groups, 7);
     }
@@ -276,6 +291,7 @@ mod tests {
         assert!(rendered.contains("temporal_aggregation_grouping"), "{rendered}");
         assert!(rendered.contains("temporal_linked_retrieval"), "{rendered}");
         assert!(rendered.contains("cursor_pagination"), "{rendered}");
+        assert!(rendered.contains("near_distance_band"), "{rendered}");
     }
 
     #[test]

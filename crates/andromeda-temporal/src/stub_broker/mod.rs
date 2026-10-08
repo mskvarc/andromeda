@@ -25,6 +25,7 @@ use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
 use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_ngsi_ld_query::geo::near_distance_band::NearDistanceBand;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::{
@@ -170,6 +171,7 @@ pub(crate) fn service_over(broker: Arc<StubBroker>, remote: Option<Arc<dyn Remot
             delete_by_query_max_matches: 100,
             aggregation_grouping_max_groups: 100,
             payload_budget: EntityConfig::default().payload_budget(),
+            near_band: NearDistanceBand::Refused,
         },
         remote,
         TemporalJoin::Extended,

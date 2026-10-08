@@ -13,10 +13,10 @@ use crate::{
     notification_validation::{validate_endpoint_present, validate_notification},
     subscription_validation_reason::SubscriptionValidationReason,
 };
-use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_model::subscription_request::SubscriptionRequest;
 use andromeda_ngsi_ld_query::{
     filter::{expression::Expr, predicate::Predicate},
+    geo::admission::GeoQueryAdmission,
     temporal::window::TimeInterval,
 };
 use chrono::Utc;
@@ -29,7 +29,7 @@ fn q_has_comparison(expr: &Expr) -> bool {
 }
 
 /// Validate a subscription create body, admitting its `geoQ` under
-/// `geo_limits`.
+/// `geo_q_admission`.
 ///
 /// # Errors
 ///
@@ -37,7 +37,7 @@ fn q_has_comparison(expr: &Expr) -> bool {
 /// breaks -- an NGSI-LD Null written into a URI member among them (clause
 /// 5.2.1) -- and [`SubscriptionError::GeoQTooLarge`] for a reference geometry
 /// past `geo_limits`.
-pub fn validate_create_request(request: &SubscriptionRequest, geo_limits: GeometryCensusLimits) -> Result<(), SubscriptionError> {
+pub fn validate_create_request(request: &SubscriptionRequest, geo_q_admission: GeoQueryAdmission) -> Result<(), SubscriptionError> {
     // Clause 5.2.1: no member admits a null value directly outside clauses
     // 5.5.8 and 5.5.12, so a create refuses a JSON `null` and the URI Null alike
     // (clause 5.8.1.4, bullet 1).
@@ -53,7 +53,7 @@ pub fn validate_create_request(request: &SubscriptionRequest, geo_limits: Geomet
     // expiresAt must be in the future at creation time.
     validate_expires_at_not_in_past(request)?;
 
-    validate_common_members(request, geo_limits)?;
+    validate_common_members(request, geo_q_admission)?;
     validate_subscribed_scope(request)
 }
 
@@ -105,14 +105,14 @@ pub fn validate_expires_at_not_in_past(request: &SubscriptionRequest) -> Result<
 }
 
 /// Validate the members shared between create and update, admitting the `geoQ`
-/// under `geo_limits`.
+/// under `geo_q_admission`.
 ///
 /// # Errors
 ///
 /// Returns the [`SubscriptionError::Validation`] of the first rule the request
 /// breaks, and [`SubscriptionError::GeoQTooLarge`] for a reference geometry
 /// past `geo_limits`.
-pub fn validate_common_members(request: &SubscriptionRequest, geo_limits: GeometryCensusLimits) -> Result<(), SubscriptionError> {
+pub fn validate_common_members(request: &SubscriptionRequest, geo_q_admission: GeoQueryAdmission) -> Result<(), SubscriptionError> {
     if request.time_interval.as_set().is_some() && request.watched_attributes.as_set().is_some() {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalWithWatchedAttributes));
     }
@@ -139,7 +139,7 @@ pub fn validate_common_members(request: &SubscriptionRequest, geo_limits: Geomet
 
     // An update fragment's `null` removes the `geoQ`, which has nothing to admit.
     if let Some(geo_q) = request.geo_q.as_set() {
-        admit_geo_q(geo_q, geo_limits)?;
+        admit_geo_q(geo_q, geo_q_admission)?;
     }
 
     // Table 5.2.21-1: `endTimeAt` "Cardinality shall be 1 if timerel is equal to
@@ -198,14 +198,19 @@ mod tests {
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_model::{request_body::RequestBody, subscription_request::SubscriptionRequest};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
+    use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
     use serde_json::{Value, json};
     use std::num::NonZeroUsize;
 
-    /// Limits no fixture of this module reaches.
-    fn limits() -> GeometryCensusLimits {
-        GeometryCensusLimits {
-            positions: GeometryPositionLimit::new(NonZeroUsize::MAX),
-            values: JsonValueLimit::new(NonZeroUsize::MAX),
+    /// Limits no fixture of this module reaches, with the distance band
+    /// refused.
+    fn limits() -> GeoQueryAdmission {
+        GeoQueryAdmission {
+            limits: GeometryCensusLimits {
+                positions: GeometryPositionLimit::new(NonZeroUsize::MAX),
+                values: JsonValueLimit::new(NonZeroUsize::MAX),
+            },
+            near_band: NearDistanceBand::Refused,
         }
     }
 

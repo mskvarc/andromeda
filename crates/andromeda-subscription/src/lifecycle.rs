@@ -31,9 +31,9 @@ use andromeda_jsonld::{
     error::JsonLdError,
     user_context_admission::AdmittedContext,
 };
-use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, ngsi_ld_urn::SubscriptionId};
 use andromeda_ngsi_ld_model::{subscription::SubscriptionStatus, subscription_request::SubscriptionRequest};
+use andromeda_ngsi_ld_query::geo::admission::GeoQueryAdmission;
 use andromeda_telemetry::subscription_ops::{self, SubscriptionOperation};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
@@ -62,8 +62,8 @@ pub struct SubscriptionService<V: SubscriptionVariant> {
     /// The distributed side of the lifecycle (clauses 5.8.1.4, 5.8.2.4,
     /// 5.8.5.4), absent for the variants that have none.
     forwarding_hook: Option<Arc<dyn SubscriptionForwardingHook>>,
-    /// The limits a `geoQ` reference geometry is admitted under.
-    geometry_limits: GeometryCensusLimits,
+    /// What a written `geoQ` is admitted under.
+    geo_q_admission: GeoQueryAdmission,
 }
 
 impl<V> SubscriptionService<V>
@@ -83,7 +83,7 @@ where
         variant: V,
         change_sink: Option<Arc<dyn SubscriptionChangeSink<V::Change>>>,
         endpoint_validator: Arc<dyn SubscriptionEndpointValidator>,
-        geometry_limits: GeometryCensusLimits,
+        geo_q_admission: GeoQueryAdmission,
     ) -> SubscriptionService<V> {
         SubscriptionService {
             repo,
@@ -92,7 +92,7 @@ where
             change_sink,
             endpoint_validator,
             forwarding_hook: None,
-            geometry_limits,
+            geo_q_admission,
         }
     }
 
@@ -154,7 +154,7 @@ where
     ) -> Result<Identifier, SubscriptionError> {
         let context = subscription_context.spec();
         let result: Result<Identifier, SubscriptionError> = async {
-            request_validation::validate_create_request(&request, self.geometry_limits)?;
+            request_validation::validate_create_request(&request, self.geo_q_admission)?;
 
             validate_endpoint(
                 request.notification.as_ref().and_then(|notification| notification.endpoint.as_ref()),
@@ -231,7 +231,7 @@ where
                 self.endpoint_validator.as_ref(),
             )?;
 
-            request_validation::validate_common_members(&request, self.geometry_limits)?;
+            request_validation::validate_common_members(&request, self.geo_q_admission)?;
             self.variant.validate_update_extra(&request)?;
             request_validation::validate_notification_fragment(&request)?;
 

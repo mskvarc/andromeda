@@ -39,6 +39,7 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, registration::ContextSourceRegistration};
+use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
 use andromeda_subscription::{
     csource::CsrSubscriptionVariant,
     endpoint_admission::SubscriptionEndpointValidator,
@@ -186,7 +187,7 @@ impl ReassemblyScene {
             CsrSubscriptionVariant::new(offline_engine()),
             None,
             Arc::new(AcceptingEndpoints),
-            EntityConfig::default().geometry_census_limits(),
+            GeoQueryAdmission::new(EntityConfig::default().geometry_census_limits(), NearDistanceBand::Refused),
         );
         let held = Arc::new(HeldEntities::new(held));
         let federation = FederationService::new(
@@ -204,7 +205,7 @@ impl ReassemblyScene {
             SpatialAcceleration::StoreVerified,
             TenantRef::UnnamedDefault,
             None,
-            EntityConfig::default().geometry_census_limits(),
+            GeoQueryAdmission::new(EntityConfig::default().geometry_census_limits(), NearDistanceBand::Refused),
         );
         let service = SubscriptionForwardingService::builder()
             .live_target(ContextTarget::Live)

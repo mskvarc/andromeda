@@ -69,6 +69,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
+    use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
     use serde_json::json;
     use std::{num::NonZeroUsize, sync::Arc};
 
@@ -79,10 +80,13 @@ mod tests {
             Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
             engine,
             None,
-            GeometryCensusLimits {
-                positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-            },
+            GeoQueryAdmission::new(
+                GeometryCensusLimits {
+                    positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                    values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                },
+                NearDistanceBand::Refused,
+            ),
         )
     }
 

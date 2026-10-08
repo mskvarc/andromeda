@@ -1,6 +1,7 @@
 //! The bounds one temporal service applies to what a request may ask of it.
 
 use crate::instance_limits::TemporalInstanceLimits;
+use andromeda_ngsi_ld_query::geo::near_distance_band::NearDistanceBand;
 use andromeda_ngsi_ld_representation::payload_budget::EntityPayloadBudget;
 
 /// The bounds a temporal service applies to its reads and writes.
@@ -19,4 +20,7 @@ pub struct TemporalServiceLimits {
     /// The budget a written temporal payload is admitted under before it is
     /// expanded, the one the Core API admits an entity under.
     pub payload_budget: EntityPayloadBudget,
+    /// Whether a temporal geo-query `near` may carry both distances (the
+    /// `near_distance_band` extension).
+    pub near_band: NearDistanceBand,
 }

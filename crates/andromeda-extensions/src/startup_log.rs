@@ -47,6 +47,7 @@ mod tests {
                 temporal_linked_retrieval: HttpFeatureMode::Disabled,
                 tenant_management: HttpFeatureMode::Disabled,
                 cursor_pagination: HttpFeatureMode::Disabled,
+                near_distance_band: HttpFeatureMode::Disabled,
                 temporal_delete_by_query_max_matches: 100,
                 temporal_aggregation_grouping_max_groups: 100,
             };

@@ -181,7 +181,7 @@ mod tests {
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_query::{
         error::QueryError,
-        geo::{compile::compile_geo_query, input::GeoQueryInput},
+        geo::{admission::GeoQueryAdmission, compile::compile_geo_query, input::GeoQueryInput, near_distance_band::NearDistanceBand},
         projection::compiled::Projection,
         queried_entity::linked_entities::NoLinkedEntities,
         term_expander::{TermExpander, TermExpansionFailure},
@@ -361,10 +361,13 @@ mod tests {
             Some(parse_fixture("location", "geoproperty")),
         )
         .expect("a valid test fixture");
-        let limits = GeometryCensusLimits {
-            positions: GeometryPositionLimit::new(NonZeroUsize::MAX),
-            values: JsonValueLimit::new(NonZeroUsize::MAX),
-        };
+        let limits = GeoQueryAdmission::new(
+            GeometryCensusLimits {
+                positions: GeometryPositionLimit::new(NonZeroUsize::MAX),
+                values: JsonValueLimit::new(NonZeroUsize::MAX),
+            },
+            NearDistanceBand::Refused,
+        );
         let from_request =
             block_on(compile_geo_query(Some(&request_geo), &LocationExpander, limits))?.expect("the complete request geo fixture did not compile");
 

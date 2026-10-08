@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_model::{entity::Entity, notification::SysAttrsSnapshot};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
+    geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::PageWindow,
     projection::{compiled::Projection, term::ProjectionTerm},
     type_selection::grammar::TypeExprRaw,
@@ -146,7 +147,7 @@ fn service() -> EntityQueryService {
         SpatialAcceleration::StoreVerified,
         TenantRef::UnnamedDefault,
         None,
-        EntityConfig::default().geometry_census_limits(),
+        GeoQueryAdmission::new(EntityConfig::default().geometry_census_limits(), NearDistanceBand::Refused),
     )
 }
 

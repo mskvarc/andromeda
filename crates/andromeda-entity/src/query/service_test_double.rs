@@ -22,7 +22,12 @@ use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
+    entity::compiled::CompiledEntityQuery,
+    geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
+    page_window::PageWindow,
+};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use async_trait::async_trait;
 use std::{collections::HashMap, sync::Arc};
@@ -119,6 +124,6 @@ fn service_with(spatial: SpatialAcceleration, reference_limits: GeometryCensusLi
         spatial,
         TenantRef::UnnamedDefault,
         None,
-        reference_limits,
+        GeoQueryAdmission::new(reference_limits, NearDistanceBand::Refused),
     )
 }

@@ -29,7 +29,6 @@ use andromeda_entity::{
     batch::execution::BatchExecutionConfig,
     change_notifier::{ChangeNotifier, SubscriptionMatching},
     change_sink::EntityChangeSink,
-    config::EntityConfig,
     discovery::EntityDiscoveryService,
     port::{attribute_history::AttributeDatasetHistory, service_ports::EntityServicePorts},
     query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
@@ -39,6 +38,7 @@ use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::FederationService;
 use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
 use andromeda_linked_retrieval::admission::TemporalJoin;
+use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
 use andromeda_postgresql_context_store::jsonld_context::repo::JsonLdContextRepository;
 use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook};
 use andromeda_snapshot::{
@@ -117,7 +117,7 @@ pub(super) fn construct_services(
     let context_hosting = TenantContextHosting::new(contexts);
     let (snapshot_preparation, snapshots) = compose_snapshot_services(config, storage, writes, &entity_query, &temporal, &forwarding, snapshot_delivery_signal);
     let edge = DistributedSubscriptionEdge::resolve(&config.identity, subscription_router, &forwarding, &storage.tenant);
-    let subscriptions = compose_subscription_services(storage, signals, transports, edge, &entity_query, &config.entity);
+    let subscriptions = compose_subscription_services(storage, signals, transports, edge, &entity_query, geo_query_admission(config));
     let state = AndromedaState {
         live_target: storage.live_target.clone(), // clone: request state owns the immutable typed live-branch selection.
         entities,
@@ -130,7 +130,7 @@ pub(super) fn construct_services(
         temporal,
         subscriptions: subscriptions.entity,
         context_hosting,
-        csr: compose_registration_service(storage, signals, subscriptions.forwarding.as_ref(), &config.entity),
+        csr: compose_registration_service(storage, signals, subscriptions.forwarding.as_ref(), geo_query_admission(config)),
         csr_subscriptions: subscriptions.csource,
         forwarding,
         entity_maps: Arc::new(EntityMapService::new(Arc::clone(&storage.entity_map_store))),
@@ -229,6 +229,7 @@ fn compose_temporal_service(
             aggregation_grouping_max_groups: config.extensions.temporal_aggregation_grouping_max_groups,
             // A temporal write is admitted under the budget a Core write is.
             payload_budget: config.entity.payload_budget(),
+            near_band: near_distance_band(config.extensions.resolve()),
         },
         // Clause 4.5.23.1 applied to the temporal API: an annotated Linked
         // Entity whose history this broker does not record is fetched from the
@@ -251,6 +252,21 @@ fn temporal_linked_retrieval(enabled: EnabledExtensions) -> TemporalJoin {
     }
 }
 
+/// Whether a `near` may carry both distances: only with the
+/// `near_distance_band` extension, which conformance mode forces off.
+fn near_distance_band(enabled: EnabledExtensions) -> NearDistanceBand {
+    if enabled.near_distance_band_enabled() {
+        NearDistanceBand::Admitted
+    } else {
+        NearDistanceBand::Refused
+    }
+}
+
+/// What every geo-query a request of the tenant writes is admitted under.
+fn geo_query_admission(config: &TenantFactoryConfig) -> GeoQueryAdmission {
+    GeoQueryAdmission::new(config.entity.geometry_census_limits(), near_distance_band(config.extensions.resolve()))
+}
+
 /// Compose the entity query service every entity read is answered from.
 fn compose_entity_query_service(config: &TenantFactoryConfig, storage: &TenantStorage, forwarding: &Arc<FederationService>) -> Arc<EntityQueryService> {
     Arc::new(EntityQueryService::new(
@@ -265,7 +281,7 @@ fn compose_entity_query_service(config: &TenantFactoryConfig, storage: &TenantSt
             Arc::clone(forwarding),      // clone: request handling and linked resolution share one forwarding service.
             storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
         )) as Arc<dyn RemoteLinkedEntitySource>),
-        config.entity.geometry_census_limits(),
+        geo_query_admission(config),
     ))
 }
 
@@ -321,7 +337,7 @@ fn compose_registration_service(
     storage: &TenantStorage,
     signals: &TenantSignals,
     forwarding: Option<&Arc<SubscriptionForwardingService>>,
-    entity_config: &EntityConfig,
+    geo_admission: GeoQueryAdmission,
 ) -> Arc<RegistrationService> {
     let probe = Arc::new(EntityStoreRegistrationProbe::new(
         Arc::clone(&storage.entity_ports.query),
@@ -333,7 +349,7 @@ fn compose_registration_service(
         probe,
         storage.engine.clone(), // clone: registration policy owns its engine handle.
         Some(Arc::new(BroadcastRegistrationChangeSink::new(signals.registration.clone()))), // clone: each tenant service and worker own a sender handle.
-        entity_config.geometry_census_limits(),
+        geo_admission,
     );
     Arc::new(match forwarding {
         // clone: request handling, the expiry sweep and subscription forwarding share one service.

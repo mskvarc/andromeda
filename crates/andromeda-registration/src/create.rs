@@ -34,7 +34,7 @@ impl RegistrationService {
     /// write.
     pub async fn create(&self, body: RegistrationBody, context: &AdmittedContext) -> Result<Identifier, RegistrationError> {
         // Counted before the body is expanded.
-        admit_registration_geometries(body.geometries(), self.geometry_limits)?;
+        admit_registration_geometries(body.geometries(), self.geo_admission.limits)?;
         let mut body = body;
         let id = match body.id.take() {
             Some(id) => {

@@ -12,10 +12,10 @@ use andromeda_entity::{
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_linked_retrieval::admission::TemporalJoin;
-use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::{
+    geo::admission::GeoQueryAdmission,
     projection::compiled::Projection,
     temporal::{instance_page::PageDirection, window::TimeInterval},
 };
@@ -176,10 +176,11 @@ impl TemporalService {
         self.linked_retrieval
     }
 
-    /// The limits a temporal query's reference geometry stays within (clause
-    /// 5.5.6).
+    /// What a temporal query's geo-query is admitted under: the limits its
+    /// reference geometry stays within (clause 5.5.6) and whether a `near`
+    /// distance band is served.
     #[must_use]
-    pub const fn reference_limits(&self) -> GeometryCensusLimits {
-        self.limits.payload_budget.geometry_census_limits()
+    pub const fn geo_admission(&self) -> GeoQueryAdmission {
+        GeoQueryAdmission::new(self.limits.payload_budget.geometry_census_limits(), self.limits.near_band)
     }
 }

@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_query::{
     cursor::PageCursor,
+    geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::{PageStart, PageWindow},
 };
 use async_trait::async_trait;
@@ -42,6 +43,17 @@ use std::{
     sync::{Arc, Mutex},
 };
 use url::Url;
+
+/// Limits no fixture reaches, with the distance band refused.
+fn geo_q_admission() -> GeoQueryAdmission {
+    GeoQueryAdmission::new(
+        GeometryCensusLimits {
+            positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+            values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+        },
+        NearDistanceBand::Refused,
+    )
+}
 
 #[test]
 fn generated_subscription_identifiers_are_ngsi_ld_urns() {
@@ -232,10 +244,7 @@ fn service(log: &DeletionLog, rows_deleted: u64) -> SubscriptionService<CsrSubsc
         CsrSubscriptionVariant::new(engine),
         None,
         Arc::new(AcceptingEndpointValidator),
-        GeometryCensusLimits {
-            positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-            values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-        },
+        geo_q_admission(),
     )
     .with_forwarding_hook(Arc::new(hook))
 }
@@ -408,10 +417,7 @@ async fn written_after_update(fragment: Value, context: &ContextSpec) -> Option<
         EntitySubscriptionVariant::new(engine),
         None,
         Arc::new(AcceptingEndpointValidator),
-        GeometryCensusLimits {
-            positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-            values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-        },
+        geo_q_admission(),
     );
     let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes()).expect("a readable fragment");
     let updated = service
@@ -575,10 +581,7 @@ async fn listed(window: &PageWindow) -> (Vec<String>, i64, Option<(Identifier, I
         EntitySubscriptionVariant::new(engine),
         None,
         Arc::new(AcceptingEndpointValidator),
-        GeometryCensusLimits {
-            positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-            values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-        },
+        geo_q_admission(),
     );
     let listing = service
         .list_for_response(&ContextTarget::Live, window, &ContextSpec::none())

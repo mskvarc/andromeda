@@ -21,10 +21,17 @@ pub enum GeoRelParseError {
     #[error("georel 'near' requires a maxDistance or minDistance")]
     NearMissingDistance,
     /// A `near` relationship carried a modifier that is neither `maxDistance`
-    /// nor `minDistance`. Dropping it would let a typo such as
-    /// `maxDistanc==500` parse as an unbounded `near`.
+    /// nor `minDistance`, written exactly as clause 4.10 spells it. Dropping it
+    /// would let a typo such as `maxDistanc==500` parse as an unbounded `near`.
     #[error("unknown georel modifier")]
     UnknownModifier,
+    /// A relationship other than `near` carried a modifier. Clause 4.10 gives
+    /// `withinRel`, `containsRel` and the other relations none.
+    #[error("only georel 'near' takes a modifier")]
+    UnexpectedModifier,
+    /// A `near` relationship named the same distance modifier twice.
+    #[error("georel 'near' names a distance modifier more than once")]
+    RepeatedDistance,
 }
 
 /// Geo-spatial relationship operators per NGSI-LD clause 4.10.
@@ -46,7 +53,10 @@ pub enum GeoRel {
     /// Matches entities whose geometry overlaps the reference geometry.
     Overlaps,
     /// Matches entities within a distance range from the reference geometry.
-    /// At least one of `max_distance` or `min_distance` must be specified.
+    ///
+    /// At least one of `max_distance` or `min_distance` is present. Clause 4.10
+    /// admits one; both together are the distance band, which only the
+    /// `near_distance_band` extension admits.
     Near {
         /// Maximum distance in meters. Entities farther than this are excluded.
         max_distance: Option<PositiveDistance>,
@@ -88,39 +98,57 @@ impl FromStr for GeoRel {
     type Err = GeoRelParseError;
 
     fn from_str(value: &str) -> Result<GeoRel, GeoRelParseError> {
-        let mut parts = value.split(';');
-        let rel = parts.next().unwrap_or_default().trim();
+        let (rel, modifiers) = value.split_once(';').map_or((value, None), |(rel, modifiers)| (rel, Some(modifiers)));
+        let simple = |georel: GeoRel| modifiers.map_or(Ok(georel), |_| Err(GeoRelParseError::UnexpectedModifier));
         match rel {
-            "within" => Ok(GeoRel::Within),
-            "contains" => Ok(GeoRel::Contains),
-            "intersects" => Ok(GeoRel::Intersects),
-            "disjoint" => Ok(GeoRel::Disjoint),
-            "equals" => Ok(GeoRel::Equals),
-            "overlaps" => Ok(GeoRel::Overlaps),
-            "near" => {
-                let mut max_distance = None;
-                let mut min_distance = None;
-                for part in parts {
-                    let part = part.trim();
-                    if part.is_empty() {
-                        continue;
-                    }
-                    if let Some(raw) = part.strip_prefix("maxDistance==") {
-                        max_distance = Some(PositiveDistance::from_str(raw)?);
-                    } else if let Some(raw) = part.strip_prefix("minDistance==") {
-                        min_distance = Some(PositiveDistance::from_str(raw)?);
-                    } else {
-                        // A malformed modifier is a rejected request, never a
-                        // silently unbounded `near`.
-                        return Err(GeoRelParseError::UnknownModifier);
-                    }
-                }
-                if max_distance.is_none() && min_distance.is_none() {
-                    return Err(GeoRelParseError::NearMissingDistance);
-                }
-                Ok(GeoRel::Near { max_distance, min_distance })
-            }
+            "within" => simple(GeoRel::Within),
+            "contains" => simple(GeoRel::Contains),
+            "intersects" => simple(GeoRel::Intersects),
+            "disjoint" => simple(GeoRel::Disjoint),
+            "equals" => simple(GeoRel::Equals),
+            "overlaps" => simple(GeoRel::Overlaps),
+            "near" => near(modifiers),
             _ => Err(GeoRelParseError::UnknownRel),
+        }
+    }
+}
+
+/// The `near` relationship its `;`-separated distance modifiers make.
+///
+/// Clause 4.10 writes the modifiers with no whitespace or empty segment, so
+/// either is an unknown modifier rather than something to skip.
+fn near(modifiers: Option<&str>) -> Result<GeoRel, GeoRelParseError> {
+    let mut max_distance = None;
+    let mut min_distance = None;
+    for modifier in modifiers.into_iter().flat_map(|modifiers| modifiers.split(';')) {
+        let (slot, raw) = if let Some(raw) = modifier.strip_prefix("maxDistance==") {
+            (&mut max_distance, raw)
+        } else if let Some(raw) = modifier.strip_prefix("minDistance==") {
+            (&mut min_distance, raw)
+        } else {
+            return Err(GeoRelParseError::UnknownModifier);
+        };
+        if slot.replace(PositiveDistance::from_str(raw)?).is_some() {
+            return Err(GeoRelParseError::RepeatedDistance);
+        }
+    }
+    if max_distance.is_none() && min_distance.is_none() {
+        return Err(GeoRelParseError::NearMissingDistance);
+    }
+    Ok(GeoRel::Near { max_distance, min_distance })
+}
+
+impl GeoRel {
+    /// Whether this is a `near` bounded from both sides, the distance band
+    /// clause 4.10 does not define.
+    #[must_use]
+    pub const fn is_distance_band(&self) -> bool {
+        match self {
+            GeoRel::Near {
+                max_distance: Some(_),
+                min_distance: Some(_),
+            } => true,
+            GeoRel::Near { .. } | GeoRel::Within | GeoRel::Contains | GeoRel::Intersects | GeoRel::Disjoint | GeoRel::Equals | GeoRel::Overlaps => false,
         }
     }
 }
@@ -258,6 +286,49 @@ mod tests {
             "near;maxDistanc==500".parse::<GeoRel>().expect_err("must fail"),
             GeoRelParseError::UnknownModifier
         ));
+    }
+
+    #[test]
+    fn a_modifier_on_a_relation_other_than_near_is_rejected() {
+        for raw in ["within;maxDistance==5", "disjoint;minDistance==5", "equals;"] {
+            assert!(
+                matches!(raw.parse::<GeoRel>().expect_err("must fail"), GeoRelParseError::UnexpectedModifier),
+                "{raw} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn a_repeated_distance_modifier_is_rejected() {
+        for raw in ["near;maxDistance==5;maxDistance==9", "near;minDistance==5;minDistance==9"] {
+            assert!(
+                matches!(raw.parse::<GeoRel>().expect_err("must fail"), GeoRelParseError::RepeatedDistance),
+                "{raw} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn whitespace_or_an_empty_segment_in_near_is_an_unknown_modifier() {
+        for raw in ["near; maxDistance==5", "near;maxDistance==5;", "near;;maxDistance==5", "near;"] {
+            assert!(
+                matches!(raw.parse::<GeoRel>().expect_err("must fail"), GeoRelParseError::UnknownModifier),
+                "{raw} should be rejected"
+            );
+        }
+        assert!(matches!(
+            " near;maxDistance==5".parse::<GeoRel>().expect_err("must fail"),
+            GeoRelParseError::UnknownRel
+        ));
+    }
+
+    #[test]
+    fn only_a_near_with_both_distances_is_a_distance_band() {
+        let band: GeoRel = "near;maxDistance==500;minDistance==50".parse().expect("band");
+        assert!(band.is_distance_band());
+        for raw in ["near;maxDistance==500", "near;minDistance==50", "within"] {
+            assert!(!raw.parse::<GeoRel>().expect(raw).is_distance_band(), "{raw}");
+        }
     }
 
     #[test]

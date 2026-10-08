@@ -82,7 +82,7 @@ impl EntityQueryService {
         let omit = expand_projection_terms(params.omit.as_deref().unwrap_or_default(), &expander).await?;
 
         let order_by = self.compile_order_terms(params, &prepared_context).await?;
-        let ordering_geometry = compile_ordering_geometry(params, self.reference_limits)?;
+        let ordering_geometry = compile_ordering_geometry(params, self.geo_admission.limits)?;
 
         let projection = Projection::builder().pick(pick).omit(omit).build();
         let compiled = CompiledEntityQuery::builder()
@@ -186,7 +186,7 @@ impl EntityQueryService {
     /// of clause 5.5.6 for a reference geometry larger than the broker
     /// resolves.
     async fn compile_geo_query(&self, params: &EntityQueryParameters, context: &PreparedTermContext) -> Result<Option<GeoQuery>, EntityError> {
-        Ok(geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(self.engine(), context), self.reference_limits).await?)
+        Ok(geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(self.engine(), context), self.geo_admission).await?)
     }
 }
 

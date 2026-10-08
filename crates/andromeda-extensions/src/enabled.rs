@@ -30,6 +30,8 @@ pub enum Extension {
     TenantManagement,
     /// Opaque, keyset-backed cursor pagination (clause 5.5.9.1).
     CursorPagination,
+    /// A `near` geo-query bounded by both `maxDistance` and `minDistance`.
+    NearDistanceBand,
 }
 
 /// The extensions that are actually on for this process.
@@ -61,6 +63,7 @@ impl ExtensionsConfig {
             (self.temporal_linked_retrieval, Extension::TemporalLinkedRetrieval),
             (self.tenant_management, Extension::TenantManagement),
             (self.cursor_pagination, Extension::CursorPagination),
+            (self.near_distance_band, Extension::NearDistanceBand),
         ] {
             if matches!(mode, HttpFeatureMode::Enabled) {
                 enabled.insert(extension);
@@ -125,6 +128,12 @@ impl EnabledExtensions {
     pub fn cursor_pagination_enabled(&self) -> bool {
         self.enabled.contains(Extension::CursorPagination)
     }
+
+    /// Whether a `near` geo-query may carry both distances.
+    #[must_use]
+    pub fn near_distance_band_enabled(&self) -> bool {
+        self.enabled.contains(Extension::NearDistanceBand)
+    }
 }
 
 #[cfg(test)]
@@ -141,6 +150,7 @@ mod tests {
             temporal_linked_retrieval: HttpFeatureMode::Enabled,
             tenant_management: HttpFeatureMode::Enabled,
             cursor_pagination: HttpFeatureMode::Enabled,
+            near_distance_band: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 100,
             temporal_aggregation_grouping_max_groups: 100,
         }
@@ -155,6 +165,7 @@ mod tests {
         assert!(!enabled.temporal_linked_retrieval_enabled());
         assert!(!enabled.tenant_management_enabled());
         assert!(enabled.cursor_pagination_enabled());
+        assert!(!enabled.near_distance_band_enabled());
     }
 
     #[test]
@@ -166,6 +177,7 @@ mod tests {
         assert!(enabled.temporal_linked_retrieval_enabled());
         assert!(enabled.tenant_management_enabled());
         assert!(enabled.cursor_pagination_enabled());
+        assert!(enabled.near_distance_band_enabled());
     }
 
     /// The conformance override wins over every feature field at once, so a
@@ -182,6 +194,7 @@ mod tests {
         assert!(!enabled.temporal_linked_retrieval_enabled());
         assert!(!enabled.tenant_management_enabled());
         assert!(!enabled.cursor_pagination_enabled());
+        assert!(!enabled.near_distance_band_enabled());
     }
 
     /// Clause 5.7.3.4 and 5.7.4.4 refuse Linked Entity retrieval on the
@@ -217,6 +230,7 @@ mod tests {
         assert!(!enabled.temporal_linked_retrieval_enabled());
         assert!(!enabled.tenant_management_enabled());
         assert!(!enabled.cursor_pagination_enabled());
+        assert!(!enabled.near_distance_band_enabled());
     }
 
     #[test]
@@ -227,5 +241,6 @@ mod tests {
         assert!(enabled.temporal_aggregation_grouping_enabled());
         assert!(enabled.temporal_linked_retrieval_enabled());
         assert!(enabled.tenant_management_enabled());
+        assert!(enabled.near_distance_band_enabled());
     }
 }

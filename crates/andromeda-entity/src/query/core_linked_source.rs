@@ -255,7 +255,12 @@ mod tests {
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
-    use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, page_window::PageWindow};
+    use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
+        entity::compiled::CompiledEntityQuery,
+        geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
+        page_window::PageWindow,
+    };
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_tenancy::tenant_ref::TenantRef;
     use async_trait::async_trait;
@@ -516,7 +521,7 @@ mod tests {
             SpatialAcceleration::StoreVerified,
             TenantRef::UnnamedDefault,
             remote_linked,
-            EntityConfig::default().geometry_census_limits(),
+            GeoQueryAdmission::new(EntityConfig::default().geometry_census_limits(), NearDistanceBand::Refused),
         )
     }
 

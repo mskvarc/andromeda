@@ -4,8 +4,8 @@
 
 use crate::{entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook, store::RegistrationStore};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
+use andromeda_ngsi_ld_query::geo::admission::GeoQueryAdmission;
 use std::sync::Arc;
 
 mod context_source_properties;
@@ -56,9 +56,9 @@ pub struct RegistrationService {
     engine: JsonLdEngine,
     change_sink: Option<Arc<dyn RegistrationChangeSink>>,
     removal_hook: Option<Arc<dyn RegistrationRemovalHook>>,
-    /// The limits a geometry the registration writes, or a query's
-    /// reference geometry, is admitted under.
-    geometry_limits: GeometryCensusLimits,
+    /// What a discovery geo-query is admitted under; its limits also bound
+    /// a geometry the registration writes.
+    geo_admission: GeoQueryAdmission,
 }
 
 /// Publishes registration lifecycle changes without coupling policy to a runtime transport.
@@ -76,7 +76,7 @@ impl RegistrationService {
         entity_probe: Arc<dyn RegisteredEntityProbe>,
         engine: JsonLdEngine,
         change_sink: Option<Arc<dyn RegistrationChangeSink>>,
-        geometry_limits: GeometryCensusLimits,
+        geo_admission: GeoQueryAdmission,
     ) -> RegistrationService {
         RegistrationService {
             repo,
@@ -84,7 +84,7 @@ impl RegistrationService {
             engine,
             change_sink,
             removal_hook: None,
-            geometry_limits,
+            geo_admission,
         }
     }
 

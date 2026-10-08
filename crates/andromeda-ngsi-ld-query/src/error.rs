@@ -228,6 +228,10 @@ pub enum QueryError {
     /// `georel=near` carried neither `maxDistance` nor `minDistance`.
     #[error("geo: near georel requires maxDistance or minDistance")]
     NearWithoutDistance,
+    /// `georel=near` carried both `maxDistance` and `minDistance` while the
+    /// `near_distance_band` extension is off (clause 4.10 admits one).
+    #[error("geo: near georel takes one of maxDistance or minDistance; both together need the near_distance_band extension")]
+    NearDistanceBand,
 
     /// A distance ordering was requested with no geometry to measure from.
     #[error("orderBy: a distance ordering requires orderFrom")]

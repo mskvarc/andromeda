@@ -30,6 +30,7 @@ use andromeda_entity::{
 };
 use andromeda_federation::FederationService;
 use andromeda_jsonld::operation_hit_scope::run_in_operation_scope;
+use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
 use andromeda_notification::{
     delivery_config::DeliveryConfig,
     interval::{IntervalNotificationDeps, IntervalNotificationOperation},
@@ -76,10 +77,11 @@ pub(super) fn compose_notification_query(
             storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
         )) as Arc<dyn RemoteLinkedEntitySource>),
         // A notification query only resolves Linked Entities by identifier and
-        // compiles no reference geometry: a subscription's `geoQ` is matched in
-        // memory from its stored form, admitted once when it was written, so a
-        // lower limit configured since never refuses a stored subscription.
-        entity_config.geometry_census_limits(),
+        // compiles no geo-query: a subscription's `geoQ` is matched in memory
+        // from its stored form, admitted once when it was written, so neither a
+        // lower limit nor the band switched off since refuses a stored
+        // subscription.
+        GeoQueryAdmission::new(entity_config.geometry_census_limits(), NearDistanceBand::Admitted),
     ))
 }
 

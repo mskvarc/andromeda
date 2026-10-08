@@ -38,6 +38,8 @@ pub const TEMPORAL_LINKED_RETRIEVAL_TOKEN: &str = "temporal-linked-retrieval";
 const TENANT_MANAGEMENT_TOKEN: &str = "tenant-management";
 /// The advertised token for the cursor-pagination extension.
 const CURSOR_PAGINATION_TOKEN: &str = "cursor-pagination";
+/// The advertised token for the `near` distance band extension.
+const NEAR_DISTANCE_BAND_TOKEN: &str = "near-distance-band";
 
 /// Merge the enabled extension tokens into the operator's `contextSourceExtras`.
 ///
@@ -99,6 +101,9 @@ fn enabled_tokens(enabled: EnabledExtensions) -> Vec<&'static str> {
     if enabled.cursor_pagination_enabled() {
         tokens.push(token(Extension::CursorPagination));
     }
+    if enabled.near_distance_band_enabled() {
+        tokens.push(token(Extension::NearDistanceBand));
+    }
     tokens
 }
 
@@ -111,6 +116,7 @@ const fn token(extension: Extension) -> &'static str {
         Extension::TemporalLinkedRetrieval => TEMPORAL_LINKED_RETRIEVAL_TOKEN,
         Extension::TenantManagement => TENANT_MANAGEMENT_TOKEN,
         Extension::CursorPagination => CURSOR_PAGINATION_TOKEN,
+        Extension::NearDistanceBand => NEAR_DISTANCE_BAND_TOKEN,
     }
 }
 
@@ -135,6 +141,7 @@ mod tests {
         advertisement::{
             CURSOR_PAGINATION_TOKEN,
             EXTENSION_KEY,
+            NEAR_DISTANCE_BAND_TOKEN,
             PURGE_DATASET_SCOPE_TOKEN,
             TEMPORAL_AGGREGATION_GROUPING_TOKEN,
             TEMPORAL_DELETE_BY_QUERY_TOKEN,
@@ -179,6 +186,7 @@ mod tests {
             temporal_linked_retrieval: HttpFeatureMode::Enabled,
             tenant_management: HttpFeatureMode::Enabled,
             cursor_pagination: HttpFeatureMode::Enabled,
+            near_distance_band: HttpFeatureMode::Enabled,
             temporal_delete_by_query_max_matches: 100,
             temporal_aggregation_grouping_max_groups: 100,
         }
@@ -195,6 +203,7 @@ mod tests {
             TEMPORAL_LINKED_RETRIEVAL_TOKEN,
             TENANT_MANAGEMENT_TOKEN,
             CURSOR_PAGINATION_TOKEN,
+            NEAR_DISTANCE_BAND_TOKEN,
         ] {
             assert!(rendered.iter().any(|rendered| rendered == token), "{rendered:?}");
         }

@@ -133,7 +133,7 @@ impl RegistrationService {
         let mut attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
         // Clause 5.5.6: a reference geometry past the budget makes the
         // discovery query too complex to resolve.
-        let geo = geo_compile::compile_geo_query(params.geo.0.as_ref(), &expander, self.geometry_limits).await?;
+        let geo = geo_compile::compile_geo_query(params.geo.0.as_ref(), &expander, self.geo_admission).await?;
         // Clause 5.10.2.4: the attributes the `q` filter and the geoquery name
         // match registrations exactly as the `attrs` list does, so they join
         // it; the filter itself is not evaluated against a registration.
@@ -244,7 +244,11 @@ mod tests {
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_query::{page_fullness::PageFullness, page_window::PageWindow};
+    use andromeda_ngsi_ld_query::{
+        geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
+        page_fullness::PageFullness,
+        page_window::PageWindow,
+    };
     use andromeda_ngsi_ld_request::query::csr::CsrQueryParameters;
     use serde_json::json;
     use std::{num::NonZeroUsize, sync::Arc};
@@ -256,10 +260,13 @@ mod tests {
             Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
             engine,
             None,
-            GeometryCensusLimits {
-                positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-            },
+            GeoQueryAdmission::new(
+                GeometryCensusLimits {
+                    positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                    values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                },
+                NearDistanceBand::Refused,
+            ),
         )
     }
 

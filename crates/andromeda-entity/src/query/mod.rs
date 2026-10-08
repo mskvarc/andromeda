@@ -58,7 +58,7 @@ use crate::{
     spatial_acceleration::SpatialAcceleration,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
+use andromeda_ngsi_ld_query::geo::admission::GeoQueryAdmission;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use std::sync::Arc;
 
@@ -75,9 +75,10 @@ pub struct EntityQueryService {
     /// (clause 4.5.23.1). Absent in a composition that resolves links purely
     /// locally.
     remote_linked: Option<Arc<dyn RemoteLinkedEntitySource>>,
-    /// The limits a query's reference geometry stays within, past which the
-    /// query is too complex to resolve (clause 5.5.6).
-    reference_limits: GeometryCensusLimits,
+    /// What a query's geo-query and distance ordering are admitted under:
+    /// the reference geometry limits past which the query is too complex to
+    /// resolve (clause 5.5.6), and whether a `near` distance band is served.
+    geo_admission: GeoQueryAdmission,
 }
 
 impl EntityQueryService {
@@ -93,7 +94,7 @@ impl EntityQueryService {
         spatial: SpatialAcceleration,
         tenant: TenantRef,
         remote_linked: Option<Arc<dyn RemoteLinkedEntitySource>>,
-        reference_limits: GeometryCensusLimits,
+        geo_admission: GeoQueryAdmission,
     ) -> EntityQueryService {
         EntityQueryService {
             reader,
@@ -103,7 +104,7 @@ impl EntityQueryService {
             spatial,
             tenant,
             remote_linked,
-            reference_limits,
+            geo_admission,
         }
     }
 
@@ -113,9 +114,9 @@ impl EntityQueryService {
         &self.engine
     }
 
-    /// The limits a query's reference geometry stays within (clause 5.5.6).
+    /// What a query's geo-query is admitted under.
     #[must_use]
-    pub const fn reference_limits(&self) -> GeometryCensusLimits {
-        self.reference_limits
+    pub const fn geo_admission(&self) -> GeoQueryAdmission {
+        self.geo_admission
     }
 }

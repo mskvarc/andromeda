@@ -44,6 +44,7 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::GeoCoordinatesInvalid(_)
         | QueryError::ReferenceGeometry(_)
         | QueryError::NearWithoutDistance
+        | QueryError::NearDistanceBand
         | QueryError::DistanceOrderWithoutReference
         | QueryError::ScopePatternInvalid(_)
         | QueryError::IcuCollation(_)

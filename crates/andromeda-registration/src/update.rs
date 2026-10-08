@@ -32,7 +32,7 @@ impl RegistrationService {
     /// store rejects the read or the write.
     pub async fn update(&self, id: &Identifier, body: RegistrationBody, context: &AdmittedContext) -> Result<(), RegistrationError> {
         // Counted before the fragment is expanded.
-        admit_registration_geometries(body.geometries(), self.geometry_limits)?;
+        admit_registration_geometries(body.geometries(), self.geo_admission.limits)?;
         let mut body = body;
         let properties = expand_context_source_properties(&self.engine, take(&mut body.additional_properties), context).await?;
         if let Some(information) = body.information.as_set_mut() {
@@ -92,6 +92,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::request_body::RequestBody;
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
+    use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
     use serde_json::{Value, json};
     use std::{num::NonZeroUsize, sync::Arc};
 
@@ -106,10 +107,13 @@ mod tests {
             Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
             engine,
             None,
-            GeometryCensusLimits {
-                positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-                values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
-            },
+            GeoQueryAdmission::new(
+                GeometryCensusLimits {
+                    positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                    values: JsonValueLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
+                },
+                NearDistanceBand::Refused,
+            ),
         )
     }
 

@@ -136,7 +136,7 @@ impl TemporalService {
     /// A reference geometry holding more positions than the broker resolves
     /// makes the query the `TooComplexQuery` of clause 5.5.6.
     async fn compile_geo_query(&self, params: &TemporalQueryParameters, context: &PreparedTermContext) -> Result<Option<GeoQuery>, TemporalError> {
-        Ok(geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(&self.engine, context), self.reference_limits()).await?)
+        Ok(geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(&self.engine, context), self.geo_admission()).await?)
     }
 }
 
