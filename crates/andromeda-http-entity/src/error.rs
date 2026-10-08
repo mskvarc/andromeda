@@ -20,7 +20,7 @@ use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::error::RenderError;
-use andromeda_ngsi_ld_request::error::ParameterError;
+use andromeda_ngsi_ld_request::{error::ParameterError, fragment_entity_id::FragmentEntityIdError};
 use andromeda_tenancy::error::TenancyError;
 use axum::http::Uri;
 
@@ -63,6 +63,14 @@ impl EntityHttpClassify for RenderError {
 impl EntityHttpClassify for ParameterError {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
         classify_parameter_error(self)
+    }
+}
+
+impl EntityHttpClassify for FragmentEntityIdError {
+    fn classify_for_entity_http(&self) -> ClassifiedReport {
+        // Clause 5.4 requires a Fragment `id` to equal the target's; a Fragment
+        // breaking it is not syntactically correct per clause 5.5.4.
+        ClassifiedReport::public(NgsiLdErrorType::BadRequestData, self.to_string())
     }
 }
 

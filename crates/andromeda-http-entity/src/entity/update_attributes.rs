@@ -32,6 +32,7 @@ use andromeda_entity::{write_kind::UpdateAttributes, write_target::WriteTarget};
 use andromeda_federation::{forwarded_content::ForwardedContent, outcome::ForwardedWriteResult, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
+use andromeda_ngsi_ld_request::fragment_entity_id::admit_fragment_entity_id;
 use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn update_attrs(
@@ -54,6 +55,7 @@ pub(crate) async fn update_attrs(
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
     let fragment = body.admitted(&context)?;
+    admit_fragment_entity_id(fragment.id.as_ref(), &id).with_entity_instance(&uri)?;
     let service = &state.entities;
     let selector = service
         .expand_write_selector(params.entity_type.as_ref(), &context)

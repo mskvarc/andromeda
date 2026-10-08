@@ -32,6 +32,7 @@ use andromeda_federation::{forwarded_content::ForwardedContent, request::Trigger
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_model::attribute::merge_member::MergeMember;
+use andromeda_ngsi_ld_request::fragment_entity_id::admit_fragment_entity_id;
 use axum::http::Method;
 
 pub(crate) async fn merge(
@@ -49,6 +50,7 @@ pub(crate) async fn merge(
     // context is admitted before anything is read under it (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;
     let patch = body.admitted(&context)?;
+    admit_fragment_entity_id(patch.id.as_ref(), &id).with_entity_instance(&uri)?;
     let service = &state.entities;
     let is_local = params.local.unwrap_or(false);
     let representation = params.representation().with_entity_instance(&uri)?;
