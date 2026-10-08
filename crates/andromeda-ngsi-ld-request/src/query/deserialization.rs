@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_query::{
 };
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
+use std::num::{IntErrorKind, NonZeroU32};
 
 /// A complete optional geo-query decoded from URL parameters.
 #[derive(Debug, Clone, Default)]
@@ -258,6 +259,38 @@ where
     .transpose()
 }
 
+/// The rejection of a `joinLevel` URL parameter that is no integer at all: a
+/// request that is syntactically invalid (Table 5.5.2-1 `InvalidRequest`).
+pub const JOIN_LEVEL_NOT_AN_INTEGER: &str = "joinLevel is not an integer";
+
+/// Deserialize an optional `joinLevel` URL parameter as a positive integer
+/// (clause 4.5.23).
+///
+/// A value that is no integer (`1.5`, `abc`, the empty value) is refused with
+/// [`JOIN_LEVEL_NOT_AN_INTEGER`]. An integer outside the positive range is
+/// input that does not meet the requirements of the operation, refused with
+/// any other message.
+///
+/// # Errors
+///
+/// Returns a deserialization error when the value is not an integer, or is an
+/// integer below 1 or beyond `u32`.
+pub fn deserialize_optional_join_level<'de, D>(deserializer: D) -> Result<Option<NonZeroU32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    raw.map(|value| {
+        let out_of_range = || DeserializeError::custom(format!("joinLevel {value} is not a positive integer"));
+        match value.parse::<i64>() {
+            Ok(level) => u32::try_from(level).ok().and_then(NonZeroU32::new).ok_or_else(out_of_range),
+            Err(error) if matches!(error.kind(), IntErrorKind::PosOverflow | IntErrorKind::NegOverflow) => Err(out_of_range()),
+            Err(_not_an_integer) => Err(DeserializeError::custom(JOIN_LEVEL_NOT_AN_INTEGER)),
+        }
+    })
+    .transpose()
+}
+
 /// Deserialize an optional ISO-8601 calendar duration at the request boundary.
 ///
 /// # Errors
@@ -274,8 +307,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::query::deserialization::{GEOREL_WITHOUT_GEOMETRY, INCOMPLETE_GEOQUERY, OptionalGeoQuery};
+    use crate::query::deserialization::{
+        GEOREL_WITHOUT_GEOMETRY,
+        INCOMPLETE_GEOQUERY,
+        JOIN_LEVEL_NOT_AN_INTEGER,
+        OptionalGeoQuery,
+        deserialize_optional_join_level,
+    };
     use serde::Deserialize;
+    use std::num::NonZeroU32;
 
     #[derive(Deserialize)]
     struct Carrier {
@@ -301,6 +341,34 @@ mod tests {
         assert!(rejection("geometry=Point&coordinates=%5B1%2C2%5D").contains(INCOMPLETE_GEOQUERY));
         assert!(rejection("geometry=Point").contains(INCOMPLETE_GEOQUERY));
         assert!(rejection("coordinates=%5B1%2C2%5D").contains(INCOMPLETE_GEOQUERY));
+    }
+
+    #[derive(Deserialize)]
+    struct JoinLevelCarrier {
+        #[serde(rename = "joinLevel", default, deserialize_with = "deserialize_optional_join_level")]
+        join_level: Option<NonZeroU32>,
+    }
+
+    fn join_level(query: &str) -> Result<Option<NonZeroU32>, String> {
+        serde_urlencoded::from_str::<JoinLevelCarrier>(query)
+            .map(|carrier| carrier.join_level)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Table 5.5.2-1: a value that is no integer is a syntactically invalid
+    /// request, an integer below 1 input that does not meet the requirements
+    /// of the operation.
+    #[test]
+    fn a_non_integer_join_level_is_reported_apart_from_an_integer_below_one() {
+        for not_an_integer in ["joinLevel=1.5", "joinLevel=abc", "joinLevel=1e1", "joinLevel="] {
+            pretty_assertions::assert_eq!(join_level(not_an_integer), Err(JOIN_LEVEL_NOT_AN_INTEGER.to_owned()), "{not_an_integer}");
+        }
+        for out_of_range in ["joinLevel=0", "joinLevel=-1", "joinLevel=4294967296", "joinLevel=99999999999999999999"] {
+            let error = join_level(out_of_range).expect_err(out_of_range);
+            assert!(!error.contains(JOIN_LEVEL_NOT_AN_INTEGER), "{out_of_range}: {error}");
+        }
+        pretty_assertions::assert_eq!(join_level("joinLevel=3"), Ok(NonZeroU32::new(3)));
+        pretty_assertions::assert_eq!(join_level(""), Ok(None));
     }
 
     #[test]

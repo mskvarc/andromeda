@@ -11,6 +11,7 @@ use crate::{
         deserialize_optional_attribute_names,
         deserialize_optional_dataset_selectors,
         deserialize_optional_iso8601_duration,
+        deserialize_optional_join_level,
         deserialize_optional_projection_terms,
         deserialize_optional_uri_csv,
     },
@@ -167,6 +168,7 @@ pub struct GetEntityParams {
     pub join: Option<JoinMode>,
     /// How many links deep the traversal goes (`joinLevel`).
     #[serde(rename = "joinLevel")]
+    #[serde(default, deserialize_with = "deserialize_optional_join_level")]
     pub join_level: Option<NonZeroU32>,
     /// Entity identifiers the result must be linked from (`containedBy`).
     #[serde(rename = "containedBy")]

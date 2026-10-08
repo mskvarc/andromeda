@@ -119,9 +119,9 @@ pub enum QueryError {
         /// The maximum the parser accepts.
         limit: usize,
     },
-    /// A bare word that is no `URI` stood as a value of an attribute that
-    /// `expandValues` does not name: clause 4.9 derives it from no production.
-    #[error("q expression: an unquoted word is no value; quote it, or name its attribute in expandValues")]
+    /// A bare word that is no `URI` stood as a value: clause 4.9 derives it
+    /// from no production, whatever `expandValues` names.
+    #[error("q expression: an unquoted word is no value; quote it")]
     QBareWord,
     /// A bare literal written in the clause 4.6.3 `DateTime` form was not one.
     #[error("q expression: invalid date-time literal: {0}")]

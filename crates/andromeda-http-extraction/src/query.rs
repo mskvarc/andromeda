@@ -6,6 +6,7 @@
 
 use crate::addressed_uri::addressed_uri;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_ngsi_ld_request::query::deserialization::JOIN_LEVEL_NOT_AN_INTEGER;
 use axum::{
     extract::FromRequestParts,
     http::{Uri, request::Parts},
@@ -55,7 +56,10 @@ where
 /// the operation does not define is one of the "parameters that are
 /// incompatible with the operation", answered with `InvalidRequest`; serde
 /// reports it through `deny_unknown_fields`, whose message is the only signal
-/// the crate offers and is stable across versions. Everything else is a value
+/// the crate offers and is stable across versions. A `joinLevel` that is no
+/// integer at all is a syntactically invalid request (Table 5.5.2-1), also
+/// `InvalidRequest`, reported through
+/// [`JOIN_LEVEL_NOT_AN_INTEGER`]. Everything else is a value
 /// inside a parameter the operation does define -- a `limit` that is not a
 /// number, a half-specified geoquery (clauses 4.10, 5.7.2.4, 5.10.2.4) -- which
 /// is input that does not meet the requirements of the operation, answered with
@@ -67,7 +71,7 @@ where
 /// error type is typed rather than read out of a message. See
 /// [`andromeda_ngsi_ld_request::representation_parameter`].
 pub fn classify_query_parse_error(error_str: &str, error_msg: String, uri: Uri) -> ExtractorRejection {
-    if error_str.contains(UNKNOWN_PARAMETER) {
+    if error_str.contains(UNKNOWN_PARAMETER) || error_str.contains(JOIN_LEVEL_NOT_AN_INTEGER) {
         ExtractorRejection::invalid_request(error_msg, uri)
     } else {
         ExtractorRejection::bad_request_data(error_msg, uri)
@@ -83,11 +87,12 @@ mod tests {
     use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
     use andromeda_ngsi_ld_request::{
         options::EntityRepresentationOptions,
-        query::deserialization::{GEOREL_WITHOUT_GEOMETRY, INCOMPLETE_GEOQUERY},
+        query::deserialization::{GEOREL_WITHOUT_GEOMETRY, INCOMPLETE_GEOQUERY, deserialize_optional_join_level},
         representation_parameter::WrittenValue,
     };
     use axum::{extract::FromRequestParts, http::Request};
     use serde::Deserialize;
+    use std::num::NonZeroU32;
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -135,6 +140,36 @@ mod tests {
         // geometry, and clauses 5.7.2.4 and 5.10.2.4 make both `BadRequestData`.
         let rejection = classify_query_parse_error(GEOREL_WITHOUT_GEOMETRY, "georel alone".to_owned(), "/test".parse().expect("valid URI"));
         assert!(matches!(rejection, ExtractorRejection::BadRequestData { .. }));
+    }
+
+    /// Table 5.5.2-1: a `joinLevel` that is no integer is a syntactically
+    /// invalid request, an integer below 1 data that does not meet the
+    /// requirements of the operation.
+    #[tokio::test]
+    async fn a_non_integer_join_level_is_invalid_request_and_zero_bad_request_data() {
+        #[derive(Debug, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct JoinParams {
+            #[serde(rename = "joinLevel", default, deserialize_with = "deserialize_optional_join_level")]
+            _join_level: Option<NonZeroU32>,
+        }
+
+        for (query, invalid_request) in [
+            ("joinLevel=abc", true),
+            ("joinLevel=1.5", true),
+            ("joinLevel=", true),
+            ("joinLevel=0", false),
+            ("joinLevel=-2", false),
+        ] {
+            let req = Request::builder().uri(format!("/test?{query}")).body(()).expect("valid request");
+            let (mut parts, ()) = req.into_parts();
+            let result = ValidatedQuery::<JoinParams>::from_request_parts(&mut parts, &()).await;
+            if invalid_request {
+                assert!(matches!(result, Err(ExtractorRejection::InvalidRequest { .. })), "{query}");
+            } else {
+                assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })), "{query}");
+            }
+        }
     }
 
     /// Clause 6.3.20 gives an unsupported `format` or `options` value the same

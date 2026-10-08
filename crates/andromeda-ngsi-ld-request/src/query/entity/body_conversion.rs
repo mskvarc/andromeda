@@ -94,7 +94,7 @@ mod tests {
             "attrs": ["speed"],
             "pick": ["id", "speed"],
             "omit": ["scope"],
-            "csf": "location==Madrid",
+            "csf": "location==\"Madrid\"",
             "containedBy": ["urn:ngsi-ld:Building:1"],
             "datasetId": ["https://example.com/datasets/one", "@none"],
             "expandValues": "speed",

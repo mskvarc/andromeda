@@ -266,9 +266,9 @@ fn the_write_side_and_the_query_side_read_every_literal_the_same_way() {
         ("12:00:00,5Z", ReadAs::Time, ReadAs::Time, ReadAs::Time),
         ("2024-01-01T01:00:00+01:00", ReadAs::PlainString, ReadAs::Refused, ReadAs::PlainString),
         ("13:00:00+01:00", ReadAs::PlainString, ReadAs::Refused, ReadAs::PlainString),
-        ("12:00:00 in the morning", ReadAs::PlainString, ReadAs::PlainString, ReadAs::PlainString),
+        ("12:00:00 in the morning", ReadAs::PlainString, ReadAs::Refused, ReadAs::PlainString),
         ("urn:ngsi-ld:Vehicle:A4567", ReadAs::PlainString, ReadAs::PlainString, ReadAs::PlainString),
-        ("atrium", ReadAs::PlainString, ReadAs::PlainString, ReadAs::PlainString),
+        ("atrium", ReadAs::PlainString, ReadAs::Refused, ReadAs::PlainString),
     ] {
         pretty_assertions::assert_eq!(written_as(literal), written, "the write path reads {literal}");
         pretty_assertions::assert_eq!(queried_as(literal, Quoting::Quoted), quoted, "a quoted operand reads {literal}");

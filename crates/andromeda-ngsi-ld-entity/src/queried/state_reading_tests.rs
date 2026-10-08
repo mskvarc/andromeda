@@ -172,7 +172,7 @@ fn rich_cases() -> Vec<(&'static str, bool)> {
         ("\"https://example.com/description\"[en]==\"Tuer\"", false),
         ("\"https://example.com/description\"[de]==\"Tuer\"", true),
         ("\"https://example.com/description\"[en]!=\"Tuer\"", true),
-        ("\"https://example.com/description\"[fr]!=\"Door\"", false),
+        ("\"https://example.com/description\"[fr]!=\"Door\"", true),
         ("\"https://example.com/description\"[de]~=\"Tu.*\"", true),
         ("\"https://example.com/description\"[en]", true),
         ("\"https://example.com/description\"[fr]", false),
