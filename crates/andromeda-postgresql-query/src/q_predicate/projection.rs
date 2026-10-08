@@ -776,13 +776,19 @@ mod tests {
         }
     }
 
-    /// The complementary forms require the language to hold a string and deny
-    /// every one of them.
+    /// The complementary forms require the `LanguageProperty`, not the target
+    /// language, and deny every string of that language (clause 4.9: "No
+    /// matching value is found as the value of the specified language key").
     #[test]
-    fn a_target_language_complement_requires_the_language() {
+    fn a_target_language_complement_requires_the_language_property_rather_than_the_language() {
         for expression in ["\"https://example.com/color\"[en]!~=\"^r\"", "\"https://example.com/color\"[en]!=\"a\"..\"m\""] {
             let (sql, _) = render(expression);
             assert!(sql.contains("NOT EXISTS(SELECT 1 FROM jsonb_array_elements"), "{expression}: {sql}");
+            assert_eq!(
+                sql.matches(r#""ls"."value" ->> ('@language')"#).count(),
+                1,
+                "only the denial pins the tag: {expression}: {sql}"
+            );
         }
     }
 

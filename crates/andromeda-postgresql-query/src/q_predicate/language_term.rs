@@ -2,9 +2,8 @@
 //!
 //! Each operator is the positive or the complementary existential of
 //! [`LanguageMap`]: `==`, a range, the ordering operators and `~=` hold when
-//! some string under the selection satisfies them; `!=` and an excluded range
-//! when the map exists and no string under the selection does; `!~=` when the
-//! map holds a string there and none does. One string is
+//! some string under the selection satisfies them; `!=`, `!~=` and an excluded
+//! range when the map exists and no string under the selection does. One string is
 //! compared the way a String Property's value is compared in its typed column
 //! (`crate::q_predicate::typed_column`), so a language map and a plain String
 //! answer every operand alike.
@@ -63,7 +62,7 @@ pub fn language_term(pred: &Predicate, map: &LanguageMap, selection: LanguageSel
             let test = |text: SimpleExpr| equality_test(text, rhs);
             match membership {
                 SetMembership::Within => map.some_string(selection, test),
-                SetMembership::Outside => map.unequal(selection, test),
+                SetMembership::Outside => map.no_string(selection, test),
             }
         }
         Predicate::Ordering { op, rhs, .. } => map.some_string(selection, |text| string_comparison(text, op.as_cmp_op(), rhs)),

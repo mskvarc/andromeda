@@ -177,8 +177,8 @@ fn resolve_instance_value<'a, I: QueriedInstance<'a>>(instance: I, path: &AttrPa
 /// A language the map does not hold yields an empty array: the entity still
 /// contains the target element, the `LanguageProperty`, and clause 4.9 makes
 /// `!=` match it where "No matching value is found as the value of the
-/// specified language key". No positive operator matches an empty array, and
-/// `!~=` asks for a String to test.
+/// specified language key", and `!~=` where no value is in L(R). No positive
+/// operator matches an empty array.
 fn language_target<'a, I: QueriedInstance<'a>>(instance: I, language: &str) -> ResolvedTarget<'a> {
     let mut strings = instance.language_values(language).filter_map(|item| TerminalKeyword::Literal.read(item));
     let value = match (strings.next(), strings.next()) {

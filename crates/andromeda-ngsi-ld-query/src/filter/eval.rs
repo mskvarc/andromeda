@@ -95,10 +95,12 @@ where
         // only non-String values, does not match. Where the target is "a value
         // from any of the key-value pairs" of a languageMap the clause reads the
         // negated operator as its complement — no value may match — rather than
-        // as one value that happens not to.
+        // as one value that happens not to. The languageMap is then the target
+        // element, so a target language it does not hold leaves no value in
+        // L(R) and matches, as `unequal` does.
         Predicate::NotMatchPattern { path, pattern } => targets_of(path).iter().any(|target| {
             let texts = pattern_targets(target);
-            !texts.is_empty() && !texts.iter().any(|value| pattern.is_match(value.as_ref()))
+            (any_one_value(target).is_some() || !texts.is_empty()) && !texts.iter().any(|value| pattern.is_match(value.as_ref()))
         }),
     }
 }
@@ -1068,13 +1070,18 @@ mod tests {
     }
 
     /// The pattern and ordering operators read the language's value like any
-    /// other String target (clause 4.9), and require the language too.
+    /// other String target (clause 4.9). Clause 4.9 `notPatternOp` requires the
+    /// target element, the `LanguageProperty`, and a value not in L(R), which a
+    /// language the map does not hold leaves none of.
     #[test]
     fn pattern_and_ordering_operators_read_the_target_language() {
         assert!(door_holds("\"https://example.com/description\"[de]~=\"Tu.*\""));
         assert!(!door_holds("\"https://example.com/description\"[en]~=\"Tu.*\""));
+        assert!(!door_holds("\"https://example.com/description\"[fr]~=\".*\""));
         assert!(door_holds("\"https://example.com/description\"[en]!~=\"Tu.*\""));
-        assert!(!door_holds("\"https://example.com/description\"[fr]!~=\"Tu.*\""));
+        assert!(!door_holds("\"https://example.com/description\"[de]!~=\"Tu.*\""));
+        assert!(door_holds("\"https://example.com/description\"[fr]!~=\"Tu.*\""));
+        assert!(!door_holds("\"https://example.com/absent\"[fr]!~=\"Tu.*\""));
         assert!(door_holds("\"https://example.com/description\"[en]>\"A\""));
         assert!(!door_holds("\"https://example.com/description\"[en]<\"A\""));
     }

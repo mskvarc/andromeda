@@ -9,8 +9,8 @@
 //! the target value is one String of the map, so every operator — ordering,
 //! pattern and range included — is decided string by string: some string has to
 //! satisfy `==`, `>`, `~=` or a range, and `!=`, `!~=` and an excluded range
-//! hold when the map carries a string under the selection and none satisfies
-//! the positive form ("No matching value is found").
+//! hold when the map exists and no string under the selection satisfies the
+//! positive form ("No matching value is found").
 //!
 //! The expanded map is an array of `{"@language": …, "@value": …}` entries
 //! (`@language` absent on the `@none` entry), held in `value_object` for a
@@ -107,24 +107,14 @@ impl LanguageMap {
         SeaExpr::exists(self.entries(selection, Some(test(entry_text(VALUE_KEYWORD)))))
     }
 
-    /// Whether the map holds a string under `selection` and none of them
-    /// passes `test`: the complement clause 4.9 gives `!~=` over a language
-    /// map.
+    /// Whether the map holds a string in any language and none under
+    /// `selection` passes `test`: the complement clause 4.9 gives `!=` and
+    /// `!~=`, whose matching entity contains the target element, the
+    /// `LanguageProperty`, and where "No matching value is found as the value
+    /// of the specified language key", which a language the map does not hold
+    /// satisfies.
     #[must_use]
     pub fn no_string(&self, selection: LanguageSelection<'_>, test: impl FnOnce(SimpleExpr) -> SimpleExpr) -> SimpleExpr {
-        Condition::all()
-            .add(self.holds(selection))
-            .add(Condition::all().add(self.some_string(selection, test)).not())
-            .into()
-    }
-
-    /// Whether the map holds a string in any language and none under
-    /// `selection` passes `test`: clause 4.9's `unequal`, whose matching entity
-    /// contains the target element, the `LanguageProperty`, and where "No
-    /// matching value is found as the value of the specified language key",
-    /// which a language the map does not hold satisfies.
-    #[must_use]
-    pub fn unequal(&self, selection: LanguageSelection<'_>, test: impl FnOnce(SimpleExpr) -> SimpleExpr) -> SimpleExpr {
         Condition::all()
             .add(self.holds(LanguageSelection::AnyLanguage))
             .add(Condition::all().add(self.some_string(selection, test)).not())
@@ -229,22 +219,13 @@ mod tests {
         assert!(!sql.contains("@language"), "{sql}");
     }
 
-    /// Clause 4.9 requires the target element: the complement holds only over
-    /// a map carrying a string under the selection.
+    /// Clause 4.9 `unequal` and `notPatternOp` require the `LanguageProperty`,
+    /// not the target language: the presence probe tests no tag, the denial
+    /// pins it.
     #[test]
-    fn no_string_requires_a_string_and_denies_every_match() {
+    fn no_string_requires_the_map_and_denies_a_match_under_the_language() {
         let tag = language("fr");
-        let (sql, _) = render(column_map().no_string(LanguageSelection::TargetLanguage(&tag), equals_door));
-        assert_eq!(sql.matches("EXISTS").count(), 2, "{sql}");
-        assert!(sql.contains("NOT EXISTS"), "{sql}");
-    }
-
-    /// Clause 4.9 `unequal` requires the `LanguageProperty`, not the target
-    /// language: the presence probe tests no tag, the denial pins it.
-    #[test]
-    fn unequal_requires_the_map_and_denies_a_match_under_the_language() {
-        let tag = language("fr");
-        let (sql, binds) = render(column_map().unequal(LanguageSelection::TargetLanguage(&tag), equals_door));
+        let (sql, binds) = render(column_map().no_string(LanguageSelection::TargetLanguage(&tag), equals_door));
         assert_eq!(sql.matches("EXISTS").count(), 2, "{sql}");
         assert_eq!(sql.matches("@language").count(), 1, "{sql}");
         assert!(sql.contains("(NOT EXISTS("), "{sql}");
