@@ -93,10 +93,23 @@ pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Identifier>, attribut
 /// event it writes is itself what ends the interval before it.
 #[must_use]
 pub fn mutation_history(addressed: AddressedInstances<'_>, previous: &EntityState, current: &EntityState) -> Vec<HistoryRecord> {
-    let removed = removed_attribute_instances(previous, current);
     let observation = written_observation(addressed, Some(previous), current);
-    let mut history = Vec::with_capacity(removed.len() + 2);
-    history.extend(observation.map(|observed| HistoryRecord::Observations(Arc::new(observed))));
+    observation
+        .map(|observed| HistoryRecord::Observations(Arc::new(observed)))
+        .into_iter()
+        .chain(removal_history(previous, current))
+        .collect()
+}
+
+/// The tombstones for what `current` no longer holds of `previous`: one per
+/// attribute instance it lost, then the Scope when it lost that.
+///
+/// Clause 4.18 ends a Scope's validity at any "update or delete operation"
+/// that removes it, a Purge Entities (clause 5.6.21) naming `scope` included.
+#[must_use]
+pub fn removal_history(previous: &EntityState, current: &EntityState) -> Vec<HistoryRecord> {
+    let removed = removed_attribute_instances(previous, current);
+    let mut history = Vec::with_capacity(removed.len() + 1);
     history.extend(removed.into_iter().map(HistoryRecord::Tombstone));
     if previous.scope().is_some() && current.scope().is_none() {
         history.push(HistoryRecord::ScopeRemoval);

@@ -8,7 +8,10 @@
 //! recomputed against a fresh read if a concurrent writer got in first.
 
 use crate::{EntityService, entity_validation_reason::EntityValidationReason, error::EntityError, modification_write::ModificationWrite};
-use andromeda_context_commit::{change_event::ChangeEvent, history_record::HistoryRecord};
+use andromeda_context_commit::{
+    change_event::ChangeEvent,
+    history_record::{HistoryRecord, removal_history},
+};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::{
@@ -17,7 +20,6 @@ use andromeda_ngsi_ld_entity::{
         purge::{AttributePurge, PurgeOutcome},
         selection::DatasetSelection,
     },
-    reads::removed_instance::removed_attribute_instances,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
@@ -116,10 +118,7 @@ fn purged_state(previous: &EntityState, mode: &PurgeMode, attributes: &[Attribut
     match outcome {
         PurgeOutcome::Untouched => None,
         PurgeOutcome::Purged => {
-            let history = removed_attribute_instances(previous, &purged)
-                .into_iter()
-                .map(HistoryRecord::Tombstone)
-                .collect();
+            let history = removal_history(previous, &purged);
             Some((purged, history))
         }
     }
@@ -190,6 +189,29 @@ mod tests {
         let (purged, history) = purged_state(&vehicle(), &drop(DatasetPurgeScope::Selector(selector)), &speed()).expect("one instance is purged");
         pretty_assertions::assert_eq!(purged.attributes().get("https://example.org/speed").map(AttributeInstances::len), Some(1));
         pretty_assertions::assert_eq!(history.len(), 1);
+    }
+
+    /// Clause 4.18 ends a Scope's validity at the operation that removes it,
+    /// so a purge naming `scope` records the Scope's removal.
+    #[test]
+    fn purging_the_scope_records_its_removal() {
+        let previous = EntityState::from_slice(
+            &serde_json::to_vec(&json!([{
+                "@id": "urn:ngsi-ld:Vehicle:1",
+                "@type": ["https://example.org/Vehicle"],
+                "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/a/b"}]
+            }]))
+            .expect("JSON"),
+        )
+        .expect("a stored entity");
+        let scope: Vec<AttributeName> = vec!["https://uri.etsi.org/ngsi-ld/scope".parse().expect("a valid attribute name")];
+        let mode = PurgeMode::Drop {
+            attributes: scope.clone(), // clone: the mode and the expanded list are separate inputs.
+            dataset: DatasetPurgeScope::Unfiltered,
+        };
+        let (purged, history) = purged_state(&previous, &mode, &scope).expect("the scope is purged");
+        assert!(purged.scope().is_none());
+        assert!(matches!(history.as_slice(), [HistoryRecord::ScopeRemoval]), "{history:?}");
     }
 
     #[test]
