@@ -653,9 +653,9 @@ mod tests {
     #[test]
     fn a_time_operand_binds_the_canonical_form_the_write_path_stores() {
         // Clause 4.6.3 admits a fraction of one to six digits, written with a
-        // decimal point or a comma, and the write path stores one canonical
-        // rendering of all of them. The probe has to bind that same rendering or
-        // a short-fraction operand matches nothing.
+        // decimal point or a comma, and the stored text is normalised to one
+        // canonical rendering of all of them. The probe has to bind that same
+        // rendering or a short-fraction operand matches nothing.
         let (_, binds) = render("\"https://example.com/d\"==\"12:00:00,5Z\"");
         assert!(
             binds
@@ -667,10 +667,10 @@ mod tests {
 
     #[test]
     fn a_time_ordering_comparison_binds_the_canonical_form_too() {
-        // The stored column is byte-wise collated, so the comparison is
-        // chronological exactly because both sides are the fixed-width form.
+        // Byte-wise order is chronological exactly because both sides are the
+        // fixed-width form, the stored side normalised from the text as written.
         let (sql, binds) = render("\"https://example.com/d\">\"09:30:00.5Z\"");
-        assert!(sql.contains("\"ca\".\"value_string\" >"), "{sql}");
+        assert!(sql.contains("'HH24:MI:SS.US') || ('Z') END) > $2"), "{sql}");
         assert!(
             binds
                 .iter()

@@ -118,7 +118,7 @@ fn candidates_of(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> 
     if element.chain.is_empty() || element.field.is_some() {
         return None;
     }
-    let keys = query_keys(&element.key_path(), scalar)?;
+    let keys = query_keys(&element.key_path(), scalar);
     let value = equality_value(StructuredTarget::AnyValue, SetMembership::Within, rhs, element.holder());
     let mut select = Query::select();
     select
@@ -133,27 +133,35 @@ fn candidates_of(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> 
 }
 
 /// The keys `scalar` has at `path`: every key a stored value equal to it can
-/// have, `None` for an operand no stored value can equal.
+/// have.
 ///
 /// A String or a URI operand may equal a String or a Relationship object, and
 /// the two are salted apart, so both keys are read. A `DateTime` is held as an
 /// instant in a scalar element and as its text inside an array, so both are
-/// read too. A `Date` and a `Time` are held as their canonical text.
-fn query_keys(path: &[i32], scalar: &Scalar) -> Option<SimpleExpr> {
+/// read too. A `Date` is held as its one text. A `Time` compares in a scalar
+/// element by its canonical fixed-width text, which the element is keyed by,
+/// and inside an array by the operand's text, so both are read.
+fn query_keys(path: &[i32], scalar: &Scalar) -> SimpleExpr {
     let path = || key_array(path);
     let key = |value: SimpleExpr| sub_eq_query_key(path(), value);
     let text_key = |kind: i16, text: String| sub_eq_query_text_key(path(), kind, text);
     match scalar {
         // clone: sea-query owns every value in its AST
-        Scalar::Number(number) => Some(key(cast(SeaExpr::val(number.decimal().clone()), PostgresType::Numeric))),
-        Scalar::Bool(value) => Some(key(cast(SeaExpr::val(*value), PostgresType::Boolean))),
-        Scalar::Str(value) | Scalar::Uri(value) => Some(array_cat(text_key(STRING_KIND, value.to_owned()), text_key(URI_KIND, value.to_owned()))),
-        Scalar::DateTime(value) => Some(array_cat(
+        Scalar::Number(number) => key(cast(SeaExpr::val(number.decimal().clone()), PostgresType::Numeric)),
+        Scalar::Bool(value) => key(cast(SeaExpr::val(*value), PostgresType::Boolean)),
+        Scalar::Str(value) | Scalar::Uri(value) => array_cat(text_key(STRING_KIND, value.to_owned()), text_key(URI_KIND, value.to_owned())),
+        Scalar::DateTime(value) => array_cat(
             key(cast(SeaExpr::val(*value), PostgresType::Timestamptz)),
             text_key(STRING_KIND, scalar.literal_text()),
-        )),
-        Scalar::Date(value) => Some(text_key(STRING_KIND, NgsiLdDate::from(*value).to_string())),
-        Scalar::Time(value) => NgsiLdTime::normalise(*value).ok().map(|canonical| text_key(STRING_KIND, canonical.to_string())),
+        ),
+        Scalar::Date(value) => text_key(STRING_KIND, NgsiLdDate::from(*value).to_string()),
+        Scalar::Time(value) => {
+            let literal = text_key(STRING_KIND, scalar.literal_text());
+            match NgsiLdTime::normalise(*value) {
+                Ok(canonical) => array_cat(text_key(STRING_KIND, canonical.to_string()), literal),
+                Err(_) => literal,
+            }
+        }
     }
 }
 
@@ -231,6 +239,15 @@ mod tests {
             "the candidates are rechecked: {sql}"
         );
         assert!(sql.ends_with("LIMIT 1001"), "{sql}");
+    }
+
+    #[test]
+    fn a_time_equality_reads_the_canonical_key_and_the_written_key() {
+        let sql = candidates("\"https://example.com/temperature\".\"https://example.com/source\"==12:00:00Z").expect("keyed");
+        assert!(
+            sql.contains(r"array_cat(sub_eq_query_key(ARRAY[2, 7]::integer[], 2::smallint, '12:00:00.000000Z'::text), sub_eq_query_key(ARRAY[2, 7]::integer[], 2::smallint, '12:00:00Z'::text))"),
+            "{sql}"
+        );
     }
 
     #[test]

@@ -53,10 +53,13 @@ $$;
 -- `value_object` is an array (several values, several objects, a language
 -- map, a list) has one key per scalar member, a value node read through its
 -- `@value`, because a `q` equality matches a value the array includes; JSON
--- has no instant, so a DateTime member keys as its text. An element whose
--- value is a geometry or a structured object has no key. A key selects
--- candidates only: two values may share a key, so a query rechecks the value
--- it compares.
+-- has no instant, so a DateTime member keys as its text. A string element
+-- holding a clause 4.6.3 time of day also keys as the canonical fixed-width
+-- text `HH:MM:SS.ffffffZ` a `q` comparison normalises it to; the shape check
+-- admits only text carrying its own offset, so neither the cast nor `to_char`
+-- depends on a session setting. An element whose value is a geometry or a
+-- structured object has no key. A key selects candidates only: two values may
+-- share a key, so a query rechecks the value it compares.
 create or replace function sub_eq_keys (attribute_name_key integer, sub_attributes public.sub_attribute[])
     returns bigint[]
     language plpgsql
@@ -71,6 +74,7 @@ declare
     path_hash bigint;
     member jsonb;
     member_value jsonb;
+    time_of_day text;
 begin
     if sub_attributes is null then
         return null;
@@ -87,6 +91,12 @@ begin
             keys := keys || hash_numeric_extended(element.value_number, path_hash # 1);
         elsif element.value_string is not null then
             keys := keys || hashtextextended(element.value_string, path_hash # 2);
+            if element.value_string ~ '^[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})$' and pg_input_is_valid('1970-01-01T' || element.value_string, 'timestamptz') then
+                time_of_day := to_char(('1970-01-01T' || element.value_string)::timestamptz at time zone 'UTC', 'HH24:MI:SS.US') || 'Z';
+                if time_of_day <> element.value_string then
+                    keys := keys || hashtextextended(time_of_day, path_hash # 2);
+                end if;
+            end if;
         elsif element.value_boolean is not null then
             keys := keys || hashint8extended(element.value_boolean::integer, path_hash # 3);
         elsif element.value_date_time is not null then

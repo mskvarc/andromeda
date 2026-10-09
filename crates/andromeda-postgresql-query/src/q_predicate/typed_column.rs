@@ -15,11 +15,13 @@
 //!   [`ValueColumn::of_uri`] decides from the byte length alone), which is what
 //!   [`relationship_object_is_comparable`] decides,
 //! * plain dates and times in `value_string`, because only full
-//!   `DateTime`-typed values are stored in `value_date_time`. Both are stored
-//!   in the one canonical, fixed-width form their clause 4.6.3 types define, so
-//!   byte-wise order over the column is chronological order and an ordering
-//!   comparison against the bound canonical text is a temporal comparison. Their
-//!   canonical text is always short, so they never read `value_long_text`.
+//!   `DateTime`-typed values are stored in `value_date_time`. A date has one
+//!   spelling, the fixed-width form clause 4.6.3 defines, so byte-wise order over
+//!   the column is chronological order and the date compares as stored. A time
+//!   is stored as written, and clause 4.6.3 admits several fractional widths of
+//!   one time of day, so the stored text is normalised to the canonical
+//!   fixed-width form before it is compared, and the comparison reads no index.
+//!   Both are always short, so they never read `value_long_text`.
 //!
 //! Every value whose family is not a single scalar lives in `value_object`
 //! instead; [`crate::q_predicate::structured_target`] compares those.
@@ -27,6 +29,7 @@
 use crate::{
     operator::compare,
     q_predicate::{instance_row::InstanceRow, string_ordering::ordered_string, value_column::ValueColumn},
+    temporal_operand::stored_time,
 };
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::{predicate::CmpOp, scalar::Scalar};
@@ -77,12 +80,11 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, row: InstanceRow) -> S
         }
         Scalar::DateTime(value) => compare(row.value(ValueColumn::DateTime), op, SeaExpr::val(*value)),
         Scalar::Date(value) => compare(row.value(ValueColumn::String), op, SeaExpr::val(NgsiLdDate::from(*value).to_string())),
-        // The operand is rendered in the same canonical form the write path
-        // stores, rather than in the clause 4.9 serialisation the client wrote:
-        // `12:00:00+01:00` and `11:00:00Z` are one time of day, and only the
-        // canonical text of both compares against the stored column.
+        // Both sides compare in the canonical fixed-width form: `12:00:00Z` and
+        // `12:00:00.000Z` are one time of day, and only their canonical texts are
+        // equal and order chronologically.
         Scalar::Time(value) => match NgsiLdTime::normalise(*value) {
-            Ok(canonical) => compare(row.value(ValueColumn::String), op, SeaExpr::val(canonical.to_string())),
+            Ok(canonical) => compare(stored_time(row.value(ValueColumn::String)), op, SeaExpr::val(canonical.to_string())),
             // A time of day with no canonical form is one no write path could
             // have stored, so nothing can compare equal to it.
             Err(_) => false_literal(),
@@ -294,12 +296,27 @@ mod tests {
     }
 
     /// Clause 4.6.3 admits a `Time` only with the literal `Z` designator, and
-    /// the write path stores one canonical rendering, so an operand that cannot
-    /// be normalised is one nothing stored could equal.
+    /// a stored time compares in its canonical rendering, so an operand that
+    /// cannot be normalised is one nothing stored could equal.
     #[test]
     fn a_time_operand_that_normalises_compares_against_its_canonical_text() {
         let time = parse_time("12:00:00,5Z").expect("the comma compatibility form");
         let sql = render(current(&Scalar::Time(time), CmpOp::Equal));
         assert!(sql.contains("value_string"), "{sql}");
+    }
+
+    /// A time is stored as written, so `12:00:00Z` and `12:00:00.000Z` are
+    /// two texts of one time of day; both sides compare in the canonical
+    /// fixed-width form, under every operator and at every depth.
+    #[test]
+    fn a_time_comparison_normalises_the_stored_text() {
+        let time = parse_time("12:00:00Z").expect("a time");
+        for row in [InstanceRow::Current, InstanceRow::Element(ElementLevel::at(0))] {
+            for op in [CmpOp::Equal, CmpOp::Greater, CmpOp::LessEq] {
+                let sql = render(typed_column_condition(&Scalar::Time(time), op, row));
+                assert!(sql.contains("'1970-01-01T'"), "the stored time is anchored and normalised: {op:?} {sql}");
+                assert!(sql.contains("'12:00:00.000000Z'"), "the operand is canonical: {op:?} {sql}");
+            }
+        }
     }
 }
