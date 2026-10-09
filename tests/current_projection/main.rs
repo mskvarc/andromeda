@@ -1,15 +1,13 @@
-//! Verification suite for the transactional current-attribute projection.
+//! Verification suite for the transactional current-state attribute rows.
 //!
-//! Covers current projection atomicity and deletion, default dataset
-//! uniqueness, distinct datasets, narrow Entity keys, empty Entity types,
-//! replayed writes, no-op suppression, long strings, instance expiry,
-//! identifier bounds, refused-write isolation, the consequences of attribute
-//! and Entity writes, the outline a deletion reads instead of the payload, and
-//! the hoisted geometry a write leaving it alone does not project again.
-//! Each test drives the broker over HTTP (or, for the no-op guard and
-//! refused-write isolation, the broker's own projection statement or
-//! committer) and then reads
-//! `current_attribute_values`, `entities`, and `temporal_entities` directly, so
+//! Covers current-state atomicity and deletion, default dataset uniqueness,
+//! distinct datasets, narrow Entity keys, empty Entity types, replayed writes,
+//! long strings, instance expiry, identifier bounds, refused-write isolation,
+//! the consequences of attribute and Entity writes, the outline a deletion
+//! reads, and the hoisted geometry a write leaving it alone does not rewrite.
+//! Each test drives the broker over HTTP (or, for refused-write isolation, the
+//! broker's own committer) and then reads
+//! `current_attributes`, `entities`, and `temporal_entities` directly, so
 //! an assertion states what the storage actually holds rather than what the
 //! rendering suggests.
 //!

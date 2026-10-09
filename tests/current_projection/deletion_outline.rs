@@ -1,13 +1,13 @@
-//! The outline a Delete Entity reads instead of the payload it removes, and
-//! the probe deciding whether it may.
+//! The outline a Delete Entity reads of the state it removes, and the probe
+//! deciding whether it reads the whole state.
 //!
 //! Clause 5.6.6 removes an entity's current state; its Temporal Evolution
 //! records a tombstone per instance it held (clauses 4.5.7 and 4.5.8) and the
 //! end of its Scope (clause 4.18). The outline those are written from is read
-//! from the rows the write path keeps beside the payload, so each test writes
+//! from the rows the write path keeps, so each test writes
 //! entities over HTTP and reads the outline through the broker's own store,
 //! asserting the typed values it hands the deletion. The watcher probe decides
-//! whether the removed payload is read at all: only an active, change-driven
+//! whether the removed state is read whole: only an active, change-driven
 //! entity subscription a deletion can raise a trigger for counts (clause
 //! 5.2.12, Table 5.2.12-1).
 

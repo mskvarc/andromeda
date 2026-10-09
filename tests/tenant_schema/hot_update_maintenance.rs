@@ -1,21 +1,20 @@
 //! Hot-update maintenance: the churn-heavy relations carry the fillfactor and
 //! autovacuum settings their write rate needs.
 //!
-//! Four relations take queue-shaped churn — `current_attribute_values`,
-//! `entity_documents`, `notification_deliveries` and `pending_side_effects` —
-//! and each carries an explicit `fillfactor` and aggressive per-table autovacuum
-//! settings, because the server defaults let dead tuples accumulate faster than
-//! they are reclaimed at that write rate. `entities` and `entity_search` share
-//! the vacuum cadence: the former is updated only for an expiry change, the
-//! latter only when a projected search column moves.
+//! Four relations take queue-shaped churn (`entities`, `current_attributes`,
+//! `notification_deliveries` and `pending_side_effects`), and each carries an
+//! explicit `fillfactor` and aggressive per-table autovacuum settings, because
+//! the server defaults let dead tuples accumulate faster than they are
+//! reclaimed at that write rate. `entity_search` shares the vacuum cadence: it
+//! is updated only when one of its search columns moves.
 //!
 //! The property is checked in four parts. The settings the migrations declare
 //! are read back from the catalogue, so a relation that lost them is caught. A
 //! sustained update run then reports the heap-only-tuple ratio and the dead-tuple
 //! count each relation actually reaches, which is what the tuning is judged by.
-//! The split of the entity into a document row that every write touches and a
-//! search row that only a projection change touches is verified through the
-//! API: a value-only write leaves the search row's update counter where it was,
+//! The split of the entity into an identity row whose `modified_at` every
+//! write stamps and a search row that only a search column change touches is
+//! verified through the API: a value-only write leaves the search row's update counter where it was,
 //! a type change advances it. And the two queue claims are told apart: the
 //! delivery claim writes the inputs of its claimable-expression index, so vacuum
 //! cadence rather than fillfactor is the defence there; the side-effect claim
@@ -44,18 +43,14 @@ struct TunedRelation {
 const TUNED_RELATIONS: &[TunedRelation] = &[
     TunedRelation {
         name: "entities",
-        fillfactor: None,
-    },
-    TunedRelation {
-        name: "entity_documents",
-        fillfactor: Some(70),
+        fillfactor: Some(80),
     },
     TunedRelation {
         name: "entity_search",
         fillfactor: None,
     },
     TunedRelation {
-        name: "current_attribute_values",
+        name: "current_attributes",
         fillfactor: Some(80),
     },
     TunedRelation {
@@ -93,10 +88,10 @@ const AUTOVACUUM_SETTINGS: &[&str] = &[
 /// measurement rather than a rounding of one or two tuples.
 const CHURN_UPDATES: i64 = 2_000;
 
-/// Identifier prefix of the projection-churn fixture. That test holds the
+/// Identifier prefix of the attribute-churn fixture. That test holds the
 /// exclusive serialized lease, so the tenant is reset to a clean slate before it
 /// runs and one fixed prefix suffices.
-const PROJECTION_CHURN_PREFIX: &str = "urn:ngsi-ld:test:tenant-schema:projection-churn";
+const ATTRIBUTE_CHURN_PREFIX: &str = "urn:ngsi-ld:test:tenant-schema:attribute-churn";
 
 /// The pages `relation` occupies right now.
 async fn relation_pages(pool: &PgPool, relation: &str) -> i64 {
@@ -198,7 +193,7 @@ async fn every_hot_update_relation_still_declares_the_maintenance_settings_it_wa
     scope.finish().await.expect("cleanup failed");
 }
 
-/// A sustained update run over the current projection, in the two shapes the
+/// A sustained update run over `current_attributes`, in the two shapes the
 /// relation can take.
 ///
 /// Through the broker a write that restates an instance without changing its
@@ -207,7 +202,7 @@ async fn every_hot_update_relation_still_declares_the_maintenance_settings_it_wa
 /// production shape: it rewrites a column no index key contains
 /// (`unit_code_id`), which is the only update the reserved `fillfactor` space
 /// can keep heap-only, and it measures that the reservation does so. A write
-/// that changes the value touches `value_number`, which `idx_cav_value_number`
+/// that changes the value touches `value_number`, which `idx_ca_value_number`
 /// contains, so it cannot: every typed-value index disqualifies HOT for its own
 /// column, which is why vacuum cadence rather than fillfactor is the primary
 /// defence. Both are measured so the tuning is judged on what it
@@ -219,10 +214,10 @@ async fn every_hot_update_relation_still_declares_the_maintenance_settings_it_wa
 /// runs against a clean slate with no concurrent writer. The HOT-ratio asserts
 /// are transaction-local and would be safe either way.
 #[tokio::test]
-async fn sustained_projection_churn_stays_heap_only_and_leaves_bounded_dead_tuples() {
+async fn sustained_attribute_row_churn_stays_heap_only_and_leaves_bounded_dead_tuples() {
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
-    let prefix = PROJECTION_CHURN_PREFIX;
+    let prefix = ATTRIBUTE_CHURN_PREFIX;
 
     let attribute_name_key: i32 = sqlx::query_scalar(
         "INSERT INTO attribute_names (name) VALUES ('https://example.test/tenant-schema/churn') \
@@ -235,14 +230,14 @@ async fn sustained_projection_churn_stays_heap_only_and_leaves_bounded_dead_tupl
     let entity_key = churn_entity(pool, prefix).await;
 
     sqlx::query(
-        "INSERT INTO current_attribute_values (entity_key, attribute_name_key, attribute_kind, value_kind, value_number) \
-         VALUES ($1, $2, 1, 1, 0::numeric)",
+        "INSERT INTO current_attributes (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_number, created_at, modified_at) \
+         VALUES ($1, $2, 0, 1, 1, 0::numeric, now(), now())",
     )
     .bind(entity_key)
     .bind(attribute_name_key)
     .execute(pool)
     .await
-    .expect("the churn projection row must be writable");
+    .expect("the churn attribute row must be writable");
 
     // `$2` is bound but never changes the row's value: it only keeps the two
     // runs on one churn driver. `unit_code_id` is set to NULL, which it already
@@ -250,8 +245,8 @@ async fn sustained_projection_churn_stays_heap_only_and_leaves_bounded_dead_tupl
     // carries.
     let restatement = churn(
         pool,
-        "current_attribute_values",
-        "UPDATE current_attribute_values SET unit_code_id = NULL WHERE entity_key = $1 AND $2 > 0",
+        "current_attributes",
+        "UPDATE current_attributes SET unit_code_id = NULL WHERE entity_key = $1 AND $2 > 0",
         entity_key,
     )
     .await;
@@ -270,14 +265,14 @@ async fn sustained_projection_churn_stays_heap_only_and_leaves_bounded_dead_tupl
 
     let revaluation = churn(
         pool,
-        "current_attribute_values",
-        "UPDATE current_attribute_values SET value_number = $2::numeric WHERE entity_key = $1",
+        "current_attributes",
+        "UPDATE current_attributes SET value_number = $2::numeric WHERE entity_key = $1",
         entity_key,
     )
     .await;
 
     assert_eq!(revaluation.updated, CHURN_UPDATES, "every value-changing update must be counted");
-    // `idx_cav_value_number` contains `value_number`, so none of these can be
+    // `idx_ca_value_number` contains `value_number`, so none of these can be
     // heap-only. Recorded as an assertion because the day that index goes, the
     // reasoning that vacuum cadence is the primary defence changes with it and
     // the tuning has to be re-measured.
@@ -296,24 +291,23 @@ async fn sustained_projection_churn_stays_heap_only_and_leaves_bounded_dead_tupl
         restatement.pages
     );
 
-    sqlx::query("DELETE FROM current_attribute_values WHERE entity_key = $1")
+    sqlx::query("DELETE FROM current_attributes WHERE entity_key = $1")
         .bind(entity_key)
         .execute(pool)
         .await
-        .expect("the churn projection row must be removable");
+        .expect("the churn attribute row must be removable");
 
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Insert one bare entity in all three current-state relations, with its type
-/// membership, under `prefix` and return its surrogate key.
+/// Insert one bare entity, with its search row and its type membership, under
+/// `prefix` and return its surrogate key.
 async fn churn_entity(pool: &PgPool, prefix: &str) -> i64 {
     sqlx::query_scalar(
         "WITH type_name AS ( \
              INSERT INTO entity_type_names (name) VALUES ('https://example.test/tenant-schema/Churn') \
              ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING entity_type_name_key), \
          ins AS (INSERT INTO entities (id) VALUES ($1::text || ':churn') RETURNING entity_key, id), \
-         doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, '[]'::jsonb FROM ins), \
          mbr AS (INSERT INTO entity_type_members (entity_key, entity_type_name_key, id) \
                  SELECT ins.entity_key, type_name.entity_type_name_key, ins.id FROM ins, type_name) \
          INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys, attribute_instance_name_keys, attribute_instance_kinds) \
@@ -326,32 +320,32 @@ async fn churn_entity(pool: &PgPool, prefix: &str) -> i64 {
     .expect("the churn entity must be writable")
 }
 
-/// A sustained payload rewrite over the document row.
+/// A sustained `modified_at` stamp over the identity row.
 ///
-/// The document row is the one every attribute write rewrites, and it carries
-/// no index other than its key, so a payload rewrite touches no index key at
-/// all: with the free space `fillfactor` reserves the run must stay heap-only,
-/// which is the property the split of the entity into three relations exists
-/// to buy.
+/// Every write of an Entity stamps its identity row's `modified_at`, and no
+/// index covers that column, so the stamp touches no index key at all: with
+/// the free space `fillfactor` reserves the run must stay heap-only, which is
+/// the property the split of the entity into an identity and a search row
+/// exists to buy.
 #[tokio::test]
-async fn sustained_document_churn_stays_heap_only() {
+async fn sustained_identity_stamping_stays_heap_only() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let pool = scope.database_pool();
     let entity_key = churn_entity(pool, scope.id_prefix()).await;
-    let pages_before = relation_pages(pool, "entity_documents").await;
+    let pages_before = relation_pages(pool, "entities").await;
 
     let rewrite = churn(
         pool,
-        "entity_documents",
-        "UPDATE entity_documents SET payload = jsonb_build_array(jsonb_build_object('round', $2::bigint)), modified_at = now() WHERE entity_key = $1",
+        "entities",
+        "UPDATE entities SET modified_at = now() + $2::bigint * interval '1 microsecond' WHERE entity_key = $1",
         entity_key,
     )
     .await;
 
-    assert_eq!(rewrite.updated, CHURN_UPDATES, "every payload rewrite must be counted");
+    assert_eq!(rewrite.updated, CHURN_UPDATES, "every stamp must be counted");
     assert!(
         rewrite.heap_only * 10 >= rewrite.updated * 9,
-        "a payload rewrite must stay heap-only: {} of {} updates were HOT",
+        "a modifiedAt stamp must stay heap-only: {} of {} updates were HOT",
         rewrite.heap_only,
         rewrite.updated
     );
@@ -360,7 +354,7 @@ async fn sustained_document_churn_stays_heap_only() {
     // the size the run started from.
     assert!(
         rewrite.pages <= pages_before + 1 + CHURN_UPDATES / 8,
-        "sustained payload churn must not grow the relation without bound: {} pages after, {pages_before} before",
+        "sustained stamping must not grow the relation without bound: {} pages after, {pages_before} before",
         rewrite.pages
     );
 
@@ -374,7 +368,7 @@ async fn sustained_document_churn_stays_heap_only() {
 /// rewritten: at commit, for this one entity's row, and independent of the
 /// statistics collector's flush latency or of concurrent writes to any other
 /// entity. Reading it before and after a write is a precise, race-free test of
-/// whether that write touched the row -- unlike the table-wide cumulative
+/// whether that write touched the row, unlike the table-wide cumulative
 /// `n_tup_upd`, which lags behind the write and counts every entity at once.
 async fn row_writer(pool: &PgPool, relation: &str, entity_id: &str) -> i64 {
     // `relation` is one of this module's own relation-name constants, never
@@ -388,8 +382,8 @@ async fn row_writer(pool: &PgPool, relation: &str, entity_id: &str) -> i64 {
         .expect("the entity's row must report the transaction that wrote it")
 }
 
-/// Through the API: a write that changes only an attribute value rewrites the
-/// document row and leaves the search row untouched, and a write that adds a
+/// Through the API: a write that changes only an attribute value stamps the
+/// identity row and leaves the search row untouched, and a write that adds a
 /// type rewrites the search row too.
 #[tokio::test]
 async fn a_value_only_write_leaves_the_search_row_untouched_while_a_type_change_rewrites_it() {
@@ -411,7 +405,7 @@ async fn a_value_only_write_leaves_the_search_row_untouched_while_a_type_change_
         .expect("create request failed");
     assert_eq!(created.status, StatusCode::CREATED);
 
-    let document_writer = row_writer(pool, "entity_documents", &id).await;
+    let identity_writer = row_writer(pool, "entities", &id).await;
     let search_writer = row_writer(pool, "entity_search", &id).await;
 
     let value_only = client
@@ -420,9 +414,9 @@ async fn a_value_only_write_leaves_the_search_row_untouched_while_a_type_change_
         .expect("attribute update request failed");
     assert_eq!(value_only.status, StatusCode::NO_CONTENT);
     assert_ne!(
-        row_writer(pool, "entity_documents", &id).await,
-        document_writer,
-        "the value write must rewrite the document row"
+        row_writer(pool, "entities", &id).await,
+        identity_writer,
+        "the value write must stamp the identity row"
     );
     assert_eq!(
         row_writer(pool, "entity_search", &id).await,

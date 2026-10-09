@@ -30,8 +30,8 @@ const DEFAULT_MAX_ENTITY_JSON_VALUES: NonZeroUsize = NonZeroUsize::MIN.saturatin
 const DEFAULT_MAX_GEOMETRY_POSITIONS: NonZeroUsize = NonZeroUsize::MIN.saturating_add(99_999);
 
 /// The default deepest nesting one attribute may have: far deeper than the
-/// NGSI-LD data models nest, and well within the depth every stored document
-/// reads back at.
+/// NGSI-LD data models nest, and well within the depth every queued and
+/// stored document reads back at.
 const DEFAULT_MAX_ATTRIBUTE_NESTING: NonZeroUsize = NonZeroUsize::MIN.saturating_add(31);
 
 /// Invalid entity execution configuration.
@@ -63,11 +63,11 @@ pub enum EntityConfigError {
     ExpiryBatchSizeOutOfRange,
     /// The attribute nesting limit admits attributes deeper than every stored
     /// and queued document holding one can be read back at.
-    #[error("entity.max_attribute_nesting ({configured}) must not exceed {ceiling}, the deepest nesting every stored document reads back at")]
+    #[error("entity.max_attribute_nesting ({configured}) must not exceed {ceiling}, the deepest nesting every queued and stored document reads back at")]
     AttributeNestingAboveDecodable {
         /// The configured limit.
         configured: usize,
-        /// The deepest nesting every stored document reads back at.
+        /// The deepest nesting every queued and stored document reads back at.
         ceiling: usize,
     },
     /// Pending side-effect polling cadence was configured as zero.
@@ -183,8 +183,8 @@ pub struct EntityConfig {
     /// each sub-attribute, each JSON object or list of a value, and each
     /// object or array inside a JSON literal is one. An attribute nesting
     /// deeper is answered 400 `BadRequestData`. At most 59, the deepest every
-    /// stored document reads back at. Every replica of a deployment runs the
-    /// same value.
+    /// queued and stored document reads back at. Every replica of a
+    /// deployment runs the same value.
     #[toml_comment(inline)]
     pub max_attribute_nesting: NonZeroUsize,
 }
@@ -242,7 +242,8 @@ impl EntityConfig {
     /// expiry batch size does not fit the unsigned 32-bit width the expiry
     /// source port accepts, and
     /// [`EntityConfigError::AttributeNestingAboveDecodable`] when the attribute
-    /// nesting limit passes the depth every stored document reads back at.
+    /// nesting limit passes the depth every queued and stored document reads
+    /// back at.
     pub fn validate(&self) -> Result<(), EntityConfigError> {
         if self.batch_chunk_concurrency == Some(0) {
             return Err(EntityConfigError::ZeroBatchChunkConcurrency);
@@ -370,9 +371,9 @@ mod tests {
         assert!(toml::from_str::<EntityConfig>(&rendered.replace("max_entity_json_values = 1000000", "max_entity_json_values = 0")).is_err());
     }
 
-    /// An attribute nesting past the depth every stored document reads back
-    /// at would admit writes no read can decode; the limit defaults to 32 and
-    /// may be raised to that ceiling, not past it.
+    /// An attribute nesting past the depth every queued and stored document
+    /// reads back at would admit writes no read can decode; the limit defaults
+    /// to 32 and may be raised to that ceiling, not past it.
     #[test]
     fn the_attribute_nesting_defaults_to_32_and_is_refused_past_the_decodable_ceiling() {
         let rendered = toml::to_string(&EntityConfig::default()).expect("the defaults render");

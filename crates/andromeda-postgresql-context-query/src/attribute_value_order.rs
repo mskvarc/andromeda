@@ -438,7 +438,6 @@ mod tests {
         assert!(sql.contains(r#""ca"."attribute_name_key" = 7"#), "{sql}");
         assert!(sql.contains(r#"ORDER BY "ca"."ordinal" ASC LIMIT 1"#), "{sql}");
         assert!(sql.contains(r#""ordered"."value_number""#), "{sql}");
-        assert!(!sql.contains("payload"), "{sql}");
     }
 
     /// A sub-attribute path orders by the first element at its end, read

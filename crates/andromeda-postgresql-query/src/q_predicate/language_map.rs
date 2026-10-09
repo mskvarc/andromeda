@@ -6,8 +6,8 @@
 //! languageMap"; with one, "the Value associated to the matching key-value pair
 //! … where the key matches the target language", and a language holding several
 //! strings matches "as a single element from the array of values". Either way
-//! the target value is one String of the map, so every operator — ordering,
-//! pattern and range included — is decided string by string: some string has to
+//! the target value is one String of the map, so every operator (ordering,
+//! pattern and range included) is decided string by string: some string has to
 //! satisfy `==`, `>`, `~=` or a range, and `!=`, `!~=` and an excluded range
 //! hold when the map exists and no string under the selection satisfies the
 //! positive form ("No matching value is found").
@@ -239,10 +239,10 @@ mod tests {
         let QueryPath::Local(path) = pred.path() else {
             panic!("a local path");
         };
-        let (sql, _) = render(LanguageMap::of_document(path, SeaExpr::col(Alias::new("payload"))).holds(LanguageSelection::AnyLanguage));
+        let (sql, _) = render(LanguageMap::of_document(path, SeaExpr::col(Alias::new("document"))).holds(LanguageSelection::AnyLanguage));
         assert!(
             sql.contains(
-                r#"jsonb_path_query_array("payload", '$[0]."https://example.com/door"[*]."https://example.com/label"[*]."https://uri.etsi.org/ngsi-ld/hasLanguageMap"[*]')"#
+                r#"jsonb_path_query_array("document", '$[0]."https://example.com/door"[*]."https://example.com/label"[*]."https://uri.etsi.org/ngsi-ld/hasLanguageMap"[*]')"#
             ),
             "{sql}"
         );

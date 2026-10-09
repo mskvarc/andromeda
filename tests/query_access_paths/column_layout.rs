@@ -60,13 +60,7 @@ async fn rebuilt_relations_declare_a_not_null_fixed_prefix_without_alignment_pad
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
 
-    for relation in [
-        "entities",
-        "entity_documents",
-        "entity_search",
-        "current_attribute_values",
-        "temporal_append_intents",
-    ] {
+    for relation in ["entities", "entity_search", "current_attributes", "temporal_append_intents"] {
         let columns = physical_columns(pool, relation).await;
         let prefix: Vec<&PhysicalColumn> = columns.iter().take_while(|column| column.attnotnull && column.is_fixed_width()).collect();
         assert!(!prefix.is_empty(), "{relation} must open with a not-null fixed-width prefix");

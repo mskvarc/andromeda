@@ -11,9 +11,9 @@
 
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, SubAttribute},
-    projected_string_column::ProjectedStringColumn,
-    projected_uri_column::ProjectedUriColumn,
+    string_value_column::StringValueColumn,
     temporal::AttributeHistory,
+    uri_value_column::UriValueColumn,
 };
 
 /// One typed value column of a stored attribute instance.
@@ -26,13 +26,13 @@ pub enum ValueColumn {
     /// A String short enough for a B-tree entry, and a `Date` or `Time` in its
     /// canonical text.
     String,
-    /// A String past [`ProjectedStringColumn::Indexed`]'s bound.
+    /// A String past [`StringValueColumn::Indexed`]'s bound.
     LongText,
     /// A `DateTime`.
     DateTime,
     /// A Relationship's single object, short enough for a B-tree entry.
     Uri,
-    /// A Relationship's single object past [`ProjectedUriColumn::Indexed`]'s
+    /// A Relationship's single object past [`UriValueColumn::Indexed`]'s
     /// bound.
     LongUri,
     /// Every value that is not a single scalar.
@@ -44,9 +44,9 @@ impl ValueColumn {
     /// write path placed it.
     #[must_use]
     pub const fn of_string(text: &str) -> ValueColumn {
-        match ProjectedStringColumn::of(text) {
-            ProjectedStringColumn::Indexed => ValueColumn::String,
-            ProjectedStringColumn::Overflow => ValueColumn::LongText,
+        match StringValueColumn::of(text) {
+            StringValueColumn::Indexed => ValueColumn::String,
+            StringValueColumn::Overflow => ValueColumn::LongText,
         }
     }
 
@@ -54,9 +54,9 @@ impl ValueColumn {
     /// exactly as the write path placed it.
     #[must_use]
     pub const fn of_uri(uri: &str) -> ValueColumn {
-        match ProjectedUriColumn::of(uri) {
-            ProjectedUriColumn::Indexed => ValueColumn::Uri,
-            ProjectedUriColumn::Overflow => ValueColumn::LongUri,
+        match UriValueColumn::of(uri) {
+            UriValueColumn::Indexed => ValueColumn::Uri,
+            UriValueColumn::Overflow => ValueColumn::LongUri,
         }
     }
 
@@ -112,7 +112,7 @@ impl ValueColumn {
 #[cfg(test)]
 mod tests {
     use crate::q_predicate::value_column::ValueColumn;
-    use andromeda_postgresql_schema::{projected_string_column::INDEXED_STRING_BYTE_LIMIT, projected_uri_column::INDEXED_URI_BYTE_LIMIT};
+    use andromeda_postgresql_schema::{string_value_column::INDEXED_STRING_BYTE_LIMIT, uri_value_column::INDEXED_URI_BYTE_LIMIT};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 

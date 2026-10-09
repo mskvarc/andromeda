@@ -39,10 +39,8 @@ use tokio::time::timeout;
 /// The foreign keys from live branch relations into the tenant-global
 /// dictionaries, which the live-only tenant migration declares and no
 /// Snapshot branch carries.
-const LIVE_ONLY_DICTIONARY_REFERENCES: [&str; 5] = [
+const LIVE_ONLY_DICTIONARY_REFERENCES: [&str; 3] = [
     "fk_attribute_history_instance_claims_attribute_name",
-    "fk_current_attribute_values_attribute_name",
-    "fk_current_attribute_values_unit_code",
     "fk_entity_type_members_entity_type_name",
     "fk_temporal_attribute_streams_attribute_name",
 ];
@@ -178,10 +176,9 @@ async fn snapshot_branch_schema_references_only_its_own_relations() {
     assert!(escaping.is_empty(), "{schema} references relations outside itself: {escaping:#?}");
 
     let live_keys = foreign_keys(&pool, "public").await;
-    for (constraint, referenced) in
-        LIVE_ONLY_DICTIONARY_REFERENCES
-            .iter()
-            .zip(["attribute_names", "attribute_names", "unit_codes", "entity_type_names", "attribute_names"])
+    for (constraint, referenced) in LIVE_ONLY_DICTIONARY_REFERENCES
+        .iter()
+        .zip(["attribute_names", "entity_type_names", "attribute_names"])
     {
         assert!(
             live_keys.iter().any(|key| key.contains(&format!(".{constraint} -> {referenced}"))),

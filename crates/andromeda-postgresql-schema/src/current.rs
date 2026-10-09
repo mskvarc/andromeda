@@ -99,8 +99,8 @@ pub enum EntityTypeMembers {
 /// and an optional `datasetId`. Exactly one typed value column is populated on
 /// a row, the one `value_kind` names; a String and a single Relationship object
 /// each have two columns, picked by byte length
-/// ([`ProjectedStringColumn`](crate::projected_string_column::ProjectedStringColumn),
-/// [`ProjectedUriColumn`](crate::projected_uri_column::ProjectedUriColumn)).
+/// ([`StringValueColumn`](crate::string_value_column::StringValueColumn),
+/// [`UriValueColumn`](crate::uri_value_column::UriValueColumn)).
 /// The instance's sub-attributes are held on the same row in
 /// `sub_attributes`, as elements of [`SubAttribute`].
 ///

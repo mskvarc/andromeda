@@ -38,7 +38,7 @@ async fn search_row(pool: &PgPool, key: i64) -> (String, String) {
 /// projection.
 async fn location_projection_version(pool: &PgPool, key: i64) -> String {
     sqlx::query_scalar(
-        "SELECT c.xmin::text FROM current_attribute_values AS c \
+        "SELECT c.xmin::text FROM current_attributes AS c \
          JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          WHERE c.entity_key = $1 AND an.name = 'https://uri.etsi.org/ngsi-ld/location'",
     )

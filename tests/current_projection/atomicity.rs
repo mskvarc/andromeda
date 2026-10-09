@@ -78,14 +78,14 @@ async fn current_projection_constraint_violation_rolls_back_the_entity_row() {
     let mut transaction = scope.database_pool().begin().await.expect("transaction must start");
     let entity_key = insert_typed_entity(&mut transaction, &id, BUILDING_TYPE).await;
 
-    // A projection row whose declared value kind does not match its populated
-    // column: exactly the corruption
-    // `chk_current_attribute_values_value_kind_column` exists to refuse.
+    // A row whose declared value kind does not match its populated column:
+    // exactly the corruption `chk_current_attributes_value_kind_column` exists
+    // to refuse.
     let name_key = insert_attribute_name(&mut transaction, "https://example.test/current-projection/rollback").await;
     let failure = sqlx::query(
-        "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_key, attribute_kind, value_kind, value_string) \
-         VALUES ($1, $2, 1, 1, 'not a number')",
+        "INSERT INTO current_attributes \
+         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_string, created_at, modified_at) \
+         VALUES ($1, $2, 0, 1, 1, 'not a number', now(), now())",
     )
     .bind(entity_key)
     .bind(name_key)
@@ -140,15 +140,6 @@ async fn current_projection_and_indexed_queries_preserve_neighboring_exact_decim
         Some("18446744073709551616"),
         "the NUMERIC projection column must hold an integer beyond u64 without rounding"
     );
-
-    let stored_payload: String =
-        sqlx::query_scalar("SELECT d.payload::text FROM entities e JOIN entity_documents d ON d.entity_key = e.entity_key WHERE e.id = $1")
-            .bind(&exact_id)
-            .fetch_one(scope.database_pool())
-            .await
-            .expect("stored payload must be readable");
-    assert!(stored_payload.contains("0.100000000000000005"), "stored payload: {stored_payload}");
-    assert!(stored_payload.contains("18446744073709551616"), "stored payload: {stored_payload}");
 
     let retrieved = client
         .get_entity(&exact_id, "", "application/json", Some(TEST_SUITE_CONTEXT))
@@ -243,12 +234,12 @@ async fn a_short_string_in_the_overflow_column_is_refused() {
 
     // A String that fits the indexed column has exactly one place it may sit,
     // so a writer parking it in the overflow column would leave the B-tree
-    // blind to it; `chk_current_attribute_values_value_long_text_length`
+    // blind to it; `chk_current_attributes_value_long_text_length`
     // refuses that placement.
     let failure = sqlx::query(
-        "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_key, attribute_kind, value_kind, value_long_text) \
-         VALUES ($1, $2, 1, 2, '0123456789')",
+        "INSERT INTO current_attributes \
+         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_long_text, created_at, modified_at) \
+         VALUES ($1, $2, 0, 1, 2, '0123456789', now(), now())",
     )
     .bind(entity_key)
     .bind(name_key)
@@ -258,7 +249,7 @@ async fn a_short_string_in_the_overflow_column_is_refused() {
     let database_error = failure.as_database_error().expect("the refusal must come from the database");
     assert_eq!(
         (database_error.code().as_deref(), database_error.constraint()),
-        (Some("23514"), Some("chk_current_attribute_values_value_long_text_length")),
+        (Some("23514"), Some("chk_current_attributes_value_long_text_length")),
         "the refusal must be the overflow length check: {database_error}"
     );
 

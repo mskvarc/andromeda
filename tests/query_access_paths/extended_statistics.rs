@@ -46,8 +46,8 @@ async fn declared_statistics_objects_exist_and_hold_collected_data() {
     analyze(pool).await;
 
     for (name, columns) in [
-        ("stx_cav_attribute_value_kind", vec!["attribute_name_key", "value_kind"]),
-        ("stx_cav_entity_attribute", vec!["entity_key", "attribute_name_key"]),
+        ("stx_ca_attribute_value_kind", vec!["attribute_name_key", "value_kind"]),
+        ("stx_ca_entity_attribute", vec!["entity_key", "attribute_name_key"]),
     ] {
         let (relation, kinds, over): (String, Vec<String>, Vec<String>) = sqlx::query_as(
             "SELECT c.relname, s.stxkind::text[], \
@@ -59,7 +59,7 @@ async fn declared_statistics_objects_exist_and_hold_collected_data() {
         .fetch_one(pool)
         .await
         .expect("the statistics object must exist");
-        assert_eq!(relation, "current_attribute_values", "{name} must be declared where it takes effect");
+        assert_eq!(relation, "current_attributes", "{name} must be declared where it takes effect");
         assert!(kinds.contains(&"d".to_owned()), "{name} must carry dependencies: {kinds:?}");
         assert!(kinds.contains(&"f".to_owned()), "{name} must carry n-distinct: {kinds:?}");
         assert_eq!(over, columns, "{name} must cover the correlated pair");

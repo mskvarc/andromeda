@@ -79,9 +79,9 @@ async fn current_projection_refuses_a_second_default_row_for_one_attribute() {
     // instance: `NULLS NOT DISTINCT` makes two absent dataset identifiers the
     // same grain, which a plain unique constraint would not.
     let failure = sqlx::query(
-        "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_key, attribute_kind, value_kind, value_number) \
-         VALUES ($1, $2, 1, 1, 9)",
+        "INSERT INTO current_attributes \
+         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_number, created_at, modified_at) \
+         VALUES ($1, $2, 1, 1, 1, 9, now(), now())",
     )
     .bind(key)
     .bind(name_key)

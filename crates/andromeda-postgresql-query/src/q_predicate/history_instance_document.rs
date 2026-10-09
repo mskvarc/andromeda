@@ -1,4 +1,4 @@
-//! One history instance rebuilt as the expanded entity document a payload
+//! One history instance rebuilt as the expanded entity document a `q`
 //! jsonpath reads.
 
 use crate::q_predicate::history_window::HistoryAliases;
@@ -13,7 +13,7 @@ use andromeda_postgresql_seaquery::{
 use sea_query::{CaseStatement, Expr as SeaExpr, ExprTrait, Func, SimpleExpr};
 
 /// The one history instance a probe scans, rebuilt as the expanded entity
-/// document the payload jsonpath reads: `[{"<attr>": [<instance>]}]`.
+/// document the `q` jsonpath reads: `[{"<attr>": [<instance>]}]`.
 ///
 /// A Query Term reaching a sub-attribute or a member of a compound value is
 /// answered by a jsonpath over an expanded entity (clause 4.9), and a history
@@ -73,7 +73,7 @@ mod tests {
     use sea_query::{PostgresQueryBuilder, Query, SimpleExpr};
 
     /// The rebuilt instance carries the sub-attributes, the value carriers and
-    /// `observedAt` the payload jsonpath walks, under the attribute's IRI.
+    /// `observedAt` the `q` jsonpath walks, under the attribute's IRI.
     #[test]
     fn the_instance_document_rebuilds_the_expanded_attribute() {
         let document: SimpleExpr = instance_document("https://example.org/speed", &HistoryAliases::top_level());

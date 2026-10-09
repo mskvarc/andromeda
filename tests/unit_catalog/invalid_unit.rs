@@ -85,7 +85,7 @@ async fn an_unregistered_unit_code_is_refused_as_bad_request_data() {
 }
 
 #[tokio::test]
-async fn a_bypass_write_of_an_unregistered_unit_identity_is_refused_by_the_foreign_key() {
+async fn a_bypass_write_of_an_unregistered_unit_identity_is_refused_by_the_dictionary_check() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let client = scope.client();
     let id = scope.id("Device:bypass-unit");
@@ -98,17 +98,17 @@ async fn a_bypass_write_of_an_unregistered_unit_identity_is_refused_by_the_forei
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
     // 32767 is the largest identity the two-byte key can hold and one the
-    // catalogue has never assigned, so the projection's foreign key is the only
-    // thing that can refuse it.
+    // catalogue has never assigned, so the statement-level dictionary check is
+    // the only thing that can refuse it, as a foreign-key violation.
     let bypass = sqlx::query(
-        "UPDATE current_attribute_values SET unit_code_id = 32767 \
+        "UPDATE current_attributes SET unit_code_id = 32767 \
          WHERE entity_key = (SELECT entity_key FROM entities WHERE id = $1)",
     )
     .bind(&id)
     .execute(scope.database_pool())
     .await;
 
-    let refusal = bypass.expect_err("the projection must refuse a unit identity the catalogue does not hold");
+    let refusal = bypass.expect_err("the dictionary check must refuse a unit identity the catalogue does not hold");
     let code = refusal.as_database_error().and_then(|error| error.code().map(std::borrow::Cow::into_owned));
     assert_eq!(code.as_deref(), Some("23503"), "the refusal must be a foreign-key violation: {refusal}");
 

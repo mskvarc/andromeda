@@ -340,23 +340,20 @@ async fn q_linked_hop_does_not_match_through_a_deleted_relationship() {
     let after = query(client, &filter).await;
     assert_eq!(ids_from_array(&after), vec![id_car_live], "the hop must not cross a tombstoned Relationship");
 
-    // The projection is written inside the transaction that mutates the entity,
-    // so the delete's effect on it is visible the moment the request returned
+    // The rows are written inside the transaction that mutates the entity, so
+    // the delete's effect on them is visible the moment the request returned
     // and this read needs no barrier. The entity carried exactly one attribute,
-    // so the deletion must leave it with no projection row at all: an absent row
-    // is what a deleted instance is, and nothing the probe has to filter out.
-    let projected: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT c.value_string, c.value_uri FROM current_attribute_values c \
+    // so the deletion must leave it with no row at all: an absent row is what a
+    // deleted instance is, and nothing the probe has to filter out.
+    let stored: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT c.value_string, c.value_uri FROM current_attributes c \
          JOIN entities e ON e.entity_key = c.entity_key WHERE e.id = $1",
     )
     .bind(&id_car_tombstoned)
     .fetch_all(scope.database_pool())
     .await
-    .expect("current_attribute_values probe failed");
-    assert!(
-        projected.is_empty(),
-        "the deleted Relationship must leave no projection row behind: {projected:?}"
-    );
+    .expect("current_attributes probe failed");
+    assert!(stored.is_empty(), "the deleted Relationship must leave no row behind: {stored:?}");
     scope.finish().await.expect("cleanup failed");
 }
 

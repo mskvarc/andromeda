@@ -33,7 +33,7 @@
 -- `object_type_keys` are `entity_type_names` keys. `proof_seals` holds the
 -- clause 4.5.2.2 `entityIdSealed` and `entityTypeSealed` members.
 create type sub_attribute as (
-    parent smallint,
+    parent integer,
     attribute_name_key integer,
     dataset_id text,
     attribute_kind smallint,

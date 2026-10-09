@@ -8,7 +8,7 @@
 //! clause 4.5.5 grain between the columns rather than adding a second row.
 
 use crate::projection_rows::{rows_for_attribute, string_placement};
-use andromeda_postgresql_schema::projected_string_column::INDEXED_STRING_BYTE_LIMIT;
+use andromeda_postgresql_schema::string_value_column::INDEXED_STRING_BYTE_LIMIT;
 use andromeda_test_fixtures::{context::TEST_SUITE_CONTEXT, high_entropy_text::high_entropy_text};
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;

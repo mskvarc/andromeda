@@ -1,7 +1,7 @@
 //! TOAST compression: every wide write-once column declares lz4.
 //!
 //! Every variable-length column that is written once and read many times -
-//! the entity documents, the temporal values, the JSONB configuration
+//! the attribute values, the temporal values, the JSONB configuration
 //! documents of subscriptions, registrations, snapshots and contexts, and the
 //! identifiers that ride beside them - is declared `COMPRESSION lz4`, because
 //! lz4 decompresses far faster than the pglz default for the same width and the
@@ -18,7 +18,6 @@ use sqlx::PgPool;
 /// Every `(relation, column)` the schema declares with lz4 TOAST compression.
 const LZ4_COLUMNS: &[(&str, &str)] = &[
     ("entities", "id"),
-    ("entity_documents", "payload"),
     ("entity_search", "scope_paths"),
     ("jsonld_contexts", "id"),
     ("jsonld_contexts", "url"),
@@ -30,10 +29,13 @@ const LZ4_COLUMNS: &[(&str, &str)] = &[
     ("attribute_history", "value_string"),
     ("attribute_history", "value_object"),
     ("attribute_history", "metadata"),
-    ("current_attribute_values", "value_string"),
-    ("current_attribute_values", "value_object"),
-    ("current_attribute_values", "value_long_text"),
-    ("current_attribute_values", "value_long_uri"),
+    ("current_attributes", "dataset_id"),
+    ("current_attributes", "value_string"),
+    ("current_attributes", "value_object"),
+    ("current_attributes", "value_long_text"),
+    ("current_attributes", "value_long_uri"),
+    ("current_attributes", "value_geometry_members"),
+    ("current_attributes", "sub_attributes"),
     ("subscriptions", "entities"),
     ("subscriptions", "notification"),
     ("subscriptions", "geo_q"),

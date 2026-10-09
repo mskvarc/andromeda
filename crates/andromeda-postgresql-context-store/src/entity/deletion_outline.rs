@@ -245,11 +245,10 @@ mod tests {
     }
 
     #[test]
-    fn the_outline_reads_types_scope_and_projected_instances_by_identifier() {
+    fn the_outline_reads_types_scope_and_attribute_rows_by_identifier() {
         let types = outline_types_statement(&ContextTarget::Live, "urn:ngsi-ld:T:1").to_string(PostgresQueryBuilder);
         assert!(types.contains(r#""n"."entity_type_name_key" = ANY("s"."entity_type_name_keys")"#), "{types}");
         assert!(types.contains(r#""e"."id" = 'urn:ngsi-ld:T:1'"#), "{types}");
-        assert!(!types.contains("entity_documents"), "{types}");
         assert!(types.contains(r#""e"."modified_at""#), "{types}");
         let instances = outline_instances_statement(&ContextTarget::Live, "urn:ngsi-ld:T:1").to_string(PostgresQueryBuilder);
         assert!(instances.contains(r#""current_attributes" AS "ca""#), "{instances}");

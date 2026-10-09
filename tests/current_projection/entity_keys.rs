@@ -82,7 +82,7 @@ async fn narrow_entity_keys_preserve_long_identifiers_and_own_their_projection_r
             "every attribute must be projected under its own parent key"
         );
         let foreign_parents: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM current_attribute_values AS c \
+            "SELECT count(*) FROM current_attributes AS c \
              WHERE c.entity_key = $1 AND NOT EXISTS (SELECT 1 FROM entities AS e WHERE e.entity_key = c.entity_key AND e.id = $2)",
         )
         .bind(key)
@@ -144,7 +144,7 @@ async fn narrow_entity_keys_cost_fewer_bytes_than_the_identifier_they_replace() 
     // 512 bytes against a hundred child rows that would each have repeated it.
     let (surrogate_bytes, identifier_bytes): (i64, i64) = sqlx::query_as(
         "SELECT sum(pg_column_size(c.entity_key))::bigint, sum(pg_column_size(e.id))::bigint \
-         FROM current_attribute_values AS c JOIN entities AS e ON e.entity_key = c.entity_key \
+         FROM current_attributes AS c JOIN entities AS e ON e.entity_key = c.entity_key \
          WHERE e.id = $1",
     )
     .bind(&id)

@@ -257,9 +257,6 @@ mod tests {
             assert!(sql.contains(&format!("'{}'", target.relation_name())), "{target}: {sql}");
         }
         assert!(sql.contains("'idx_ca_sub_eq_keys'"), "{sql}");
-        for dropped in ["current_attribute_values", "idx_cav_", "entity_documents"] {
-            assert!(!sql.contains(dropped), "{dropped}: {sql}");
-        }
     }
 
     #[test]
@@ -270,6 +267,5 @@ mod tests {
             assert!(sql.contains(&format!("'{}'", target.relation_name())), "{target}: {sql}");
         }
         assert!(sql.contains("'current_attributes'"), "{sql}");
-        assert!(!sql.contains("entity_documents"), "{sql}");
     }
 }

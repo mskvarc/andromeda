@@ -45,14 +45,14 @@ async fn every_stored_code_decodes_through_the_registry_that_owns_its_column() {
         );
     }
 
-    let projected_kinds: Vec<i16> = sqlx::query_scalar("SELECT DISTINCT value_kind FROM current_attribute_values")
+    let projected_kinds: Vec<i16> = sqlx::query_scalar("SELECT DISTINCT value_kind FROM current_attributes")
         .fetch_all(pool)
         .await
-        .expect("projected value kinds must be readable");
+        .expect("current value kinds must be readable");
     for stored in projected_kinds {
         assert!(
             ValueKind::try_from(stored).is_ok(),
-            "the current projection holds value kind {stored}, which no release assigned"
+            "current state holds value kind {stored}, which no release assigned"
         );
     }
 

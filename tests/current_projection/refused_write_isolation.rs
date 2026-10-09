@@ -216,7 +216,7 @@ async fn current_projection_writes_landed_after_a_refusal_hold_exactly_what_they
     assert_eq!(rows.len(), 1, "one projection row, not one per attempt: {rows:?}");
     assert_eq!(rows[0].value_text.as_deref(), Some("21.5"));
     let unit_rows: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM current_attribute_values AS c JOIN entities AS e ON e.entity_key = c.entity_key \
+        "SELECT count(*) FROM current_attributes AS c JOIN entities AS e ON e.entity_key = c.entity_key \
          JOIN unit_codes AS u ON u.id = c.unit_code_id WHERE e.id = $1 AND u.code = $2",
     )
     .bind(&kept)

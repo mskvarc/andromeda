@@ -690,8 +690,35 @@ fn nesting_at_the_configured_maximum_round_trips() {
     let rows = round_trip(&state);
     pretty_assertions::assert_eq!(
         rows[0].sub_attributes.iter().map(|element| element.parent).collect::<Vec<_>>(),
-        (0..31).collect::<Vec<i16>>()
+        (0..31).collect::<Vec<i32>>()
     );
+}
+
+/// 32,768 dataset instances of one sub-attribute put the child of the last
+/// one at a position no `smallint` holds; the instance still round-trips.
+#[test]
+fn a_parent_past_the_smallint_range_round_trips() {
+    const SIBLINGS: i32 = 32_768;
+    let mut siblings: Vec<Value> = (1..SIBLINGS)
+        .map(|n| {
+            with(
+                property(&json!([{"@value": n}])),
+                &json!({ngsi("datasetId"): [{"@id": format!("urn:ngsi-ld:Dataset:{n}")}]}),
+            )
+        })
+        .collect();
+    siblings.push(with(
+        property(&json!([{"@value": SIBLINGS}])),
+        &json!({
+            ngsi("datasetId"): [{"@id": format!("urn:ngsi-ld:Dataset:{SIBLINGS}")}],
+            ex("c"): [property(&json!([{"@value": 0}]))]
+        }),
+    ));
+    let state = committed(&document(
+        &json!({ex("a"): [with(property(&json!([{"@value": 0}])), &json!({ex("b"): siblings}))]}),
+    ));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(rows[0].sub_attributes.last().map(|element| element.parent), Some(SIBLINGS));
 }
 
 #[test]

@@ -86,11 +86,10 @@ mod tests {
     use sea_query::PostgresQueryBuilder;
 
     #[test]
-    fn the_types_are_read_from_the_search_row_by_identifier_without_the_payload() {
+    fn the_types_are_read_from_the_search_row_by_identifier() {
         let sql = entity_types_statement(&ContextTarget::Live, "urn:ngsi-ld:T:1").to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""n"."entity_type_name_key" = ANY("s"."entity_type_name_keys")"#), "{sql}");
         assert!(sql.contains(r#""e"."id" = 'urn:ngsi-ld:T:1'"#), "{sql}");
-        assert!(!sql.contains("payload") && !sql.contains("entity_documents"), "{sql}");
         assert!(sql.ends_with(r#"ORDER BY "n"."name" ASC"#), "{sql}");
     }
 }

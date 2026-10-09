@@ -36,7 +36,7 @@ use sqlx::{
 pub struct SubAttributeElement {
     /// 0 for a sub-attribute of the top-level instance, else the 1-based
     /// array position of the element it belongs to, which precedes it.
-    pub parent: i16,
+    pub parent: i32,
     /// The element's members.
     pub members: InstanceMembers,
     /// `createdAt` (clause 4.8), when stamped.
@@ -78,7 +78,7 @@ impl Decode<'_, Postgres> for EwkbGeometry {
 #[sqlx(type_name = "sub_attribute")]
 pub struct SubAttributeRecord {
     /// `parent`.
-    pub parent: i16,
+    pub parent: i32,
     /// `attribute_name_key`.
     pub attribute_name_key: i32,
     /// `dataset_id`.

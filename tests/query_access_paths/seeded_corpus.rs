@@ -193,18 +193,12 @@ pub async fn type_dictionary_key(pool: &PgPool, name: &str) -> i32 {
 
 /// The Entity rows of the corpus: `$1` the identifier prefix, `$2`/`$3` the
 /// rare and common type keys, `$4` the Entity count, `$5`/`$6` the city and
-/// alarm attribute keys, `$7`/`$8` their IRIs. Every 997th Entity is of the
-/// rare type, and each type is stated on the search row and as a membership.
+/// alarm attribute keys. Every 997th Entity is of the rare type, and each type
+/// is stated on the search row and as a membership.
 const ENTITY_CORPUS: &str = "WITH seeded AS ( \
          SELECT g, $1::text || ':seed:' || lpad(g::text, 6, '0') AS id FROM generate_series(1, $4::bigint) AS g), \
      ins AS ( \
          INSERT INTO entities (id) SELECT id FROM seeded RETURNING entity_key, id), \
-     docs AS ( \
-         INSERT INTO entity_documents (entity_key, payload) \
-         SELECT ins.entity_key, \
-                jsonb_build_array(jsonb_build_object('@id', ins.id, $7::text, to_jsonb('city-' || (seeded.g % 1000)::text)) \
-                                  || CASE WHEN seeded.g % 1000 = 0 THEN jsonb_build_object($8::text, to_jsonb(true)) ELSE '{}'::jsonb END) \
-         FROM ins JOIN seeded ON seeded.id = ins.id), \
      typed AS ( \
          SELECT ins.entity_key, ins.id, seeded.g, CASE WHEN seeded.g % 997 = 0 THEN $2::integer ELSE $3::integer END AS type_key \
          FROM ins JOIN seeded ON seeded.id = ins.id), \
@@ -222,12 +216,11 @@ const ENTITY_CORPUS: &str = "WITH seeded AS ( \
 
 /// Write the corpus and analyze the relations the plans read.
 ///
-/// Every Entity lands in all three current-state relations: the identity row,
-/// a document row carrying a payload with the city attribute (and, on every
-/// 1000th Entity, the alarm attribute), and a search row carrying the type,
-/// the attribute keys, the location and the scope. The projection receives a
-/// numeric reading, a `GeoProperty` entrance, the city string and the owner
-/// Relationship per Entity.
+/// Every Entity lands in the current-state relations: the identity row and a
+/// search row carrying the type, the attribute keys (the city attribute, and
+/// on every 1000th Entity the alarm attribute), the location and the scope.
+/// `current_attributes` receives a numeric reading, a `GeoProperty` entrance,
+/// the city string and the owner Relationship per Entity.
 pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     let reading = dictionary_key(pool, READING_ATTRIBUTE).await;
     let entrance = dictionary_key(pool, ENTRANCE_ATTRIBUTE).await;
@@ -244,17 +237,15 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
         .bind(SEEDED_ENTITIES)
         .bind(city)
         .bind(alarm)
-        .bind(CITY_ATTRIBUTE)
-        .bind(ALARM_ATTRIBUTE)
         .execute(pool)
         .await
         .expect("entity corpus must be writable");
 
     let like = format!("{prefix}:seed:%");
     sqlx::query(
-        "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_key, attribute_kind, value_kind, value_number) \
-         SELECT e.entity_key, $1, 1, 1, (e.entity_key % 20000)::numeric \
+        "INSERT INTO current_attributes \
+         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_number, created_at, modified_at) \
+         SELECT e.entity_key, $1, 0, 1, 1, (e.entity_key % 20000)::numeric, now(), now() \
          FROM entities AS e WHERE e.id LIKE $2::text",
     )
     .bind(reading)
@@ -264,10 +255,10 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     .expect("numeric projection corpus must be writable");
 
     sqlx::query(
-        "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_key, attribute_kind, value_kind, value_geometry) \
-         SELECT e.entity_key, $1, 3, 4, \
-                ST_SetSRID(ST_MakePoint(13.0 + (e.entity_key % 1000) * 0.001, 52.0 + (e.entity_key % 1000) * 0.001), 4326) \
+        "INSERT INTO current_attributes \
+         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_geometry, created_at, modified_at) \
+         SELECT e.entity_key, $1, 1, 3, 4, \
+                ST_SetSRID(ST_MakePoint(13.0 + (e.entity_key % 1000) * 0.001, 52.0 + (e.entity_key % 1000) * 0.001), 4326), now(), now() \
          FROM entities AS e WHERE e.id LIKE $2::text",
     )
     .bind(entrance)
@@ -277,9 +268,9 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     .expect("geometry projection corpus must be writable");
 
     sqlx::query(
-        "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_key, attribute_kind, value_kind, value_string) \
-         SELECT e.entity_key, $1, 1, 2, 'city-' || (e.entity_key % 1000)::text \
+        "INSERT INTO current_attributes \
+         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_string, created_at, modified_at) \
+         SELECT e.entity_key, $1, 2, 1, 2, 'city-' || (e.entity_key % 1000)::text, now(), now() \
          FROM entities AS e WHERE e.id LIKE $2::text",
     )
     .bind(city)
@@ -289,9 +280,9 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     .expect("string projection corpus must be writable");
 
     sqlx::query(
-        "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_key, attribute_kind, value_kind, value_uri) \
-         SELECT e.entity_key, $1, 2, 7, $3::text || (e.entity_key % 2000)::text \
+        "INSERT INTO current_attributes \
+         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_uri, created_at, modified_at) \
+         SELECT e.entity_key, $1, 3, 2, 7, $3::text || (e.entity_key % 2000)::text, now(), now() \
          FROM entities AS e WHERE e.id LIKE $2::text",
     )
     .bind(owner)
@@ -331,9 +322,9 @@ pub async fn seed_essays(pool: &PgPool, corpus: &SeededCorpus) -> SeededEssays {
         .to_owned();
 
     sqlx::query(
-        "INSERT INTO current_attribute_values \
-         (entity_key, attribute_name_key, attribute_kind, value_kind, value_long_text) \
-         SELECT e.entity_key, $1, 1, 2, essay.body \
+        "INSERT INTO current_attributes \
+         (entity_key, attribute_name_key, ordinal, attribute_kind, value_kind, value_long_text, created_at, modified_at) \
+         SELECT e.entity_key, $1, 4, 1, 2, essay.body, now(), now() \
          FROM unnest($2::text[]) WITH ORDINALITY AS essay(body, ordinal) \
          JOIN entities AS e ON e.id = $3::text || ':seed:' || lpad(essay.ordinal::text, 6, '0')",
     )
@@ -351,12 +342,7 @@ pub async fn seed_essays(pool: &PgPool, corpus: &SeededCorpus) -> SeededEssays {
 
 /// Refresh the statistics the planner reads for every relation the plans touch.
 pub async fn analyze(pool: &PgPool) {
-    for statement in [
-        "ANALYZE entities",
-        "ANALYZE entity_documents",
-        "ANALYZE entity_search",
-        "ANALYZE current_attribute_values",
-    ] {
+    for statement in ["ANALYZE entities", "ANALYZE entity_search", "ANALYZE current_attributes"] {
         sqlx::query(statement).execute(pool).await.expect("analyze must succeed");
     }
 }

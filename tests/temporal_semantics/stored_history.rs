@@ -93,7 +93,7 @@ pub async fn stored_attribute_history(pool: &PgPool, entity_id: &str, attribute_
 
 /// Count the current projection rows of one Entity.
 pub async fn current_projection_rows(pool: &PgPool, entity_id: &str) -> i64 {
-    sqlx::query(CURRENT_PROJECTION_ROWS_SQL)
+    sqlx::query(CURRENT_ATTRIBUTE_ROWS_SQL)
         .bind(entity_id)
         .fetch_one(pool)
         .await
@@ -152,9 +152,9 @@ WHERE te.id = $1
 ORDER BY ah.recorded_at, ah.write_id, ah.write_ordinal
 ";
 
-const CURRENT_PROJECTION_ROWS_SQL: &str = r"
+const CURRENT_ATTRIBUTE_ROWS_SQL: &str = r"
 SELECT count(*)::bigint AS rows
-FROM current_attribute_values c
+FROM current_attributes c
 JOIN entities e ON e.entity_key = c.entity_key
 WHERE e.id = $1
 ";

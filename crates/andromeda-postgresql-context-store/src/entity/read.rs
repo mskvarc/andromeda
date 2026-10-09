@@ -215,7 +215,6 @@ mod tests {
         );
         assert!(sql.ends_with(r#"WHERE "e"."id" = 'urn:x'"#), "{sql}");
         assert!(!sql.contains("ORDER BY"), "{sql}");
-        assert!(!sql.contains("entity_documents"), "{sql}");
     }
 
     /// The token a read-modify-write states its precondition against is the

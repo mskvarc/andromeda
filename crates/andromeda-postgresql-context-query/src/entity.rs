@@ -544,7 +544,6 @@ mod tests {
         let mut q = empty_query();
         q.selection.q_expr = Some(parser::parse("\"https://example.com/temperature\">1").expect("valid q"));
         let built = build(&q, &temperature_is_known());
-        assert!(!built.sql.contains("entity_documents"), "{}", built.sql);
         assert!(
             built.sql.contains(r#"FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attributes" AS "ca""#),
             "{}",
@@ -603,11 +602,6 @@ mod tests {
             built.sql
         );
         assert!(built.sql.contains(" OR (FALSE)"), "the unresolved term is unsatisfiable: {}", built.sql);
-        assert!(
-            !built.sql.contains("payload\" ->") && !built.sql.contains(" ? "),
-            "no payload key probe remains: {}",
-            built.sql
-        );
         assert!(
             !built.bind_values.iter().any(|bind| matches!(bind, Value::Int(Some(11)))),
             "the key is inlined, not bound: {:?}",
@@ -979,7 +973,6 @@ mod tests {
         let built = build(&q, &temperature_is_known());
         // Row presence is existence: a deleted attribute leaves no row.
         assert!(built.sql.contains("\"current_attributes\""), "{}", built.sql);
-        assert!(!built.sql.contains("\"payload\"->0 ?"), "{}", built.sql);
     }
 
     #[test]
@@ -993,11 +986,6 @@ mod tests {
         let built = build(&cq, &temperature_is_known());
         assert!(built.sql.contains("EXISTS"), "{}", built.sql);
         assert!(built.sql.contains("\"value_number\" >"), "{}", built.sql);
-        assert!(
-            !built.sql.contains("jsonb_path_query_first"),
-            "value predicates no longer scan the payload: {}",
-            built.sql
-        );
     }
 
     #[test]
@@ -1203,8 +1191,7 @@ mod tests {
     }
 
     /// Clause 4.8 with clause 4.23: `orderBy=createdAt` sorts on the identity
-    /// row's own `created_at` column, not on a payload attribute, so the
-    /// statement reads `entities.created_at` and joins no document row for it.
+    /// row's own `created_at` column.
     #[test]
     fn build_with_order_by_created_at_reads_the_identity_column() {
         let mut q = empty_query();
@@ -1216,7 +1203,6 @@ mod tests {
         let built = build(&q, &known_types());
         assert!(built.sql.contains(r#""entities"."created_at" AS "sort_0""#), "{}", built.sql);
         assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC, "sort_1" ASC LIMIT"#), "{}", built.sql);
-        assert!(!built.sql.contains("jsonb_path_query_first("), "no payload lateral is opened: {}", built.sql);
     }
 
     /// A descending `createdAt` reverses only the order.
@@ -1244,7 +1230,6 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(!built.sql.contains("entity_documents"), "no document row is joined: {}", built.sql);
         assert!(built.sql.contains(r#""entities"."modified_at" AS "sort_0""#), "{}", built.sql);
         assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC, "sort_1" ASC"#), "{}", built.sql);
     }
@@ -1449,7 +1434,6 @@ mod tests {
             "the guard reads the hoisted instance's own expiry column: {}",
             built.sql
         );
-        assert!(!built.sql.contains("expiresAt"), "the guard no longer walks the payload: {}", built.sql);
     }
 
     #[test]

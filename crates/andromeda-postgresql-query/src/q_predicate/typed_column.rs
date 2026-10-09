@@ -1,21 +1,21 @@
 //! Which typed field of a stored instance holds a value of each clause
 //! 4.9 operand kind, and how a Query Term is compared against it.
 //!
-//! The mapping mirrors what the write path projects:
+//! The mapping mirrors what the write path stores:
 //!
 //! * numbers land in `value_number` (`numeric`) and bind directly as an exact
 //!   decimal, so every supported operand uses the typed numeric index,
 //! * booleans in `value_boolean`,
 //! * date-times in `value_date_time`,
 //! * strings in `value_string` for Properties and single-term
-//!   `VocabProperties` -- or, past the B-tree bound, in `value_long_text`, which
-//!   [`ValueColumn::of_string`] decides from the byte length alone -- and,
+//!   `VocabProperties` (or, past the B-tree bound, in `value_long_text`, which
+//!   [`ValueColumn::of_string`] decides from the byte length alone) and,
 //!   under the equality operators only, in `value_uri` for Relationship objects
-//!   -- or, past the B-tree bound, in `value_long_uri`, which
-//!   [`ValueColumn::of_uri`] decides from the byte length alone -- which is what
+//!   (or, past the B-tree bound, in `value_long_uri`, which
+//!   [`ValueColumn::of_uri`] decides from the byte length alone), which is what
 //!   [`relationship_object_is_comparable`] decides,
 //! * plain dates and times in `value_string`, because only full
-//!   `DateTime`-typed values are projected to `value_date_time`. Both are stored
+//!   `DateTime`-typed values are stored in `value_date_time`. Both are stored
 //!   in the one canonical, fixed-width form their clause 4.6.3 types define, so
 //!   byte-wise order over the column is chronological order and an ordering
 //!   comparison against the bound canonical text is a temporal comparison. Their
@@ -39,15 +39,15 @@ use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 /// each comparison is the shape the partial index over that column is predicated
 /// on: `value_number > $1` implies `value_number IS NOT NULL`, which is what
 /// makes `(attribute_name_key, value_number) WHERE value_number IS NOT NULL`
-/// applicable. Nothing tests `value_kind`, deliberately: the projection's check
+/// applicable. Nothing tests `value_kind`, deliberately: the row's check
 /// constraint already ties the kind to the populated column, so the column being
 /// non-NULL *is* the kind test.
 ///
 /// A row whose value lives in another column therefore yields NULL, not FALSE,
 /// which is the reading clause 4.9 wants under every operator compiled here.
-/// `equal` and the ordering operators all state it the same way — "If there is
+/// `equal` and the ordering operators all state it the same way: "If there is
 /// no equality between the target value data type and the Query Term value data
-/// type, then it shall be considered as not matching" — and an unknown that the
+/// type, then it shall be considered as not matching", and an unknown that the
 /// enclosing `EXISTS` drops is exactly that.
 ///
 /// `unequal` is the one operator that reads a datatype difference the other way,
@@ -153,7 +153,7 @@ mod tests {
         predicate::CmpOp,
         scalar::{Scalar, parse_date, parse_time},
     };
-    use andromeda_postgresql_schema::{projected_string_column::INDEXED_STRING_BYTE_LIMIT, projected_uri_column::INDEXED_URI_BYTE_LIMIT};
+    use andromeda_postgresql_schema::{string_value_column::INDEXED_STRING_BYTE_LIMIT, uri_value_column::INDEXED_URI_BYTE_LIMIT};
     use sea_query::{PostgresQueryBuilder, Query, SimpleExpr};
 
     /// The comparison over a current row.

@@ -41,15 +41,12 @@ async fn current_projection_database_refuses_a_typeless_entity_row() {
     let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
     let id = scope.id("Building:empty-type-sql");
 
-    let payload = json!([{ "@id": id }]);
     let failure = sqlx::query(
-        "WITH ins AS (INSERT INTO entities (id) VALUES ($1) RETURNING entity_key), \
-              doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, $2 FROM ins) \
+        "WITH ins AS (INSERT INTO entities (id) VALUES ($1) RETURNING entity_key) \
          INSERT INTO entity_search (entity_key, entity_type_name_keys, attribute_name_keys, attribute_instance_name_keys, attribute_instance_kinds) \
          SELECT entity_key, ARRAY[]::integer[], ARRAY[]::integer[], ARRAY[]::integer[], ARRAY[]::smallint[] FROM ins",
     )
     .bind(&id)
-    .bind(&payload)
     .execute(scope.database_pool())
     .await
     .expect_err("a typeless Entity row must be refused");

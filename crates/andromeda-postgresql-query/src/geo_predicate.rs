@@ -87,7 +87,7 @@ pub enum GeometrySource<'a> {
         default_location: &'a DefaultLocationNarrowing,
     },
     /// A plain `PostGIS` `geometry` column, as a Context Source Registration
-    /// carries. Registrations have no payload and no `GeoProperty` of their own,
+    /// carries. Registrations have no attribute rows and no `GeoProperty` of their own,
     /// so `geoproperty` does not apply.
     ///
     /// Clause 5.10.2: a registration that declares no location may still serve
@@ -191,8 +191,8 @@ pub(crate) fn near_envelope_prefilter(geo: &GeoQuery, geometry: &SimpleExpr) -> 
 /// `geography`, which the spheroidal `near` relation measures on. Exactly one of
 /// the two is read, whichever the relation names. The relation semantics live
 /// here rather than inside [`condition`] so a caller that reads its subject
-/// geometry from rows this module does not model -- the `attribute_history`
-/// instances a clause 5.7.4.4 temporal geo query filters -- applies the
+/// geometry from rows this module does not model (the `attribute_history`
+/// instances a clause 5.7.4.4 temporal geo query filters) applies the
 /// identical relation rather than a second, drifting copy of it.
 ///
 /// # Errors
@@ -492,7 +492,6 @@ mod tests {
             "the hoisted default instance is guarded by its own expiry: {sql}"
         );
         assert!(!sql.contains("\"s\".\"location_expires_at\""), "no entity-level expiry is mixed in: {sql}");
-        assert!(!sql.contains("payload"), "the guard no longer walks the payload: {sql}");
     }
 
     /// Clause 4.10: `geoproperty` names any `GeoProperty` of the entity. Every

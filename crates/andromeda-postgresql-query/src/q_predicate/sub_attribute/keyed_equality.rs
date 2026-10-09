@@ -111,7 +111,7 @@ fn candidates_of(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> 
         LocalTarget::SubAttribute(Some(LanguageSelection::AnyLanguage)) => {}
         LocalTarget::OwnValue
         | LocalTarget::TrailingMember(_)
-        | LocalTarget::PayloadMember
+        | LocalTarget::NestedMember
         | LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(_)) | None) => return None,
     }
     let element = ElementPath::resolve(path, &names.attributes)?;

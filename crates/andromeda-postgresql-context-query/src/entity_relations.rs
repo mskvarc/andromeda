@@ -392,7 +392,6 @@ mod tests {
             sql.contains(r#"JOIN "entity_search" ON "entity_search"."entity_key" = "selected"."entity_key""#),
             "{sql}"
         );
-        assert!(!sql.contains("entity_documents"), "{sql}");
     }
 
     /// An attribute value ordering reads the attribute's rows through a

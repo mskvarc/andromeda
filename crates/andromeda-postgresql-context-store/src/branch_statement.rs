@@ -1,9 +1,9 @@
 //! A write statement whose text depends on nothing but the branch it writes.
 //!
-//! The set-writes of the entity relations and of their attribute projection
-//! are one statement per kind of change, whatever the batch: the rows travel
-//! as bound arrays, so the statement text is a function of the branch schema
-//! alone. The live branch -- every ordinary write -- builds its text once for
+//! The set-writes of the entity relations and of their attribute rows are
+//! one statement per kind of change, whatever the batch: the rows travel as
+//! bound arrays, so the statement text is a function of the branch schema
+//! alone. The live branch (every ordinary write) builds its text once for
 //! the process and reuses it; a Snapshot branch, written while a Snapshot is
 //! captured or cloned and named by a schema of its own, builds its text for
 //! each statement.

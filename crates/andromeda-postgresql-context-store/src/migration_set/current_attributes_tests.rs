@@ -97,13 +97,17 @@ fn sub_attribute_key_expression(schema: &DeclaredSchema) -> String {
         .to_owned()
 }
 
+/// An instance holds as many sub-attribute instances as the value budgets
+/// admit, so an element's parent position is an `integer`: a `smallint`
+/// would refuse the 32,768th.
 #[test]
-fn no_migration_creates_entity_documents() {
-    for sql in every_migration_sql() {
-        let sql = normalized(sql).to_lowercase();
-        assert!(!sql.contains("create table entity_documents"), "entity_documents is created");
-        assert!(!sql.contains("current_attribute_values"), "a migration names current_attribute_values");
-    }
+fn an_element_names_its_parent_by_an_integer_position() {
+    let fields = every_migration_sql()
+        .into_iter()
+        .map(|sql| normalized(sql).to_lowercase())
+        .find_map(|sql| sql.split_once("create type sub_attribute as (").map(|(_, fields)| fields.to_owned()))
+        .unwrap_or_else(|| panic!("no migration declares sub_attribute"));
+    assert!(fields.trim_start().starts_with("parent integer,"), "{fields}");
 }
 
 #[test]

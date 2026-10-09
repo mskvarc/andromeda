@@ -255,9 +255,7 @@ mod tests {
         assert!(sql.contains(r"FROM UNNEST($14::text[]"), "{sql}");
         assert!(sql.contains(r"$40::sub_attribute_tree[]) AS r("), "{sql}");
         assert!(sql.contains(r#""r"."sub_attributes" AS "sub_attributes""#), "{sql}");
-        for absent in ["entity_documents", "attribute_instance_objects", "WITH RECURSIVE"] {
-            assert!(!sql.contains(absent), "{absent}: {sql}");
-        }
+        assert!(!sql.contains("WITH RECURSIVE"), "{sql}");
     }
 
     /// A row finds its entity by identifier: a positional pairing has no index,

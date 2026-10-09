@@ -144,7 +144,7 @@ mod tests {
     fn the_attribute_expiry_query_reads_heads_and_writes_nothing() {
         let (sql, _values) = entities_with_expired_attributes_statement(&ContextTarget::Live, cutoff(), 100).build_sqlx(PostgresQueryBuilder);
         assert!(sql.contains(r#""e"."modified_at" AS "entity_modified_at""#), "{sql}");
-        for fragment in ["entity_documents", "current_attributes", "UPDATE ", "DELETE ", "INSERT "] {
+        for fragment in ["current_attributes", "UPDATE ", "DELETE ", "INSERT "] {
             assert!(!sql.contains(fragment), "the candidate query must not contain {fragment}: {sql}");
         }
     }

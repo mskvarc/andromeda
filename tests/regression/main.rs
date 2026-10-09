@@ -10,7 +10,6 @@
 mod anonymous_registration_id;
 mod append_entity_types;
 mod array_valued_property_history;
-mod attribute_discovery_type_spelling;
 mod attribute_member_validation;
 mod attribute_nesting;
 mod attribute_nesting_fixture;

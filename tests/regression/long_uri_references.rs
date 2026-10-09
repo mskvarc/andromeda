@@ -83,11 +83,11 @@ async fn retrieve(client: &TestClient, id: &str) -> Value {
     response.json_value().expect("an entity must be JSON")
 }
 
-/// The `(value_uri, value_long_uri)` pair the current-state projection holds
-/// for the default instance of one attribute.
+/// The `(value_uri, value_long_uri)` pair `current_attributes` holds for the
+/// default instance of one attribute.
 async fn uri_placement(pool: &PgPool, entity_id: &str, local_name: &str) -> (Option<String>, Option<String>) {
     sqlx::query_as(
-        "SELECT c.value_uri, c.value_long_uri FROM current_attribute_values AS c \
+        "SELECT c.value_uri, c.value_long_uri FROM current_attributes AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
          JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          WHERE e.id = $1 AND c.dataset_id IS NULL AND an.name LIKE '%' || $2",
@@ -96,7 +96,7 @@ async fn uri_placement(pool: &PgPool, entity_id: &str, local_name: &str) -> (Opt
     .bind(local_name)
     .fetch_one(pool)
     .await
-    .expect("the default instance of the Relationship must be projected")
+    .expect("the default instance of the Relationship must be stored")
 }
 
 /// Assert that `response` refuses the request as `BadRequestData`.

@@ -45,7 +45,7 @@ pub enum AssemblyError {
         /// The element's 1-based position.
         position: usize,
         /// The parent it names.
-        parent: i16,
+        parent: i32,
     },
     /// An element names itself or a later element as its parent.
     #[error("element {position} names parent {parent}, which does not precede it")]
@@ -53,7 +53,7 @@ pub enum AssemblyError {
         /// The element's 1-based position.
         position: usize,
         /// The parent it names.
-        parent: i16,
+        parent: i32,
     },
     /// Two rows hold one instance grain (clause 4.5.5).
     #[error("two rows hold one instance: {0}")]

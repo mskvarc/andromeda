@@ -408,10 +408,10 @@ async fn snapshot_concurrent_clone_update_delete_and_purge_races_are_determinist
 /// Clause 5.16.2.4: a clone copies "All Entity and Temporal Evolution of Entity
 /// data that is part of the Snapshot to be cloned". A source still preparing
 /// holds that data only once it finishes, so the clone waits for it instead of
-/// copying an empty or missing branch -- and then carries the source's data.
+/// copying an empty or missing branch, and then carries the source's data.
 ///
 /// The source is held in `preparing` deterministically: a session holds the
-/// live `entity_documents` relation in ACCESS EXCLUSIVE mode, which the
+/// live `current_attributes` relation in ACCESS EXCLUSIVE mode, which the
 /// source's capture has to read, until the clone has been seen waiting.
 #[tokio::test]
 #[serial(snapshot)]
@@ -434,10 +434,10 @@ async fn snapshot_clone_of_a_preparing_source_waits_and_copies_the_source_data()
         .await
         .expect("Snapshot database connection");
     let mut holder = pool.begin().await.expect("lock holder transaction");
-    sqlx::query("LOCK TABLE entity_documents IN ACCESS EXCLUSIVE MODE")
+    sqlx::query("LOCK TABLE current_attributes IN ACCESS EXCLUSIVE MODE")
         .execute(&mut *holder)
         .await
-        .expect("hold the live documents");
+        .expect("hold the live attribute rows");
 
     let source_body = json!({"id": source, "type": "Snapshot", "snapshotQueries": [{"type": "Query", "entities": [{"type": entity_type}]}]});
     pretty_assertions::assert_eq!(create_snapshot_raw(&client(), &source_body).await.0, StatusCode::CREATED);
@@ -450,7 +450,7 @@ async fn snapshot_clone_of_a_preparing_source_waits_and_copies_the_source_data()
         "the clone waits while its source is still preparing"
     );
 
-    holder.rollback().await.expect("release the live documents");
+    holder.rollback().await.expect("release the live attribute rows");
     pretty_assertions::assert_eq!(
         wait_for_snapshot_terminal(&client(), source, Duration::from_secs(10)).await["snapshotStatus"],
         "success"

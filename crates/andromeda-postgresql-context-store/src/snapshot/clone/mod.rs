@@ -164,10 +164,7 @@ mod tests {
     fn the_clone_copies_the_instance_table() {
         let schema = DeclaredSchema::of_every_migration();
         assert!(CLONED_TABLES.contains(&CURRENT_ATTRIBUTES));
-        for dropped in ["attribute_instance_objects", "current_attribute_values", "entity_documents"] {
-            assert!(!CLONED_TABLES.contains(&dropped), "{dropped}");
-            assert!(!BRANCH_TABLES.contains(&dropped), "{dropped}");
-        }
+        assert!(BRANCH_TABLES.contains(&CURRENT_ATTRIBUTES));
         let declared: Vec<_> = schema.columns.iter().filter(|column| column.table == CURRENT_ATTRIBUTES).collect();
         assert!(declared.iter().all(|column| !column.is_identity()), "no key to continue");
         let plan = current_attributes_plan(&schema);

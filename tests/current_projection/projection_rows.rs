@@ -27,7 +27,7 @@ const ROWS_FOR_ENTITY: &str = "SELECT an.name AS attribute_name, \
      COALESCE(c.value_number::text, c.value_string, c.value_long_text, \
               c.value_boolean::text, c.value_date_time::text, c.value_uri, \
               c.value_long_uri, c.value_object::text, ST_AsText(c.value_geometry)) AS value_text \
-     FROM current_attribute_values AS c \
+     FROM current_attributes AS c \
      JOIN entities AS e ON e.entity_key = c.entity_key \
      JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
      WHERE e.id = $1 \
@@ -65,7 +65,7 @@ pub async fn entity_key(pool: &PgPool, entity_id: &str) -> Option<i64> {
 /// Count the projection rows carrying one surrogate key, including rows whose
 /// Entity has already been deleted.
 pub async fn rows_for_key(pool: &PgPool, key: i64) -> i64 {
-    sqlx::query_scalar("SELECT count(*) FROM current_attribute_values WHERE entity_key = $1")
+    sqlx::query_scalar("SELECT count(*) FROM current_attributes WHERE entity_key = $1")
         .bind(key)
         .fetch_one(pool)
         .await
@@ -88,7 +88,7 @@ pub async fn temporal_entity_exists(pool: &PgPool, entity_id: &str) -> bool {
 /// value: the indexed column up to the B-tree bound, the overflow column past it.
 pub async fn string_placement(pool: &PgPool, entity_id: &str, local_name: &str) -> (Option<String>, Option<String>) {
     sqlx::query_as(
-        "SELECT c.value_string, c.value_long_text FROM current_attribute_values AS c \
+        "SELECT c.value_string, c.value_long_text FROM current_attributes AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
          JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          WHERE e.id = $1 AND c.dataset_id IS NULL AND an.name LIKE '%' || $2",
@@ -107,7 +107,7 @@ pub async fn string_placement(pool: &PgPool, entity_id: &str, local_name: &str) 
 /// overflow column past it.
 pub async fn uri_placement(pool: &PgPool, entity_id: &str, local_name: &str) -> (Option<String>, Option<String>) {
     sqlx::query_as(
-        "SELECT c.value_uri, c.value_long_uri FROM current_attribute_values AS c \
+        "SELECT c.value_uri, c.value_long_uri FROM current_attributes AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
          JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          WHERE e.id = $1 AND c.dataset_id IS NULL AND an.name LIKE '%' || $2",
@@ -123,7 +123,7 @@ pub async fn uri_placement(pool: &PgPool, entity_id: &str, local_name: &str) -> 
 /// supplied local name for one Entity.
 pub async fn attribute_name_key(pool: &PgPool, entity_id: &str, local_name: &str) -> i32 {
     sqlx::query_scalar(
-        "SELECT c.attribute_name_key FROM current_attribute_values AS c \
+        "SELECT c.attribute_name_key FROM current_attributes AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
          JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          WHERE e.id = $1 AND an.name LIKE '%' || $2 LIMIT 1",
@@ -140,7 +140,7 @@ pub async fn attribute_name_key(pool: &PgPool, entity_id: &str, local_name: &str
 /// instance carries none.
 pub async fn unit_code_of(pool: &PgPool, entity_id: &str, local_name: &str, dataset_id: Option<&str>) -> Option<String> {
     sqlx::query_scalar(
-        "SELECT u.code FROM current_attribute_values AS c \
+        "SELECT u.code FROM current_attributes AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
          JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          LEFT JOIN unit_codes AS u ON u.id = c.unit_code_id \

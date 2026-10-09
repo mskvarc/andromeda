@@ -137,7 +137,7 @@ pub(crate) fn ordinal(name: &AttributeName, position: usize) -> Result<i32, Flat
 
 /// Append the instances of `attributes`, sub-attributes of the element at
 /// `parent`, and their descendants to `elements` in pre-order.
-fn push_elements(attributes: &Attributes, parent: i16, keys: &NameKeys, elements: &mut Vec<SubAttributeElement>) -> Result<(), FlattenError> {
+fn push_elements(attributes: &Attributes, parent: i32, keys: &NameKeys, elements: &mut Vec<SubAttributeElement>) -> Result<(), FlattenError> {
     for (name, instances) in attributes.iter() {
         for (dataset_id, instance) in instances.iter() {
             elements.push(SubAttributeElement {
@@ -146,7 +146,7 @@ fn push_elements(attributes: &Attributes, parent: i16, keys: &NameKeys, elements
                 created_at: instance.created_at().map(SystemInstant::get),
                 modified_at: instance.modified_at().map(SystemInstant::get),
             });
-            let position = i16::try_from(elements.len()).map_err(|_| FlattenError::TooManyInstances(name.clone()))?;
+            let position = i32::try_from(elements.len()).map_err(|_| FlattenError::TooManyInstances(name.clone()))?;
             push_elements(instance.sub_attributes(), position, keys, elements)?;
         }
     }

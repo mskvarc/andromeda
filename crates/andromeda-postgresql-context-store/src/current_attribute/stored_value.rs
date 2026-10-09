@@ -12,7 +12,7 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
-use andromeda_postgresql_schema::{current::CurrentAttributes, projected_string_column::ProjectedStringColumn, projected_uri_column::ProjectedUriColumn};
+use andromeda_postgresql_schema::{current::CurrentAttributes, string_value_column::StringValueColumn, uri_value_column::UriValueColumn};
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 
@@ -130,12 +130,12 @@ impl StoredValue {
     pub fn row_column(&self) -> CurrentAttributes {
         match self {
             StoredValue::Number { .. } => CurrentAttributes::ValueNumber,
-            StoredValue::String { text, .. } => ProjectedStringColumn::of(text).column(),
+            StoredValue::String { text, .. } => StringValueColumn::of(text).column(),
             StoredValue::Boolean { .. } => CurrentAttributes::ValueBoolean,
             StoredValue::DateTime { .. } => CurrentAttributes::ValueDateTime,
             StoredValue::Geometry { .. } => CurrentAttributes::ValueGeometry,
             StoredValue::Object(_) => CurrentAttributes::ValueObject,
-            StoredValue::Uri(uri) => ProjectedUriColumn::of(uri.as_str()).column(),
+            StoredValue::Uri(uri) => UriValueColumn::of(uri.as_str()).column(),
         }
     }
 }

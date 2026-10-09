@@ -14,14 +14,14 @@ use chrono::SecondsFormat;
 use sea_query::{Expr as SeaExpr, SimpleExpr};
 use std::iter::once;
 
-/// Both sides of one payload comparison, lifted into the domain the operand's
+/// Both sides of one document comparison, lifted into the domain the operand's
 /// kind is ordered in.
 ///
 /// A value read out of JSONB with `#>>` arrives as text, so neither side can be
 /// compared until both have been lifted the same way. Without that a numeric
 /// comparison orders lexicographically and `9` exceeds `10`.
 pub struct LiftedComparison {
-    /// The stored value, read out of the payload and lifted.
+    /// The stored value, read out of the document and lifted.
     pub stored: SimpleExpr,
     /// The bound operand, lifted the same way.
     pub operand: SimpleExpr,
@@ -29,8 +29,8 @@ pub struct LiftedComparison {
 
 /// Lift a stored JSONB text expression and one `q` operand into a common domain.
 ///
-/// `stored_text` is an expression already yielding `text` — the `… #>> '{}'`
-/// form every payload reader builds — and the operand carries its own bound
+/// `stored_text` is an expression already yielding `text` (the `… #>> '{}'`
+/// form every document reader builds), and the operand carries its own bound
 /// value, so sea-query numbers both sides' placeholders when the enclosing
 /// statement renders.
 ///
@@ -50,7 +50,7 @@ pub struct LiftedComparison {
 ///   order and a `::date` cast would buy nothing but a cast failure to guard.
 ///
 /// Both temporal lifts are regex-guarded (see [`crate::temporal_operand`]): a
-/// payload member holding text of another shape yields `NULL` and simply does not
+/// document member holding text of another shape yields `NULL` and simply does not
 /// match, instead of aborting the statement.
 ///
 /// Numbers bind directly as `NUMERIC`; booleans and `DateTime` values bind as
@@ -91,7 +91,7 @@ pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedCompar
 }
 
 /// The jsonpath reaching every instance of the attribute element a path
-/// addresses inside the expanded payload: `$[0]."<attr>"[*]."<sub>"[*]…`.
+/// addresses inside the expanded document: `$[0]."<attr>"[*]."<sub>"[*]…`.
 ///
 /// Clause 4.9: "If a Property has multiple instances (identified by its
 /// respective datasetId), and no datasetId is explicitly addressed, the target
@@ -196,7 +196,7 @@ mod tests {
     use andromeda_ngsi_ld_query::filter::scalar::{parse_date, parse_date_time, parse_time};
     use sea_query::{Alias, PostgresQueryBuilder, Query, Value, Values};
 
-    /// A plain column stands in for the `payload #>> '{}'` extraction real
+    /// A plain column stands in for the `#>> '{}'` extraction real
     /// callers lift.
     fn stored() -> SimpleExpr {
         SeaExpr::col(Alias::new("stored"))

@@ -1,9 +1,9 @@
 //! Typed `q` predicates: pushed-down comparisons agree with the stored value.
 //!
-//! One Entity carries a fixture of every value shape the projection can hold,
-//! plus the shapes it cannot. Every predicate is compared against the residual
-//! oracle — the value the fixture actually holds — and the shapes that cannot be
-//! pushed down have to fall back to the payload without changing the answer.
+//! One Entity carries a fixture of every value shape a row holds in a typed
+//! column, plus the shapes held in `value_object` or among the sub-attributes.
+//! Every predicate is compared against the residual oracle (the value the
+//! fixture actually holds), and every shape has to give the same answer.
 
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::{context::TEST_SUITE_CONTEXT, high_entropy_text::high_entropy_text};
@@ -94,7 +94,7 @@ async fn posted_query_selects_fixture(client: &TestClient, id: &str, label: &str
 /// Read the migration-owned kind codes of one attribute of one Entity.
 async fn kinds_of(pool: &PgPool, id: &str, local_name: &str) -> (i16, i16) {
     sqlx::query_as(
-        "SELECT c.attribute_kind, c.value_kind FROM current_attribute_values AS c \
+        "SELECT c.attribute_kind, c.value_kind FROM current_attributes AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
          JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          WHERE e.id = $1 AND an.name LIKE '%' || $2",
@@ -197,26 +197,25 @@ async fn typed_q_predicates_agree_with_the_residual_oracle_for_long_strings() {
 }
 
 #[tokio::test]
-async fn typed_q_predicates_beyond_double_precision_fall_back_without_changing_semantics() {
+async fn typed_q_predicates_beyond_double_precision_compare_exactly() {
     let scope = TestEnvironment::from_suite("query_access_paths").await.expect("isolated test environment");
     let client = scope.client();
     let id = scope.id("Building:typed-q-precision");
     let created = client.post_entity(&typed_fixture(&id)).send().await.expect("create entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    // The operand cannot travel to the projection exactly, so the predicate
-    // must be answered from the payload, which holds the JSON number verbatim.
+    // `value_number` holds the JSON number exactly and the operand binds as an
+    // exact decimal, so a neighbouring double is a different number.
     assert!(
         selects_fixture(client, &id, &format!("counter=={BEYOND_DOUBLE}")).await,
         "the exact value must match"
     );
     assert!(
         !selects_fixture(client, &id, &format!("counter=={}", BEYOND_DOUBLE - 1)).await,
-        "the neighbouring double must not match, which is the whole reason for the fallback"
+        "the neighbouring double must not match"
     );
 
-    // A sub-attribute predicate is not projectable either, and must still be
-    // answered exactly.
+    // A sub-attribute predicate reads the element's number, also exactly.
     assert!(selects_fixture(client, &id, "precise.accuracy==0.5").await);
     assert!(!selects_fixture(client, &id, "precise.accuracy==0.6").await);
 
@@ -224,16 +223,15 @@ async fn typed_q_predicates_beyond_double_precision_fall_back_without_changing_s
 }
 
 #[tokio::test]
-async fn typed_q_predicates_read_compound_values_from_the_payload() {
+async fn typed_q_predicates_read_compound_values_from_the_value_object() {
     let scope = TestEnvironment::from_suite("query_access_paths").await.expect("isolated test environment");
     let client = scope.client();
     let id = scope.id("Building:typed-q-compound");
     let created = client.post_entity(&typed_fixture(&id)).send().await.expect("create entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    // The projection stores a compound value as one opaque JSONB object, so a
-    // predicate addressing a member inside it is answered by the payload
-    // fallback (clause 4.9 compound value path).
+    // A compound value is one `value_object`, so a predicate addressing a
+    // member inside it reads that member (clause 4.9 compound value path).
     assert!(selects_fixture(client, &id, "address[city]==\"Berlin\"").await);
     assert!(!selects_fixture(client, &id, "address[city]==\"Paris\"").await);
 
@@ -267,7 +265,7 @@ async fn typed_q_fixtures_are_projected_under_their_declared_kinds() {
     }
 
     let tombstones: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM current_attribute_values AS c \
+        "SELECT count(*) FROM current_attributes AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key WHERE e.id = $1 AND c.value_kind = 0",
     )
     .bind(&id)
@@ -290,7 +288,7 @@ async fn typed_q_list_relationship_projects_the_related_entity_identifiers() {
     // A ListRelationship targets Entities, so its projected object must carry
     // the target identifiers, not an empty list (clauses 4.5.4 and 4.5.24).
     let projected: Value = sqlx::query_scalar(
-        "SELECT c.value_object FROM current_attribute_values AS c \
+        "SELECT c.value_object FROM current_attributes AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
          JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          WHERE e.id = $1 AND an.name LIKE '%members'",

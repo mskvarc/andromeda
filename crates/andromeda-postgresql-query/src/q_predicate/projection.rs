@@ -155,7 +155,7 @@ enum Reading {
 const fn reading(target: LocalTarget<'_>) -> Reading {
     match target {
         LocalTarget::OwnValue | LocalTarget::SubAttribute(Some(LanguageSelection::AnyLanguage)) => Reading::OwnValue,
-        LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember | LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(_)) | None) => {
+        LocalTarget::TrailingMember(_) | LocalTarget::NestedMember | LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(_)) | None) => {
             Reading::Members
         }
     }
@@ -165,7 +165,7 @@ const fn reading(target: LocalTarget<'_>) -> Reading {
 const fn target_language(target: LocalTarget<'_>) -> Option<&AttributeName> {
     match target {
         LocalTarget::TrailingMember(member) | LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(member))) => Some(member),
-        LocalTarget::OwnValue | LocalTarget::PayloadMember | LocalTarget::SubAttribute(Some(LanguageSelection::AnyLanguage) | None) => None,
+        LocalTarget::OwnValue | LocalTarget::NestedMember | LocalTarget::SubAttribute(Some(LanguageSelection::AnyLanguage) | None) => None,
     }
 }
 
@@ -278,7 +278,7 @@ fn compile_history(pred: &Predicate, path: &AttrPath, window: &HistoryWindow, na
             });
             CompiledTerm::Standalone(Condition::any().add(document()).add(language))
         }
-        LocalTarget::PayloadMember | LocalTarget::SubAttribute(None) => CompiledTerm::Standalone(document()),
+        LocalTarget::NestedMember | LocalTarget::SubAttribute(None) => CompiledTerm::Standalone(document()),
     }
 }
 
@@ -314,7 +314,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::filter::parser;
-    use andromeda_postgresql_schema::{current::Entities, projected_string_column::INDEXED_STRING_BYTE_LIMIT};
+    use andromeda_postgresql_schema::{current::Entities, string_value_column::INDEXED_STRING_BYTE_LIMIT};
     use sea_query::{Alias, PostgresQueryBuilder, Query, Value};
 
     const SPEED: &str = "https://example.com/speed";
@@ -503,7 +503,7 @@ mod tests {
 
     /// A long operand's equality reads only the overflow column, and its
     /// inequality is still the total negation of that equality (clause 4.9
-    /// `unequal`), so a short stored value -- whose overflow arm is unknown --
+    /// `unequal`), so a short stored value (whose overflow arm is unknown)
     /// is unequal to it rather than dropped.
     #[test]
     fn a_negated_long_string_equality_is_the_total_negation_of_the_overflow_comparison() {
@@ -561,9 +561,9 @@ mod tests {
     }
 
     /// The equality operator keeps the plain comparison: clause 4.9 states the
-    /// datatype rule the other way for it — "If there is no equality between the
+    /// datatype rule the other way for it: "If there is no equality between the
     /// target value data type and the Query Term value data type, then it shall
-    /// be considered as not matching" — which is what an unknown already means.
+    /// be considered as not matching", which is what an unknown already means.
     #[test]
     fn an_equality_is_not_negated_at_all() {
         let (sql, _) = render("\"https://example.com/brandName\"==\"Mercedes\"");
@@ -612,7 +612,7 @@ mod tests {
 
     #[test]
     fn no_probe_guards_against_a_stored_deletion_marker() {
-        // A deleted attribute is an absent row in the projection, so there is
+        // A deleted attribute is an absent row, so there is
         // nothing to exclude and no sentinel value a client could collide with.
         let (sql, _) = render("\"https://example.com/brandName\"==\"Mercedes\"");
         assert!(!sql.contains("IS DISTINCT FROM"), "{sql}");
@@ -621,7 +621,7 @@ mod tests {
 
     #[test]
     fn no_probe_filters_on_the_value_kind_code() {
-        // The projection's check constraint already pins the kind to the
+        // The row's check constraint already pins the kind to the
         // populated column, and a `value_kind = k` term would turn the NULL a
         // wrong-kind row yields into FALSE, which a negated predicate then
         // reads as a match.
@@ -754,8 +754,8 @@ mod tests {
 
     /// Clause 4.9: with no target language specified, a `LanguageProperty`'s
     /// target value is "a value from any of the key-value pairs held within the
-    /// languageMap", and a `ListProperty`'s is "the valueList array" — both of
-    /// which the write path projects into `value_object`, so an equality Query
+    /// languageMap", and a `ListProperty`'s is "the valueList array", both of
+    /// which the write path stores in `value_object`, so an equality Query
     /// Term has to reach that column and not only the typed ones.
     #[test]
     fn an_unqualified_equality_reaches_the_structured_value_column() {
@@ -805,7 +805,7 @@ mod tests {
     /// A language-selected path addresses a `languageMap` key. A scalar-valued
     /// attribute of the same name has no such key, so clause 4.9's target
     /// element does not exist for it and neither polarity may consult its typed
-    /// column — `color[en]!=5` must not select a plain numeric Property.
+    /// column: `color[en]!=5` must not select a plain numeric Property.
     #[test]
     fn a_target_language_never_consults_the_typed_scalar_columns() {
         for expression in ["\"https://example.com/color\"[en]==5", "\"https://example.com/color\"[en]!=5"] {
@@ -864,7 +864,7 @@ mod tests {
     /// Clause 4.9's ordering, pattern and range operators are not containment
     /// tests, so nothing probes the structured column by containment under
     /// them. A `LanguageProperty`'s strings are each a String target value with
-    /// no target language, so a String operand reads them one by one — only on
+    /// no target language, so a String operand reads them one by one, only on
     /// a row written as a `LanguageProperty`, never a `ListProperty`'s array.
     #[test]
     fn ordering_pattern_and_string_range_read_a_language_map_only_on_a_language_property() {

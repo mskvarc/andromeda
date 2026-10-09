@@ -282,16 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn no_target_names_a_dropped_relation() {
-        let names = IndexTarget::ALL
-            .map(IndexTarget::relation_name)
-            .into_iter()
-            .chain(HeapTarget::ALL.map(HeapTarget::relation_name));
-        for name in names {
-            for dropped in ["current_attribute_values", "entity_documents", "cav"] {
-                assert!(!name.contains(dropped), "{name} names {dropped}");
-            }
-        }
+    fn the_heap_targets_are_the_attribute_rows_the_entities_and_the_delivery_state() {
         assert_eq!(
             HeapTarget::ALL.map(HeapTarget::relation_name),
             ["current_attributes", "entities", "subscription_delivery_state"]

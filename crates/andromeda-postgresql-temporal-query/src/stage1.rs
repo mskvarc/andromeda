@@ -654,7 +654,7 @@ mod tests {
         ] {
             assert!(sql.contains(fragment), "{fragment} missing: {sql}");
         }
-        assert!(!sql.contains("current_attribute_values"), "a temporal q never reads current state: {sql}");
+        assert!(!sql.contains("current_attributes"), "a temporal q never reads current state: {sql}");
         assert!(!sql.contains(r#""entities""#), "{sql}");
     }
 
@@ -746,7 +746,6 @@ mod tests {
             sql.contains("jsonb_path_query_first(jsonb_build_array(jsonb_build_object('https://example.com/address'"),
             "{sql}"
         );
-        assert!(!sql.contains("entity_documents"), "{sql}");
     }
 
     /// Clause 5.7.4.4 S3: the geospatial restriction is checked against the
@@ -822,8 +821,8 @@ mod tests {
         );
         assert!(sql.contains(r#""ahg"."value_geometry""#), "{sql}");
         assert!(
-            !sql.contains("current_attribute_values"),
-            "a temporal geo query reads history, not the current-state projection: {sql}"
+            !sql.contains("current_attributes"),
+            "a temporal geo query reads history, not current state: {sql}"
         );
     }
 

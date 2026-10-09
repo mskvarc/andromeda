@@ -9,7 +9,7 @@
 
 use crate::migration_set::declared_schema::{DeclaredSchema, every_migration_sql};
 use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
-use andromeda_postgresql_schema::{projected_string_column::INDEXED_STRING_BYTE_LIMIT, projected_uri_column::INDEXED_URI_BYTE_LIMIT};
+use andromeda_postgresql_schema::{string_value_column::INDEXED_STRING_BYTE_LIMIT, uri_value_column::INDEXED_URI_BYTE_LIMIT};
 use pretty_assertions::assert_eq;
 
 /// The longest identifier PostgreSQL keeps without truncating it.

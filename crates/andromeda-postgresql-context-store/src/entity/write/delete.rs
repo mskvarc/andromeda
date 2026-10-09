@@ -249,8 +249,6 @@ mod tests {
         pretty_assertions::assert_eq!(sql.matches(r#"DELETE FROM "entities""#).count(), 1, "{sql}");
         for relation in [
             "current_attributes",
-            "current_attribute_values",
-            "entity_documents",
             "attribute_history",
             "temporal_entities",
             "temporal_attribute_streams",

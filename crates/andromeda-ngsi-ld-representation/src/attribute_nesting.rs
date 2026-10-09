@@ -3,13 +3,18 @@
 //!
 //! ETSI GS CIM 009 v1.9.1 bounds no nesting: a Property value may be a JSON
 //! object of any depth, a list may hold lists, and every attribute may carry
-//! sub-attributes of its own (clause 4.5.2). Andromeda stores an attribute as
-//! its JSON-LD expansion and reads every stored and queued document back with
-//! `serde_json`'s reader, which refuses a text nesting more than
+//! sub-attributes of its own (clause 4.5.2). Current state holds the
+//! sub-attributes of an attribute instance as elements of one array, each
+//! naming its parent by an `integer` position, so depth costs it one element
+//! per level and no bound the value budgets reach. The durable queues and the
+//! temporal history hold an attribute as its JSON-LD expansion and are read
+//! back with `serde_json`'s reader, which refuses a text nesting more than
 //! [`READER_NESTING_LIMIT`] containers. The expansion wraps every level of an
-//! attribute in a node and an array, so a write and the reads of what it stored
-//! agree on what an attribute is only if the write is held to the depth the
-//! reads can take: [`AttributeNestingLimit::DECODABLE_CEILING`].
+//! attribute in a node and an array, so a write and the reads of what it
+//! queued and recorded agree on what an attribute is only if the write is held
+//! to the depth those reads can take:
+//! [`AttributeNestingLimit::DECODABLE_CEILING`], set by the deepest of them, an
+//! entity state inside a pending side-effect job.
 //!
 //! The refusal is `BadRequestData`. Clause 6.3.2 keeps 413 for an input "too
 //! large i.e. too many bytes", which a deep value of a few hundred bytes is not,
@@ -22,7 +27,7 @@ use derive_more::Display;
 use std::num::NonZeroUsize;
 use thiserror::Error;
 
-/// Containers above an attribute instance in a stored entity document: the
+/// Containers above an attribute instance in an entity document: the
 /// document's array, the entity node, the attribute's array of instances, and
 /// the instance node.
 const CONTAINERS_ABOVE_AN_INSTANCE: usize = 4;
@@ -69,7 +74,7 @@ pub struct AttributeNestingLimit(NonZeroUsize);
 impl AttributeNestingLimit {
     /// The deepest nesting every stored and queued document holding an
     /// attribute decodes at: the reader's limit, less the containers the
-    /// deepest queue and the stored entity document put around an attribute
+    /// deepest queue and the entity document it holds put around an attribute
     /// instance and the containers below its deepest level, taken at the most
     /// containers a level costs.
     pub const DECODABLE_CEILING: AttributeNestingLimit = AttributeNestingLimit::decodable_ceiling();

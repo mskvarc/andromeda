@@ -5,7 +5,7 @@
 //! stop at the attribute itself, descend a `.`-separated sub-attribute chain,
 //! or carry one trailing `[…]` group. Only the first of those is the typed
 //! value of an attribute instance alone, and a target element that
-//! is a `LanguageProperty` -- at the top level or below a sub-attribute -- may
+//! is a `LanguageProperty` (at the top level or below a sub-attribute) may
 //! be read with or without a target language. The routing decision is this
 //! classification, made once, rather than a boolean re-derived at every call
 //! site.
@@ -18,8 +18,8 @@ use andromeda_ngsi_ld_query::filter::path::AttrPath;
 /// can answer a predicate over it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocalTarget<'a> {
-    /// The attribute's own value, which is exactly what the projection stores:
-    /// one typed column per attribute instance.
+    /// The attribute's own value, which a row holds in one typed column per
+    /// attribute instance.
     OwnValue,
     /// One trailing member, written `attr[member]`.
     ///
@@ -27,12 +27,12 @@ pub enum LocalTarget<'a> {
     /// which applies: on a `LanguageProperty` the member is the target language
     /// and selects one `languageMap` key, and on every other family it is a
     /// member of a compound value. The two are indistinguishable in the query
-    /// text — a language tag and a JSON member name are both bare names — so
+    /// text (a language tag and a JSON member name are both bare names), so
     /// both readings are compiled and disjoined.
     TrailingMember(&'a AttributeName),
     /// A compound member nested below another, which lives only inside a
     /// structured value and has no language reading.
-    PayloadMember,
+    NestedMember,
     /// A sub-attribute, held in the sub-attribute tree of its attribute's
     /// instance.
     ///
@@ -64,7 +64,7 @@ pub const fn local_target(path: &AttrPath) -> LocalTarget<'_> {
     match (at_top_level, trailing) {
         (true, []) => LocalTarget::OwnValue,
         (true, [member]) => LocalTarget::TrailingMember(member),
-        (true, [_, _, ..]) => LocalTarget::PayloadMember,
+        (true, [_, _, ..]) => LocalTarget::NestedMember,
         (false, []) => LocalTarget::SubAttribute(Some(LanguageSelection::AnyLanguage)),
         (false, [member]) => LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(member))),
         (false, [_, _, ..]) => LocalTarget::SubAttribute(None),
@@ -102,7 +102,7 @@ mod tests {
     }
 
     /// Clause 4.9: `[*]` matches a `LanguageProperty` against every language's
-    /// value, which is the same target the unqualified path addresses — "a
+    /// value, which is the same target the unqualified path addresses: "a
     /// value from any of the key-value pairs held within the languageMap".
     #[test]
     fn the_language_suppression_marker_addresses_the_attributes_own_value() {
@@ -114,7 +114,7 @@ mod tests {
         let path = path_of("\"https://example.com/color\"[en]==\"red\"");
         match local_target(&path) {
             LocalTarget::TrailingMember(member) => pretty_assertions::assert_eq!(member.as_str(), "en"),
-            other @ (LocalTarget::OwnValue | LocalTarget::PayloadMember | LocalTarget::SubAttribute(_)) => {
+            other @ (LocalTarget::OwnValue | LocalTarget::NestedMember | LocalTarget::SubAttribute(_)) => {
                 panic!("expected a trailing member, got {other:?}")
             }
         }
@@ -142,7 +142,7 @@ mod tests {
             LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(member))) => pretty_assertions::assert_eq!(member.as_str(), "en"),
             other @ (LocalTarget::OwnValue
             | LocalTarget::TrailingMember(_)
-            | LocalTarget::PayloadMember
+            | LocalTarget::NestedMember
             | LocalTarget::SubAttribute(None | Some(LanguageSelection::AnyLanguage))) => panic!("expected a sub-attribute target language, got {other:?}"),
         }
     }
@@ -157,6 +157,6 @@ mod tests {
 
     #[test]
     fn a_nested_compound_member_has_no_language_reading() {
-        assert_eq!(local_target(&path_of("\"https://example.com/sensor\"[a.b]==40")), LocalTarget::PayloadMember);
+        assert_eq!(local_target(&path_of("\"https://example.com/sensor\"[a.b]==40")), LocalTarget::NestedMember);
     }
 }

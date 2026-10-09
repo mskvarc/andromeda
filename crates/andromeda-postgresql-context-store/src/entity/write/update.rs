@@ -413,7 +413,6 @@ mod tests {
         );
         assert!(sql.contains(r#"RETURNING "entities"."entity_key", "entities"."id")"#), "{sql}");
         assert!(sql.ends_with(r#"SELECT "id" FROM "ents""#), "{sql}");
-        assert!(!sql.contains("entity_documents"), "{sql}");
     }
 
     /// The attribute instances are written as each entity's edit stages

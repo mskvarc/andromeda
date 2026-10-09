@@ -1,37 +1,38 @@
 //! Lifting stored temporal text out of JSONB into the domain clause 4.9 orders
 //! it in.
 //!
-//! A `DateTime`, `Date` or `Time` read out of a JSONB payload with `#>>` arrives
-//! as whatever text the client wrote. Clause 4.6.3 admits many spellings of one
-//! instant — any offset, any fractional width — so text comparison over that is
-//! not the temporal comparison clause 4.9 asks for. Each expression here states
-//! how one such column is lifted, and every statement that compares a temporal
-//! value builds it from these so no two of them disagree.
+//! A `DateTime`, `Date` or `Time` read out of a JSONB document with `#>>`
+//! arrives as whatever text the client wrote. Clause 4.6.3 admits many
+//! spellings of one instant (any offset, any fractional width), so text
+//! comparison over that is not the temporal comparison clause 4.9 asks for.
+//! Each expression here states how one such column is lifted, and every
+//! statement that compares a temporal value builds it from these so no two of
+//! them disagree.
 //!
-//! Every expression is guarded before it casts. A payload member is only
-//! *supposed* to hold a temporal literal — nothing in the database enforces it —
+//! Every expression is guarded before it casts. A document member is only
+//! *supposed* to hold a temporal literal (nothing in the database enforces it),
 //! and an unguarded `::timestamptz` cast over a row that holds `"soon"` aborts
 //! the whole statement with a runtime cast error rather than declining to match
 //! that one row. The guard is two checks, both of which have to pass:
 //!
 //! * a regular expression restricts the *shape* to clause 4.6.3's RFC 3339
 //!   productions, so PostgreSQL's far more permissive timestamp grammar cannot
-//!   admit `now`, `epoch`, a bare date, or a `2024-01-01 BC` era marker — none of
+//!   admit `now`, `epoch`, a bare date, or a `2024-01-01 BC` era marker, none of
 //!   which the client wrote as a `DateTime` or `Time` literal;
 //! * `pg_input_is_valid`
 //!   (PostgreSQL 16+) then asks the `timestamptz` input function itself whether
 //!   the shaped text is a real instant, without raising. A string can satisfy
-//!   the regex and still not be one — `2024-02-30T00:00:00Z` has the right
+//!   the regex and still not be one: `2024-02-30T00:00:00Z` has the right
 //!   shape but names a day February does not have, and `25:00:00Z` has the right
-//!   shape but names an hour a day does not have — and only the input function
+//!   shape but names an hour a day does not have. Only the input function
 //!   knows every calendar and clock rule the regex does not encode.
 //!
 //! Together the two checks turn a non-conforming row into `NULL`, which every
 //! comparison then reports as unknown: the row does not match, in either
 //! polarity, which is what clause 4.9 requires of a target the operator has no
-//! meaning for. Neither check can itself raise an error — the regex either
+//! meaning for. Neither check can itself raise an error (the regex either
 //! matches or does not, and `pg_input_is_valid` catches the input function's
-//! error internally — so the `CASE`'s `WHEN` is always safe to evaluate,
+//! error internally), so the `CASE`'s `WHEN` is always safe to evaluate,
 //! whatever order PostgreSQL chooses to evaluate its two conjuncts in.
 
 use andromeda_postgresql_seaquery::{
@@ -68,8 +69,8 @@ const TIME_ANCHOR: &str = "1970-01-01T";
 /// Wrap a transformation in the two-part guard that makes it safe to apply.
 ///
 /// `regex_operand` is evaluated by the regex, `cast_source` is the exact
-/// expression `pg_input_is_valid` validates — the same text the real cast inside
-/// `transformed` sees — so a caller whose cast source is not the bare stored
+/// expression `pg_input_is_valid` validates (the same text the real cast inside
+/// `transformed` sees), so a caller whose cast source is not the bare stored
 /// expression (the `Time` lift anchors it to a date first) states that
 /// explicitly rather than the guard assuming they are the same text.
 fn shape_guarded(regex_operand: SimpleExpr, shape: &str, cast_source: SimpleExpr, transformed: SimpleExpr) -> SimpleExpr {
@@ -86,8 +87,8 @@ fn shape_guarded(regex_operand: SimpleExpr, shape: &str, cast_source: SimpleExpr
 /// equal without the statement having to normalise either.
 #[must_use]
 pub fn stored_date_time(stored: SimpleExpr) -> SimpleExpr {
-    // The one stored expression is read three times — by the shape check, by
-    // `pg_input_is_valid`, and by the cast — so each reader takes its own copy.
+    // The one stored expression is read three times (by the shape check, by
+    // `pg_input_is_valid`, and by the cast), so each reader takes its own copy.
     let regex_operand = stored.clone();
     let cast_source = stored.clone();
     let transformed = cast_compound(stored, PostgresType::Timestamptz);
@@ -99,15 +100,15 @@ pub fn stored_date_time(stored: SimpleExpr) -> SimpleExpr {
 ///
 /// The result is text rather than a `time` value on purpose: the canonical form
 /// is fixed-width and UTC, so byte-wise text order over it is chronological
-/// order, and the comparison is then the same one the current-value projection
-/// makes against its `COLLATE "C"` string column.
+/// order, and the comparison is then the same one a stored row makes against
+/// its `COLLATE "C"` string column.
 ///
 /// The offset is resolved by anchoring the time of day to a date and letting the
 /// `timestamptz` parser do it, then converting to UTC before the date is dropped.
 /// The literal carries its own offset, so neither step consults the session
 /// `TimeZone` and the result does not depend on the server's configuration. The
 /// anchored, concatenated text is what is validated and cast, not the bare
-/// stored expression — an out-of-range hour or minute (`25:00:00Z`, `12:60:00Z`)
+/// stored expression: an out-of-range hour or minute (`25:00:00Z`, `12:60:00Z`)
 /// has the `TIME_SHAPE` regex's shape but is not a real time of day, and only
 /// validating the text that is actually cast catches that.
 #[must_use]
@@ -133,7 +134,7 @@ mod tests {
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
 
     /// The stored operand every test lifts: a plain column stands in for the
-    /// `payload #>> '{}'` extraction the real callers pass.
+    /// `#>> '{}'` extraction the real callers pass.
     fn stored() -> SimpleExpr {
         Expr::col(Alias::new("stored"))
     }

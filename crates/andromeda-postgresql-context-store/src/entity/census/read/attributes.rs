@@ -143,7 +143,7 @@ mod tests {
     }
 
     /// A key exists while its ledger rows sum above zero, so every read keeps
-    /// only the positive groups and reads no payload or Entity row.
+    /// only the positive groups and reads no Entity row.
     #[test]
     fn every_read_keeps_the_positive_sums_and_reads_no_entity_relation() {
         let statements = [
@@ -152,7 +152,7 @@ mod tests {
         ];
         for statement in &statements {
             assert!(statement.contains("> 0"), "{statement}");
-            for relation in ["entity_documents", "entity_search", r#""entities""#, "current_attribute_values", "payload"] {
+            for relation in ["entity_search", r#""entities""#, "current_attributes"] {
                 assert!(!statement.contains(relation), "{relation} read: {statement}");
             }
         }

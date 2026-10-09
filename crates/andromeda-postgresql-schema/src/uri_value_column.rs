@@ -6,14 +6,13 @@
 //! Relationship object longer than [`INDEXED_URI_BYTE_LIMIT`] is held in
 //! `value_long_uri` instead. The migration's two length checks make that
 //! placement canonical: every URI has exactly one column it may sit in. The
-//! writer places a value through [`ProjectedUriColumn::of`] and the `q`
+//! writer places a value through [`UriValueColumn::of`] and the `q`
 //! compiler routes an equality through the same function, which is what makes
 //! reading only the operand's own column exact.
 //!
 //! The bound equals the one every stored identifier is held to, so an object
-//! naming a local Entity always sits in `value_uri`, the column a Relationship
-//! traversal joins `entities.id` on. An object in `value_long_uri` cannot name
-//! a local Entity, so the traversal loses nothing by never reading it.
+//! naming a local Entity always sits in `value_uri`; an object in
+//! `value_long_uri` names no local Entity.
 
 use crate::current::CurrentAttributes;
 
@@ -27,7 +26,7 @@ pub const INDEXED_URI_BYTE_LIMIT: usize = 1024;
 
 /// The column one Relationship object is held in.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum ProjectedUriColumn {
+pub enum UriValueColumn {
     /// `value_uri`, keyed by a B-tree: at most [`INDEXED_URI_BYTE_LIMIT`]
     /// octets.
     Indexed,
@@ -35,14 +34,14 @@ pub enum ProjectedUriColumn {
     Overflow,
 }
 
-impl ProjectedUriColumn {
+impl UriValueColumn {
     /// The column `uri` is held in.
     #[must_use]
-    pub const fn of(uri: &str) -> ProjectedUriColumn {
+    pub const fn of(uri: &str) -> UriValueColumn {
         if uri.len() <= INDEXED_URI_BYTE_LIMIT {
-            ProjectedUriColumn::Indexed
+            UriValueColumn::Indexed
         } else {
-            ProjectedUriColumn::Overflow
+            UriValueColumn::Overflow
         }
     }
 
@@ -50,15 +49,15 @@ impl ProjectedUriColumn {
     #[must_use]
     pub const fn column(self) -> CurrentAttributes {
         match self {
-            ProjectedUriColumn::Indexed => CurrentAttributes::ValueUri,
-            ProjectedUriColumn::Overflow => CurrentAttributes::ValueLongUri,
+            UriValueColumn::Indexed => CurrentAttributes::ValueUri,
+            UriValueColumn::Overflow => CurrentAttributes::ValueLongUri,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::projected_uri_column::{INDEXED_URI_BYTE_LIMIT, ProjectedUriColumn};
+    use crate::uri_value_column::{INDEXED_URI_BYTE_LIMIT, UriValueColumn};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -70,17 +69,17 @@ mod tests {
 
     #[test]
     fn a_uri_of_exactly_the_limit_is_indexed() {
-        assert_eq!(ProjectedUriColumn::of(&urn_of_length(INDEXED_URI_BYTE_LIMIT)), ProjectedUriColumn::Indexed);
+        assert_eq!(UriValueColumn::of(&urn_of_length(INDEXED_URI_BYTE_LIMIT)), UriValueColumn::Indexed);
     }
 
     #[test]
     fn a_uri_one_byte_past_the_limit_overflows() {
-        assert_eq!(ProjectedUriColumn::of(&urn_of_length(INDEXED_URI_BYTE_LIMIT + 1)), ProjectedUriColumn::Overflow);
+        assert_eq!(UriValueColumn::of(&urn_of_length(INDEXED_URI_BYTE_LIMIT + 1)), UriValueColumn::Overflow);
     }
 
     #[test]
     fn a_uri_far_past_the_limit_overflows() {
-        assert_eq!(ProjectedUriColumn::of(&urn_of_length(6000)), ProjectedUriColumn::Overflow);
+        assert_eq!(UriValueColumn::of(&urn_of_length(6000)), UriValueColumn::Overflow);
     }
 
     /// A two-octet character counts twice: an IRI (clause 4.6.2 NOTE 2) whose
@@ -92,13 +91,13 @@ mod tests {
         let at_limit = format!("{prefix}x{}", "\u{e9}".repeat((INDEXED_URI_BYTE_LIMIT - prefix.len() - 1) / 2));
         assert_eq!(at_limit.len(), INDEXED_URI_BYTE_LIMIT, "the fixture must sit exactly at the bound");
         assert!(at_limit.chars().count() < INDEXED_URI_BYTE_LIMIT);
-        assert_eq!(ProjectedUriColumn::of(&at_limit), ProjectedUriColumn::Indexed);
-        assert_eq!(ProjectedUriColumn::of(&format!("{at_limit}a")), ProjectedUriColumn::Overflow);
+        assert_eq!(UriValueColumn::of(&at_limit), UriValueColumn::Indexed);
+        assert_eq!(UriValueColumn::of(&format!("{at_limit}a")), UriValueColumn::Overflow);
     }
 
     #[test]
     fn each_placement_names_its_column() {
-        assert_eq!(ProjectedUriColumn::Indexed.column().to_string(), "value_uri");
-        assert_eq!(ProjectedUriColumn::Overflow.column().to_string(), "value_long_uri");
+        assert_eq!(UriValueColumn::Indexed.column().to_string(), "value_uri");
+        assert_eq!(UriValueColumn::Overflow.column().to_string(), "value_long_uri");
     }
 }

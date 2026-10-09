@@ -2,10 +2,10 @@
 //!
 //! `jsonb_path_ops` indexes containment (`@>`) and nothing else; the default
 //! `jsonb_ops` class also serves key existence (`?`, `?|`, `?&`). Every
-//! predicate compiled against `current_attribute_values.value_object` is a
+//! predicate compiled against `current_attributes.value_object` is a
 //! containment test, so its GIN index uses the smaller `jsonb_path_ops` class.
 //! The test states both halves: the two operator classes behave as declared, and
-//! the projection's index is the containment one.
+//! the `value_object` index is the containment one.
 
 use crate::seeded_corpus::explain;
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
@@ -71,7 +71,7 @@ async fn the_projection_indexes_value_object_for_containment_alone() {
     let object_indexes: Vec<String> = sqlx::query_scalar(
         "SELECT pg_get_indexdef(i.indexrelid) FROM pg_index AS i \
          JOIN pg_class AS t ON t.oid = i.indrelid \
-         WHERE t.relname = 'current_attribute_values' \
+         WHERE t.relname = 'current_attributes' \
            AND pg_get_indexdef(i.indexrelid) LIKE '%value_object%'",
     )
     .fetch_all(scope.database_pool())

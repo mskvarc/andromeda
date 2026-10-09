@@ -34,7 +34,7 @@ fn vehicle(id: &str, expires_at: &str) -> Value {
 /// no row exists.
 async fn projected_speed_expiry(pool: &PgPool, entity_id: &str) -> Option<Option<DateTime<Utc>>> {
     sqlx::query_scalar(
-        "SELECT c.expires_at FROM current_attribute_values AS c \
+        "SELECT c.expires_at FROM current_attributes AS c \
          JOIN entities AS e ON e.entity_key = c.entity_key \
          JOIN attribute_names AS an ON an.attribute_name_key = c.attribute_name_key \
          WHERE e.id = $1 AND an.name LIKE '%speed'",

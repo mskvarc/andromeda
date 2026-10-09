@@ -91,7 +91,7 @@ async fn ordering_dist_2d_orderfrom_with_3d_entities() {
 
 /// NGSI-LD 4.23 read with 4.10: `orderBy` may name any `GeoProperty`, not only
 /// the default `location`. A named one is measured from its
-/// `current_attribute_values`
+/// `current_attributes`
 /// instance rows, so the ordering has to reach the same geometry the filter
 /// does.
 ///

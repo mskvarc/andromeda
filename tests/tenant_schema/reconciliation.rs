@@ -39,20 +39,12 @@ const INVARIANTS: &[Invariant] = &[
         count: "SELECT COUNT(*) FROM scope_history sh WHERE NOT EXISTS (SELECT 1 FROM temporal_entities te WHERE te.temporal_entity_key = sh.temporal_entity_key)",
     },
     Invariant {
-        description: "current projection rows whose entity no longer exists",
-        count: "SELECT COUNT(*) FROM current_attribute_values cav WHERE NOT EXISTS (SELECT 1 FROM entities e WHERE e.entity_key = cav.entity_key)",
-    },
-    Invariant {
-        description: "document rows whose entity no longer exists",
-        count: "SELECT COUNT(*) FROM entity_documents d WHERE NOT EXISTS (SELECT 1 FROM entities e WHERE e.entity_key = d.entity_key)",
+        description: "attribute rows whose entity no longer exists",
+        count: "SELECT COUNT(*) FROM current_attributes ca WHERE NOT EXISTS (SELECT 1 FROM entities e WHERE e.entity_key = ca.entity_key)",
     },
     Invariant {
         description: "search rows whose entity no longer exists",
         count: "SELECT COUNT(*) FROM entity_search s WHERE NOT EXISTS (SELECT 1 FROM entities e WHERE e.entity_key = s.entity_key)",
-    },
-    Invariant {
-        description: "entities without a document row",
-        count: "SELECT COUNT(*) FROM entities e WHERE NOT EXISTS (SELECT 1 FROM entity_documents d WHERE d.entity_key = e.entity_key)",
     },
     Invariant {
         description: "entities without a search row",
@@ -80,8 +72,8 @@ const INVARIANTS: &[Invariant] = &[
         count: "SELECT COUNT(*) FROM temporal_attribute_streams s WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.attribute_name_key =s.attribute_name_key)",
     },
     Invariant {
-        description: "current projection rows naming a dictionary key that does not exist",
-        count: "SELECT COUNT(*) FROM current_attribute_values cav WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.attribute_name_key =cav.attribute_name_key)",
+        description: "attribute rows naming a dictionary key that does not exist",
+        count: "SELECT COUNT(*) FROM current_attributes ca WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.attribute_name_key =ca.attribute_name_key)",
     },
     Invariant {
         description: "routing projection rows naming a dictionary key that does not exist (the wildcard sentinel 0 names none)",
@@ -130,12 +122,11 @@ const REPLACED_RELATIONS: &[&str] = &[
 /// precondition left to the suite that happened to run before it.
 const POPULATED_RELATIONS: &[&str] = &[
     "entities",
-    "entity_documents",
     "entity_search",
     "temporal_entities",
     "temporal_attribute_streams",
     "attribute_history",
-    "current_attribute_values",
+    "current_attributes",
     "attribute_names",
     "write_records",
     "registration_information",

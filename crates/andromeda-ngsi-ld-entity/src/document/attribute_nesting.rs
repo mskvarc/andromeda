@@ -7,9 +7,9 @@
 //! levels of its `GeoJSON` node and its nested coordinate lists. Nested arrays a
 //! Property value is written with are flattened by the expansion and stored as
 //! one array, so they are no level. Each level costs at most two containers in
-//! the stored expansion, which is what lets
+//! the expansion, which is what lets
 //! [`AttributeNestingLimit::DECODABLE_CEILING`](andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit::DECODABLE_CEILING)
-//! bound every stored document from the levels alone.
+//! bound every queued and stored document from the levels alone.
 
 use crate::{
     document::{

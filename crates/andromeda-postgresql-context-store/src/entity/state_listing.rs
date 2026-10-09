@@ -115,6 +115,6 @@ mod tests {
     fn a_listing_windows_the_heads_in_identifier_order() {
         let sql = windowed(heads_statement(&ContextTarget::Live), Some(10), Some(20)).to_string(PostgresQueryBuilder);
         assert!(sql.ends_with(r#"ORDER BY "e"."id" ASC LIMIT 10 OFFSET 20"#), "{sql}");
-        assert!(!sql.contains("current_attributes") && !sql.contains("entity_documents"), "{sql}");
+        assert!(!sql.contains("current_attributes"), "{sql}");
     }
 }
