@@ -44,7 +44,7 @@ mod current_attributes_tests;
 mod ddl_text;
 /// The schema objects the embedded migrations declare, read from their text.
 #[cfg(test)]
-mod declared_schema;
+pub(crate) mod declared_schema;
 /// The naming and storage conventions, checked against the declared schema.
 #[cfg(test)]
 mod naming_tests;

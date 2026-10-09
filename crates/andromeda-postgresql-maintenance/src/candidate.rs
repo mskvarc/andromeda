@@ -12,7 +12,8 @@ use strum::{Display, EnumString, IntoStaticStr};
 #[derive(Clone, Copy, Debug, Display, EnumString, Eq, Hash, Iden, IntoStaticStr, PartialEq)]
 #[strum(serialize_all = "snake_case")]
 pub enum IndexTarget {
-    /// Natural entity/attribute/dataset grain.
+    /// Natural entity/attribute/dataset grain, and bloat canary for the paired
+    /// sub-attribute key rebuild.
     UqCurrentAttributesGrain,
     /// Numeric predicate index.
     IdxCaValueNumber,
@@ -30,7 +31,7 @@ pub enum IndexTarget {
     IdxCaValueGeometry,
     /// Entity/attribute geometry correlation index.
     IdxCaEntityGeometry,
-    /// Sub-attribute equality key GIN.
+    /// Sub-attribute equality key GIN, queued only through its canary.
     IdxCaSubEqKeys,
 }
 
@@ -60,6 +61,49 @@ impl IndexTarget {
         IndexTarget::IdxCaValueGeometry,
         IndexTarget::IdxCaEntityGeometry,
     ];
+
+    /// The GIN index queued together with this probeable B-tree, its bloat
+    /// canary.
+    ///
+    /// `pgstattuple` reads no GIN index, so a GIN is never measured itself: the
+    /// B-tree over the rows whose churn bloats it stands in for it. The string
+    /// B-tree covers exactly the rows the trigram GIN covers. The grain covers
+    /// every row the sub-attribute key GIN covers, and a row whose
+    /// `sub_attributes` change is never a heap-only update (the key expression
+    /// reads the column), so each such change also leaves a dead grain entry.
+    #[must_use]
+    pub const fn paired_gin(self) -> Option<IndexTarget> {
+        match self {
+            IndexTarget::IdxCaValueString => Some(IndexTarget::IdxCaValueStringTrgm),
+            IndexTarget::UqCurrentAttributesGrain => Some(IndexTarget::IdxCaSubEqKeys),
+            IndexTarget::IdxCaValueNumber
+            | IndexTarget::IdxCaValueStringTrgm
+            | IndexTarget::IdxCaValueBoolean
+            | IndexTarget::IdxCaValueDateTime
+            | IndexTarget::IdxCaValueUri
+            | IndexTarget::IdxCaValueGeometry
+            | IndexTarget::IdxCaEntityGeometry
+            | IndexTarget::IdxCaSubEqKeys => None,
+        }
+    }
+
+    /// The probeable B-tree whose qualification queues this GIN index, the
+    /// inverse of [`IndexTarget::paired_gin`].
+    #[must_use]
+    pub const fn canary(self) -> Option<IndexTarget> {
+        match self {
+            IndexTarget::IdxCaValueStringTrgm => Some(IndexTarget::IdxCaValueString),
+            IndexTarget::IdxCaSubEqKeys => Some(IndexTarget::UqCurrentAttributesGrain),
+            IndexTarget::UqCurrentAttributesGrain
+            | IndexTarget::IdxCaValueNumber
+            | IndexTarget::IdxCaValueString
+            | IndexTarget::IdxCaValueBoolean
+            | IndexTarget::IdxCaValueDateTime
+            | IndexTarget::IdxCaValueUri
+            | IndexTarget::IdxCaValueGeometry
+            | IndexTarget::IdxCaEntityGeometry => None,
+        }
+    }
 
     /// The exact database identifier created by tenant migrations.
     #[must_use]
@@ -201,6 +245,39 @@ mod tests {
     fn no_gin_index_target_is_probed_directly() {
         for target in [IndexTarget::IdxCaValueStringTrgm, IndexTarget::IdxCaSubEqKeys] {
             assert!(!IndexTarget::PROBEABLE.contains(&target), "{target}");
+        }
+    }
+
+    /// An index outside the probe set is never measured, so only a canary can
+    /// queue it; without one it would bloat unattended.
+    #[test]
+    fn every_index_no_probe_measures_is_queued_through_a_probeable_canary() {
+        for target in IndexTarget::ALL.into_iter().filter(|target| !IndexTarget::PROBEABLE.contains(target)) {
+            assert_eq!(
+                target.canary().map(|canary| (IndexTarget::PROBEABLE.contains(&canary), canary.paired_gin())),
+                Some((true, Some(target))),
+                "{target} is queued by a probed canary pairing it"
+            );
+        }
+    }
+
+    #[test]
+    fn the_grain_is_the_canary_of_the_sub_attribute_key_gin() {
+        assert_eq!(IndexTarget::UqCurrentAttributesGrain.paired_gin(), Some(IndexTarget::IdxCaSubEqKeys));
+        assert_eq!(IndexTarget::IdxCaSubEqKeys.canary(), Some(IndexTarget::UqCurrentAttributesGrain));
+        assert_eq!(IndexTarget::IdxCaValueString.paired_gin(), Some(IndexTarget::IdxCaValueStringTrgm));
+    }
+
+    #[test]
+    fn a_canary_and_its_gin_name_each_other_and_no_other_index_is_paired() {
+        for target in IndexTarget::ALL {
+            if let Some(gin) = target.paired_gin() {
+                assert_eq!(gin.canary(), Some(target), "{target}");
+            }
+            if let Some(canary) = target.canary() {
+                assert_eq!(canary.paired_gin(), Some(target), "{target}");
+                assert_eq!(target.paired_gin(), None, "{target} is a GIN, never a canary");
+            }
         }
     }
 

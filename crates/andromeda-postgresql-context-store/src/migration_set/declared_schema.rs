@@ -27,48 +27,48 @@ use crate::migration_set::{
 use sqlx::migrate::Migration;
 
 /// Every embedded migration: platform, tenant and branch.
-pub(super) fn every_migration() -> Vec<&'static Migration> {
+pub(crate) fn every_migration() -> Vec<&'static Migration> {
     platform_migrations().iter().chain(tenant_migrator().migrations.iter()).collect()
 }
 
 /// The text of every embedded migration: platform, tenant and branch.
-pub(super) fn every_migration_sql() -> Vec<&'static str> {
+pub(crate) fn every_migration_sql() -> Vec<&'static str> {
     every_migration().into_iter().map(|migration| migration.sql.as_str()).collect()
 }
 
 /// One column a `CREATE TABLE` or `ALTER TABLE ... ADD COLUMN` declares.
 #[derive(Debug)]
-pub(super) struct DeclaredColumn {
+pub(crate) struct DeclaredColumn {
     /// The table the column belongs to.
-    pub(super) table: String,
+    pub(crate) table: String,
     /// The column name.
-    pub(super) name: String,
+    pub(crate) name: String,
     /// Everything after the name: the type and every column option.
-    pub(super) definition: String,
+    pub(crate) definition: String,
 }
 
 impl DeclaredColumn {
     /// The first word of the type, upper-cased, with any array brackets kept.
-    pub(super) fn type_word(&self) -> String {
+    pub(crate) fn type_word(&self) -> String {
         self.definition.split_whitespace().next().unwrap_or_default().to_uppercase()
     }
 
     /// Whether the column's values are variable-length and therefore stored
     /// through TOAST.
-    pub(super) fn is_variable_length(&self) -> bool {
+    pub(crate) fn is_variable_length(&self) -> bool {
         let type_word = self.type_word();
         type_word.ends_with("[]") || ["TEXT", "JSONB", "NUMERIC", "BYTEA", "GEOMETRY", "GEOGRAPHY", "LTREE"].contains(&type_word.as_str())
     }
 
     /// Whether the column is an identity the database generates.
-    pub(super) fn is_identity(&self) -> bool {
+    pub(crate) fn is_identity(&self) -> bool {
         contains_ci(&self.definition, "AS IDENTITY")
     }
 }
 
 /// What a named constraint enforces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ConstraintKind {
+pub(crate) enum ConstraintKind {
     /// `PRIMARY KEY`.
     PrimaryKey,
     /// `UNIQUE`.
@@ -81,24 +81,24 @@ pub(super) enum ConstraintKind {
 
 /// One named constraint a table declares.
 #[derive(Debug)]
-pub(super) struct DeclaredConstraint {
+pub(crate) struct DeclaredConstraint {
     /// The table the constraint belongs to.
-    pub(super) table: String,
+    pub(crate) table: String,
     /// The constraint name.
-    pub(super) name: String,
+    pub(crate) name: String,
     /// What the constraint enforces.
-    pub(super) kind: ConstraintKind,
+    pub(crate) kind: ConstraintKind,
     /// The column list a primary key, unique or foreign-key constraint names.
-    pub(super) columns: Vec<String>,
+    pub(crate) columns: Vec<String>,
     /// The referenced column list of a foreign key; empty for every other kind.
-    pub(super) referenced_columns: Vec<String>,
+    pub(crate) referenced_columns: Vec<String>,
     /// Everything after the name, from the constraint kind on.
-    pub(super) definition: String,
+    pub(crate) definition: String,
 }
 
 /// What a named index-like object is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum IndexKind {
+pub(crate) enum IndexKind {
     /// `CREATE INDEX`.
     Plain,
     /// `CREATE UNIQUE INDEX`.
@@ -109,62 +109,62 @@ pub(super) enum IndexKind {
 
 /// One index or extended-statistics object.
 #[derive(Debug)]
-pub(super) struct DeclaredIndex {
+pub(crate) struct DeclaredIndex {
     /// The table the object is defined on.
-    pub(super) table: String,
+    pub(crate) table: String,
     /// The object name.
-    pub(super) name: String,
+    pub(crate) name: String,
     /// What the object is.
-    pub(super) kind: IndexKind,
+    pub(crate) kind: IndexKind,
     /// Everything after the name: for an index, the table, method, keys,
     /// storage parameters and predicate; for a statistics object, its kinds,
     /// expressions and table.
-    pub(super) definition: String,
+    pub(crate) definition: String,
 }
 
 /// One `CREATE [OR REPLACE] FUNCTION`.
 #[derive(Debug)]
-pub(super) struct DeclaredFunction {
+pub(crate) struct DeclaredFunction {
     /// The function name.
-    pub(super) name: String,
+    pub(crate) name: String,
     /// Everything after the name: the arguments, the return type, every
     /// attribute and the body.
-    pub(super) definition: String,
+    pub(crate) definition: String,
 }
 
 /// One `CREATE TRIGGER`.
 #[derive(Debug)]
-pub(super) struct DeclaredTrigger {
+pub(crate) struct DeclaredTrigger {
     /// The table the trigger fires on.
-    pub(super) table: String,
+    pub(crate) table: String,
     /// The trigger name.
-    pub(super) name: String,
+    pub(crate) name: String,
     /// Everything after the name: timing, event, transition tables, level and
     /// the function executed.
-    pub(super) definition: String,
+    pub(crate) definition: String,
 }
 
 /// Every table, column, constraint, index, statistics object, function and
 /// trigger the embedded migrations declare.
 #[derive(Debug, Default)]
-pub(super) struct DeclaredSchema {
+pub(crate) struct DeclaredSchema {
     /// Every table, in declaration order.
-    pub(super) tables: Vec<String>,
+    pub(crate) tables: Vec<String>,
     /// Every column, in declaration order.
-    pub(super) columns: Vec<DeclaredColumn>,
+    pub(crate) columns: Vec<DeclaredColumn>,
     /// Every named constraint.
-    pub(super) constraints: Vec<DeclaredConstraint>,
+    pub(crate) constraints: Vec<DeclaredConstraint>,
     /// Every index and statistics object.
-    pub(super) indexes: Vec<DeclaredIndex>,
+    pub(crate) indexes: Vec<DeclaredIndex>,
     /// Every function.
-    pub(super) functions: Vec<DeclaredFunction>,
+    pub(crate) functions: Vec<DeclaredFunction>,
     /// Every trigger.
-    pub(super) triggers: Vec<DeclaredTrigger>,
+    pub(crate) triggers: Vec<DeclaredTrigger>,
 }
 
 impl DeclaredSchema {
     /// Reads the objects every embedded migration declares.
-    pub(super) fn of_every_migration() -> DeclaredSchema {
+    pub(crate) fn of_every_migration() -> DeclaredSchema {
         let mut schema = DeclaredSchema::default();
         for sql in every_migration_sql() {
             let text = without_comments(sql);

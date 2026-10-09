@@ -335,12 +335,16 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn the_trigram_gin_is_never_selected_for_direct_probe() {
+    fn no_gin_is_ever_selected_for_direct_probe() {
         let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
         let sizes = [
             IndexSize {
                 target: IndexTarget::IdxCaValueStringTrgm,
                 bytes: profile.minimum_relation_bytes * 10,
+            },
+            IndexSize {
+                target: IndexTarget::IdxCaSubEqKeys,
+                bytes: profile.minimum_relation_bytes * 20,
             },
             IndexSize {
                 target: IndexTarget::IdxCaValueString,

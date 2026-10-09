@@ -108,13 +108,50 @@ async fn snapshot_count(transaction: &mut Transaction<'_, Postgres>) -> Result<i
 /// the sum ignores. Only ordinary tables carry storage here (`relkind = 'r'`);
 /// their indexes and TOAST are already folded into the total.
 async fn branch_bytes(transaction: &mut Transaction<'_, Postgres>) -> Result<i64, SnapshotError> {
-    let bytes: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(pg_total_relation_size(c.oid)), 0)::bigint \
-         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
-         WHERE n.nspname LIKE 'snap\\_%' AND c.relkind = 'r'",
-    )
-    .fetch_one(&mut **transaction)
-    .await
-    .map_err(|error| persistence_error(error))?;
+    let bytes: i64 = sqlx::query_scalar(BRANCH_BYTES)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(|error| persistence_error(error))?;
     Ok(bytes)
+}
+
+/// The statement [`branch_bytes`] runs. It names no relation, so every table a
+/// branch migration creates counts with its indexes and TOAST.
+const BRANCH_BYTES: &str = "SELECT COALESCE(SUM(pg_total_relation_size(c.oid)), 0)::bigint \
+                            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                            WHERE n.nspname LIKE 'snap\\_%' AND c.relkind = 'r'";
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        migration_set::declared_schema::DeclaredSchema,
+        snapshot::{branch_schema::BRANCH_TABLES, quota::BRANCH_BYTES},
+    };
+
+    /// A Snapshot's footprint is its whole branch schema, so the instance
+    /// table and its key index count without being listed, and reaping drops
+    /// the schema with everything it holds.
+    #[test]
+    fn purge_and_quota_count_the_instance_table() {
+        assert!(
+            BRANCH_BYTES.contains("pg_total_relation_size(c.oid)"),
+            "indexes and TOAST included: {BRANCH_BYTES}"
+        );
+        assert!(BRANCH_BYTES.contains("n.nspname LIKE 'snap\\_%'"), "{BRANCH_BYTES}");
+        assert!(BRANCH_BYTES.contains("c.relkind = 'r'"), "{BRANCH_BYTES}");
+        assert!(!BRANCH_BYTES.contains("relname "), "no relation is singled out: {BRANCH_BYTES}");
+        assert!(BRANCH_TABLES.contains(&"current_attributes"));
+        let schema = DeclaredSchema::of_every_migration();
+        assert!(
+            schema
+                .indexes
+                .iter()
+                .any(|index| index.name == "idx_ca_sub_eq_keys" && index.table == "current_attributes"),
+            "the key index lives with its table in the branch schema"
+        );
+        assert!(
+            schema.tables.iter().any(|table| table == "current_attributes"),
+            "an ordinary table, which relkind 'r' selects"
+        );
+    }
 }

@@ -6,12 +6,12 @@ use andromeda_postgresql_codes::maintenance_decision::MaintenanceDecisionCode;
 /// The decision `postgresql_maintenance_targets.last_decision` records.
 ///
 /// Every policy decision, plus the one the controller makes on the policy's
-/// behalf: queueing the trigram index together with its string canary.
+/// behalf: queueing a GIN index together with its canary B-tree.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RecordedDecision {
     /// The policy's own decision for the target.
     Policy(PolicyDecision),
-    /// Queued together with its paired string index.
+    /// Queued together with its canary B-tree.
     PairedQueued,
 }
 

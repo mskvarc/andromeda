@@ -61,7 +61,7 @@ pub(crate) async fn load_target_state(
     })
 }
 
-/// Return the first pending action, keeping the string B-tree ahead of its GIN pair.
+/// Return the first pending action, keeping each canary B-tree ahead of its GIN pair.
 pub(crate) async fn pending_action(connection: &mut PgConnection, tenant: &RegisteredTenant) -> Result<Option<MaintenanceTarget>, MaintenanceError> {
     let statement = Query::select()
         .column(PostgresqlMaintenanceTargets::Target)
@@ -78,17 +78,21 @@ pub(crate) async fn pending_action(connection: &mut PgConnection, tenant: &Regis
         .into_iter()
         .map(|code| MaintenanceTargetCode::try_from(code).map(target_of))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(targets
+    Ok(first_pending(&targets))
+}
+
+/// The pending target to act on first: any target but a GIN queued through a
+/// canary, so a canary is rebuilt on an earlier pass than its GIN, and a GIN
+/// once nothing else is pending.
+fn first_pending(targets: &[MaintenanceTarget]) -> Option<MaintenanceTarget> {
+    targets
         .iter()
         .copied()
-        .find(|target| matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCaValueString)))
-        .or_else(|| {
-            targets
-                .iter()
-                .copied()
-                .find(|target| !matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm)))
+        .find(|target| match target {
+            MaintenanceTarget::Index(index) => index.canary().is_none(),
+            MaintenanceTarget::Heap(_) => true,
         })
-        .or_else(|| targets.first().copied()))
+        .or_else(|| targets.first().copied())
 }
 
 /// Read detailed-probe ordering and cooldown state in one platform query.
@@ -189,15 +193,21 @@ pub(crate) async fn record_decision(
         ) => {}
     }
     execute_update(connection, statement.clone()).await?;
-    if decision == PolicyDecision::Queued && matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCaValueString)) {
-        let trigram = MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm);
-        ensure_target_state(connection, tenant, trigram).await?;
+    let paired_gin = match target {
+        MaintenanceTarget::Index(index) => index.paired_gin(),
+        MaintenanceTarget::Heap(_) => None,
+    };
+    if decision == PolicyDecision::Queued
+        && let Some(gin) = paired_gin
+    {
+        let gin = MaintenanceTarget::Index(gin);
+        ensure_target_state(connection, tenant, gin).await?;
         let paired = Query::update()
             .table(PostgresqlMaintenanceTargets::Table)
             .value(PostgresqlMaintenanceTargets::IsActionPending, true)
             .value(PostgresqlMaintenanceTargets::LastDecision, RecordedDecision::PairedQueued.code().code())
             .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
-            .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(trigram).code()))
+            .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(gin).code()))
             .to_owned();
         execute_update(connection, paired).await?;
     }
@@ -276,4 +286,46 @@ fn target_state_insert(tenant: TenantKey, target: MaintenanceTarget) -> Result<I
 /// Convert a physical byte count to the platform schema's signed storage type.
 fn persisted_bytes(value: u64, counter: CatalogCounter) -> Result<i64, MaintenanceError> {
     i64::try_from(value).map_err(|_| MaintenanceError::CatalogValueOverflow { counter, value })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
+        state::target_record::first_pending,
+    };
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn a_canary_is_acted_on_before_the_gin_it_queued() {
+        for (canary, gin) in [
+            (IndexTarget::IdxCaValueString, IndexTarget::IdxCaValueStringTrgm),
+            (IndexTarget::UqCurrentAttributesGrain, IndexTarget::IdxCaSubEqKeys),
+        ] {
+            assert_eq!(
+                first_pending(&[MaintenanceTarget::Index(gin), MaintenanceTarget::Index(canary)]),
+                Some(MaintenanceTarget::Index(canary))
+            );
+        }
+    }
+
+    #[test]
+    fn a_gin_is_acted_on_once_nothing_else_is_pending() {
+        assert_eq!(
+            first_pending(&[MaintenanceTarget::Index(IndexTarget::IdxCaSubEqKeys)]),
+            Some(MaintenanceTarget::Index(IndexTarget::IdxCaSubEqKeys))
+        );
+        assert_eq!(first_pending(&[]), None);
+    }
+
+    #[test]
+    fn a_pending_heap_goes_ahead_of_a_gin() {
+        assert_eq!(
+            first_pending(&[
+                MaintenanceTarget::Index(IndexTarget::IdxCaSubEqKeys),
+                MaintenanceTarget::Heap(HeapTarget::CurrentAttributes),
+            ]),
+            Some(MaintenanceTarget::Heap(HeapTarget::CurrentAttributes))
+        );
+    }
 }

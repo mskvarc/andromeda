@@ -231,7 +231,10 @@ impl CatalogColumn {
 
 #[cfg(test)]
 mod tests {
-    use crate::inspection::{index_sizes_statement, invalid_indexes_statement};
+    use crate::{
+        candidate::{HeapTarget, IndexTarget},
+        inspection::{heap_samples_statement, index_sizes_statement, invalid_indexes_statement},
+    };
     use sea_query::PostgresQueryBuilder;
 
     #[test]
@@ -242,5 +245,31 @@ mod tests {
         let invalid_sql = invalid_indexes_statement().to_string(PostgresQueryBuilder);
         assert!(invalid_sql.contains("pg_index"), "{invalid_sql}");
         assert!(invalid_sql.contains("indisvalid"), "{invalid_sql}");
+    }
+
+    /// The size sample reads the GIN indexes too, so a canary's queued GIN
+    /// reports its bytes before and after its rebuild.
+    #[test]
+    fn the_index_size_sample_reads_every_current_attributes_index_the_key_gin_included() {
+        let sql = index_sizes_statement().to_string(PostgresQueryBuilder);
+        assert!(sql.contains("\"relname\" = 'current_attributes'"), "{sql}");
+        for target in IndexTarget::ALL {
+            assert!(sql.contains(&format!("'{}'", target.relation_name())), "{target}: {sql}");
+        }
+        assert!(sql.contains("'idx_ca_sub_eq_keys'"), "{sql}");
+        for dropped in ["current_attribute_values", "idx_cav_", "entity_documents"] {
+            assert!(!sql.contains(dropped), "{dropped}: {sql}");
+        }
+    }
+
+    #[test]
+    fn the_heap_sample_reads_current_attributes_and_entities() {
+        let sql = heap_samples_statement().to_string(PostgresQueryBuilder);
+        assert!(sql.contains("pg_stat_user_tables"), "{sql}");
+        for target in HeapTarget::ALL {
+            assert!(sql.contains(&format!("'{}'", target.relation_name())), "{target}: {sql}");
+        }
+        assert!(sql.contains("'current_attributes'"), "{sql}");
+        assert!(!sql.contains("entity_documents"), "{sql}");
     }
 }

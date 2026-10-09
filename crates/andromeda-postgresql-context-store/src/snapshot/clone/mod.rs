@@ -86,15 +86,40 @@ fn copy_sql(source_schema: &str, target_schema: &str, table: &str, plan: &Column
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::{
-        branch_schema::BRANCH_TABLES,
-        clone::{
-            CLONED_TABLES,
-            column_plan::{IdentityGeneration, fixture::entity_key_plan},
-            copy_sql,
+    use crate::{
+        migration_set::{
+            branch::branch_migrations,
+            declared_schema::{DeclaredColumn, DeclaredSchema},
+        },
+        snapshot::{
+            branch_schema::BRANCH_TABLES,
+            clone::{
+                CLONED_TABLES,
+                column_plan::{ColumnPlan, IdentityGeneration, PlannedColumn, fixture::entity_key_plan},
+                copy_sql,
+            },
         },
     };
     use pretty_assertions::assert_eq;
+
+    /// The relation holding every current attribute instance.
+    const CURRENT_ATTRIBUTES: &str = "current_attributes";
+
+    /// The column plan the catalogue gives for `current_attributes`: every
+    /// column its migration declares, none of them an identity.
+    fn current_attributes_plan(schema: &DeclaredSchema) -> ColumnPlan {
+        ColumnPlan {
+            columns: schema
+                .columns
+                .iter()
+                .filter(|column| column.table == CURRENT_ATTRIBUTES)
+                .map(|column| PlannedColumn {
+                    name: column.name.clone(),
+                    identity: None,
+                })
+                .collect(),
+        }
+    }
 
     /// The branch relations a clone leaves empty: the Snapshot-scoped
     /// subscriptions and their delivery state and queue.
@@ -129,6 +154,63 @@ mod tests {
             assert!(copy.ends_with(&format!(" FROM snap_2.{table}")), "{copy}");
             assert!(!copy.contains("LOCK"), "{copy}");
             assert!(!copy.contains("FOR SHARE"), "{copy}");
+        }
+    }
+
+    /// The rows carry their own grain, so the copy needs no surrogate key to
+    /// continue and no parent order: one statement copies every column, the
+    /// sub-attribute tree included.
+    #[test]
+    fn the_clone_copies_the_instance_table() {
+        let schema = DeclaredSchema::of_every_migration();
+        assert!(CLONED_TABLES.contains(&CURRENT_ATTRIBUTES));
+        for dropped in ["attribute_instance_objects", "current_attribute_values", "entity_documents"] {
+            assert!(!CLONED_TABLES.contains(&dropped), "{dropped}");
+            assert!(!BRANCH_TABLES.contains(&dropped), "{dropped}");
+        }
+        let declared: Vec<_> = schema.columns.iter().filter(|column| column.table == CURRENT_ATTRIBUTES).collect();
+        assert!(declared.iter().all(|column| !column.is_identity()), "no key to continue");
+        let plan = current_attributes_plan(&schema);
+        assert!(!plan.overrides_system_value());
+        assert_eq!(plan.identity_columns().count(), 0);
+        let copy = copy_sql("snap_2", "snap_3_stg", CURRENT_ATTRIBUTES, &plan);
+        let columns = plan.quoted_columns();
+        assert_eq!(
+            copy,
+            format!("INSERT INTO snap_3_stg.current_attributes ({columns}) SELECT {columns} FROM snap_2.current_attributes")
+        );
+        for column in &declared {
+            assert!(columns.contains(&format!("\"{}\"", column.name)), "{}: {copy}", column.name);
+        }
+        assert!(columns.contains("\"sub_attributes\""), "{copy}");
+    }
+
+    /// `sub_attribute` is declared once per tenant in `public`, and both
+    /// branches resolve it there, so the source and target arrays are of one
+    /// type: two composite types of the same shape in two schemas would not
+    /// cast to each other.
+    #[test]
+    fn the_clone_casts_no_composite_type() {
+        let schema = DeclaredSchema::of_every_migration();
+        let copy = copy_sql("snap_2", "snap_3_stg", CURRENT_ATTRIBUTES, &current_attributes_plan(&schema));
+        assert!(!copy.contains("::"), "{copy}");
+        assert!(!copy.to_lowercase().contains("cast"), "{copy}");
+        let sub_attributes = schema
+            .columns
+            .iter()
+            .find(|column| column.table == CURRENT_ATTRIBUTES && column.name == "sub_attributes")
+            .map(DeclaredColumn::type_word);
+        assert_eq!(
+            sub_attributes.as_deref(),
+            Some("SUB_ATTRIBUTE[]"),
+            "an unqualified type the search path resolves"
+        );
+        for migration in branch_migrations() {
+            assert!(
+                !migration.sql.as_str().to_lowercase().contains("create type"),
+                "{} declares a type inside the branch schema",
+                migration.description
+            );
         }
     }
 
