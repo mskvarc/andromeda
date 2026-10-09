@@ -102,11 +102,7 @@ mod tests {
     use crate::order_geography::geo_order_distance;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-    use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::resolved_names::ResolvedNames,
-        entity_row_refs::{DocumentsRef, EntityRowRefs},
-    };
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_row_refs::EntityRowRefs};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, PostgresQueryBuilder, Query, SimpleExpr};
 
@@ -131,7 +127,7 @@ mod tests {
 
     /// The rows as the temporal path aliases them.
     fn aliased() -> EntityRowRefs {
-        EntityRowRefs::aliased(None, Alias::new("e"), Alias::new("s"), DocumentsRef::ByKeyLookup)
+        EntityRowRefs::aliased(None, Alias::new("e"), Alias::new("s"))
     }
 
     /// Render a distance expression to its SQL with values inlined.

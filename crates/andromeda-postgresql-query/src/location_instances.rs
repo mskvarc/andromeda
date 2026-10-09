@@ -151,11 +151,7 @@ fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: Attr
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute_name_key::AttributeNameKey,
-        entity_row_refs::{DocumentsRef, EntityRowRefs},
-        location_instances::any_location_instance,
-    };
+    use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs, location_instances::any_location_instance};
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
     use andromeda_postgresql_schema::current::Entities;
@@ -334,7 +330,7 @@ mod tests {
     /// reaches the live relations.
     #[test]
     fn both_arms_read_the_statements_branch() {
-        let rows = EntityRowRefs::aliased(Some(Alias::new("snap_7").into()), Alias::new("e"), Alias::new("s"), DocumentsRef::ByKeyLookup);
+        let rows = EntityRowRefs::aliased(Some(Alias::new("snap_7").into()), Alias::new("e"), Alias::new("s"));
         let (sql, _) = render(
             any_location_instance(
                 &geo(GeoRel::Within),

@@ -1,4 +1,4 @@
-//! Which typed `current_attribute_values` column holds a value of each clause
+//! Which typed field of a stored instance holds a value of each clause
 //! 4.9 operand kind, and how a Query Term is compared against it.
 //!
 //! The mapping mirrors what the write path projects:
@@ -26,7 +26,7 @@
 
 use crate::{
     operator::compare,
-    q_predicate::{instance_scan::InstanceScan, string_ordering::ordered_string, value_column::ValueColumn},
+    q_predicate::{instance_row::InstanceRow, string_ordering::ordered_string, value_column::ValueColumn},
 };
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::{predicate::CmpOp, scalar::Scalar};
@@ -56,33 +56,33 @@ use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 /// whole `equal` condition rather than as a per-column `!=` that a NULL would
 /// swallow.
 #[must_use]
-pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, scan: &InstanceScan<'_>) -> SimpleExpr {
+pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, row: InstanceRow) -> SimpleExpr {
     match scalar {
         // SeaQuery owns every value in its AST, so this is the one necessary
         // clone between the borrowed query domain value and the NUMERIC bind.
-        Scalar::Number(number) => compare(scan.value(ValueColumn::Number), op, SeaExpr::val(number.decimal().clone())),
-        Scalar::Bool(value) => compare(scan.value(ValueColumn::Boolean), op, SeaExpr::val(*value)),
+        Scalar::Number(number) => compare(row.value(ValueColumn::Number), op, SeaExpr::val(number.decimal().clone())),
+        Scalar::Bool(value) => compare(row.value(ValueColumn::Boolean), op, SeaExpr::val(*value)),
         Scalar::Str(value) | Scalar::Uri(value) => {
-            let string_test = string_condition(scalar, value.as_str(), op, scan);
+            let string_test = string_condition(scalar, value.as_str(), op, row);
             match relationship_object_is_comparable(op) {
                 RelationshipObjects::Comparable => {
                     // Equality is byte identity, so a stored object equal to the
                     // operand sits in the one column the operand would be placed
                     // in, and only that column is read.
-                    let uri_test = compare(scan.value(ValueColumn::of_uri(value.as_str())), op, SeaExpr::val(value.as_str()));
+                    let uri_test = compare(row.value(ValueColumn::of_uri(value.as_str())), op, SeaExpr::val(value.as_str()));
                     string_test.or(uri_test)
                 }
                 RelationshipObjects::NonMatching => string_test,
             }
         }
-        Scalar::DateTime(value) => compare(scan.value(ValueColumn::DateTime), op, SeaExpr::val(*value)),
-        Scalar::Date(value) => compare(scan.value(ValueColumn::String), op, SeaExpr::val(NgsiLdDate::from(*value).to_string())),
+        Scalar::DateTime(value) => compare(row.value(ValueColumn::DateTime), op, SeaExpr::val(*value)),
+        Scalar::Date(value) => compare(row.value(ValueColumn::String), op, SeaExpr::val(NgsiLdDate::from(*value).to_string())),
         // The operand is rendered in the same canonical form the write path
         // stores, rather than in the clause 4.9 serialisation the client wrote:
         // `12:00:00+01:00` and `11:00:00Z` are one time of day, and only the
         // canonical text of both compares against the stored column.
         Scalar::Time(value) => match NgsiLdTime::normalise(*value) {
-            Ok(canonical) => compare(scan.value(ValueColumn::String), op, SeaExpr::val(canonical.to_string())),
+            Ok(canonical) => compare(row.value(ValueColumn::String), op, SeaExpr::val(canonical.to_string())),
             // A time of day with no canonical form is one no write path could
             // have stored, so nothing can compare equal to it.
             Err(_) => false_literal(),
@@ -100,19 +100,19 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, scan: &InstanceScan<'_
 /// on either side of the operand; a row whose value is in the other column
 /// yields NULL for that arm, which the disjunction absorbs. An ordering
 /// compares under the collation [`ordered_string`] picks.
-fn string_condition(scalar: &Scalar, value: &str, op: CmpOp, scan: &InstanceScan<'_>) -> SimpleExpr {
+fn string_condition(scalar: &Scalar, value: &str, op: CmpOp, row: InstanceRow) -> SimpleExpr {
     match op {
-        CmpOp::Equal | CmpOp::Unequal => compare(scan.value(ValueColumn::of_string(value)), op, SeaExpr::val(value)),
+        CmpOp::Equal | CmpOp::Unequal => compare(row.value(ValueColumn::of_string(value)), op, SeaExpr::val(value)),
         CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => {
-            let ordered = |column| compare(ordered_string(scan.value(column), scalar, op), op, SeaExpr::val(value));
-            ordered(ValueColumn::String).or(ordered(ValueColumn::LongText))
+            let ordered = |column: &ValueColumn| compare(ordered_string(row.value(*column), scalar, op), op, SeaExpr::val(value));
+            row.string_columns().iter().map(ordered).reduce(ExprTrait::or).unwrap_or_else(false_literal)
         }
     }
 }
 
 /// Whether a Relationship's object is a comparison target under one operator.
 ///
-/// `current_attribute_values.value_uri` and `value_long_uri` hold Relationship
+/// `value_uri` and `value_long_uri` hold Relationship
 /// objects and nothing else, so probing them is exactly the decision of whether
 /// the predicate may match a Relationship.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,27 +144,20 @@ const fn relationship_object_is_comparable(op: CmpOp) -> RelationshipObjects {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        entity_row_refs::EntityRowRefs,
-        q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, typed_column::typed_column_condition},
+    use crate::q_predicate::{
+        instance_row::{ElementLevel, InstanceRow},
+        typed_column::typed_column_condition,
     };
-    use andromeda_ngsi_ld_query::{
-        filter::{
-            predicate::CmpOp,
-            scalar::{Scalar, parse_date, parse_time},
-        },
-        temporal::window::TimeInterval,
+    use andromeda_ngsi_ld_query::filter::{
+        predicate::CmpOp,
+        scalar::{Scalar, parse_date, parse_time},
     };
-    use andromeda_postgresql_schema::{
-        projected_string_column::INDEXED_STRING_BYTE_LIMIT,
-        projected_uri_column::INDEXED_URI_BYTE_LIMIT,
-        temporal::AttributeHistory,
-    };
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
+    use andromeda_postgresql_schema::{projected_string_column::INDEXED_STRING_BYTE_LIMIT, projected_uri_column::INDEXED_URI_BYTE_LIMIT};
+    use sea_query::{PostgresQueryBuilder, Query, SimpleExpr};
 
-    /// The comparison over the current-state projection.
+    /// The comparison over a current row.
     fn current(scalar: &Scalar, op: CmpOp) -> SimpleExpr {
-        typed_column_condition(scalar, op, &InstanceScan::Current(&EntityRowRefs::unaliased(None)))
+        typed_column_condition(scalar, op, InstanceRow::Current)
     }
 
     fn render(expr: SimpleExpr) -> String {
@@ -205,7 +198,7 @@ mod tests {
         let long = Scalar::Str(format!("urn:ngsi-ld:Person:{}", "a".repeat(6000)));
         for op in [CmpOp::Equal, CmpOp::Unequal] {
             let sql = render(current(&long, op));
-            assert!(sql.contains(r#""cav"."value_long_uri" "#), "{op:?}: {sql}");
+            assert!(sql.contains(r#""ca"."value_long_uri" "#), "{op:?}: {sql}");
             assert!(!sql.contains("value_uri"), "{op:?}: {sql}");
         }
     }
@@ -215,7 +208,7 @@ mod tests {
         let prefix = "urn:ngsi-ld:Person:";
         let at_limit = format!("{prefix}{}", "a".repeat(INDEXED_URI_BYTE_LIMIT - prefix.len()));
         let sql = render(current(&Scalar::Str(at_limit), CmpOp::Equal));
-        assert!(sql.contains(r#""cav"."value_uri" = "#), "{sql}");
+        assert!(sql.contains(r#""ca"."value_uri" = "#), "{sql}");
         assert!(!sql.contains("value_long_uri"), "{sql}");
     }
 
@@ -223,22 +216,29 @@ mod tests {
     /// equality over history reads that column.
     #[test]
     fn a_long_uri_equality_over_history_reads_the_one_history_uri_column() {
-        let window = HistoryWindow::builder()
-            .schema(None)
-            .temporal_entity_key(Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
-            .axis(AttributeHistory::ObservedAt)
-            .interval(TimeInterval::Unbounded)
-            .build();
         let long = format!("urn:ngsi-ld:Person:{}", "a".repeat(6000));
-        let sql = render(typed_column_condition(&Scalar::Str(long), CmpOp::Equal, &InstanceScan::History(&window)));
+        let sql = render(typed_column_condition(&Scalar::Str(long), CmpOp::Equal, InstanceRow::History));
         assert!(sql.contains(r#""qh"."value_uri" = "#), "{sql}");
         assert!(!sql.contains("value_long_uri"), "{sql}");
+    }
+
+    /// An element keeps a String of any length in `value_string`, so its
+    /// ordering reads that field alone.
+    #[test]
+    fn an_element_string_ordering_reads_its_one_string_field() {
+        let sql = render(typed_column_condition(
+            &Scalar::Str("m".to_owned()),
+            CmpOp::Greater,
+            InstanceRow::Element(ElementLevel::at(0)),
+        ));
+        assert!(sql.contains(r#"("l0"."value_string") COLLATE "und-x-icu""#), "{sql}");
+        assert!(!sql.contains("value_long_text"), "{sql}");
     }
 
     #[test]
     fn a_short_string_equality_reads_only_the_indexed_column() {
         let sql = render(current(&Scalar::Str("red".to_owned()), CmpOp::Equal));
-        assert!(sql.contains(r#""cav"."value_string" = "#), "{sql}");
+        assert!(sql.contains(r#""ca"."value_string" = "#), "{sql}");
         assert!(!sql.contains("value_long_text"), "{sql}");
     }
 
@@ -246,7 +246,7 @@ mod tests {
     fn a_string_equality_past_the_limit_reads_only_the_overflow_column() {
         let long = "a".repeat(INDEXED_STRING_BYTE_LIMIT + 1);
         let sql = render(current(&Scalar::Str(long), CmpOp::Equal));
-        assert!(sql.contains(r#""cav"."value_long_text" = "#), "{sql}");
+        assert!(sql.contains(r#""ca"."value_long_text" = "#), "{sql}");
         assert!(!sql.contains("value_string"), "{sql}");
     }
 
@@ -254,8 +254,8 @@ mod tests {
     fn string_ordering_reads_both_string_columns_and_never_relationship_objects() {
         for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
             let sql = render(current(&Scalar::Str("m".to_owned()), op));
-            assert!(sql.contains(r#"("cav"."value_string") COLLATE "und-x-icu""#), "{op:?}: {sql}");
-            assert!(sql.contains(r#"("cav"."value_long_text") COLLATE "und-x-icu""#), "{op:?}: {sql}");
+            assert!(sql.contains(r#"("ca"."value_string") COLLATE "und-x-icu""#), "{op:?}: {sql}");
+            assert!(sql.contains(r#"("ca"."value_long_text") COLLATE "und-x-icu""#), "{op:?}: {sql}");
             assert!(!sql.contains("value_uri"), "{op:?}: {sql}");
         }
     }
@@ -273,14 +273,8 @@ mod tests {
     /// String equality over history reads that column.
     #[test]
     fn a_long_string_equality_over_history_reads_the_one_history_string_column() {
-        let window = HistoryWindow::builder()
-            .schema(None)
-            .temporal_entity_key(Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
-            .axis(AttributeHistory::ObservedAt)
-            .interval(TimeInterval::Unbounded)
-            .build();
         let long = "a".repeat(INDEXED_STRING_BYTE_LIMIT + 1);
-        let sql = render(typed_column_condition(&Scalar::Str(long), CmpOp::Equal, &InstanceScan::History(&window)));
+        let sql = render(typed_column_condition(&Scalar::Str(long), CmpOp::Equal, InstanceRow::History));
         assert!(sql.contains(r#""qh"."value_string" = "#), "{sql}");
         assert!(!sql.contains("value_long_text"), "{sql}");
     }

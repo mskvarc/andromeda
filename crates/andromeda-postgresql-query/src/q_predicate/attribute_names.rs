@@ -1,16 +1,19 @@
 //! Which attribute names a compiled `q` filter references by dictionary key.
 
+use crate::q_predicate::sub_attribute::member_field::MemberField;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::{expression::Expr, path::QueryPath};
 
-/// Attribute names a `q` expression references at the top level of each entity
-/// it addresses.
+/// Attribute names a `q` expression reads by dictionary key.
 ///
-/// Only these need dictionary resolution: sub-attribute and value-path segments
-/// are navigated inside the JSONB payload, never through `attribute_names`. A
+/// The attribute of each term and every sub-attribute on its path are keyed:
+/// a row and each element of its `sub_attributes` name their attribute by
+/// key. A path ending on a member of an instance (`observedAt`, `unitCode`, a
+/// timestamp) reads a field rather than an element, and value-path segments
+/// are navigated inside a `value_object`, so neither is resolved. A
 /// linked-entity traversal contributes the Relationship each hop descends
-/// through as well as the terminal attribute, because the hop probes
-/// `current_attribute_values` for that Relationship by dictionary key.
+/// through as well as the terminal attribute, because the hop probes that
+/// Relationship's instances by dictionary key.
 pub fn referenced_attribute_names(expr: &Expr, out: &mut Vec<AttributeName>) {
     match expr {
         Expr::And(terms) | Expr::Or(terms) => {
@@ -25,8 +28,11 @@ pub fn referenced_attribute_names(expr: &Expr, out: &mut Vec<AttributeName>) {
 /// Collect the dictionary-resolvable names one attribute axis mentions.
 fn path_attribute_names(path: &QueryPath, out: &mut Vec<AttributeName>) {
     match path {
-        // clone: the caller owns the resolved list, which outlives the expression
-        QueryPath::Local(local) => out.push(local.attr.clone()),
+        QueryPath::Local(local) => {
+            // clone: the caller owns the resolved list, which outlives the expression
+            out.push(local.attr.clone());
+            out.extend(local.sub_attrs.iter().filter(|name| MemberField::of(name).is_none()).cloned());
+        }
         QueryPath::Linked { relationship, inner, .. } => {
             // clone: as above
             out.push(relationship.clone());
@@ -58,19 +64,23 @@ mod tests {
         );
     }
 
+    /// A member of an instance is a field of it, so it has no dictionary row
+    /// to resolve; a sub-attribute is an element keyed by its name.
     #[test]
-    fn sub_attribute_segments_are_not_collected() {
-        // They are navigated inside the payload, so they have no dictionary row
-        // to resolve.
+    fn sub_attribute_segments_are_collected_and_member_segments_are_not() {
         assert_eq!(
             collected("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">=\"2024-01-01T00:00:00Z\""),
             vec!["https://example.com/temperature"]
+        );
+        assert_eq!(
+            collected("\"https://example.com/temperature\".\"https://example.com/accuracy\".\"https://example.com/method\"==\"x\""),
+            vec!["https://example.com/accuracy", "https://example.com/method", "https://example.com/temperature"]
         );
     }
 
     #[test]
     fn every_relationship_a_traversal_descends_is_collected_with_the_terminal_attribute() {
-        // Clause 4.9: each hop probes `current_attribute_values` for its
+        // Clause 4.9: each hop probes the instances of its
         // Relationship by dictionary key, exactly as the terminal comparison
         // does.
         assert_eq!(

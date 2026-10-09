@@ -40,8 +40,8 @@ pub(crate) fn non_empty(condition: Condition) -> Option<Condition> {
 pub(crate) enum CompiledTerm {
     /// The term holds when one instance of one attribute passes the test.
     Instances(InstanceTest),
-    /// The term is a condition of its own: a linked-entity hop, a payload
-    /// reading, a disjunction of both readings of a trailing member, or a term
+    /// The term is a condition of its own: a linked-entity hop, a
+    /// sub-attribute probe, a history document reading, a disjunction of both readings of a trailing member, or a term
     /// no row can satisfy.
     Standalone(Condition),
 }
@@ -125,8 +125,8 @@ mod tests {
         let scan = InstanceScan::Current(&rows);
         let sql = render(Disjunction::default().with(test_of(3, "a", 1)).with(test_of(4, "b", 2)).into_condition(&scan));
         assert_eq!(sql.matches("EXISTS").count(), 1, "{sql}");
-        assert!(sql.contains(r#""cav"."attribute_name_key" = 3"#), "{sql}");
-        assert!(sql.contains(r#""cav"."attribute_name_key" = 4"#), "{sql}");
+        assert!(sql.contains(r#""ca"."attribute_name_key" = 3"#), "{sql}");
+        assert!(sql.contains(r#""ca"."attribute_name_key" = 4"#), "{sql}");
     }
 
     #[test]

@@ -49,9 +49,14 @@ $$;
 -- One key per element holding one scalar value: the hash of the element's
 -- name path, salted with its value kind code, combined with the hash of its
 -- value. A number hashes through its `numeric` hash, so `1.0` and `1.00`
--- share a key; a DateTime as its epoch microseconds. An element whose value
--- is a geometry or an object has no key. A key selects candidates only: two
--- values may share a key, so a query rechecks the value it compares.
+-- share a key; a DateTime as its epoch microseconds. An element whose
+-- `value_object` is an array (several values, several objects, a language
+-- map, a list) has one key per scalar member, a value node read through its
+-- `@value`, because a `q` equality matches a value the array includes; JSON
+-- has no instant, so a DateTime member keys as its text. An element whose
+-- value is a geometry or a structured object has no key. A key selects
+-- candidates only: two values may share a key, so a query rechecks the value
+-- it compares.
 create or replace function sub_eq_keys (attribute_name_key integer, sub_attributes public.sub_attribute[])
     returns bigint[]
     language plpgsql
@@ -64,6 +69,8 @@ declare
     element public.sub_attribute;
     element_position integer := 0;
     path_hash bigint;
+    member jsonb;
+    member_value jsonb;
 begin
     if sub_attributes is null then
         return null;
@@ -86,6 +93,29 @@ begin
             keys := keys || hashint8extended((extract(epoch from element.value_date_time) * 1000000)::bigint, path_hash # 6);
         elsif element.value_uri is not null then
             keys := keys || hashtextextended(element.value_uri, path_hash # 7);
+        elsif jsonb_typeof(element.value_object) = 'array' then
+            for member in
+            select
+                value
+            from
+                jsonb_array_elements(element.value_object)
+                loop
+                    member_value := case when jsonb_typeof(member) = 'object' then
+                        member -> '@value'
+                    else
+                        member
+                    end;
+                    case jsonb_typeof(member_value)
+                    when 'number' then
+                        keys := keys || hash_numeric_extended((member_value #>> '{}')::numeric, path_hash # 1);
+                    when 'string' then
+                        keys := keys || hashtextextended(member_value #>> '{}', path_hash # 2);
+                    when 'boolean' then
+                        keys := keys || hashint8extended((member_value #>> '{}')::boolean::integer, path_hash # 3);
+                    else
+                        null;
+                    end case;
+                end loop;
         end if;
     end loop;
     return keys;

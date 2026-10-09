@@ -6,30 +6,40 @@
 //! collation order". Each of those three is a key here, applied in the order
 //! clause 4.23.2 ranks the datatypes in.
 //!
-//! Which datatype a value has is not decided here. It is one question with one
-//! answer across the broker, and
-//! [`attribute_value_datatype`](crate::attribute_value_datatype) is where that
-//! answer lives; the lateral projects it once per entity and every key below
-//! reads the projection rather than re-deriving it from the payload.
-//!
-//! Every key reads one lateral projection of the attribute's value node, so the
-//! jsonpath that reaches into the payload is evaluated once per entity however
-//! many keys the term contributes.
+//! An entity orders by one value: the first instance of the attribute in
+//! written order (the `current_attributes` row with the lowest `ordinal`) that
+//! holds the target, and on a sub-attribute path the first element in written
+//! order at the end of the path. The value is read once per entity, by a
+//! lateral that projects it as one typed column per kind, and every key reads
+//! that projection. Which datatype the value has is decided once
+//! ([`datatype_token`]), so the rank and the key that breaks its ties read one
+//! answer.
 
-use crate::attribute_value_datatype::{ARRAY_TYPE, ID_MEMBER, LIST_MEMBER, NUMBER_TYPE, VALUE_MEMBER, datatype_rank, datatype_token};
+use crate::attribute_value_datatype::{ARRAY_TYPE, NUMBER_TYPE, OBJECT_TYPE, OrderedValue, VALUE_MEMBER, datatype_rank, datatype_token};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{filter::path::AttrPath, ordering::sort_direction::SortDirection};
-use andromeda_ngsi_ld_vocabulary::{
-    expanded::classes::{DATE_TIME, TIME},
-    prefix::NGSI_LD,
+use andromeda_ngsi_ld_vocabulary::expanded::classes::{DATE_TIME, TIME};
+use andromeda_postgresql_query::{
+    dictionary::resolved_names::ResolvedNames,
+    entity_row_refs::EntityRowRefs,
+    q_predicate::{
+        projection_probe::{Ca, of_attribute, projection_column, standing},
+        sub_attribute::{element_path::ElementPath, member_field::MemberField},
+        value_object_member::{expanded_jsonpath, is_json_property, literal_jsonpath},
+    },
+    temporal_operand::{stored_date_time, stored_time},
 };
-use andromeda_postgresql_query::temporal_operand::{stored_date_time, stored_time};
+use andromeda_postgresql_schema::current::{CurrentAttributes, SubAttribute};
 use andromeda_postgresql_seaquery::{
+    cast::{cast_compound, typed_null},
     collation::{PostgresCollation, collate},
-    jsonb::{escape_jsonpath_key, jsonb_array_length, jsonb_build_array, jsonb_build_object, jsonb_path_query_first, jsonb_typeof},
-    literal::{int_literal, text_literal},
+    jsonb::{escape_jsonpath_key, jsonb_build_object, jsonb_path_query_first, jsonb_typeof},
+    literal::{false_literal, int_literal, text_literal},
     pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    unnest::composite_field,
 };
-use sea_query::{Alias, CaseStatement, Expr as SeaExpr, ExprTrait, Func, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Asterisk, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Func, Iden, IntoIden, Order, Query, SelectStatement, SimpleExpr};
 
 /// The lateral projection one ordering term reads its attribute value from.
 ///
@@ -40,6 +50,38 @@ use sea_query::{Alias, CaseStatement, Expr as SeaExpr, ExprTrait, Func, Query, S
 pub struct AttributeValue {
     /// The name the enclosing statement knows the lateral by.
     alias: Alias,
+}
+
+/// The prefix each ordering term's lateral projection is aliased with.
+const LATERAL_ALIAS_PREFIX: &str = "order_value_";
+
+/// The alias the lateral reads the instance it orders by under.
+const SOURCE_ALIAS: &str = "ordered";
+
+/// The column the instance read carries a sub-attribute element in.
+const ELEMENT_COLUMN: &str = "element";
+
+/// The columns the lateral projects, one per kind of value, and the datatype.
+#[derive(Iden, Clone, Copy)]
+enum Projected {
+    /// A number.
+    #[iden = "value_number"]
+    Number,
+    /// A boolean.
+    #[iden = "value_boolean"]
+    Boolean,
+    /// A `DateTime` instant.
+    #[iden = "value_date_time"]
+    DateTime,
+    /// A string.
+    #[iden = "value_text"]
+    Text,
+    /// A structured value.
+    #[iden = "value_object"]
+    Object,
+    /// The clause 4.23.2 datatype of the value.
+    #[iden = "value_datatype"]
+    Datatype,
 }
 
 impl AttributeValue {
@@ -60,33 +102,24 @@ impl AttributeValue {
         self.alias.clone()
     }
 
-    /// The lateral body: one entity's value node for `path`, and the
-    /// clause 4.23.2 datatype that node holds.
-    ///
-    /// The carrier is found by prefix rather than by name. Clause 5.2.5 gives
-    /// each attribute family its own value member — `hasValue`, `hasObject`,
-    /// `hasLanguageMap`, `hasVocab`, `hasValueList`, `hasObjectList` — and
-    /// clause 4.23.1 orders by whichever of them the attribute happens to
-    /// carry, so the jsonpath selects the one member of the attribute node
-    /// whose key opens with the prefix they share.
-    ///
-    /// The datatype is projected rather than left to the keys: it is read by the
-    /// rank and by three keys, and deriving it four times over would let the
-    /// rank and the key that breaks its ties be computed from two different
-    /// readings of one value.
+    /// The lateral body: the value `path` addresses on the entity `rows`
+    /// names, one typed column per kind, and the clause 4.23.2 datatype it
+    /// has. An entity holding none projects no row, which the enclosing left
+    /// join reads as "attribute does not exist".
     #[must_use]
-    pub fn lateral(&self, payload: &SimpleExpr, path: &AttrPath) -> SelectStatement {
-        let mut carrier = Query::select();
-        carrier.expr_as(carrier_expression(payload, path), Alias::new(CARRIER_COLUMN));
-
-        let value_node = carrier_column().json_get(int_literal(FIRST_VALUE_NODE));
-        let arity = carrier_arity();
-
+    pub fn lateral(&self, rows: &EntityRowRefs, path: &AttrPath, attributes: &ResolvedNames<AttributeName>) -> SelectStatement {
+        let source = Alias::new(SOURCE_ALIAS);
+        let read = instance_read(rows, path, attributes);
+        let value = ordered_value(path, ElementPath::resolve(path, attributes).as_ref(), &source);
         let mut projection = Query::select();
         projection
-            .from_subquery(carrier.take(), Alias::new(CARRIER_ALIAS))
-            .expr_as(datatype_token(&value_node, &arity), Alias::new(DATATYPE_COLUMN))
-            .expr_as(value_node, Alias::new(VALUE_NODE_COLUMN));
+            .from_subquery(read, source)
+            .expr_as(value.number.clone(), Projected::Number) // clone: the datatype reads the same columns
+            .expr_as(value.boolean.clone(), Projected::Boolean) // clone: as above
+            .expr_as(value.date_time.clone(), Projected::DateTime) // clone: as above
+            .expr_as(value.text.clone(), Projected::Text) // clone: as above
+            .expr_as(value.object.clone(), Projected::Object) // clone: as above
+            .expr_as(datatype_token(&value), Projected::Datatype);
         projection.take()
     }
 
@@ -94,30 +127,28 @@ impl AttributeValue {
     /// carries no such attribute.
     #[must_use]
     pub fn datatype_rank(&self, direction: SortDirection) -> SimpleExpr {
-        datatype_rank(self.datatype(), direction)
+        datatype_rank(self.column(Projected::Datatype), direction)
     }
 
     /// The ordering key for numbers, `NULL` for every other datatype.
-    ///
-    /// Left as JSONB rather than cast: JSONB compares two numbers numerically,
-    /// so `9` precedes `10` without the statement risking a cast over a value
-    /// that turned out not to be a number after all.
     #[must_use]
     pub fn numeric_key(&self) -> SimpleExpr {
-        CaseStatement::new().case(self.datatype().eq(text_literal(NUMBER_TYPE)), self.value()).into()
+        CaseStatement::new()
+            .case(self.column(Projected::Datatype).eq(text_literal(NUMBER_TYPE)), self.column(Projected::Number))
+            .into()
     }
 
     /// The ordering key for `DateTime` values, `NULL` for every other datatype.
     ///
     /// Clause 4.23.1 calls the sort order for datetimes trivial, which it is
-    /// only once each side is resolved to an instant: clause 4.6.3 admits a
-    /// fraction of any width, so two spellings of one moment order by their text
-    /// otherwise.
+    /// once each side is an instant: a value held as one is one, and a string
+    /// written as a `DateTime` is resolved to one.
     #[must_use]
     pub fn instant_key(&self) -> SimpleExpr {
         let date_time = DATE_TIME;
+        let instant = Func::coalesce([self.column(Projected::DateTime), stored_date_time(self.column(Projected::Text))]);
         CaseStatement::new()
-            .case(self.datatype().eq(text_literal(date_time.as_str())), stored_date_time(self.value_text()))
+            .case(self.column(Projected::Datatype).eq(text_literal(date_time.as_str())), instant)
             .into()
     }
 
@@ -129,468 +160,344 @@ impl AttributeValue {
     /// normalised to a single UTC spelling first, for the reason a `DateTime`
     /// is resolved to an instant.
     ///
-    /// An ordered list carrier is read through its first element. Clause 4.23.2
-    /// ranks every list under one bucket, Array, and says nothing about how two
-    /// Arrays compare; the first element is what a multi-node array already
-    /// orders by here, so both spellings of an array order the same way instead
-    /// of every list tying on a NULL key.
+    /// An array is read through its first element. Clause 4.23.2 ranks every
+    /// array under one bucket, Array, and says nothing about how two Arrays
+    /// compare; the first element is what both a list and several values order
+    /// by, instead of every array tying on a NULL key.
     #[must_use]
     pub fn text_key(&self, collation: &PostgresCollation) -> SimpleExpr {
         let time = TIME;
+        let first = self.column(Projected::Object).json_get(int_literal(0));
         let comparable = CaseStatement::new()
-            .case(self.datatype().eq(text_literal(time.as_str())), stored_time(self.value_text()))
+            .case(
+                self.column(Projected::Datatype).eq(text_literal(time.as_str())),
+                stored_time(self.column(Projected::Text)),
+            )
             .finally(Func::coalesce([
-                self.value_text(),
-                self.object_text(),
-                self.list_head_text(VALUE_MEMBER),
-                self.list_head_text(ID_MEMBER),
+                self.column(Projected::Text),
+                first.json_get_text(text_literal(VALUE_MEMBER)),
+                self.column(Projected::Object).json_get_text(int_literal(0)),
             ]));
         collate(comparable.into(), collation)
     }
 
-    /// The attribute's first value node, as the lateral projected it.
-    fn value_node(&self) -> SimpleExpr {
-        SeaExpr::col((self.alias(), Alias::new(VALUE_NODE_COLUMN)))
-    }
-
-    /// The clause 4.23.2 datatype of that value node, as the lateral projected
-    /// it.
-    fn datatype(&self) -> SimpleExpr {
-        SeaExpr::col((self.alias(), Alias::new(DATATYPE_COLUMN)))
-    }
-
-    /// The value node's `@value` member, as JSONB.
-    fn value(&self) -> SimpleExpr {
-        self.value_node().json_get(text_literal(VALUE_MEMBER))
-    }
-
-    /// The value node's `@value` member, as text.
-    fn value_text(&self) -> SimpleExpr {
-        self.value_node().json_get_text(text_literal(VALUE_MEMBER))
-    }
-
-    /// The value node's `@id` member, as text: a Relationship's target object.
-    fn object_text(&self) -> SimpleExpr {
-        self.value_node().json_get_text(text_literal(ID_MEMBER))
-    }
-
-    /// One keyword of the first element of an ordered list carrier, as text.
-    fn list_head_text(&self, keyword: &str) -> SimpleExpr {
-        self.value_node()
-            .json_get(text_literal(LIST_MEMBER))
-            .json_get(int_literal(FIRST_VALUE_NODE))
-            .json_get_text(text_literal(keyword))
+    /// One column of the projection.
+    fn column(&self, column: Projected) -> SimpleExpr {
+        SeaExpr::col((self.alias(), column.into_iden()))
     }
 }
 
-/// The prefix each ordering term's lateral projection is aliased with.
-const LATERAL_ALIAS_PREFIX: &str = "order_value_";
+/// The one instance of the entity the term orders by, read from
+/// `current_attributes`: the row of the attribute with the lowest `ordinal`
+/// that holds the path's target, carrying the element at the end of the path
+/// when there is one.
+fn instance_read(rows: &EntityRowRefs, path: &AttrPath, attributes: &ResolvedNames<AttributeName>) -> SelectStatement {
+    let mut read = Query::select();
+    read.column((Ca, Asterisk))
+        .from(rows.table(CurrentAttributes::Table).alias(Ca))
+        .and_where(projection_column(CurrentAttributes::EntityKey).eq(rows.entity_key_column()))
+        .order_by_expr(projection_column(CurrentAttributes::Ordinal), Order::Asc)
+        .limit(1);
+    match ElementPath::resolve(path, attributes) {
+        // No dictionary row means no instance was ever written.
+        None => {
+            read.and_where(false_literal());
+        }
+        Some(element) => {
+            read.and_where(of_attribute(element.attribute)).and_where(standing());
+            if let Some(first) = element.first_element() {
+                read.cond_where(element.condition(Condition::all())).expr_as(first, Alias::new(ELEMENT_COLUMN));
+            }
+        }
+    }
+    read.take()
+}
 
-/// The alias the lateral gives its inner carrier lookup.
-const CARRIER_ALIAS: &str = "carrier";
+/// The typed value the read instance holds for the path, read off the
+/// columns of `source`.
+fn ordered_value(path: &AttrPath, element: Option<&ElementPath>, source: &Alias) -> OrderedValue {
+    let holder = match element.map(|element| element.chain.is_empty()) {
+        Some(false) => Holder::Element(SeaExpr::col((source.clone(), Alias::new(ELEMENT_COLUMN)))),
+        Some(true) | None => Holder::Row(source.clone()),
+    };
+    match element.and_then(|element| element.field) {
+        Some(field) => holder.member(field),
+        None if path.value_path.is_empty() => holder.own_value(),
+        None => holder.member_of_value(path),
+    }
+}
 
-/// The column the inner lookup projects the value-carrier array under.
-const CARRIER_COLUMN: &str = "value_carrier";
+/// The instance holding the ordered value: a row, or an element of a row.
+enum Holder {
+    /// A `current_attributes` row, read under this alias.
+    Row(Alias),
+    /// A `sub_attribute` element value.
+    Element(SimpleExpr),
+}
 
-/// The column the lateral projects the first value node under.
-const VALUE_NODE_COLUMN: &str = "value_node";
+impl Holder {
+    /// A field of a row and an element alike.
+    fn field(&self, row: CurrentAttributes, element: SubAttribute) -> SimpleExpr {
+        match self {
+            Holder::Row(alias) => SeaExpr::col((alias.clone(), row)),
+            Holder::Element(value) => composite_field(value.clone(), &element), // clone: the element is read by every field
+        }
+    }
 
-/// The column the lateral projects that node's clause 4.23.2 datatype under.
-const DATATYPE_COLUMN: &str = "value_datatype";
+    /// The holder's own value: the typed field that is set, a scalar a JSON
+    /// literal holds, a structured value, and a geometry as an Object.
+    fn own_value(&self) -> OrderedValue {
+        let object = self.field(CurrentAttributes::ValueObject, SubAttribute::ValueObject);
+        let strings = match self {
+            Holder::Row(_) => vec![
+                self.field(CurrentAttributes::ValueString, SubAttribute::ValueString),
+                self.field(CurrentAttributes::ValueLongText, SubAttribute::ValueString),
+                self.field(CurrentAttributes::ValueUri, SubAttribute::ValueUri),
+                self.field(CurrentAttributes::ValueLongUri, SubAttribute::ValueUri),
+                json_text(object.clone()), // clone: the object is read by every kind
+            ],
+            Holder::Element(_) => vec![
+                self.field(CurrentAttributes::ValueString, SubAttribute::ValueString),
+                self.field(CurrentAttributes::ValueUri, SubAttribute::ValueUri),
+                json_text(object.clone()), // clone: as above
+            ],
+        };
+        let geometry = CaseStatement::new().case(
+            self.field(CurrentAttributes::ValueGeometry, SubAttribute::ValueGeometry).is_not_null(),
+            jsonb_build_object([]),
+        );
+        OrderedValue {
+            number: Func::coalesce([
+                self.field(CurrentAttributes::ValueNumber, SubAttribute::ValueNumber),
+                json_number(object.clone()),
+            ])
+            .into(), // clone: as above
+            boolean: Func::coalesce([
+                self.field(CurrentAttributes::ValueBoolean, SubAttribute::ValueBoolean),
+                json_boolean(object.clone()),
+            ])
+            .into(), // clone: as above
+            date_time: self.field(CurrentAttributes::ValueDateTime, SubAttribute::ValueDateTime),
+            text: Func::coalesce(strings).into(),
+            object: Func::coalesce([json_compound(object), geometry.into()]).into(),
+        }
+    }
 
-/// The index of the value node an ordering reads.
-///
-/// Clause 4.23.1 orders by one value per entity, and the expanded payload holds
-/// a scalar value as a single node, so the ordering reads the first.
-const FIRST_VALUE_NODE: i64 = 0;
+    /// A member of the holder the path ends on: an instant compares as one,
+    /// and a `unitCode` (held as the catalog identity of the code) has no
+    /// value to order by.
+    fn member(&self, field: MemberField) -> OrderedValue {
+        let date_time = match field {
+            MemberField::ObservedAt => self.field(CurrentAttributes::ObservedAt, SubAttribute::ObservedAt),
+            MemberField::CreatedAt => self.field(CurrentAttributes::CreatedAt, SubAttribute::CreatedAt),
+            MemberField::ModifiedAt => self.field(CurrentAttributes::ModifiedAt, SubAttribute::ModifiedAt),
+            MemberField::ExpiresAt => self.field(CurrentAttributes::ExpiresAt, SubAttribute::ExpiresAt),
+            MemberField::UnitCode => typed_null(PostgresType::Timestamptz),
+        };
+        OrderedValue {
+            number: typed_null(PostgresType::Numeric),
+            boolean: typed_null(PostgresType::Boolean),
+            date_time,
+            text: typed_null(PostgresType::Text),
+            object: typed_null(PostgresType::Jsonb),
+        }
+    }
 
-/// The local name every NGSI-LD value carrier's IRI opens with.
-const VALUE_CARRIER_LOCAL_PREFIX: &str = "has";
+    /// The member of the holder's compound value a trailing path addresses
+    /// (clause 4.23.3 EXAMPLE 4, `?orderBy=address[city]`).
+    ///
+    /// Clause 4.9 gives the spelling three readings and only the stored value
+    /// says which applies, so each is looked up and the first that resolves is
+    /// taken: a member of an expanded structured value, a member of a
+    /// `JsonProperty`'s literal, and, for one member, a target language of a
+    /// `languageMap`. They cannot collide: a structured value has no
+    /// `@language`, a `languageMap` no IRI-keyed members, and a literal is read
+    /// only on a `JsonProperty`.
+    fn member_of_value(&self, path: &AttrPath) -> OrderedValue {
+        let object = self.field(CurrentAttributes::ValueObject, SubAttribute::ValueObject);
+        let json_property = is_json_property(self.field(CurrentAttributes::AttributeKind, SubAttribute::AttributeKind));
+        let mut readings = vec![
+            jsonb_path_query_first(object.clone(), &expanded_jsonpath(&path.value_path)), // clone: every reading walks the one value
+            CaseStatement::new()
+                .case(
+                    json_property,
+                    jsonb_path_query_first(object.clone(), &literal_jsonpath(&path.value_path_compact)),
+                ) // clone: as above
+                .into(),
+        ];
+        if let [language] = path.value_path_compact.as_slice() {
+            readings.push(jsonb_path_query_first(object, &target_language_jsonpath(language)));
+        }
+        let member: SimpleExpr = Func::coalesce(readings).into();
+        OrderedValue {
+            number: json_number(member.clone()),   // clone: the member is read by every kind
+            boolean: json_boolean(member.clone()), // clone: as above
+            date_time: typed_null(PostgresType::Timestamptz),
+            text: json_text(member.clone()), // clone: as above
+            object: json_compound(member),
+        }
+    }
+}
 
-/// The JSON-LD keyword a language-tagged value node carries its tag under.
-const LANGUAGE_MEMBER: &str = "@language";
+/// The jsonpath selecting the value of one language of a `languageMap`.
+fn target_language_jsonpath(language: &AttributeName) -> String {
+    format!("$[*] ? (@.\"@language\" == \"{}\").\"{VALUE_MEMBER}\"", escape_jsonpath_key(language.as_str()))
+}
 
-/// How many value nodes an attribute carries, `NULL` when its carrier is not an
-/// array at all.
-///
-/// Guarded by a `CASE` rather than by a conjunct: `jsonb_array_length` raises on
-/// a value that is not an array, and only a `CASE` guarantees the test is
-/// evaluated before the call it guards.
-fn carrier_arity() -> SimpleExpr {
+/// `json` read as a number when it is a JSON number.
+fn json_number(json: SimpleExpr) -> SimpleExpr {
+    json_scalar(json, NUMBER_TYPE, PostgresType::Numeric)
+}
+
+/// `json` read as a boolean when it is a JSON boolean.
+fn json_boolean(json: SimpleExpr) -> SimpleExpr {
+    json_scalar(json, "boolean", PostgresType::Boolean)
+}
+
+/// `json` read as text when it is a JSON string.
+fn json_text(json: SimpleExpr) -> SimpleExpr {
+    json_scalar(json, "string", PostgresType::Text)
+}
+
+/// `json` when it is a structure: an object or an array.
+fn json_compound(json: SimpleExpr) -> SimpleExpr {
     CaseStatement::new()
         .case(
-            jsonb_typeof(carrier_column()).eq(text_literal(ARRAY_TYPE)),
-            jsonb_array_length(carrier_column()),
+            jsonb_typeof(json.clone()).is_in([text_literal(OBJECT_TYPE), text_literal(ARRAY_TYPE)]), // clone: the test reads the value it guards
+            json,
         )
         .into()
 }
 
-/// The value-carrier array the lateral's inner lookup projected.
-fn carrier_column() -> SimpleExpr {
-    SeaExpr::col((Alias::new(CARRIER_ALIAS), Alias::new(CARRIER_COLUMN)))
-}
-
-/// The jsonpath prefixes reaching the value-node array a path lands on.
+/// `json` as `ty` when its JSON type is `json_type`, `NULL` otherwise.
 ///
-/// The dotted segments of a clause 4.9 `ValuePath` walk the attribute axis, so
-/// each one is another node hop — clause 4.23.3 EXAMPLE 5 `?orderBy=name.observedAt`
-/// addresses the `observedAt` member of `name`, whose value is what orders.
-///
-/// What that last hop lands on has two shapes, and the payload alone says
-/// which. A sub-Property or sub-Relationship the client wrote is a node of the
-/// graph in its own right, carrying one of the clause 5.2.5 value members
-/// (`hasValue`, `hasObject`, `hasLanguageMap`, `hasVocab`, `hasValueList`,
-/// `hasObjectList`) — so the carrier is selected by the prefix their keys
-/// share, rather than by naming one family's member and missing the rest. A
-/// system sub-attribute such as `observedAt` or `unitCode` is expanded straight
-/// to a value-node array with no carrier at all, and *is* what orders. Both are
-/// read, because a path cannot tell them apart before the entity is fetched.
-fn carrier_jsonpaths(path: &AttrPath) -> Vec<String> {
-    let mut node = String::from("$[0].\"");
-    node.push_str(&escape_jsonpath_key(path.attr.as_str()));
-    node.push('"');
-    for sub_attr in &path.sub_attrs {
-        node.push_str("[0].\"");
-        node.push_str(&escape_jsonpath_key(sub_attr.as_str()));
-        node.push('"');
-    }
-
-    let mut carrier = node.clone(); // clone: the direct reading keeps the node the carrier reading descends from
-    carrier.push_str("[0].keyvalue() ? (@.key starts with \"");
-    carrier.push_str(&escape_jsonpath_key(NGSI_LD.as_str()));
-    carrier.push_str(VALUE_CARRIER_LOCAL_PREFIX);
-    carrier.push_str("\").value");
-
-    if path.sub_attrs.is_empty() {
-        // A top-level attribute is always a node carrying a value member.
-        return vec![carrier];
-    }
-    vec![carrier, node]
-}
-
-/// The jsonpath reaching a compound value's member as JSON-LD expansion leaves
-/// it: an IRI-keyed array of value nodes hanging off the carrier.
-///
-/// This is clause 4.23.3 EXAMPLE 4, `?orderBy=address[city]`. Expansion turns
-/// the members of a structured Property value into nodes of the graph, so the
-/// member key is its expanded IRI and the hop precedes the `@value` selector
-/// rather than indexing into it.
-fn structured_member_jsonpath(carrier: &str, path: &AttrPath) -> String {
-    let mut jsonpath = String::from(carrier);
-    for member in &path.value_path {
-        jsonpath.push_str("[0].\"");
-        jsonpath.push_str(&escape_jsonpath_key(member.as_str()));
-        jsonpath.push('"');
-    }
-    jsonpath
-}
-
-/// The jsonpath reaching a member of a value expansion never entered.
-///
-/// A `JsonProperty`'s value, and any Property value whose contents are opaque
-/// JSON, sits inside one `@value`: its keys are the literal text the client
-/// wrote, never expanded through the `@context`. The member hop therefore
-/// descends *into* `@value` and uses the pre-expansion spelling the path kept
-/// for exactly this reading.
-fn raw_json_member_jsonpath(carrier: &str, path: &AttrPath) -> String {
-    let mut jsonpath = String::from(carrier);
-    jsonpath.push_str("[0].\"");
-    jsonpath.push_str(VALUE_MEMBER);
-    jsonpath.push('"');
-    for member in &path.value_path_compact {
-        jsonpath.push_str(".\"");
-        jsonpath.push_str(&escape_jsonpath_key(member.as_str()));
-        jsonpath.push('"');
-    }
-    jsonpath
-}
-
-/// The jsonpath selecting one language of a `LanguageProperty`'s carrier.
-///
-/// Clause 4.9 gives `attr[member]` a second reading: "If the target element is a
-/// `LanguageProperty` and a target language is specified, the target value is
-/// defined as the Value associated to the matching key-value pair held within
-/// the languageMap". A language tag is a bare name exactly as a JSON member is,
-/// so the query text cannot say which was meant and both are read.
-fn target_language_jsonpath(carrier: &str, tag: &str) -> String {
-    let mut jsonpath = String::from(carrier);
-    jsonpath.push_str("[*] ? (@.\"");
-    jsonpath.push_str(LANGUAGE_MEMBER);
-    jsonpath.push_str("\" == \"");
-    jsonpath.push_str(&escape_jsonpath_key(tag));
-    jsonpath.push_str("\")");
-    jsonpath
-}
-
-/// The carrier array one ordering term reads its value node from.
-///
-/// A path that names one attribute and navigates no further has one reading.
-/// Every further axis adds the readings clause 4.9 gives that axis, and only
-/// the stored entity says which applies — so each is looked up and the first
-/// that resolves is taken. They cannot collide: a structured value carries no
-/// `@language`, a `languageMap` carries no IRI-keyed members, and opaque JSON is
-/// reachable only through the `@value` no expanded member sits under.
-fn carrier_expression(payload: &SimpleExpr, path: &AttrPath) -> SimpleExpr {
-    let mut readings = Vec::new();
-    for carrier in &carrier_jsonpaths(path) {
-        if path.value_path.is_empty() {
-            // clone: every reading binds the same payload column into its own lookup.
-            readings.push(jsonb_path_query_first(payload.clone(), carrier));
-            continue;
-        }
-        readings.push(jsonb_path_query_first(payload.clone(), &structured_member_jsonpath(carrier, path)));
-        readings.push(as_value_node_array(jsonb_path_query_first(
-            payload.clone(),
-            &raw_json_member_jsonpath(carrier, path),
-        )));
-        if let [tag] = path.value_path_compact.as_slice() {
-            readings.push(as_node_array(jsonb_path_query_first(
-                payload.clone(),
-                &target_language_jsonpath(carrier, tag.as_str()),
-            )));
-        }
-    }
-    match <[SimpleExpr; 1]>::try_from(readings) {
-        Ok([single]) => single,
-        Err(readings) => Func::coalesce(readings).into(),
-    }
-}
-
-/// Wrap an opaque JSON value as the one-element carrier every key downstream
-/// expects, or `NULL` when the lookup found nothing.
-///
-/// The guard is what keeps the reading honest: `jsonb_build_object` over a
-/// `NULL` produces `{"@value": null}`, which is not `NULL` and would win the
-/// `COALESCE` over a reading that did resolve.
-fn as_value_node_array(raw: SimpleExpr) -> SimpleExpr {
-    // clone: the guard tests the same lookup the wrapped value reads.
+/// Guarded by a `CASE`, because the cast raises on a value of another type and
+/// only a `CASE` guarantees the test runs first.
+fn json_scalar(json: SimpleExpr, json_type: &str, ty: PostgresType) -> SimpleExpr {
     CaseStatement::new()
         .case(
-            raw.clone().is_not_null(),
-            jsonb_build_array(jsonb_build_object([text_literal(VALUE_MEMBER), raw])),
+            jsonb_typeof(json.clone()).eq(text_literal(json_type)), // clone: the test reads the value it guards
+            cast_compound(json.json_path_text(text_literal("{}")), ty),
         )
         .into()
-}
-
-/// Wrap a single value node as a one-element carrier, or `NULL` when the lookup
-/// found nothing.
-fn as_node_array(node: SimpleExpr) -> SimpleExpr {
-    // clone: the guard tests the same lookup the wrapped node reads.
-    CaseStatement::new().case(node.clone().is_not_null(), jsonb_build_array(node)).into()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute_value_order::{AttributeValue, carrier_jsonpaths, structured_member_jsonpath};
+    use crate::attribute_value_order::AttributeValue;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
-        filter::{path::AttrPath, value_path::parse_attribute_path},
+        filter::{
+            expression::Expr as QueryExpr,
+            parser::parse,
+            path::{AttrPath, QueryPath},
+        },
         ordering::sort_direction::SortDirection,
     };
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_row_refs::EntityRowRefs};
     use andromeda_postgresql_seaquery::collation::PostgresCollation;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
+    use sea_query::{PostgresQueryBuilder, Query, SimpleExpr};
 
-    const SPEED: &str = "https://example.com/speed";
-
-    fn speed() -> AttrPath {
-        AttrPath::simple(SPEED.parse().expect("a valid attribute name"))
+    fn names() -> ResolvedNames<AttributeName> {
+        ResolvedNames::from_pairs(
+            [("speed", 7), ("address", 15), ("temperature", 12), ("accuracy", 20)]
+                .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("valid name"), AttributeNameKey::from(key))),
+        )
     }
 
-    /// A path as a client would write it in `orderBy`.
     fn path(text: &str) -> AttrPath {
-        parse_attribute_path(text).expect("a clause 4.9 ValuePath")
+        let QueryExpr::Pred(pred) = parse(text).expect("a path parses as an existence query") else {
+            panic!("a single predicate");
+        };
+        let QueryPath::Local(local) = pred.path() else {
+            panic!("a local path");
+        };
+        // clone: the test owns the path beyond the parsed expression
+        local.clone()
     }
 
-    fn payload() -> SimpleExpr {
-        Expr::col(Alias::new("payload"))
+    fn lateral(text: &str) -> String {
+        AttributeValue::at(0)
+            .lateral(&EntityRowRefs::unaliased(None), &path(text), &names())
+            .to_string(PostgresQueryBuilder)
     }
 
     fn render(expr: SimpleExpr) -> String {
         Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
     }
 
-    /// Clause 5.2.5 gives every attribute family its own value member, so the
-    /// carrier is matched on the prefix they share instead of on one name.
+    /// The entity orders by the first instance of the attribute in written
+    /// order, read without a document, from the typed columns.
     #[test]
-    fn the_carrier_is_selected_by_the_prefix_every_value_member_shares() {
-        let jsonpath = carrier_jsonpaths(&speed()).remove(0);
+    fn an_attribute_value_is_read_from_its_first_row_in_written_order() {
+        let sql = lateral("\"https://example.com/speed\"");
         assert!(
-            jsonpath.contains("keyvalue() ? (@.key starts with \"https://uri.etsi.org/ngsi-ld/has\")"),
-            "{jsonpath}"
+            sql.contains(r#"FROM "current_attributes" AS "ca" WHERE "ca"."entity_key" = "entities"."entity_key""#),
+            "{sql}"
         );
-        assert!(jsonpath.ends_with("\").value"), "the carrier's value is what the path selects: {jsonpath}");
-        assert!(jsonpath.starts_with("$[0].\"https://example.com/speed\"[0]."), "{jsonpath}");
+        assert!(sql.contains(r#""ca"."attribute_name_key" = 7"#), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "ca"."ordinal" ASC LIMIT 1"#), "{sql}");
+        assert!(sql.contains(r#""ordered"."value_number""#), "{sql}");
+        assert!(!sql.contains("payload"), "{sql}");
     }
 
-    /// An attribute IRI carrying a double quote cannot break out of the
-    /// jsonpath's own quoting.
+    /// A sub-attribute path orders by the first element at its end, read
+    /// through the same chain recheck a `q` term uses.
     #[test]
-    fn an_attribute_iri_cannot_break_out_of_the_jsonpath() {
-        let quoted: AttributeName = "https://example.com/a\"b".parse().expect("a valid attribute name");
-        let jsonpath = carrier_jsonpaths(&AttrPath::simple(quoted)).remove(0);
-        assert!(jsonpath.contains("a\\\"b"), "{jsonpath}");
+    fn a_sub_attribute_value_is_read_from_the_first_element_of_the_chain() {
+        let sql = lateral("\"https://example.com/temperature\".\"https://example.com/accuracy\"");
+        assert!(sql.contains(r#"(SELECT "l0" FROM UNNEST("ca"."sub_attributes") AS "l0""#), "{sql}");
+        assert!(sql.contains(r#"("ordered"."element")."value_number""#), "{sql}");
     }
 
-    /// Clause 4.23.3 EXAMPLE 5, `?orderBy=name.observedAt`: a dotted path walks
-    /// the attribute axis, so each segment is another attribute-node hop before
-    /// the carrier the value is read from.
+    /// Clause 4.23.3 EXAMPLE 5: `orderBy=name.observedAt` orders by a member
+    /// of the attribute, which its row holds as a typed field.
     #[test]
-    fn a_dotted_path_hops_each_sub_attribute_before_selecting_the_carrier() {
-        let jsonpaths = carrier_jsonpaths(&path("\"https://example.com/name\".\"https://uri.etsi.org/ngsi-ld/observedAt\""));
-        let node = "$[0].\"https://example.com/name\"[0].\"https://uri.etsi.org/ngsi-ld/observedAt\"";
-        assert!(jsonpaths.iter().all(|jsonpath| jsonpath.starts_with(node)), "{jsonpaths:?}");
-        // A sub-Property carries a value member; a system sub-attribute such as
-        // `observedAt` expands straight to a value-node array and is read as it
-        // stands. Both readings are built because the path cannot tell them
-        // apart before the entity is fetched.
-        assert!(jsonpaths.iter().any(|jsonpath| jsonpath.ends_with("\").value")), "{jsonpaths:?}");
-        assert!(jsonpaths.contains(&node.to_owned()), "{jsonpaths:?}");
+    fn a_member_of_the_attribute_orders_by_its_field() {
+        let sql = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/observedAt\"");
+        assert!(sql.contains(r#""ordered"."observed_at" AS "value_date_time""#), "{sql}");
     }
 
-    /// Clause 4.23.3 EXAMPLE 4, `?orderBy=address[city]`: expansion turns the
-    /// members of a structured Property value into IRI-keyed nodes, so the
-    /// member hop comes after the carrier rather than inside a `@value`.
-    #[test]
-    fn a_compound_member_is_hopped_off_the_carrier() {
-        let compound = path("\"https://example.com/address\"[\"https://example.com/city\"]");
-        let jsonpath = structured_member_jsonpath(&carrier_jsonpaths(&compound).remove(0), &compound);
-        assert!(jsonpath.ends_with("\").value[0].\"https://example.com/city\""), "{jsonpath}");
-    }
-
-    /// A path with no trailing group reads one carrier and needs no disjunction:
-    /// the carrier projection is the lookup itself.
-    #[test]
-    fn a_path_that_stops_at_an_attribute_makes_a_single_lookup() {
-        let sql = AttributeValue::at(0).lateral(&payload(), &speed()).to_string(PostgresQueryBuilder);
-        assert!(sql.contains("(SELECT jsonb_path_query_first("), "the carrier is one lookup: {sql}");
-        assert!(!sql.contains("@language"), "no target language is read: {sql}");
-        assert!(!sql.contains("jsonb_build_object"), "no opaque-JSON wrap is needed: {sql}");
-    }
-
-    /// Clause 4.9 gives `attr[member]` more than one reading and only the stored
-    /// entity says which applies, so every reading is looked up and the first
-    /// that resolves is taken: the expanded member of a structured value, the
-    /// literal key of opaque JSON, and the target language of a
-    /// `LanguageProperty`.
+    /// Clause 4.23.3 EXAMPLE 4: `orderBy=address[city]` orders by a member of
+    /// the compound value, read under each spelling clause 4.9 gives it.
     #[test]
     fn a_trailing_member_reads_every_shape_clause_4_9_gives_the_spelling() {
-        let sql = AttributeValue::at(0)
-            .lateral(&payload(), &path("\"https://example.com/address\"[city]"))
-            .to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#".value[0]."city""#), "the expanded member of a structured value: {sql}");
-        assert!(sql.contains(r#".value[0]."@value"."city""#), "the literal key of opaque JSON: {sql}");
-        assert!(sql.contains(r#"@language" == "city""#), "the target language of a LanguageProperty: {sql}");
-        assert!(sql.contains("jsonb_build_object"), "opaque JSON is wrapped as a value node: {sql}");
+        let sql = lateral("\"https://example.com/address\"[city]");
+        assert!(sql.contains(r#"'$."city"[*]."@value"'"#), "{sql}");
+        assert!(sql.contains(r#"'$."city"'"#), "{sql}");
+        assert!(sql.contains(r#"'$[*] ? (@."@language" == "city")."@value"'"#), "{sql}");
     }
 
-    /// A nested trailing group names no language — clause 4.9 gives a target
-    /// language as one member — so only the two member readings apply.
     #[test]
-    fn a_nested_trailing_group_reads_no_target_language() {
-        let sql = AttributeValue::at(0)
-            .lateral(&payload(), &path("\"https://example.com/sensor\"[a.b]"))
-            .to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#".value[0]."a"[0]."b""#), "the expanded members of a structured value: {sql}");
-        assert!(sql.contains(r#".value[0]."@value"."a"."b""#), "the literal keys of opaque JSON: {sql}");
-        assert!(!sql.contains("@language"), "no single member names a language: {sql}");
+    fn an_unrecorded_attribute_reads_no_instance() {
+        assert!(lateral("\"https://example.com/never\"").contains("FALSE"));
     }
 
-    /// The opaque-JSON reading has to be guarded: `jsonb_build_object` over a
-    /// lookup that found nothing yields `{"@value": null}`, which is not NULL
-    /// and would win the COALESCE over a reading that did resolve.
-    #[test]
-    fn the_opaque_json_reading_is_guarded_against_winning_on_a_missing_value() {
-        let sql = AttributeValue::at(0)
-            .lateral(&payload(), &path("\"https://example.com/address\"[city]"))
-            .to_string(PostgresQueryBuilder);
-        assert!(sql.contains("IS NOT NULL"), "the wrap is guarded: {sql}");
-    }
-
-    /// The lateral evaluates the payload lookup once and names both of the
-    /// things every key reads: the value node, and the one datatype every key
-    /// and the rank agree on.
-    #[test]
-    fn the_lateral_projects_the_value_node_and_its_datatype_from_one_lookup() {
-        let sql = AttributeValue::at(0).lateral(&payload(), &speed()).to_string(PostgresQueryBuilder);
-        assert_eq!(sql.matches("jsonb_path_query_first(").count(), 1, "{sql}");
-        assert!(sql.contains("AS \"value_node\""), "{sql}");
-        assert!(sql.contains("AS \"value_datatype\""), "{sql}");
-        assert!(sql.contains("jsonb_array_length("), "{sql}");
-    }
-
-    /// Two ordering terms name two projections, so neither reads the other's
-    /// value node.
     #[test]
     fn each_ordering_term_names_its_own_projection() {
         let first = render(AttributeValue::at(0).numeric_key());
         let second = render(AttributeValue::at(1).numeric_key());
-        assert!(first.contains("\"order_value_0\".\"value_datatype\""), "{first}");
-        assert!(second.contains("\"order_value_1\".\"value_datatype\""), "{second}");
+        assert!(first.contains("\"order_value_0\""), "{first}");
+        assert!(second.contains("\"order_value_1\""), "{second}");
     }
 
-    /// The rank and the three keys read the one projected datatype, so the
-    /// bucket an entity is placed in and the key that orders it inside that
-    /// bucket cannot be computed from two different readings of one value.
     #[test]
     fn every_key_reads_the_one_projected_datatype() {
         let value = AttributeValue::at(0);
-        for sql in [
-            render(value.datatype_rank(SortDirection::Ascending)),
-            render(value.numeric_key()),
-            render(value.instant_key()),
-            render(value.text_key(&PostgresCollation::new("und-x-icu"))),
+        for key in [
+            value.datatype_rank(SortDirection::Ascending),
+            value.numeric_key(),
+            value.instant_key(),
+            value.text_key(&PostgresCollation::new("und-x-icu")),
         ] {
-            assert!(sql.contains("\"order_value_0\".\"value_datatype\""), "{sql}");
+            assert!(render(key).contains("\"order_value_0\".\"value_datatype\""));
         }
     }
 
-    /// A number is compared as JSONB, which orders numbers numerically, rather
-    /// than as the text `9` that would exceed `10`.
     #[test]
-    fn the_numeric_key_compares_numbers_as_numbers() {
-        let sql = render(AttributeValue::at(0).numeric_key());
-        assert!(sql.contains("'number'"), "{sql}");
-        assert!(!sql.contains("::numeric"), "no cast can see a value that is not a number: {sql}");
-    }
-
-    /// Clause 4.6.3 admits a fraction of any width up to six digits, so a
-    /// `DateTime` is resolved to an instant before it is compared.
-    #[test]
-    fn the_instant_key_resolves_a_date_time_value_to_an_instant() {
-        let sql = render(AttributeValue::at(0).instant_key());
-        assert!(sql.contains("'https://uri.etsi.org/ngsi-ld/DateTime'"), "{sql}");
-        assert!(sql.contains("::timestamptz"), "{sql}");
-    }
-
-    /// Clause 4.23.1: strings sort under the requested collation. The value is
-    /// read out of the payload as text, because PostgreSQL collates no JSONB.
-    #[test]
-    fn the_text_key_is_collated_and_read_as_text() {
+    fn the_text_key_is_collated_and_reads_the_first_element_of_an_array() {
         let sql = render(AttributeValue::at(0).text_key(&PostgresCollation::new("und-x-icu")));
-        assert!(sql.contains("COLLATE \"und-x-icu\""), "{sql}");
-        assert!(sql.contains("->> ('@value')"), "{sql}");
-        assert!(!sql.contains("::text"), "a jsonb text cast would keep the JSON quotes: {sql}");
-    }
-
-    /// Clause 4.23.1 sorts "by target value or target object", so a
-    /// Relationship orders by the URI of the entity it points at.
-    #[test]
-    fn the_text_key_falls_back_to_a_relationships_target_object() {
-        let sql = render(AttributeValue::at(0).text_key(&PostgresCollation::new("und-x-icu")));
-        assert!(sql.contains("->> ('@id')"), "{sql}");
-    }
-
-    /// Clause 4.23.2 puts every list in one bucket and says nothing about how
-    /// two Arrays compare, so they order by their first element rather than all
-    /// tying on a key no list carrier can fill.
-    #[test]
-    fn the_text_key_reads_the_first_element_of_an_ordered_list() {
-        let sql = render(AttributeValue::at(0).text_key(&PostgresCollation::new("und-x-icu")));
-        assert!(sql.contains("-> ('@list')) -> (0)) ->> ('@value')"), "{sql}");
-        assert!(
-            sql.contains("-> ('@list')) -> (0)) ->> ('@id')"),
-            "a list of objects orders by its first URI: {sql}"
-        );
+        assert!(sql.contains(r#"COLLATE "und-x-icu""#), "{sql}");
+        assert!(sql.contains(r#"("order_value_0"."value_object" -> (0)) ->> ('@value')"#), "{sql}");
     }
 }

@@ -19,7 +19,10 @@
 
 use crate::entity_head::{EntityHead, select_head};
 use andromeda_ngsi_ld_query::count_policy::CountPolicy;
-use andromeda_postgresql_query::{entity_row_refs::EntityRowRefs, sort_key::SortKey};
+use andromeda_postgresql_query::{
+    entity_row_refs::EntityRowRefs,
+    sort_key::{KeyOrder, SortKey},
+};
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{aggregate::count_over_all, branch::qualified};
 use sea_query::{Alias, Condition, Expr, ExprTrait, JoinType, Query, SelectStatement};
@@ -55,7 +58,24 @@ const LOOKUP: &str = "stored";
 /// projects its keys under and the head statement by the same columns read
 /// back through the page.
 #[must_use]
-pub fn heads_of(mut page: SelectStatement, rows: &EntityRowRefs, keys: Vec<SortKey>, count: CountPolicy) -> SelectStatement {
+pub fn heads_of(page: SelectStatement, rows: &EntityRowRefs, keys: Vec<SortKey>, count: CountPolicy) -> SelectStatement {
+    heads_over(projected_page(page, rows, keys, count), rows, count)
+}
+
+/// A page projecting its entity key and its sort keys, and the order it is
+/// read in.
+#[derive(Debug, Clone)]
+pub struct ProjectedPage {
+    /// The page statement.
+    pub select: SelectStatement,
+    /// Each sort key's column and direction, in the order they decide.
+    pub order: Vec<(Alias, KeyOrder)>,
+}
+
+/// Project `page`'s entity key, its total when `count` asks for it, and each
+/// of `keys` under `sort_<n>`, and order it by those columns.
+#[must_use]
+pub fn projected_page(mut page: SelectStatement, rows: &EntityRowRefs, keys: Vec<SortKey>, count: CountPolicy) -> ProjectedPage {
     page.expr(rows.entity_key_column());
     match count {
         CountPolicy::Emit => {
@@ -63,7 +83,31 @@ pub fn heads_of(mut page: SelectStatement, rows: &EntityRowRefs, keys: Vec<SortK
         }
         CountPolicy::Omit => {}
     }
+    let order = keys
+        .into_iter()
+        .enumerate()
+        .map(|(position, key)| {
+            let column = sort_column(position);
+            let (expression, order) = key.into_parts();
+            // clone: the page projects the key under this name and orders by it.
+            page.expr_as(expression, column.clone());
+            order.order_by(&mut page, Expr::col(column.clone()));
+            (column, order)
+        })
+        .collect();
+    ProjectedPage { select: page, order }
+}
 
+/// The column a page projects its key in `position` under.
+#[must_use]
+pub fn sort_column(position: usize) -> Alias {
+    Alias::new(format!("sort_{position}"))
+}
+
+/// Read the head of every Entity a projected `page` keeps, in its order.
+#[must_use]
+pub fn heads_over(page: ProjectedPage, rows: &EntityRowRefs, count: CountPolicy) -> SelectStatement {
+    let ProjectedPage { select: page, order } = page;
     let mut heads = Query::select();
     // The page carries no search row of its own beyond what its filters
     // joined; the head is read by the key the page projected.
@@ -76,25 +120,11 @@ pub fn heads_of(mut page: SelectStatement, rows: &EntityRowRefs, keys: Vec<SortK
         }
         CountPolicy::Omit => {}
     }
-
-    let restated: Vec<_> = keys
-        .into_iter()
-        .enumerate()
-        .map(|(position, key)| {
-            let column = Alias::new(format!("sort_{position}"));
-            let (expression, order) = key.into_parts();
-            // clone: the page projects the key under this name and orders by it.
-            page.expr_as(expression, column.clone());
-            order.order_by(&mut page, Expr::col(column.clone()));
-            (column, order)
-        })
-        .collect();
-
     heads
         .from_subquery(page, Alias::new(PAGE))
         .join_lateral(JoinType::InnerJoin, stored_head_lookup(rows), Alias::new(LOOKUP), Condition::all());
-    for (column, order) in restated {
-        order.order_by(&mut heads, Expr::col((Alias::new(PAGE), column)));
+    for (column, key_order) in order {
+        key_order.order_by(&mut heads, Expr::col((Alias::new(PAGE), column)));
     }
     heads.take()
 }

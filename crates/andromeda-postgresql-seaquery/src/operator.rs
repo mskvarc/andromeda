@@ -66,8 +66,19 @@ pub fn array_contains_key(array_col: SimpleExpr, key: i32) -> SimpleExpr {
 /// the empty one included.
 #[must_use]
 pub fn array_contained_by_keys(array_col: SimpleExpr, keys: &[i32]) -> SimpleExpr {
+    array_col.array_contained_by(key_array(keys))
+}
+
+/// `ARRAY[k, …]::integer[]`, dictionary keys rendered inline.
+///
+/// Inlined for the reason [`array_contains_key`] gives: a key array is part of
+/// the statement's shape, which a constant keeps visible to the planner, and an
+/// immutable function over it folds at planning. Cast so an empty list still
+/// names the element type.
+#[must_use]
+pub fn key_array(keys: &[i32]) -> SimpleExpr {
     let keys = keys.iter().map(i32::to_string).collect::<Vec<_>>().join(", ");
-    array_col.array_contained_by(Expr::cust(format!("ARRAY[{keys}]::integer[]")))
+    Expr::cust(format!("ARRAY[{keys}]::integer[]"))
 }
 
 /// Regex: `col ~ pattern` - tests if column matches POSIX regex.

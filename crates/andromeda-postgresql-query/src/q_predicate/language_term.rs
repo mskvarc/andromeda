@@ -109,7 +109,7 @@ fn string_in_range(text: SimpleExpr, min: &Scalar, max: &Scalar) -> SimpleExpr {
 /// comparison runs on the canonical text the String column holds the value in,
 /// under that column's byte order. A `DateTime` compares as an instant once the
 /// string is shown to be one, which carries no collation. The lifting is
-/// [`lift_comparison`]'s, which the payload reading shares.
+/// [`lift_comparison`]'s, which the JSON value reading shares.
 fn string_comparison(text: SimpleExpr, op: CmpOp, scalar: &Scalar) -> SimpleExpr {
     if string_comparability(scalar) == StringComparability::Incomparable {
         return false_literal();

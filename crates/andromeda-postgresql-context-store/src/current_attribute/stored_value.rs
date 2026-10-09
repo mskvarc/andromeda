@@ -130,18 +130,12 @@ impl StoredValue {
     pub fn row_column(&self) -> CurrentAttributes {
         match self {
             StoredValue::Number { .. } => CurrentAttributes::ValueNumber,
-            StoredValue::String { text, .. } => match ProjectedStringColumn::of(text) {
-                ProjectedStringColumn::Indexed => CurrentAttributes::ValueString,
-                ProjectedStringColumn::Overflow => CurrentAttributes::ValueLongText,
-            },
+            StoredValue::String { text, .. } => ProjectedStringColumn::of(text).column(),
             StoredValue::Boolean { .. } => CurrentAttributes::ValueBoolean,
             StoredValue::DateTime { .. } => CurrentAttributes::ValueDateTime,
             StoredValue::Geometry { .. } => CurrentAttributes::ValueGeometry,
             StoredValue::Object(_) => CurrentAttributes::ValueObject,
-            StoredValue::Uri(uri) => match ProjectedUriColumn::of(uri.as_str()) {
-                ProjectedUriColumn::Indexed => CurrentAttributes::ValueUri,
-                ProjectedUriColumn::Overflow => CurrentAttributes::ValueLongUri,
-            },
+            StoredValue::Uri(uri) => ProjectedUriColumn::of(uri.as_str()).column(),
         }
     }
 }

@@ -1847,6 +1847,7 @@ dependencies = [
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
+ "andromeda-unit-catalog",
  "chrono",
  "derive_more",
  "iri-rs",

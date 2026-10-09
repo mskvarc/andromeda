@@ -15,8 +15,12 @@
 //! SQL. The set-write therefore binds through `build_sqlx` like every other
 //! converted statement, with no hand-numbered parameters.
 
-use crate::{cast::cast, column_reference::quoted, pg_type::PostgresType};
-use sea_query::{DynIden, Func, FunctionCall, Iden, IntoIden, SimpleExpr};
+use crate::{
+    cast::cast,
+    column_reference::{qualified, quoted},
+    pg_type::PostgresType,
+};
+use sea_query::{Alias, Condition, DynIden, Expr, Func, FunctionCall, Iden, IntoIden, SimpleExpr};
 
 /// The `UNNEST` set-returning function.
 #[derive(Iden, Clone, Copy)]
@@ -108,14 +112,86 @@ pub fn apply_column_alias(mut sql: String, alias: &dyn Iden, columns: &[UnnestCo
     sql
 }
 
+/// The column `WITH ORDINALITY` adds to an unnested array: the 1-based
+/// position of each element.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ordinality"]
+pub struct Ordinality;
+
+/// Whether some path of elements through a tree held as one array passes
+/// `filter`: `EXISTS (SELECT 1 FROM UNNEST(tree) WITH ORDINALITY AS "l0" JOIN
+/// UNNEST(tree) AS "l1" ON "l1"."<parent>" = "l0"."ordinality" … WHERE
+/// filter)`.
+///
+/// Each element of `tree` names its parent by the 1-based position of the
+/// parent element in the same array, so one level of the path is one unnest of
+/// the array joined to the previous level by that position, and `filter` reads
+/// each level's fields under the alias `levels` gives it. The first level is
+/// left unconstrained: the caller states which elements a path starts from.
+/// Only a level with a level below it needs its position, so the last one is
+/// unnested without it, and its alias then names the element itself.
+///
+/// The `WITH ORDINALITY` source is no [`sea_query::TableRef`], so the
+/// statement is a custom expression whose only interpolated pieces are
+/// identifiers; `tree` and `filter` are rendered by sea-query in place of
+/// `$1` and `$2`, which binds their values in statement order.
+#[must_use]
+pub fn exists_in_positional_tree(tree: SimpleExpr, levels: &[Alias], parent: &dyn Iden, filter: Condition) -> SimpleExpr {
+    let sql = format!("EXISTS (SELECT 1 FROM {} WHERE $2)", positional_tree_source(levels, parent));
+    Expr::cust_with_exprs(sql, [tree, filter.into()])
+}
+
+/// The first element at the end of a path through a tree that passes
+/// `filter`, as a value of the array's element type, or `NULL` when none
+/// does: `(SELECT "lN" FROM … WHERE filter LIMIT 1)`, the source as
+/// [`exists_in_positional_tree`] unnests it.
+///
+/// Elements come in array order, which is the written order of siblings.
+#[must_use]
+pub fn first_in_positional_tree(tree: SimpleExpr, levels: &[Alias], parent: &dyn Iden, filter: Condition) -> SimpleExpr {
+    let last = levels.last().map(|level| quoted(level)).unwrap_or_default();
+    let sql = format!("(SELECT {last} FROM {} WHERE $2 LIMIT 1)", positional_tree_source(levels, parent));
+    Expr::cust_with_exprs(sql, [tree, filter.into()])
+}
+
+/// One field of a composite value: `(value)."field"`.
+#[must_use]
+pub fn composite_field(value: SimpleExpr, field: &dyn Iden) -> SimpleExpr {
+    Expr::cust_with_expr(format!("($1).{}", quoted(field)), value)
+}
+
+/// The `FROM` items of a path through a positional tree, the tree rendered as
+/// `$1`.
+fn positional_tree_source(levels: &[Alias], parent: &dyn Iden) -> String {
+    let mut sql = String::new();
+    for (depth, level) in levels.iter().enumerate() {
+        if depth > 0 {
+            sql.push_str(" JOIN ");
+        }
+        sql.push_str("UNNEST($1)");
+        if depth + 1 < levels.len() {
+            sql.push_str(" WITH ORDINALITY");
+        }
+        sql.push_str(" AS ");
+        sql.push_str(&quoted(level));
+        if let Some(above) = depth.checked_sub(1).and_then(|above| levels.get(above)) {
+            sql.push_str(" ON ");
+            sql.push_str(&qualified(level, parent));
+            sql.push_str(" = ");
+            sql.push_str(&qualified(above, &Ordinality));
+        }
+    }
+    sql
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         pg_type::PostgresType,
-        unnest::{UnnestColumn, apply_column_alias, apply_with_ordinality, unnest_call},
+        unnest::{UnnestColumn, apply_column_alias, apply_with_ordinality, composite_field, exists_in_positional_tree, first_in_positional_tree, unnest_call},
     };
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
+    use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr};
 
     /// The projection set-write's fourteen columns, in the order the upsert
     /// binds them, so the rendered source can be asserted against the real one.
@@ -172,6 +248,47 @@ mod tests {
         assert!(sql.contains("$1::text[]"), "{sql}");
         assert!(!sql.contains("float8"), "{sql}");
         assert!(!sql.contains("double precision"), "{sql}");
+    }
+
+    /// Every level after the first joins the previous one by the parent
+    /// position, and the tree is rendered once per level.
+    #[test]
+    fn a_positional_tree_joins_each_level_to_its_parent_by_position() {
+        let levels = [Alias::new("l0"), Alias::new("l1")];
+        let filter = Condition::all().add(Expr::col((Alias::new("l1"), Alias::new("value"))).eq(5));
+        let (sql, values) = Query::select()
+            .expr(exists_in_positional_tree(
+                Expr::col((Alias::new("ca"), Alias::new("tree"))),
+                &levels,
+                &Alias::new("parent"),
+                filter,
+            ))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            concat!(
+                r#"SELECT EXISTS (SELECT 1 FROM UNNEST("ca"."tree") WITH ORDINALITY AS "l0" "#,
+                r#"JOIN UNNEST("ca"."tree") AS "l1" ON "l1"."parent" = "l0"."ordinality" "#,
+                r#"WHERE "l1"."value" = $1)"#,
+            )
+        );
+        assert_eq!(values.0.len(), 1, "{sql}");
+    }
+
+    /// The last level names the element itself, which is what the first
+    /// match returns.
+    #[test]
+    fn the_first_element_of_a_path_is_the_last_level_itself() {
+        let levels = [Alias::new("l0")];
+        let sql = Query::select()
+            .expr(composite_field(
+                first_in_positional_tree(Expr::col(Alias::new("tree")), &levels, &Alias::new("parent"), Condition::all()),
+                &Alias::new("value"),
+            ))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(sql, r#"SELECT ((SELECT "l0" FROM UNNEST("tree") AS "l0" WHERE TRUE LIMIT 1))."value""#);
     }
 
     #[test]

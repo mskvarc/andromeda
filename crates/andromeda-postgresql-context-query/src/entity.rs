@@ -1,8 +1,9 @@
 //! SQL generation for entity queries using sea-query.
 
 use crate::{
-    entity_page::heads_of,
+    entity_page::{heads_of, heads_over},
     entity_relations::{EntityRelations, RowSource},
+    keyed_page::{PageSource, keyed_page},
     result_ordering,
     selector_predicate::condition as selector_condition,
 };
@@ -12,6 +13,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
     entity_selection::ConsideredEntities,
+    filter::predicate::Predicate,
     page_window::{PageStart, PageWindow},
     projection::projected_members::{ProjectedMembers, ScopeRetention},
     read_order::ReadOrder,
@@ -25,7 +27,7 @@ use andromeda_postgresql_query::{
     geo_predicate as geo_sql,
     geo_predicate::GeometrySource,
     page_window::bound_to_window,
-    q_predicate::{instance_scan::InstanceScan, projection as q_filter},
+    q_predicate::{instance_scan::InstanceScan, projection as q_filter, sub_attribute::keyed_equality::keyed_candidates},
     scope_predicate::{ScopeTarget, condition as scope_condition},
     sort_key::{KeyOrder, NullPlacement, SortKey},
 };
@@ -105,25 +107,45 @@ pub fn build_query(
     let schema = schema_iden(target);
     let relations = EntityRelations::for_query(query, &names.types, schema.as_ref());
     let rows = relations.rows(schema.clone());
-    let condition = build_entity_conditions(query, names, &rows, &relations.source)?;
-
-    let mut page = Query::select();
-    relations.apply_from(&mut page, schema.as_ref());
-    // clone: the fallback count statement filters on the same condition. The
-    // count joins the document row only when a `q` filter reads it, and that
-    // is the only way the condition can reference the payload, so a condition
-    // rendered against this statement's rows names nothing the count lacks.
-    page.cond_where(condition.clone());
-    let (keys, read_order) = window_and_sort_keys(&mut page, &rows, query, window, &names.attributes)?;
+    let condition = build_entity_conditions(query, names, &rows, &relations.source, QFilter::Whole)?;
+    let keyed = query
+        .selection
+        .q_expr
+        .as_ref()
+        .and_then(|q_expr| keyed_candidates(q_expr, &rows, names).map(|keyed| (q_expr, keyed)));
 
     // An offset page, and the first page of a cursor walk, piggyback a
     // requested total on every row; a continued cursor page cannot, since its
-    // rows are only those past the cursor.
-    let counted_on_page = match (count, &window.start) {
-        (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(None)) => CountPolicy::Emit,
-        (CountPolicy::Emit, PageStart::Cursor(Some(_))) | (CountPolicy::Omit, _) => CountPolicy::Omit,
+    // rows are only those past the cursor, and neither can a keyed page, whose
+    // first branch reads only the Entities the short walk visited.
+    let counted_on_page = match (count, &window.start, &keyed) {
+        (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(None), None) => CountPolicy::Emit,
+        (CountPolicy::Emit, PageStart::Cursor(Some(_)), None)
+        | (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(_), Some(_))
+        | (CountPolicy::Omit, PageStart::Offset(_) | PageStart::Cursor(_), None | Some(_)) => CountPolicy::Omit,
     };
-    let select = heads_of(page, &rows, keys, counted_on_page);
+    let (select, read_order) = match keyed {
+        None => {
+            let mut page = Query::select();
+            relations.apply_from(&mut page, schema.as_ref());
+            // clone: the count statement filters on the same condition.
+            page.cond_where(condition.clone());
+            let (keys, read_order) = window_and_sort_keys(&mut page, &rows, query, window, &names.attributes)?;
+            (heads_of(page, &rows, keys, counted_on_page), read_order)
+        }
+        Some((q_expr, keyed)) => {
+            let source = PageSource {
+                relations: &relations,
+                schema: schema.as_ref(),
+                rows: &rows,
+                query,
+                window,
+                names,
+            };
+            let (page, read_order) = keyed_page(&source, q_expr, keyed)?;
+            (heads_over(page, &rows, CountPolicy::Omit), read_order)
+        }
+    };
 
     let total = match count {
         CountPolicy::Omit => EntityTotal::Omitted,
@@ -147,8 +169,7 @@ pub fn build_query(
 /// entities `window` selects.
 ///
 /// Similar to [`build_query`] but selects `id` alone, used for operations that
-/// only need to identify matching entities; the document row is joined only
-/// when a filter or ordering reads the payload.
+/// only need to identify matching entities.
 ///
 /// # Errors
 ///
@@ -161,7 +182,7 @@ pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, wind
     let schema = schema_iden(target);
     let relations = EntityRelations::for_query(query, &names.types, schema.as_ref());
     let rows = relations.rows(schema.clone());
-    let condition = build_entity_conditions(query, names, &rows, &relations.source)?;
+    let condition = build_entity_conditions(query, names, &rows, &relations.source, QFilter::Whole)?;
 
     let mut select = Query::select();
     select.expr_as(rows.identity_column(Entities::Id), Entities::Id);
@@ -196,7 +217,7 @@ pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, wind
 /// Propagates the [`RenderError`] a distance `orderBy` term raises when it has
 /// no reference geometry to measure from (clause 4.23); a cursor window carries
 /// no `orderBy` and so never fails here.
-fn window_and_sort_keys(
+pub(crate) fn window_and_sort_keys(
     select: &mut SelectStatement,
     rows: &EntityRowRefs,
     query: &CompiledEntityQuery,
@@ -212,6 +233,18 @@ fn window_and_sort_keys(
     Ok((keys, read_order))
 }
 
+/// How much of a query's `q` a statement filters on.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum QFilter<'q> {
+    /// The whole expression.
+    Whole,
+    /// The expression without one term of its top-level conjunction, which
+    /// the statement answers by other means.
+    Except(&'q Predicate),
+    /// None of it: the statement's rows are filtered by `q` further out.
+    Omitted,
+}
+
 /// Builds sea-query `Condition` from compiled entity query filters.
 ///
 /// The branch a statement runs against is chosen by the schema its relations
@@ -219,7 +252,13 @@ fn window_and_sort_keys(
 /// `rows` carry that schema to any subquery a filter opens, and `source` is
 /// the relation the statement is driven by, which decides what of the
 /// selectors is left to filter.
-fn build_entity_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows: &EntityRowRefs, source: &RowSource) -> Result<Condition, RenderError> {
+pub(crate) fn build_entity_conditions(
+    query: &CompiledEntityQuery,
+    names: &QueryNames,
+    rows: &EntityRowRefs,
+    source: &RowSource,
+    q: QFilter<'_>,
+) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
     // Clause 5.5.14: a request narrowed to an empty identifier set considers no
@@ -238,7 +277,7 @@ fn build_entity_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows
     }
 
     // Attribute existence filter (clause 5.5.9 `attrs`): the entity carries a
-    // member of at least one of the named attributes. The names the payload
+    // member of at least one of the named attributes. The names the entity
     // carries are recorded as dictionary keys on the search row, so each term
     // is a containment test the GIN index answers; a name the dictionary has
     // never recorded is carried by no entity and its term is constant `FALSE`.
@@ -261,7 +300,12 @@ fn build_entity_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows
     }
 
     if let Some(q_expr) = &query.selection.q_expr {
-        condition = condition.add(q_filter::compile(q_expr, &InstanceScan::Current(rows), names));
+        let scan = InstanceScan::Current(rows);
+        match q {
+            QFilter::Whole => condition = condition.add(q_filter::compile(q_expr, &scan, names)),
+            QFilter::Except(answered) => condition = condition.add(q_filter::compile_except(q_expr, answered, &scan, names)),
+            QFilter::Omitted => {}
+        }
     }
 
     if let Some(geo) = &query.selection.geo {
@@ -492,17 +536,21 @@ mod tests {
         );
     }
 
-    /// A `q` filter reads the payload for its jsonpath fallback, so the page
-    /// joins the document row, and the heads are still read by key for the
-    /// kept rows only.
+    /// A `q` filter probes the rows of its attribute inside the page, which
+    /// joins nothing for it, and the heads are still read by key for the kept
+    /// rows only.
     #[test]
-    fn a_q_filter_joins_the_documents_inside_the_page_and_reads_the_heads_outside_it() {
+    fn a_q_filter_probes_inside_the_page_and_the_heads_are_read_outside_it() {
         let mut q = empty_query();
         q.selection.q_expr = Some(parser::parse("\"https://example.com/temperature\">1").expect("valid q"));
         let built = build(&q, &temperature_is_known());
-        assert!(built.sql.contains(r#"JOIN "entity_documents" ON"#), "{}", built.sql);
+        assert!(!built.sql.contains("entity_documents"), "{}", built.sql);
+        assert!(
+            built.sql.contains(r#"FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attributes" AS "ca""#),
+            "{}",
+            built.sql
+        );
         assert!(built.sql.starts_with(r#"SELECT "stored"."entity_key", "stored"."id","#), "{}", built.sql);
-        assert!(!built.sql.contains(r#""entity_documents"."payload" AS"#), "{}", built.sql);
     }
 
     /// Clause 4.23.1 returns the entities sorted, so every key the page is cut
@@ -929,10 +977,8 @@ mod tests {
         let mut q = empty_query();
         q.selection.q_expr = Some(parser::parse("\"https://example.com/temperature\"").unwrap());
         let built = build(&q, &temperature_is_known());
-        // A `q` existence predicate resolves through the current-state
-        // projection: row presence is existence, since a tombstone never
-        // reaches `current_attribute_values`.
-        assert!(built.sql.contains("\"current_attribute_values\""), "{}", built.sql);
+        // Row presence is existence: a deleted attribute leaves no row.
+        assert!(built.sql.contains("\"current_attributes\""), "{}", built.sql);
         assert!(!built.sql.contains("\"payload\"->0 ?"), "{}", built.sql);
     }
 
@@ -1121,8 +1167,8 @@ mod tests {
     }
 
     /// Clause 4.23.1 sorts by the attribute's value, which the statement reads
-    /// out of the payload, and clause 4.23.2 ranks that value's datatype before
-    /// comparing it.
+    /// from the attribute's first row, and clause 4.23.2 ranks that value's
+    /// datatype before comparing it.
     #[test]
     fn build_with_order_by_asc() {
         let mut q = empty_query();
@@ -1134,8 +1180,12 @@ mod tests {
         let built = build(&q, &known_types());
         assert!(built.sql.contains("ORDER BY"));
         assert!(built.sql.contains("ASC"));
-        assert!(built.sql.contains("jsonb_path_query_first("), "{}", built.sql);
-        assert!(built.sql.contains("https://example.com/name"), "{}", built.sql);
+        assert!(
+            built.sql.contains(r#"LEFT JOIN LATERAL (SELECT COALESCE("ordered"."value_number""#),
+            "{}",
+            built.sql
+        );
+        assert!(built.sql.contains(r#"FROM "current_attributes" AS "ca""#), "{}", built.sql);
         assert!(built.sql.contains("array_position("), "the datatype rank decides first: {}", built.sql);
     }
 
@@ -1538,17 +1588,15 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("o''brien"), "{}", built.sql);
+        assert!(!built.sql.contains("brien"), "the attribute is read by dictionary key: {}", built.sql);
         assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
     }
 
-    /// A distance ordering measures through the dictionary key, so no IRI
-    /// reaches its distance subquery. Clause 4.23.2 still ranks the entities
-    /// whose attribute is not a `GeoProperty` by value, and that comparison
-    /// interpolates the IRI into a jsonpath, where an apostrophe in it is
-    /// doubled rather than closing the literal.
+    /// A distance ordering measures through the dictionary key, and so does
+    /// the clause 4.23.2 value comparison that ranks the entities whose
+    /// attribute is not a `GeoProperty`, so no IRI reaches the statement.
     #[test]
-    fn a_distance_ordering_escapes_the_geoproperty_iri_its_value_comparison_reads() {
+    fn a_distance_ordering_reads_the_geoproperty_by_key_alone() {
         let mut q = empty_query();
         let geometry = serde_json::from_value::<Geometry>(serde_json::json!({
             "type": "Point",
@@ -1572,7 +1620,7 @@ mod tests {
             "the geometry is reached by dictionary key: {}",
             built.sql
         );
-        assert!(built.sql.contains("o''brien"), "{}", built.sql);
+        assert!(!built.sql.contains("brien"), "{}", built.sql);
         assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
     }
 

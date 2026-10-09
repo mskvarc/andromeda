@@ -1,15 +1,16 @@
 //! The value columns a `q` Query Term compares against, named by what they
 //! hold rather than by the relation that holds them.
 //!
-//! The current-state projection and the temporal history store one attribute
-//! instance's value the same way: one typed column per scalar kind, and
-//! `value_object` for every value that is not a single scalar. A value
-//! condition is therefore written once, against a [`ValueColumn`], and the
-//! [`InstanceScan`](crate::q_predicate::instance_scan::InstanceScan) it runs
-//! under resolves the column in the relation it scans.
+//! A `current_attributes` row, an element of its `sub_attributes` and an
+//! `attribute_history` row store one attribute instance's value the same way:
+//! one typed field per scalar kind, and `value_object` for every value that is
+//! not a single scalar. A value condition is therefore written once, against a
+//! [`ValueColumn`], and the
+//! [`InstanceRow`](crate::q_predicate::instance_row::InstanceRow) it reads
+//! resolves the field in the relation or element it reads.
 
 use andromeda_postgresql_schema::{
-    current::CurrentAttributeValues,
+    current::{CurrentAttributes, SubAttribute},
     projected_string_column::ProjectedStringColumn,
     projected_uri_column::ProjectedUriColumn,
     temporal::AttributeHistory,
@@ -59,18 +60,34 @@ impl ValueColumn {
         }
     }
 
-    /// The `current_attribute_values` column holding this kind.
+    /// The `current_attributes` column holding this kind.
     #[must_use]
-    pub const fn in_projection(self) -> CurrentAttributeValues {
+    pub const fn in_current(self) -> CurrentAttributes {
         match self {
-            ValueColumn::Number => CurrentAttributeValues::ValueNumber,
-            ValueColumn::Boolean => CurrentAttributeValues::ValueBoolean,
-            ValueColumn::String => CurrentAttributeValues::ValueString,
-            ValueColumn::LongText => CurrentAttributeValues::ValueLongText,
-            ValueColumn::DateTime => CurrentAttributeValues::ValueDateTime,
-            ValueColumn::Uri => CurrentAttributeValues::ValueUri,
-            ValueColumn::LongUri => CurrentAttributeValues::ValueLongUri,
-            ValueColumn::Object => CurrentAttributeValues::ValueObject,
+            ValueColumn::Number => CurrentAttributes::ValueNumber,
+            ValueColumn::Boolean => CurrentAttributes::ValueBoolean,
+            ValueColumn::String => CurrentAttributes::ValueString,
+            ValueColumn::LongText => CurrentAttributes::ValueLongText,
+            ValueColumn::DateTime => CurrentAttributes::ValueDateTime,
+            ValueColumn::Uri => CurrentAttributes::ValueUri,
+            ValueColumn::LongUri => CurrentAttributes::ValueLongUri,
+            ValueColumn::Object => CurrentAttributes::ValueObject,
+        }
+    }
+
+    /// The `sub_attribute` field holding this kind.
+    ///
+    /// An element keeps a String of any length in `value_string` and a URI of
+    /// any length in `value_uri`: no B-tree keys on either.
+    #[must_use]
+    pub const fn in_element(self) -> SubAttribute {
+        match self {
+            ValueColumn::Number => SubAttribute::ValueNumber,
+            ValueColumn::Boolean => SubAttribute::ValueBoolean,
+            ValueColumn::String | ValueColumn::LongText => SubAttribute::ValueString,
+            ValueColumn::DateTime => SubAttribute::ValueDateTime,
+            ValueColumn::Uri | ValueColumn::LongUri => SubAttribute::ValueUri,
+            ValueColumn::Object => SubAttribute::ValueObject,
         }
     }
 
@@ -114,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn every_kind_names_a_projection_column_and_a_history_column_of_the_same_name() {
+    fn every_kind_names_a_row_column_an_element_field_and_a_history_column_of_the_same_name() {
         for column in [
             ValueColumn::Number,
             ValueColumn::Boolean,
@@ -123,23 +140,25 @@ mod tests {
             ValueColumn::Uri,
             ValueColumn::Object,
         ] {
-            assert_eq!(Iden::to_string(&column.in_projection()), Iden::to_string(&column.in_history()), "{column:?}");
+            assert_eq!(Iden::to_string(&column.in_current()), Iden::to_string(&column.in_history()), "{column:?}");
+            assert_eq!(Iden::to_string(&column.in_current()), Iden::to_string(&column.in_element()), "{column:?}");
         }
     }
 
-    /// History has no overflow column, so a long String is read from
-    /// `value_string` there.
+    /// History and an element have no overflow column, so a long String is
+    /// read from `value_string` there.
     #[test]
-    fn a_long_string_is_read_from_the_one_history_string_column() {
-        assert_eq!(Iden::to_string(&ValueColumn::LongText.in_projection()), "value_long_text");
+    fn a_long_string_is_read_from_the_one_history_or_element_string_column() {
+        assert_eq!(Iden::to_string(&ValueColumn::LongText.in_current()), "value_long_text");
         assert_eq!(Iden::to_string(&ValueColumn::LongText.in_history()), "value_string");
+        assert_eq!(Iden::to_string(&ValueColumn::LongText.in_element()), "value_string");
     }
 
     /// History has no overflow column, so a long Relationship object is read
     /// from `value_uri` there.
     #[test]
     fn a_long_uri_is_read_from_the_one_history_uri_column() {
-        assert_eq!(Iden::to_string(&ValueColumn::LongUri.in_projection()), "value_long_uri");
+        assert_eq!(Iden::to_string(&ValueColumn::LongUri.in_current()), "value_long_uri");
         assert_eq!(Iden::to_string(&ValueColumn::LongUri.in_history()), "value_uri");
     }
 }

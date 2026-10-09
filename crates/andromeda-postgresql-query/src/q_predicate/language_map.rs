@@ -13,12 +13,12 @@
 //! positive form ("No matching value is found").
 //!
 //! The expanded map is an array of `{"@language": …, "@value": …}` entries
-//! (`@language` absent on the `@none` entry), held in `value_object` for a
-//! top-level attribute and under `hasLanguageMap` in the expanded document for
-//! a sub-attribute. Each entry is one string, so the map is unnested and every
+//! (`@language` absent on the `@none` entry), held in the `value_object` of a
+//! current row or element and of a history row, and under `hasLanguageMap` in
+//! the expanded document a temporal `q` rebuilds for a sub-attribute. Each entry is one string, so the map is unnested and every
 //! comparison runs against one entry's `@value` text.
 
-use crate::q_predicate::{instance_scan::InstanceScan, value_column::ValueColumn};
+use crate::q_predicate::{instance_row::InstanceRow, value_column::ValueColumn};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::path::AttrPath;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LANGUAGE_MAP;
@@ -61,17 +61,17 @@ pub enum LanguageSelection<'a> {
 pub struct LanguageMap(SimpleExpr);
 
 impl LanguageMap {
-    /// The map the scanned instance row holds: its `value_object` when the row
-    /// was written as a `LanguageProperty`.
+    /// The map an instance holds: its `value_object` when it was written as a
+    /// `LanguageProperty`.
     ///
     /// The family is tested inside a `CASE` rather than beside the probe: the
     /// conjuncts of a `WHERE` are evaluated in whatever order the planner
     /// picks, and unnesting the object a structured Property holds in the same
     /// column would raise an error rather than yield no rows.
     #[must_use]
-    pub fn of_instance(scan: &InstanceScan<'_>) -> LanguageMap {
+    pub fn of_instance(row: InstanceRow) -> LanguageMap {
         let language_property = int_literal(i64::from(AttributeKind::LanguageProperty.code()));
-        let map = CaseStatement::new().case(scan.attribute_family().eq(language_property), scan.value(ValueColumn::Object));
+        let map = CaseStatement::new().case(row.attribute_family().eq(language_property), row.value(ValueColumn::Object));
         LanguageMap(map.into())
     }
 
@@ -158,12 +158,9 @@ fn language_map_jsonpath(path: &AttrPath) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        entity_row_refs::EntityRowRefs,
-        q_predicate::{
-            instance_scan::InstanceScan,
-            language_map::{LanguageMap, LanguageSelection},
-        },
+    use crate::q_predicate::{
+        instance_row::InstanceRow,
+        language_map::{LanguageMap, LanguageSelection},
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse, path::QueryPath};
@@ -192,10 +189,9 @@ mod tests {
     /// a map; any other family's object is never unnested.
     #[test]
     fn an_instance_row_offers_its_object_only_as_a_language_property() {
-        let rows = EntityRowRefs::unaliased(None);
-        let (sql, _) = render(LanguageMap::of_instance(&InstanceScan::Current(&rows)).holds(LanguageSelection::AnyLanguage));
+        let (sql, _) = render(LanguageMap::of_instance(InstanceRow::Current).holds(LanguageSelection::AnyLanguage));
         assert!(
-            sql.contains(r#"jsonb_array_elements((CASE WHEN ("cav"."attribute_kind" = (5)) THEN "cav"."value_object" END)) AS "ls""#),
+            sql.contains(r#"jsonb_array_elements((CASE WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object" END)) AS "ls""#),
             "{sql}"
         );
     }

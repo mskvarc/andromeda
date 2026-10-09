@@ -5,8 +5,9 @@ use derive_more::From;
 /// Dictionary key for an expanded attribute IRI in the `attribute_names` table.
 ///
 /// `attribute_names` normalises attribute IRIs to an `INTEGER` so the temporal
-/// catalogue, the history hypertable, and the `current_attribute_values`
-/// projection can all index on a four-byte key instead of a full IRI. It is a PostgreSQL schema
+/// catalogue, the history hypertable, and `current_attributes` (its rows and
+/// the elements of their sub-attribute trees) can all index on a four-byte key
+/// instead of a full IRI. It is a PostgreSQL schema
 /// artefact and names nothing in ETSI GS CIM 009, which is why it lives beside
 /// the statements that bind it rather than in the data model.
 ///

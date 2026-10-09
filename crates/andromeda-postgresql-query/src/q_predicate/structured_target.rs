@@ -2,7 +2,7 @@
 //!
 //! # What is stored here
 //!
-//! `current_attribute_values` keeps one typed column per attribute instance,
+//! A stored instance keeps one typed field per scalar kind,
 //! and every attribute family whose value is not a single scalar lands in
 //! `value_object` as the JSON the write path derived from the expanded
 //! document:
@@ -186,7 +186,7 @@ mod tests {
     use andromeda_postgresql_seaquery::literal::int_literal;
     use sea_query::{Alias, Condition, Expr as SeaExpr, PostgresQueryBuilder, Query, SimpleExpr, Value};
 
-    /// A stand-in for the probe's `"cav"."value_object"` reference.
+    /// A stand-in for the probe's `"ca"."value_object"` reference.
     fn column() -> SimpleExpr {
         SeaExpr::col(Alias::new("value_object"))
     }

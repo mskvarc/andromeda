@@ -9,14 +9,13 @@
 //!
 //! The keys are handed back as values rather than written into the statement,
 //! because the paginated entity query orders twice: its page is ordered on the
-//! expressions, and the statement that reads the page's payloads restates the
+//! expressions, and the statement that reads the page's heads restates the
 //! same order on the columns the page projected them under.
 
 use crate::{attribute_value_order::AttributeValue, order_geography::geo_order_distance};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     error::QueryError,
-    filter::path::AttrPath,
     ordering::{
         compiled::ResultOrdering,
         sort_direction::SortDirection,
@@ -106,7 +105,14 @@ pub fn sort_keys(
                     .as_deref()
                     .filter(|_| path.is_simple())
                     .and_then(|reference| geo_order_distance(&path.attr, attribute_names, rows, reference));
-                keys.extend(attribute_keys(select, &rows.payload_column(), path, position, direction, &collation, distance));
+                let value = AttributeValue::at(position);
+                select.join_lateral(
+                    JoinType::LeftJoin,
+                    value.lateral(rows, path, attribute_names),
+                    value.alias(),
+                    SeaExpr::val(true),
+                );
+                keys.extend(attribute_keys(&value, direction, &collation, distance));
             }
         }
     }
@@ -138,8 +144,8 @@ fn distance_reference(term: &CompiledOrderTerm, ordering: &ResultOrdering) -> Re
     }
 }
 
-/// The keys one attribute-valued term contributes, with the value lookup they
-/// read joined into `select`.
+/// The keys one attribute-valued term contributes, read off the value
+/// lookup the caller joined.
 ///
 /// A distance term measures first and ranks the entities it could not measure
 /// after the ones it could: clause 4.23.2 puts "Attribute is a `GeoProperty`"
@@ -149,16 +155,11 @@ fn distance_reference(term: &CompiledOrderTerm, ordering: &ResultOrdering) -> Re
 /// they are what "sorted by value" means and because they break a tie between
 /// two entities the same distance away.
 fn attribute_keys(
-    select: &mut SelectStatement,
-    payload: &SimpleExpr,
-    path: &AttrPath,
-    position: usize,
+    value: &AttributeValue,
     direction: SortDirection,
     collation: &PostgresCollation,
     distance: Option<SimpleExpr>,
 ) -> impl Iterator<Item = SortKey> {
-    let value = AttributeValue::at(position);
-    select.join_lateral(JoinType::LeftJoin, value.lateral(payload, path), value.alias(), SeaExpr::val(true));
     let by_value = KeyOrder::new(direction, NullPlacement::Unstated);
     let measured = distance.map(|distance| SortKey::new(distance, nulls_last(direction)));
     // The rank runs ascending whichever way the term does: the sequence it is

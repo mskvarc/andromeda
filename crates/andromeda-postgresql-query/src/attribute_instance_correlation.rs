@@ -63,7 +63,7 @@ mod tests {
     use crate::{
         attribute_instance_correlation::{existence_marker, geometry_instances_of, instance_geometry_column},
         attribute_name_key::AttributeNameKey,
-        entity_row_refs::{DocumentsRef, EntityRowRefs},
+        entity_row_refs::EntityRowRefs,
     };
     use sea_query::{Alias, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 
@@ -80,7 +80,7 @@ mod tests {
     }
 
     fn aliased() -> EntityRowRefs {
-        EntityRowRefs::aliased(None, Alias::new("e"), Alias::new("s"), DocumentsRef::ByKeyLookup)
+        EntityRowRefs::aliased(None, Alias::new("e"), Alias::new("s"))
     }
 
     /// The correlation names the outer relation explicitly, so a join added to

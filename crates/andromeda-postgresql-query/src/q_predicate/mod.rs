@@ -3,32 +3,34 @@
 //!
 //! # Probes
 //!
-//! Value predicates compile to an `EXISTS` probe against the `current_attribute_values` projection, whose typed partial indexes are keyed `(attribute_name_key, value_*)`. A functional jsonpath expression over the JSONB payload can be served by no index and would degrade every filtered query to a sequential scan over `entities`.
+//! Value predicates compile to an `EXISTS` probe against the `current_attributes` rows, whose typed partial indexes are keyed `(attribute_name_key, value_*)`. The planner scans the typed index, fetches `entity_key` from the heap, and semi-joins back to the driving table.
 //!
-//! The planner scans the typed index, fetches `entity_key` from the heap, and semi-joins back to the driving table.
-//!
-//! Every probe correlates on `entity_key`, the surrogate the projection is keyed
+//! Every probe correlates on `entity_key`, the surrogate the rows are keyed
 //! on, so a statement that reaches entities through an alias hands over the
 //! [`EntityRowRefs`](crate::entity_row_refs::EntityRowRefs) naming that alias
 //! rather than the Entity URI.
 //!
-//! # Eligibility
+//! # What a path addresses
 //!
-//! Not every predicate can use the projection. `current_attribute_values` stores
-//! one value per attribute instance; it does not store sub-attributes or the
-//! interior of compound values. What a path addresses is decided once, by
+//! A `current_attributes` row is one top-level attribute instance: its value in
+//! one typed column, or in `value_object` when it is not a single scalar, and
+//! its sub-attributes as a tree of elements in `sub_attributes`, each element
+//! holding a value the same way. What a path addresses is decided once, by
 //! [`local_target`](crate::q_predicate::local_target::local_target):
 //!
 //! | Predicate shape | Compiles to |
 //! |---|---|
-//! | comparison or pattern with no sub-attribute and no value path | `EXISTS` on `current_attribute_values`, whose ordering, pattern and range tests also read the strings of a `LanguageProperty` row's `languageMap` |
-//! | bare existence | `EXISTS` on `current_attribute_values`, presence alone |
-//! | any operator with one trailing member (`attr[member]`) | both: a target-language probe on the projection, disjoined with the jsonpath fallback |
-//! | anything carrying a sub-attribute | the JSONB jsonpath fallback, disjoined with a reading of the sub-attribute's `languageMap` (with the one trailing member as its target language) unless the value path is deeper |
-//! | a deeper value path (`attr[a.b]`) | JSONB jsonpath fallback |
+//! | comparison or pattern with no sub-attribute and no value path | a test of the row's value columns, whose ordering, pattern and range tests also read the strings of a `LanguageProperty` row's `languageMap` |
+//! | bare existence | the row's presence |
+//! | one trailing member (`attr[member]`) | the target language of a `languageMap`, disjoined with the member of a compound value read out of `value_object` |
+//! | a deeper value path (`attr[a.b]`) | the member of a compound value read out of `value_object` |
+//! | anything carrying a sub-attribute | the same tests on the element at the end of the path, rechecked through the tree inline (see [`sub_attribute`]) |
+//! | a path ending on `observedAt`, `unitCode` or a timestamp | the typed field of the instance it hangs off |
 //! | attribute IRI absent from `attribute_names` | constant `FALSE` |
 //!
-//! The jsonpath fallback answers the shapes the projection cannot. It is unindexed.
+//! A temporal `q` reads history rows, which keep the sub-attributes of an
+//! instance verbatim, so a term on a sub-attribute or a compound member walks
+//! the instance rebuilt as a document (see [`document_term`]).
 //!
 //! # Attribute families beyond Property and Relationship
 //!
@@ -38,44 +40,39 @@
 //! `ListRelationship`'s `objectList`, a multi-term `VocabProperty`'s `vocab`,
 //! and any Property value that is an array or an object. Clause 4.9 names every
 //! one of those a target value, so a Query Term is compared against
-//! `value_object` by JSONB containment as well as against the typed columns —
-//! see [`structured_target`](crate::q_predicate::structured_target). The
-//! operators containment cannot express — ordering, pattern and range — read a
-//! `languageMap` string by string instead (see
-//! [`language_term`](crate::q_predicate::language_term)), since clause 4.9
-//! makes each of its strings a String target value.
+//! `value_object` by JSONB containment as well as against the typed columns
+//! (see [`structured_target`]). The operators containment cannot express
+//! (ordering, pattern and range) read a `languageMap` string by string instead
+//! (see [`language_term`]), since clause 4.9 makes each of its strings a String
+//! target value.
 //!
 //! # Deleted attributes
 //!
-//! No predicate tests for a stored deletion marker. The projection holds no
-//! tombstone — the tombstone value kind belongs to history — so an attribute
-//! deleted by clause 5.6.16 is an absent row, and row presence alone answers an
-//! existence test.
+//! No predicate tests for a stored deletion marker. Current state holds no
+//! tombstone (the tombstone value kind belongs to history), so an attribute
+//! deleted by clause 5.6.16 is an absent row or element, and presence alone
+//! answers an existence test.
 //!
 //! # Linked-entity traversal
 //!
 //! The clause 4.9 `{}` axis (`rel{attr}=="x"`) compiles to one correlated
-//! `EXISTS` per hop. Each probe reads the Relationship's instances from
-//! `current_attribute_values`, joins `value_uri` to `entities.id` to reach the
-//! entity each instance names, and compiles the rest of the predicate against
-//! that entity's `entity_key` — recursively, so a chain of hops nests a chain of
-//! probes. Aliases are suffixed by depth (`cav_ln1`/`le1`, `cav_ln2`/`le2`, …)
-//! so a nested probe cannot shadow its enclosing one.
-//!
-//! Reading the object from the projection rather than the payload keeps the
-//! probe on the `(attribute_name_key, value_uri)` index. A hop's optional
-//! entity-type guard becomes a disjunction of membership tests against the
-//! linked entity's `types` column, and a Relationship name absent from
-//! `attribute_names` compiles to constant `FALSE` exactly as any other unknown
-//! name does.
+//! `EXISTS` per hop. Each probe reads the Relationship's instances, joins
+//! `value_uri` to `entities.id` to reach the entity each instance names, and
+//! compiles the rest of the predicate against that entity's `entity_key`,
+//! recursively, so a chain of hops nests a chain of probes. Aliases are
+//! suffixed by depth (`cav_ln1`/`le1`, `cav_ln2`/`le2`, …) so a nested probe
+//! cannot shadow its enclosing one. A hop's optional entity-type guard becomes
+//! a disjunction of membership tests against the linked entity's `types`
+//! column, and a Relationship name absent from `attribute_names` compiles to
+//! constant `FALSE` exactly as any other unknown name does.
 //!
 //! # Temporal `q`
 //!
 //! A temporal query's `q` (clause 5.7.4.4 step S2) is "checked against all the
 //! Attribute instances resulting from the initial filtering performed by the
 //! temporal query", not against current state. The same comparisons then run
-//! over the in-window `attribute_history` rows instead of the projection: the
-//! two relations hold an instance's value in the same typed columns, and an
+//! over the in-window `attribute_history` rows instead: the two relations hold
+//! an instance's value in the same typed columns, and an
 //! [`InstanceScan`](crate::q_predicate::instance_scan::InstanceScan) says which
 //! one a compiled `q` reads. Each Query Term is its own existential over the
 //! instances of its attribute valid within the window on the requested
@@ -86,12 +83,13 @@
 //!
 //! # Disjunctions
 //!
-//! The Query Terms of a disjunction that each read one attribute's instances
-//! share one probe, each arm keeping its attribute key beside its value test
-//! (see [`instance_test`]). A disjunction of separate `EXISTS` can only be
-//! evaluated as a filter on every entity row; one `EXISTS` is a semi-join the
-//! planner drives from a `BitmapOr` over every arm's value index. Hops and
-//! payload readings read other rows, so they stay beside the shared probe.
+//! The Query Terms of a disjunction that each read one attribute's rows share
+//! one probe, each arm keeping its attribute key beside its value test (see
+//! [`instance_test`]). A disjunction of separate `EXISTS` can only be evaluated
+//! as a filter on every entity row; one `EXISTS` is a semi-join the planner
+//! drives from a `BitmapOr` over every arm's value index. Hops, sub-attribute
+//! probes and history document readings read other rows, so they stay beside
+//! the shared probe.
 //!
 //! # Multi-instance semantics
 //!
@@ -100,13 +98,15 @@
 //! Value of such instances").
 
 pub mod attribute_names;
+pub mod document_term;
 pub mod equality_term;
-pub mod fallback;
 pub mod history_instance_document;
 pub mod history_window;
 pub mod in_effect_instance;
+pub mod instance_row;
 pub mod instance_scan;
 pub mod instance_test;
+pub mod json_value_term;
 pub mod language_map;
 pub mod language_term;
 pub mod local_target;
@@ -116,6 +116,8 @@ pub mod projection;
 pub mod projection_probe;
 pub mod string_ordering;
 pub mod structured_target;
+pub mod sub_attribute;
 pub mod traversal;
 pub mod typed_column;
 pub mod value_column;
+pub mod value_object_member;

@@ -22,7 +22,7 @@
 use crate::{
     attribute_name_key::AttributeNameKey,
     dictionary::resolved_names::ResolvedNames,
-    entity_row_refs::{DocumentsRef, EntityRowRefs},
+    entity_row_refs::EntityRowRefs,
     instance_expiry::instance_stands,
     q_predicate::{
         history_window::{HistoryAliases, HistoryWindow, WindowProbes},
@@ -72,18 +72,13 @@ impl LinkedHop {
     }
 
     /// Where a predicate compiled *inside* this hop reads its entity: the
-    /// linked identity row, and the payload by key lookup.
+    /// linked identity and search rows, whose key its probes correlate on.
     ///
     /// `schema` is the branch schema of the statement this hop is nested in, so
     /// the linked entity is read in the same branch the traversal started from
     /// rather than falling back to the live default schema.
     pub(crate) fn inner_rows(&self, schema: Option<DynIden>) -> EntityRowRefs {
-        EntityRowRefs::aliased(
-            schema,
-            Alias::new(self.linked_entity.as_str()),
-            Alias::new(self.linked_search.as_str()),
-            DocumentsRef::ByKeyLookup,
-        )
+        EntityRowRefs::aliased(schema, Alias::new(self.linked_entity.as_str()), Alias::new(self.linked_search.as_str()))
     }
 
     /// Wrap an already-compiled inner predicate in this hop's probe.

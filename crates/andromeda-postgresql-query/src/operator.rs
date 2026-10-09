@@ -7,7 +7,7 @@ use sea_query::{BinOper, Condition, Expr, ExprTrait, SimpleExpr};
 /// Build a clause 4.9 comparison between two already-lifted operands.
 ///
 /// Shared by every rendering of clause 4.9, so a predicate cannot compare with
-/// one operator against `current_attribute_values`, another against the payload
+/// one operator against `current_attributes`, another against a JSON value
 /// and a third against a registration's properties. The operator token differs
 /// from the clause 4.9 spelling only at `==`, which SQL writes `=`, and `!=`,
 /// which is kept over the equivalent `<>`.

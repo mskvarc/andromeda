@@ -314,7 +314,7 @@ mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
         dictionary::resolved_names::ResolvedNames,
-        entity_row_refs::{DocumentsRef, EntityRowRefs},
+        entity_row_refs::EntityRowRefs,
         error::RenderError,
         geo_predicate::{GeometrySource, condition},
     };
@@ -335,7 +335,7 @@ mod tests {
 
     /// The rows as the temporal path aliases them: `e` for the identity,
     /// `s` for the search row.
-    static ALIASED: LazyLock<EntityRowRefs> = LazyLock::new(|| EntityRowRefs::aliased(None, Alias::new("e"), Alias::new("s"), DocumentsRef::ByKeyLookup));
+    static ALIASED: LazyLock<EntityRowRefs> = LazyLock::new(|| EntityRowRefs::aliased(None, Alias::new("e"), Alias::new("s")));
 
     fn name(value: &str) -> AttributeName {
         value.parse().expect("valid attribute name")

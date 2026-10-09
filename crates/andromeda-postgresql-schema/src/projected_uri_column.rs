@@ -1,7 +1,7 @@
-//! Which of the two URI columns of `current_attribute_values` a Relationship
+//! Which of the two URI columns of `current_attributes` a Relationship
 //! object is held in.
 //!
-//! `idx_cav_value_uri` keys on `value_uri`, and a B-tree refuses an entry past
+//! `idx_ca_value_uri` keys on `value_uri`, and a B-tree refuses an entry past
 //! 2704 bytes (SQLSTATE 54000). Clause 4.6.2 sets no length on a URI, so a
 //! Relationship object longer than [`INDEXED_URI_BYTE_LIMIT`] is held in
 //! `value_long_uri` instead. The migration's two length checks make that
@@ -15,13 +15,13 @@
 //! traversal joins `entities.id` on. An object in `value_long_uri` cannot name
 //! a local Entity, so the traversal loses nothing by never reading it.
 
-use crate::current::CurrentAttributeValues;
+use crate::current::CurrentAttributes;
 
 /// The greatest length, in UTF-8 octets, a URI held in `value_uri` may have.
 ///
 /// 1024 leaves the `(attribute_name_key, value_uri)` entry of
-/// `idx_cav_value_uri` well inside the 2704 bytes a B-tree entry may take. A
-/// unit test in `migration_set` pins the literal migration 0023 states to this
+/// `idx_ca_value_uri` well inside the 2704 bytes a B-tree entry may take. A
+/// unit test in `migration_set` pins the literal the `current_attributes` migration states to this
 /// constant, and another pins it to the identifier bound.
 pub const INDEXED_URI_BYTE_LIMIT: usize = 1024;
 
@@ -48,10 +48,10 @@ impl ProjectedUriColumn {
 
     /// The column this placement names.
     #[must_use]
-    pub const fn column(self) -> CurrentAttributeValues {
+    pub const fn column(self) -> CurrentAttributes {
         match self {
-            ProjectedUriColumn::Indexed => CurrentAttributeValues::ValueUri,
-            ProjectedUriColumn::Overflow => CurrentAttributeValues::ValueLongUri,
+            ProjectedUriColumn::Indexed => CurrentAttributes::ValueUri,
+            ProjectedUriColumn::Overflow => CurrentAttributes::ValueLongUri,
         }
     }
 }

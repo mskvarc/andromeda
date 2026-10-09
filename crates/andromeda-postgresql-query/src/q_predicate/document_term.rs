@@ -1,36 +1,37 @@
-//! JSONB jsonpath fallback for the `q` predicate shapes the typed value columns
-//! cannot answer.
+//! Query Terms decided over an attribute instance rebuilt as an expanded
+//! JSON-LD document.
 //!
-//! The projection stores one typed value per attribute instance. Sub-attributes
-//! (`temperature.observedAt`) and the interior of compound values
-//! (`address[city]`) live only inside an expanded entity document, so
-//! predicates addressing them read that document directly: the payload over
-//! current state, a rebuilt one-instance document over history (see
-//! [`InstanceScan::document_condition`](crate::q_predicate::instance_scan::InstanceScan::document_condition)).
-//! This path is unindexed by construction.
+//! A temporal `q` (clause 5.7.4.4) on a sub-attribute (`temperature.observedAt`)
+//! or on the interior of a compound value (`address[city]`) reaches a target
+//! no typed column of `attribute_history` holds: the sub-attributes of a
+//! history instance are kept verbatim in its `metadata`. Each in-window
+//! instance is rebuilt as the expanded document of an entity holding that one
+//! instance (see
+//! [`instance_document`](crate::q_predicate::history_instance_document::instance_document)),
+//! and the term walks it by jsonpath.
 
 use crate::{
-    jsonb::{attribute_instances_jsonpath, instance_json_literal_member_jsonpath, instance_value_jsonpath, lift_comparison},
-    operator::{compare, pattern as pattern_predicate},
-    q_predicate::string_ordering::ordered_string,
+    dictionary::query_names::QueryNames,
+    jsonb::{attribute_instances_jsonpath, instance_json_literal_member_jsonpath, instance_value_jsonpath},
+    q_predicate::{
+        history_instance_document::instance_document,
+        history_window::{HistoryAliases, HistoryWindow},
+        json_value_term::{JsonTarget, json_equality, json_ordering, json_pattern},
+    },
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     filter::{
         path::AttrPath,
-        predicate::{CmpOp, OrderingOp, PatternPolarity, SetMembership},
+        predicate::{OrderingOp, PatternPolarity, SetMembership},
         scalar::{CompareValue, Scalar},
     },
     pattern::Pattern,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBJECT, VALUE};
 use andromeda_postgresql_seaquery::{
-    cast::cast_compound,
     jsonb::{jsonb_path_exists, jsonb_path_query, jsonb_path_query_first},
-    literal::{int_literal, text_literal},
-    operator::present_and,
-    pg_operator::PgBinaryOperator,
-    pg_type::PostgresType,
+    literal::{false_literal, int_literal},
 };
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Func, Query, SimpleExpr};
 
@@ -38,12 +39,23 @@ use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Func, Query, Simpl
 /// which is also the name of its one column.
 const INSTANCE: &str = "attribute_instance";
 
-/// Read a JSONB value out as its whole text: `(jsonb) #>> '{}'`.
+/// A condition over the rebuilt document of each in-window instance of
+/// `attribute`, which holds when one instance satisfies it.
 ///
-/// The empty `text[]` path yields the value itself as text, which is what every
-/// `q` comparison lifts from.
-fn whole_text(jsonb: SimpleExpr) -> SimpleExpr {
-    jsonb.json_path_text(text_literal("{}"))
+/// The condition is checked inside the window's probe over the instances, so
+/// one instance that satisfies it is enough. An attribute the dictionary never
+/// recorded has no history, so it matches nothing.
+pub(crate) fn on_history_document(
+    window: &HistoryWindow,
+    attribute: &AttributeName,
+    names: &QueryNames,
+    build: impl FnOnce(SimpleExpr) -> Condition,
+) -> Condition {
+    let aliases = HistoryAliases::top_level();
+    match names.attributes.get(attribute) {
+        Some(id) => window.exists(id, build(instance_document(attribute.as_str(), &aliases)), &aliases),
+        None => Condition::all().add(false_literal()),
+    }
 }
 
 /// Whether some instance of the attribute element `path` addresses in
@@ -118,6 +130,18 @@ impl Instance<'_> {
         }
     }
 
+    /// The instance as the JSON target a term compares.
+    fn target(&self, object: Objects) -> JsonTarget {
+        JsonTarget {
+            value: self.value(),
+            object: match object {
+                Objects::Read => Some(self.carried(OBJECT.as_str())),
+                Objects::Ignored => None,
+            },
+            presence: self.value_presence(),
+        }
+    }
+
     /// The value behind the `terminal_iri` carrier here.
     fn carried(&self, terminal_iri: &str) -> SimpleExpr {
         jsonb_path_query_first(self.node.clone(), &self.carrier_jsonpath(terminal_iri)) // clone: sea-query owns every operand, and one instance is read by several extractions
@@ -136,127 +160,37 @@ impl Instance<'_> {
     }
 }
 
+/// Whether a term reads a Relationship's object beside a Property's value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Objects {
+    /// The equality operators, which clause 4.9 lets compare an object.
+    Read,
+    /// Every other operator, which a Relationship operand non-matches.
+    Ignored,
+}
+
 /// Compile an existence predicate that carries a sub-path.
-///
-/// A sub-path existence check asks whether a nested element is present, which
-/// only the payload can answer.
 #[must_use]
-pub fn fallback_exists(path: &AttrPath, document: &SimpleExpr) -> Condition {
+pub fn document_exists(path: &AttrPath, document: &SimpleExpr) -> Condition {
     on_some_instance(path, document, |instance| Condition::all().add(instance.value_presence()))
 }
 
-/// Compare a stored text expression against one scalar operand.
-///
-/// Everything that decides the comparison domain (the cast a number or boolean
-/// needs, the guarded `timestamptz` comparison a `DateTime` needs, the
-/// normalisation a `Time` needs) lives in [`lift_comparison`], so this fallback
-/// and the CSR renderer compare the same way. A String ordering compares under
-/// the collation [`ordered_string`] picks.
-fn scalar_predicate(stored_text: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
-    let lifted = lift_comparison(scalar, stored_text);
-    compare(ordered_string(lifted.stored, scalar, op), op, lifted.operand)
-}
-
-/// Build a single-scalar equality comparison (`==`/`!=`), `COALESCing` a
-/// Property's value with a Relationship's object so either matches.
-///
-/// Clause 4.9 admits a Relationship's object as a comparison target for the
-/// equality operators and requires a Relationship operand to non-match every
-/// other operator, which is why the object extraction appears here and nowhere
-/// else in this module.
-fn equality_scalar_comparison(extract_value: SimpleExpr, extract_object: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
-    let coalesced = Func::coalesce([whole_text(extract_value), whole_text(extract_object)]);
-    scalar_predicate(coalesced.into(), scalar, op)
-}
-
-/// Compile an equality predicate (`==`/`!=`) against the payload.
+/// Compile an equality predicate (`==`/`!=`) against the document.
 #[must_use]
-pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, document: &SimpleExpr) -> Condition {
-    on_some_instance(path, document, |instance| instance_equality(instance, membership, rhs))
+pub fn document_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, document: &SimpleExpr) -> Condition {
+    on_some_instance(path, document, |instance| json_equality(&instance.target(Objects::Read), membership, rhs))
 }
 
-/// Decide an equality predicate against one instance.
-fn instance_equality(instance: &Instance<'_>, membership: SetMembership, rhs: &CompareValue) -> Condition {
-    let extract_value = instance.value();
-
-    match rhs {
-        CompareValue::Scalar(scalar) => {
-            let extract_object = instance.carried(OBJECT.as_str());
-            Condition::all().add(equality_scalar_comparison(extract_value, extract_object, scalar, membership.as_cmp_op()))
-        }
-        CompareValue::Range { min, max } => {
-            let stored = whole_text(extract_value);
-            // Both bounds compare against the one lifted stored side; lifting the
-            // maximum only contributes its operand.
-            let lower = lift_comparison(min, stored.clone()); // clone: the stored side is compared against both bounds
-            let upper_operand = lift_comparison(max, stored).operand;
-            let stored_side = lower.stored;
-            // Each bound orders the stored side under its own collation.
-            let bounded = |op: CmpOp, bound: &Scalar, operand: SimpleExpr| compare(ordered_string(stored_side.clone(), bound, op), op, operand); // clone: the stored side is read by both halves
-            // A missing element makes the extraction NULL, and every comparison
-            // against NULL is unknown, so presence is required structurally in
-            // both polarities (clause 4.9).
-            match membership {
-                SetMembership::Within => Condition::all()
-                    .add(bounded(CmpOp::GreaterEq, min, lower.operand))
-                    .add(bounded(CmpOp::LessEq, max, upper_operand)),
-                SetMembership::Outside => Condition::any()
-                    .add(bounded(CmpOp::Less, min, lower.operand))
-                    .add(bounded(CmpOp::Greater, max, upper_operand)),
-            }
-        }
-        CompareValue::ValueList(values) => {
-            // A value list is a set of equality comparisons (clause 4.9 Table
-            // 4.9-1), so it COALESCEs a Relationship's object in exactly the
-            // way the single-scalar arm above does — `compile_equality_on_projection`
-            // routes every list arm through this same COALESCE via
-            // `scalar_condition`, and the fallback has to agree with it.
-            let extract_object = instance.carried(OBJECT.as_str());
-            let disjunction = values.iter().fold(Condition::any(), |cond, value| {
-                // Each arm reads its own COALESCE of the two extractions.
-                let coalesced = Func::coalesce([whole_text(extract_value.clone()), whole_text(extract_object.clone())]);
-                let lifted = lift_comparison(value, coalesced.into());
-                cond.add(compare(lifted.stored, CmpOp::Equal, lifted.operand))
-            });
-            match membership {
-                SetMembership::Within => Condition::all().add(disjunction),
-                SetMembership::Outside => Condition::all().add(disjunction.not()),
-            }
-        }
-    }
-}
-
-/// Compile an ordering predicate (`>`/`>=`/`<`/`<=`) against the payload.
-///
-/// A Relationship's object is not extracted at all. Clause 4.9 requires a
-/// Relationship (and a `ListRelationship`) operand to non-match every operator
-/// other than equality and inequality: a URI names a resource and carries no
-/// order a `<` or `>` could mean. `COALESCing` `hasObject` here would
-/// make `owner>"a"` select entities the standard requires it to reject.
+/// Compile an ordering predicate (`>`/`>=`/`<`/`<=`) against the document.
 #[must_use]
-pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, document: &SimpleExpr) -> Condition {
-    on_some_instance(path, document, |instance| {
-        Condition::all().add(scalar_predicate(whole_text(instance.value()), rhs, op.as_cmp_op()))
-    })
+pub fn document_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, document: &SimpleExpr) -> Condition {
+    on_some_instance(path, document, |instance| json_ordering(&instance.target(Objects::Ignored), op, rhs))
 }
 
-/// Compile a pattern predicate against the payload.
-///
-/// Both polarities require the element to be present (clause 4.9), which is
-/// what [`present_and`] states once for every backend.
-///
-/// Only a Property's value (`hasValue`) is a target. Clause 4.9 defines the
-/// pattern operators over String targets and requires a Relationship operand to
-/// non-match every operator other than equality and inequality, so a
-/// Relationship's object URI is not matched against a pattern however
-/// string-shaped it is.
+/// Compile a pattern predicate against the document.
 #[must_use]
-pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, document: &SimpleExpr) -> Condition {
-    on_some_instance(path, document, |instance| {
-        let extract = whole_text(instance.value());
-        let value = pattern_predicate(cast_compound(extract, PostgresType::Text), polarity, SeaExpr::val(pattern.portable().as_str()));
-        Condition::all().add(present_and(instance.value_presence(), value))
-    })
+pub fn document_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, document: &SimpleExpr) -> Condition {
+    on_some_instance(path, document, |instance| json_pattern(&instance.target(Objects::Ignored), pattern, polarity))
 }
 
 #[cfg(test)]
@@ -265,11 +199,14 @@ mod tests {
     use crate::{
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        entity_row_refs::EntityRowRefs,
-        q_predicate::{instance_scan::InstanceScan, projection::compile},
+        q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, projection::compile},
     };
-    use andromeda_ngsi_ld_query::filter::{expression::Expr, parser, path::QueryPath, predicate::Predicate, scalar::Scalar};
-    use andromeda_postgresql_schema::current::Entities;
+    use andromeda_ngsi_ld_query::{
+        filter::{expression::Expr, parser, path::QueryPath, predicate::Predicate, scalar::Scalar},
+        temporal::window::TimeInterval,
+    };
+    use andromeda_postgresql_schema::{current::Entities, temporal::AttributeHistory};
+    use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
@@ -290,6 +227,11 @@ mod tests {
                 AttributeNameKey::from(12),
             ),
             ("https://example.com/address".parse().expect("valid attribute name"), AttributeNameKey::from(15)),
+            (
+                "https://example.com/parkingTickets".parse().expect("valid attribute name"),
+                AttributeNameKey::from(16),
+            ),
+            ("https://example.com/o'brien".parse().expect("valid attribute name"), AttributeNameKey::from(17)),
         ])
     }
 
@@ -302,9 +244,18 @@ mod tests {
         sql
     }
 
+    fn history_over(interval: TimeInterval) -> HistoryWindow {
+        HistoryWindow::builder()
+            .schema(None)
+            .temporal_entity_key(SeaExpr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
+            .axis(AttributeHistory::ModifiedAt)
+            .interval(interval)
+            .build()
+    }
+
     fn render(q: &str) -> String {
         let expr = parser::parse(q).expect("parse q");
-        render_condition(compile(&expr, &InstanceScan::Current(&EntityRowRefs::unaliased(None)), &names()))
+        render_condition(compile(&expr, &InstanceScan::History(&history_over(TimeInterval::Unbounded)), &names()))
     }
 
     /// Clause 4.9: a `q` on the system sub-attribute `observedAt` reaches its
@@ -315,13 +266,15 @@ mod tests {
     fn sub_attribute_predicate_falls_back_to_jsonpath() {
         let sql = render("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">=\"2024-01-01T00:00:00Z\"");
         assert!(sql.contains("jsonb_path_query_first"), "{sql}");
-        assert!(!sql.contains("current_attribute_values"), "sub-attributes are not projected: {sql}");
         assert!(
             sql.contains("'$[0].\"https://example.com/temperature\"[*].\"https://uri.etsi.org/ngsi-ld/observedAt\"[*]'"),
             "every instance of the system sub-attribute is read: {sql}"
         );
         assert!(sql.contains("'$.\"@value\"'"), "a system sub-attribute reaches @value directly: {sql}");
-        assert!(!sql.contains("hasValue"), "no hasValue hop is inserted: {sql}");
+        assert!(
+            !sql.contains("'$.\"https://uri.etsi.org/ngsi-ld/hasValue\""),
+            "no hasValue hop is inserted: {sql}"
+        );
     }
 
     /// Clause 4.9 makes the target value any Value of the instances when no
@@ -331,9 +284,7 @@ mod tests {
     fn a_sub_attribute_term_holds_when_some_instance_passes() {
         let sql = render("\"https://example.com/temperature\".\"https://example.com/accuracy\"<0.2");
         assert!(
-            sql.contains(
-                r#"EXISTS(SELECT 1 FROM jsonb_path_query("entity_documents"."payload", '$[0]."https://example.com/temperature"[*]."https://example.com/accuracy"[*]') AS "attribute_instance""#
-            ),
+            sql.contains(r#"'$[0]."https://example.com/temperature"[*]."https://example.com/accuracy"[*]') AS "attribute_instance""#),
             "{sql}"
         );
         assert!(
@@ -349,7 +300,7 @@ mod tests {
     /// Clause 4.9 gives `attr[member]` two readings — a compound value member,
     /// and the target language of a `LanguageProperty` — and the query text
     /// cannot tell them apart, so both are compiled and disjoined. This is the
-    /// compound half: the payload jsonpath still carries the member key.
+    /// compound half: the document jsonpath still carries the member key.
     #[test]
     fn compound_value_path_falls_back_to_jsonpath_with_terminal_key() {
         let sql = render("\"https://example.com/address\"[city]==\"Berlin\"");
@@ -362,9 +313,9 @@ mod tests {
         assert!(sql.contains(" OR "), "{sql}");
     }
 
-    /// A sub-attribute lives only in the payload, so nothing probes the
-    /// projection: the Property-value reading and the `languageMap` reading of
-    /// a `LanguageProperty` sub-attribute (clause 4.9) both read the payload.
+    /// A history instance keeps its sub-attributes in its document alone: the
+    /// Property-value reading and the `languageMap` reading of a
+    /// `LanguageProperty` sub-attribute (clause 4.9) both read it.
     /// Clause 4.9 EXAMPLE 11 reads the member of a `JsonProperty`'s raw JSON,
     /// which the expanded-value reading never reaches.
     #[test]
@@ -388,9 +339,8 @@ mod tests {
     }
 
     #[test]
-    fn a_sub_attribute_path_compiles_to_the_payload_alone() {
+    fn a_sub_attribute_path_reads_the_rebuilt_document_alone() {
         let sql = render("\"https://example.com/address\".\"https://example.com/sub\"==\"a\"");
-        assert!(!sql.contains("current_attribute_values"), "{sql}");
         assert!(sql.contains("hasValue"), "{sql}");
         assert!(sql.contains("hasLanguageMap"), "{sql}");
     }
@@ -417,7 +367,7 @@ mod tests {
     }
 
     /// Clause 4.9 requires a Relationship operand to non-match every operator
-    /// other than equality and inequality, so the payload fallback must not reach
+    /// other than equality and inequality, so the document reading must not reach
     /// `hasObject` under an ordering or pattern operator.
     #[test]
     fn ordering_and_pattern_predicates_do_not_read_a_relationship_object() {
@@ -427,16 +377,16 @@ mod tests {
             "\"https://example.com/address\".\"https://example.com/sub\"!~=\"^a\"",
         ] {
             let sql = render(expression);
-            assert!(!sql.contains("hasObject"), "{expression}: {sql}");
-            assert!(sql.contains("hasValue"), "{expression}: {sql}");
+            assert!(!sql.contains("hasObject\"[0].\"@id\""), "{expression}: {sql}");
+            assert!(sql.contains("hasValue\"[0].\"@value\""), "{expression}: {sql}");
         }
     }
 
-    /// Clause 4.9 recommends the UCA for ordering text strings, so a payload
+    /// Clause 4.9 recommends the UCA for ordering text strings, so a document
     /// String ordering and both String bounds of a range collate under the ICU
     /// root collation, and a String equality does not.
     #[test]
-    fn a_payload_string_ordering_and_range_collate_under_the_icu_root_collation() {
+    fn a_document_string_ordering_and_range_collate_under_the_icu_root_collation() {
         for expression in [
             "\"https://example.com/address\".\"https://example.com/sub\">\"a\"",
             "\"https://example.com/address\".\"https://example.com/sub\"==\"a\"..\"m\"",
@@ -461,19 +411,46 @@ mod tests {
         // Every arm of a value
         // list is an equality comparison, so each one may match a Relationship's
         // object, not only a Property's value. A sub-attribute path forces the
-        // payload fallback rather than the projection.
+        // document reading.
         for expression in [
             "\"https://example.com/address\".\"https://example.com/sub\"==\"a\",\"b\"",
             "\"https://example.com/address\".\"https://example.com/sub\"!=\"a\",\"b\"",
         ] {
             let sql = render(expression);
-            assert!(sql.contains("hasObject"), "{expression}: {sql}");
-            assert_eq!(sql.matches("COALESCE").count(), 2, "{expression}: one per list member: {sql}");
+            assert!(sql.contains("hasObject\"[0].\"@id\""), "{expression}: {sql}");
+            assert_eq!(
+                sql.matches("COALESCE(jsonb_path_query_first(\"attribute_instance\"").count(),
+                2,
+                "{expression}: one per list member: {sql}"
+            );
         }
     }
 
+    /// A Query Term only a jsonpath answers is checked against every instance
+    /// valid within the window, so the rebuilt instance document is read in
+    /// the probe over the instances inside it and in the probe over the
+    /// instance in effect when it opens (clause 4.11, Annex C clause C.5.5).
     #[test]
-    fn fallback_escapes_apostrophes_in_attribute_iris() {
+    fn a_document_condition_over_history_probes_both_window_and_in_effect_instances() {
+        let start = DateTime::parse_from_rfc3339("2019-01-01T00:00:00Z")
+            .expect("a valid instant")
+            .with_timezone(&Utc);
+        let window = history_over(TimeInterval::After(start));
+        let address = "https://example.com/address".parse::<AttributeName>().expect("a valid attribute name");
+        let sql = render_condition(on_history_document(&window, &address, &names(), |document| {
+            Condition::all().add(SeaExpr::expr(document).is_not_null())
+        }));
+        assert_eq!(sql.matches("EXISTS").count(), 2, "{sql}");
+        assert_eq!(
+            sql.matches("jsonb_build_array(jsonb_build_object('https://example.com/address'").count(),
+            2,
+            "{sql}"
+        );
+        assert!(sql.contains("JOIN LATERAL"), "{sql}");
+    }
+
+    #[test]
+    fn a_document_reading_escapes_apostrophes_in_attribute_iris() {
         let path = AttrPath {
             attr: "https://example.com/o'brien".parse().expect("valid attribute name"),
             sub_attrs: vec!["https://example.com/sub".parse().expect("valid attribute name")],
@@ -486,7 +463,7 @@ mod tests {
             membership: SetMembership::Within,
             rhs: CompareValue::Scalar(Scalar::Str("x".to_string())),
         });
-        let condition = compile(&expr, &InstanceScan::Current(&EntityRowRefs::unaliased(None)), &names());
+        let condition = compile(&expr, &InstanceScan::History(&history_over(TimeInterval::Unbounded)), &names());
         let sql = render_condition(condition);
         assert!(sql.contains("o''brien"), "apostrophe must be doubled inside the SQL literal: {sql}");
     }

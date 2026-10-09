@@ -87,6 +87,12 @@ pub fn array_append(array: SimpleExpr, element: SimpleExpr) -> SimpleExpr {
     Func::cust(ArrayAppend).args([array, element]).into()
 }
 
+/// `array_cat(left, right)`: the elements of `left`, then those of `right`.
+#[must_use]
+pub fn array_cat(left: SimpleExpr, right: SimpleExpr) -> SimpleExpr {
+    Func::cust(ArrayCat).args([left, right]).into()
+}
+
 /// `ARRAY(subquery)` - the array-valued subquery constructor, which collects a
 /// single-column result set into one Postgres array.
 ///

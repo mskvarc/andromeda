@@ -3,8 +3,8 @@
 //! Clause 4.9 defines the target element as the last name of the attribute
 //! path, and the target value as whatever that element carries. A path may
 //! stop at the attribute itself, descend a `.`-separated sub-attribute chain,
-//! or carry one trailing `[…]` group. Only the first of those is answered by
-//! the `current_attribute_values` projection alone, and a target element that
+//! or carry one trailing `[…]` group. Only the first of those is the typed
+//! value of an attribute instance alone, and a target element that
 //! is a `LanguageProperty` -- at the top level or below a sub-attribute -- may
 //! be read with or without a target language. The routing decision is this
 //! classification, made once, rather than a boolean re-derived at every call
@@ -30,10 +30,11 @@ pub enum LocalTarget<'a> {
     /// text — a language tag and a JSON member name are both bare names — so
     /// both readings are compiled and disjoined.
     TrailingMember(&'a AttributeName),
-    /// A compound member nested below another, which lives only inside the
-    /// JSONB payload and has no language reading.
+    /// A compound member nested below another, which lives only inside a
+    /// structured value and has no language reading.
     PayloadMember,
-    /// A sub-attribute, which lives only inside the JSONB payload.
+    /// A sub-attribute, held in the sub-attribute tree of its attribute's
+    /// instance.
     ///
     /// The sub-attribute is the target element, and when it is a
     /// `LanguageProperty` clause 4.9 reads it through its `languageMap` exactly
@@ -155,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn a_nested_compound_member_is_answered_by_the_payload_alone() {
+    fn a_nested_compound_member_has_no_language_reading() {
         assert_eq!(local_target(&path_of("\"https://example.com/sensor\"[a.b]==40")), LocalTarget::PayloadMember);
     }
 }

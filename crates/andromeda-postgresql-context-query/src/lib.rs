@@ -17,6 +17,7 @@ pub mod entity;
 pub mod entity_head;
 pub mod entity_page;
 pub mod entity_relations;
+pub mod keyed_page;
 pub mod order_geography;
 pub mod result_ordering;
 pub mod selector_predicate;

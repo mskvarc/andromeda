@@ -39,6 +39,7 @@ pub mod queue;
 pub mod returning_image;
 pub mod setting;
 pub mod spherical_distance;
+pub mod sub_attribute_key;
 pub mod temporary_table;
 pub mod timescale;
 pub mod transaction;

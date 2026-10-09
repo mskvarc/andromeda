@@ -1,36 +1,47 @@
 //! `q` predicates compiled to `EXISTS` probes against the stored attribute
-//! instances an [`InstanceScan`] names: the `current_attribute_values`
-//! projection for a Query Entities `q`, the in-window `attribute_history` rows
-//! for a temporal one.
+//! instances an [`InstanceScan`] names: the `current_attributes` rows for a
+//! Query Entities `q`, the in-window `attribute_history` rows for a temporal
+//! one.
 //!
-//! This module routes each Query Term to the compilation of its operator
-//! (`equality_term`, `ordering_term`, `pattern_term`, and existence here) by
-//! what its path addresses, and descends linked-entity hops first.
+//! This module routes each Query Term by what its path addresses (see
+//! [`local_target`]) to the readings that can hold its target value, and
+//! compiles each reading with the comparison of its operator
+//! (`equality_term`, `ordering_term`, `pattern_term`, and existence here). It
+//! descends linked-entity hops first.
 
 use crate::{
     dictionary::query_names::QueryNames,
+    entity_row_refs::EntityRowRefs,
     q_predicate::{
-        equality_term::compile_equality,
-        fallback::fallback_exists,
+        document_term::{document_equality, document_exists, document_ordering, document_pattern, on_history_document},
+        equality_term::equality_value,
+        history_window::HistoryWindow,
+        instance_row::InstanceRow,
         instance_scan::InstanceScan,
         instance_test::{CompiledTerm, Disjunction, InstanceTest},
-        language_map::LanguageMap,
+        json_value_term::{JsonTarget, json_equality, json_ordering, json_pattern},
+        language_map::{LanguageMap, LanguageSelection},
         language_term::language_term,
         local_target::{LocalTarget, local_target},
-        ordering_term::compile_ordering,
-        pattern_term::compile_pattern,
-        structured_target::carries_target_language,
+        ordering_term::ordering_value,
+        pattern_term::pattern_value,
+        projection_probe::{ProbeShape, probe},
+        structured_target::{StructuredTarget, carries_target_language},
+        sub_attribute::element_path::ElementPath,
         traversal::LinkedHop,
         value_column::ValueColumn,
+        value_object_member::on_some_member,
     },
 };
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::{
     expression::Expr,
     path::{AttrPath, QueryPath},
     predicate::{PatternPolarity, Predicate},
 };
 use andromeda_postgresql_seaquery::literal::false_literal;
-use sea_query::Condition;
+use sea_query::{Condition, SimpleExpr};
+use std::ptr;
 
 /// Compile a parsed `q` expression into a sea-query [`Condition`].
 ///
@@ -51,9 +62,24 @@ use sea_query::Condition;
 /// drive from the value indexes.
 #[must_use]
 pub fn compile(expr: &Expr, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+    compile_with(expr, scan, names, None)
+}
+
+/// [`compile`], with `answered` (a term of `expr`'s top-level conjunction the
+/// statement answers on its own) compiled as no constraint.
+#[must_use]
+pub fn compile_except(expr: &Expr, answered: &Predicate, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+    compile_with(expr, scan, names, Some(answered))
+}
+
+/// Compile `expr`, leaving out the one term `answered` names.
+fn compile_with(expr: &Expr, scan: &InstanceScan<'_>, names: &QueryNames, answered: Option<&Predicate>) -> Condition {
     match expr {
-        Expr::And(terms) => terms.iter().fold(Condition::all(), |cond, term| cond.add(compile(term, scan, names))),
+        Expr::And(terms) => terms
+            .iter()
+            .fold(Condition::all(), |cond, term| cond.add(compile_with(term, scan, names, answered))),
         Expr::Or(terms) => disjunction(terms, Disjunction::default(), scan, names).into_condition(scan),
+        Expr::Pred(pred) if answered.is_some_and(|answered| ptr::eq(answered, pred)) => Condition::all(),
         Expr::Pred(pred) => compile_predicate(pred, scan, names).into_condition(scan),
     }
 }
@@ -85,7 +111,10 @@ fn compile_predicate(pred: &Predicate, scan: &InstanceScan<'_>, names: &QueryNam
 /// entity being queried and says nothing of the entities it points at.
 fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_>, names: &QueryNames, depth: usize) -> CompiledTerm {
     match path {
-        QueryPath::Local(local) => compile_local_predicate(pred, local, scan, names),
+        QueryPath::Local(local) => match scan {
+            InstanceScan::Current(rows) => compile_current(pred, local, rows, names),
+            InstanceScan::History(window) => compile_history(pred, local, window, names),
+        },
         QueryPath::Linked {
             relationship,
             guard_types,
@@ -106,31 +135,161 @@ fn compile_along_path(pred: &Predicate, path: &QueryPath, scan: &InstanceScan<'_
     }
 }
 
-/// Compile the comparison itself, routing it by operator and by what its path
-/// addresses.
+/// Where an instance holds the value a term with no target language reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reading {
+    /// The instance's own value (clause 4.9 target value with no trailing
+    /// path), a `languageMap` read in every language.
+    OwnValue,
+    /// The members of a compound value the trailing path addresses.
+    Members,
+}
+
+/// The reading the trailing group of a path gives its target value.
 ///
-/// A sub-attribute that is a `LanguageProperty` is the target element of its
-/// path (clause 4.9), and only the payload holds it, so its `languageMap`
-/// reading is disjoined with the payload reading of a Property's value. The two
-/// cannot both match one instance: only a `LanguageProperty` carries
-/// `hasLanguageMap`, and it carries no `hasValue`.
-fn compile_local_predicate(pred: &Predicate, path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
-    let target = local_target(path);
-    let term = match pred {
-        Predicate::Exists(_) => compile_exists(path, target, scan, names),
-        Predicate::Equality { membership, rhs, .. } => compile_equality(path, target, *membership, rhs, scan, names),
-        Predicate::Ordering { op, rhs, .. } => compile_ordering(pred, path, target, *op, rhs, scan, names),
-        Predicate::MatchPattern { pattern, .. } => compile_pattern(pred, path, target, pattern, PatternPolarity::Match, scan, names),
-        Predicate::NotMatchPattern { pattern, .. } => compile_pattern(pred, path, target, pattern, PatternPolarity::NotMatch, scan, names),
-    };
+/// One trailing member has a second reading beside the compound member, the
+/// target language of a `LanguageProperty` (see [`target_language`]), and the
+/// stored instance decides which applies. Neither can match the other's
+/// instances (a `languageMap` has no IRI-keyed members, a compound value no
+/// `@language`), so both are compiled and disjoined.
+const fn reading(target: LocalTarget<'_>) -> Reading {
     match target {
+        LocalTarget::OwnValue | LocalTarget::SubAttribute(Some(LanguageSelection::AnyLanguage)) => Reading::OwnValue,
+        LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember | LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(_)) | None) => {
+            Reading::Members
+        }
+    }
+}
+
+/// The target language of a one-member trailing group, if `target` has one.
+const fn target_language(target: LocalTarget<'_>) -> Option<&AttributeName> {
+    match target {
+        LocalTarget::TrailingMember(member) | LocalTarget::SubAttribute(Some(LanguageSelection::TargetLanguage(member))) => Some(member),
+        LocalTarget::OwnValue | LocalTarget::PayloadMember | LocalTarget::SubAttribute(Some(LanguageSelection::AnyLanguage) | None) => None,
+    }
+}
+
+/// Compile a term over current state.
+///
+/// The target element is held by a row of the attribute, or by an element of
+/// the row's `sub_attributes` for a sub-attribute path. A row's test joins the
+/// probe of its attribute, which a disjunction shares; an element's test is a
+/// probe of its own, walked in page order (see [`ProbeShape::Walked`]).
+fn compile_current(pred: &Predicate, path: &AttrPath, rows: &EntityRowRefs, names: &QueryNames) -> CompiledTerm {
+    let Some(element) = ElementPath::resolve(path, &names.attributes) else {
+        return unsatisfiable_term();
+    };
+    let target = local_target(path);
+    let holder = element.holder();
+    let value = if let Some(field) = element.field {
+        field.of_instance(holder).map_or_else(unsatisfiable, |column| field.condition(&column, pred))
+    } else {
+        let own = match reading(target) {
+            Reading::OwnValue => own_value(pred, holder),
+            Reading::Members => on_some_member(path, holder, |member| json_reading(pred, member)),
+        };
+        match target_language(target) {
+            Some(language) => Condition::any().add(language_reading(pred, language, holder)).add(own),
+            None => own,
+        }
+    };
+    if element.chain.is_empty() {
+        return CompiledTerm::Instances(InstanceTest {
+            attribute: element.attribute,
+            value,
+        });
+    }
+    CompiledTerm::Standalone(probe(element.attribute, element.condition(value), rows, ProbeShape::Walked))
+}
+
+/// A term against the instance's own value.
+fn own_value(pred: &Predicate, row: InstanceRow) -> Condition {
+    match pred {
+        // An instance *is* the attribute: an attribute deleted by clause
+        // 5.6.16 leaves no row and no element behind, so presence needs no
+        // further guard.
+        Predicate::Exists(_) => Condition::all(),
+        Predicate::Equality { membership, rhs, .. } => equality_value(StructuredTarget::AnyValue, *membership, rhs, row),
+        Predicate::Ordering { op, rhs, .. } => ordering_value(pred, *op, rhs, row),
+        Predicate::MatchPattern { pattern, .. } => pattern_value(pred, pattern, PatternPolarity::Match, row),
+        Predicate::NotMatchPattern { pattern, .. } => pattern_value(pred, pattern, PatternPolarity::NotMatch, row),
+    }
+}
+
+/// A term against the strings a `languageMap` holds under one target
+/// language (clause 4.9).
+///
+/// Existence asks for the matching key-value pair, which is the target element
+/// of a language-selected path.
+fn language_reading(pred: &Predicate, language: &AttributeName, row: InstanceRow) -> Condition {
+    match pred {
+        Predicate::Exists(_) => carries_target_language(&row.value(ValueColumn::Object), language),
+        Predicate::Equality { membership, rhs, .. } => equality_value(StructuredTarget::TargetLanguage(language), *membership, rhs, row),
+        Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. } => {
+            Condition::all().add(language_term(pred, &LanguageMap::of_instance(row), LanguageSelection::TargetLanguage(language)))
+        }
+    }
+}
+
+/// A term against one member of a compound value.
+fn json_reading(pred: &Predicate, member: &JsonTarget) -> Condition {
+    match pred {
+        Predicate::Exists(_) => Condition::all().add(member.presence.clone()), // clone: the member is read by every test
+        Predicate::Equality { membership, rhs, .. } => json_equality(member, *membership, rhs),
+        Predicate::Ordering { op, rhs, .. } => json_ordering(member, *op, rhs),
+        Predicate::MatchPattern { pattern, .. } => json_pattern(member, pattern, PatternPolarity::Match),
+        Predicate::NotMatchPattern { pattern, .. } => json_pattern(member, pattern, PatternPolarity::NotMatch),
+    }
+}
+
+/// Compile a term over the instances of a temporal window.
+///
+/// A history row holds a top-level instance's value in the typed columns a
+/// current row does, and its sub-attributes verbatim in `metadata`, so a term
+/// on the attribute's own value (or one language of it) reads the row and every
+/// other term reads the instance rebuilt as an expanded document. A
+/// sub-attribute that is a `LanguageProperty` is the target element of its
+/// path (clause 4.9), so its `languageMap` reading is disjoined with the
+/// document reading of a Property's value. The two cannot both match one
+/// instance: only a `LanguageProperty` carries `hasLanguageMap`, and it carries
+/// no `hasValue`.
+fn compile_history(pred: &Predicate, path: &AttrPath, window: &HistoryWindow, names: &QueryNames) -> CompiledTerm {
+    let target = local_target(path);
+    let scan = InstanceScan::History(window);
+    let document = || on_history_document(window, &path.attr, names, |document| document_reading(pred, path, &document));
+    match target {
+        LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
+            Some(id) => CompiledTerm::Instances(InstanceTest {
+                attribute: id,
+                value: own_value(pred, InstanceRow::History),
+            }),
+            None => unsatisfiable_term(),
+        },
+        LocalTarget::TrailingMember(member) => {
+            let tagged = match names.attributes.get(&path.attr) {
+                Some(id) => scan.exists(id, language_reading(pred, member, InstanceRow::History)),
+                None => unsatisfiable(),
+            };
+            CompiledTerm::Standalone(Condition::any().add(tagged).add(document()))
+        }
         LocalTarget::SubAttribute(Some(selection)) => {
-            let language = scan.document_condition(&path.attr, names, |document| {
+            let language = on_history_document(window, &path.attr, names, |document| {
                 Condition::all().add(language_term(pred, &LanguageMap::of_document(path, document), selection))
             });
-            CompiledTerm::Standalone(Condition::any().add(term.into_condition(scan)).add(language))
+            CompiledTerm::Standalone(Condition::any().add(document()).add(language))
         }
-        LocalTarget::OwnValue | LocalTarget::TrailingMember(_) | LocalTarget::PayloadMember | LocalTarget::SubAttribute(None) => term,
+        LocalTarget::PayloadMember | LocalTarget::SubAttribute(None) => CompiledTerm::Standalone(document()),
+    }
+}
+
+/// A term against the rebuilt document of a history instance.
+fn document_reading(pred: &Predicate, path: &AttrPath, document: &SimpleExpr) -> Condition {
+    match pred {
+        Predicate::Exists(_) => document_exists(path, document),
+        Predicate::Equality { membership, rhs, .. } => document_equality(path, *membership, rhs, document),
+        Predicate::Ordering { op, rhs, .. } => document_ordering(path, *op, rhs, document),
+        Predicate::MatchPattern { pattern, .. } => document_pattern(path, pattern, PatternPolarity::Match, document),
+        Predicate::NotMatchPattern { pattern, .. } => document_pattern(path, pattern, PatternPolarity::NotMatch, document),
     }
 }
 
@@ -144,48 +303,13 @@ pub(crate) fn unsatisfiable_term() -> CompiledTerm {
     CompiledTerm::Standalone(unsatisfiable())
 }
 
-/// Compile a bare existence predicate.
-///
-/// A row in the projection *is* the attribute: the tombstone value kind belongs
-/// to history and never appears in current state, so an attribute deleted by
-/// clause 5.6.16 leaves no row behind and presence needs no further guard.
-///
-/// The obvious alternative, `payload->0 ? '<iri>'`, cannot use the GIN index on
-/// `payload`: GIN's `jsonb_ops` only serves `?` when the left operand is the
-/// bare indexed column, and `payload->0` is an expression. It is a sequential
-/// scan.
-fn compile_exists(path: &AttrPath, target: LocalTarget<'_>, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
-    let fallback = || scan.document_condition(&path.attr, names, |document| fallback_exists(path, &document));
-    match target {
-        LocalTarget::OwnValue => match names.attributes.get(&path.attr) {
-            Some(id) => CompiledTerm::Instances(InstanceTest {
-                attribute: id,
-                value: Condition::all(),
-            }),
-            None => unsatisfiable_term(),
-        },
-        // Clause 4.9's target element for a language-selected path is the
-        // matching key-value pair, so its presence is what existence asks —
-        // and, on any other family, the presence of the compound member the
-        // same spelling addresses.
-        LocalTarget::TrailingMember(member) => {
-            let tagged = match names.attributes.get(&path.attr) {
-                Some(id) => scan.exists(id, carries_target_language(&scan.value(ValueColumn::Object), member)),
-                None => unsatisfiable(),
-            };
-            CompiledTerm::Standalone(Condition::any().add(tagged).add(fallback()))
-        }
-        LocalTarget::PayloadMember | LocalTarget::SubAttribute(_) => CompiledTerm::Standalone(fallback()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         attribute_name_key::AttributeNameKey,
         dictionary::resolved_names::ResolvedNames,
-        entity_row_refs::{DocumentsRef, EntityRowRefs},
+        entity_row_refs::EntityRowRefs,
         entity_type_name_key::EntityTypeNameKey,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -225,6 +349,7 @@ mod tests {
             ("https://example.com/color".parse().expect("valid attribute name"), AttributeNameKey::from(13)),
             ("https://example.com/name".parse().expect("valid attribute name"), AttributeNameKey::from(14)),
             ("https://example.com/address".parse().expect("valid attribute name"), AttributeNameKey::from(15)),
+            ("https://example.com/label".parse().expect("valid attribute name"), AttributeNameKey::from(40)),
             ("https://example.com/a".parse().expect("valid attribute name"), AttributeNameKey::from(16)),
             ("https://example.com/b".parse().expect("valid attribute name"), AttributeNameKey::from(17)),
             ("https://example.com/c".parse().expect("valid attribute name"), AttributeNameKey::from(18)),
@@ -267,8 +392,8 @@ mod tests {
     fn number_comparison_probes_typed_number_column() {
         let (sql, binds) = render(&format!("{}>50", quoted(SPEED)));
         assert!(sql.contains("EXISTS"), "{sql}");
-        assert!(sql.contains("\"current_attribute_values\""), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_number\" >"), "{sql}");
+        assert!(sql.contains("\"current_attributes\""), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_number\" >"), "{sql}");
         assert!(matches!(binds[0], Value::Int(Some(7))), "attribute id binds as int4: {binds:?}");
         assert!(
             matches!(&binds[1], Value::BigDecimal(Some(value)) if value.to_string() == "50"),
@@ -279,7 +404,7 @@ mod tests {
     #[test]
     fn a_number_comparison_binds_numeric_without_a_double_conversion() {
         let (sql, binds) = render(&format!("{}>0.100000000000000005", quoted(SPEED)));
-        assert!(sql.contains("\"cav\".\"value_number\" > $2"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_number\" > $2"), "{sql}");
         assert!(!sql.contains("double precision"), "{sql}");
         assert!(
             matches!(&binds[1], Value::BigDecimal(Some(value)) if value.to_string() == "0.100000000000000005"),
@@ -294,16 +419,16 @@ mod tests {
         // defined over String targets. `value_uri` holds Relationship objects and
         // nothing else, so a pattern must not probe it.
         let (sql, _) = render("\"https://example.com/brandName\"~=\"Merc.*\"");
-        assert!(sql.contains("\"cav\".\"value_string\" ~"), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_long_text\" ~"), "a pattern reads both string columns: {sql}");
+        assert!(sql.contains("\"ca\".\"value_string\" ~"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_long_text\" ~"), "a pattern reads both string columns: {sql}");
         assert!(!sql.contains("value_uri"), "a pattern must not test relationship objects: {sql}");
     }
 
     #[test]
     fn a_negated_pattern_does_not_reach_relationship_objects_either() {
         let (sql, _) = render("\"https://example.com/brandName\"!~=\"Merc.*\"");
-        assert!(sql.contains("\"cav\".\"value_string\" !~"), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_long_text\" !~"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_string\" !~"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_long_text\" !~"), "{sql}");
         assert!(!sql.contains("value_uri"), "{sql}");
     }
 
@@ -314,9 +439,9 @@ mod tests {
             "\"https://example.com/brandName\"!=\"Mercedes\"",
         ] {
             let (sql, _) = render(expression);
-            assert!(sql.contains("\"cav\".\"value_string\" "), "{expression}: {sql}");
+            assert!(sql.contains("\"ca\".\"value_string\" "), "{expression}: {sql}");
             assert!(
-                sql.contains("\"cav\".\"value_uri\" "),
+                sql.contains("\"ca\".\"value_uri\" "),
                 "{expression}: relationship objects are legal equality targets: {sql}"
             );
         }
@@ -333,7 +458,7 @@ mod tests {
             "\"https://example.com/brandName\"<=\"Mercedes\"",
         ] {
             let (sql, _) = render(expression);
-            assert!(sql.contains("(\"cav\".\"value_string\") COLLATE \"und-x-icu\""), "{expression}: {sql}");
+            assert!(sql.contains("(\"ca\".\"value_string\") COLLATE \"und-x-icu\""), "{expression}: {sql}");
             assert!(!sql.contains("value_uri"), "{expression}: {sql}");
         }
     }
@@ -370,9 +495,9 @@ mod tests {
     fn an_inequality_negates_the_whole_equality_condition_totally() {
         let (sql, _) = render("\"https://example.com/brandName\"!=\"Mercedes\"");
         assert!(sql.contains("NOT COALESCE("), "the negation reads an unknown as a non-match: {sql}");
-        assert!(sql.contains("\"cav\".\"value_string\" = "), "the inner condition is the equality one: {sql}");
-        assert!(sql.contains("\"cav\".\"value_uri\" = "), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_object\" @> "), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_string\" = "), "the inner condition is the equality one: {sql}");
+        assert!(sql.contains("\"ca\".\"value_uri\" = "), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_object\" @> "), "{sql}");
         assert!(!sql.contains(" != "), "no per-column inequality survives: {sql}");
     }
 
@@ -385,8 +510,8 @@ mod tests {
         let long = "a".repeat(INDEXED_STRING_BYTE_LIMIT + 1);
         let (sql, _) = render(&format!("\"https://example.com/name\"!=\"{long}\""));
         assert!(sql.contains("NOT COALESCE("), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_long_text\" = "), "{sql}");
-        assert!(!sql.contains("\"cav\".\"value_string\" = "), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_long_text\" = "), "{sql}");
+        assert!(!sql.contains("\"ca\".\"value_string\" = "), "{sql}");
     }
 
     /// A string range is two ordering comparisons, and each reads both string
@@ -394,8 +519,8 @@ mod tests {
     #[test]
     fn a_string_range_reads_both_string_columns_on_each_bound() {
         let (sql, _) = render("\"https://example.com/brandName\"==\"a\"..\"z\"");
-        assert_eq!(sql.matches("(\"cav\".\"value_string\") COLLATE \"und-x-icu\"").count(), 2, "{sql}");
-        assert_eq!(sql.matches("(\"cav\".\"value_long_text\") COLLATE \"und-x-icu\"").count(), 2, "{sql}");
+        assert_eq!(sql.matches("(\"ca\".\"value_string\") COLLATE \"und-x-icu\"").count(), 2, "{sql}");
+        assert_eq!(sql.matches("(\"ca\".\"value_long_text\") COLLATE \"und-x-icu\"").count(), 2, "{sql}");
     }
 
     /// A Relationship object is an identifier of at most 1024 octets, so the
@@ -435,8 +560,8 @@ mod tests {
     fn a_negated_range_negates_the_interval_test_totally() {
         let (sql, _) = render(&format!("{}!=10..20", quoted(SPEED)));
         assert!(sql.contains("NOT COALESCE("), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_number\" >= "), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_number\" <= "), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_number\" >= "), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_number\" <= "), "{sql}");
     }
 
     /// A language-selected inequality keeps its own compilation: clause 4.9
@@ -448,12 +573,12 @@ mod tests {
     fn a_language_selected_inequality_requires_a_language_property_rather_than_the_key() {
         let (sql, _) = render("\"https://example.com/color\"[en]!=\"red\"");
         assert!(
-            sql.contains("(EXISTS(SELECT 1 FROM jsonb_array_elements((CASE WHEN (\"cav\".\"attribute_kind\" = (5))"),
+            sql.contains("(EXISTS(SELECT 1 FROM jsonb_array_elements((CASE WHEN (\"ca\".\"attribute_kind\" = (5))"),
             "the LanguageProperty guard: {sql}"
         );
         assert!(!sql.contains("jsonb_build_object('@language', $2::text)) "), "no key guard: {sql}");
         assert!(
-            !sql.contains("\"cav\".\"value_string\" = "),
+            !sql.contains("\"ca\".\"value_string\" = "),
             "no typed column answers a language-selected path: {sql}"
         );
     }
@@ -480,21 +605,21 @@ mod tests {
     #[test]
     fn boolean_comparison_binds_native_boolean() {
         let (sql, binds) = render("\"https://example.com/active\"==true");
-        assert!(sql.contains("\"cav\".\"value_boolean\" ="), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_boolean\" ="), "{sql}");
         assert!(binds.iter().any(|b| matches!(b, Value::Bool(Some(true)))), "{binds:?}");
     }
 
     #[test]
     fn datetime_comparison_binds_native_timestamp() {
         let (sql, binds) = render("\"https://example.com/observed\">=2017-12-24T12:00:00Z");
-        assert!(sql.contains("\"cav\".\"value_date_time\" >="), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_date_time\" >="), "{sql}");
         assert!(binds.iter().any(|b| matches!(b, Value::ChronoDateTimeUtc(_))), "{binds:?}");
     }
 
     #[test]
     fn date_scalar_compares_as_text_because_the_projection_stores_it_that_way() {
         let (sql, _) = render("\"https://example.com/d\"==2024-01-01");
-        assert!(sql.contains("\"cav\".\"value_string\" ="), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_string\" ="), "{sql}");
         assert!(!sql.contains("value_date_time"), "only full date-times reach value_date_time: {sql}");
     }
 
@@ -518,7 +643,7 @@ mod tests {
         // The stored column is byte-wise collated, so the comparison is
         // chronological exactly because both sides are the fixed-width form.
         let (sql, binds) = render("\"https://example.com/d\">\"09:30:00.5Z\"");
-        assert!(sql.contains("\"cav\".\"value_string\" >"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_string\" >"), "{sql}");
         assert!(
             binds
                 .iter()
@@ -531,8 +656,8 @@ mod tests {
     fn inclusive_range_becomes_a_bounded_pair_inside_one_probe() {
         let (sql, binds) = render("\"https://example.com/temperature\"==10..20");
         assert_eq!(sql.matches("EXISTS").count(), 1, "one probe, not two: {sql}");
-        assert!(sql.contains("\"cav\".\"value_number\" >="), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_number\" <="), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_number\" >="), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_number\" <="), "{sql}");
         assert!(matches!(binds[0], Value::Int(Some(12))));
         assert!(matches!(&binds[1], Value::BigDecimal(Some(value)) if value.to_string() == "10"));
         assert!(matches!(&binds[2], Value::BigDecimal(Some(value)) if value.to_string() == "20"));
@@ -542,8 +667,8 @@ mod tests {
     fn excluded_range_requires_the_attribute_to_exist() {
         let (sql, _) = render("\"https://example.com/temperature\"!=10..20");
         assert!(sql.contains("EXISTS"), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_number\" <"), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_number\" >"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_number\" <"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_number\" >"), "{sql}");
     }
 
     #[test]
@@ -568,7 +693,7 @@ mod tests {
     #[test]
     fn integers_beyond_binary64_precision_use_the_numeric_projection() {
         let (sql, binds) = render(&format!("{}==9007199254740993", quoted(SPEED)));
-        assert!(sql.contains("current_attribute_values"), "{sql}");
+        assert!(sql.contains("current_attributes"), "{sql}");
         assert!(!sql.contains("jsonb_path_query_first"), "{sql}");
         assert!(
             matches!(&binds[1], Value::BigDecimal(Some(value)) if value.to_string() == "9007199254740993"),
@@ -579,23 +704,23 @@ mod tests {
     #[test]
     fn exact_fractions_use_the_projection() {
         let (sql, _) = render(&format!("{}>0.100000000000000005", quoted(SPEED)));
-        assert!(sql.contains("\"cav\".\"value_number\" >"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_number\" >"), "{sql}");
     }
 
     #[test]
     fn pattern_match_uses_posix_regex_on_the_string_column() {
         let (sql, _) = render("\"https://example.com/name\"~=\"^A.*\"");
-        assert!(sql.contains("\"cav\".\"value_string\" ~"), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_long_text\" ~"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_string\" ~"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_long_text\" ~"), "{sql}");
     }
 
     #[test]
     fn negated_pattern_sits_inside_the_probe_so_missing_attributes_do_not_match() {
         let (sql, _) = render("\"https://example.com/name\"!~=\"^A.*\"");
-        assert!(sql.contains("\"cav\".\"value_string\" !~"), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_long_text\" !~"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_string\" !~"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_long_text\" !~"), "{sql}");
         assert!(
-            !sql.contains("NOT (EXISTS(SELECT 1 FROM \"current_attribute_values\"") && !sql.contains("NOT EXISTS(SELECT 1 FROM \"current_attribute_values\""),
+            !sql.contains("NOT (EXISTS(SELECT 1 FROM \"current_attributes\"") && !sql.contains("NOT EXISTS(SELECT 1 FROM \"current_attributes\""),
             "clause 4.9 requires the target element to be present: {sql}"
         );
     }
@@ -608,10 +733,10 @@ mod tests {
     #[test]
     fn an_unqualified_equality_reaches_the_structured_value_column() {
         let (sql, _) = render("\"https://example.com/color\"==\"red\"");
-        assert!(sql.contains("\"cav\".\"value_string\" = "), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_object\" @> jsonb_build_array($"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_string\" = "), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_object\" @> jsonb_build_array($"), "{sql}");
         assert!(
-            sql.contains("\"cav\".\"value_object\" @> jsonb_build_array(jsonb_build_object('@value', $"),
+            sql.contains("\"ca\".\"value_object\" @> jsonb_build_array(jsonb_build_object('@value', $"),
             "the value-node element shape a languageMap and a valueList carry: {sql}"
         );
     }
@@ -624,7 +749,7 @@ mod tests {
     #[test]
     fn a_uri_query_term_reaches_an_object_list_through_the_bare_element_shape() {
         let (sql, binds) = render("\"https://example.com/color\"==\"urn:ngsi-ld:Part:1\"");
-        assert!(sql.contains("\"cav\".\"value_object\" @> jsonb_build_array($"), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_object\" @> jsonb_build_array($"), "{sql}");
         assert!(
             binds
                 .iter()
@@ -636,16 +761,18 @@ mod tests {
     /// Clause 4.9: "the target value is defined as the Value associated to the
     /// matching key-value pair held within the languageMap ... where the key
     /// matches the target language". The row decides whether `attr[en]` means
-    /// that or a compound value member, so both are compiled.
+    /// that or a compound value member, so both are compiled, as one test of
+    /// the attribute's rows.
     #[test]
-    fn a_target_language_compiles_a_language_map_probe_beside_the_payload_reading() {
+    fn a_target_language_compiles_a_language_map_reading_beside_the_member_reading() {
         let (sql, _) = render("\"https://example.com/color\"[en]==\"red\"");
         assert!(
             sql.contains("jsonb_build_object('@language', $2::text, '@value', $3::text)"),
             "the languageMap reading: {sql}"
         );
-        assert!(sql.contains("jsonb_path_query_first"), "the compound-value reading: {sql}");
+        assert!(sql.contains(r#"jsonb_path_query("ca"."value_object""#), "the compound-value reading: {sql}");
         assert!(sql.contains(" OR "), "{sql}");
+        assert_eq!(sql.matches("FROM \"current_attributes\"").count(), 1, "{sql}");
     }
 
     /// A language-selected path addresses a `languageMap` key. A scalar-valued
@@ -656,7 +783,7 @@ mod tests {
     fn a_target_language_never_consults_the_typed_scalar_columns() {
         for expression in ["\"https://example.com/color\"[en]==5", "\"https://example.com/color\"[en]!=5"] {
             let (sql, _) = render(expression);
-            assert!(!sql.contains("\"cav\".\"value_number\""), "{expression}: {sql}");
+            assert!(!sql.contains("\"ca\".\"value_number\""), "{expression}: {sql}");
         }
     }
 
@@ -670,8 +797,8 @@ mod tests {
     fn an_unqualified_inequality_negates_every_reading_of_the_target_value_at_once() {
         let (sql, _) = render("\"https://example.com/color\"!=\"red\"");
         assert_eq!(sql.matches("NOT COALESCE(").count(), 1, "{sql}");
-        assert!(sql.contains("\"cav\".\"value_object\" @> "), "the structured readings are inside it: {sql}");
-        assert!(sql.contains("\"cav\".\"value_string\" = "), "so are the typed columns: {sql}");
+        assert!(sql.contains("\"ca\".\"value_object\" @> "), "the structured readings are inside it: {sql}");
+        assert!(sql.contains("\"ca\".\"value_string\" = "), "so are the typed columns: {sql}");
         assert!(sql.contains("EXISTS"), "{sql}");
         assert!(!sql.contains("NOT (EXISTS"), "{sql}");
     }
@@ -681,7 +808,7 @@ mod tests {
     #[test]
     fn a_value_list_reaches_the_structured_value_column_once_per_member() {
         let (sql, _) = render("\"https://example.com/color\"==\"red\",\"blue\"");
-        assert_eq!(sql.matches("\"cav\".\"value_object\" @> ").count(), 4, "two shapes per member: {sql}");
+        assert_eq!(sql.matches("\"ca\".\"value_object\" @> ").count(), 4, "two shapes per member: {sql}");
         assert_eq!(sql.matches("EXISTS").count(), 1, "one probe, not one per member: {sql}");
     }
 
@@ -690,7 +817,7 @@ mod tests {
     #[test]
     fn a_negated_value_list_denies_the_structured_value_column_for_every_member() {
         let (sql, _) = render("\"https://example.com/color\"!=\"red\",\"blue\"");
-        assert_eq!(sql.matches("\"cav\".\"value_object\" @> ").count(), 4, "two element shapes per member: {sql}");
+        assert_eq!(sql.matches("\"ca\".\"value_object\" @> ").count(), 4, "two element shapes per member: {sql}");
         assert_eq!(sql.matches("NOT COALESCE(").count(), 2, "one negation per member: {sql}");
     }
 
@@ -701,7 +828,10 @@ mod tests {
         let (sql, _) = render("\"https://example.com/color\"[en]");
         assert!(sql.contains("jsonb_build_object('@language', $2::text)"), "{sql}");
         assert!(!sql.contains("'@value'"), "existence says nothing about the value: {sql}");
-        assert!(sql.contains("jsonb_path_exists"), "the compound-member reading is compiled beside it: {sql}");
+        assert!(
+            sql.contains(r#"jsonb_path_query("ca"."value_object""#),
+            "the compound-member reading is compiled beside it: {sql}"
+        );
     }
 
     /// Clause 4.9's ordering, pattern and range operators are not containment
@@ -721,10 +851,10 @@ mod tests {
             let (sql, _) = render(expression);
             assert!(!sql.contains("\"value_object\" @>"), "{expression}: {sql}");
             assert!(
-                sql.contains(r#"jsonb_array_elements((CASE WHEN ("cav"."attribute_kind" = (5)) THEN "cav"."value_object" END))"#),
+                sql.contains(r#"jsonb_array_elements((CASE WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object" END))"#),
                 "{expression}: {sql}"
             );
-            assert!(sql.contains("\"cav\".\"value_string\""), "the typed column is still read: {expression}: {sql}");
+            assert!(sql.contains("\"ca\".\"value_string\""), "the typed column is still read: {expression}: {sql}");
         }
     }
 
@@ -793,10 +923,10 @@ mod tests {
     }
 
     /// Clause 4.9's target element is the last name of the dotted path, so a
-    /// `LanguageProperty` sub-attribute is read through its `languageMap` in
-    /// the payload, beside the reading of a Property value.
+    /// `LanguageProperty` sub-attribute is read through the `languageMap` its
+    /// element holds, beside the reading of a compound member.
     #[test]
-    fn a_sub_attribute_is_read_through_its_language_map_in_the_payload() {
+    fn a_sub_attribute_is_read_through_the_language_map_of_its_element() {
         for expression in [
             "\"https://example.com/address\".\"https://example.com/label\"[en]==\"Front\"",
             "\"https://example.com/address\".\"https://example.com/label\"[en]!=\"Front\"",
@@ -806,14 +936,9 @@ mod tests {
             "\"https://example.com/address\".\"https://example.com/label\"==\"Front\"",
         ] {
             let (sql, _) = render(expression);
-            assert!(
-                sql.contains(r#"."https://example.com/label"[*]."https://uri.etsi.org/ngsi-ld/hasLanguageMap"[*]"#),
-                "{expression}: {sql}"
-            );
-            assert!(
-                !sql.contains("current_attribute_values"),
-                "a sub-attribute is not projected: {expression}: {sql}"
-            );
+            assert!(sql.contains(r#"UNNEST("ca"."sub_attributes") AS "l0""#), "{expression}: {sql}");
+            assert!(sql.contains(r#""l0"."value_object""#), "{expression}: {sql}");
+            assert!(!sql.contains("hasLanguageMap"), "{expression}: {sql}");
         }
     }
 
@@ -821,7 +946,8 @@ mod tests {
     #[test]
     fn a_nested_compound_path_below_a_sub_attribute_reads_no_language_map() {
         let (sql, _) = render("\"https://example.com/address\".\"https://example.com/label\"[a.b]==\"x\"");
-        assert!(!sql.contains("hasLanguageMap"), "{sql}");
+        assert!(!sql.contains("'@language'"), "{sql}");
+        assert!(sql.contains(r#"jsonb_path_query("l0"."value_object""#), "{sql}");
     }
 
     #[test]
@@ -832,7 +958,7 @@ mod tests {
             &EntityRowRefs::unaliased(None),
         );
         assert!(sql.contains("FALSE"), "{sql}");
-        assert!(!sql.contains("current_attribute_values"), "no probe is emitted when no row can exist: {sql}");
+        assert!(!sql.contains("current_attributes"), "no probe is emitted when no row can exist: {sql}");
     }
 
     #[test]
@@ -843,9 +969,9 @@ mod tests {
         pretty_assertions::assert_eq!(
             sql,
             concat!(
-                r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
-                r#"WHERE "cav"."attribute_name_key" = $1 AND ("cav"."expires_at" IS NULL OR "cav"."expires_at" > NOW()) "#,
-                r#"AND "cav"."entity_key" = "entities"."entity_key")"#,
+                r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attributes" AS "ca" "#,
+                r#"WHERE "ca"."attribute_name_key" = $1 AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) "#,
+                r#"AND "ca"."entity_key" = "entities"."entity_key")"#,
             )
         );
         assert!(matches!(binds[0], Value::Int(Some(7))), "{binds:?}");
@@ -855,7 +981,7 @@ mod tests {
     fn unknown_attribute_existence_compiles_to_a_constant_false() {
         let (sql, _) = render("\"https://example.com/never-written\"");
         assert!(sql.contains("FALSE"), "{sql}");
-        assert!(!sql.contains("current_attribute_values"), "{sql}");
+        assert!(!sql.contains("current_attributes"), "{sql}");
     }
 
     #[test]
@@ -881,9 +1007,9 @@ mod tests {
             "(\"https://example.com/color\"==\"red\"|\"https://example.com/name\"==\"x\")|\"https://example.com/a\"==1",
         ] {
             let (sql, _) = render(expression);
-            assert_eq!(sql.matches("FROM \"current_attribute_values\"").count(), 1, "{expression}: {sql}");
+            assert_eq!(sql.matches("FROM \"current_attributes\"").count(), 1, "{expression}: {sql}");
             assert!(
-                sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\" AS \"cav\" WHERE (\"cav\".\"expires_at\" IS NULL"),
+                sql.contains("EXISTS(SELECT 1 FROM \"current_attributes\" AS \"ca\" WHERE (\"ca\".\"expires_at\" IS NULL"),
                 "the attribute key moves into each arm: {expression}: {sql}"
             );
         }
@@ -894,7 +1020,7 @@ mod tests {
     #[test]
     fn a_shared_probe_binds_each_attribute_key_ahead_of_its_operands() {
         let (sql, binds) = render("\"https://example.com/color\"==\"red\"|\"https://example.com/name\"==\"x\"");
-        assert!(sql.contains("(\"cav\".\"attribute_name_key\" = $1 AND "), "{sql}");
+        assert!(sql.contains("(\"ca\".\"attribute_name_key\" = $1 AND "), "{sql}");
         assert!(matches!(binds[0], Value::Int(Some(13))), "{binds:?}");
         let second = binds
             .iter()
@@ -908,23 +1034,88 @@ mod tests {
         );
     }
 
-    /// A linked-entity hop reads other rows than the scan does, and a payload
-    /// reading reads no instance row at all, so neither joins the shared probe.
+    /// A linked-entity hop reads other rows than the scan does, so it stands
+    /// beside the shared probe, which a compound member reading joins: it reads
+    /// the `value_object` of a row of its attribute.
     #[test]
-    fn hops_and_payload_readings_stand_beside_the_shared_probe() {
+    fn hops_stand_beside_the_shared_probe_and_member_readings_join_it() {
         let (sql, _) = render(&format!(
             "{}{{{}}}==\"x\"|\"https://example.com/color\"==\"red\"|\"https://example.com/name\"==\"y\"|\"https://example.com/address\"[street]>\"a\"",
             quoted(IS_PARKED_IN),
             quoted(CATEGORY)
         ));
         assert!(sql.contains("\"cav_ln1\""), "the hop keeps its own probe: {sql}");
-        assert!(sql.contains("jsonb_path_query_first"), "the payload reading stays: {sql}");
+        assert!(sql.contains(r#"jsonb_path_query("ca"."value_object""#), "the member reading: {sql}");
         assert_eq!(
-            sql.matches("FROM \"current_attribute_values\" AS \"cav\" WHERE (\"cav\".\"expires_at\"")
-                .count(),
+            sql.matches("FROM \"current_attributes\" AS \"ca\" WHERE (\"ca\".\"expires_at\"").count(),
             1,
-            "the two plain terms share one probe: {sql}"
+            "the three row terms share one probe: {sql}"
         );
+    }
+
+    /// A range on a sub-attribute has no key to read, so its probe walks: it
+    /// carries an `OFFSET`, which keeps it a per-row probe in page order, and
+    /// rechecks the element inline.
+    #[test]
+    fn a_sub_attribute_range_walks() {
+        let (sql, _) = render("\"https://example.com/address\".\"https://example.com/label\">0.5");
+        assert!(!sql.contains("&&"), "{sql}");
+        assert!(sql.contains(r#"UNNEST("ca"."sub_attributes") AS "l0""#), "{sql}");
+        assert!(sql.contains(r#""l0"."value_number" > "#), "{sql}");
+        assert!(sql.contains("OFFSET"), "the probe is walked: {sql}");
+    }
+
+    /// No trigram index covers an element's strings, so a pattern on a
+    /// sub-attribute walks and reads the element's one string field.
+    #[test]
+    fn a_sub_attribute_pattern_walks_without_a_trigram_filter() {
+        let (sql, _) = render("\"https://example.com/address\".\"https://example.com/label\"~=\"^x\"");
+        assert!(!sql.contains("&&") && !sql.contains(" % ") && !sql.contains("similarity"), "{sql}");
+        assert!(sql.contains(r#""l0"."value_string" ~ "#), "{sql}");
+        assert!(!sql.contains("value_long_text"), "{sql}");
+        assert!(sql.contains("OFFSET"), "{sql}");
+    }
+
+    /// A top-level pattern is matched whole: PostgreSQL extracts the trigrams
+    /// `idx_ca_value_string_trgm` filters on from the pattern itself, anchors
+    /// included, and newline-sensitive mode is never set.
+    #[test]
+    fn a_top_level_pattern_keeps_its_anchors_and_never_sets_newline_mode() {
+        let (sql, binds) = render("\"https://example.com/color\"~=\"^x-[0-9]$\"");
+        assert!(sql.contains(r#""ca"."value_string" ~ "#), "{sql}");
+        assert!(
+            binds
+                .iter()
+                .any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "^x-[0-9]$")),
+            "{binds:?}"
+        );
+        assert!(
+            !binds.iter().any(|bind| matches!(bind, Value::String(Some(text)) if text.contains("(?n)"))),
+            "{binds:?}"
+        );
+        assert!(!sql.contains("OFFSET"), "a row term stays a planned probe: {sql}");
+    }
+
+    /// A member of a sub-attribute's compound value is read out of the
+    /// element's `value_object`, which no key covers, so the term walks.
+    #[test]
+    fn a_value_object_sub_attribute_walks() {
+        let (sql, _) = render("\"https://example.com/address\".\"https://example.com/label\"[c]==\"x\"");
+        assert!(!sql.contains("&&"), "{sql}");
+        assert!(sql.contains(r#"jsonb_path_query("l0"."value_object""#), "{sql}");
+        assert!(sql.contains("OFFSET"), "{sql}");
+    }
+
+    /// A path ending on a member of the attribute reads the field of its row,
+    /// with no element chain at all.
+    #[test]
+    fn a_member_of_the_attribute_is_read_from_its_row() {
+        let (sql, _) = render(&format!(
+            "{}.\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2024-01-01T00:00:00Z\"",
+            quoted(SPEED)
+        ));
+        assert!(sql.contains(r#""ca"."observed_at" > "#), "{sql}");
+        assert!(!sql.contains("UNNEST"), "{sql}");
     }
 
     /// Two terms one instance must pass together are not two terms two
@@ -940,15 +1131,15 @@ mod tests {
         let (sql, _) = render_with(
             &format!("{}>50", quoted(SPEED)),
             &names(),
-            &EntityRowRefs::aliased(None, Alias::new("ce"), Alias::new("cs"), DocumentsRef::ByKeyLookup),
+            &EntityRowRefs::aliased(None, Alias::new("ce"), Alias::new("cs")),
         );
-        assert!(sql.contains("\"cav\".\"entity_key\" = \"ce\".\"entity_key\""), "{sql}");
+        assert!(sql.contains("\"ca\".\"entity_key\" = \"ce\".\"entity_key\""), "{sql}");
     }
 
     #[test]
     fn entity_queries_correlate_on_the_entities_surrogate_key() {
         let (sql, _) = render(&format!("{}>50", quoted(SPEED)));
-        assert!(sql.contains("\"cav\".\"entity_key\" = \"entities\".\"entity_key\""), "{sql}");
+        assert!(sql.contains("\"ca\".\"entity_key\" = \"entities\".\"entity_key\""), "{sql}");
         assert!(!sql.contains("\"entities\".\"id\""), "the URI is not the correlation column: {sql}");
     }
 
@@ -967,8 +1158,8 @@ mod tests {
         assert!(!sql.contains("entity_search"), "a hop without a type guard reads no search row: {sql}");
         // The inner comparison is correlated against the linked entity's key,
         // which is the row the join on its URI landed on.
-        assert!(sql.contains("\"cav\".\"entity_key\" = \"le1\".\"entity_key\""), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_string\" ="), "{sql}");
+        assert!(sql.contains("\"ca\".\"entity_key\" = \"le1\".\"entity_key\""), "{sql}");
+        assert!(sql.contains("\"ca\".\"value_string\" ="), "{sql}");
         assert!(
             matches!(binds[0], Value::Int(Some(19))),
             "the relationship's dictionary key binds first: {binds:?}"
@@ -1002,12 +1193,12 @@ mod tests {
                 r#"AND "cav_ln1"."attribute_name_key" = $1 "#,
                 r#"AND ("cav_ln1"."expires_at" IS NULL OR "cav_ln1"."expires_at" > NOW()) "#,
                 r#"AND (("ls1"."entity_type_name_keys" @> (ARRAY[31])) OR ("ls1"."entity_type_name_keys" @> (ARRAY[32]))) "#,
-                r#"AND EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
-                r#"WHERE "cav"."attribute_name_key" = $2 AND ("cav"."expires_at" IS NULL OR "cav"."expires_at" > NOW()) "#,
-                r#"AND ("cav"."value_string" = $3 OR "cav"."value_uri" = $4 "#,
-                r#"OR (("cav"."value_object" @> jsonb_build_array($5::text)) "#,
-                r#"OR ("cav"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $6::text))))) "#,
-                r#"AND "cav"."entity_key" = "le1"."entity_key"))"#,
+                r#"AND EXISTS(SELECT 1 FROM "current_attributes" AS "ca" "#,
+                r#"WHERE "ca"."attribute_name_key" = $2 AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) "#,
+                r#"AND ("ca"."value_string" = $3 OR "ca"."value_uri" = $4 "#,
+                r#"OR (("ca"."value_object" @> jsonb_build_array($5::text)) "#,
+                r#"OR ("ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $6::text))))) "#,
+                r#"AND "ca"."entity_key" = "le1"."entity_key"))"#,
             )
         );
         assert!(
@@ -1058,7 +1249,7 @@ mod tests {
             sql.contains("\"cav_ln2\".\"entity_key\" = \"le1\".\"entity_key\""),
             "the second hop starts at the first's target: {sql}"
         );
-        assert!(sql.contains("\"cav\".\"entity_key\" = \"le2\".\"entity_key\""), "{sql}");
+        assert!(sql.contains("\"ca\".\"entity_key\" = \"le2\".\"entity_key\""), "{sql}");
     }
 
     #[test]
@@ -1066,7 +1257,7 @@ mod tests {
         let (sql, _) = render(&format!("{}{{{}}}", quoted(IS_PARKED_IN), quoted(CATEGORY)));
         assert!(sql.contains("\"current_attribute_values\" AS \"cav_ln1\""), "{sql}");
         assert!(
-            sql.contains("\"cav\".\"entity_key\" = \"le1\".\"entity_key\""),
+            sql.contains("\"ca\".\"entity_key\" = \"le1\".\"entity_key\""),
             "existence resolves against the entity the hop landed on: {sql}"
         );
     }

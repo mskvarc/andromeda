@@ -114,11 +114,7 @@ mod tests {
         pattern::Pattern,
         type_selection::grammar::TypeExpr,
     };
-    use andromeda_postgresql_query::{
-        dictionary::resolved_names::ResolvedNames,
-        entity_row_refs::{DocumentsRef, EntityRowRefs},
-        entity_type_name_key::EntityTypeNameKey,
-    };
+    use andromeda_postgresql_query::{dictionary::resolved_names::ResolvedNames, entity_row_refs::EntityRowRefs, entity_type_name_key::EntityTypeNameKey};
     use iri_rs::IriBuf;
     use sea_query::{Alias, Condition, Expr, PostgresQueryBuilder, Query};
 
@@ -148,7 +144,7 @@ mod tests {
 
     fn render(selectors: Vec<EntitySelector>, source: &RowSource) -> Option<String> {
         let selection = EntitySelection::builder().selectors(selectors).build();
-        let rows = EntityRowRefs::unaliased_with(None, DocumentsRef::ByKeyLookup).keyed_by(Alias::new("selected"));
+        let rows = EntityRowRefs::unaliased(None).keyed_by(Alias::new("selected"));
         condition(&selection, &rows, &types(), source)
             .map(|condition: Condition| Query::select().expr(Expr::val(1)).cond_where(condition).to_string(PostgresQueryBuilder))
     }

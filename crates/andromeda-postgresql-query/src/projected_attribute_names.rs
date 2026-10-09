@@ -1,15 +1,16 @@
 //! Which attribute names a compiled query has to resolve against the
 //! `attribute_names` dictionary before its SQL can be rendered.
 //!
-//! Four parts of a query reach an attribute by dictionary key rather than
-//! through the JSONB payload, and so have to be collected here: the member
-//! existence terms -- `attrs` (clause 5.5.9) and the names a `pick` / `omit`
-//! projection keeps an entity alive by (clause 4.21) --, a `q` filter's
-//! predicate targets, the `GeoProperty` a geo-query names (clause 4.10), and the
-//! `GeoProperty` a distance ordering measures to (clause 4.23). Everything else
-//! is navigated inside the payload and has no dictionary row to look up.
+//! Five parts of a query reach an attribute by dictionary key, and so have to
+//! be collected here: the member existence terms -- `attrs` (clause 5.5.9) and
+//! the names a `pick` / `omit` projection keeps an entity alive by (clause
+//! 4.21) --, a `q` filter's predicate targets and the sub-attributes on their
+//! paths, the `GeoProperty` a geo-query names (clause 4.10), the `GeoProperty`
+//! a distance ordering measures to, and the attribute and sub-attributes a
+//! value ordering reads (clause 4.23). Members of a compound value are
+//! navigated inside a `value_object` and have no dictionary row to look up.
 
-use crate::q_predicate::attribute_names::referenced_attribute_names;
+use crate::q_predicate::{attribute_names::referenced_attribute_names, sub_attribute::member_field::MemberField};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     filter::expression::Expr,
@@ -41,6 +42,16 @@ pub fn projected_attribute_names<'a>(
         // clone: the caller owns the resolved list, which outlives the query
         names.push(geo.geoproperty.clone());
     }
+    for term in order_terms.iter().filter(|term| !term.direction.is_distance()) {
+        match &term.target {
+            OrderTarget::Attribute(path) => {
+                // clone: the caller owns the resolved list, which outlives the query
+                names.push(path.attr.clone());
+                names.extend(path.sub_attrs.iter().filter(|name| MemberField::of(name).is_none()).cloned());
+            }
+            OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::CreatedAt | OrderTarget::ModifiedAt => {}
+        }
+    }
     for term in order_terms.iter().filter(|term| term.direction.is_distance()) {
         match &term.target {
             // Only the attribute itself can be the `GeoProperty` a distance is
@@ -63,7 +74,7 @@ pub fn projected_attribute_names<'a>(
 ///
 /// A geo-query always resolves its target, the default `location` included:
 /// clause 5.7.2.4 lets any instance of it match, and every instance but the
-/// hoisted default one is a `current_attribute_values` row keyed by the
+/// hoisted default one is a `current_attributes` row keyed by the
 /// dictionary. A distance ordering on `location` (clause 4.23) measures from
 /// the hoisted default instance's dedicated `geography` column alone, so it
 /// keys nothing; every other `GeoProperty`, the clause 4.7 `observationSpace`
@@ -186,11 +197,11 @@ mod tests {
         assert_eq!(projected_attribute_names([], None, None, &terms), [] as [AttributeName; 0]);
     }
 
-    /// A value ordering navigates the payload, so it contributes nothing.
+    /// A value ordering reads the attribute's rows by dictionary key.
     #[test]
-    fn a_value_ordering_contributes_no_name() {
+    fn a_value_ordering_contributes_its_attribute() {
         let terms = [order_term(ordered_attribute("https://example.com/temperature"), OrderDirection::Asc)];
-        assert_eq!(projected_attribute_names([], None, None, &terms), [] as [AttributeName; 0]);
+        assert_eq!(projected_attribute_names([], None, None, &terms), [name("https://example.com/temperature")]);
     }
 
     /// Clause 4.23's keywords name no attribute, whichever direction they sort.
