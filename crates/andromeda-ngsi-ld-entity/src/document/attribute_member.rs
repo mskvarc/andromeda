@@ -27,15 +27,6 @@ impl AttributeMember {
         }
     }
 
-    /// Drop `createdAt` and `modifiedAt` from every instance of this member,
-    /// its own sub-attributes left as they are.
-    pub fn forget_system_instants(&mut self) {
-        match self {
-            AttributeMember::Remove => {}
-            AttributeMember::Instances(instances) => instances.iter_mut().for_each(InstanceDocument::forget_system_instants),
-        }
-    }
-
     /// Drop `createdAt` and `modifiedAt` from every instance of this member
     /// and of its sub-attributes, at every depth.
     pub fn forget_system_instants_throughout(&mut self) {
@@ -85,13 +76,6 @@ mod tests {
         let instance = &member.instances()[0];
         let nested = &instance.sub_attributes()[0].instances()[0];
         [(instance.created_at(), instance.modified_at()), (nested.created_at(), nested.modified_at())]
-    }
-
-    #[test]
-    fn forgetting_system_times_leaves_the_sub_attributes_alone() {
-        let mut member = stamped_member();
-        member.forget_system_instants();
-        pretty_assertions::assert_eq!(times(&member), [(None, None), (Some(at()), Some(at()))]);
     }
 
     #[test]

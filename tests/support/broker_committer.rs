@@ -7,10 +7,7 @@
 
 use andromeda_context_commit::commit_consequence_publisher::NoCommitConsequencePublisher;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use andromeda_postgresql_atomic_write::{
-    committer::{EntityInsertMode, PostgresAtomicCommitter},
-    history_mode::TemporalHistoryCommitMode,
-};
+use andromeda_postgresql_atomic_write::{committer::PostgresAtomicCommitter, history_mode::TemporalHistoryCommitMode};
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_cache_config::NameCacheConfig, name_lookup::NameLookup};
 use andromeda_postgresql_temporal_store::{
     bulk_write_mode::BulkWriteMode,
@@ -40,7 +37,6 @@ pub fn committer(pool: &PgPool) -> PostgresAtomicCommitter {
             recorder: Arc::new(TemporalRecorder::new(repository)),
         },
         CoreWriteHistory::Recorded,
-        EntityInsertMode::Unnest,
         attribute_names,
         entity_type_names,
         Arc::new(NoCommitConsequencePublisher),

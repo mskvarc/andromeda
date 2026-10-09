@@ -1,8 +1,13 @@
-//! The batch update: one statement that overwrites each staged entity's payload
-//! and rewrites its search and lifecycle rows only where they changed.
+//! The batch update: one statement that overwrites each staged entity's
+//! attribute instances and rewrites its search and lifecycle rows.
 
 use crate::{
     branch_statement::BranchStatement,
+    current_attribute::{
+        staged_rows::StagedRows,
+        staging::{apply_instances_alias, instances_cte},
+        write::{replaced_rows, vanished_rows},
+    },
     entity::{
         census::delta::{CensusChange, CensusStatements},
         mapper::stored_written_entity,
@@ -11,16 +16,17 @@ use crate::{
         staged_geometry::{kept_column, staged_column},
         types_present::{entity_write_failure, types_present},
         write::{
-            payload_staging::{DocumentWrite, Pay, apply_payload_alias, payload_cte, payload_of, staged_expectation, staged_payload},
             search_image::SearchImage,
             staging::{
-                Docs,
+                Attrs,
                 Ents,
+                Gone,
                 HOISTED_COLUMNS,
                 HoistedColumn,
                 Proj,
                 ProjectedWrite,
                 Srch,
+                StagedColumn,
                 apply_staged_alias,
                 expectation,
                 projected,
@@ -37,7 +43,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
+use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     clock::now,
     pg_operator::PgBinaryOperator,
@@ -58,67 +64,66 @@ static ENTITY_UPDATE_STATEMENT: BranchStatement = BranchStatement::new(entity_up
 /// Build the batch update.
 ///
 /// ```sql
-/// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $15::boolean[]) AS d(…)),
-///      pay AS (SELECT p.id, p.expected_modified_at, p.payload
-///              FROM UNNEST($1::text[], $16::timestamptz[], $17::text[]) AS p(id, expected_modified_at, payload)),
-///      docs AS (UPDATE entity_documents SET payload = pay.payload::jsonb, modified_at = NOW()
-///               FROM pay, entities
-///               WHERE pay.id = entities.id
-///                 AND entity_documents.entity_key = entities.entity_key
-///                 AND (pay.expected_modified_at IS NULL OR entity_documents.modified_at = pay.expected_modified_at)
-///               RETURNING entity_documents.entity_key, entities.id),
+/// WITH proj AS (SELECT … FROM UNNEST($1::text[], …, $17::timestamptz[]) AS d(…)),
+///      ents AS (UPDATE entities SET modified_at = NOW(), expires_at = proj.expires_at,
+///                                   min_attribute_expires_at = proj.min_attribute_expires_at
+///               FROM proj
+///               WHERE entities.id = proj.id
+///                 AND (proj.expected_modified_at IS NULL OR entities.modified_at = proj.expected_modified_at)
+///               RETURNING entities.entity_key, entities.id),
 ///      srch(entity_key, id, old_types, new_types, old_instance_names, …) AS
 ///              (UPDATE entity_search SET entity_type_name_keys = proj.entity_type_name_keys, …,
 ///                      location = CASE WHEN proj.loc_kept THEN entity_search.location ELSE proj.location END, …,
-///                      written_xid = pg_current_xact_id() FROM docs, proj
-///               WHERE proj.id = docs.id AND entity_search.entity_key = docs.entity_key
+///                      written_xid = pg_current_xact_id() FROM ents, proj
+///               WHERE proj.id = ents.id AND entity_search.entity_key = ents.entity_key
 ///                 AND (entity_search.entity_type_name_keys IS DISTINCT FROM proj.entity_type_name_keys OR …
 ///                      OR (NOT proj.loc_kept AND entity_search.location IS DISTINCT FROM proj.location) OR … )
-///               RETURNING entity_search.entity_key, docs.id, old.entity_type_name_keys, new.entity_type_name_keys, …),
-///      ents AS (UPDATE entities SET expires_at = proj.expires_at,
-///                                   min_attribute_expires_at = proj.min_attribute_expires_at
-///               FROM docs, proj
-///               WHERE proj.id = docs.id AND entities.entity_key = docs.entity_key
-///                 AND (entities.expires_at IS DISTINCT FROM proj.expires_at OR entities.min_attribute_expires_at IS DISTINCT FROM proj.min_attribute_expires_at)),
+///               RETURNING entity_search.entity_key, ents.id, old.entity_type_name_keys, new.entity_type_name_keys, …),
 ///      strays AS (DELETE FROM entity_type_members WHERE (entity_type_name_key, id) IN
 ///                 (SELECT <old type the new row lacks>, srch.id FROM srch …)),
 ///      mbrs AS (INSERT INTO entity_type_members (…) SELECT srch.entity_key, <new type the old row lacked>, srch.id FROM srch …),
+///      instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST($18::text[], …) AS r(…)),
+///      gone AS (DELETE FROM current_attributes WHERE entity_key IN (SELECT entity_key FROM ents)
+///               AND NOT EXISTS (<a staged row of the same grain>)),
+///      attrs AS (INSERT INTO current_attributes (entity_key, …) SELECT ents.entity_key, instances.… FROM ents JOIN instances ON instances.id = ents.id
+///                ON CONFLICT (entity_key, attribute_name_key, dataset_id) DO UPDATE SET ordinal = excluded.ordinal, …),
 ///      census_shapes AS (SELECT <image arrays>, SUM(±1) FROM srch … GROUP BY <image arrays>),
 ///      census_types AS (INSERT INTO entity_type_census …), census_type_attributes AS (…), census_attributes AS (…)
-/// SELECT entity_key, id FROM docs
+/// SELECT entity_key, id FROM ents
 /// ```
 ///
-/// The payload write is the anchor ([`document_write`]). Its expectation
-/// column is nullable so one
-/// statement carries both an unconditional overwrite and a compare-and-set in
-/// the same batch: a null expectation matches whatever is there, a non-null
-/// one matches only an untouched row. An identifier that does not come back
-/// therefore means either "gone" or "moved on", and which of those it is
-/// depends on the precondition the caller attached. The document statement
-/// names only the payload and its version token — no column any index of
-/// `entity_documents` covers — so the update stays a heap-only tuple.
-///
-/// The search and lifecycle rows are rewritten only for the entities whose
-/// payload write landed, and only where a projected column actually differs
-/// from what is stored: `IS DISTINCT FROM` on every column, so a value-only
-/// write leaves both rows and every search index untouched. A geometry the
-/// write leaves as the stored row holds it is staged as kept, with no EWKB:
-/// the statement neither parses nor validates nor compares its positions, and
-/// a row rewritten for another column keeps the stored geometry. Both expiry columns
-/// are replaced, because both are derived from the payload that was just
-/// replaced: an entity whose new document no longer carries `expiresAt`
+/// The identity row is the anchor ([`entity_write`]): it stamps the clause
+/// 4.8 `modifiedAt` and replaces both expiries, which are derived from the
+/// state just written: an entity whose new state no longer carries `expiresAt`
 /// (clause 4.22) must not keep an expiry instant that would later delete it.
-/// The type memberships and
-/// the discovery census move with the search row: both are derived from the
-/// pre- and post-image its write returns (PostgreSQL 18 `RETURNING old.*,
-/// new.*`), which is the row the write actually replaced, found after any
-/// concurrent writer it waited on. A value-only write rewrites no search row,
-/// so it moves no membership and counts nothing.
+/// Its expectation column is nullable so one statement carries both an
+/// unconditional overwrite and a compare-and-set in the same batch: a null
+/// expectation matches whatever is there, a non-null one matches only an
+/// untouched row. An identifier that does not come back therefore means
+/// either "gone" or "moved on", and which of those it is depends on the
+/// precondition the caller attached. No column the anchor writes is in an
+/// index unless it changed, so the update stays a heap-only tuple.
+///
+/// Every other relation is written only for the entities whose anchor landed.
+/// The attribute instances are the staged rows: a stored grain (clause 4.5.5)
+/// is overwritten in place, a new one inserted, and one the state no longer
+/// holds deleted. The search row is rewritten only where a projected column
+/// actually differs from what is stored: `IS DISTINCT FROM` on every column,
+/// so a value-only write leaves it and every search index untouched. A geometry
+/// the write leaves as the stored row holds it is staged as kept, with no EWKB:
+/// the statement neither parses nor validates nor compares its positions, and a
+/// row rewritten for another column keeps the stored geometry. The type
+/// memberships and the discovery census move with the search row: both are
+/// derived from the pre- and post-image its write returns (PostgreSQL 18
+/// `RETURNING old.*, new.*`), which is the row the write actually replaced,
+/// found after any concurrent writer it waited on. A value-only write rewrites
+/// no search row, so it moves no membership and counts nothing.
 ///
 /// # Errors
 ///
-/// Returns [`ContextStoreError::StatementBuild`] if the membership insert ever stops
-/// matching its column list, which its fixed shape makes unreachable.
+/// Returns [`ContextStoreError::StatementBuild`] if the membership or row
+/// insert ever stops matching its column list, which their fixed shapes make
+/// unreachable.
 pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let columns = update_staging_columns();
 
@@ -139,15 +144,15 @@ pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, Contex
     let changed = HOISTED_COLUMNS
         .into_iter()
         .fold(scalar_changed, |changed, column| changed.add(hoisted_changed(column)));
-    search.from(Docs).from(Proj).cond_where(
+    search.from(Ents).from(Proj).cond_where(
         Cond::all()
-            .add(Expr::col((Proj, Entities::Id)).equals((Docs, Entities::Id)))
-            .add(Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Docs, EntityDocuments::EntityKey)))
+            .add(Expr::col((Proj, Entities::Id)).equals((Ents, Entities::Id)))
+            .add(Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Ents, Entities::EntityKey)))
             .add(changed),
     );
     search.returning(Query::returning().exprs([
         Expr::col((EntitySearch::Table, EntitySearch::EntityKey)),
-        Expr::col((Docs, Entities::Id)),
+        Expr::col((Ents, Entities::Id)),
         Expr::col((Old, EntitySearch::EntityTypeNameKeys)),
         Expr::col((New, EntitySearch::EntityTypeNameKeys)),
         Expr::col((Old, EntitySearch::AttributeInstanceNameKeys)),
@@ -156,35 +161,9 @@ pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, Contex
         Expr::col((New, EntitySearch::AttributeInstanceKinds)),
     ]));
 
-    let mut lifecycle = Query::update();
-    lifecycle
-        .table(table_of(target, Entities::Table))
-        .value(Entities::ExpiresAt, projected(Entities::ExpiresAt))
-        .value(Entities::MinAttributeExpiresAt, projected(Entities::MinAttributeExpiresAt))
-        .from(Docs)
-        .from(Proj)
-        .cond_where(
-            Cond::all()
-                .add(Expr::col((Proj, Entities::Id)).equals((Docs, Entities::Id)))
-                .add(Expr::col((Entities::Table, Entities::EntityKey)).equals((Docs, EntityDocuments::EntityKey)))
-                .add(
-                    Cond::any()
-                        .add(SimpleExpr::from(Expr::col((Entities::Table, Entities::ExpiresAt))).distinct_from(projected(Entities::ExpiresAt)))
-                        .add(
-                            SimpleExpr::from(Expr::col((Entities::Table, Entities::MinAttributeExpiresAt)))
-                                .distinct_from(projected(Entities::MinAttributeExpiresAt)),
-                        ),
-                ),
-        );
-
-    let payload_source = DocumentWrite::Update {
-        expectation: columns.len() + 1,
-        payload: columns.len() + 2,
-    };
     let mut with = WithClause::new();
     with.cte(projection_cte(&columns, ProjectedWrite::Update))
-        .cte(payload_cte(payload_source))
-        .cte(CommonTableExpression::new().table_name(Docs).query(document_write(target)).to_owned())
+        .cte(CommonTableExpression::new().table_name(Ents).query(entity_write(target)).to_owned())
         .cte(
             CommonTableExpression::new()
                 .table_name(Srch)
@@ -201,55 +180,54 @@ pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, Contex
                 .query(search)
                 .to_owned(),
         )
-        .cte(CommonTableExpression::new().table_name(Ents).query(lifecycle).to_owned())
         .cte(CommonTableExpression::new().table_name(Strays).query(dropped_memberships(target)).to_owned())
-        .cte(CommonTableExpression::new().table_name(Mbrs).query(added_memberships(target)?).to_owned());
+        .cte(CommonTableExpression::new().table_name(Mbrs).query(added_memberships(target)?).to_owned())
+        .cte(instances_cte(columns.len() + 1))
+        .cte(CommonTableExpression::new().table_name(Gone).query(vanished_rows(target, Ents)).to_owned())
+        .cte(CommonTableExpression::new().table_name(Attrs).query(replaced_rows(target, Ents)?).to_owned());
     for census in CensusStatements::of(target, Srch, CensusChange::Replaced)?.ctes() {
         with.cte(census);
     }
-    let statement = with.query(Query::select().column(EntityDocuments::EntityKey).column(Entities::Id).from(Docs).take());
+    let statement = with.query(Query::select().column(Entities::EntityKey).column(Entities::Id).from(Ents).take());
 
     let sql = statement.to_string(PostgresQueryBuilder);
-    Ok(apply_payload_alias(apply_staged_alias(sql, &columns), payload_source))
+    Ok(apply_instances_alias(apply_staged_alias(sql, &columns)))
 }
 
-/// The update's anchor, `docs`: each payload whose expectation still holds,
-/// overwritten, with the key and identifier of every row it landed in.
+/// The update's anchor, `ents`: each identity row whose expectation still
+/// holds, stamped and given its new expiries, with the key and identifier of
+/// every row it landed in.
 ///
-/// It reads the payload source alone and finds each row through the unique
-/// identifier index, so its cost grows with the batch whatever row estimate
-/// the plan was made for.
-fn document_write(target: &ContextTarget) -> UpdateStatement {
+/// It finds each row through the unique identifier index, so its cost grows
+/// with the batch whatever row estimate the plan was made for.
+fn entity_write(target: &ContextTarget) -> UpdateStatement {
     Query::update()
-        .table(table_of(target, EntityDocuments::Table))
-        .value(EntityDocuments::Payload, staged_payload())
-        .value(EntityDocuments::ModifiedAt, now())
-        .from(Pay)
-        .from(table_of(target, Entities::Table))
+        .table(table_of(target, Entities::Table))
+        .value(Entities::ModifiedAt, now())
+        .value(Entities::ExpiresAt, projected(Entities::ExpiresAt))
+        .value(Entities::MinAttributeExpiresAt, projected(Entities::MinAttributeExpiresAt))
+        .from(Proj)
         .cond_where(
             Cond::all()
-                .add(payload_of(Entities::Table))
-                .add(Expr::col((EntityDocuments::Table, EntityDocuments::EntityKey)).equals((Entities::Table, Entities::EntityKey)))
-                .add(expectation(staged_expectation(), EntityDocuments::Table)),
+                .add(Expr::col((Entities::Table, Entities::Id)).equals((Proj, Entities::Id)))
+                .add(expectation(Expr::col((Proj, StagedColumn::ExpectedModifiedAt)), Entities::Table)),
         )
-        .returning(Query::returning().exprs([
-            Expr::col((EntityDocuments::Table, EntityDocuments::EntityKey)),
-            Expr::col((Entities::Table, Entities::Id)),
-        ]))
+        .returning(Query::returning().exprs([Expr::col((Entities::Table, Entities::EntityKey)), Expr::col((Entities::Table, Entities::Id))]))
         .take()
 }
 
-/// The six scalar `entity_search` columns the update projects, each written
+/// The seven scalar `entity_search` columns the update projects, each written
 /// and guarded by the same list so no column can be rewritten without being
 /// compared, or compared without being written. The three hoisted geometries
 /// ([`HOISTED_COLUMNS`]) are written and guarded the same way, unless the row
 /// keeps them.
-const SCALAR_SEARCH_COLUMNS: [EntitySearch; 6] = [
+const SCALAR_SEARCH_COLUMNS: [EntitySearch; 7] = [
     EntitySearch::EntityTypeNameKeys,
     EntitySearch::AttributeNameKeys,
     EntitySearch::AttributeInstanceNameKeys,
     EntitySearch::AttributeInstanceKinds,
     EntitySearch::ScopePaths,
+    EntitySearch::VerbatimScopePaths,
     EntitySearch::LocationExpiresAt,
 ];
 
@@ -275,7 +253,8 @@ fn hoisted_changed(column: HoistedColumn) -> Cond {
 
 impl EntityRepository {
     /// Overwrite every entity in `entities` whose expectation still holds,
-    /// returning the rows actually written.
+    /// its attribute instances becoming the rows `rows` stages for it,
+    /// returning the entities actually written.
     ///
     /// `expected_modified_at` is positionally aligned with `entities`; a `None`
     /// entry overwrites unconditionally.
@@ -290,6 +269,7 @@ impl EntityRepository {
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
         entities: &PreparedEntityColumns,
+        rows: StagedRows<'_>,
         expected_modified_at: &[Option<DateTime<Utc>>],
     ) -> Result<Vec<WrittenEntity>, ContextStoreError> {
         if entities.ids.is_empty() {
@@ -310,13 +290,14 @@ impl EntityRepository {
         let [locations, observation_spaces, operation_spaces] = geometries.map(|column| staged_column(column));
         let [locations_kept, observation_spaces_kept, operation_spaces_kept] = geometries.map(|column| kept_column(column));
         let sql = ENTITY_UPDATE_STATEMENT.text(target)?;
-        let rows = sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
+        let query = sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
             .bind(&ids)
             .bind(literal_texts(&entities.entity_type_name_keys))
             .bind(literal_texts(&entities.attribute_name_keys))
             .bind(literal_texts(&entities.attribute_instance_name_keys))
             .bind(literal_texts(&entities.attribute_instance_kinds))
             .bind(entities.scope_paths_bind())
+            .bind(entities.verbatim_scope_paths_bind())
             .bind(&locations)
             .bind(&observation_spaces)
             .bind(&operation_spaces)
@@ -326,9 +307,8 @@ impl EntityRepository {
             .bind(&locations_kept)
             .bind(&observation_spaces_kept)
             .bind(&operation_spaces_kept)
-            .bind(expected_modified_at)
-            .bind(&entities.payload_json)
-            .fetch_all(&mut **tx);
+            .bind(expected_modified_at);
+        let rows = rows.bind_to(query).fetch_all(&mut **tx);
         let rows: Vec<(i64, String)> = observe_statement(ENTITY_UPDATE, rows).await.map_err(entity_write_failure)?;
 
         rows.iter().map(|(key, id)| stored_written_entity(*key, id)).collect()
@@ -337,12 +317,20 @@ impl EntityRepository {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity::write::{
-        placeholders,
-        update::{ENTITY_UPDATE_STATEMENT, entity_update_sql},
+    use crate::{
+        current_attribute::staging::ROW_COLUMNS,
+        entity::write::{
+            placeholders,
+            staging::update_staging_columns,
+            update::{ENTITY_UPDATE_STATEMENT, entity_update_sql},
+        },
     };
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use std::{borrow::Cow, collections::BTreeSet, ptr};
+
+    fn update() -> String {
+        entity_update_sql(&ContextTarget::Live).expect("the fixed update builds")
+    }
 
     /// The live branch's update text is built once and lent to every write;
     /// a Snapshot branch's is built for its own schema each time.
@@ -351,41 +339,74 @@ mod tests {
         let first = ENTITY_UPDATE_STATEMENT.text(&ContextTarget::Live).expect("the fixed update builds");
         let second = ENTITY_UPDATE_STATEMENT.text(&ContextTarget::Live).expect("the fixed update builds");
         assert!(matches!((&first, &second), (Cow::Borrowed(a), Cow::Borrowed(b)) if ptr::eq(*a, *b)));
-        pretty_assertions::assert_eq!(first, entity_update_sql(&ContextTarget::Live).expect("the fixed update builds"));
+        pretty_assertions::assert_eq!(first, update());
 
         let key = SnapshotKey::try_from(5).expect("positive key");
         let snapshot = ContextTarget::Snapshot(SnapshotTarget::staging(key, "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri")));
         let text = ENTITY_UPDATE_STATEMENT.text(&snapshot).expect("the fixed update builds");
         assert!(matches!(text, Cow::Owned(_)));
-        assert!(text.contains(r#"UPDATE "snap_5_stg"."entity_documents""#), "{text}");
+        for relation in ["entities", "entity_search", "current_attributes"] {
+            assert!(text.contains(&format!(r#""snap_5_stg"."{relation}""#)), "{relation}: {text}");
+        }
     }
 
     #[test]
-    fn the_update_binds_seventeen_placeholders_and_names_its_staging_columns() {
-        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
-        pretty_assertions::assert_eq!(placeholders(&sql), (1..=17).collect::<BTreeSet<u32>>());
+    fn the_update_binds_contiguous_placeholders_and_names_its_staging_columns() {
+        let sql = update();
+        let binds = update_staging_columns().len() + ROW_COLUMNS.len() + 1;
+        pretty_assertions::assert_eq!(
+            placeholders(&sql),
+            (1..=u32::try_from(binds).expect("a small count")).collect::<BTreeSet<u32>>()
+        );
         assert!(
             sql.contains(
-                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at, loc_kept, obs_kept, ops_kept)"
+                " AS d(id, entity_type_name_keys_literal, attribute_name_keys_literal, attribute_instance_name_keys_literal, attribute_instance_kinds_literal, scope_paths_json, verbatim_scope_paths_json, loc, obs, ops, loc_expires_at, expires_at, min_attribute_expires_at, loc_kept, obs_kept, ops_kept, expected_modified_at)"
             ),
             "{sql}"
         );
         assert!(
-            sql.contains("UNNEST($1::text[], $16::timestamptz[], $17::text[]) AS p(id, expected_modified_at, payload)"),
-            "{sql}"
+            !sql.to_lowercase().contains("ordinality"),
+            "no row is paired by its position in the batch: {sql}"
         );
-        assert!(!sql.contains("ORDINALITY"), "no row is paired by its position in the batch: {sql}");
     }
 
-    /// The stored document is read by the document write alone, so it is
-    /// staged apart from the materialised projection every sibling reads, and
-    /// cast to `jsonb` only where it is stored.
+    /// Clause 4.8: the compare-and-set token is the entity's `modifiedAt`, which
+    /// the anchor compares with what the caller read and stamps anew.
     #[test]
-    fn the_payload_is_staged_apart_from_the_projection() {
-        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
-        let projection = sql.split(r#", "pay" AS ("#).next().unwrap_or_default();
-        assert!(!projection.contains("payload"), "the projection carries no payload: {projection}");
-        pretty_assertions::assert_eq!(sql.matches(r#""pay"."#).count(), 4, "only the document write reads the payload source: {sql}");
+    fn a_compare_and_set_write_states_the_read_token() {
+        let sql = update();
+        assert!(
+            sql.contains(r#""ents" AS (UPDATE "entities" SET "modified_at" = NOW(), "expires_at" = "proj"."expires_at", "min_attribute_expires_at" = "proj"."min_attribute_expires_at" FROM "proj" WHERE "entities"."id" = "proj"."id" AND"#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#""proj"."expected_modified_at" IS NULL OR "entities"."modified_at" = "proj"."expected_modified_at""#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#"RETURNING "entities"."entity_key", "entities"."id")"#), "{sql}");
+        assert!(sql.ends_with(r#"SELECT "entity_key", "id" FROM "ents""#), "{sql}");
+        assert!(!sql.contains("entity_documents"), "{sql}");
+    }
+
+    /// The attribute instances are the staged rows: a stored grain is
+    /// overwritten, a new one inserted, a vanished one deleted, each paired
+    /// with its entity by identifier and only for an entity the anchor wrote.
+    #[test]
+    fn the_update_replaces_the_instance_rows_of_every_written_entity() {
+        let sql = update();
+        assert!(
+            sql.contains(r#""attrs" AS (INSERT INTO "current_attributes" ("entity_key", "attribute_name_key""#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#"FROM "ents" JOIN "instances" ON "instances"."id" = "ents"."id""#), "{sql}");
+        assert!(
+            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_key", "dataset_id") DO UPDATE SET"#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents")"#),
+            "{sql}"
+        );
     }
 
     /// A geometry the row keeps is the stored column itself and changes
@@ -393,7 +414,7 @@ mod tests {
     /// another column, given a re-projection of it.
     #[test]
     fn a_kept_geometry_keeps_the_stored_column_and_is_not_compared() {
-        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
+        let sql = update();
         for (column, kept) in [("location", "loc_kept"), ("observation_space", "obs_kept"), ("operation_space", "ops_kept")] {
             assert!(
                 sql.contains(&format!(
@@ -411,38 +432,20 @@ mod tests {
     }
 
     #[test]
-    fn the_document_write_is_the_compare_and_set_anchor_and_names_only_heap_neutral_columns() {
-        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
-        assert!(
-            sql.contains(r#""docs" AS (UPDATE "entity_documents" SET "payload" = "pay"."payload"::jsonb, "modified_at" = NOW() FROM "pay", "entities" WHERE "pay"."id" = "entities"."id" AND "entity_documents"."entity_key" = "entities"."entity_key" AND"#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#""pay"."expected_modified_at" IS NULL OR "entity_documents"."modified_at" = "pay"."expected_modified_at""#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"RETURNING "entity_documents"."entity_key", "entities"."id")"#), "{sql}");
-        assert!(sql.ends_with(r#"SELECT "entity_key", "id" FROM "docs""#), "{sql}");
-    }
-
-    #[test]
     fn the_search_row_is_rewritten_only_where_a_projected_column_differs() {
-        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
+        let sql = update();
         assert!(
             sql.contains(r#""srch" ("entity_key", "id", "old_types", "new_types", "old_instance_names", "new_instance_names", "old_instance_kinds", "new_instance_kinds") AS (UPDATE "entity_search" SET "entity_type_name_keys" = "proj"."entity_type_name_keys""#),
             "{sql}"
         );
-        pretty_assertions::assert_eq!(
-            sql.matches("IS DISTINCT FROM").count(),
-            11,
-            "nine search columns and two lifecycle columns are guarded: {sql}"
-        );
+        pretty_assertions::assert_eq!(sql.matches("IS DISTINCT FROM").count(), 10, "ten search columns are guarded: {sql}");
         for column in [
             "entity_type_name_keys",
             "attribute_name_keys",
             "attribute_instance_name_keys",
             "attribute_instance_kinds",
             "scope_paths",
+            "verbatim_scope_paths",
             "location",
             "observation_space",
             "operation_space",
@@ -453,7 +456,7 @@ mod tests {
                 "{column} must be guarded: {sql}"
             );
         }
-        assert!(sql.contains(r#""entity_search"."entity_key" = "docs"."entity_key""#), "{sql}");
+        assert!(sql.contains(r#""entity_search"."entity_key" = "ents"."entity_key""#), "{sql}");
     }
 
     /// A spatial index catching up from the store reads the search rows written
@@ -462,25 +465,18 @@ mod tests {
     /// no projected column changed.
     #[test]
     fn a_rewritten_search_row_is_stamped_with_the_writing_transaction() {
-        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
-        assert!(sql.contains(r#""written_xid" = pg_current_xact_id() FROM "docs", "proj""#), "{sql}");
+        let sql = update();
+        assert!(sql.contains(r#""written_xid" = pg_current_xact_id() FROM "ents", "proj""#), "{sql}");
         assert!(!sql.contains(r#""written_xid" IS DISTINCT FROM"#), "{sql}");
     }
 
-    /// Both expiries follow the payload just written (clause 4.22): an update
-    /// whose document dropped the entity's `expiresAt` clears the column, so
-    /// the expiry sweep never deletes the entity at an instant its own
-    /// document no longer asks for.
+    /// Both expiries follow the state just written (clause 4.22): an update
+    /// whose state dropped the entity's `expiresAt` clears the column, so the
+    /// expiry sweep never deletes the entity at an instant its own state no
+    /// longer asks for.
     #[test]
-    fn the_lifecycle_row_replaces_both_expiries_with_the_written_payloads() {
-        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
-        assert!(
-            sql.contains(
-                r#""ents" AS (UPDATE "entities" SET "expires_at" = "proj"."expires_at", "min_attribute_expires_at" = "proj"."min_attribute_expires_at""#
-            ),
-            "{sql}"
-        );
-        assert!(sql.contains(r#""entities"."expires_at" IS DISTINCT FROM "proj"."expires_at""#), "{sql}");
+    fn the_anchor_replaces_both_expiries_with_the_written_states() {
+        let sql = update();
         assert!(
             !sql.contains(r#"COALESCE("proj"."expires_at""#),
             "a dropped expiry must not fall back to the stored one: {sql}"
@@ -493,7 +489,7 @@ mod tests {
     /// the images the search write returned.
     #[test]
     fn a_type_change_moves_the_type_memberships_in_the_same_statement() {
-        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
+        let sql = update();
         assert!(sql.contains(r#""strays" AS (DELETE FROM "entity_type_members""#), "{sql}");
         assert!(sql.contains(r#""mbrs" AS (INSERT INTO "entity_type_members""#), "{sql}");
         pretty_assertions::assert_eq!(
@@ -508,9 +504,9 @@ mod tests {
     /// changed.
     #[test]
     fn the_search_write_returns_both_images_and_the_census_reads_them() {
-        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
+        let sql = update();
         assert!(
-            sql.contains(r#"RETURNING "entity_search"."entity_key", "docs"."id", "old"."entity_type_name_keys", "new"."entity_type_name_keys", "old"."attribute_instance_name_keys", "new"."attribute_instance_name_keys", "old"."attribute_instance_kinds", "new"."attribute_instance_kinds")"#),
+            sql.contains(r#"RETURNING "entity_search"."entity_key", "ents"."id", "old"."entity_type_name_keys", "new"."entity_type_name_keys", "old"."attribute_instance_name_keys", "new"."attribute_instance_name_keys", "old"."attribute_instance_kinds", "new"."attribute_instance_kinds")"#),
             "{sql}"
         );
         assert!(sql.contains(r#""census_shapes" AS (SELECT"#), "{sql}");
@@ -521,8 +517,8 @@ mod tests {
 
     #[test]
     fn the_projection_validates_each_geometry_once() {
-        let sql = entity_update_sql(&ContextTarget::Live).expect("the fixed update builds");
-        pretty_assertions::assert_eq!(sql.matches("ST_MakeValid").count(), 3, "{sql}");
+        let sql = update();
+        pretty_assertions::assert_eq!(sql.matches("ST_MakeValid").count(), 4, "{sql}");
         assert!(sql.starts_with(r#"WITH "proj" AS ("#), "{sql}");
     }
 }

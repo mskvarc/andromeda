@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_representation::{
     compact_node::{CompactNode, NodeShape, aliased_node::AliasedNode},
     sys_attrs::SysAttrsInclusion,
 };
-use std::{convert::Infallible, sync::Arc};
+use std::convert::Infallible;
 
 /// Compact entity state through the processor.
 pub(crate) async fn entity_through_processor(
@@ -130,18 +130,12 @@ pub(crate) async fn document_entity_through_processor(
     read_entity(AliasedNode::new(JsonPiece::new(&compacted), terms.aliases()))
 }
 
-/// `state` without the clause 4.8 times of its top-level instances, which a
-/// representation that did not ask for `sysAttrs` leaves out (Table
+/// `state` without the clause 4.8 times of its instances at every depth,
+/// which a representation that did not ask for `sysAttrs` leaves out (Table
 /// 5.2.14-1).
 fn without_instance_times(state: &EntityState) -> EntityState {
     // clone: cheap, every attribute stays shared until its instances are touched
     let mut stripped = state.clone();
-    stripped.attributes_mut().retain(|_, instances| {
-        for (_, instance) in Arc::make_mut(instances).iter_mut() {
-            instance.set_created_at(None);
-            instance.set_modified_at(None);
-        }
-        true
-    });
+    stripped.strip_attribute_instants();
     stripped
 }

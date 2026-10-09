@@ -77,7 +77,9 @@ pub(crate) fn building_snapshot() -> EntityState {
             "https://uri.etsi.org/ngsi-ld/modifiedAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2024-06-01T10:00:00.000000Z"}],
             ACCURACY_IRI: [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
-                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "high"}]
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "high"}],
+                "https://uri.etsi.org/ngsi-ld/createdAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2024-06-01T10:00:00.000000Z"}],
+                "https://uri.etsi.org/ngsi-ld/modifiedAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2024-06-01T10:00:00.000000Z"}]
             }]
         }]
     }]);

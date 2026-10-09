@@ -130,6 +130,15 @@ pub struct SubAttributeRecord {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
+/// The `sub_attribute_tree` composite: one row's elements as one value, which
+/// a statement writing many rows binds one per row.
+#[derive(Debug, Type)]
+#[sqlx(type_name = "sub_attribute_tree")]
+pub struct SubAttributeTree {
+    /// `elements`, in the order the row holds them.
+    pub elements: Vec<SubAttributeRecord>,
+}
+
 impl TryFrom<SubAttributeElement> for SubAttributeRecord {
     type Error = EwkbError;
 

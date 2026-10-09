@@ -5,7 +5,7 @@
 use crate::current_attribute::{
     assemble::{AssemblyError, assemble},
     flatten::{FlattenError, flatten},
-    name_keys::{KeyNames, NameKeys},
+    name_keys::{KeyNames, MentionedNames, NameKeys},
     row::{CurrentAttributeRow, InstanceMembers},
     stored_json::StoredJson,
     stored_value::{LiteralAnnotation, StoredValue},
@@ -39,17 +39,17 @@ const GEOJSON: &str = "https://purl.org/geojson/vocab#";
 const EX: &str = "https://ex.org/";
 
 /// The expanded IRI of an NGSI-LD core term.
-fn ngsi(term: &str) -> String {
+pub(super) fn ngsi(term: &str) -> String {
     format!("{NGSI}{term}")
 }
 
 /// The expanded IRI of an example term.
-fn ex(term: &str) -> String {
+pub(super) fn ex(term: &str) -> String {
     format!("{EX}{term}")
 }
 
 /// The expanded IRI of an NGSI-LD attribute family.
-fn family(term: &str) -> Value {
+pub(super) fn family(term: &str) -> Value {
     json!([ngsi(term)])
 }
 
@@ -59,7 +59,7 @@ fn date_time(text: &str) -> Value {
 }
 
 /// `instance` with the members of `extra` added.
-fn with(mut instance: Value, extra: &Value) -> Value {
+pub(super) fn with(mut instance: Value, extra: &Value) -> Value {
     if let (Some(instance), Some(extra)) = (instance.as_object_mut(), extra.as_object()) {
         instance.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone())));
     }
@@ -67,7 +67,7 @@ fn with(mut instance: Value, extra: &Value) -> Value {
 }
 
 /// A Property instance holding the expanded `values`.
-fn property(values: &Value) -> Value {
+pub(super) fn property(values: &Value) -> Value {
     json!({"@type": family("Property"), ngsi("hasValue"): values})
 }
 
@@ -168,7 +168,7 @@ fn nested_every_family() -> Value {
 }
 
 /// The stored document of an Entity with `attributes`.
-fn document(attributes: &Value) -> Value {
+pub(super) fn document(attributes: &Value) -> Value {
     json!([with(json!({"@id": "urn:ngsi-ld:Building:1", "@type": [ex("Building")]}), attributes)])
 }
 
@@ -178,7 +178,7 @@ fn now() -> SystemInstant {
 }
 
 /// The state a create commits from the stored `document`.
-fn committed(document: &Value) -> EntityState {
+pub(super) fn committed(document: &Value) -> EntityState {
     committed_text(&document.to_string())
 }
 
@@ -189,41 +189,21 @@ fn committed_text(text: &str) -> EntityState {
     state
 }
 
-/// Every attribute name and type IRI `attributes` mentions, at any depth.
-fn mentioned(attributes: &Attributes, names: &mut IndexSet<AttributeName>, types: &mut IndexSet<NgsiLdReference>) {
-    for (name, instances) in attributes.iter() {
-        names.insert(name.clone());
-        for (_, instance) in instances.iter() {
-            let value = instance.value();
-            types.extend(value.value_type().cloned());
-            types.extend(value.object_types().iter().cloned());
-            if let FamilyValue::Property { values, .. } = value {
-                for value in values {
-                    if let ExpandedValue::Literal(literal) = value {
-                        types.extend(literal.datatype().cloned());
-                    }
-                }
-            }
-            mentioned(instance.sub_attributes(), names, types);
-        }
-    }
-}
-
-/// Dictionary keys for every name `state` mentions, both ways.
-fn dictionary(state: &EntityState) -> (NameKeys, KeyNames) {
-    let (mut names, mut types) = (IndexSet::new(), IndexSet::new());
-    mentioned(state.attributes(), &mut names, &mut types);
+/// Dictionary keys for every name `state` mentions, both ways: the names a
+/// write interns ([`MentionedNames`]), which flattening every fixture proves
+/// complete.
+pub(super) fn dictionary(state: &EntityState) -> (NameKeys, KeyNames) {
+    let mut mentioned = MentionedNames::default();
+    mentioned.collect(state.attributes());
+    let names: IndexSet<AttributeName> = mentioned.attributes.into_iter().collect();
+    let types: IndexSet<EntityTypeName> = mentioned.types.into_iter().collect();
     let attribute_keys = names.iter().zip(1..).map(|(name, key)| (name.clone(), AttributeNameKey::from(key)));
     let type_keys = types.iter().zip(1..).map(|(name, key)| (name.clone(), EntityTypeNameKey::from(key)));
-    let keys = NameKeys::new(
-        ResolvedNames::from_pairs(attribute_keys.clone()),
-        ResolvedNames::from_pairs(
-            type_keys
-                .clone()
-                .map(|(name, key)| (name.as_str().parse::<EntityTypeName>().expect("a type IRI"), key)),
-        ),
+    let keys = NameKeys::new(ResolvedNames::from_pairs(attribute_keys.clone()), ResolvedNames::from_pairs(type_keys.clone()));
+    let key_names = KeyNames::from_pairs(
+        attribute_keys.map(|(name, key)| (key, name)),
+        type_keys.map(|(name, key)| (key, name.as_str().parse::<NgsiLdReference>().expect("a type IRI"))),
     );
-    let key_names = KeyNames::from_pairs(attribute_keys.map(|(name, key)| (key, name)), type_keys.map(|(name, key)| (key, name)));
     (keys, key_names)
 }
 

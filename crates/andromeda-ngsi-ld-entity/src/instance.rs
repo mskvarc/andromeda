@@ -139,7 +139,8 @@ impl Instance {
     }
 
     /// Whether two instances agree on everything but their system times
-    /// (clause 4.8): what decides whether a write modified an instance.
+    /// (clause 4.8), at every depth: what decides whether a write modified an
+    /// instance.
     #[must_use]
     pub fn same_content(&self, other: &Instance) -> bool {
         self.value == other.value
@@ -147,6 +148,6 @@ impl Instance {
             && self.expires_at == other.expires_at
             && self.evolution_id == other.evolution_id
             && self.proof_seals == other.proof_seals
-            && self.sub_attributes == other.sub_attributes
+            && self.sub_attributes.same_content(&other.sub_attributes)
     }
 }

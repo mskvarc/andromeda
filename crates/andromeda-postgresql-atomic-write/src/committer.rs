@@ -12,7 +12,7 @@ use crate::{
     history_interpretation::interpret,
     history_mode::{HistoryPlacement, TemporalHistoryCommitMode},
     job_settlement::settle,
-    name_resolution::{ResolvedWriteNames, resolve_attribute_names, resolve_write_names},
+    name_resolution::{resolve_attribute_names, resolve_write_names},
     projected_entity_key::ProjectedEntityKey,
     projection,
     write_isolation::IsolatedSubmission,
@@ -32,26 +32,15 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_postgresql_context_store::entity::{
-    copy::create_batch_via_copy_in_tx,
-    inserted_entity::InsertedEntity,
-    repo::EntityRepository,
-    written_entity::WrittenEntity,
+use andromeda_postgresql_context_store::{
+    current_attribute::name_keys::NameKeys,
+    entity::{inserted_entity::InsertedEntity, repo::EntityRepository, written_entity::WrittenEntity},
 };
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_temporal::core_write_history::CoreWriteHistory;
 use chrono::Utc;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::{collections::HashMap, sync::Arc};
-
-/// PostgreSQL statement strategy used for fused entity inserts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EntityInsertMode {
-    /// Bind parallel arrays and insert from `UNNEST`.
-    Unnest,
-    /// Stream binary rows into a staging table before insertion.
-    CopyStaging,
-}
 
 /// What one commit's entity statements produced.
 struct EntityMutations {
@@ -73,8 +62,6 @@ pub struct PostgresAtomicCommitter {
     history_mode: TemporalHistoryCommitMode,
     /// Whether Core writes add to the Temporal Evolution they change.
     core_write_history: CoreWriteHistory,
-    /// Fused insert statement strategy.
-    entity_insert_mode: EntityInsertMode,
     /// Dictionary the projection's attribute keys are minted through.
     attribute_names: Arc<dyn NameLookup<AttributeName>>,
     /// Dictionary the entity rows' type keys are minted through.
@@ -89,7 +76,6 @@ impl PostgresAtomicCommitter {
         pool: &PgPool,
         history_mode: TemporalHistoryCommitMode,
         core_write_history: CoreWriteHistory,
-        entity_insert_mode: EntityInsertMode,
         attribute_names: Arc<dyn NameLookup<AttributeName>>,
         entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
         consequence_publisher: Arc<dyn CommitConsequencePublisher>,
@@ -98,7 +84,6 @@ impl PostgresAtomicCommitter {
             pool: pool.clone(), // clone: SQLx pools are shared reference-counted handles.
             history_mode,
             core_write_history,
-            entity_insert_mode,
             attribute_names,
             entity_type_names,
             consequence_publisher,
@@ -138,25 +123,23 @@ impl PostgresAtomicCommitter {
         Ok(EntityMutations { outcomes, keys })
     }
 
-    /// Insert the grouped entity rows with the configured fused statement.
+    /// Insert the grouped entity rows with one fused statement.
     async fn apply_inserts(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
         inserts: &[IndexedWrite<'_>],
-        names: &ResolvedWriteNames,
+        names: &NameKeys,
         outcomes: &mut [Option<WriteOutcome>],
         keys: &mut HashMap<Identifier, ProjectedEntityKey>,
     ) -> Result<(), AttemptFailure> {
         if inserts.is_empty() {
             return Ok(());
         }
-        let columns = columns_for(inserts, names)?;
-        let inserted = match self.entity_insert_mode {
-            EntityInsertMode::Unnest => EntityRepository::create_batch_in_tx(tx, target, &columns).await,
-            EntityInsertMode::CopyStaging => create_batch_via_copy_in_tx(tx, target, &columns).await,
-        }
-        .map_err(|error| entity_statement(error))?;
+        let binds = columns_for(inserts, names)?;
+        let inserted = EntityRepository::create_batch_in_tx(tx, target, &binds.entities, binds.rows)
+            .await
+            .map_err(|error| entity_statement(error))?;
         record_minted(keys, inserted);
         for (index, write) in inserts {
             outcomes[*index] = Some(insert_outcome(write.precondition, returned_flag(keys, write.entity_id.as_ref())));
@@ -170,16 +153,16 @@ impl PostgresAtomicCommitter {
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
         updates: &[IndexedWrite<'_>],
-        names: &ResolvedWriteNames,
+        names: &NameKeys,
         outcomes: &mut [Option<WriteOutcome>],
         keys: &mut HashMap<Identifier, ProjectedEntityKey>,
     ) -> Result<(), AttemptFailure> {
         if updates.is_empty() {
             return Ok(());
         }
-        let columns = columns_for(updates, names)?;
+        let binds = columns_for(updates, names)?;
         let expected = expectations(updates);
-        let saved = EntityRepository::save_batch_in_tx(tx, target, &columns, &expected)
+        let saved = EntityRepository::save_batch_in_tx(tx, target, &binds.entities, binds.rows, &expected)
             .await
             .map_err(|error| entity_statement(error))?;
         record_keys(keys, saved);

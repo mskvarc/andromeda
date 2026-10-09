@@ -17,6 +17,10 @@ pub mod name_keys;
 mod round_trip_tests;
 /// One row.
 pub mod row;
+/// The bind vectors the rows of many Entities travel in.
+pub mod staged_rows;
+/// The `instances` staging every statement writing rows reads them from.
+pub mod staging;
 /// The family value an instance's stored columns hold.
 mod stored_family;
 /// A JSON piece held as its codec wrote it.
@@ -25,3 +29,5 @@ pub mod stored_json;
 pub mod stored_value;
 /// One sub-attribute element and the composite it travels as.
 pub mod sub_attribute;
+/// The statements that write an Entity's rows beside its Entity row.
+pub(crate) mod write;

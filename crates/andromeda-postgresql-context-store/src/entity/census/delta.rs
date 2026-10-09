@@ -41,7 +41,6 @@ use sea_query::{
     InsertStatement,
     IntoIden,
     JoinType,
-    PostgresQueryBuilder,
     Query,
     SelectStatement,
     SimpleExpr,
@@ -208,17 +207,6 @@ impl CensusStatements {
             CommonTableExpression::new().table_name(CensusCte::Attributes).query(self.attributes).to_owned(),
         ]
     }
-
-    /// Each `WITH` entry's name beside its rendered statement, for a statement
-    /// that is not built through sea-query (the binary `COPY` insert) to embed.
-    pub(crate) fn rendered(&self) -> [(CensusCte, String); 4] {
-        [
-            (CensusCte::Shapes, self.shapes.to_string(PostgresQueryBuilder)),
-            (CensusCte::Types, self.types.to_string(PostgresQueryBuilder)),
-            (CensusCte::TypeAttributes, self.type_attributes.to_string(PostgresQueryBuilder)),
-            (CensusCte::Attributes, self.attributes.to_string(PostgresQueryBuilder)),
-        ]
-    }
 }
 
 /// One side of the source rows as signed shape rows:
@@ -317,10 +305,10 @@ fn ledger_insert(
 
 #[cfg(test)]
 mod tests {
-    use crate::entity::census::delta::{CensusChange, CensusStatements};
+    use crate::entity::census::delta::{CensusChange, CensusCte, CensusStatements};
     use andromeda_context_space::context_target::ContextTarget;
     use pretty_assertions::assert_eq;
-    use sea_query::Iden;
+    use sea_query::{Iden, PostgresQueryBuilder};
 
     /// The source CTE the statements under test read, named as the entity
     /// statements name theirs.
@@ -328,13 +316,19 @@ mod tests {
     #[iden = "srch"]
     struct Srch;
 
+    /// Each `WITH` entry's name beside its rendered statement.
+    fn statements_of(statements: &CensusStatements) -> [(CensusCte, String); 4] {
+        [
+            (CensusCte::Shapes, statements.shapes.to_string(PostgresQueryBuilder)),
+            (CensusCte::Types, statements.types.to_string(PostgresQueryBuilder)),
+            (CensusCte::TypeAttributes, statements.type_attributes.to_string(PostgresQueryBuilder)),
+            (CensusCte::Attributes, statements.attributes.to_string(PostgresQueryBuilder)),
+        ]
+    }
+
     fn rendered(change: CensusChange) -> Vec<(String, String)> {
-        CensusStatements::of(&ContextTarget::Live, Srch, change)
-            .expect("the census statements build")
-            .rendered()
-            .into_iter()
-            .map(|(name, sql)| (name.to_string(), sql))
-            .collect()
+        let statements = CensusStatements::of(&ContextTarget::Live, Srch, change).expect("the census statements build");
+        statements_of(&statements).into_iter().map(|(name, sql)| (name.to_string(), sql)).collect()
     }
 
     /// The written rows are grouped by shape once, and every ledger expands
@@ -418,7 +412,7 @@ mod tests {
         use andromeda_context_space::{snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
         let key = SnapshotKey::try_from(5).expect("positive key");
         let target = ContextTarget::Snapshot(SnapshotTarget::staging(key, "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri")));
-        let statements = CensusStatements::of(&target, Srch, CensusChange::Added).expect("builds").rendered();
+        let statements = statements_of(&CensusStatements::of(&target, Srch, CensusChange::Added).expect("builds"));
         for (ledger, (_, sql)) in ["entity_type_census", "entity_type_attribute_census", "attribute_census"]
             .iter()
             .zip(&statements[1..])

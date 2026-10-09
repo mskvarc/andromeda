@@ -3,7 +3,8 @@
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clause 4.5.2
 --
--- The composite types the branch relations declare columns of. They live in
+-- The composite types the branch relations declare columns of, and the one
+-- their writes bind such a column through. They live in
 -- `public`, and a Snapshot schema reaches them through its search path, so one
 -- definition serves every branch. One definition is also what lets a Snapshot
 -- clone copy a column of such a type between two schemas: two composite types
@@ -55,5 +56,14 @@ create type sub_attribute as (
     created_at timestamptz,
     modified_at timestamptz,
     expires_at timestamptz
+);
+
+-- The sub-attributes of one attribute instance as one value. A statement that
+-- writes many `current_attributes` rows binds the `sub_attributes` of every
+-- row as one array parameter, and a PostgreSQL array is rectangular, so arrays
+-- of differing lengths travel each wrapped in one of these. No column has this
+-- type.
+create type sub_attribute_tree as (
+    elements sub_attribute[]
 );
 

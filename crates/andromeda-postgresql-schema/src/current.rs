@@ -178,7 +178,7 @@ pub enum CurrentAttributeValues {
 ///
 /// A deleted attribute is an absent row rather than a stored marker, which is
 /// why row presence alone answers an existence test.
-#[derive(Iden, Clone, Copy)]
+#[derive(Iden, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CurrentAttributes {
     /// Table name: `current_attributes`
     Table,

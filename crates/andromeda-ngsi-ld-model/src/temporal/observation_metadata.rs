@@ -136,9 +136,9 @@ impl ObservationMetadata {
 
 /// The instance holding the metadata members of `parts` and nothing else.
 ///
-/// The sub-attributes keep no `createdAt` or `modifiedAt`: the broker stamps
-/// attribute instances alone (clause 4.8), so one there was written by a
-/// client, which clause 5.2.5 says to ignore.
+/// The sub-attributes keep no `createdAt` or `modifiedAt`: history records
+/// the system times of the instance alone, and a time a client wrote is never
+/// kept (clause 5.2.5).
 fn metadata_document(mut parts: InstanceDocumentParts) -> InstanceDocument {
     parts.sub_attributes.values_mut().for_each(AttributeMember::forget_system_instants_throughout);
     InstanceDocument::builder()

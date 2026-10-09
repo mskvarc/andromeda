@@ -1,17 +1,18 @@
-//! The statements that write the three current-state entity relations and the
-//! type memberships beside them.
+//! The statements that write an entity's current state: its identity, search
+//! and type membership rows, and one `current_attributes` row per attribute
+//! instance.
 //!
 //! There is one statement per kind of change, and it serves any number of
 //! entities: a single-entity write is a set of one, which is why no per-row
 //! variant exists. Each statement returns the rows it affected, and the caller
 //! turns that into a per-entity outcome by asking what the write assumed.
 //!
-//! Insert and update return the surrogate key alongside the identifier, because
-//! the projection of current attribute values is written against that key in
-//! this same transaction and must not have to read the row back to find it.
-//! Delete returns neither: the projection is removed by the single ownership
-//! edge that cascades from `entities`, and clause 5.6.6 leaves the temporal
-//! evolution standing.
+//! Insert and update write the attribute instance rows in the same statement,
+//! paired with their entity by identifier, and return the surrogate key
+//! alongside the identifier, because the rest of the transaction writes
+//! against that key and must not have to read the row back to find it. Delete
+//! returns neither: the instance rows go with the identity row, and clause
+//! 5.6.6 leaves the temporal evolution standing.
 //!
 //! Every statement also keeps the discovery census
 //! ([`census`](crate::entity::census)) in step with the search rows it writes,
@@ -26,7 +27,7 @@
 //! the geometry, expiry and expectation arrays carry NULLs (`Vec<Option<T>>`),
 //! which `sea-query-sqlx` cannot represent, so every array is bound outside
 //! sea-query in the marker order the statement builder emits. The statement
-//! structure — every relation, column, cast, function and clause — is still
+//! structure (every relation, column, cast, function and clause) is still
 //! built by sea-query.
 
 #[cfg(test)]
@@ -36,8 +37,6 @@ use std::collections::BTreeSet;
 mod delete;
 /// The batch insert.
 mod insert;
-/// The stored document a set-write lands, staged apart from the projection.
-mod payload_staging;
 /// The images of an `entity_search` row a set-write hands on.
 pub(crate) mod search_image;
 /// The staging shape every set-write reads its arrays through.

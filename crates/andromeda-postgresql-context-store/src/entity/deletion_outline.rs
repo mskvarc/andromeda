@@ -1,11 +1,11 @@
-//! The reads that let a deletion skip the payload it removes.
+//! The reads that let a deletion skip assembling the state it removes.
 //!
-//! The outline is read from the rows the write path keeps beside the payload:
-//! the search row names the entity's types and scopes, and the current-state
-//! projection holds one row per attribute instance with its `datasetId` and
-//! family -- exactly what the payload's instances are, since every instance a
-//! write admits is projected. The watcher probe asks the branch's subscription
-//! relation, which every replica sharing the database reads alike.
+//! The outline is read from the narrowest columns that hold it: the search
+//! row names the entity's types and scopes, the identity row its version, and
+//! each `current_attributes` row the name, `datasetId` and family of one
+//! attribute instance, without its value or sub-attributes. The watcher probe
+//! asks the branch's subscription relation, which every replica sharing the
+//! database reads alike.
 
 use crate::{
     entity::{
@@ -26,7 +26,7 @@ use andromeda_ngsi_ld_model::notification::{NotificationTrigger, effective_notif
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::{subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
 use andromeda_postgresql_schema::{
-    current::{CurrentAttributeValues, E, Entities, EntityDocuments, EntitySearch},
+    current::{CurrentAttributes, E, Entities, EntitySearch},
     name_dictionary::AttributeNames,
     subscriptions::Subscriptions,
 };
@@ -37,20 +37,15 @@ use sea_query_sqlx::SqlxBinder;
 use sqlx::Row;
 use strum::IntoEnumIterator;
 
-/// Alias `cav` for the entity's projected instances.
+/// Alias `ca` for the entity's attribute instance rows.
 #[derive(Iden, Clone, Copy)]
-#[iden = "cav"]
-struct Projected;
+#[iden = "ca"]
+struct Instance;
 
 /// The column naming whether the entity held a Scope.
 #[derive(Iden, Clone, Copy)]
 #[iden = "scoped"]
 struct Scoped;
-
-/// Alias `d` for the entity's document row, which carries its version.
-#[derive(Iden, Clone, Copy)]
-#[iden = "d"]
-struct Document;
 
 /// The column answering the watcher probe.
 #[derive(Iden, Clone, Copy)]
@@ -59,8 +54,8 @@ struct Watched;
 
 /// One row per type the entity carries, each naming whether it held a Scope
 /// and the clause 4.8 `modifiedAt` a deletion compares against: the
-/// [`entity_types_statement`] joined to `entity_documents d`, with the columns
-/// `(cardinality(s.scope_paths) > 0) AS scoped` and `d.modified_at` beside the
+/// [`entity_types_statement`] with the columns
+/// `(cardinality(s.scope_paths) > 0) AS scoped` and `e.modified_at` beside the
 /// name.
 ///
 /// The version is read by the first statement of the outline and the instances
@@ -70,48 +65,38 @@ struct Watched;
 fn outline_types_statement(target: &ContextTarget, id: &str) -> SelectStatement {
     let mut statement = entity_types_statement(target, id);
     statement
-        .join_as(
-            JoinType::InnerJoin,
-            table_of(target, EntityDocuments::Table),
-            Document,
-            Expr::col((Document, EntityDocuments::EntityKey)).equals((E, Entities::EntityKey)),
-        )
         .expr_as(
             Expr::col((Search, EntitySearch::ScopePaths))
                 .is_not_null()
                 .and(has_elements(Expr::col((Search, EntitySearch::ScopePaths)))),
             Scoped,
         )
-        .column((Document, EntityDocuments::ModifiedAt));
+        .column((E, Entities::ModifiedAt));
     statement
 }
 
 /// One row per attribute instance the entity holds:
 ///
 /// ```sql
-/// SELECT an.name, cav.dataset_id, cav.attribute_kind
-/// FROM entities e JOIN current_attribute_values cav ON cav.entity_key = e.entity_key
-/// JOIN attribute_names an ON an.attribute_name_key = cav.attribute_name_key
+/// SELECT an.name, ca.dataset_id, ca.attribute_kind
+/// FROM entities e JOIN current_attributes ca ON ca.entity_key = e.entity_key
+/// JOIN attribute_names an ON an.attribute_name_key = ca.attribute_name_key
 /// WHERE e.id = $1
 /// ```
 fn outline_instances_statement(target: &ContextTarget, id: &str) -> SelectStatement {
     let mut statement = Query::select();
     statement
         .column((AttributeNameRow, AttributeNames::Name))
-        .column((Projected, CurrentAttributeValues::DatasetId))
-        .column((Projected, CurrentAttributeValues::AttributeKind))
+        .column((Instance, CurrentAttributes::DatasetId))
+        .column((Instance, CurrentAttributes::AttributeKind))
         .from_as(table_of(target, Entities::Table), E)
         .join_as(
             JoinType::InnerJoin,
-            table_of(target, CurrentAttributeValues::Table),
-            Projected,
-            Expr::col((Projected, CurrentAttributeValues::EntityKey)).equals((E, Entities::EntityKey)),
+            table_of(target, CurrentAttributes::Table),
+            Instance,
+            Expr::col((Instance, CurrentAttributes::EntityKey)).equals((E, Entities::EntityKey)),
         );
-    join_attribute_name(
-        &mut statement,
-        JoinType::InnerJoin,
-        Expr::col((Projected, CurrentAttributeValues::AttributeNameKey)),
-    );
+    join_attribute_name(&mut statement, JoinType::InnerJoin, Expr::col((Instance, CurrentAttributes::AttributeNameKey)));
     statement.and_where(Expr::col((E, Entities::Id)).eq(id));
     statement
 }
@@ -178,7 +163,7 @@ impl EntityRepository {
         } else {
             ScopePresence::Absent
         };
-        let modified_at = first.try_get::<DateTime<Utc>, _>(EntityDocuments::ModifiedAt.to_string().as_str())?;
+        let modified_at = first.try_get::<DateTime<Utc>, _>(Entities::ModifiedAt.to_string().as_str())?;
         let types = type_rows
             .iter()
             .map(|row| stored_type_name(row.try_get::<&str, _>(0)?))
@@ -264,13 +249,13 @@ mod tests {
         let types = outline_types_statement(&ContextTarget::Live, "urn:ngsi-ld:T:1").to_string(PostgresQueryBuilder);
         assert!(types.contains(r#""n"."entity_type_name_key" = ANY("s"."entity_type_name_keys")"#), "{types}");
         assert!(types.contains(r#""e"."id" = 'urn:ngsi-ld:T:1'"#), "{types}");
-        assert!(
-            types.contains(r#"JOIN "entity_documents" AS "d" ON "d"."entity_key" = "e"."entity_key""#),
-            "{types}"
-        );
-        assert!(types.contains(r#""d"."modified_at""#), "{types}");
+        assert!(!types.contains("entity_documents"), "{types}");
+        assert!(types.contains(r#""e"."modified_at""#), "{types}");
         let instances = outline_instances_statement(&ContextTarget::Live, "urn:ngsi-ld:T:1").to_string(PostgresQueryBuilder);
-        assert!(instances.contains(r#""current_attribute_values" AS "cav""#), "{instances}");
-        assert!(instances.contains(r#""an"."attribute_name_key" = "cav"."attribute_name_key""#), "{instances}");
+        assert!(instances.contains(r#""current_attributes" AS "ca""#), "{instances}");
+        assert!(instances.contains(r#""an"."attribute_name_key" = "ca"."attribute_name_key""#), "{instances}");
+        for unread in ["value_", "sub_attributes"] {
+            assert!(!instances.contains(unread), "the outline reads no value: {instances}");
+        }
     }
 }

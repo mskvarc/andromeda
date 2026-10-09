@@ -4,8 +4,6 @@
 pub mod census;
 /// Executing a compiled entity query: its page, its total and its identifiers.
 pub mod compiled_query;
-/// Binary COPY path for bulk entity inserts.
-pub mod copy;
 /// The reads that let a deletion skip the payload it removes.
 pub mod deletion_outline;
 /// Reading interned keys back as the names the dictionaries hold.
@@ -32,10 +30,10 @@ pub mod pushdown;
 pub mod read;
 /// The PostgreSQL entity store.
 pub mod repo;
-/// The Scope label paths one entity's search row is matched by.
-pub mod scope_label_paths;
 /// How a set-write stages one hoisted geometry of one entity row.
 pub mod staged_geometry;
+/// The Scopes one entity's search row is matched by and read back from.
+pub mod staged_scopes;
 /// What an Entity row or census ledger that no longer reads back looks like.
 pub mod stored_entity_error;
 /// The clause 4.5.1 invariant that every stored entity carries at least one type.

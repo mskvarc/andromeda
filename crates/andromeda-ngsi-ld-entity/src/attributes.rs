@@ -101,6 +101,20 @@ impl Attributes {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    /// Whether both hold the same attributes with instances of the same
+    /// content ([`Instance::same_content`](crate::instance::Instance::same_content)),
+    /// system times aside. Like equality, it ignores the order of attributes.
+    #[must_use]
+    pub fn same_content(&self, other: &Attributes) -> bool {
+        self.len() == other.len()
+            && self.0.iter().all(|(name, instances)| {
+                other
+                    .0
+                    .get(name)
+                    .is_some_and(|others| Arc::ptr_eq(instances, others) || instances.same_content(others))
+            })
+    }
 }
 
 impl FromIterator<(AttributeName, AttributeInstances)> for Attributes {

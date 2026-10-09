@@ -1,6 +1,6 @@
 //! Encoding semantic entity records into PostgreSQL bind columns.
 
-use crate::{entity_group::IndexedWrite, name_resolution::ResolvedWriteNames};
+use crate::entity_group::IndexedWrite;
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     commit_invariant::{CommitInvariant, NameDictionary},
@@ -12,19 +12,36 @@ use andromeda_context_commit::{
 };
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::stored_attribute_kind};
-use andromeda_postgresql_context_store::entity::{params::PreparedEntityColumns, scope_label_paths::ScopeLabelPaths, staged_geometry::StagedGeometry};
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, ltree::StoredScopePath};
+use andromeda_postgresql_context_store::{
+    current_attribute::{
+        flatten::{FlattenError, flatten},
+        name_keys::NameKeys,
+        staged_rows::StagedRows,
+    },
+    entity::{params::PreparedEntityColumns, staged_geometry::StagedGeometry, staged_scopes::StagedScopes},
+};
+use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use chrono::{DateTime, Utc};
-use std::{collections::HashMap, hash::Hash};
 
-/// Build parallel bind vectors for one fused entity statement.
+/// The binds of one fused entity statement: one entry per entity, and one row
+/// per attribute instance of those entities.
+#[derive(Debug)]
+pub(crate) struct EntityBinds<'a> {
+    /// The parallel entity columns.
+    pub(crate) entities: PreparedEntityColumns,
+    /// The `current_attributes` rows, each naming its entity.
+    pub(crate) rows: StagedRows<'a>,
+}
+
+/// Build the binds of one fused entity statement.
 ///
-/// `names` is the resolution of every type and attribute name the writes
-/// project; one it does not hold is an invariant failure, because the keys
-/// were minted from these very writes in this transaction.
-pub(crate) fn columns_for(writes: &[IndexedWrite<'_>], names: &ResolvedWriteNames) -> Result<PreparedEntityColumns, CommitError> {
+/// `keys` is the resolution of every name the writes project or store; one it
+/// does not hold is an invariant failure, because the keys were minted from
+/// these very writes in this transaction.
+pub(crate) fn columns_for<'a>(writes: &[IndexedWrite<'a>], keys: &NameKeys) -> Result<EntityBinds<'a>, CommitError> {
     let mut columns = PreparedEntityColumns::with_capacity(writes.len());
-    for (_, write) in writes {
+    let mut rows = StagedRows::default();
+    for &(_, write) in writes {
         let record = write.entity.record().ok_or_else(|| {
             CommitError::from(CommitInvariant::MissingEntityRecord {
                 entity: write.entity_id.as_ref().clone(), // clone: the error owns the entity it names
@@ -35,19 +52,16 @@ pub(crate) fn columns_for(writes: &[IndexedWrite<'_>], names: &ResolvedWriteName
         let row = StoredRow::of(write);
         let changes = &record.geometry_changes;
         columns.ids.push(write.entity_id.as_ref().clone()); // clone: the SQL column set owns identifiers borrowed from the writes.
-        columns.push_entity_type_name_keys(key_array(&projection.types, &names.types, NameDictionary::EntityType)?);
-        let attribute_keys = key_array(projection.attributes.names(), &names.attributes, NameDictionary::AttributeName)?;
+        columns.push_entity_type_name_keys(key_array(&projection.types, |name| keys.entity_type(name), NameDictionary::EntityType)?);
+        let attribute_keys = key_array(projection.attributes.names(), |name| keys.attribute(name), NameDictionary::AttributeName)?;
         columns.push_attribute_instances(instance_keys(&projection.attributes, &attribute_keys));
         columns.push_attribute_name_keys(attribute_keys);
-        columns.scope_paths_json.push(ScopeLabelPaths::new(
-            // `entity_search.scope_paths` is only matched against: the
-            // Entity's Scope is read back from its stored document, which keeps
-            // the written text, so the label path alone is stored here.
-            projection.scopes.iter().map(|scope| StoredScopePath::from(scope).label_path).collect(),
-        ));
-        columns
-            .push_payload(&record.state)
-            .map_err(|error| CommitError::Persistence(PersistenceFailure::Unencodable.record(&error)))?;
+        columns.scopes.push(StagedScopes::of(&projection.scopes));
+        rows.push(
+            write.entity_id.as_ref(),
+            flatten(state.attributes(), keys).map_err(|error| flatten_failure(&error))?,
+        )
+        .map_err(|error| CommitError::Persistence(PersistenceFailure::Unencodable.record(&error)))?;
         columns
             .push_geometries(
                 row.staged(changes.location, state.location_geometry()),
@@ -59,7 +73,24 @@ pub(crate) fn columns_for(writes: &[IndexedWrite<'_>], names: &ResolvedWriteName
         columns.expires_ats.push(record.expires_at);
         columns.min_attribute_expires_ats.push(record.min_attribute_expires_at);
     }
-    Ok(columns)
+    Ok(EntityBinds { entities: columns, rows })
+}
+
+/// The commit failure a state that does not flatten into rows is.
+///
+/// A name without a key is the dictionaries breaking their promise; any other
+/// refusal is a state the write did not settle, which the rows cannot hold.
+fn flatten_failure(error: &FlattenError) -> CommitError {
+    match error {
+        FlattenError::UnresolvedAttribute(_) => CommitError::Invariant(CommitInvariant::UnresolvedName(NameDictionary::AttributeName)),
+        FlattenError::UnresolvedType(_) => CommitError::Invariant(CommitInvariant::UnresolvedName(NameDictionary::EntityType)),
+        FlattenError::Unstamped(_)
+        | FlattenError::UncommittedSpelling(_)
+        | FlattenError::SeveralJsonLiterals(_)
+        | FlattenError::InstanceIdentifier(_)
+        | FlattenError::TooManyInstances(_)
+        | FlattenError::Json(_) => CommitError::Persistence(PersistenceFailure::Unencodable.record(error)),
+    }
 }
 
 /// What a write knows of the search row it writes.
@@ -98,22 +129,14 @@ impl StoredRow {
     }
 }
 
-/// The JSON array of dictionary keys for `names`, in declaration order.
+/// The dictionary keys `key` gives for `names`, in declaration order.
 ///
 /// `dictionary` names the dictionary in the invariant failure a missing key
 /// raises, so the failure says which dictionary broke its promise.
-fn key_array<N, K>(names: &[N], keys: &HashMap<N, K>, dictionary: NameDictionary) -> Result<Vec<K>, CommitError>
-where
-    N: Eq + Hash,
-    K: Copy,
-{
+fn key_array<N, K>(names: &[N], key: impl Fn(&N) -> Option<K>, dictionary: NameDictionary) -> Result<Vec<K>, CommitError> {
     names
         .iter()
-        .map(|name| {
-            keys.get(name)
-                .copied()
-                .ok_or(CommitError::Invariant(CommitInvariant::UnresolvedName(dictionary)))
-        })
+        .map(|name| key(name).ok_or(CommitError::Invariant(CommitInvariant::UnresolvedName(dictionary))))
         .collect()
 }
 
@@ -135,10 +158,7 @@ pub(crate) fn expectations(writes: &[IndexedWrite<'_>]) -> Vec<Option<DateTime<U
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        columns::{CommitInvariant, NameDictionary, columns_for, expectations},
-        name_resolution::ResolvedWriteNames,
-    };
+    use crate::columns::{CommitInvariant, NameDictionary, columns_for, expectations};
     use andromeda_context_commit::{
         atomic_write::AtomicWrite,
         entity_mutation::EntityMutation,
@@ -147,7 +167,7 @@ mod tests {
         precondition::Precondition,
         projected_attributes::ProjectedAttributes,
     };
-    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};
+    use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes, system_instant::SystemInstant};
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
         attribute_type::AttributeType,
@@ -155,14 +175,19 @@ mod tests {
         identifier::Identifier,
         scope::path::ScopePath,
     };
-    use andromeda_postgresql_context_store::entity::{scope_label_paths::ScopeLabelPaths, staged_geometry::StagedGeometry};
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+    use andromeda_postgresql_context_store::{current_attribute::name_keys::NameKeys, entity::staged_geometry::StagedGeometry};
+    use andromeda_postgresql_query::{
+        attribute_name_key::AttributeNameKey,
+        dictionary::resolved_names::ResolvedNames,
+        entity_type_name_key::EntityTypeNameKey,
+    };
     use chrono::Utc;
     use serde_json::json;
-    use std::{collections::HashMap, sync::Arc};
+    use std::sync::Arc;
 
     const VEHICLE: &str = "https://example.org/Vehicle";
     const SPEED: &str = "https://example.org/speed";
+    const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
 
     fn vehicle() -> EntityTypeName {
         VEHICLE.parse().expect("valid type name")
@@ -172,11 +197,21 @@ mod tests {
         SPEED.parse().expect("valid attribute name")
     }
 
-    fn resolved() -> ResolvedWriteNames {
-        ResolvedWriteNames {
-            types: HashMap::from([(vehicle(), EntityTypeNameKey::from(7))]),
-            attributes: HashMap::from([(speed(), AttributeNameKey::from(11))]),
-        }
+    fn location() -> AttributeName {
+        LOCATION.parse().expect("valid attribute name")
+    }
+
+    /// The keys of `types` and `attributes`.
+    fn keys(types: Vec<(EntityTypeName, i32)>, attributes: Vec<(AttributeName, i32)>) -> NameKeys {
+        NameKeys::new(
+            ResolvedNames::from_pairs(attributes.into_iter().map(|(name, key)| (name, AttributeNameKey::from(key)))),
+            ResolvedNames::from_pairs(types.into_iter().map(|(name, key)| (name, EntityTypeNameKey::from(key)))),
+        )
+    }
+
+    /// The keys of the Vehicle type, `speed` and `location`.
+    fn resolved() -> NameKeys {
+        keys(vec![(vehicle(), 7)], vec![(speed(), 11), (location(), 13)])
     }
 
     /// The member `speed`, holding one Property instance.
@@ -205,7 +240,9 @@ mod tests {
                 }]
             }]
         }]);
-        EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes")
+        let mut state = EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes");
+        state.stamp_attribute_instants(None, SystemInstant::new(Utc::now()));
+        state
     }
 
     fn scoped_write(id: &str, scopes: Vec<&str>, location: Located) -> AtomicWrite {
@@ -233,22 +270,23 @@ mod tests {
         let writes = [scoped_write("urn:ngsi-ld:A", Vec::new(), None)];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &resolved()).expect("valid columns");
-        pretty_assertions::assert_eq!(columns.entity_type_name_keys[0].as_str(), "{7}");
-        pretty_assertions::assert_eq!(columns.attribute_name_keys[0].as_str(), "{11}");
-        pretty_assertions::assert_eq!(columns.attribute_instance_name_keys[0].as_str(), "{11}");
-        pretty_assertions::assert_eq!(columns.attribute_instance_kinds[0].as_str(), "{1}", "a Property is stored as family code 1");
+        pretty_assertions::assert_eq!(columns.entities.entity_type_name_keys[0].as_str(), "{7}");
+        pretty_assertions::assert_eq!(columns.entities.attribute_name_keys[0].as_str(), "{11}");
+        pretty_assertions::assert_eq!(columns.entities.attribute_instance_name_keys[0].as_str(), "{11}");
+        pretty_assertions::assert_eq!(
+            columns.entities.attribute_instance_kinds[0].as_str(),
+            "{1}",
+            "a Property is stored as family code 1"
+        );
     }
 
     /// The stored instance arrays are compared whole to decide whether a write
     /// rewrites the search row, so they are encoded in one canonical order
-    /// whatever order the payload listed its members in.
+    /// whatever order the state listed its members in.
     #[test]
     fn attribute_instances_encode_in_one_canonical_order() {
         let colour: AttributeName = "https://example.org/colour".parse().expect("valid attribute name");
-        let names = ResolvedWriteNames {
-            types: resolved().types,
-            attributes: HashMap::from([(speed(), AttributeNameKey::from(11)), (colour.clone(), AttributeNameKey::from(3))]),
-        };
+        let names = keys(vec![(vehicle(), 7)], vec![(speed(), 11), (colour.clone(), 3)]);
         let encode = |attributes: ProjectedAttributes| {
             let mut write = scoped_write("urn:ngsi-ld:A", Vec::new(), None);
             if let EntityMutation::Update(record) = &mut write.entity {
@@ -258,8 +296,8 @@ mod tests {
             let indexed: Vec<_> = writes.iter().enumerate().collect();
             let columns = columns_for(&indexed, &names).expect("valid columns");
             (
-                columns.attribute_instance_name_keys[0].as_str().to_owned(),
-                columns.attribute_instance_kinds[0].as_str().to_owned(),
+                columns.entities.attribute_instance_name_keys[0].as_str().to_owned(),
+                columns.entities.attribute_instance_kinds[0].as_str().to_owned(),
             )
         };
         let mut forward_members = ProjectedAttributes::default();
@@ -279,10 +317,7 @@ mod tests {
     #[test]
     fn a_member_without_instances_is_keyed_but_not_counted() {
         let scope: AttributeName = "https://uri.etsi.org/ngsi-ld/scope".parse().expect("valid attribute name");
-        let names = ResolvedWriteNames {
-            types: resolved().types,
-            attributes: HashMap::from([(speed(), AttributeNameKey::from(11)), (scope.clone(), AttributeNameKey::from(5))]),
-        };
+        let names = keys(vec![(vehicle(), 7)], vec![(speed(), 11), (scope.clone(), 5)]);
         let mut write = scoped_write("urn:ngsi-ld:A", Vec::new(), None);
         if let EntityMutation::Update(record) = &mut write.entity {
             record.projection.attributes.push(scope, |_| []);
@@ -290,8 +325,8 @@ mod tests {
         let writes = [write];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &names).expect("valid columns");
-        pretty_assertions::assert_eq!(columns.attribute_name_keys[0].as_str(), "{11,5}");
-        pretty_assertions::assert_eq!(columns.attribute_instance_name_keys[0].as_str(), "{11}");
+        pretty_assertions::assert_eq!(columns.entities.attribute_name_keys[0].as_str(), "{11,5}");
+        pretty_assertions::assert_eq!(columns.entities.attribute_instance_name_keys[0].as_str(), "{11}");
     }
 
     /// The keys were minted from these very writes, so a name without one is
@@ -300,12 +335,9 @@ mod tests {
     fn a_name_the_dictionary_did_not_resolve_is_an_invariant_failure() {
         let writes = [scoped_write("urn:ngsi-ld:A", Vec::new(), None)];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
-        let refused = columns_for(&indexed, &ResolvedWriteNames::default()).expect_err("an unresolved name is refused");
+        let refused = columns_for(&indexed, &NameKeys::default()).expect_err("an unresolved name is refused");
         assert!(matches!(refused, CommitError::Invariant(_)), "{refused:?}");
-        let types_only = ResolvedWriteNames {
-            types: resolved().types,
-            attributes: HashMap::new(),
-        };
+        let types_only = keys(vec![(vehicle(), 7)], Vec::new());
         let refused = columns_for(&indexed, &types_only).expect_err("an unresolved attribute name is refused");
         assert!(
             matches!(refused, CommitError::Invariant(CommitInvariant::UnresolvedName(NameDictionary::AttributeName))),
@@ -313,28 +345,46 @@ mod tests {
         );
     }
 
+    /// Clause 4.18: the label path is what a `scopeQ` matches, the written
+    /// text what reads back.
     #[test]
-    fn scopes_are_encoded_as_ltree_paths() {
-        let writes = [scoped_write("urn:ngsi-ld:A", vec!["/a/b", "/c"], None)];
+    fn scopes_are_encoded_as_ltree_paths_beside_their_written_text() {
+        let writes = [scoped_write("urn:ngsi-ld:A", vec!["/a/b", "c"], None)];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &resolved()).expect("valid columns");
-        pretty_assertions::assert_eq!(columns.scope_paths_json[0], ScopeLabelPaths::new(vec!["a.b".to_owned(), "c".to_owned()]));
+        let scopes = &columns.entities.scopes[0];
+        pretty_assertions::assert_eq!(scopes.label_paths().0, ["a.b".to_owned(), "c".to_owned()].as_slice());
+        pretty_assertions::assert_eq!(scopes.written().0, ["/a/b".to_owned(), "c".to_owned()].as_slice());
     }
 
-    /// Each state is encoded once, by the entity state codec, into the stored
-    /// document it decodes back from.
+    /// Each attribute instance of each state is one staged row, and a state
+    /// without attributes stages none.
     #[test]
-    fn payloads_are_encoded_once_as_the_stored_document() {
-        let writes = [scoped_write("urn:ngsi-ld:A", Vec::new(), None), scoped_write("urn:ngsi-ld:B", Vec::new(), None)];
+    fn each_attribute_instance_is_staged_as_one_row() {
+        let writes = [
+            scoped_write("urn:ngsi-ld:A", Vec::new(), Some((1.0, 2.0))),
+            scoped_write("urn:ngsi-ld:B", Vec::new(), None),
+            scoped_write("urn:ngsi-ld:C", Vec::new(), Some((3.0, 4.0))),
+        ];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &resolved()).expect("valid columns");
-        pretty_assertions::assert_eq!(columns.payload_json.len(), 2);
-        for ((_, write), encoded) in indexed.iter().zip(&columns.payload_json) {
-            let record = write.entity.record().expect("an update carries a record");
-            pretty_assertions::assert_eq!(encoded.as_bytes(), record.state.to_vec().expect("the state encodes").as_slice());
-            let decoded = EntityState::from_slice(encoded.as_bytes()).expect("the stored document decodes");
-            pretty_assertions::assert_eq!(&decoded, record.state.as_ref());
+        pretty_assertions::assert_eq!(columns.rows.len(), 2);
+    }
+
+    /// The rows hold the state the write settled, so a state whose instances
+    /// carry no system times is not written.
+    #[test]
+    fn an_unstamped_state_is_not_written() {
+        let mut write = scoped_write("urn:ngsi-ld:A", Vec::new(), Some((1.0, 2.0)));
+        if let EntityMutation::Update(record) = &mut write.entity {
+            let mut state = EntityState::clone(&record.state); // clone: the test strips the times of a copy
+            state.strip_attribute_instants();
+            record.state = Arc::new(state);
         }
+        let writes = [write];
+        let indexed: Vec<_> = writes.iter().enumerate().collect();
+        let refused = columns_for(&indexed, &resolved()).expect_err("an unstamped state is refused");
+        assert!(matches!(refused, CommitError::Persistence(_)), "{refused:?}");
     }
 
     #[test]
@@ -347,24 +397,23 @@ mod tests {
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &resolved()).expect("valid columns");
         for length in [
-            columns.ids.len(),
-            columns.entity_type_name_keys.len(),
-            columns.attribute_name_keys.len(),
-            columns.attribute_instance_name_keys.len(),
-            columns.attribute_instance_kinds.len(),
-            columns.scope_paths_json.len(),
-            columns.payload_json.len(),
-            columns.locations.len(),
-            columns.obs_spaces.len(),
-            columns.op_spaces.len(),
-            columns.location_expires_ats.len(),
-            columns.expires_ats.len(),
-            columns.min_attribute_expires_ats.len(),
+            columns.entities.ids.len(),
+            columns.entities.entity_type_name_keys.len(),
+            columns.entities.attribute_name_keys.len(),
+            columns.entities.attribute_instance_name_keys.len(),
+            columns.entities.attribute_instance_kinds.len(),
+            columns.entities.scopes.len(),
+            columns.entities.locations.len(),
+            columns.entities.obs_spaces.len(),
+            columns.entities.op_spaces.len(),
+            columns.entities.location_expires_ats.len(),
+            columns.entities.expires_ats.len(),
+            columns.entities.min_attribute_expires_ats.len(),
         ] {
             pretty_assertions::assert_eq!(length, 3);
         }
         pretty_assertions::assert_eq!(
-            columns.locations.iter().map(|staged| staged.ewkb().is_some()).collect::<Vec<_>>(),
+            columns.entities.locations.iter().map(|staged| staged.ewkb().is_some()).collect::<Vec<_>>(),
             vec![true, false, true],
             "the location is encoded from the state the record shares"
         );
@@ -383,12 +432,8 @@ mod tests {
     }
 
     /// The resolution of the Vehicle type and of `location`.
-    fn located_names() -> ResolvedWriteNames {
-        let location: AttributeName = "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name");
-        ResolvedWriteNames {
-            types: resolved().types,
-            attributes: HashMap::from([(location, AttributeNameKey::from(13))]),
-        }
+    fn located_names() -> NameKeys {
+        keys(vec![(vehicle(), 7)], vec![(location(), 13)])
     }
 
     /// Clause 5.6.2: an update that leaves `location` as the state it read held
@@ -399,8 +444,8 @@ mod tests {
         let writes = [update_sharing_the_location(Precondition::UnchangedSince(Utc::now()))];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &located_names()).expect("valid columns");
-        pretty_assertions::assert_eq!(columns.locations, vec![StagedGeometry::Kept]);
-        pretty_assertions::assert_eq!(columns.obs_spaces, vec![StagedGeometry::Kept], "neither state holds one");
+        pretty_assertions::assert_eq!(columns.entities.locations, vec![StagedGeometry::Kept]);
+        pretty_assertions::assert_eq!(columns.entities.obs_spaces, vec![StagedGeometry::Kept], "neither state holds one");
     }
 
     /// An update that overwrites whatever is stored cannot know the stored row
@@ -410,8 +455,8 @@ mod tests {
         let writes = [update_sharing_the_location(Precondition::MustExist)];
         let indexed: Vec<_> = writes.iter().enumerate().collect();
         let columns = columns_for(&indexed, &located_names()).expect("valid columns");
-        assert!(columns.locations[0].ewkb().is_some(), "{:?}", columns.locations);
-        pretty_assertions::assert_eq!(columns.obs_spaces, vec![StagedGeometry::Written(None)]);
+        assert!(columns.entities.locations[0].ewkb().is_some(), "{:?}", columns.entities.locations);
+        pretty_assertions::assert_eq!(columns.entities.obs_spaces, vec![StagedGeometry::Written(None)]);
     }
 
     #[test]

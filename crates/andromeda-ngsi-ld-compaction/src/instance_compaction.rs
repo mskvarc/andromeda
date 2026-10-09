@@ -76,7 +76,7 @@ impl Walk<'_> {
         self.compact_reference(&mut result, &reserved().dataset_id, stored.dataset_id.map(Identifier::as_str))?;
         self.compact_reference(&mut result, &reserved().instance_id, instance.instance_id().map(Identifier::as_str))?;
         self.compact_seals(&mut result, instance.proof_seals())?;
-        self.compact_stored_attributes(&mut result, instance.sub_attributes(), SysAttrsInclusion::Include)?;
+        self.compact_stored_attributes(&mut result, instance.sub_attributes(), stored.system_times)?;
         Ok(Compacted::Object(result))
     }
 

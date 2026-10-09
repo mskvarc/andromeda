@@ -2,13 +2,15 @@
 //!
 //! Each statement stages its rows with `UNNEST` under the alias `d`, then
 //! projects them once, in a common table expression `proj`, into the typed
-//! columns the entity relations store: the JSONB key arrays become `integer[]`
-//! and `ltree[]`, the EWKB geometries are validated. The relation statements
-//! that follow read `proj` rather than repeating the projection, so a geometry
-//! is validated once per row however many relations it lands in. The stored
-//! document is staged apart, keyed by the entity identifier.
+//! columns the entity relations store: the key array literals become
+//! `integer[]`, the JSONB scope arrays `ltree[]` and `text[]`, the EWKB
+//! geometries are validated. The relation statements that follow read `proj`
+//! rather than repeating the projection, so a geometry is validated once per
+//! row however many relations it lands in. The attribute instances are staged
+//! apart, one row each, keyed by the entity identifier
+//! ([`instances_cte`](crate::current_attribute::staging::instances_cte)).
 
-use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
+use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     cast::cast,
     jsonb::jsonb_array_elements_text,
@@ -47,16 +49,11 @@ pub(super) struct Staged;
 #[iden = "proj"]
 pub(super) struct Proj;
 
-/// The insert CTE over `entities`, `ins`, whose returned keys drive the two
-/// child inserts.
+/// The insert CTE over `entities`, `ins`, whose returned keys drive the child
+/// inserts.
 #[derive(Iden, Clone, Copy)]
 #[iden = "ins"]
 pub(super) struct Ins;
-
-/// The `entity_documents` CTE, `docs`: the update's compare-and-set anchor.
-#[derive(Iden, Clone, Copy)]
-#[iden = "docs"]
-pub(super) struct Docs;
 
 /// The `entity_search` CTE, `srch`: the rows a set-write wrote there, returned
 /// as the images ([`SearchImage`](crate::entity::write::search_image::SearchImage))
@@ -65,7 +62,20 @@ pub(super) struct Docs;
 #[iden = "srch"]
 pub(crate) struct Srch;
 
-/// The `entities` lifecycle CTE, `ents`.
+/// The `current_attributes` CTE, `attrs`: the attribute instance rows a
+/// set-write lands.
+#[derive(Iden, Clone, Copy)]
+#[iden = "attrs"]
+pub(super) struct Attrs;
+
+/// The update's `current_attributes` delete CTE, `gone`: the stored instance
+/// rows whose grain the written state no longer holds.
+#[derive(Iden, Clone, Copy)]
+#[iden = "gone"]
+pub(super) struct Gone;
+
+/// The update CTE over `entities`, `ents`: the update's compare-and-set
+/// anchor, whose returned keys drive every other relation the update writes.
 #[derive(Iden, Clone, Copy)]
 #[iden = "ents"]
 pub(super) struct Ents;
@@ -82,12 +92,13 @@ pub(super) struct Doomed;
 /// The key and instance arrays arrive as PostgreSQL array literals
 /// (`entity_type_name_keys_literal`, `attribute_name_keys_literal`,
 /// `attribute_instance_name_keys_literal`, `attribute_instance_kinds_literal`)
-/// and are cast to `integer[]`/`smallint[]` in the projection; the scope paths
-/// arrive as JSONB (`scope_paths_json`) and are expanded to `ltree[]` there; the geometries arrive as EWKB
+/// and are cast to `integer[]`/`smallint[]` in the projection; the scopes
+/// arrive as JSONB (`scope_paths_json`, `verbatim_scope_paths_json`) and are
+/// expanded to `ltree[]` and `text[]` there; the geometries arrive as EWKB
 /// (`loc`, `obs`, `ops`) and are validated there. Not every statement uses
 /// every column: the delete stages only `id` and the expectation, and only the
-/// update stages which geometries a row keeps (`loc_kept`, `obs_kept`,
-/// `ops_kept`).
+/// update stages the expectation and which geometries a row keeps
+/// (`loc_kept`, `obs_kept`, `ops_kept`).
 #[derive(Iden, Clone, Copy)]
 pub(super) enum StagedColumn {
     /// Entity identifier.
@@ -103,9 +114,8 @@ pub(super) enum StagedColumn {
     AttributeInstanceKindsLiteral,
     /// Scope-path array as JSONB, in `ltree` dot notation.
     ScopePathsJson,
-    /// Payload as JSON text, staged apart from the projection and cast to
-    /// `jsonb` where the document is written.
-    Payload,
+    /// The same Scopes as JSONB, as written.
+    VerbatimScopePathsJson,
     /// Default `GeoProperty` geometry as EWKB.
     Loc,
     /// `observationSpace` geometry as EWKB.
@@ -198,9 +208,9 @@ fn array_of(column: StagedColumn, element_type: PostgresType) -> SimpleExpr {
     array_subquery(&Query::select().expr(cast(element, element_type)).to_owned())
 }
 
-/// The twelve projected staging columns every insert and update stages, in
-/// bind order. The payload is bound after every projected column.
-const fn value_staging_columns() -> [(StagedColumn, PostgresType); 12] {
+/// The thirteen projected staging columns every insert and update stages, in
+/// bind order.
+const fn value_staging_columns() -> [(StagedColumn, PostgresType); 13] {
     [
         (StagedColumn::Id, PostgresType::TextArray),
         (StagedColumn::EntityTypeNameKeysLiteral, PostgresType::TextArray),
@@ -208,6 +218,7 @@ const fn value_staging_columns() -> [(StagedColumn, PostgresType); 12] {
         (StagedColumn::AttributeInstanceNameKeysLiteral, PostgresType::TextArray),
         (StagedColumn::AttributeInstanceKindsLiteral, PostgresType::TextArray),
         (StagedColumn::ScopePathsJson, PostgresType::JsonbArray),
+        (StagedColumn::VerbatimScopePathsJson, PostgresType::JsonbArray),
         (StagedColumn::Loc, PostgresType::ByteaArray),
         (StagedColumn::Obs, PostgresType::ByteaArray),
         (StagedColumn::Ops, PostgresType::ByteaArray),
@@ -217,7 +228,7 @@ const fn value_staging_columns() -> [(StagedColumn, PostgresType); 12] {
     ]
 }
 
-/// The twelve projected staging columns of the insert, in bind order.
+/// The thirteen projected staging columns of the insert, in bind order.
 pub(super) fn insert_staging_columns() -> Vec<UnnestColumn> {
     value_staging_columns()
         .into_iter()
@@ -225,13 +236,13 @@ pub(super) fn insert_staging_columns() -> Vec<UnnestColumn> {
         .collect()
 }
 
-/// The fifteen projected staging columns of the update: the insert's twelve
-/// and whether each hoisted geometry is kept. The expectation the
-/// compare-and-set reads is staged with the payload, after every projected
-/// column.
+/// The seventeen projected staging columns of the update: the insert's
+/// thirteen, whether each hoisted geometry is kept, and the expectation the
+/// compare-and-set holds.
 pub(super) fn update_staging_columns() -> Vec<UnnestColumn> {
     let mut columns = insert_staging_columns();
     columns.extend(HOISTED_COLUMNS.map(|column| UnnestColumn::new(column.kept, PostgresType::BooleanArray)));
+    columns.push(UnnestColumn::new(StagedColumn::ExpectedModifiedAt, PostgresType::TimestamptzArray));
     columns
 }
 
@@ -251,10 +262,10 @@ pub(super) fn staging_source(columns: &[UnnestColumn]) -> FunctionCall {
 /// The projection CTE `proj` over the staged `columns`, whose output columns
 /// carry the names of the relation columns they land in.
 ///
-/// What only an update stages -- whether each geometry is kept -- is
-/// projected for the update alone, so the insert and the update share this one
-/// builder. A kept geometry stages no EWKB, so its projection validates
-/// nothing.
+/// What only an update stages -- whether each geometry is kept, and the
+/// expectation -- is projected for the update alone, so the insert and the
+/// update share this one builder. A kept geometry stages no EWKB, so its
+/// projection validates nothing.
 pub(super) fn projection_cte(columns: &[UnnestColumn], write: ProjectedWrite) -> CommonTableExpression {
     let mut select = Query::select();
     select
@@ -275,7 +286,11 @@ pub(super) fn projection_cte(columns: &[UnnestColumn], write: ProjectedWrite) ->
             cast(staged(StagedColumn::AttributeInstanceKindsLiteral), PostgresType::SmallintArray),
             EntitySearch::AttributeInstanceKinds,
         )
-        .expr_as(array_of(StagedColumn::ScopePathsJson, PostgresType::Ltree), EntitySearch::ScopePaths);
+        .expr_as(array_of(StagedColumn::ScopePathsJson, PostgresType::Ltree), EntitySearch::ScopePaths)
+        .expr_as(
+            array_of(StagedColumn::VerbatimScopePathsJson, PostgresType::Text),
+            EntitySearch::VerbatimScopePaths,
+        );
     for column in HOISTED_COLUMNS {
         select.expr_as(geometry(column.ewkb), column.stored);
     }
@@ -288,6 +303,7 @@ pub(super) fn projection_cte(columns: &[UnnestColumn], write: ProjectedWrite) ->
             for column in HOISTED_COLUMNS {
                 select.expr(staged(column.kept));
             }
+            select.expr(staged(StagedColumn::ExpectedModifiedAt));
         }
         ProjectedWrite::Insert => {}
     }
@@ -304,25 +320,27 @@ pub(super) fn apply_staged_alias(sql: String, columns: &[UnnestColumn]) -> Strin
 /// Which set-write a projection serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProjectedWrite {
-    /// The update: whether each geometry is kept is staged and projected.
+    /// The update: whether each geometry is kept, and the expectation, are
+    /// staged and projected.
     Update,
     /// The insert: nothing to compare against and no stored row to keep from.
     Insert,
 }
 
 /// The precondition the update and the delete carry:
-/// `<expected> IS NULL OR entity_documents.modified_at = <expected>`,
-/// with `expected` read from wherever the statement carries it (`d` for the
-/// delete, `pay` for the update).
+/// `<expected> IS NULL OR <entities>.modified_at = <expected>`, with
+/// `expected` read from wherever the statement carries it (`d` for the delete,
+/// `proj` for the update) and `entities` the name the statement reads the
+/// identity row under.
 ///
 /// A null expectation matches whatever is there; a non-null one matches only a
 /// row still standing as the caller read it, which is what turns a
 /// read-modify-write into a compare-and-set rather than a lost update. The
-/// token compared is `entity_documents.modified_at`: the version of the payload
-/// is what a caller read and what it states.
-pub(super) fn expectation(expected: SimpleExpr, documents_alias: impl IntoIden) -> Cond {
-    let documents_alias = documents_alias.into_iden();
+/// token compared is the clause 4.8 `modifiedAt` of the entity, which every
+/// write stamps: it is what a caller read and what it states.
+pub(super) fn expectation(expected: SimpleExpr, entities_alias: impl IntoIden) -> Cond {
+    let entities_alias = entities_alias.into_iden();
     Cond::any()
         .add(expected.clone().is_null())
-        .add(Expr::col((documents_alias, EntityDocuments::ModifiedAt)).eq(expected)) // clone: the expectation is read twice, once for its presence and once for its value
+        .add(Expr::col((entities_alias, Entities::ModifiedAt)).eq(expected)) // clone: the expectation is read twice, once for its presence and once for its value
 }

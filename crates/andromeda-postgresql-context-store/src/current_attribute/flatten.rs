@@ -159,11 +159,9 @@ fn members(name: &AttributeName, dataset_id: Option<&Identifier>, instance: &Ins
 /// The value of one instance of `name`, in the column its shape names.
 fn stored_value(name: &AttributeName, family: &FamilyValue, keys: &NameKeys) -> Result<StoredValue, FlattenError> {
     match family {
-        FamilyValue::Property { values, .. } => match values.as_slice() {
-            [ExpandedValue::Literal(literal)] if literal.direction().is_none() => literal_value(name, literal, keys),
-            [ExpandedValue::Literal(_) | ExpandedValue::Json(_) | ExpandedValue::Node(_) | ExpandedValue::List(_)] | [] | [_, _, ..] => {
-                object(&StructuredValue::Values(values.iter().map(ExpandedValue::to_fragment).collect()))
-            }
+        FamilyValue::Property { values, .. } => match scalar_literal(values) {
+            Some(literal) => literal_value(name, literal, keys),
+            None => object(&StructuredValue::Values(values.iter().map(ExpandedValue::to_fragment).collect())),
         },
         FamilyValue::GeoProperty { geometry, .. } => Ok(match geometry {
             GeoValue::Geometry(geometry) => StoredValue::Geometry {
@@ -201,6 +199,15 @@ fn stored_value(name: &AttributeName, family: &FamilyValue, keys: &NameKeys) -> 
             })
             .collect::<Result<Vec<_>, _>>()
             .and_then(|targets| object(&StructuredValue::ObjectList(targets))),
+    }
+}
+
+/// The literal a Property's values hold as one scalar: a single literal with
+/// no direction. Any other value is held whole in `value_object`.
+pub(crate) const fn scalar_literal(values: &[ExpandedValue]) -> Option<&Literal> {
+    match values {
+        [ExpandedValue::Literal(literal)] if literal.direction().is_none() => Some(literal),
+        [ExpandedValue::Literal(_) | ExpandedValue::Json(_) | ExpandedValue::Node(_) | ExpandedValue::List(_)] | [] | [_, _, ..] => None,
     }
 }
 

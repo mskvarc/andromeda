@@ -19,7 +19,7 @@ use andromeda_context_commit::deleted_entity::DeletedEntity;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_schema::current::{E, Entities, EntityDocuments, EntitySearch};
+use andromeda_postgresql_schema::current::{E, Entities, EntitySearch};
 use andromeda_postgresql_seaquery::unnest::apply_column_alias;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
@@ -28,12 +28,6 @@ use sqlx::{Postgres, Row, Transaction};
 
 /// The statement name the entity set-delete is observed under.
 const ENTITY_DELETE: StatementName = StatementName("entity-delete");
-
-/// Alias `doc` for the `entity_documents` row the delete reads its version
-/// token from.
-#[derive(Iden, Clone, Copy)]
-#[iden = "doc"]
-struct Doc;
 
 /// The delete CTE, `gone`, whose only purpose is to run.
 #[derive(Iden, Clone, Copy)]
@@ -46,12 +40,11 @@ static ENTITY_DELETE_STATEMENT: BranchStatement = BranchStatement::new(entity_de
 /// Build the batch delete.
 ///
 /// ```sql
-/// WITH doomed AS (SELECT e.entity_key, e.id, e.created_at, doc.modified_at, e.expires_at
+/// WITH doomed AS (SELECT e.entity_key, e.id, e.created_at, e.modified_at, e.expires_at
 ///                 FROM UNNEST(…) AS d(id, expected_modified_at)
 ///                 JOIN entities e ON e.id = d.id
-///                 JOIN entity_documents doc ON doc.entity_key = e.entity_key
-///                 WHERE d.expected_modified_at IS NULL OR doc.modified_at = d.expected_modified_at
-///                 FOR UPDATE OF e, doc),
+///                 WHERE d.expected_modified_at IS NULL OR e.modified_at = d.expected_modified_at
+///                 FOR UPDATE OF e),
 ///      srch(entity_key, old_types, old_instance_names, old_instance_kinds) AS
 ///              (DELETE FROM entity_search WHERE entity_key IN (SELECT entity_key FROM doomed)
 ///               RETURNING entity_key, entity_type_name_keys, attribute_instance_name_keys, attribute_instance_kinds),
@@ -61,22 +54,23 @@ static ENTITY_DELETE_STATEMENT: BranchStatement = BranchStatement::new(entity_de
 /// ```
 ///
 /// Carries the same nullable expectation the update does, and for the same
-/// reason: a delete computed from a payload the caller read is a
+/// reason: a delete computed from a state the caller read is a
 /// read-modify-write like any other, and one that removed a state its author
 /// never saw would be a lost update. The candidates are locked before the
-/// delete so a concurrent payload write cannot slip between the expectation
-/// check and the removal.
+/// delete so a concurrent write cannot slip between the expectation check and
+/// the removal.
 ///
 /// The search row is deleted by name so that the rows it held come back: the
 /// discovery census counts every one of their types and attribute instances
 /// out, from the row the delete removed rather than from the statement's
-/// snapshot of it. Everything else goes through the ownership edges that
-/// cascade from `entities`: the document row, the type memberships and the
-/// current attribute projection. Clause 5.6.6 leaves the temporal evolution
-/// standing, so no history relation is touched. The system attributes come
-/// back because the clause 5.6.10 notification carries them and cannot read
-/// them once the rows are gone; the payload does not, because every caller read
-/// it before the delete and decoding it again would only double its cost.
+/// snapshot of it. Everything else goes with the identity row: the type
+/// memberships through their cascading foreign key, the attribute instances
+/// through the statement-level trigger on `entities`, which removes the
+/// instances of every deleted entity in one pass. Clause 5.6.6 leaves the
+/// temporal evolution standing, so no history relation is touched. The system
+/// attributes come back because the clause 5.6.10 notification carries them
+/// and cannot read them once the rows are gone; the attributes do not, because
+/// every caller that needs them read them before the delete.
 ///
 /// # Errors
 ///
@@ -90,7 +84,7 @@ pub(super) fn entity_delete_sql(target: &ContextTarget) -> Result<String, Contex
         .expr(Expr::col((E, Entities::EntityKey)))
         .expr(Expr::col((E, Entities::Id)))
         .expr(Expr::col((E, Entities::CreatedAt)))
-        .expr(Expr::col((Doc, EntityDocuments::ModifiedAt)))
+        .expr(Expr::col((E, Entities::ModifiedAt)))
         .expr(Expr::col((E, Entities::ExpiresAt)))
         .from_function(staging_source(&columns), Staged)
         .join_as(
@@ -99,14 +93,8 @@ pub(super) fn entity_delete_sql(target: &ContextTarget) -> Result<String, Contex
             E,
             Expr::col((E, Entities::Id)).equals((Staged, StagedColumn::Id)),
         )
-        .join_as(
-            JoinType::Join,
-            table_of(target, EntityDocuments::Table),
-            Doc,
-            Expr::col((Doc, EntityDocuments::EntityKey)).equals((E, Entities::EntityKey)),
-        )
-        .cond_where(expectation(staged(StagedColumn::ExpectedModifiedAt), Doc))
-        .lock_with_tables(LockType::Update, [E.into_iden(), Doc.into_iden()]);
+        .cond_where(expectation(staged(StagedColumn::ExpectedModifiedAt), E))
+        .lock_with_tables(LockType::Update, [E.into_iden()]);
 
     let doomed_keys = || Query::select().column(Entities::EntityKey).from(Doomed).take();
     let search = Query::delete()
@@ -147,7 +135,7 @@ pub(super) fn entity_delete_sql(target: &ContextTarget) -> Result<String, Contex
             .columns([
                 Entities::Id.into_iden(),
                 Entities::CreatedAt.into_iden(),
-                EntityDocuments::ModifiedAt.into_iden(),
+                Entities::ModifiedAt.into_iden(),
                 Entities::ExpiresAt.into_iden(),
             ])
             .from(Doomed)
@@ -163,11 +151,10 @@ impl EntityRepository {
     /// the system attributes each one held.
     ///
     /// The search row is deleted beside the identity row so the discovery
-    /// census can count out what it held; the document, membership and current
-    /// attribute rows the entity owns go with it through the foreign keys that
-    /// cascade from `entities`, and the entity's temporal evolution
-    /// deliberately survives: clause 5.6.6 deletes the Entity, and only clause
-    /// 5.6.16 deletes its history.
+    /// census can count out what it held; the membership and attribute
+    /// instance rows the entity owns go with the identity row, and the
+    /// entity's temporal evolution deliberately survives: clause 5.6.6 deletes
+    /// the Entity, and only clause 5.6.16 deletes its history.
     ///
     /// `expected_modified_at` is positionally aligned with `ids`; a `None` entry
     /// deletes unconditionally.
@@ -228,19 +215,16 @@ mod tests {
         let sql = entity_delete_sql(&ContextTarget::Live).expect("the fixed delete builds");
         pretty_assertions::assert_eq!(placeholders(&sql), (1..=2).collect::<BTreeSet<u32>>());
         assert!(
-            sql.starts_with(r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "e"."created_at", "doc"."modified_at", "e"."expires_at" FROM UNNEST("#),
+            sql.starts_with(r#"WITH "doomed" AS (SELECT "e"."entity_key", "e"."id", "e"."created_at", "e"."modified_at", "e"."expires_at" FROM UNNEST("#),
             "{sql}"
         );
         assert!(sql.contains("AS d(id, expected_modified_at)"), "{sql}");
+        assert!(sql.contains(r#"JOIN "entities" AS "e" ON "e"."id" = "d"."id" WHERE"#), "{sql}");
         assert!(
-            sql.contains(r#"JOIN "entities" AS "e" ON "e"."id" = "d"."id" JOIN "entity_documents" AS "doc" ON "doc"."entity_key" = "e"."entity_key""#),
+            sql.contains(r#""d"."expected_modified_at" IS NULL OR "e"."modified_at" = "d"."expected_modified_at""#),
             "{sql}"
         );
-        assert!(
-            sql.contains(r#""d"."expected_modified_at" IS NULL OR "doc"."modified_at" = "d"."expected_modified_at""#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"FOR UPDATE OF "e", "doc")"#), "{sql}");
+        assert!(sql.contains(r#"FOR UPDATE OF "e")"#), "{sql}");
     }
 
     #[test]
@@ -256,13 +240,17 @@ mod tests {
         );
     }
 
-    /// Clause 5.6.6 leaves the temporal evolution standing, and the document,
-    /// membership and projection rows cascade from `entities`.
+    /// Clause 5.6.6 leaves the temporal evolution standing, and the
+    /// membership and attribute instance rows go with the identity row, the
+    /// instances through the statement-level trigger on `entities`.
     #[test]
-    fn the_delete_names_only_the_identity_the_search_row_and_the_census() {
+    fn an_entity_delete_is_one_statement() {
         let sql = entity_delete_sql(&ContextTarget::Live).expect("the fixed delete builds");
+        pretty_assertions::assert_eq!(sql.matches(r#"DELETE FROM "entities""#).count(), 1, "{sql}");
         for relation in [
+            "current_attributes",
             "current_attribute_values",
+            "entity_documents",
             "attribute_history",
             "temporal_entities",
             "temporal_attribute_streams",
@@ -270,7 +258,6 @@ mod tests {
         ] {
             assert!(!sql.contains(relation), "entity deletion must not name {relation}: {sql}");
         }
-        assert!(!sql.contains(r#"DELETE FROM "entity_documents""#), "the document row cascades: {sql}");
     }
 
     /// The census counts out the search rows the delete removed, read from its

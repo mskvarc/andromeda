@@ -162,6 +162,17 @@ impl AttributeInstances {
         self.get(None).map(|instance| (None, instance)).or_else(|| self.iter().next())
     }
 
+    /// Whether both hold the same identities with instances of the same
+    /// content ([`Instance::same_content`]), system times aside. Like equality,
+    /// it ignores the order of instances.
+    #[must_use]
+    pub fn same_content(&self, other: &AttributeInstances) -> bool {
+        self.len() == other.len()
+            && self
+                .iter()
+                .all(|(dataset_id, instance)| other.get(dataset_id).is_some_and(|another| instance.same_content(another)))
+    }
+
     /// Give the instances up, in stored order.
     pub fn into_instances(self) -> impl Iterator<Item = (Option<Identifier>, Instance)> {
         self.0.into_iter()

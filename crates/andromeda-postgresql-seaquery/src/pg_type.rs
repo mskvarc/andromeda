@@ -99,6 +99,10 @@ pub enum PostgresType {
     /// `uuid[]`.
     #[iden = "uuid[]"]
     UuidArray,
+    /// `sub_attribute_tree[]`: the sub-attribute elements of many attribute
+    /// instances, one composite per instance.
+    #[iden = "sub_attribute_tree[]"]
+    SubAttributeTreeArray,
 }
 
 #[cfg(test)]

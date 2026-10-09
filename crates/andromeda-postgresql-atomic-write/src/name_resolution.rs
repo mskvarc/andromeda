@@ -1,10 +1,11 @@
 //! The dictionary keys one commit's writes are stored under.
 //!
 //! An entity's search row carries its types as `entity_type_names` keys and
-//! the names of its attributes as `attribute_names` keys, and the
-//! current-attribute projection carries its attributes as `attribute_names`
-//! keys too, so both dictionaries are consulted inside the commit's own
-//! transaction before the statements that bind the keys run. Minting rather
+//! the names of its attributes as `attribute_names` keys, and its
+//! `current_attributes` rows carry every attribute name at every depth as an
+//! `attribute_names` key and every datatype, `valueType` and `objectType` IRI
+//! as an `entity_type_names` key, so both dictionaries are consulted inside
+//! the commit's own transaction before the statements that bind the keys run. Minting rather
 //! than looking up: a type or attribute recorded for the first time has no
 //! key yet, and the row that references it is written moments later in the
 //! same transaction, so a key exists exactly when the row that references it
@@ -13,29 +14,22 @@
 use crate::commit_refusal::name_lookup;
 use andromeda_context_commit::{atomic_write::AtomicWrite, error::CommitError};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_postgresql_context_store::current_attribute::name_keys::{MentionedNames, NameKeys};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
 use andromeda_temporal::append_intent::{TemporalAppendEntry, TemporalAppendIntent};
 use sqlx::{Postgres, Transaction};
 use std::collections::HashMap;
 
-/// The dictionary keys the entity statements of one commit bind: every type
-/// and every attribute name the writes' records project.
-#[derive(Debug, Default)]
-pub(crate) struct ResolvedWriteNames {
-    /// The key of every entity type a record declares.
-    pub(crate) types: HashMap<EntityTypeName, EntityTypeNameKey>,
-    /// The key of every attribute name a record's payload carries.
-    pub(crate) attributes: HashMap<AttributeName, AttributeNameKey>,
-}
-
-/// Mint the dictionary key of every entity type and attribute name the
-/// writes' records project.
+/// Mint the dictionary key of every name the writes' records project or
+/// store: every entity type and attribute name the search row carries, and
+/// every name the `current_attributes` rows of the state hold as a key
+/// ([`MentionedNames`]).
 ///
 /// Only writes that carry an entity record contribute: a delete or a
-/// history-only write states no types and carries no payload. Resolved before
-/// the entity statements run because the fused insert and update bind both
-/// key arrays directly.
+/// history-only write states no types and stores no attribute. Resolved before
+/// the entity statements run because the fused insert and update bind the
+/// keys directly.
 ///
 /// # Errors
 ///
@@ -47,14 +41,15 @@ pub(crate) async fn resolve_write_names(
     writes: &[AtomicWrite],
     entity_type_names: &dyn NameLookup<EntityTypeName>,
     attribute_names: &dyn NameLookup<AttributeName>,
-) -> Result<ResolvedWriteNames, CommitError> {
-    let mut types: Vec<EntityTypeName> = Vec::new();
-    let mut attributes: Vec<AttributeName> = Vec::new();
+) -> Result<NameKeys, CommitError> {
+    let mut mentioned = MentionedNames::default();
     for record in writes.iter().filter_map(|write| write.entity.record()) {
         // clone: the dictionary request owns the names it resolves.
-        types.extend(record.projection.types.iter().cloned());
-        attributes.extend(record.projection.attributes.names().iter().cloned());
+        mentioned.types.extend(record.projection.types.iter().cloned());
+        mentioned.attributes.extend(record.projection.attributes.names().iter().cloned());
+        mentioned.collect(record.state.attributes());
     }
+    let MentionedNames { mut attributes, mut types } = mentioned;
     types.sort_unstable();
     types.dedup();
     attributes.sort_unstable();
@@ -72,7 +67,7 @@ pub(crate) async fn resolve_write_names(
     } else {
         attribute_names.resolve_or_create(tx, &attributes).await.map_err(|error| name_lookup(&error))?
     };
-    Ok(ResolvedWriteNames { types, attributes })
+    Ok(NameKeys::new(ResolvedNames::from_pairs(attributes), ResolvedNames::from_pairs(types)))
 }
 
 /// Mint the dictionary key of every attribute the projected intents name.

@@ -47,12 +47,7 @@ impl Instance {
     /// `unitCode`, the NGSI-LD Null anywhere, a repeated sub-attribute
     /// instance.
     pub fn try_from_document(attribute: &AttributeName, document: InstanceDocument) -> Result<(Option<Identifier>, Instance), EntityRefusal> {
-        let mut parts = document.into_parts();
-        // The broker stamps attribute instances alone (clause 4.8), so a time
-        // on a sub-attribute was written by a client, which clause 5.2.5 says
-        // to ignore. Each level drops its children's, so every depth is
-        // covered once.
-        parts.sub_attributes.values_mut().for_each(AttributeMember::forget_system_instants);
+        let parts = document.into_parts();
         let family = resolved_family(&parts);
         reject_nulls(attribute, &parts)?;
         let envelope = Envelope {
@@ -289,12 +284,11 @@ mod tests {
         (held, (held.created_at(), held.modified_at()))
     }
 
-    /// The broker stamps attribute instances alone (clause 4.8), so a
-    /// sub-attribute time is a client's, which clause 5.2.5 ignores at every
-    /// depth; the instance's own times are what the stored-document decoder
-    /// reads back and survive.
+    /// A stored instance carries the times a write stamped at every depth
+    /// (clause 4.8), so they read back at every depth; a time a client wrote
+    /// is replaced when the write is stamped (clause 5.2.5).
     #[test]
-    fn sub_attribute_system_times_are_dropped_at_every_depth() {
+    fn sub_attribute_system_times_are_kept_at_every_depth() {
         let method = "https://example.org/method";
         let written = stamped(sub_attribute(ACCURACY, stamped(sub_attribute(method, stamped(IndexMap::new())))));
 
@@ -302,7 +296,7 @@ mod tests {
 
         pretty_assertions::assert_eq!((instance.created_at(), instance.modified_at()), (Some(at()), Some(at())));
         let (accuracy, accuracy_times) = sub_attribute_times(&instance, ACCURACY);
-        pretty_assertions::assert_eq!(accuracy_times, (None, None));
-        pretty_assertions::assert_eq!(sub_attribute_times(accuracy, method).1, (None, None));
+        pretty_assertions::assert_eq!(accuracy_times, (Some(at()), Some(at())));
+        pretty_assertions::assert_eq!(sub_attribute_times(accuracy, method).1, (Some(at()), Some(at())));
     }
 }

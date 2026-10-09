@@ -28,10 +28,7 @@ use andromeda_federation::config::FederationConfig;
 use andromeda_http_headers::link::field_layout::LinkFieldLayout;
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_jsonld::config::JsonLdConfig;
-use andromeda_postgresql_atomic_write::{
-    committer::{EntityInsertMode, PostgresAtomicCommitter},
-    config::{AtomicWriteConfig, BulkWriteMode},
-};
+use andromeda_postgresql_atomic_write::{committer::PostgresAtomicCommitter, config::AtomicWriteConfig};
 use andromeda_postgresql_context_store::{config::DatabaseConfig, tenant_database::DatabaseUrl};
 use andromeda_snapshot::config::SnapshotConfig;
 use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
@@ -242,10 +239,6 @@ async fn build_tenant_state(
     // Every write path reaches the `current_attributes` rows through this
     // complete atomic commit implementation, which writes them in the
     // transaction that mutates the entity.
-    let entity_insert_mode = match config.atomic_write.bulk_mode {
-        BulkWriteMode::Unnest => EntityInsertMode::Unnest,
-        BulkWriteMode::CopyStaging => EntityInsertMode::CopyStaging,
-    };
     // The consequence drains' wake channels are created here, before the drains
     // are registered, so the committer can hold their wake handles while the
     // drains are still being assembled; a commit that races assembly and wakes
@@ -271,7 +264,6 @@ async fn build_tenant_state(
         &storage.pool,
         temporal.history_mode,
         config.temporal.core_write_history,
-        entity_insert_mode,
         Arc::clone(&storage.attribute_names),   // clone: the commit interns names through the tenant's one dictionary.
         Arc::clone(&storage.entity_type_names), // clone: the same dictionary, for entity types.
         consequence_publisher,
