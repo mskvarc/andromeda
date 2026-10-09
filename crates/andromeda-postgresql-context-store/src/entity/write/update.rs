@@ -1,16 +1,17 @@
-//! The batch update: one statement that overwrites each staged entity's
+//! The batch update: one statement that writes each staged entity's edited
 //! attribute instances and rewrites its search and lifecycle rows.
 
 use crate::{
     branch_statement::BranchStatement,
     current_attribute::{
+        staged_grains::{GRAIN_BINDS, StagedGrains, apply_grains_alias, grains_cte},
         staged_rows::StagedRows,
-        staging::{apply_instances_alias, instances_cte},
-        write::{replaced_rows, vanished_rows},
+        staging::{ROW_COLUMNS, apply_instances_alias, instances_cte},
+        write::{dropped_rows, moved_rows, vanished_rows, written_rows},
     },
     entity::{
         census::delta::{CensusChange, CensusStatements},
-        mapper::stored_written_entity,
+        mapper::stored_uri,
         params::{PreparedEntityColumns, literal_texts},
         repo::EntityRepository,
         staged_geometry::{kept_column, staged_column},
@@ -19,10 +20,12 @@ use crate::{
             search_image::SearchImage,
             staging::{
                 Attrs,
+                Dropped,
                 Ents,
                 Gone,
                 HOISTED_COLUMNS,
                 HoistedColumn,
+                Moved,
                 Proj,
                 ProjectedWrite,
                 Srch,
@@ -35,7 +38,6 @@ use crate::{
             },
             type_membership::{Mbrs, Strays, added_memberships, dropped_memberships},
         },
-        written_entity::WrittenEntity,
     },
     error::ContextStoreError,
     store_invariant::{GuardedEntityWrite, StoreInvariant},
@@ -45,8 +47,11 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
+    cast::cast,
     clock::now,
     pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    placeholder::external_placeholder,
     returning_image::{New, Old},
     transaction_id::current_transaction_id,
 };
@@ -83,13 +88,17 @@ static ENTITY_UPDATE_STATEMENT: BranchStatement = BranchStatement::new(entity_up
 ///                 (SELECT <old type the new row lacks>, srch.id FROM srch …)),
 ///      mbrs AS (INSERT INTO entity_type_members (…) SELECT srch.entity_key, <new type the old row lacked>, srch.id FROM srch …),
 ///      instances AS (SELECT r.id, r.attribute_name_key, … FROM UNNEST($18::text[], …) AS r(…)),
-///      gone AS (DELETE FROM current_attributes WHERE entity_key IN (SELECT entity_key FROM ents)
+///      grains AS (SELECT g.id, g.attribute_name_key, g.dataset_id, g.ordinal FROM UNNEST($45::text[], …) AS g(…)),
+///      gone AS (DELETE FROM current_attributes WHERE entity_key IN (SELECT entity_key FROM ents WHERE id = ANY($49::text[]))
 ///               AND NOT EXISTS (<a staged row of the same grain>)),
+///      dropped AS (DELETE FROM current_attributes WHERE entity_key IN (<ents removing a grain>) AND EXISTS (<a removed grain of the row>)),
+///      moved AS (UPDATE current_attributes SET ordinal = grains.ordinal FROM ents, grains WHERE grains.ordinal IS NOT NULL AND <the row's grain>),
 ///      attrs AS (INSERT INTO current_attributes (entity_key, …) SELECT ents.entity_key, instances.… FROM ents JOIN instances ON instances.id = ents.id
-///                ON CONFLICT (entity_key, attribute_name_key, dataset_id) DO UPDATE SET ordinal = excluded.ordinal, …),
+///                ON CONFLICT (entity_key, attribute_name_key, dataset_id) DO UPDATE SET ordinal = excluded.ordinal, …
+///                WHERE (current_attributes.ordinal, …) IS DISTINCT FROM (excluded.ordinal, …)),
 ///      census_shapes AS (SELECT <image arrays>, SUM(±1) FROM srch … GROUP BY <image arrays>),
 ///      census_types AS (INSERT INTO entity_type_census …), census_type_attributes AS (…), census_attributes AS (…)
-/// SELECT entity_key, id FROM ents
+/// SELECT id FROM ents
 /// ```
 ///
 /// The identity row is the anchor ([`entity_write`]): it stamps the clause
@@ -105,9 +114,14 @@ static ENTITY_UPDATE_STATEMENT: BranchStatement = BranchStatement::new(entity_up
 /// index unless it changed, so the update stays a heap-only tuple.
 ///
 /// Every other relation is written only for the entities whose anchor landed.
-/// The attribute instances are the staged rows: a stored grain (clause 4.5.5)
-/// is overwritten in place, a new one inserted, and one the state no longer
-/// holds deleted. The search row is rewritten only where a projected column
+/// The attribute instances are written as each entity's edit says
+/// ([`RowEdit`](crate::current_attribute::row_edit::RowEdit)): a staged row
+/// updates its stored grain (clause 4.5.5) in place, keeping its `createdAt`,
+/// or is inserted when the grain is new; a staged grain with an ordinal moves
+/// its row there and a staged grain without one deletes its row; and an entity
+/// whose staged rows are every row it keeps, named in the overwritten list,
+/// loses every stored grain none of them has. A row the edit does not name is
+/// not touched. The search row is rewritten only where a projected column
 /// actually differs from what is stored: `IS DISTINCT FROM` on every column,
 /// so a value-only write leaves it and every search index untouched. A geometry
 /// the write leaves as the stored row holds it is staged as kept, with no EWKB:
@@ -126,6 +140,11 @@ static ENTITY_UPDATE_STATEMENT: BranchStatement = BranchStatement::new(entity_up
 /// unreachable.
 pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, ContextStoreError> {
     let columns = update_staging_columns();
+    // The binds run entity columns, row columns (the identifier first), grain
+    // columns, then the overwritten entities.
+    let rows_first = columns.len() + 1;
+    let grains_first = rows_first + ROW_COLUMNS.len() + 1;
+    let overwritten = external_placeholder(grains_first + GRAIN_BINDS - 1);
 
     let mut search = Query::update();
     search.table(table_of(target, EntitySearch::Table));
@@ -182,16 +201,24 @@ pub(super) fn entity_update_sql(target: &ContextTarget) -> Result<String, Contex
         )
         .cte(CommonTableExpression::new().table_name(Strays).query(dropped_memberships(target)).to_owned())
         .cte(CommonTableExpression::new().table_name(Mbrs).query(added_memberships(target)?).to_owned())
-        .cte(instances_cte(columns.len() + 1))
-        .cte(CommonTableExpression::new().table_name(Gone).query(vanished_rows(target, Ents)).to_owned())
-        .cte(CommonTableExpression::new().table_name(Attrs).query(replaced_rows(target, Ents)?).to_owned());
+        .cte(instances_cte(rows_first))
+        .cte(grains_cte(grains_first))
+        .cte(
+            CommonTableExpression::new()
+                .table_name(Gone)
+                .query(vanished_rows(target, Ents, cast(overwritten, PostgresType::TextArray)))
+                .to_owned(),
+        )
+        .cte(CommonTableExpression::new().table_name(Dropped).query(dropped_rows(target, Ents)).to_owned())
+        .cte(CommonTableExpression::new().table_name(Moved).query(moved_rows(target, Ents)).to_owned())
+        .cte(CommonTableExpression::new().table_name(Attrs).query(written_rows(target, Ents)?).to_owned());
     for census in CensusStatements::of(target, Srch, CensusChange::Replaced)?.ctes() {
         with.cte(census);
     }
-    let statement = with.query(Query::select().column(Entities::EntityKey).column(Entities::Id).from(Ents).take());
+    let statement = with.query(Query::select().column(Entities::Id).from(Ents).take());
 
     let sql = statement.to_string(PostgresQueryBuilder);
-    Ok(apply_instances_alias(apply_staged_alias(sql, &columns)))
+    Ok(apply_grains_alias(apply_instances_alias(apply_staged_alias(sql, &columns))))
 }
 
 /// The update's anchor, `ents`: each identity row whose expectation still
@@ -252,9 +279,9 @@ fn hoisted_changed(column: HoistedColumn) -> Cond {
 }
 
 impl EntityRepository {
-    /// Overwrite every entity in `entities` whose expectation still holds,
-    /// its attribute instances becoming the rows `rows` stages for it,
-    /// returning the entities actually written.
+    /// Write every entity in `entities` whose expectation still holds, its
+    /// attribute instances edited as `rows` and `grains` stage it, returning
+    /// the entities actually written.
     ///
     /// `expected_modified_at` is positionally aligned with `entities`; a `None`
     /// entry overwrites unconditionally.
@@ -264,14 +291,15 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when the expectation slice is not the same
     /// length as `entities`, when an entity carries no type, when the update
     /// statement cannot be built, when the statement fails, or when a returned
-    /// surrogate key or identifier is not a valid written entity.
+    /// identifier is not a valid URI.
     pub async fn save_batch_in_tx(
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
         entities: &PreparedEntityColumns,
         rows: StagedRows<'_>,
+        grains: StagedGrains<'_>,
         expected_modified_at: &[Option<DateTime<Utc>>],
-    ) -> Result<Vec<WrittenEntity>, ContextStoreError> {
+    ) -> Result<Vec<Identifier>, ContextStoreError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -308,17 +336,17 @@ impl EntityRepository {
             .bind(&observation_spaces_kept)
             .bind(&operation_spaces_kept)
             .bind(expected_modified_at);
-        let rows = rows.bind_to(query).fetch_all(&mut **tx);
-        let rows: Vec<(i64, String)> = observe_statement(ENTITY_UPDATE, rows).await.map_err(entity_write_failure)?;
+        let rows = grains.bind_to(rows.bind_to(query)).fetch_all(&mut **tx);
+        let rows: Vec<(String,)> = observe_statement(ENTITY_UPDATE, rows).await.map_err(entity_write_failure)?;
 
-        rows.iter().map(|(key, id)| stored_written_entity(*key, id)).collect()
+        rows.iter().map(|(id,)| stored_uri(id)).collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        current_attribute::staging::ROW_COLUMNS,
+        current_attribute::{staged_grains::GRAIN_BINDS, staging::ROW_COLUMNS},
         entity::write::{
             placeholders,
             staging::update_staging_columns,
@@ -353,7 +381,7 @@ mod tests {
     #[test]
     fn the_update_binds_contiguous_placeholders_and_names_its_staging_columns() {
         let sql = update();
-        let binds = update_staging_columns().len() + ROW_COLUMNS.len() + 1;
+        let binds = update_staging_columns().len() + ROW_COLUMNS.len() + 1 + GRAIN_BINDS;
         pretty_assertions::assert_eq!(
             placeholders(&sql),
             (1..=u32::try_from(binds).expect("a small count")).collect::<BTreeSet<u32>>()
@@ -384,15 +412,17 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains(r#"RETURNING "entities"."entity_key", "entities"."id")"#), "{sql}");
-        assert!(sql.ends_with(r#"SELECT "entity_key", "id" FROM "ents""#), "{sql}");
+        assert!(sql.ends_with(r#"SELECT "id" FROM "ents""#), "{sql}");
         assert!(!sql.contains("entity_documents"), "{sql}");
     }
 
-    /// The attribute instances are the staged rows: a stored grain is
-    /// overwritten, a new one inserted, a vanished one deleted, each paired
-    /// with its entity by identifier and only for an entity the anchor wrote.
+    /// The attribute instances are written as each entity's edit stages
+    /// them, each row and grain paired with its entity by identifier and only
+    /// for an entity the anchor wrote: staged rows upserted, moved rows given
+    /// their ordinal, removed grains deleted, and an overwritten entity's
+    /// unstated grains deleted.
     #[test]
-    fn the_update_replaces_the_instance_rows_of_every_written_entity() {
+    fn the_update_writes_the_edit_of_every_written_entity() {
         let sql = update();
         assert!(
             sql.contains(r#""attrs" AS (INSERT INTO "current_attributes" ("entity_key", "attribute_name_key""#),
@@ -404,9 +434,32 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents")"#),
+            sql.contains(r#""moved" AS (UPDATE "current_attributes" SET "ordinal" = "grains"."ordinal" FROM "ents", "grains""#),
             "{sql}"
         );
+        assert!(
+            sql.contains(r#""dropped" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "ents"."entity_key" FROM "ents" JOIN "grains""#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#""gone" AS (DELETE FROM "current_attributes" WHERE "current_attributes"."entity_key" IN (SELECT "entity_key" FROM "ents" WHERE "id" = ANY($49::text[]))"#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r"$45::text[], $46::integer[], $47::text[], $48::integer[]) AS g(id, attribute_name_key, dataset_id, ordinal)"),
+            "{sql}"
+        );
+    }
+
+    /// The batch's rows and grains find their entity by identifier, never by
+    /// position, so the statement's binds do not grow with the batch and no
+    /// plan depends on its size.
+    #[test]
+    fn a_batch_pairs_rows_by_entity_id() {
+        let sql = update();
+        assert!(!sql.to_lowercase().contains("ordinality"), "{sql}");
+        assert!(sql.contains(r#""grains"."id" = "ents"."id""#), "{sql}");
+        assert!(sql.contains(r#""instances"."id" = "ents"."id""#), "{sql}");
     }
 
     /// A geometry the row keeps is the stored column itself and changes
@@ -438,7 +491,8 @@ mod tests {
             sql.contains(r#""srch" ("entity_key", "id", "old_types", "new_types", "old_instance_names", "new_instance_names", "old_instance_kinds", "new_instance_kinds") AS (UPDATE "entity_search" SET "entity_type_name_keys" = "proj"."entity_type_name_keys""#),
             "{sql}"
         );
-        pretty_assertions::assert_eq!(sql.matches("IS DISTINCT FROM").count(), 10, "ten search columns are guarded: {sql}");
+        let (search, _) = sql.split_once(r#""strays" AS"#).expect("the search write precedes the memberships");
+        pretty_assertions::assert_eq!(search.matches("IS DISTINCT FROM").count(), 10, "ten search columns are guarded: {sql}");
         for column in [
             "entity_type_name_keys",
             "attribute_name_keys",

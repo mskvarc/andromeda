@@ -16,15 +16,15 @@ use andromeda_context_commit::{atomic_write::AtomicWrite, error::CommitError};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_context_store::current_attribute::name_keys::{MentionedNames, NameKeys};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
-use andromeda_temporal::append_intent::{TemporalAppendEntry, TemporalAppendIntent};
+use andromeda_postgresql_query::dictionary::resolved_names::ResolvedNames;
 use sqlx::{Postgres, Transaction};
 use std::collections::HashMap;
 
 /// Mint the dictionary key of every name the writes' records project or
-/// store: every entity type and attribute name the search row carries, and
-/// every name the `current_attributes` rows of the state hold as a key
-/// ([`MentionedNames`]).
+/// store: every entity type and attribute name the search row carries, every
+/// name the `current_attributes` rows of the state hold as a key
+/// ([`MentionedNames`]), and the name of every attribute an update removes,
+/// whose rows it deletes by key.
 ///
 /// Only writes that carry an entity record contribute: a delete or a
 /// history-only write states no types and stores no attribute. Resolved before
@@ -48,6 +48,13 @@ pub(crate) async fn resolve_write_names(
         mentioned.types.extend(record.projection.types.iter().cloned());
         mentioned.attributes.extend(record.projection.attributes.names().iter().cloned());
         mentioned.collect(record.state.attributes());
+        if let Some(replaced) = &record.replaces {
+            let attributes = record.state.attributes();
+            // clone: the dictionary request owns the names it resolves.
+            mentioned
+                .attributes
+                .extend(replaced.attributes().names().filter(|name| !attributes.contains(name)).cloned());
+        }
     }
     let MentionedNames { mut attributes, mut types } = mentioned;
     types.sort_unstable();
@@ -68,40 +75,4 @@ pub(crate) async fn resolve_write_names(
         attribute_names.resolve_or_create(tx, &attributes).await.map_err(|error| name_lookup(&error))?
     };
     Ok(NameKeys::new(ResolvedNames::from_pairs(attributes), ResolvedNames::from_pairs(types)))
-}
-
-/// Mint the dictionary key of every attribute the projected intents name.
-///
-/// Resolved after the mutation is interpreted, from the intents the
-/// current-state projection follows, so only attributes a landed write actually
-/// observed or tombstoned mint a key; the projection's foreign key demands one
-/// for every row it writes, whether or not history records the write.
-///
-/// # Errors
-///
-/// Returns [`CommitError::Persistence`] when the dictionary cannot be resolved,
-/// which includes a resolution refused for taking the tenant's dictionary past
-/// its bound.
-pub(crate) async fn resolve_attribute_names(
-    tx: &mut Transaction<'_, Postgres>,
-    projected: &[&TemporalAppendIntent],
-    attribute_names: &dyn NameLookup<AttributeName>,
-) -> Result<HashMap<AttributeName, AttributeNameKey>, CommitError> {
-    let mut names: Vec<AttributeName> = projected
-        .iter()
-        .flat_map(|intent| intent.entries.iter())
-        .filter_map(|entry| match entry {
-            // clone: the dictionary request owns the names it resolves.
-            TemporalAppendEntry::Observation { row } => Some(row.attribute_name.clone()),
-            TemporalAppendEntry::Tombstone { attribute_name, .. } => Some(attribute_name.clone()),
-            TemporalAppendEntry::Scope { .. } => None,
-        })
-        .collect();
-    names.sort_unstable();
-    names.dedup();
-    let names = names;
-    if names.is_empty() {
-        return Ok(HashMap::new());
-    }
-    attribute_names.resolve_or_create(tx, &names).await.map_err(|error| name_lookup(&error))
 }

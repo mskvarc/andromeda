@@ -17,6 +17,10 @@ pub mod name_keys;
 mod round_trip_tests;
 /// One row.
 pub mod row;
+/// What a write does to an Entity's rows.
+pub mod row_edit;
+/// The grains an update moves or removes.
+pub mod staged_grains;
 /// The bind vectors the rows of many Entities travel in.
 pub mod staged_rows;
 /// The `instances` staging every statement writing rows reads them from.

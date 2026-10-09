@@ -24,7 +24,6 @@ pub mod commit_replay;
 pub mod committer;
 /// Entity changes paired with their context-space identity.
 pub mod context_change_event;
-pub mod current_state_projection;
 /// An entity captured immediately before deletion.
 pub mod deleted_entity;
 /// Entity-row mutations and their semantic payload.

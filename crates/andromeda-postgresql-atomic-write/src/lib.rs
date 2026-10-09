@@ -1,8 +1,8 @@
 //! PostgreSQL implementation of the atomic context-commit protocol.
 //!
 //! The crate owns the transaction that commits current entity state, native
-//! PostgreSQL temporal history, the `current_attribute_values` projection,
-//! notification events and durable asynchronous side-effect jobs. All
+//! PostgreSQL temporal history, notification events and durable asynchronous
+//! side-effect jobs. All
 //! of them share one transaction, so a failure in any of them rolls the entity
 //! mutation back. PostgreSQL statement fusion remains a private implementation
 //! detail.
@@ -30,8 +30,6 @@ pub mod intent_store;
 /// Removing the side-effect job a replayed commit settles.
 mod job_settlement;
 mod name_resolution;
-mod projected_entity_key;
-mod projection;
 mod write_isolation;
 
 #[cfg(test)]

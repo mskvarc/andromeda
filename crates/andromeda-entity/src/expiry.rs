@@ -231,7 +231,9 @@ fn purge_write(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<Atomic
     Some(
         AtomicWrite::builder()
             .entity_id(Arc::new(purged.current.id().clone())) // clone: the atomic write owns a shared validated identifier.
-            .entity(EntityMutation::Update(EntityRecord::from_state(purged.current).expect("a projectable state")))
+            .entity(EntityMutation::Update(
+                EntityRecord::replacing(&purged.previous, purged.current).expect("a projectable state"),
+            ))
             .history(purged.history)
             .precondition(Precondition::UnchangedSince(purged.modified_at))
             .build(),
@@ -308,6 +310,11 @@ mod tests {
         pretty_assertions::assert_eq!(write.history.len(), 1);
         assert!(matches!(write.history[0], HistoryRecord::Tombstone(_)));
         assert!(write.precondition.is_unchanged_since());
+        let replaced = write.entity.record().and_then(|record| record.replaces.as_deref());
+        assert!(
+            replaced.is_some_and(|state| state.attributes().contains("https://example.org/speed")),
+            "the purge states the state it read, so a store writes only the instances it removed"
+        );
     }
 
     #[test]

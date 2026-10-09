@@ -83,6 +83,10 @@ fn reserved_member_name(member: MemberName<'_>) -> Result<AttributeName, CommitE
 pub struct EntityRecord {
     /// The entity state, shared with the consequence paths.
     pub state: Arc<EntityState>,
+    /// The state the write was computed from and replaces, or `None` when it
+    /// replaces no state its writer read. A store that keeps an entity's
+    /// attribute instances apart writes only those the two states differ in.
+    pub replaces: Option<Arc<EntityState>>,
     /// The members a query filters on.
     pub projection: SearchProjection,
     /// Which hoisted geometries differ from the state this record replaces.
@@ -109,6 +113,7 @@ impl EntityRecord {
             expires_at: state.entity_expiry(),
             min_attribute_expires_at: state.min_attribute_expiry(),
             state,
+            replaces: None,
         })
     }
 
@@ -120,9 +125,10 @@ impl EntityRecord {
     ///
     /// Returns the [`CommitError::Invariant`] of
     /// [`SearchProjection::from_state`].
-    pub fn replacing(previous: &EntityState, state: Arc<EntityState>) -> Result<EntityRecord, CommitError> {
+    pub fn replacing(previous: &Arc<EntityState>, state: Arc<EntityState>) -> Result<EntityRecord, CommitError> {
         let mut record = EntityRecord::from_state(state)?;
         record.geometry_changes = HoistedGeometryChanges::between(previous, &record.state);
+        record.replaces = Some(Arc::clone(previous)); // clone: Arc ref-count bump; the writer keeps the state it read
         Ok(record)
     }
 
@@ -139,6 +145,7 @@ impl EntityRecord {
     ) -> EntityRecord {
         EntityRecord {
             state,
+            replaces: None,
             projection,
             geometry_changes: HoistedGeometryChanges::all_changed(),
             expires_at,
@@ -323,7 +330,9 @@ mod tests {
         let replacing = EntityRecord::replacing(&previous, Arc::clone(&current)).expect("a projection");
         assert_eq!(replacing.geometry_changes.location, GeometryChange::Unchanged);
         assert!(Arc::ptr_eq(&replacing.state, &current));
+        assert!(replacing.replaces.as_ref().is_some_and(|replaced| Arc::ptr_eq(replaced, &previous)));
         let fresh = EntityRecord::from_state(current).expect("a projection");
         assert_eq!(fresh.geometry_changes.location, GeometryChange::Changed);
+        assert!(fresh.replaces.is_none());
     }
 }

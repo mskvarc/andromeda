@@ -8,11 +8,10 @@
 //! turns that into a per-entity outcome by asking what the write assumed.
 //!
 //! Insert and update write the attribute instance rows in the same statement,
-//! paired with their entity by identifier, and return the surrogate key
-//! alongside the identifier, because the rest of the transaction writes
-//! against that key and must not have to read the row back to find it. Delete
-//! returns neither: the instance rows go with the identity row, and clause
-//! 5.6.6 leaves the temporal evolution standing.
+//! paired with their entity by identifier, and return the identifier of every
+//! entity they wrote. Delete returns what a deletion notification needs: the
+//! instance rows go with the identity row, and clause 5.6.6 leaves the
+//! temporal evolution standing.
 //!
 //! Every statement also keeps the discovery census
 //! ([`census`](crate::entity::census)) in step with the search rows it writes,

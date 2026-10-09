@@ -32,8 +32,8 @@ pub enum HistoryRecord {
     /// to current state is a separate question -- current state holds one
     /// instance per Attribute instance (clause 4.5.5), the most current one
     /// (clause 4.5.5.3) -- which the write answers through its
-    /// [`CurrentStateProjection`](crate::current_state_projection::CurrentStateProjection)
-    /// rather than through its history.
+    /// [`EntityMutation`](crate::entity_mutation::EntityMutation) rather than
+    /// through its history.
     EvolutionInstances(Arc<EntityDocument>),
     /// End of one attribute instance that left current entity state.
     Tombstone(RemovedAttributeInstance),

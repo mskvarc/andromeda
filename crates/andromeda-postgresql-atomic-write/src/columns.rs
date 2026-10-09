@@ -13,34 +13,35 @@ use andromeda_context_commit::{
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::stored_attribute_kind};
 use andromeda_postgresql_context_store::{
-    current_attribute::{
-        flatten::{FlattenError, flatten},
-        name_keys::NameKeys,
-        staged_rows::StagedRows,
-    },
+    current_attribute::{flatten::FlattenError, name_keys::NameKeys, row_edit::RowEdit, staged_grains::StagedGrains, staged_rows::StagedRows},
     entity::{params::PreparedEntityColumns, staged_geometry::StagedGeometry, staged_scopes::StagedScopes},
 };
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use chrono::{DateTime, Utc};
 
-/// The binds of one fused entity statement: one entry per entity, and one row
-/// per attribute instance of those entities.
+/// The binds of one fused entity statement: one entry per entity, and the
+/// `current_attributes` rows and grains each entity's edit writes.
 #[derive(Debug)]
 pub(crate) struct EntityBinds<'a> {
     /// The parallel entity columns.
     pub(crate) entities: PreparedEntityColumns,
-    /// The `current_attributes` rows, each naming its entity.
+    /// The rows written whole, each naming its entity.
     pub(crate) rows: StagedRows<'a>,
+    /// The grains an update moves or removes, and the entities it overwrites.
+    pub(crate) grains: StagedGrains<'a>,
 }
 
 /// Build the binds of one fused entity statement.
 ///
 /// `keys` is the resolution of every name the writes project or store; one it
 /// does not hold is an invariant failure, because the keys were minted from
-/// these very writes in this transaction.
+/// these very writes in this transaction. An update that states the state it
+/// replaces stages only what differs from it ([`RowEdit`]); an insert, or an
+/// update that read nothing, stages every instance.
 pub(crate) fn columns_for<'a>(writes: &[IndexedWrite<'a>], keys: &NameKeys) -> Result<EntityBinds<'a>, CommitError> {
     let mut columns = PreparedEntityColumns::with_capacity(writes.len());
     let mut rows = StagedRows::default();
+    let mut grains = StagedGrains::default();
     for &(_, write) in writes {
         let record = write.entity.record().ok_or_else(|| {
             CommitError::from(CommitInvariant::MissingEntityRecord {
@@ -57,11 +58,10 @@ pub(crate) fn columns_for<'a>(writes: &[IndexedWrite<'a>], keys: &NameKeys) -> R
         columns.push_attribute_instances(instance_keys(&projection.attributes, &attribute_keys));
         columns.push_attribute_name_keys(attribute_keys);
         columns.scopes.push(StagedScopes::of(&projection.scopes));
-        rows.push(
-            write.entity_id.as_ref(),
-            flatten(state.attributes(), keys).map_err(|error| flatten_failure(&error))?,
-        )
-        .map_err(|error| CommitError::Persistence(PersistenceFailure::Unencodable.record(&error)))?;
+        let edit = RowEdit::between(record.replaces.as_deref(), state).map_err(|error| flatten_failure(&error))?;
+        rows.push(write.entity_id.as_ref(), edit.rows(keys).map_err(|error| flatten_failure(&error))?)
+            .map_err(|error| CommitError::Persistence(PersistenceFailure::Unencodable.record(&error)))?;
+        grains.push(write.entity_id.as_ref(), &edit, keys).map_err(|error| flatten_failure(&error))?;
         columns
             .push_geometries(
                 row.staged(changes.location, state.location_geometry()),
@@ -73,7 +73,11 @@ pub(crate) fn columns_for<'a>(writes: &[IndexedWrite<'a>], keys: &NameKeys) -> R
         columns.expires_ats.push(record.expires_at);
         columns.min_attribute_expires_ats.push(record.min_attribute_expires_at);
     }
-    Ok(EntityBinds { entities: columns, rows })
+    Ok(EntityBinds {
+        entities: columns,
+        rows,
+        grains,
+    })
 }
 
 /// The commit failure a state that does not flatten into rows is.
@@ -422,7 +426,7 @@ mod tests {
     /// An update of the state it read, whose record shares that state's
     /// location, replacing it under `precondition`.
     fn update_sharing_the_location(precondition: Precondition) -> AtomicWrite {
-        let previous = vehicle_state("urn:ngsi-ld:A", Some((13.4, 52.5)));
+        let previous = Arc::new(vehicle_state("urn:ngsi-ld:A", Some((13.4, 52.5))));
         let current = Arc::new(EntityState::clone(&previous)); // clone: shares every attribute, as a read-modify-write does
         AtomicWrite::builder()
             .entity_id(Arc::new("urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI")))
@@ -457,6 +461,42 @@ mod tests {
         let columns = columns_for(&indexed, &located_names()).expect("valid columns");
         assert!(columns.entities.locations[0].ewkb().is_some(), "{:?}", columns.entities.locations);
         pretty_assertions::assert_eq!(columns.entities.obs_spaces, vec![StagedGeometry::Written(None)]);
+    }
+
+    /// An update that states the state it read stages only what differs from
+    /// it: restating that state stages no row and no grain.
+    #[test]
+    fn an_update_of_the_state_it_read_stages_no_row() {
+        let writes = [update_sharing_the_location(Precondition::UnchangedSince(Utc::now()))];
+        let indexed: Vec<_> = writes.iter().enumerate().collect();
+        let columns = columns_for(&indexed, &located_names()).expect("valid columns");
+        assert!(columns.rows.is_empty(), "{:?}", columns.rows);
+        assert!(columns.grains.is_empty(), "{:?}", columns.grains);
+    }
+
+    /// An attribute the update removes is staged as a grain to delete, under
+    /// its dictionary key, and nothing is written whole.
+    #[test]
+    fn an_update_removing_an_attribute_stages_its_grain() {
+        let previous = Arc::new(vehicle_state("urn:ngsi-ld:A", Some((13.4, 52.5))));
+        let current = Arc::new(vehicle_state("urn:ngsi-ld:A", None));
+        let writes = [AtomicWrite::builder()
+            .entity_id(Arc::new("urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI")))
+            .entity(EntityMutation::Update(EntityRecord::replacing(&previous, current).expect("a projection")))
+            .precondition(Precondition::UnchangedSince(Utc::now()))
+            .build()];
+        let indexed: Vec<_> = writes.iter().enumerate().collect();
+        let columns = columns_for(&indexed, &located_names()).expect("valid columns");
+        assert!(columns.rows.is_empty(), "{:?}", columns.rows);
+        pretty_assertions::assert_eq!(columns.grains.len(), 1);
+        let unresolved = columns_for(&indexed, &keys(vec![(vehicle(), 7)], Vec::new())).expect_err("the removed name has no key");
+        assert!(
+            matches!(
+                unresolved,
+                CommitError::Invariant(CommitInvariant::UnresolvedName(NameDictionary::AttributeName))
+            ),
+            "{unresolved:?}"
+        );
     }
 
     #[test]

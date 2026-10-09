@@ -320,10 +320,9 @@ impl EntityService {
             let (write, inline_events) = match placement {
                 SideEffectPlacement::Inline(_) => (builder.history(history).build(), events),
                 SideEffectPlacement::DeferredOnLive => {
-                    // Tombstones stay inline in both modes: they describe what
-                    // the state just stopped saying, and deferring them would
-                    // leave `current_attribute_values` answering `q` filters with a
-                    // value the entity no longer has.
+                    // Tombstones stay inline in both modes: the deferred job
+                    // replays observations alone, so the endings commit with
+                    // the write that made them.
                     let (observations, endings): (Vec<HistoryRecord>, Vec<HistoryRecord>) = history.into_iter().partition(HistoryRecord::is_observations);
                     let temporal_entities = observations
                         .into_iter()

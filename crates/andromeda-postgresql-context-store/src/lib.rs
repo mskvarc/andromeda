@@ -1,9 +1,8 @@
 //! PostgreSQL-backed context store for the NGSI-LD context broker.
 //!
 //! This crate owns the persistence layer for entity state, subscriptions,
-//! context-source registrations, notification events and deliveries, and the
-//! `current_attribute_values` projection. It does NOT depend on the temporal
-//! store; both stores are independent.
+//! context-source registrations, notification events and deliveries. It does
+//! NOT depend on the temporal store; both stores are independent.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
@@ -25,8 +24,6 @@ pub mod csource_registration;
 pub mod csource_subscription;
 /// The `current_attributes` rows an Entity's attributes are stored as.
 pub mod current_attribute;
-/// The current-state projection of the attribute instances entities hold.
-pub mod current_attribute_values;
 /// Persistence layer for NGSI-LD entities.
 pub mod entity;
 /// Entity Map persistence (clauses 5.2.39 and 5.5.14).

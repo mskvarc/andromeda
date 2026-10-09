@@ -7,9 +7,8 @@
 //! (clause 4.5.5.3), so it takes only the instances that stand over what it
 //! held: a Temporal Evolution created for an unknown identifier brings the
 //! Entity into being with its most current instances, a newer observation
-//! advances it, and a backfill of older ones leaves it as it was. The Entity's
-//! document and the projection its `q` filters read change together, in the
-//! transaction that records the history.
+//! advances it, and a backfill of older ones leaves it as it was. Current state
+//! changes in the transaction that records the history.
 //!
 //! Subscriptions watch current state (clause 5.8.6 defines a change on it
 //! alone), so a change the fold makes owes the notifications a Core write
@@ -19,7 +18,6 @@ use crate::{error::TemporalError, service::TemporalService, temporal_invariant::
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
-    current_state_projection::CurrentStateProjection,
     entity_mutation::EntityMutation,
     entity_record::EntityRecord,
     precondition::{AfterAttempt, Precondition, after_attempt},
@@ -32,10 +30,7 @@ use andromeda_entity::{
     entity_snapshot::EntitySnapshot,
     notification_plan::{creation, modification},
 };
-use andromeda_ngsi_ld_entity::{
-    history::current_state_fold::{CurrentStateFold, fold_into_current_state},
-    system_instant::SystemInstant,
-};
+use andromeda_ngsi_ld_entity::{history::current_state_fold::fold_into_current_state, system_instant::SystemInstant};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use chrono::Utc;
 use std::sync::Arc;
@@ -112,13 +107,11 @@ fn evolution_write(
         (Some(snapshot), None) => Ok(EvolutionWrite {
             write: builder
                 .entity(EntityMutation::None)
-                .projection(CurrentStateProjection::Untouched)
                 .precondition(Precondition::UnchangedSince(snapshot.modified_at))
                 .build(),
             events: Vec::new(),
         }),
-        (current, Some(fold)) => {
-            let CurrentStateFold { mut state, restated, removed } = fold;
+        (current, Some(mut state)) => {
             // Clause 4.8: a standing instance takes the write instant as its
             // modifiedAt and keeps the createdAt it had; a new one takes both.
             state.settle(previous.map(|state| &**state), SystemInstant::new(now));
@@ -133,21 +126,12 @@ fn evolution_write(
                 None => creation(&state),
             };
             let plan = notifier.plan(target, entity_id, &record.projection.types, change, Some(&state), previous);
-            let projection = CurrentStateProjection::Restated {
-                observed: Arc::new(restated),
-                removed,
-            };
             let (entity, precondition) = match current {
                 Some(snapshot) => (EntityMutation::Update(record), Precondition::UnchangedSince(snapshot.modified_at)),
                 None => (EntityMutation::Insert(record), Precondition::MustNotExist),
             };
             Ok(EvolutionWrite {
-                write: builder
-                    .entity(entity)
-                    .projection(projection)
-                    .subscription_matches(plan.matches)
-                    .precondition(precondition)
-                    .build(),
+                write: builder.entity(entity).subscription_matches(plan.matches).precondition(precondition).build(),
                 events: plan.events,
             })
         }

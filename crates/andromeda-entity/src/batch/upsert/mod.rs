@@ -8,12 +8,12 @@
 //! 5.6.8.4 does for an Entity that exists, rather than answered as processed
 //! with its content dropped.
 //!
-//! Replace mode overwrites `entity_documents.payload` wholesale, so any attribute the
-//! replacement omits is deleted and needs a tombstone. That diff is only
-//! meaningful against the state the entity actually had when the write
+//! Replace mode overwrites the entity's current state wholesale, so any
+//! attribute the replacement omits is deleted and needs a tombstone. That diff
+//! is only meaningful against the state the entity actually had when the write
 //! landed, which is what the compare-and-set guarantees. The diff is taken
-//! against `entity_documents.payload` rather than the temporal catalogue
-//! on purpose: catalogue rows outlive the attributes they describe, because a
+//! against the stored current state rather than the temporal catalogue on
+//! purpose: catalogue rows outlive the attributes they describe, because a
 //! deletion writes a tombstone rather than dropping the row, so diffing against
 //! them would re-tombstone already-deleted attributes on every upsert.
 //!

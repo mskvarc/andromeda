@@ -6,7 +6,6 @@
 
 use crate::{
     batch_side_effect_job::BatchSideEffectJob,
-    current_state_projection::CurrentStateProjection,
     entity_mutation::EntityMutation,
     history_record::HistoryRecord,
     precondition::Precondition,
@@ -26,10 +25,6 @@ pub struct AtomicWrite {
     /// Temporal Evolution records produced by the mutation.
     #[builder(default = Default::default())]
     pub history: Vec<HistoryRecord>,
-    /// What the mutation did to current state, which the current-attribute
-    /// projection follows.
-    #[builder(default = CurrentStateProjection::FromHistory)]
-    pub projection: CurrentStateProjection,
     /// Subscriptions the mutation matched, each owed a notification event.
     #[builder(default = Default::default())]
     pub subscription_matches: Vec<SubscriptionMatch>,

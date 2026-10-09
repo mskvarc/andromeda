@@ -1,7 +1,7 @@
 //! The JSON a history row stores a structured value as, both ways.
 //!
-//! `attribute_history.value_object` and `current_attribute_values.value_object`
-//! are read inside PostgreSQL: the aggregation tells an array from an object
+//! `attribute_history.value_object` and `current_attributes.value_object` are
+//! read inside PostgreSQL: the aggregation tells an array from an object
 //! with `jsonb_typeof` and counts `jsonb_array_length`, `distinct` and
 //! `aggrGroupBy` compare `value_object::text`, and the temporal `q` rebuilds an
 //! expanded instance around it. The stored JSON is therefore a fixed contract,

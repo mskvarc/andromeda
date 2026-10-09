@@ -12,10 +12,6 @@ pub(crate) mod dictionary_join;
 pub mod entity_types;
 /// Removing entities and attribute instances whose `expiresAt` has passed.
 pub mod expiry;
-/// The identity the fused entity insert hands back, with its minted key.
-pub mod inserted_entity;
-/// Resolving surrogate keys of entities a commit touched without writing them.
-pub mod keys;
 /// Row-to-domain conversions for the `entities` table.
 pub mod mapper;
 /// The parallel bind vectors every entity statement is driven from.
@@ -40,5 +36,3 @@ pub mod stored_entity_error;
 pub mod types_present;
 /// The statements that write the three current-state entity relations.
 pub mod write;
-/// The identity a write statement hands back for each entity row it affected.
-pub mod written_entity;

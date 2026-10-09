@@ -1,7 +1,7 @@
 //! One tenant's name dictionaries.
 //!
 //! Every relation that records an attribute (the temporal catalogue, the
-//! history hypertable, the `current_attribute_values` projection, the
+//! history hypertable, the `current_attributes` rows, the
 //! registration routing projection and the notification event queue) stores
 //! the attribute's `INTEGER` dictionary key rather than its IRI, and every
 //! relation that records an entity's types (`entities`, `temporal_entities`)

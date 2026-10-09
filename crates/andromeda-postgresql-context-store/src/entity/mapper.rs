@@ -7,15 +7,7 @@
 //! malformed one is reported. The broker only ever writes valid values, so a
 //! decode or parse failure is an internal fault rather than client input.
 
-use crate::{
-    entity::{
-        inserted_entity::{InsertedEntity, MintedEntityKey},
-        stored_entity_error::StoredEntityError,
-        written_entity::WrittenEntity,
-    },
-    error::ContextStoreError,
-    jsonb_text::JsonbText,
-};
+use crate::{entity::stored_entity_error::StoredEntityError, error::ContextStoreError, jsonb_text::JsonbText};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::attribute_type_of, entity_key::EntityKey};
@@ -52,33 +44,6 @@ pub fn stored_uri(raw: &str) -> Result<Identifier, ContextStoreError> {
 /// impossible.
 pub fn stored_entity_key(raw: i64) -> Result<EntityKey, ContextStoreError> {
     Ok(EntityKey::try_from(raw).map_err(StoredEntityError::Key)?)
-}
-
-/// Lift the identity pair a write statement returns into a [`WrittenEntity`].
-///
-/// # Errors
-///
-/// Returns [`ContextStoreError::StoredEntity`] when the returned key is not a
-/// valid surrogate key or the returned identifier is not a valid URI.
-pub fn stored_written_entity(key: i64, id: &str) -> Result<WrittenEntity, ContextStoreError> {
-    Ok(WrittenEntity {
-        key: stored_entity_key(key)?,
-        id: stored_uri(id)?,
-    })
-}
-
-/// Build the [`InsertedEntity`] the fused insert's `RETURNING` reports for one
-/// entity it created.
-///
-/// # Errors
-///
-/// Returns [`ContextStoreError::StoredEntity`] when the returned key is not a
-/// valid surrogate key or the returned identifier is not a valid URI.
-pub(crate) fn stored_inserted_entity(key: i64, id: &str) -> Result<InsertedEntity, ContextStoreError> {
-    Ok(InsertedEntity {
-        key: MintedEntityKey::new(stored_entity_key(key)?),
-        id: stored_uri(id)?,
-    })
 }
 
 /// Parse a stored entity type IRI into an [`EntityTypeName`].

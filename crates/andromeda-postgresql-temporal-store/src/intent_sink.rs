@@ -31,11 +31,10 @@ use std::{slice, sync::Arc};
 
 /// PostgreSQL temporal history used through the idempotent append port.
 ///
-/// The sink writes Temporal Evolution and nothing else. Current entity state
-/// and its `current_attribute_values` projection are written together by the
-/// transaction that mutates the entity, so a deferred history append neither
-/// produces nor publishes projection work: an append that reaches this sink
-/// describes an entity mutation that has already committed.
+/// The sink writes Temporal Evolution and nothing else. Current entity state is
+/// written by the transaction that mutates the entity, so a deferred history
+/// append touches none of it: an append that reaches this sink describes an
+/// entity mutation that has already committed.
 pub struct PostgresTemporalHistorySink {
     /// Temporal repository selected for the sink workload.
     repository: Arc<TemporalRepository>,

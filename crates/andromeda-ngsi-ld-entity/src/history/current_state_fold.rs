@@ -20,7 +20,6 @@ use crate::{
     history::instance_recency::InstanceRecency,
     instance::Instance,
     operation::{attribute_write::remove_instance, instance_patch::new_instance, mutation_error::MutationError},
-    reads::{attribute_instance_key::AttributeInstanceKey, removed_instance::RemovedAttributeInstance},
     system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -42,19 +41,6 @@ pub enum CurrentStateFoldError {
     Instance(#[from] MutationError),
 }
 
-/// What folding a Temporal Evolution fragment into current state changed.
-#[derive(Debug, PartialEq)]
-pub struct CurrentStateFold {
-    /// The entity's current state after the fold.
-    pub state: EntityState,
-    /// The instances that now stand in current state because of the fold,
-    /// alone beside the entity's identifier and types.
-    pub restated: EntityState,
-    /// The instances the fold removed from current state: a standing deletion
-    /// instance of the fragment ends the instance it replaces (clause 4.5.7).
-    pub removed: Vec<RemovedAttributeInstance>,
-}
-
 /// Whether a candidate instance stood over the instance current state held.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Standing {
@@ -68,8 +54,8 @@ enum Standing {
 /// current state, or into a new entity when there is none, at the write
 /// instant `at` (clauses 4.5.5.3, 4.5.7, 5.6.11.4).
 ///
-/// Returns `None` when current state existed and no instance of the fragment
-/// stands over what it held. A new entity is always created, with the
+/// Returns the entity's current state after the fold, or `None` when current
+/// state existed and no instance of the fragment stands over what it held. A new entity is always created, with the
 /// fragment's identifier, types and scope, even when no instance of the
 /// fragment stands. The fragment's types are added to the entity's. The
 /// instances keep their members except `instanceId`, which identifies an
@@ -86,7 +72,7 @@ pub fn fold_into_current_state(
     current: Option<&EntityState>,
     evolution: &EntityDocument,
     at: DateTime<Utc>,
-) -> Result<Option<CurrentStateFold>, CurrentStateFoldError> {
+) -> Result<Option<EntityState>, CurrentStateFoldError> {
     let mut state = match current {
         // clone: the fold builds the new current state from the stored one, sharing every attribute it does not touch.
         Some(current) => current.clone(),
@@ -94,26 +80,18 @@ pub fn fold_into_current_state(
     };
     // clone: the entity owns the types it gains.
     state.types_mut().extend(evolution.types().iter().cloned());
-    let mut touched: Vec<AttributeInstanceKey> = Vec::new();
-    let mut removed: Vec<RemovedAttributeInstance> = Vec::new();
+    let mut stood = Standing::Older;
     for (name, member) in evolution.attributes() {
         for candidate in member.instances().iter().filter(|candidate| !expired(candidate, at)) {
-            let dataset_id = candidate.dataset_id();
-            if stand(&mut state, name, candidate, at, &mut removed)? == Standing::Stood
-                && !touched.iter().any(|key| key.attr == *name && key.dataset_id.as_ref() == dataset_id)
-            {
-                touched.push(AttributeInstanceKey {
-                    attr: name.clone(),              // clone: the fold records the identity it touched.
-                    dataset_id: dataset_id.cloned(), // clone: the fold records the identity it touched.
-                });
+            if stand(&mut state, name, candidate, at)? == Standing::Stood {
+                stood = Standing::Stood;
             }
         }
     }
-    if current.is_some() && touched.is_empty() {
-        return Ok(None);
-    }
-    let restated = restated_instances(&state, &touched);
-    Ok(Some(CurrentStateFold { state, restated, removed }))
+    Ok(match (current, stood) {
+        (Some(_), Standing::Older) => None,
+        (Some(_), Standing::Stood) | (None, Standing::Stood | Standing::Older) => Some(state),
+    })
 }
 
 /// Let `candidate` stand over the instance `state` holds under its identity
@@ -121,13 +99,7 @@ pub fn fold_into_current_state(
 ///
 /// A candidate recording a deletion (it carries `deletedAt`, clause 4.5.7)
 /// removes the held instance instead of replacing it.
-fn stand(
-    state: &mut EntityState,
-    name: &AttributeName,
-    candidate: &InstanceDocument,
-    at: DateTime<Utc>,
-    removed: &mut Vec<RemovedAttributeInstance>,
-) -> Result<Standing, MutationError> {
+fn stand(state: &mut EntityState, name: &AttributeName, candidate: &InstanceDocument, at: DateTime<Utc>) -> Result<Standing, MutationError> {
     let dataset_id = candidate.dataset_id();
     let held = state.attributes().get(name).and_then(|instances| instances.get(dataset_id));
     let candidate_recency = InstanceRecency {
@@ -139,17 +111,9 @@ fn stand(
     if held.is_some_and(|held| recency_of(held).order(&candidate_recency) == Ordering::Greater) {
         return Ok(Standing::Older);
     }
-    let held_family = held.map(Instance::family);
-    match (held_family, candidate.deleted_at()) {
-        (Some(attribute_type), Some(_)) => {
+    match (held, candidate.deleted_at()) {
+        (Some(_), Some(_)) => {
             remove_instance(state.attributes_mut(), name, dataset_id);
-            removed.push(RemovedAttributeInstance {
-                key: AttributeInstanceKey {
-                    attr: name.clone(),              // clone: the removal record owns the identity it names.
-                    dataset_id: dataset_id.cloned(), // clone: the removal record owns the identity it names.
-                },
-                attribute_type,
-            });
         }
         (None, Some(_)) => {}
         (Some(_) | None, None) => {
@@ -196,30 +160,6 @@ fn new_entity(evolution: &EntityDocument) -> Result<EntityState, CurrentStateFol
     // clone: the new entity owns its copy of the borrowed fragment's scope.
     let scope = evolution.scope().and_then(Slot::as_set).cloned();
     Ok(EntityState::from_parts(id, types, scope, None, Attributes::new()))
-}
-
-/// The entity's identifier and types with only the instances standing under
-/// `touched`.
-fn restated_instances(state: &EntityState, touched: &[AttributeInstanceKey]) -> EntityState {
-    let mut restated = Attributes::new();
-    for key in touched {
-        let Some(instance) = state.attributes().get(&key.attr).and_then(|instances| instances.get(key.dataset_id.as_ref())) else {
-            continue;
-        };
-        // clone: the restatement owns a copy of each standing instance and its identity.
-        let (dataset_id, instance) = (key.dataset_id.clone(), instance.clone());
-        match restated.get_mut(&key.attr) {
-            Some(instances) => {
-                instances.insert(dataset_id, instance);
-            }
-            None => {
-                // clone: the restatement owns the attribute name.
-                restated.insert(key.attr.clone(), AttributeInstances::one(dataset_id, instance));
-            }
-        }
-    }
-    // clone: the restatement owns its copy of the entity's identity.
-    EntityState::from_parts(state.id().clone(), state.types().clone(), None, None, restated)
 }
 
 #[cfg(test)]
@@ -292,11 +232,10 @@ mod tests {
         let fold = fold_into_current_state(None, &series, at("2026-01-01T00:00:00Z"))
             .expect("a foldable fragment")
             .expect("a new entity is always created");
-        assert_eq!(values(&fold.state), vec![200]);
-        let held = fold.state.attributes().get(V).and_then(|instances| instances.get(None)).expect("the instance");
+        assert_eq!(values(&fold), vec![200]);
+        let held = fold.attributes().get(V).and_then(|instances| instances.get(None)).expect("the instance");
         assert_eq!(held.instance_id(), None, "no instanceId in current state");
-        assert_eq!(fold.state.types().as_slice(), &["https://example.org/TQ".parse().expect("a valid type")]);
-        assert_eq!(values(&fold.restated), vec![200]);
+        assert_eq!(fold.types().as_slice(), &["https://example.org/TQ".parse().expect("a valid type")]);
     }
 
     /// Instances without `observedAt` tie, and the later one stands.
@@ -306,7 +245,7 @@ mod tests {
         let fold = fold_into_current_state(None, &series, at("2026-01-01T00:00:00Z"))
             .expect("foldable")
             .expect("created");
-        assert_eq!(values(&fold.state), vec![2]);
+        assert_eq!(values(&fold), vec![2]);
     }
 
     /// A newer observation replaces the current instance; a backfill of an
@@ -325,7 +264,7 @@ mod tests {
         )
         .expect("foldable")
         .expect("the newer observation stands");
-        assert_eq!(values(&newer.state), vec![7]);
+        assert_eq!(values(&newer), vec![7]);
 
         let backfill = fold_into_current_state(
             Some(&current),
@@ -344,12 +283,11 @@ mod tests {
         let fold = fold_into_current_state(None, &series, at("2026-01-01T00:00:00Z"))
             .expect("foldable")
             .expect("created");
-        let mut held = values(&fold.state);
+        let mut held = values(&fold);
         held.sort_unstable();
         assert_eq!(held, vec![1, 9]);
         assert!(
-            fold.state
-                .attributes()
+            fold.attributes()
                 .get(V)
                 .is_some_and(|instances| instances.contains(Some(&dataset("urn:ngsi-ld:Dataset:x"))))
         );
@@ -368,7 +306,7 @@ mod tests {
         let fold = fold_into_current_state(None, &series, at("2026-01-01T00:00:00Z"))
             .expect("foldable")
             .expect("created");
-        assert_eq!(values(&fold.state), vec![1]);
+        assert_eq!(values(&fold), vec![1]);
     }
 
     /// A standing deletion instance ends the current one.
@@ -388,7 +326,6 @@ mod tests {
             .expect("foldable")
             .expect("the deletion stands");
 
-        assert!(!fold.state.attributes().contains(V));
-        assert_eq!(fold.removed.len(), 1);
+        assert!(!fold.attributes().contains(V));
     }
 }

@@ -69,10 +69,23 @@ pub(crate) struct Srch;
 pub(super) struct Attrs;
 
 /// The update's `current_attributes` delete CTE, `gone`: the stored instance
-/// rows whose grain the written state no longer holds.
+/// rows of an overwritten entity whose grain the written state no longer
+/// holds.
 #[derive(Iden, Clone, Copy)]
 #[iden = "gone"]
 pub(super) struct Gone;
+
+/// The update's `current_attributes` delete CTE, `dropped`: the stored
+/// instance rows whose grain an edit removes.
+#[derive(Iden, Clone, Copy)]
+#[iden = "dropped"]
+pub(super) struct Dropped;
+
+/// The update's `current_attributes` update CTE, `moved`: the stored instance
+/// rows an edit gives a new ordinal and nothing else.
+#[derive(Iden, Clone, Copy)]
+#[iden = "moved"]
+pub(super) struct Moved;
 
 /// The update CTE over `entities`, `ents`: the update's compare-and-set
 /// anchor, whose returned keys drive every other relation the update writes.

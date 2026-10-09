@@ -10,8 +10,7 @@ use crate::{
     },
     entity::{
         census::delta::{CensusChange, CensusStatements},
-        inserted_entity::InsertedEntity,
-        mapper::stored_inserted_entity,
+        mapper::stored_uri,
         params::{PreparedEntityColumns, literal_texts},
         repo::EntityRepository,
         staged_geometry::written_column,
@@ -57,7 +56,7 @@ static ENTITY_INSERT_STATEMENT: BranchStatement = BranchStatement::new(entity_in
 ///      census_types AS (INSERT INTO entity_type_census … FROM srch …),
 ///      census_type_attributes AS (INSERT INTO entity_type_attribute_census … FROM srch …),
 ///      census_attributes AS (INSERT INTO attribute_census … FROM srch …)
-/// SELECT entity_key, id FROM ins
+/// SELECT id FROM ins
 /// ```
 ///
 /// The conflict clause on `entities` is how a duplicate create is detected:
@@ -157,7 +156,7 @@ pub(super) fn entity_insert_sql(target: &ContextTarget) -> Result<String, Contex
     for census in CensusStatements::of(target, Srch, CensusChange::Added)?.ctes() {
         with.cte(census);
     }
-    let statement = with.query(Query::select().columns([Entities::EntityKey, Entities::Id]).from(Ins).take());
+    let statement = with.query(Query::select().column(Entities::Id).from(Ins).take());
 
     let sql = statement.to_string(PostgresQueryBuilder);
     Ok(apply_instances_alias(apply_staged_alias(sql, &columns)))
@@ -172,13 +171,13 @@ impl EntityRepository {
     ///
     /// Returns [`ContextStoreError`] when an entity carries no type, when the
     /// insert statement cannot be built, when the statement fails, or when a
-    /// returned surrogate key or identifier is not a valid written entity.
+    /// returned identifier is not a valid URI.
     pub async fn create_batch_in_tx(
         tx: &mut Transaction<'_, Postgres>,
         target: &ContextTarget,
         entities: &PreparedEntityColumns,
         rows: StagedRows<'_>,
-    ) -> Result<Vec<InsertedEntity>, ContextStoreError> {
+    ) -> Result<Vec<Identifier>, ContextStoreError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -204,9 +203,9 @@ impl EntityRepository {
             .bind(&entities.expires_ats)
             .bind(&entities.min_attribute_expires_ats);
         let rows = rows.bind_to(query).fetch_all(&mut **tx);
-        let rows: Vec<(i64, String)> = observe_statement(ENTITY_INSERT, rows).await.map_err(entity_write_failure)?;
+        let rows: Vec<(String,)> = observe_statement(ENTITY_INSERT, rows).await.map_err(entity_write_failure)?;
 
-        rows.iter().map(|(key, id)| stored_inserted_entity(*key, id)).collect()
+        rows.iter().map(|(id,)| stored_uri(id)).collect()
     }
 }
 
@@ -284,7 +283,7 @@ mod tests {
             sql.contains(r#"RETURNING "entity_key", "entity_type_name_keys", "attribute_instance_name_keys", "attribute_instance_kinds")"#),
             "{sql}"
         );
-        assert!(sql.ends_with(r#"SELECT "entity_key", "id" FROM "ins""#), "{sql}");
+        assert!(sql.ends_with(r#"SELECT "id" FROM "ins""#), "{sql}");
         pretty_assertions::assert_eq!(
             sql.matches("ST_MakeValid").count(),
             4,

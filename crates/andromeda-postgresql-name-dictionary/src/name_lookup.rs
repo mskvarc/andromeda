@@ -1,8 +1,8 @@
 //! The port every write and read path resolves interned names through.
 //!
 //! The store crates map expanded attribute IRIs onto the `INTEGER` key the
-//! temporal catalogue, the history hypertable and the
-//! `current_attribute_values` projection are written against, and expanded
+//! temporal catalogue, the history hypertable and the `current_attributes`
+//! rows are written against, and expanded
 //! entity type IRIs onto the key the `entity_type_name_keys` arrays carry. The concrete
 //! dictionary is [`NameCache`](crate::name_cache::NameCache); this trait is
 //! what the stores hold, so none of them depends on another.

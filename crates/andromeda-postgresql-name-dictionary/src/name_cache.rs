@@ -2,7 +2,7 @@
 //!
 //! `attribute_names` maps expanded attribute IRIs to the `INTEGER` key used by
 //! the temporal catalogue, the history hypertable, and the
-//! `current_attribute_values` projection; `entity_type_names` maps expanded
+//! `current_attributes` rows; `entity_type_names` maps expanded
 //! type IRIs to the key the `entity_type_name_keys` arrays carry. Both the write path
 //! (which must create missing entries) and the read path (which must not)
 //! resolve through this one cache, so a tenant holds a single copy of each

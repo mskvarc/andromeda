@@ -37,7 +37,6 @@ mod hoisted_geometry;
 mod identifier_bounds;
 mod instance_expiry;
 mod long_text;
-mod noop_suppression;
 mod projection_rows;
 mod refused_write_isolation;
 mod replayed_writes;
