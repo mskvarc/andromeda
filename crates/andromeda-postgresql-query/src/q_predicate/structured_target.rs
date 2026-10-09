@@ -12,6 +12,7 @@
 //! | `LanguageProperty` | the expanded `languageMap`, `[{"@language": "en", "@value": "red"}, …]` |
 //! | `ListProperty` | the `valueList`, `[{"@value": 1}, {"@value": 2}, …]` |
 //! | `ListRelationship` | the `objectList`, `["urn:ngsi-ld:Part:1", …]` |
+//! | Relationship holding more than one object | the objects, `["urn:ngsi-ld:Part:1", …]` |
 //! | `VocabProperty` carrying more than one term | the expanded `vocab`, `["http://example.org/Male", …]` |
 //! | a Property whose value is an array or an object | the value itself |
 //!

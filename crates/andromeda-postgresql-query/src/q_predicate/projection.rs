@@ -523,14 +523,41 @@ mod tests {
         assert_eq!(sql.matches("(\"ca\".\"value_long_text\") COLLATE \"und-x-icu\"").count(), 2, "{sql}");
     }
 
-    /// A Relationship object is an identifier of at most 1024 octets, so the
-    /// hop joins the linked entity on `value_uri` alone.
+    /// Clause 4.9 follows every object of the Relationship: one object in
+    /// either URI column, several as the JSON array in `value_object`, each
+    /// expanded to one row and joined to the entity it names.
     #[test]
-    fn a_hop_joins_on_value_uri_alone() {
+    fn a_hop_expands_every_object_of_the_relationship() {
         let (sql, _) = render("\"https://example.com/isParkedIn\"{\"https://example.com/name\"}==\"x\"");
-        assert!(sql.contains(r#"."id" = "cav_ln1"."value_uri""#), "{sql}");
-        let join = sql.split(" WHERE ").next().unwrap_or_default();
-        assert!(!join.contains("value_long_text"), "{join}");
+        assert!(
+            sql.contains(r#"JOIN jsonb_array_elements_text(COALESCE("ca_ln1"."value_object", jsonb_build_array(COALESCE("ca_ln1"."value_uri", "ca_ln1"."value_long_uri")))) AS "lo1" ON TRUE"#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#"JOIN "entities" AS "le1" ON "le1"."id" = "lo1""#), "{sql}");
+        assert!(
+            sql.contains(r#""ca_ln1"."attribute_kind" IN (2, 8)"#),
+            "only a Relationship or a ListRelationship holds objects: {sql}"
+        );
+    }
+
+    /// Clause 4.9: an operand is matched when it is included in the target value
+    /// of a Relationship holding several objects, the JSON array of URIs in
+    /// `value_object`.
+    #[test]
+    fn a_relationship_equality_reads_an_object_among_several() {
+        let (sql, _) = render("\"https://example.com/isParkedIn\"==\"urn:ngsi-ld:Part:c\"");
+        assert!(sql.contains(r#""ca"."value_uri" = "#), "{sql}");
+        assert!(sql.contains(r#""ca"."value_object" @> jsonb_build_array("#), "{sql}");
+    }
+
+    /// A Relationship object past the B-tree bound is held in `value_long_uri`,
+    /// and an operand of that length is compared there.
+    #[test]
+    fn a_long_relationship_object_is_compared_in_its_overflow_column() {
+        let object = format!("urn:ngsi-ld:Part:{}", "x".repeat(1100));
+        let (sql, _) = render(&format!("\"https://example.com/isParkedIn\"==\"{object}\""));
+        assert!(sql.contains(r#""ca"."value_long_uri" = "#), "{sql}");
+        assert!(!sql.contains(r#""ca"."value_uri" = "#), "{sql}");
     }
 
     /// The equality operator keeps the plain comparison: clause 4.9 states the
@@ -1044,7 +1071,7 @@ mod tests {
             quoted(IS_PARKED_IN),
             quoted(CATEGORY)
         ));
-        assert!(sql.contains("\"cav_ln1\""), "the hop keeps its own probe: {sql}");
+        assert!(sql.contains("\"ca_ln1\""), "the hop keeps its own probe: {sql}");
         assert!(sql.contains(r#"jsonb_path_query("ca"."value_object""#), "the member reading: {sql}");
         assert_eq!(
             sql.matches("FROM \"current_attributes\" AS \"ca\" WHERE (\"ca\".\"expires_at\"").count(),
@@ -1149,12 +1176,9 @@ mod tests {
     #[test]
     fn a_single_hop_probes_the_relationship_and_joins_the_entity_it_names() {
         let (sql, binds) = render(&format!("{}{{{}}}==\"commercial\"", quoted(IS_PARKED_IN), quoted(CATEGORY)));
-        assert!(sql.contains("\"current_attribute_values\" AS \"cav_ln1\""), "{sql}");
-        assert!(
-            sql.contains("JOIN \"entities\" AS \"le1\" ON \"le1\".\"id\" = \"cav_ln1\".\"value_uri\""),
-            "the hop resolves the object through the projection, not the payload: {sql}"
-        );
-        assert!(sql.contains("\"cav_ln1\".\"entity_key\" = \"entities\".\"entity_key\""), "{sql}");
+        assert!(sql.contains("\"current_attributes\" AS \"ca_ln1\""), "{sql}");
+        assert!(sql.contains("JOIN \"entities\" AS \"le1\" ON \"le1\".\"id\" = \"lo1\""), "{sql}");
+        assert!(sql.contains("\"ca_ln1\".\"entity_key\" = \"entities\".\"entity_key\""), "{sql}");
         assert!(!sql.contains("entity_search"), "a hop without a type guard reads no search row: {sql}");
         // The inner comparison is correlated against the linked entity's key,
         // which is the row the join on its URI landed on.
@@ -1181,17 +1205,19 @@ mod tests {
         // The whole statement is pinned, not a substring: the guard renders as a
         // bare `a OR b`, and without parentheses around it the second disjunct
         // escapes the correlation, the attribute-name test and the tombstone
-        // guard — the probe would then match whenever any entity in the tenant
+        // guard, and the probe would then match whenever any entity in the tenant
         // carried the second type. A `contains` assertion cannot see that.
         pretty_assertions::assert_eq!(
             sql,
             concat!(
-                r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav_ln1" "#,
-                r#"JOIN "entities" AS "le1" ON "le1"."id" = "cav_ln1"."value_uri" "#,
+                r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attributes" AS "ca_ln1" "#,
+                r#"JOIN jsonb_array_elements_text(COALESCE("ca_ln1"."value_object", jsonb_build_array(COALESCE("ca_ln1"."value_uri", "ca_ln1"."value_long_uri")))) AS "lo1" ON TRUE "#,
+                r#"JOIN "entities" AS "le1" ON "le1"."id" = "lo1" "#,
                 r#"JOIN "entity_search" AS "ls1" ON "ls1"."entity_key" = "le1"."entity_key" "#,
-                r#"WHERE "cav_ln1"."entity_key" = "entities"."entity_key" "#,
-                r#"AND "cav_ln1"."attribute_name_key" = $1 "#,
-                r#"AND ("cav_ln1"."expires_at" IS NULL OR "cav_ln1"."expires_at" > NOW()) "#,
+                r#"WHERE "ca_ln1"."entity_key" = "entities"."entity_key" "#,
+                r#"AND "ca_ln1"."attribute_name_key" = $1 "#,
+                r#"AND "ca_ln1"."attribute_kind" IN (2, 8) "#,
+                r#"AND ("ca_ln1"."expires_at" IS NULL OR "ca_ln1"."expires_at" > NOW()) "#,
                 r#"AND (("ls1"."entity_type_name_keys" @> (ARRAY[31])) OR ("ls1"."entity_type_name_keys" @> (ARRAY[32]))) "#,
                 r#"AND EXISTS(SELECT 1 FROM "current_attributes" AS "ca" "#,
                 r#"WHERE "ca"."attribute_name_key" = $2 AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) "#,
@@ -1242,20 +1268,20 @@ mod tests {
             quoted("https://example.com/inner"),
             quoted("https://example.com/zone")
         ));
-        for alias in ["cav_ln1", "le1", "cav_ln2", "le2"] {
+        for alias in ["ca_ln1", "lo1", "le1", "ca_ln2", "lo2", "le2"] {
             assert!(sql.contains(&format!("AS \"{alias}\"")), "{alias} missing from {sql}");
         }
         assert!(
-            sql.contains("\"cav_ln2\".\"entity_key\" = \"le1\".\"entity_key\""),
+            sql.contains("\"ca_ln2\".\"entity_key\" = \"le1\".\"entity_key\""),
             "the second hop starts at the first's target: {sql}"
         );
         assert!(sql.contains("\"ca\".\"entity_key\" = \"le2\".\"entity_key\""), "{sql}");
     }
 
     #[test]
-    fn a_bare_existence_through_a_hop_probes_the_projection_of_the_linked_entity() {
+    fn a_bare_existence_through_a_hop_probes_the_rows_of_the_linked_entity() {
         let (sql, _) = render(&format!("{}{{{}}}", quoted(IS_PARKED_IN), quoted(CATEGORY)));
-        assert!(sql.contains("\"current_attribute_values\" AS \"cav_ln1\""), "{sql}");
+        assert!(sql.contains("\"current_attributes\" AS \"ca_ln1\""), "{sql}");
         assert!(
             sql.contains("\"ca\".\"entity_key\" = \"le1\".\"entity_key\""),
             "existence resolves against the entity the hop landed on: {sql}"
@@ -1268,6 +1294,6 @@ mod tests {
         // ever written, so no entity is reachable through it.
         let (sql, _) = render(&format!("{}{{{}}}==\"x\"", quoted("https://example.com/never-written"), quoted(CATEGORY)));
         assert!(sql.contains("FALSE"), "{sql}");
-        assert!(!sql.contains("cav_ln1"), "no probe is emitted when no row can exist: {sql}");
+        assert!(!sql.contains("ca_ln1"), "no probe is emitted when no row can exist: {sql}");
     }
 }

@@ -2,44 +2,44 @@
 //!
 //! Clause 4.10 lets a geo-query name any `GeoProperty` of an entity, and clause
 //! 4.23 lets a distance ordering measure to one. Every `GeoProperty` other than
-//! the default `location` is stored as `current_attribute_values` rows — one per
-//! `datasetId` instance — rather than as a column of `entity_search`, so both the
+//! the default `location` is stored as `current_attributes` rows (one per
+//! `datasetId` instance) rather than as a column of `entity_search`, so both the
 //! filter and the ordering reach it through the same correlated subquery. That
 //! fragment is written once here: a predicate and an ordering that disagreed
 //! about which rows a `GeoProperty` lives in would silently order by a geometry
 //! they did not filter on.
 
 use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs, instance_expiry::instance_stands};
-use andromeda_postgresql_schema::current::CurrentAttributeValues;
+use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::literal::int_literal;
 use sea_query::{Alias, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
-/// A `current_attribute_values` scan selecting one entity's geometry-valued
+/// A `current_attributes` scan selecting one entity's geometry-valued
 /// instances of one attribute, correlated to the outer row and left open so a
 /// caller can add its projection and any further condition.
 ///
-/// `subquery_alias` names the `current_attribute_values` occurrence inside the
+/// `subquery_alias` names the `current_attributes` occurrence inside the
 /// subquery; each caller passes its own so two correlated subqueries nested in
 /// one statement cannot capture each other's rows.
 ///
 /// Both equality columns and the `value_geometry IS NOT NULL` restriction are
-/// covered by the partial btree index `idx_cav_entity_geometry
+/// covered by the partial btree index `idx_ca_entity_geometry
 /// (attribute_name_key, entity_key)`, so the scan is an index probe rather than a
 /// scan of every instance of the attribute.
 ///
-/// The correlation reads the outer row's `entity_key`: the projection is owned
-/// by the `entities` row through the surrogate key, and the entity URI is not a
+/// The correlation reads the outer row's `entity_key`: the rows are owned by
+/// the `entities` row through the surrogate key, and the entity URI is not a
 /// column of this relation at all.
 #[must_use]
 pub fn geometry_instances_of(outer: &EntityRowRefs, subquery_alias: &str, attribute_name_key: AttributeNameKey) -> SelectStatement {
     let alias = Alias::new(subquery_alias);
     let mut scan = Query::select();
-    scan.from(outer.table(CurrentAttributeValues::Table).alias(alias.clone()))
-        .and_where(SeaExpr::col((alias.clone(), CurrentAttributeValues::EntityKey)).eq(outer.entity_key_column()))
-        .and_where(SeaExpr::col((alias.clone(), CurrentAttributeValues::AttributeNameKey)).eq(attribute_name_key.get()))
-        .and_where(SeaExpr::col((alias.clone(), CurrentAttributeValues::ValueGeometry)).is_not_null())
+    scan.from(outer.table(CurrentAttributes::Table).alias(alias.clone()))
+        .and_where(SeaExpr::col((alias.clone(), CurrentAttributes::EntityKey)).eq(outer.entity_key_column()))
+        .and_where(SeaExpr::col((alias.clone(), CurrentAttributes::AttributeNameKey)).eq(attribute_name_key.get()))
+        .and_where(SeaExpr::col((alias.clone(), CurrentAttributes::ValueGeometry)).is_not_null())
         // Clause 4.22: a past-due instance neither matches nor is measured to.
-        .and_where(instance_stands(SeaExpr::col((alias, CurrentAttributeValues::ExpiresAt))));
+        .and_where(instance_stands(SeaExpr::col((alias, CurrentAttributes::ExpiresAt))));
     scan
 }
 
@@ -47,7 +47,7 @@ pub fn geometry_instances_of(outer: &EntityRowRefs, subquery_alias: &str, attrib
 /// [`geometry_instances_of`] selects.
 #[must_use]
 pub fn instance_geometry_column(subquery_alias: &str) -> SimpleExpr {
-    SeaExpr::col((Alias::new(subquery_alias), CurrentAttributeValues::ValueGeometry))
+    SeaExpr::col((Alias::new(subquery_alias), CurrentAttributes::ValueGeometry))
 }
 
 /// A `SELECT 1` marker for a correlated `EXISTS` built over
@@ -84,7 +84,7 @@ mod tests {
     }
 
     /// The correlation names the outer relation explicitly, so a join added to
-    /// the enclosing statement cannot silently rebind it — and, more sharply,
+    /// the enclosing statement cannot silently rebind it, and, more sharply,
     /// so the subquery's own `entity_key` cannot capture the comparison and turn
     /// it into a tautology over every instance in the tenant.
     #[test]
@@ -111,7 +111,7 @@ mod tests {
         }
     }
 
-    /// The projection is owned by the `entities` row through the surrogate key,
+    /// The rows are owned by the `entities` row through the surrogate key,
     /// so the entity URI appears nowhere in the correlation.
     #[test]
     fn the_correlation_reads_the_surrogate_key_and_never_the_entity_uri() {
@@ -122,7 +122,7 @@ mod tests {
 
     /// Clause 4.10 reads the instances of one named `GeoProperty`, so the scan
     /// restricts on the dictionary key and on the geometry column being
-    /// populated — the two halves the supporting partial index is built on.
+    /// populated: the two halves the supporting partial index is built on.
     #[test]
     fn the_correlation_restricts_to_the_geometry_instances_of_one_attribute() {
         let sql = render(geometry_instances_of(
@@ -130,7 +130,7 @@ mod tests {
             "geo_order",
             AttributeNameKey::from(7_i32),
         ));
-        assert!(sql.contains("FROM \"current_attribute_values\" AS \"geo_order\""), "{sql}");
+        assert!(sql.contains("FROM \"current_attributes\" AS \"geo_order\""), "{sql}");
         assert!(sql.contains("\"geo_order\".\"attribute_name_key\" = 7"), "{sql}");
         assert!(sql.contains("\"geo_order\".\"value_geometry\" IS NOT NULL"), "{sql}");
     }

@@ -20,12 +20,12 @@ use sea_query::{CaseStatement, Expr as SeaExpr, Func, Keyword, QueryStatementBui
 /// Clause 4.23.1 defines sort by distance as "calculating spherical distance
 /// using the Haversine formula", so the measurement is the great-circle one
 /// over a sphere, not the spheroidal distance `ST_Distance` makes between two
-/// `geography` operands — the two disagree by about a quarter of a percent, and
+/// `geography` operands; the two disagree by about a quarter of a percent, and
 /// so can rank two entities differently.
 ///
 /// The default `GeoProperty` has a dedicated geometry column; every other one is
-/// read from its `current_attribute_values` instance rows, the same projection
-/// the geo filter itself reads, so an ordering and a filter can never disagree
+/// read from its `current_attributes` instance rows, the same rows the geo
+/// filter itself reads, so an ordering and a filter can never disagree
 /// about where a `GeoProperty`'s geometry lives. Where a `GeoProperty` has several
 /// `datasetId` instances the ordering takes the smallest of their distances,
 /// which is the reading that agrees with clause 4.10 counting an entity as
@@ -37,7 +37,7 @@ use sea_query::{CaseStatement, Expr as SeaExpr, Func, Keyword, QueryStatementBui
 ///
 /// An attribute IRI the broker has never recorded is carried by no entity, so
 /// there is no geometry anywhere to measure to and no distance expression at
-/// all — clause 4.23.2 then ranks every entity as one whose "attribute is not a
+/// all; clause 4.23.2 then ranks every entity as one whose "attribute is not a
 /// `GeoProperty`" and orders them by value instead.
 #[must_use]
 pub fn geo_order_distance(
@@ -69,7 +69,7 @@ pub fn geo_order_distance(
     }
 }
 
-/// Alias the correlated ordering subquery reads `current_attribute_values`
+/// Alias the correlated ordering subquery reads `current_attributes`
 /// under.
 ///
 /// Deliberately not the alias the geo predicate uses: a query that both filters
@@ -163,19 +163,16 @@ mod tests {
             sql.contains("CASE WHEN (\"entity_search\".\"location_expires_at\" IS NULL OR \"entity_search\".\"location_expires_at\" > NOW())"),
             "an expired default instance is not measured to: {sql}"
         );
-        assert!(
-            !sql.contains("current_attribute_values"),
-            "the default GeoProperty needs no instance lookup: {sql}"
-        );
+        assert!(!sql.contains("current_attributes"), "the default GeoProperty needs no instance lookup: {sql}");
     }
 
     /// Clause 4.23 read together with clause 4.10: an ordering reads the same
-    /// projection the filter does, so a named `GeoProperty` measures from its
+    /// rows the filter does, so a named `GeoProperty` measures from its
     /// instance rows and takes the smallest distance among them.
     #[test]
     fn a_custom_geoproperty_measures_from_its_nearest_attribute_instance() {
         let sql = render(geo_order_distance(&name(CUSTOM_GEOPROPERTY), &resolved_custom(), &outer(), REFERENCE).expect("a recorded GeoProperty is measurable"));
-        assert!(sql.contains("FROM \"current_attribute_values\""), "{sql}");
+        assert!(sql.contains("FROM \"current_attributes\""), "{sql}");
         assert!(sql.contains("MIN(ST_DistanceSphere("), "the nearest instance decides: {sql}");
         assert!(sql.contains(&format!("\"attribute_name_key\" = {CUSTOM_GEOPROPERTY_ID}")), "{sql}");
         assert!(

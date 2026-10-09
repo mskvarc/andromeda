@@ -7,13 +7,13 @@
 //! carries one (clause 4.5.16.1) -- is hoisted into the dedicated
 //! `entity_search.location` columns, whose `GiST` indexes serve the common
 //! single-instance entity. Every instance, the default one included, is also a
-//! `current_attribute_values` row. The relation is therefore evaluated as the
+//! `current_attributes` row. The relation is therefore evaluated as the
 //! union of two index-driven arms:
 //!
 //! - the hoisted default instance, through `idx_entity_search_location` (or its
 //!   `geography` twin for `near`), restricted to the index's candidates when an
 //!   in-memory spatial index already answered for the default instance;
-//! - every instance carrying a `datasetId`, through `idx_cav_value_geometry`.
+//! - every instance carrying a `datasetId`, through `idx_ca_value_geometry`.
 //!
 //! An entity is in the answer when either arm finds one of its instances, and
 //! the outer statement reaches the union as a semi-join, so the planner may
@@ -31,7 +31,7 @@ use crate::{
     instance_expiry::instance_stands,
 };
 use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
-use andromeda_postgresql_schema::current::{CurrentAttributeValues, Entities, EntitySearch};
+use andromeda_postgresql_schema::current::{CurrentAttributes, Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     cast::cast,
     literal::false_literal,
@@ -47,7 +47,7 @@ const DEFAULT_ALIAS: &str = "geo_default";
 /// to an index's candidates.
 const CANDIDATE_ALIAS: &str = "geo_candidate";
 
-/// Alias the `datasetId`-instance arm reads `current_attribute_values` under.
+/// Alias the `datasetId`-instance arm reads `current_attributes` under.
 const INSTANCE_ALIAS: &str = "geo_location_instance";
 
 /// The entities one of whose `location` instances meets `geo`.
@@ -129,13 +129,13 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
 /// `datasetId` is read by both arms, which the semi-join answers once.
 fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: AttributeNameKey) -> Result<SelectStatement, RenderError> {
     let instance = Alias::new(INSTANCE_ALIAS);
-    let geometry: SimpleExpr = SeaExpr::col((instance.clone(), CurrentAttributeValues::ValueGeometry));
+    let geometry: SimpleExpr = SeaExpr::col((instance.clone(), CurrentAttributes::ValueGeometry));
     let mut arm = Query::select();
-    arm.column((instance.clone(), CurrentAttributeValues::EntityKey))
-        .from_as(rows.table(CurrentAttributeValues::Table), instance.clone())
-        .and_where(SeaExpr::col((instance.clone(), CurrentAttributeValues::AttributeNameKey)).eq(location_key.get()))
-        .and_where(SeaExpr::col((instance.clone(), CurrentAttributeValues::DatasetId)).is_not_null())
-        .and_where(instance_stands(SeaExpr::col((instance, CurrentAttributeValues::ExpiresAt))))
+    arm.column((instance.clone(), CurrentAttributes::EntityKey))
+        .from_as(rows.table(CurrentAttributes::Table), instance.clone())
+        .and_where(SeaExpr::col((instance.clone(), CurrentAttributes::AttributeNameKey)).eq(location_key.get()))
+        .and_where(SeaExpr::col((instance.clone(), CurrentAttributes::DatasetId)).is_not_null())
+        .and_where(instance_stands(SeaExpr::col((instance, CurrentAttributes::ExpiresAt))))
         .and_where(SeaExpr::expr(geometry.clone()).is_not_null()); // clone: the column is read by the presence test and the relation
     if let Some(prefilter) = near_envelope_prefilter(geo, &geometry) {
         arm.and_where(prefilter);
@@ -209,7 +209,7 @@ mod tests {
             "{sql}"
         );
         assert!(
-            sql.contains(r#"UNION ALL (SELECT "geo_location_instance"."entity_key" FROM "current_attribute_values" AS "geo_location_instance" WHERE "geo_location_instance"."attribute_name_key" = $2 AND "geo_location_instance"."dataset_id" IS NOT NULL AND ("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW()) AND "geo_location_instance"."value_geometry" IS NOT NULL AND ST_Within("geo_location_instance"."value_geometry","#),
+            sql.contains(r#"UNION ALL (SELECT "geo_location_instance"."entity_key" FROM "current_attributes" AS "geo_location_instance" WHERE "geo_location_instance"."attribute_name_key" = $2 AND "geo_location_instance"."dataset_id" IS NOT NULL AND ("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW()) AND "geo_location_instance"."value_geometry" IS NOT NULL AND ST_Within("geo_location_instance"."value_geometry","#),
             "{sql}"
         );
         assert!(
@@ -232,7 +232,7 @@ mod tests {
     fn an_unrecorded_location_reads_the_hoisted_arm_alone() {
         let (sql, _) = render(any_location_instance(&geo(GeoRel::Within), &unaliased(), &DefaultLocationNarrowing::Unnarrowed, None).expect("renders"));
         assert!(sql.contains(r#"FROM "entity_search" AS "geo_default""#), "{sql}");
-        assert!(!sql.contains("current_attribute_values"), "{sql}");
+        assert!(!sql.contains("current_attributes"), "{sql}");
         assert!(!sql.contains("UNION"), "{sql}");
     }
 
@@ -341,7 +341,7 @@ mod tests {
             .expect("renders"),
         );
         assert!(sql.contains(r#"FROM "snap_7"."entity_search" AS "geo_default""#), "{sql}");
-        assert!(sql.contains(r#"FROM "snap_7"."current_attribute_values" AS "geo_location_instance""#), "{sql}");
+        assert!(sql.contains(r#"FROM "snap_7"."current_attributes" AS "geo_location_instance""#), "{sql}");
         assert!(sql.contains(r#""e"."entity_key" IN ("#), "{sql}");
     }
 }

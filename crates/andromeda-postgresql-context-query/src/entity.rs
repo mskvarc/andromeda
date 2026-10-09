@@ -1492,7 +1492,7 @@ mod tests {
     }
 
     /// Clause 4.10: `geoproperty` selects any `GeoProperty` of the entity. A
-    /// named one is held in `current_attribute_values`, so the whole statement —
+    /// named one is held in `current_attributes`, so the whole statement —
     /// not just the fragment — has to reach it there.
     #[test]
     fn a_named_geoproperty_filters_through_its_attribute_instance_rows() {
@@ -1507,7 +1507,7 @@ mod tests {
             AttributeNameKey::from(42_i32),
         )]));
         let built = build(&q, &names);
-        assert!(built.sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\""), "{}", built.sql);
+        assert!(built.sql.contains("EXISTS(SELECT 1 FROM \"current_attributes\""), "{}", built.sql);
         assert!(built.sql.contains("\"attribute_name_key\" = "), "{}", built.sql);
         assert!(
             built.bind_values.iter().any(|bind| matches!(bind, Value::Int(Some(42)))),

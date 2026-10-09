@@ -5,10 +5,10 @@
 //! be collected here: the member existence terms -- `attrs` (clause 5.5.9) and
 //! the names a `pick` / `omit` projection keeps an entity alive by (clause
 //! 4.21) --, a `q` filter's predicate targets and the sub-attributes on their
-//! paths, the `GeoProperty` a geo-query names (clause 4.10), the `GeoProperty`
-//! a distance ordering measures to, and the attribute and sub-attributes a
-//! value ordering reads (clause 4.23). Members of a compound value are
-//! navigated inside a `value_object` and have no dictionary row to look up.
+//! paths, the `GeoProperty` a geo-query names (clause 4.10), and the attribute
+//! and sub-attributes an ordering reads (clause 4.23). Members of a compound
+//! value are navigated inside a `value_object` and have no dictionary row to
+//! look up.
 
 use crate::q_predicate::{attribute_names::referenced_attribute_names, sub_attribute::member_field::MemberField};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -17,7 +17,6 @@ use andromeda_ngsi_ld_query::{
     geo::query::GeoQuery,
     ordering::term::{CompiledOrderTerm, OrderTarget},
 };
-use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 
 /// Collect the names a query reads by dictionary key.
 ///
@@ -42,50 +41,24 @@ pub fn projected_attribute_names<'a>(
         // clone: the caller owns the resolved list, which outlives the query
         names.push(geo.geoproperty.clone());
     }
-    for term in order_terms.iter().filter(|term| !term.direction.is_distance()) {
+    // Every ordering term, a distance term included, ranks by the clause
+    // 4.23.2 value keys read from the attribute's rows, so each resolves its
+    // attribute and the sub-attributes on its path. A distance term on a
+    // `GeoProperty` other than the default `location` also measures to that
+    // attribute's rows by the same key.
+    for term in order_terms {
         match &term.target {
             OrderTarget::Attribute(path) => {
                 // clone: the caller owns the resolved list, which outlives the query
                 names.push(path.attr.clone());
                 names.extend(path.sub_attrs.iter().filter(|name| MemberField::of(name).is_none()).cloned());
             }
+            // None of the clause 4.23 keywords names an attribute, so none of
+            // them has a dictionary row.
             OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::CreatedAt | OrderTarget::ModifiedAt => {}
         }
     }
-    for term in order_terms.iter().filter(|term| term.direction.is_distance()) {
-        match &term.target {
-            // Only the attribute itself can be the `GeoProperty` a distance is
-            // measured to. Clause 4.23.1 sorts by distance when "Attribute is a
-            // GeoProperty", and a path that descends into a sub-attribute or
-            // into a member of a compound value addresses a value inside one,
-            // which carries no geometry of its own — so it resolves no
-            // dictionary row and falls through to the clause 4.23.2 value keys.
-            OrderTarget::Attribute(path) if path.is_simple() => push_distance_target(&path.attr, &mut names),
-            // None of the clause 4.23 keywords names an attribute, so none of
-            // them has a dictionary row.
-            OrderTarget::Attribute(_) | OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::CreatedAt | OrderTarget::ModifiedAt => {}
-        }
-    }
     names
-}
-
-/// Add the `GeoProperty` a distance ordering measures to, unless it is the one
-/// that needs no dictionary row.
-///
-/// A geo-query always resolves its target, the default `location` included:
-/// clause 5.7.2.4 lets any instance of it match, and every instance but the
-/// hoisted default one is a `current_attributes` row keyed by the
-/// dictionary. A distance ordering on `location` (clause 4.23) measures from
-/// the hoisted default instance's dedicated `geography` column alone, so it
-/// keys nothing; every other `GeoProperty`, the clause 4.7 `observationSpace`
-/// and `operationSpace` included, goes through the projection and is
-/// collected.
-fn push_distance_target(name: &AttributeName, out: &mut Vec<AttributeName>) {
-    if name.as_str() == LOCATION.as_str() {
-        return;
-    }
-    // clone: the caller owns the resolved list, which outlives the query
-    out.push(name.clone());
 }
 
 #[cfg(test)]
@@ -189,12 +162,26 @@ mod tests {
         );
     }
 
-    /// A distance ordering on the default `GeoProperty` measures from the
-    /// dedicated geography column, so it resolves nothing either.
+    /// Clause 4.23.2: an Entity whose `location` is no `GeoProperty` ranks by
+    /// its value after the measured ones, and that value is read from its rows
+    /// by key, so a distance ordering on the default `GeoProperty` resolves it.
     #[test]
-    fn a_distance_ordering_on_the_default_geoproperty_resolves_nothing() {
+    fn a_distance_ordering_on_the_default_geoproperty_resolves_it_for_its_value_keys() {
         let terms = [order_term(ordered_attribute(LOCATION.as_str()), OrderDirection::DistAsc)];
-        assert_eq!(projected_attribute_names([], None, None, &terms), [] as [AttributeName; 0]);
+        assert_eq!(projected_attribute_names([], None, None, &terms), [name(LOCATION.as_str())]);
+    }
+
+    /// A distance ordering on a path into a sub-attribute measures nothing and
+    /// ranks by the value at the end of the path, read by key.
+    #[test]
+    fn a_distance_ordering_on_a_sub_attribute_path_resolves_its_names() {
+        let mut path = AttrPath::simple(name("https://example.com/area"));
+        path.sub_attrs.push(name("https://example.com/accuracy"));
+        let terms = [order_term(OrderTarget::Attribute(path), OrderDirection::DistAsc)];
+        assert_eq!(
+            collected(&projected_attribute_names([], None, None, &terms)),
+            vec!["https://example.com/area", "https://example.com/accuracy"]
+        );
     }
 
     /// A value ordering reads the attribute's rows by dictionary key.
@@ -215,7 +202,7 @@ mod tests {
         assert_eq!(projected_attribute_names([], None, None, &terms), [] as [AttributeName; 0]);
     }
 
-    /// The three axes accumulate rather than displacing one another.
+    /// The axes accumulate rather than displacing one another.
     #[test]
     fn a_filter_a_geo_query_and_an_ordering_each_contribute_their_own_names() {
         let expr = parser::parse("\"https://example.com/speed\">1").expect("parse q");

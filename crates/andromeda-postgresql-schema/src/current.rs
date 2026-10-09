@@ -34,24 +34,6 @@ pub enum Entities {
     ModifiedAt,
 }
 
-/// The `entity_documents` table - the expanded payload of one current Entity
-/// and the version token that moves with it.
-///
-/// Carries no index other than its primary key so that every payload write
-/// stays a heap-only-tuple update.
-#[derive(Iden, Clone, Copy)]
-pub enum EntityDocuments {
-    /// Table name: `entity_documents`
-    Table,
-    /// Foreign key to `entities`, cascading on entity deletion; also the primary key
-    EntityKey,
-    /// Instant the payload was last written (clause 4.8 `modifiedAt`), the
-    /// compare-and-set token an optimistic overwrite states
-    ModifiedAt,
-    /// Full expanded JSON-LD payload
-    Payload,
-}
-
 /// The `entity_search` table - the indexed query axes of one current Entity.
 ///
 /// Every index the planner uses to find entities is on this relation; the
@@ -108,60 +90,6 @@ pub enum EntityTypeMembers {
     EntityTypeNameKey,
     /// The Entity's identifier, copied from `entities` so the walk is ordered by it
     Id,
-}
-
-/// The `current_attribute_values` table - one row per current attribute
-/// instance of an entity.
-///
-/// The grain is the clause 4.5.5 dataset grain: an entity, an attribute name
-/// and an optional `datasetId`. Exactly one of the eight typed value columns is
-/// populated on any row, and which one is pinned to `value_kind`, so a
-/// predicate that knows the value shape it is comparing knows the column it has
-/// to read. A String is the one shape with two columns, and its byte length
-/// alone picks between them
-/// ([`ProjectedStringColumn`](crate::projected_string_column::ProjectedStringColumn)).
-///
-/// A deleted attribute is an absent row rather than a stored marker: the
-/// tombstone value kind belongs to history and never appears here, which is why
-/// row presence alone answers an existence test.
-#[derive(Iden, Clone, Copy)]
-pub enum CurrentAttributeValues {
-    /// Table name: `current_attribute_values`
-    Table,
-    /// Foreign key to `entities`, cascading on entity deletion
-    EntityKey,
-    /// Foreign key to `attribute_names`
-    AttributeNameKey,
-    /// Attribute family code of the projected instance
-    AttributeKind,
-    /// Value shape code, pinning which typed value column is populated
-    ValueKind,
-    /// `DateTime` value, when `value_kind` selects it
-    ValueDateTime,
-    /// The instance's own clause 4.22 `expiresAt`, NULL when it never expires
-    ExpiresAt,
-    /// Foreign key to `unit_codes` for the instance's `unitCode` (clause 4.5.2)
-    UnitCodeId,
-    /// Boolean value, when `value_kind` selects it
-    ValueBoolean,
-    /// Optional dataset identifier (clause 4.5.5)
-    DatasetId,
-    /// Numeric value, when `value_kind` selects it
-    ValueNumber,
-    /// String value, when `value_kind` selects it
-    ValueString,
-    /// Geometry value, when `value_kind` selects it
-    ValueGeometry,
-    /// JSON object or array value, when `value_kind` selects it
-    ValueObject,
-    /// URI value, when `value_kind` selects it
-    ValueUri,
-    /// String value too long for `value_string`'s B-tree, when `value_kind`
-    /// selects String
-    ValueLongText,
-    /// URI value too long for `value_uri`'s B-tree, when `value_kind` selects
-    /// URI
-    ValueLongUri,
 }
 
 /// The `current_attributes` table - one row per top-level attribute instance
@@ -327,7 +255,7 @@ pub struct E;
 
 #[cfg(test)]
 mod tests {
-    use crate::current::{CurrentAttributeValues, CurrentAttributes, E, Entities, EntityDocuments, EntitySearch, EntityTypeMembers, SubAttribute};
+    use crate::current::{CurrentAttributes, E, Entities, EntitySearch, EntityTypeMembers, SubAttribute};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -343,14 +271,6 @@ mod tests {
         assert_eq!(Entities::CreatedAt.to_string(), "created_at");
         assert_eq!(Entities::ExpiresAt.to_string(), "expires_at");
         assert_eq!(Entities::MinAttributeExpiresAt.to_string(), "min_attribute_expires_at");
-    }
-
-    #[test]
-    fn entity_documents_names() {
-        assert_eq!(EntityDocuments::Table.to_string(), "entity_documents");
-        assert_eq!(EntityDocuments::EntityKey.to_string(), "entity_key");
-        assert_eq!(EntityDocuments::ModifiedAt.to_string(), "modified_at");
-        assert_eq!(EntityDocuments::Payload.to_string(), "payload");
     }
 
     #[test]
@@ -376,35 +296,6 @@ mod tests {
         assert_eq!(EntityTypeMembers::EntityKey.to_string(), "entity_key");
         assert_eq!(EntityTypeMembers::EntityTypeNameKey.to_string(), "entity_type_name_key");
         assert_eq!(EntityTypeMembers::Id.to_string(), "id");
-    }
-
-    #[test]
-    fn current_attribute_values_table_name() {
-        assert_eq!(CurrentAttributeValues::Table.to_string(), "current_attribute_values");
-    }
-
-    #[test]
-    fn current_attribute_values_grain_column_names() {
-        assert_eq!(CurrentAttributeValues::EntityKey.to_string(), "entity_key");
-        assert_eq!(CurrentAttributeValues::AttributeNameKey.to_string(), "attribute_name_key");
-        assert_eq!(CurrentAttributeValues::DatasetId.to_string(), "dataset_id");
-        assert_eq!(CurrentAttributeValues::AttributeKind.to_string(), "attribute_kind");
-        assert_eq!(CurrentAttributeValues::ValueKind.to_string(), "value_kind");
-        assert_eq!(CurrentAttributeValues::UnitCodeId.to_string(), "unit_code_id");
-    }
-
-    #[test]
-    fn current_attribute_values_typed_value_column_names() {
-        assert_eq!(CurrentAttributeValues::ValueNumber.to_string(), "value_number");
-        assert_eq!(CurrentAttributeValues::ValueString.to_string(), "value_string");
-        assert_eq!(CurrentAttributeValues::ValueBoolean.to_string(), "value_boolean");
-        assert_eq!(CurrentAttributeValues::ValueGeometry.to_string(), "value_geometry");
-        assert_eq!(CurrentAttributeValues::ValueObject.to_string(), "value_object");
-        assert_eq!(CurrentAttributeValues::ValueDateTime.to_string(), "value_date_time");
-        assert_eq!(CurrentAttributeValues::ExpiresAt.to_string(), "expires_at");
-        assert_eq!(CurrentAttributeValues::ValueUri.to_string(), "value_uri");
-        assert_eq!(CurrentAttributeValues::ValueLongText.to_string(), "value_long_text");
-        assert_eq!(CurrentAttributeValues::ValueLongUri.to_string(), "value_long_uri");
     }
 
     #[test]

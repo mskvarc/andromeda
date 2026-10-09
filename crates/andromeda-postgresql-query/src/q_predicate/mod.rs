@@ -56,11 +56,13 @@
 //! # Linked-entity traversal
 //!
 //! The clause 4.9 `{}` axis (`rel{attr}=="x"`) compiles to one correlated
-//! `EXISTS` per hop. Each probe reads the Relationship's instances, joins
-//! `value_uri` to `entities.id` to reach the entity each instance names, and
-//! compiles the rest of the predicate against that entity's `entity_key`,
-//! recursively, so a chain of hops nests a chain of probes. Aliases are
-//! suffixed by depth (`cav_ln1`/`le1`, `cav_ln2`/`le2`, …) so a nested probe
+//! `EXISTS` per hop. Each probe reads the Relationship's instances, expands
+//! every object they hold (the single one in `value_uri` or `value_long_uri`,
+//! several in `value_object`), joins each to `entities.id` to reach the entity
+//! it names, and compiles the rest of the predicate against that entity's
+//! `entity_key`, recursively, so a chain of hops nests a chain of probes.
+//! Aliases are suffixed by depth (`ca_ln1`/`lo1`/`le1`, `ca_ln2`/`lo2`/`le2`,
+//! and so on) so a nested probe
 //! cannot shadow its enclosing one. A hop's optional entity-type guard becomes
 //! a disjunction of membership tests against the linked entity's `types`
 //! column, and a Relationship name absent from `attribute_names` compiles to

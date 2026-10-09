@@ -131,8 +131,9 @@ enum RelationshipObjects {
 /// an ordering operator would make `owner>"a"` select entities the standard
 /// requires it to reject.
 ///
-/// A `ListRelationship`'s objects are not here at all: they are projected into
-/// `value_object` as a JSON array, and the containment test in
+/// The objects of a `ListRelationship`, or of a Relationship holding several,
+/// are not here at all: they are held in `value_object` as a JSON array, and
+/// the containment test in
 /// [`crate::q_predicate::structured_target`] is what compares a URI Query Term
 /// against them.
 const fn relationship_object_is_comparable(op: CmpOp) -> RelationshipObjects {

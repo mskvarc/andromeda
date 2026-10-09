@@ -1,8 +1,8 @@
 //! The per-tenant name dictionaries.
 //!
 //! `attribute_names` maps an expanded attribute IRI to the compact `INTEGER`
-//! key the temporal catalogue, the history hypertable, and the
-//! `current_attribute_values` projection all reference; `entity_type_names`
+//! key the temporal catalogue, the history hypertable, and
+//! `current_attributes` all reference; `entity_type_names`
 //! does the same for expanded entity type IRIs, which
 //! `entity_search.entity_type_name_keys` and
 //! `temporal_entities.entity_type_name_keys` carry as integer arrays. One

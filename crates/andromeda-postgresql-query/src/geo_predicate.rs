@@ -7,10 +7,10 @@
 //!
 //! Clause 4.10 lets `geoproperty` name any `GeoProperty` of the entity, defaulting
 //! to `location`, and clause 5.7.2.4 counts an entity as matching when any
-//! instance of it meets the restriction. Every `GeoProperty` — `observationSpace`
-//! and `operationSpace` as much as a custom one — is read from the
-//! `current_attribute_values` projection, which holds one `value_geometry` row
-//! per attribute instance keyed by the `attribute_names` dictionary, so the
+//! instance of it meets the restriction. Every `GeoProperty` (`observationSpace`
+//! and `operationSpace` as much as a custom one) is read from
+//! `current_attributes`, which holds one `value_geometry` row per attribute
+//! instance keyed by the `attribute_names` dictionary, so the
 //! multi-instance rule is an existential over those rows. The default
 //! `location` additionally has its default instance hoisted into dedicated
 //! `PostGIS` columns on `entity_search`; [`crate::location_instances`] reads
@@ -70,7 +70,7 @@ pub enum GeometrySource<'a> {
     /// One entity's current-state rows, addressed through the names the
     /// enclosing statement knows them by.
     ///
-    /// A `GeoProperty` is reached through its `current_attribute_values`
+    /// A `GeoProperty` is reached through its `current_attributes`
     /// instance rows, correlated back to the identity row's surrogate key. The
     /// default `location` also reads the hoisted default instance on the search
     /// row, narrowed by what an in-memory index established about it. Every
@@ -278,7 +278,7 @@ fn subject_geometry(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names:
     }
 }
 
-/// Alias the correlated instance subquery reads `current_attribute_values`
+/// Alias the correlated instance subquery reads `current_attributes`
 /// under.
 ///
 /// Distinct enough not to collide with an alias the enclosing statement chose.
@@ -496,14 +496,14 @@ mod tests {
     }
 
     /// Clause 4.10: `geoproperty` names any `GeoProperty` of the entity. Every
-    /// one other than the default is stored as a `current_attribute_values` row
+    /// one other than the default is stored as a `current_attributes` row
     /// rather than a column of `entities`, so the relation is evaluated over
     /// those instance rows, correlated back to the entity being filtered.
     #[test]
     fn a_custom_geoproperty_is_read_from_its_attribute_instance_rows() {
         let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
         let sql = render(condition(&geo, entity_source(), &resolved_custom()).unwrap());
-        assert!(sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\""), "{sql}");
+        assert!(sql.contains("EXISTS(SELECT 1 FROM \"current_attributes\""), "{sql}");
         assert!(sql.contains("\"geo_instance\".\"value_geometry\""), "{sql}");
         assert!(
             sql.contains(&format!("\"attribute_name_key\" = {CUSTOM_GEOPROPERTY_ID}")),
@@ -528,14 +528,14 @@ mod tests {
     /// Clause 4.10: where a `GeoProperty` has several `datasetId` instances, one
     /// of them meeting the restriction is enough. The predicate is therefore an
     /// existential over the instance rows, with no restriction on `dataset_id`
-    /// that could pin it to the default instance — an instance that fails the
+    /// that could pin it to the default instance: an instance that fails the
     /// relation cannot veto one that passes it.
     #[test]
     fn a_multi_instance_geoproperty_matches_when_any_one_instance_does() {
         let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
         let sql = render(condition(&geo, entity_source(), &resolved_custom()).unwrap());
         assert!(
-            sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\""),
+            sql.contains("EXISTS(SELECT 1 FROM \"current_attributes\""),
             "an existential, not an aggregate: {sql}"
         );
         assert!(!sql.contains("dataset_id"), "no instance is preferred over another: {sql}");
@@ -551,7 +551,7 @@ mod tests {
             let names = ResolvedNames::from_pairs([(name(iri), AttributeNameKey::from(7_i32))]);
             let geo = point_query(GeoRel::Within, iri);
             let sql = render(condition(&geo, entity_source(), &names).unwrap());
-            assert!(sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\""), "{iri}: {sql}");
+            assert!(sql.contains("EXISTS(SELECT 1 FROM \"current_attributes\""), "{iri}: {sql}");
             assert!(sql.contains("\"attribute_name_key\" = 7"), "{iri}: {sql}");
         }
     }
@@ -576,7 +576,7 @@ mod tests {
         let geo = point_query(GeoRel::Within, LOCATION);
         let sql = render(condition(&geo, entity_source(), &resolved_none()).unwrap());
         assert!(sql.contains("ST_Within(\"geo_default\".\"location\""), "{sql}");
-        assert!(!sql.contains("current_attribute_values"), "{sql}");
+        assert!(!sql.contains("current_attributes"), "{sql}");
     }
 
     /// Clause 4.10: an Entity that does not convey the target `GeoProperty` is

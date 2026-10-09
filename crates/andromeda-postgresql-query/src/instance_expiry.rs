@@ -28,9 +28,9 @@ mod tests {
     #[test]
     fn an_instance_stands_while_it_never_expires_or_its_expiry_is_ahead() {
         let sql = Query::select()
-            .expr(instance_stands(Expr::col(("cav", "expires_at"))))
+            .expr(instance_stands(Expr::col(("ca", "expires_at"))))
             .to_owned()
             .to_string(PostgresQueryBuilder);
-        pretty_assertions::assert_eq!(sql, r#"SELECT "cav"."expires_at" IS NULL OR "cav"."expires_at" > NOW()"#);
+        pretty_assertions::assert_eq!(sql, r#"SELECT "ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()"#);
     }
 }
