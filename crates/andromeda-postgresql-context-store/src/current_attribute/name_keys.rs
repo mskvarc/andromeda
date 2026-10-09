@@ -6,9 +6,13 @@
 //! literal's datatype, a `valueType`, an `objectType`) as an `entity_type_names`
 //! key. Both maps hold hits only; a name with no key cannot be flattened, and a
 //! key with no name cannot be assembled. A write interns the names
-//! [`MentionedNames`] collects before it flattens.
+//! [`MentionedNames`] collects before it flattens; a read looks up the names of
+//! the keys [`HeldKeys`] collects before it assembles.
 
-use crate::current_attribute::flatten::scalar_literal;
+use crate::current_attribute::{
+    flatten::scalar_literal,
+    row::{CurrentAttributeRow, InstanceMembers},
+};
 use andromeda_ngsi_ld_entity::{attributes::Attributes, family_value::FamilyValue};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
@@ -79,6 +83,40 @@ impl MentionedNames {
                 self.collect(instance.sub_attributes());
             }
         }
+    }
+}
+
+/// The keys an Entity's rows hold at every depth: every attribute name key,
+/// and every datatype, `valueType` and `objectType` key. Assembly needs the
+/// name of each.
+#[derive(Debug, Default)]
+pub struct HeldKeys {
+    /// `attribute_names` keys, unsorted and possibly repeated.
+    pub attributes: Vec<AttributeNameKey>,
+    /// `entity_type_names` keys, unsorted and possibly repeated.
+    pub types: Vec<EntityTypeNameKey>,
+}
+
+impl HeldKeys {
+    /// Add the keys `row` holds, its elements' included.
+    pub fn collect(&mut self, row: &CurrentAttributeRow) {
+        self.members(&row.members);
+        for element in &row.sub_attributes {
+            self.members(&element.members);
+        }
+    }
+
+    /// Add the keys one instance's members hold.
+    fn members(&mut self, members: &InstanceMembers) {
+        self.attributes.push(members.attribute_name_key);
+        self.types.extend(
+            members
+                .value
+                .datatype_key()
+                .into_iter()
+                .chain(members.value_type_key)
+                .chain(members.object_type_keys.iter().copied()),
+        );
     }
 }
 

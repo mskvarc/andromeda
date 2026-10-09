@@ -1,7 +1,7 @@
 //! SQL generation for entity queries using sea-query.
 
 use crate::{
-    entity_page::payloads_of,
+    entity_page::heads_of,
     entity_relations::{EntityRelations, RowSource},
     result_ordering,
     selector_predicate::condition as selector_condition,
@@ -41,7 +41,8 @@ use sea_query::{Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Query, Se
 /// it reports is read, each a statement tree the store binds and executes on
 /// its own.
 pub struct EntityQuery {
-    /// The paginated statement selecting the matching entity payloads.
+    /// The paginated statement selecting the heads of the matching entities,
+    /// whose `current_attributes` rows the store reads by their keys.
     pub select: SelectStatement,
     /// How the clause 6.3.13 total is read, when the query asked for one.
     pub total: EntityTotal,
@@ -78,8 +79,8 @@ pub enum EntityTotal {
     Counted(SelectStatement),
 }
 
-/// Builds a parameterized SQL query to retrieve the entity payloads `window`
-/// selects, counting every match when `count` asks for it.
+/// Builds a parameterized SQL query to retrieve the heads of the entities
+/// `window` selects, counting every match when `count` asks for it.
 ///
 /// Generates filter conditions from the compiled query (IDs, types, attrs, q expression,
 /// geo filter, scope query), ordering, and pagination clauses, joining only the
@@ -122,7 +123,7 @@ pub fn build_query(
         (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(None)) => CountPolicy::Emit,
         (CountPolicy::Emit, PageStart::Cursor(Some(_))) | (CountPolicy::Omit, _) => CountPolicy::Omit,
     };
-    let select = payloads_of(page, &rows, keys, counted_on_page);
+    let select = heads_of(page, &rows, keys, counted_on_page);
 
     let total = match count {
         CountPolicy::Omit => EntityTotal::Omitted,
@@ -145,9 +146,9 @@ pub fn build_query(
 /// Builds a parameterized SQL query to retrieve only the identifiers of the
 /// entities `window` selects.
 ///
-/// Similar to [`build_query`] but selects `id` instead of `payload`, used for
-/// operations that only need to identify matching entities; the document row
-/// is joined only when a filter or ordering reads the payload.
+/// Similar to [`build_query`] but selects `id` alone, used for operations that
+/// only need to identify matching entities; the document row is joined only
+/// when a filter or ordering reads the payload.
 ///
 /// # Errors
 ///
@@ -395,6 +396,12 @@ mod tests {
         }
     }
 
+    /// The page a head statement cuts, before the lookup that reads each kept
+    /// Entity's head, which reads the search row whatever the filters read.
+    fn page_of(sql: &str) -> &str {
+        sql.split_once(r#") AS "page""#).map_or(sql, |(page, _)| page)
+    }
+
     fn ids(raw: &[&str]) -> Vec<Identifier> {
         raw.iter().map(|id| id.parse().expect("valid URI")).collect()
     }
@@ -442,7 +449,7 @@ mod tests {
         let q = empty_query();
         let built = build(&q, &known_types());
         assert!(built.sql.contains("SELECT"));
-        assert!(built.sql.contains("\"payload\""));
+        assert!(built.sql.contains(r#""stored"."entity_key""#));
         assert!(built.sql.contains("\"entities\""));
         assert!(built.sql.contains("LIMIT"));
         assert!(built.sql.contains("OFFSET"));
@@ -461,51 +468,48 @@ mod tests {
         assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC LIMIT"#), "{}", built.sql);
     }
 
-    /// A payload query that filters on nothing cuts its page from the identity
-    /// row alone and looks each kept row's document up by key outside the
-    /// window, so an `OFFSET` walks entity keys and never reads the documents
-    /// it skips.
+    /// A query that filters on nothing cuts its page from the identity row
+    /// alone and looks each kept row's head up by key outside the window, so
+    /// an `OFFSET` walks entity keys and never reads the heads it skips.
     #[test]
-    fn a_payload_query_with_no_filter_joins_nothing_and_reads_the_page_documents_by_key() {
+    fn a_query_with_no_filter_joins_nothing_and_reads_the_page_heads_by_key() {
         let q = empty_query();
         let built = build_paged(&q, &PageWindow::offset(20, 5000), CountPolicy::Omit, &known_types());
         assert_eq!(
             built.sql,
             concat!(
-                r#"SELECT "stored"."payload", "stored"."created_at", "stored"."modified_at", "stored"."expires_at" "#,
+                r#"SELECT "stored"."entity_key", "stored"."id", "stored"."entity_created_at", "stored"."entity_modified_at", "stored"."entity_expires_at", "#,
+                r#""stored"."entity_type_name_keys", "stored"."verbatim_scope_paths" "#,
                 r#"FROM (SELECT "entities"."entity_key", "entities"."id" AS "sort_0" FROM "entities" WHERE TRUE "#,
                 r#"ORDER BY "sort_0" ASC LIMIT $1 OFFSET $2) AS "page" "#,
-                r#"INNER JOIN LATERAL (SELECT "d"."payload", "e"."created_at", "d"."modified_at", "e"."expires_at" FROM "entity_documents" AS "d" "#,
-                r#"INNER JOIN "entities" AS "e" ON "e"."entity_key" = "d"."entity_key" WHERE "d"."entity_key" = "page"."entity_key" LIMIT $3) AS "stored" ON TRUE "#,
+                r#"INNER JOIN LATERAL (SELECT "e"."entity_key" AS "entity_key", "e"."id" AS "id", "e"."created_at" AS "entity_created_at", "#,
+                r#""e"."modified_at" AS "entity_modified_at", "e"."expires_at" AS "entity_expires_at", "#,
+                r#""s"."entity_type_name_keys" AS "entity_type_name_keys", "s"."verbatim_scope_paths" AS "verbatim_scope_paths" "#,
+                r#"FROM "entities" AS "e" INNER JOIN "entity_search" AS "s" ON "s"."entity_key" = "e"."entity_key" "#,
+                r#"WHERE "e"."entity_key" = "page"."entity_key" LIMIT $3) AS "stored" ON TRUE "#,
                 r#"ORDER BY "page"."sort_0" ASC"#
             )
         );
     }
 
     /// A `q` filter reads the payload for its jsonpath fallback, so the page
-    /// joins the document row, but the payload is still read by key for the
-    /// kept rows only: the page never projects it.
+    /// joins the document row, and the heads are still read by key for the
+    /// kept rows only.
     #[test]
-    fn a_q_filter_joins_the_documents_inside_the_page_and_reads_the_payload_outside_it() {
+    fn a_q_filter_joins_the_documents_inside_the_page_and_reads_the_heads_outside_it() {
         let mut q = empty_query();
         q.selection.q_expr = Some(parser::parse("\"https://example.com/temperature\">1").expect("valid q"));
         let built = build(&q, &temperature_is_known());
         assert!(built.sql.contains(r#"JOIN "entity_documents" ON"#), "{}", built.sql);
-        assert!(
-            built.sql.starts_with(
-                r#"SELECT "stored"."payload", "stored"."created_at", "stored"."modified_at", "stored"."expires_at" FROM (SELECT "entities"."entity_key", "#
-            ),
-            "{}",
-            built.sql
-        );
+        assert!(built.sql.starts_with(r#"SELECT "stored"."entity_key", "stored"."id","#), "{}", built.sql);
         assert!(!built.sql.contains(r#""entity_documents"."payload" AS"#), "{}", built.sql);
     }
 
     /// Clause 4.23.1 returns the entities sorted, so every key the page is cut
-    /// by is restated on the payload statement in the same direction and null
+    /// by is restated on the head statement in the same direction and null
     /// placement, ending with the `id` tiebreaker.
     #[test]
-    fn the_payload_statement_restates_every_key_of_the_page_order() {
+    fn the_head_statement_restates_every_key_of_the_page_order() {
         let mut q = empty_query();
         q.ordering.terms = vec![CompiledOrderTerm {
             target: OrderTarget::ModifiedAt,
@@ -514,22 +518,16 @@ mod tests {
         }];
         let built = build(&q, &known_types());
         assert!(
-            built
-                .sql
-                .contains(r#""entity_documents"."modified_at" AS "sort_0", "entities"."id" AS "sort_1""#),
+            built.sql.contains(r#""entities"."modified_at" AS "sort_0", "entities"."id" AS "sort_1""#),
             "{}",
             built.sql
         );
-        assert!(built.sql.contains(r#"ORDER BY "sort_0" DESC NULLS LAST, "sort_1" ASC LIMIT"#), "{}", built.sql);
-        assert!(
-            built.sql.ends_with(r#"ORDER BY "page"."sort_0" DESC NULLS LAST, "page"."sort_1" ASC"#),
-            "{}",
-            built.sql
-        );
+        assert!(built.sql.contains(r#"ORDER BY "sort_0" DESC, "sort_1" ASC LIMIT"#), "{}", built.sql);
+        assert!(built.sql.ends_with(r#"ORDER BY "page"."sort_0" DESC, "page"."sort_1" ASC"#), "{}", built.sql);
     }
 
     /// The total is counted inside the page, over every matching entity before
-    /// the window cuts it, and carried out beside each payload.
+    /// the window cuts it, and carried out beside each head.
     #[test]
     fn a_counted_query_counts_inside_the_page_and_carries_the_total_out() {
         let q = empty_query();
@@ -654,7 +652,7 @@ mod tests {
         let q = projected(&Projection::builder().pick(vec![ProjectionTerm::Id, speed_term()]).build());
         let built = build_counted(&q, &speed_and_scope_are_known());
         assert!(!built.sql.contains("attribute_name_keys"), "{}", built.sql);
-        assert!(!built.sql.contains("entity_search"), "{}", built.sql);
+        assert!(!page_of(&built.sql).contains("entity_search"), "{}", built.sql);
     }
 
     #[test]
@@ -767,7 +765,7 @@ mod tests {
             "{}",
             built.sql
         );
-        assert!(!built.sql.contains("entity_search"), "the walk answers the type: {}", built.sql);
+        assert!(!page_of(&built.sql).contains("entity_search"), "the walk answers the type: {}", built.sql);
         assert!(
             !built.bind_values.iter().any(|bind| matches!(bind, Value::Int(Some(1)))),
             "the resolved key is inlined, not bound: {:?}",
@@ -1107,7 +1105,7 @@ mod tests {
         assert!(matches!(entity_query.total, EntityTotal::OnPageRows { .. }));
     }
 
-    /// The ids-only statement pages by keyset the same way the payload one does.
+    /// The ids-only statement pages by keyset the same way the head one does.
     #[test]
     fn build_ids_query_pages_by_keyset() {
         let q = empty_query();
@@ -1185,10 +1183,10 @@ mod tests {
         assert!(built.sql.contains(r#"ORDER BY "sort_0" DESC, "sort_1" ASC LIMIT"#), "{}", built.sql);
     }
 
-    /// Clause 4.8 `modifiedAt` lives on `entity_documents`, is nullable, and so
-    /// sorts with `NULLS LAST`; the term joins the document row to read it.
+    /// Clause 4.8 `modifiedAt` is a column of the identity row that is never
+    /// null, so the term joins nothing and states no null placement.
     #[test]
-    fn build_with_order_by_modified_at_joins_and_reads_the_document_column() {
+    fn build_with_order_by_modified_at_reads_the_identity_column() {
         let mut q = empty_query();
         q.ordering.terms = vec![CompiledOrderTerm {
             target: OrderTarget::ModifiedAt,
@@ -1196,9 +1194,9 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains(r#"JOIN "entity_documents" ON"#), "the document row is joined: {}", built.sql);
-        assert!(built.sql.contains(r#""entity_documents"."modified_at" AS "sort_0""#), "{}", built.sql);
-        assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC NULLS LAST"#), "{}", built.sql);
+        assert!(!built.sql.contains("entity_documents"), "no document row is joined: {}", built.sql);
+        assert!(built.sql.contains(r#""entities"."modified_at" AS "sort_0""#), "{}", built.sql);
+        assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC, "sort_1" ASC"#), "{}", built.sql);
     }
 
     /// Clause 4.23.2 ranks "Attribute does not exist" last, and an unscoped

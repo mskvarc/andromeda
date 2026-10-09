@@ -95,7 +95,7 @@ impl ProjectedMembers {
                 .omit
                 .iter()
                 .filter(|term| term.linked_terms().is_empty())
-                .filter_map(attribute_iri)
+                .filter_map(ProjectionTerm::attribute_iri)
                 .cloned() // clone: the selection owns its names independently of the projection it was read from
                 .collect();
             ProjectedMembers::AnyBesides { attributes, scope }
@@ -106,12 +106,12 @@ impl ProjectedMembers {
                 projection
                     .omit
                     .iter()
-                    .any(|term| term.linked_terms().is_empty() && attribute_iri(term) == Some(*iri))
+                    .any(|term| term.linked_terms().is_empty() && term.attribute_iri() == Some(*iri))
             };
             let attributes = projection
                 .pick
                 .iter()
-                .filter_map(attribute_iri)
+                .filter_map(ProjectionTerm::attribute_iri)
                 .filter(|iri| !omitted_bare(iri))
                 .cloned() // clone: as above
                 .collect();
@@ -141,14 +141,6 @@ impl ProjectedMembers {
             ProjectedMembers::AnyBesides { attributes, .. } => (attributes, &NON_ATTRIBUTE_MEMBERS),
         };
         attributes.iter().map(IriBuf::as_str).chain(besides.iter().map(Iri::as_str))
-    }
-}
-
-/// The expanded name of an Attribute term; `None` for a clause 4.21 keyword.
-const fn attribute_iri(term: &ProjectionTerm) -> Option<&IriBuf> {
-    match term {
-        ProjectionTerm::Attribute { iri, .. } => Some(iri),
-        ProjectionTerm::Id | ProjectionTerm::Type | ProjectionTerm::Scope => None,
     }
 }
 

@@ -5,11 +5,12 @@
 use crate::current_attribute::{
     assemble::{AssemblyError, assemble},
     flatten::{FlattenError, flatten},
-    name_keys::{KeyNames, MentionedNames, NameKeys},
+    name_keys::{HeldKeys, KeyNames, MentionedNames, NameKeys},
     row::{CurrentAttributeRow, InstanceMembers},
     stored_json::StoredJson,
+    stored_members::StoredInstanceError,
     stored_value::{LiteralAnnotation, StoredValue},
-    sub_attribute::{ElementRecordError, SubAttributeElement, SubAttributeRecord},
+    sub_attribute::{SubAttributeElement, SubAttributeRecord},
 };
 use andromeda_ngsi_ld_entity::{
     attributes::Attributes,
@@ -32,7 +33,7 @@ use chrono::{TimeZone, Utc};
 use indexmap::IndexSet;
 use sea_query::Iden;
 use serde_json::{Value, json, value::to_raw_value};
-use std::{env, fs};
+use std::{collections::BTreeSet, env, fs};
 
 const NGSI: &str = "https://uri.etsi.org/ngsi-ld/";
 const GEOJSON: &str = "https://purl.org/geojson/vocab#";
@@ -266,6 +267,25 @@ fn every_family_round_trips() {
         pretty_assertions::assert_eq!(row.sub_attributes.len(), 16, "eight families, each with its child");
         assert!(row.sub_attributes.iter().any(|element| element.parent > 0), "a second level");
     }
+}
+
+/// A read looks up the names of the keys its rows hold, which are the keys of
+/// exactly the names the write interned, at every depth.
+#[test]
+fn the_keys_rows_hold_are_the_keys_of_the_names_a_write_mentions() {
+    let state = committed(&document(&every_family(&nested_every_family())));
+    let (keys, _) = dictionary(&state);
+    let mut held = HeldKeys::default();
+    for row in rows(&state, &keys) {
+        held.collect(&row);
+    }
+    let mut mentioned = MentionedNames::default();
+    mentioned.collect(state.attributes());
+    let expected_attributes: BTreeSet<i32> = mentioned.attributes.iter().map(|name| keys.attribute(name).expect("a key").get()).collect();
+    let expected_types: BTreeSet<i32> = mentioned.types.iter().map(|name| keys.entity_type(name).expect("a key").get()).collect();
+    pretty_assertions::assert_eq!(held.attributes.iter().map(|key| key.get()).collect::<BTreeSet<i32>>(), expected_attributes);
+    pretty_assertions::assert_eq!(held.types.iter().map(|key| key.get()).collect::<BTreeSet<i32>>(), expected_types);
+    assert!(!expected_types.is_empty(), "the fixture holds datatypes, value types and object types");
 }
 
 #[test]
@@ -812,7 +832,7 @@ fn an_element_with_two_values_is_an_assembly_error() {
     record.value_string = Some("a".to_owned());
     assert!(matches!(
         SubAttributeElement::try_from(record),
-        Err(ElementRecordError::ValueFields { kind: ValueKind::Number })
+        Err(StoredInstanceError::ValueFields { kind: ValueKind::Number })
     ));
 }
 
@@ -823,7 +843,7 @@ fn an_element_whose_value_is_in_another_field_is_an_assembly_error() {
     record.value_boolean = Some(true);
     assert!(matches!(
         SubAttributeElement::try_from(record),
-        Err(ElementRecordError::ValueFields { kind: ValueKind::Number })
+        Err(StoredInstanceError::ValueFields { kind: ValueKind::Number })
     ));
 }
 
@@ -831,7 +851,7 @@ fn an_element_whose_value_is_in_another_field_is_an_assembly_error() {
 fn a_language_beside_a_number_is_an_assembly_error() {
     let mut record = number_record();
     record.value_language = Some("en".to_owned());
-    assert!(matches!(SubAttributeElement::try_from(record), Err(ElementRecordError::Annotation)));
+    assert!(matches!(SubAttributeElement::try_from(record), Err(StoredInstanceError::Annotation)));
 }
 
 #[test]

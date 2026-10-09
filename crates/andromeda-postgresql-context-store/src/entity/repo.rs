@@ -1,15 +1,16 @@
 //! The PostgreSQL entity store.
 //!
-//! Holds the tenant pool plus the two things a pushed-down predicate needs:
-//! the attribute-name dictionary the current-value projection is keyed on and
-//! the entity-type-name dictionary the `entity_type_name_keys` column is keyed on. Those
-//! are properties of this store, not of the policy above it, which is why they
-//! live here and not in the port.
+//! Holds the tenant pool plus the two dictionaries every name is stored as a
+//! key of: the attribute-name dictionary the `current_attributes` rows are
+//! keyed on and the entity-type-name dictionary the `entity_type_name_keys`
+//! column and the rows' type keys are keyed on. A pushed-down predicate
+//! resolves names to keys through them and a read resolves the keys it reads
+//! back to names. Those are properties of this store, not of the policy above
+//! it, which is why they live here and not in the port.
 //!
-//! Nothing here waits for the projection. It is written inside the same
-//! transaction as the entity row it describes, so a committed write is a
-//! visible write and a reader that can see the entity can see its projected
-//! values.
+//! An Entity's rows are written inside the same transaction as its Entity row,
+//! so a committed write is a visible write and a reader that can see the
+//! Entity can see its attributes.
 
 use crate::error::ContextStoreError;
 use andromeda_entity::storage_profile::StorageProfile;

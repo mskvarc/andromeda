@@ -1,29 +1,15 @@
 //! Row → domain conversions for the `entities` table.
 //!
-//! An entity payload is the stored expanded document, decoded by the entity
-//! state codec straight from the column's JSON text. The identifier, type-name
-//! and attribute-name columns come back as text and are lifted into their
-//! domain types here, once, so every statement that reads them agrees on how a
-//! malformed one is reported. The broker only ever writes valid values, so a
-//! decode or parse failure is an internal fault rather than client input.
+//! The identifier, type-name and attribute-name columns come back as text and
+//! are lifted into their domain types here, once, so every statement that
+//! reads them agrees on how a malformed one is reported. The broker only ever
+//! writes valid values, so a parse failure is an internal fault rather than
+//! client input.
 
-use crate::{entity::stored_entity_error::StoredEntityError, error::ContextStoreError, jsonb_text::JsonbText};
-use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use crate::{entity::stored_entity_error::StoredEntityError, error::ContextStoreError};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::attribute_type_of, entity_key::EntityKey};
 use std::str::FromStr;
-
-/// Decode a stored entity document into the [`EntityState`] it was written
-/// from.
-///
-/// # Errors
-///
-/// Returns [`ContextStoreError::StoredEntity`] when the stored document does
-/// not decode as an entity state, which means the column holds a document the
-/// broker never wrote.
-pub fn stored_state(payload: JsonbText<'_>) -> Result<EntityState, ContextStoreError> {
-    Ok(EntityState::from_slice(payload.as_bytes()).map_err(StoredEntityError::Payload)?)
-}
 
 /// Parse a stored entity identifier into a [`Identifier`].
 ///

@@ -14,6 +14,7 @@ mod attribute_value_datatype;
 pub mod attribute_value_order;
 pub mod csr;
 pub mod entity;
+pub mod entity_head;
 pub mod entity_page;
 pub mod entity_relations;
 pub mod order_geography;

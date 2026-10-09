@@ -2,8 +2,8 @@
 //! `pending_side_effects.payload` JSONB column.
 //!
 //! Every entity state a job carries is written by the entity state codec as
-//! the stored expanded document an `entity_documents` row holds, and read back
-//! by the same codec straight from the column's text.
+//! its expanded document, and read back by the same codec straight from the
+//! column's text.
 
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_change::AttributeChangeKind};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};

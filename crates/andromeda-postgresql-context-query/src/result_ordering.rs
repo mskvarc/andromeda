@@ -31,7 +31,7 @@ use andromeda_postgresql_query::{
     error::RenderError,
     sort_key::{KeyOrder, NullPlacement, SortKey},
 };
-use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
+use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     collation::{PostgresCollation, collate},
     pg_array::elements_or_null,
@@ -82,18 +82,19 @@ pub fn sort_keys(
                 elements_or_null(rows.search_column(EntitySearch::ScopePaths)),
                 nulls_last(direction),
             )),
-            // Clause 4.8 `createdAt` is a `timestamptz` on the identity row that
-            // is never null, so it needs no `NULLS LAST` and no collation; two
-            // entities created in one transaction share it and fall to the
-            // `id ASC` tie-break below (clause 5.5.9).
+            // Clause 4.8 `createdAt` and `modifiedAt` are `timestamptz` columns
+            // of the identity row that are never null, so they need no `NULLS
+            // LAST` and no collation; two entities written in one transaction
+            // share them and fall to the `id ASC` tie-break below (clause
+            // 5.5.9).
             OrderTarget::CreatedAt => keys.push(SortKey::new(
                 rows.identity_column(Entities::CreatedAt),
                 KeyOrder::new(direction, NullPlacement::Unstated),
             )),
-            // Clause 4.8 `modifiedAt` lives on `entity_documents`; it is
-            // nullable, so absent values sort last in both directions
-            // (clause 4.23.2).
-            OrderTarget::ModifiedAt => keys.push(SortKey::new(rows.documents_column(EntityDocuments::ModifiedAt), nulls_last(direction))),
+            OrderTarget::ModifiedAt => keys.push(SortKey::new(
+                rows.identity_column(Entities::ModifiedAt),
+                KeyOrder::new(direction, NullPlacement::Unstated),
+            )),
             OrderTarget::Attribute(path) => {
                 // Only an attribute is a `GeoProperty`. Clause 4.23.1 sorts by
                 // distance when "Attribute is a GeoProperty"; a path descending

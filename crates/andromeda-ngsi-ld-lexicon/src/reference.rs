@@ -1,6 +1,6 @@
 //! The NGSI-LD compacted-name grammar and the reference type built on it.
 
-use crate::{identifier_length::IdentifierTooLong, name::grammar::Name, uri::Uri};
+use crate::{entity_type_name::EntityTypeName, identifier_length::IdentifierTooLong, name::grammar::Name, uri::Uri};
 use compact_str::CompactString;
 use derive_more::{AsRef, Deref, Display, Into};
 use iri_rs::IriBuf;
@@ -73,9 +73,20 @@ validated_ngsi_name! {
     as_ref(str, CompactString)
 }
 
+// Hand-written: no derive converts between two newtypes. Total, because an
+// entity type name and a reference are checked against one grammar
+// (`validate_ngsi_ld_name`), so an IRI a store interns as a type name reads
+// back as the reference it was interned from.
+impl From<&EntityTypeName> for NgsiLdReference {
+    fn from(name: &EntityTypeName) -> NgsiLdReference {
+        NgsiLdReference(CompactString::from(name.as_str()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
+        entity_type_name::EntityTypeName,
         identifier_length::IDENTIFIER_BYTE_LIMIT,
         reference::{NgsiLdReference, NgsiLdReferenceError},
     };
@@ -104,6 +115,14 @@ mod tests {
         let parsed: NgsiLdReference = "https://example.com/Vehicle".parse().expect("valid reference");
         pretty_assertions::assert_eq!(String::from(parsed), "https://example.com/Vehicle");
         assert!("".parse::<NgsiLdReference>().is_err());
+    }
+
+    #[test]
+    fn a_type_name_is_the_reference_of_the_same_text() {
+        for raw in ["xsd:decimal", "https://example.com/Vehicle", "Building"] {
+            let name: EntityTypeName = raw.parse().expect(raw);
+            pretty_assertions::assert_eq!(NgsiLdReference::from(&name), raw.parse::<NgsiLdReference>().expect(raw));
+        }
     }
 
     name_length_tests!(NgsiLdReference);

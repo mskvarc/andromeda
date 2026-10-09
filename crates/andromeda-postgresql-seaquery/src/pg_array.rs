@@ -19,6 +19,11 @@ pub fn array_of_subquery(subquery: SelectStatement) -> SimpleExpr {
 #[iden = "ANY"]
 struct AnyQuantifier;
 
+/// The `ALL` array quantifier.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ALL"]
+struct AllQuantifier;
+
 /// The `array_position` function.
 #[derive(Iden, Clone, Copy)]
 #[iden = "array_position"]
@@ -106,6 +111,13 @@ pub fn any(array: SimpleExpr) -> SimpleExpr {
     Func::cust(AnyQuantifier).args([array]).into()
 }
 
+/// `ALL(array)` - the right operand of `column <> ALL(array)`, bound as one
+/// value for the reason [`any`] binds its array as one.
+#[must_use]
+pub fn all(array: SimpleExpr) -> SimpleExpr {
+    Func::cust(AllQuantifier).args([array]).into()
+}
+
 /// A bound `text[]` value from a batch of borrowed strings.
 ///
 /// The array value owns its elements, so each string is copied: a bound
@@ -151,7 +163,7 @@ pub fn nullable_text_array(values: &[Option<&str>]) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::pg_array::{any, array_append, array_position, array_subquery, elements_or_null, has_elements, nullable_text_array};
+    use crate::pg_array::{all, any, array_append, array_position, array_subquery, elements_or_null, has_elements, nullable_text_array};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr};
 
@@ -202,6 +214,18 @@ mod tests {
             .to_owned()
             .build(PostgresQueryBuilder);
         assert!(sql.contains("= ANY("), "{sql}");
+        assert_eq!(values.0.len(), 1, "the whole array is one bound value: {sql}");
+    }
+
+    #[test]
+    fn inequality_against_all_binds_the_array_once() {
+        let (sql, values) = Query::select()
+            .column(Alias::new("name"))
+            .from(Alias::new("attribute_names"))
+            .and_where(Expr::col(Alias::new("attribute_name_key")).ne(all(Expr::val(vec![3_i32, 9]))))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert!(sql.ends_with(r#""attribute_name_key" <> ALL($1)"#), "{sql}");
         assert_eq!(values.0.len(), 1, "the whole array is one bound value: {sql}");
     }
 

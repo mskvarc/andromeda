@@ -2,13 +2,19 @@
 //! and the identifiers alone (clauses 5.7.2 and 5.5.9).
 
 use crate::{
-    entity::{mapper::stored_uri, pushdown, read::retrieved_of, repo::EntityRepository},
+    current_attribute::read::RowSelection,
+    entity::{mapper::stored_uri, pushdown, repo::EntityRepository},
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{port::retrieved_entity::RetrievedEntity, query_outcome::QueryOutcome};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, page_window::PageWindow};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
+    entity::compiled::CompiledEntityQuery,
+    page_window::PageWindow,
+    projection::returned_attributes::ReturnedAttributes,
+};
 use andromeda_postgresql_context_query::{
     entity::{self as entity_sql, EntityTotal},
     entity_page::TOTAL_COUNT_COLUMN,
@@ -25,8 +31,13 @@ use sqlx::{Row, postgres::PgRow};
 
 impl EntityRepository {
     /// Execute a compiled entity query and return the matching stored states
-    /// `window` selects, each with its clause 4.8 system attributes read by the
-    /// same statement, counting every match when `count` asks for it.
+    /// `window` selects, each with its clause 4.8 system attributes, counting
+    /// every match when `count` asks for it.
+    ///
+    /// Two statements: the page's heads, then the `current_attributes` rows of
+    /// the Entities it kept, by their keys and limited to the attributes the
+    /// query's `attrs` or clause 4.21 projection can return. A projection that
+    /// returns no attribute reads no row.
     ///
     /// The page is returned in the order it is presented: a backward or
     /// from-end cursor page, read descending so one index scan serves it, is
@@ -43,9 +54,8 @@ impl EntityRepository {
     ///
     /// Returns [`ContextStoreError`] when a name the query reads cannot be
     /// resolved through the dictionaries, when the statement cannot be rendered
-    /// from the compiled query, when the select or the separate count fails,
-    /// when a returned row does not carry the expected payload column, or when
-    /// a stored document no longer decodes as an entity state.
+    /// from the compiled query, when a statement or the separate count fails,
+    /// or when the stored rows no longer read back as entity states.
     pub async fn query_compiled(
         &self,
         target: &ContextTarget,
@@ -59,9 +69,10 @@ impl EntityRepository {
         let built = entity_sql::build_query(target, &planned.query, &planned.window, planned.count, &names)?;
 
         let (sql, values) = built.select.build_sqlx(PostgresQueryBuilder);
-        let result_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
-        let on_page_rows = matches!(built.total, EntityTotal::OnPageRows { .. });
-        let (mut rows, window_count) = extract_payloads(&result_rows, on_page_rows)?;
+        let head_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let window_count = page_total(&head_rows, matches!(built.total, EntityTotal::OnPageRows { .. }));
+        let selection = row_selection(&planned.query, &names.attributes);
+        let mut rows = self.entities_of_heads(target, &head_rows, &selection).await?;
         built.read_order.present(&mut rows);
         let rows = rows;
 
@@ -129,7 +140,8 @@ impl EntityRepository {
     ///
     /// A clause 5.5.9 `attrs` term is answered by the search row's interned
     /// attribute names, so every term resolves, and so is every name a clause
-    /// 4.21 projection keeps an entity alive by. A clause 4.9 linked-entity
+    /// 4.21 projection keeps an entity alive by or returns, which the rows of
+    /// the page are read by. A clause 4.9 linked-entity
     /// traversal contributes more than one name per predicate: the Relationship
     /// each hop descends through is probed by dictionary key just as the
     /// terminal attribute is, and both come back from the same collection walk.
@@ -145,10 +157,15 @@ impl EntityRepository {
     /// name that resolves to nothing is a name nothing has ever written, not
     /// one written moments ago.
     async fn resolve_names(&self, compiled: &CompiledEntityQuery) -> Result<QueryNames, ContextStoreError> {
+        let returned = match ReturnedAttributes::of(&compiled.projection, &compiled.selection.attrs) {
+            ReturnedAttributes::Every => Vec::new(),
+            ReturnedAttributes::Named(iris) | ReturnedAttributes::AllBut(iris) => iris,
+        };
         let members = compiled
             .selection
             .attrs
             .iter()
+            .chain(returned)
             .map(IriBuf::as_str)
             .chain(compiled.selection.projected_members.names());
         let attribute_names = projected_attribute_names(
@@ -172,14 +189,92 @@ impl EntityRepository {
     }
 }
 
-/// Decode the entity states and system attributes of a result set,
-/// optionally reading the piggybacked total count off the first row
-/// (`COUNT(*) OVER ()` is constant across the set).
-fn extract_payloads(rows: &[PgRow], read_total_count: bool) -> Result<(Vec<RetrievedEntity>, Option<i64>), ContextStoreError> {
-    let count = match (read_total_count, rows.first()) {
+/// The piggybacked total of a page, read off its first row when the page
+/// carries one (`COUNT(*) OVER ()` is constant across the set).
+fn page_total(rows: &[PgRow], read_total_count: bool) -> Option<i64> {
+    match (read_total_count, rows.first()) {
         (true, Some(first)) => first.try_get::<i64, _>(TOTAL_COUNT_COLUMN).ok(),
         (true, None) | (false, _) => None,
+    }
+}
+
+/// The rows of a page's Entities the query's `attrs` or clause 4.21
+/// projection can return, by the keys `attributes` resolved. A name with no
+/// key is held by no row: it takes nothing when named and sets nothing apart
+/// when excluded.
+fn row_selection(query: &CompiledEntityQuery, attributes: &ResolvedNames<AttributeName>) -> RowSelection {
+    let keys = |iris: Vec<&IriBuf>| iris.into_iter().filter_map(|iri| attributes.get_str(iri.as_str())).collect();
+    match ReturnedAttributes::of(&query.projection, &query.selection.attrs) {
+        ReturnedAttributes::Every => RowSelection::Every,
+        ReturnedAttributes::Named(iris) => RowSelection::Named(keys(iris)),
+        ReturnedAttributes::AllBut(iris) => RowSelection::AllBut(keys(iris)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{current_attribute::read::RowSelection, entity::compiled_query::row_selection};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_query::{
+        entity::compiled::CompiledEntityQuery,
+        entity_selection::EntitySelection,
+        projection::{compiled::Projection, term::ProjectionTerm},
     };
-    let states = rows.iter().map(retrieved_of).collect::<Result<Vec<RetrievedEntity>, ContextStoreError>>()?;
-    Ok((states, count))
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
+    use iri_rs::IriBuf;
+    use pretty_assertions::assert_eq;
+
+    fn iri(name: &str) -> IriBuf {
+        IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI")
+    }
+
+    fn query(projection: Projection, attrs: Vec<IriBuf>) -> CompiledEntityQuery {
+        CompiledEntityQuery::builder()
+            .selection(EntitySelection::builder().attrs(attrs).build())
+            .projection(projection)
+            .build()
+    }
+
+    fn known() -> ResolvedNames<AttributeName> {
+        ResolvedNames::from_pairs(
+            [("a", 4), ("b", 7)]
+                .into_iter()
+                .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("a name"), AttributeNameKey::from(key))),
+        )
+    }
+
+    /// Clause 4.21: `pick=id,type` returns no attribute, so the page reads no
+    /// `current_attributes` row at all.
+    #[test]
+    fn pick_of_id_and_type_reads_no_instance_rows() {
+        let projection = Projection::builder().pick(vec![ProjectionTerm::Id, ProjectionTerm::Type]).build();
+        assert!(row_selection(&query(projection, Vec::new()), &known()).takes_none());
+    }
+
+    #[test]
+    fn attrs_reads_the_rows_of_the_named_attributes_the_dictionary_holds() {
+        assert_eq!(
+            row_selection(&query(Projection::default(), vec![iri("a"), iri("b"), iri("never-written")]), &known()),
+            RowSelection::Named(vec![AttributeNameKey::from(4), AttributeNameKey::from(7)])
+        );
+    }
+
+    #[test]
+    fn omit_reads_every_row_but_those_of_the_omitted_attributes() {
+        let projection = Projection::builder()
+            .omit(vec![ProjectionTerm::Attribute {
+                iri: iri("a"),
+                linked: Vec::new(),
+            }])
+            .build();
+        assert_eq!(
+            row_selection(&query(projection, Vec::new()), &known()),
+            RowSelection::AllBut(vec![AttributeNameKey::from(4)])
+        );
+    }
+
+    #[test]
+    fn no_projection_reads_every_row() {
+        assert_eq!(row_selection(&query(Projection::default(), Vec::new()), &known()), RowSelection::Every);
+    }
 }

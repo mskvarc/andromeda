@@ -1,7 +1,7 @@
 //! Reading the types one entity carries from its search row.
 //!
 //! The search row names every type of the entity by its dictionary key, so the
-//! types are known without decoding the payload they were written in.
+//! types are known without reading the Entity's attributes.
 
 use crate::{
     entity::{

@@ -16,8 +16,6 @@ pub mod expiry;
 pub mod mapper;
 /// The parallel bind vectors every entity statement is driven from.
 pub mod params;
-/// Reading whole entity payloads a page at a time.
-pub mod payload_listing;
 /// Direct implementations of entity policy ports.
 mod port;
 /// Deciding what to ask PostgreSQL for, and what to hand back unanswered.
@@ -30,6 +28,10 @@ pub mod repo;
 pub mod staged_geometry;
 /// The Scopes one entity's search row is matched by and read back from.
 pub mod staged_scopes;
+/// Reading whole Entities a page at a time.
+pub mod state_listing;
+/// Entities read back from their heads and rows, and assembled.
+pub mod stored_entities;
 /// What an Entity row or census ledger that no longer reads back looks like.
 pub mod stored_entity_error;
 /// The clause 4.5.1 invariant that every stored entity carries at least one type.

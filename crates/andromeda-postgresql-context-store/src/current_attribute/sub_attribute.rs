@@ -5,24 +5,20 @@
 //! [`SubAttributeRecord`] is the composite field for field, in the type's
 //! declaration order, encoded and decoded in the binary protocol by the
 //! `sqlx` derive. Converting a record into an element is where a stored
-//! element breaking its invariants (a value in no field or in two, a value in
-//! a field its kind does not name, a code no release defines) is refused.
+//! element breaking its invariants is refused, as a row's members are.
 
 use crate::current_attribute::{
     row::InstanceMembers,
     stored_json::StoredJson,
-    stored_value::{LiteralAnnotation, StoredValue},
+    stored_members::{MemberColumns, StoredInstanceError},
+    stored_value::StoredValue,
 };
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, uri::UriParseError};
-use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError};
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, registry::UnknownCompactCode, value_kind::ValueKind};
-use andromeda_postgresql_encoding::ewkb::{Ewkb, EwkbError, encode};
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
-use andromeda_unit_catalog::unit_code_id::{UnitCodeId, UnitCodeIdOutOfRange};
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
+use andromeda_postgresql_encoding::ewkb::{EwkbError, encode};
+use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use langtag::{InvalidLangTag, LangTagBuf};
 use serde_json::value::RawValue;
 use sqlx::{
     Decode,
@@ -34,7 +30,6 @@ use sqlx::{
     postgres::{PgArgumentBuffer, PgTypeInfo, PgValueRef},
     types::Json,
 };
-use thiserror::Error;
 
 /// One sub-attribute instance inside its top-level instance's row.
 #[derive(Debug, PartialEq)]
@@ -52,7 +47,7 @@ pub struct SubAttributeElement {
 
 /// A geometry in the binary form of `PostGIS` `geometry`, which is EWKB.
 #[derive(Debug)]
-pub struct EwkbGeometry(Vec<u8>);
+pub struct EwkbGeometry(pub(crate) Vec<u8>);
 
 // Hand-written: `geometry` is a `PostGIS` type `sqlx` knows only by name, and
 // its binary send and receive form is the EWKB the store already builds, so
@@ -194,46 +189,10 @@ impl TryFrom<SubAttributeElement> for SubAttributeRecord {
     }
 }
 
-/// A stored `sub_attribute` element that breaks its invariants.
-#[derive(Debug, Error)]
-pub enum ElementRecordError {
-    /// The attribute or value kind code is one no release defines.
-    #[error(transparent)]
-    Code(#[from] UnknownCompactCode),
-    /// The populated value fields are not exactly the one the value kind
-    /// names.
-    #[error("the element's value fields disagree with its value kind {}", .kind.label())]
-    ValueFields {
-        /// The value kind the element records.
-        kind: ValueKind,
-    },
-    /// A literal annotation stands beside a value that cannot carry it.
-    #[error("the element carries a datatype or language its value cannot carry")]
-    Annotation,
-    /// The `datasetId` is not an identifier.
-    #[error(transparent)]
-    DatasetId(#[from] IdentifierParseError),
-    /// The URI is not a URI.
-    #[error(transparent)]
-    Uri(#[from] UriParseError),
-    /// The language tag is not a BCP 47 tag.
-    #[error("the element's language tag is not a BCP 47 tag: {0}")]
-    Language(#[source] InvalidLangTag<String>),
-    /// The number is not one the JSON number model carries.
-    #[error(transparent)]
-    Number(#[from] JsonNumberError),
-    /// The geometry is not canonical EWKB.
-    #[error(transparent)]
-    Geometry(#[from] EwkbError),
-    /// The unit code identity is out of the catalog's range.
-    #[error(transparent)]
-    UnitCode(#[from] UnitCodeIdOutOfRange),
-}
-
 impl TryFrom<SubAttributeRecord> for SubAttributeElement {
-    type Error = ElementRecordError;
+    type Error = StoredInstanceError;
 
-    fn try_from(record: SubAttributeRecord) -> Result<SubAttributeElement, ElementRecordError> {
+    fn try_from(record: SubAttributeRecord) -> Result<SubAttributeElement, StoredInstanceError> {
         let SubAttributeRecord {
             parent,
             attribute_name_key,
@@ -259,113 +218,33 @@ impl TryFrom<SubAttributeRecord> for SubAttributeElement {
             modified_at,
             expires_at,
         } = record;
-        let fields = ValueFields {
-            number: value_number,
-            string: value_string,
-            boolean: value_boolean,
-            date_time: value_date_time,
-            geometry: value_geometry,
-            geometry_members: value_geometry_members,
-            object: value_object,
-            uri: value_uri,
+        let columns = MemberColumns {
+            attribute_name_key,
+            dataset_id,
+            attribute_kind,
+            value_kind,
+            value_number,
+            value_string,
+            value_boolean,
+            value_date_time,
+            value_geometry,
+            value_geometry_members,
+            value_object,
+            value_uri,
+            value_datatype_key,
+            value_language,
+            value_type_key,
+            object_type_keys,
+            proof_seals,
+            unit_code_id,
+            observed_at,
+            expires_at,
         };
-        let annotation = (
-            value_datatype_key.map(EntityTypeNameKey::from),
-            value_language.map(LangTagBuf::new).transpose().map_err(ElementRecordError::Language)?,
-        );
         Ok(SubAttributeElement {
             parent,
-            members: InstanceMembers {
-                attribute_name_key: AttributeNameKey::from(attribute_name_key),
-                dataset_id: dataset_id.map(|dataset_id| dataset_id.parse()).transpose()?,
-                attribute_kind: AttributeKind::try_from(attribute_kind)?,
-                value: fields.into_value(ValueKind::try_from(value_kind)?, annotation)?,
-                value_type_key: value_type_key.map(EntityTypeNameKey::from),
-                object_type_keys: object_type_keys.unwrap_or_default().into_iter().map(EntityTypeNameKey::from).collect(),
-                unit_code_id: unit_code_id.map(UnitCodeId::try_from).transpose()?,
-                observed_at,
-                expires_at,
-                proof_seals: proof_seals.map(StoredJson::from),
-            },
+            members: InstanceMembers::try_from(columns)?,
             created_at,
             modified_at,
         })
-    }
-}
-
-/// The value fields of one record.
-struct ValueFields {
-    /// `value_number`.
-    number: Option<BigDecimal>,
-    /// `value_string`.
-    string: Option<String>,
-    /// `value_boolean`.
-    boolean: Option<bool>,
-    /// `value_date_time`.
-    date_time: Option<DateTime<Utc>>,
-    /// `value_geometry`.
-    geometry: Option<EwkbGeometry>,
-    /// `value_geometry_members`, which only a geometry carries.
-    geometry_members: Option<Json<Box<RawValue>>>,
-    /// `value_object`.
-    object: Option<Json<Box<RawValue>>>,
-    /// `value_uri`.
-    uri: Option<String>,
-}
-
-impl ValueFields {
-    /// The one value the fields hold under `kind`, with the datatype and
-    /// language the record carries beside it.
-    fn into_value(self, kind: ValueKind, (datatype, language): (Option<EntityTypeNameKey>, Option<LangTagBuf>)) -> Result<StoredValue, ElementRecordError> {
-        let populated = usize::from(self.number.is_some())
-            + usize::from(self.string.is_some())
-            + usize::from(self.boolean.is_some())
-            + usize::from(self.date_time.is_some())
-            + usize::from(self.geometry.is_some())
-            + usize::from(self.object.is_some())
-            + usize::from(self.uri.is_some());
-        let misplaced = ElementRecordError::ValueFields { kind };
-        if populated != 1 || (self.geometry_members.is_some() && self.geometry.is_none()) {
-            return Err(misplaced);
-        }
-        let annotated = datatype.is_some() || language.is_some();
-        if language.is_some() && !matches!(kind, ValueKind::String) {
-            return Err(ElementRecordError::Annotation);
-        }
-        let value = match kind {
-            ValueKind::Number => StoredValue::Number {
-                number: JsonNumber::from_decimal(&self.number.ok_or(misplaced)?)?,
-                datatype,
-            },
-            ValueKind::String => StoredValue::String {
-                text: self.string.ok_or(misplaced)?,
-                annotation: match (datatype, language) {
-                    (None, None) => LiteralAnnotation::Plain,
-                    (Some(datatype), None) => LiteralAnnotation::Datatype(datatype),
-                    (None, Some(language)) => LiteralAnnotation::Language(language),
-                    (Some(_), Some(_)) => return Err(ElementRecordError::Annotation),
-                },
-            },
-            ValueKind::Boolean => StoredValue::Boolean {
-                flag: self.boolean.ok_or(misplaced)?,
-                datatype,
-            },
-            ValueKind::DateTime => StoredValue::DateTime {
-                instant: self.date_time.ok_or(misplaced)?,
-                datatype,
-            },
-            ValueKind::Geometry | ValueKind::Object | ValueKind::Uri if annotated => return Err(ElementRecordError::Annotation),
-            ValueKind::Geometry => {
-                let ewkb = Ewkb::try_from(self.geometry.ok_or(misplaced)?.0.as_slice())?;
-                StoredValue::Geometry {
-                    form: Geometry::try_from(&ewkb)?.into_parts().0,
-                    members: self.geometry_members.map(StoredJson::from),
-                }
-            }
-            ValueKind::Object => StoredValue::Object(StoredJson::from(self.object.ok_or(misplaced)?)),
-            ValueKind::Uri => StoredValue::Uri(self.uri.ok_or(misplaced)?.parse()?),
-            ValueKind::Tombstone => return Err(misplaced),
-        };
-        Ok(value)
     }
 }

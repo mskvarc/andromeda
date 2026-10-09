@@ -11,10 +11,10 @@
 //! and one set of statements.
 
 use crate::{
-    bounded_keys::{bounded_keys, preload_row_limit},
+    bounded_keys::{bounded_keys, bounded_names, preload_row_limit},
     dictionary_relation::DictionaryRelation,
     dictionary_rows::{CachePublication, decode, held_publication},
-    dictionary_statements::{held_select_query, name_insert_query, name_select_query, preload_query},
+    dictionary_statements::{held_select_query, key_select_query, name_insert_query, name_select_query, preload_query},
     name_cache_config::NameCacheConfig,
     name_lookup::{NameLookup, NameLookupError},
     schema_epoch::{EPOCH_CHECK_INTERVAL, UNKNOWN_EPOCH, now_millis, read_schema_epoch},
@@ -31,7 +31,7 @@ use std::{
     time::Duration,
 };
 
-/// Cache of expanded IRI to dictionary key for one dictionary.
+/// Cache of expanded IRI to dictionary key, and back, for one dictionary.
 ///
 /// The cache is bounded by the byte budget and idle timeout of its
 /// [`NameCacheConfig`]; the dictionary behind it is not. A name the cache has
@@ -54,6 +54,9 @@ pub struct NameCache<N: DictionaryRelation> {
     /// Cached mappings from expanded IRI text to dictionary key, bounded by
     /// the configured byte budget and idle timeout.
     keys: Cache<N, N::Key>,
+    /// The same committed mappings from key to name, bounded the same way and
+    /// filled at the same points.
+    names: Cache<N::Key, N>,
     /// How many rows a preload reads at most, derived from the byte budget.
     preload_rows: u64,
     /// The tenant schema stamp (`schema_metadata.applied_at`, microseconds) this
@@ -76,6 +79,7 @@ impl<N: DictionaryRelation> NameCache<N> {
         NameCache {
             pool: pool.clone(), // clone: Arc ref-count bump
             keys: bounded_keys(config),
+            names: bounded_names(config),
             preload_rows: preload_row_limit(config),
             schema_epoch: AtomicI64::new(UNKNOWN_EPOCH),
             // Seeded to now, not zero: a cache is inside its check interval the
@@ -125,6 +129,7 @@ impl<N: DictionaryRelation> NameCache<N> {
             CachePublication::Publish => {
                 for (name, id) in resolved {
                     self.keys.insert(name.clone(), *id); // clone: the cache keeps its own key
+                    self.names.insert(*id, name.clone()); // clone: each direction keeps its own name
                 }
             }
             CachePublication::Withhold => {}
@@ -184,6 +189,7 @@ impl<N: DictionaryRelation> NameCache<N> {
         let previous = self.schema_epoch.swap(observed, Ordering::Relaxed);
         if previous != UNKNOWN_EPOCH && previous != observed {
             self.keys.invalidate_all();
+            self.names.invalidate_all();
         }
         Ok(())
     }
@@ -269,6 +275,36 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
         resolved.extend(minted);
         Ok(resolved.into_iter().collect())
     }
+
+    /// Read keys back as names, answering cached keys without a statement.
+    ///
+    /// Misses are read on the pool, whose committed snapshot is what makes
+    /// publishing them sound, and a key no committed row holds is not
+    /// remembered as absent.
+    async fn names_of(&self, keys: &[N::Key]) -> Result<HashMap<N::Key, N>, NameLookupError> {
+        self.revalidate_epoch(&self.pool).await?;
+        let mut named = HashMap::with_capacity(keys.len());
+        let mut missing = Vec::new();
+        for key in keys {
+            match self.names.get(key) {
+                Some(name) => {
+                    named.insert(*key, name);
+                }
+                None => missing.push(N::key_value(*key)),
+            }
+        }
+        if missing.is_empty() {
+            return Ok(named);
+        }
+        missing.sort_unstable();
+        missing.dedup();
+        let (sql, values) = key_select_query::<N>(&missing).build_sqlx(PostgresQueryBuilder);
+        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
+        let found = decode::<N>(&rows)?;
+        self.absorb(&found, CachePublication::Publish);
+        named.extend(found.into_iter().map(|(name, key)| (key, name)));
+        Ok(named)
+    }
 }
 
 /// The text of every distinct name a read has to ask the dictionary for.
@@ -299,7 +335,7 @@ mod tests {
     use crate::{
         dictionary_relation::DictionaryRelation,
         dictionary_rows::CachePublication,
-        dictionary_statements::{SNAPSHOT_IS_COMMITTED_COLUMN, held_select_query, name_insert_query, name_select_query, preload_query},
+        dictionary_statements::{SNAPSHOT_IS_COMMITTED_COLUMN, held_select_query, key_select_query, name_insert_query, name_select_query, preload_query},
         name_cache::{NameCache, distinct_text, names_not_yet_held},
         name_cache_config::NameCacheConfig,
         name_lookup::NameLookup,
@@ -389,6 +425,41 @@ mod tests {
                     assert!(!cache.keys.contains_key(&asked[0]), "a failed lookup must not populate the cache");
                 }
 
+                #[tokio::test]
+                async fn names_of_no_keys_does_not_touch_the_database() {
+                    let named = cache::<$name>().names_of(&[]).await;
+                    assert!(
+                        named.is_ok_and(|names| names.is_empty()),
+                        "an empty read must answer nothing without a query"
+                    );
+                }
+
+                #[tokio::test]
+                async fn names_of_cached_keys_are_served_without_a_query() {
+                    let cache = cache::<$name>();
+                    cache.absorb(&[(first(), <$key>::from(7))], CachePublication::Publish);
+                    // The pool points nowhere, so this only succeeds if no query is issued.
+                    let named = cache.names_of(&[<$key>::from(7), <$key>::from(7)]).await.ok();
+                    assert_eq!(named.and_then(|names| names.get(&<$key>::from(7)).cloned()), Some(first()));
+                }
+
+                /// A mapping minted inside a transaction answers neither
+                /// direction for anyone but its caller.
+                #[tokio::test]
+                async fn a_withheld_resolution_names_no_key() {
+                    let cache = cache::<$name>();
+                    cache.absorb(&[(first(), <$key>::from(7))], CachePublication::Withhold);
+                    assert!(!cache.names.contains_key(&<$key>::from(7)));
+                }
+
+                #[test]
+                fn a_batch_of_keys_is_read_back_through_a_single_array_bind() {
+                    let (sql, values) = key_select_query::<$name>(&[3, 9]).build_sqlx(PostgresQueryBuilder);
+                    assert!(sql.contains(concat!("FROM \"", $table, "\" WHERE")), "{sql}");
+                    assert!(sql.contains("= ANY($1)"), "{sql}");
+                    assert_eq!(values.0.0.len(), 1, "the whole batch is one bound array: {sql}");
+                }
+
                 /// The rule the transaction-aware write path depends on: a name minted
                 /// inside the caller's transaction is handed back to that caller and to
                 /// nobody else, because the transaction may still roll it away.
@@ -410,6 +481,7 @@ mod tests {
                     let cache = cache::<$name>();
                     cache.absorb(&[(first(), <$key>::from(7))], CachePublication::Publish);
                     assert_eq!(cache.keys.get(&first()), Some(<$key>::from(7)));
+                    assert_eq!(cache.names.get(&<$key>::from(7)), Some(first()));
                 }
 
                 /// Eviction is safe because a dropped name is a miss like any

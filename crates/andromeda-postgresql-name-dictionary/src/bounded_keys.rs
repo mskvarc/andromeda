@@ -1,4 +1,4 @@
-//! The bounded in-process map from interned name to dictionary key.
+//! The bounded in-process maps from interned name to dictionary key and back.
 //!
 //! A mapping never changes once its dictionary row is committed, so nothing
 //! here expires for staleness: entries leave only to keep the cache inside its
@@ -25,9 +25,21 @@ use moka::sync::Cache;
 /// than an understatement of it.
 const ENTRY_OVERHEAD_BYTES: u32 = 160;
 
-/// A cache over one dictionary, sized and timed by `config`.
+/// A cache from name to key over one dictionary, sized and timed by `config`.
 pub(crate) fn bounded_keys<N: InternedName>(config: &NameCacheConfig) -> Cache<N, N::Key> {
     let builder = Cache::builder().max_capacity(config.capacity_bytes()).weigher(entry_weight::<N>);
+    match config.idle_timeout() {
+        Some(idle) => builder.time_to_idle(idle).build(),
+        None => builder.build(),
+    }
+}
+
+/// A cache from key to name over one dictionary, sized and timed by `config`
+/// as the cache from name to key is, each holding its own budget.
+pub(crate) fn bounded_names<N: InternedName>(config: &NameCacheConfig) -> Cache<N::Key, N> {
+    let builder = Cache::builder()
+        .max_capacity(config.capacity_bytes())
+        .weigher(|key: &N::Key, name: &N| entry_weight::<N>(name, key));
     match config.idle_timeout() {
         Some(idle) => builder.time_to_idle(idle).build(),
         None => builder.build(),
@@ -56,7 +68,7 @@ fn entry_weight<N: InternedName>(name: &N, _key: &N::Key) -> u32 {
 #[cfg(test)]
 mod tests {
     use crate::{
-        bounded_keys::{ENTRY_OVERHEAD_BYTES, bounded_keys, entry_weight, preload_row_limit},
+        bounded_keys::{ENTRY_OVERHEAD_BYTES, bounded_keys, bounded_names, entry_weight, preload_row_limit},
         name_cache_config::{IdleEviction, NameCacheConfig, Unlimited},
     };
     use andromeda_configuration_scalars::{human_byte_size::HumanByteSize, human_duration::HumanDuration};
@@ -78,6 +90,18 @@ mod tests {
         assert_eq!(keys.policy().max_capacity(), Some(4 * 1024 * 1024));
         assert_eq!(keys.policy().time_to_idle(), Some(Duration::from_secs(90)));
         assert_eq!(keys.policy().time_to_live(), None, "a committed mapping never goes stale");
+    }
+
+    #[test]
+    fn the_cache_of_names_by_key_has_the_budget_and_idle_timeout_of_the_cache_of_keys() {
+        let config = NameCacheConfig {
+            capacity_per_dictionary: HumanByteSize::mib(4),
+            idle_eviction: IdleEviction::After(HumanDuration::from_secs(90)),
+        };
+        let names = bounded_names::<AttributeName>(&config);
+        assert_eq!(names.policy().max_capacity(), Some(4 * 1024 * 1024));
+        assert_eq!(names.policy().time_to_idle(), Some(Duration::from_secs(90)));
+        assert_eq!(names.policy().time_to_live(), None, "a committed mapping never goes stale");
     }
 
     #[test]

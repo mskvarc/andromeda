@@ -57,6 +57,16 @@ pub(crate) fn name_select_query<N: DictionaryRelation>(names: &[&str]) -> Select
         .to_owned()
 }
 
+/// Read back the names of a batch of keys, bound as one array for the reason
+/// [`name_select_query`] binds its names as one.
+pub(crate) fn key_select_query<N: DictionaryRelation>(keys: &[i32]) -> SelectStatement {
+    Query::select()
+        .columns([N::key_column(), N::name_column()])
+        .from(N::table())
+        .and_where(Expr::col(N::key_column()).eq(any(Expr::val(keys.to_vec()))))
+        .to_owned()
+}
+
 /// Mint every name of a batch that the dictionary does not already hold.
 ///
 /// One statement per batch rather than one per name, and `DO NOTHING` rather

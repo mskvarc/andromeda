@@ -65,6 +65,16 @@ impl ProjectionTerm {
         }
     }
 
+    /// The expanded name of the Attribute this term names; `None` for a
+    /// clause 4.21 keyword.
+    #[must_use]
+    pub const fn attribute_iri(&self) -> Option<&IriBuf> {
+        match self {
+            ProjectionTerm::Attribute { iri, .. } => Some(iri),
+            ProjectionTerm::Id | ProjectionTerm::Type | ProjectionTerm::Scope => None,
+        }
+    }
+
     /// The clause 4.21 linked-entity sub-projection carried by this term.
     ///
     /// Empty for the clause 4.21 keywords and for an attribute term that
@@ -114,6 +124,18 @@ mod tests {
         assert_eq!(ProjectionTerm::keyword("scope"), Some(ProjectionTerm::Scope));
         assert_eq!(ProjectionTerm::keyword("speed"), None);
         assert_eq!(ProjectionTerm::keyword("Id"), None);
+    }
+
+    #[test]
+    fn only_an_attribute_term_names_an_attribute_iri() {
+        let term = ProjectionTerm::Attribute {
+            iri: iri("https://example.com/speed"),
+            linked: Vec::new(),
+        };
+        assert_eq!(term.attribute_iri(), Some(&iri("https://example.com/speed")));
+        for keyword in [ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope] {
+            assert_eq!(keyword.attribute_iri(), None, "{keyword:?}");
+        }
     }
 
     #[test]

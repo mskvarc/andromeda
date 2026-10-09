@@ -7,6 +7,9 @@
 //! dictionary is [`NameCache`](crate::name_cache::NameCache); this trait is
 //! what the stores hold, so none of them depends on another.
 //!
+//! Resolution in the other direction, from key back to name, is what a read
+//! of rows keyed on the dictionary assembles names from.
+//!
 //! The two operations differ in more than direction. Resolution that may mint
 //! runs *inside the caller's transaction*, on the connection that transaction
 //! holds: a dictionary row is part of the write that needed it, so it commits
@@ -102,6 +105,20 @@ pub trait NameLookup<N: InternedName>: Send + Sync + Debug {
     /// the `Stored*` variants when a stored row is unreadable.
     #[must_use = "name resolution must be awaited"]
     async fn resolve_or_create(&self, connection: &mut PgConnection, names: &[N]) -> Result<HashMap<N, N::Key>, NameLookupError>;
+
+    /// Read dictionary keys back as the names they intern, without creating
+    /// any.
+    ///
+    /// A key no committed dictionary row holds reads back as nothing. A row
+    /// keyed on the dictionary is written in the transaction that interned its
+    /// names, so every key a committed row holds has a committed name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NameLookupError::Statement`] when the read fails and one of the
+    /// `Stored*` variants when a stored row is unreadable.
+    #[must_use = "name lookups must be awaited"]
+    async fn names_of(&self, keys: &[N::Key]) -> Result<HashMap<N::Key, N>, NameLookupError>;
 }
 
 #[cfg(test)]

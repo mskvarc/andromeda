@@ -5,14 +5,14 @@
 //! by type alone: then it is driven by the type-membership walk of that
 //! selection (clause 4.17), which carries the same `entity_key` and `id` and
 //! yields a type's Entities in identifier order without visiting any other.
-//! `entities` is then joined only for the `createdAt` a sort reads.
-//! `entity_search` is joined only when some axis of the query reads an indexed
-//! column of it, and `entity_documents` only when a filter or an ordering reads
-//! the payload — a `q` expression, a sort on an attribute value, or a sort on
-//! the `modifiedAt` column that lives on that row. A projected payload is not
-//! a reason to join: it is looked up by key for the rows of the cut page alone
-//! (see `crate::entity_page`). A query that asks for identifiers with no filter
-//! joins nothing and reads one relation.
+//! `entities` is then joined only for the `createdAt` or `modifiedAt` a sort
+//! reads. `entity_search` is joined only when some axis of the query reads an
+//! indexed column of it, and `entity_documents` only when a filter or an
+//! ordering reads the payload: a `q` expression or a sort on an attribute
+//! value. What the response holds is not a reason to join: the head of each
+//! Entity is looked up by key for the rows of the cut page alone, and its
+//! attributes are read afterwards by the keys of the page. A query that asks
+//! for identifiers with no filter joins nothing and reads one relation.
 
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
@@ -78,9 +78,7 @@ impl EntityRelations {
     /// member, a geo query, a scope query, an ordering on `type` or `scope`, or
     /// a distance ordering measured to the default `location`. The document
     /// row is joined when a `q` expression is present (its jsonpath fallback
-    /// reads the payload) or when an ordering sorts on an attribute value or
-    /// on the `modifiedAt` column; a projected payload alone is read by key
-    /// lookup instead.
+    /// reads the payload) or when an ordering sorts on an attribute value.
     pub fn for_query(query: &CompiledEntityQuery, types: &ResolvedNames<EntityTypeName>, schema: Option<&DynIden>) -> EntityRelations {
         let selection = &query.selection;
         let terms = &query.ordering.terms;
@@ -222,8 +220,8 @@ const fn demand(needed: bool) -> Demand {
 /// other than the key and the identifier the membership walk carries.
 const fn reads_lifecycle(term: &CompiledOrderTerm) -> bool {
     match &term.target {
-        OrderTarget::CreatedAt => true,
-        OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::ModifiedAt | OrderTarget::Attribute(_) => false,
+        OrderTarget::CreatedAt | OrderTarget::ModifiedAt => true,
+        OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::Attribute(_) => false,
     }
 }
 
@@ -234,19 +232,18 @@ fn reads_search_row(term: &CompiledOrderTerm) -> bool {
         // Only a term naming the attribute itself can read the dedicated
         // geometry column; a path descending into it reads the payload.
         OrderTarget::Attribute(path) => term.direction.is_distance() && path.is_simple() && path.attr.as_str() == LOCATION.as_str(),
-        // `createdAt` reads the identity row; `modifiedAt` the document row.
+        // `createdAt` and `modifiedAt` read the identity row.
         OrderTarget::Id | OrderTarget::CreatedAt | OrderTarget::ModifiedAt => false,
     }
 }
 
 /// Whether an ordering term reads the `entity_documents` row: a value ordering
-/// on an attribute, or an ordering on the `modifiedAt` column that lives there.
-/// A distance ordering reads a geometry column or the projection.
+/// on an attribute. A distance ordering reads a geometry column or the
+/// projection.
 const fn reads_documents_row(term: &CompiledOrderTerm) -> bool {
     match &term.target {
         OrderTarget::Attribute(_) => !term.direction.is_distance(),
-        OrderTarget::ModifiedAt => true,
-        OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::CreatedAt => false,
+        OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope | OrderTarget::CreatedAt | OrderTarget::ModifiedAt => false,
     }
 }
 
@@ -461,18 +458,24 @@ mod tests {
         assert_eq!(relations(&ordered).documents, Demand::Joined);
     }
 
-    /// An ordering on `modifiedAt` reads a column of `entity_documents`, so the
-    /// document row is joined; `createdAt` reads the identity row and joins
-    /// neither.
+    /// `createdAt` and `modifiedAt` are columns of the identity row, so an
+    /// ordering on either joins nothing beside it.
     #[test]
-    fn a_modified_at_ordering_joins_the_documents_and_created_at_joins_nothing() {
-        let mut by_modified = empty_query();
-        by_modified.ordering.terms = vec![term(OrderTarget::ModifiedAt, OrderDirection::Asc)];
-        assert_eq!(relations(&by_modified), joined(Demand::Joined, Demand::NotJoined));
+    fn a_system_time_ordering_joins_nothing() {
+        for target in [OrderTarget::ModifiedAt, OrderTarget::CreatedAt] {
+            let mut query = empty_query();
+            query.ordering.terms = vec![term(target, OrderDirection::Desc)];
+            assert_eq!(relations(&query), joined(Demand::NotJoined, Demand::NotJoined));
+        }
+    }
 
-        let mut by_created = empty_query();
-        by_created.ordering.terms = vec![term(OrderTarget::CreatedAt, OrderDirection::Desc)];
-        assert_eq!(relations(&by_created), joined(Demand::NotJoined, Demand::NotJoined));
+    /// A `modifiedAt` sort reads the identity row, which a type-driven walk
+    /// joins on its key, as it does for `createdAt`.
+    #[test]
+    fn a_modified_at_sort_joins_the_entities_row_to_the_walk() {
+        let mut query = typed_query();
+        query.ordering.terms = vec![term(OrderTarget::ModifiedAt, OrderDirection::Asc)];
+        assert!(matches!(relations(&query).source, RowSource::TypeMembers { entities: Demand::Joined, .. }));
     }
 
     #[test]
