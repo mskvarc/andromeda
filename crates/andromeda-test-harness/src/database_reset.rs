@@ -104,8 +104,9 @@ fn is_lock_not_available(error: &sqlx::Error) -> bool {
 /// Temporal Evolution is reached through `temporal_entities`, not through
 /// `entities`: no foreign key makes deleting an entity cascade into its
 /// history, so an entity delete reclaims nothing temporal.
-/// `temporal_attribute_streams` cascades from `temporal_entities`, while `attribute_history` and `scope_history` carry no foreign key at all —
-/// hypertables cannot — so each is deleted through the streams and the
+/// `temporal_attribute_streams` cascades from `temporal_entities`, while
+/// `attribute_history` and `scope_history` carry no foreign key at all
+/// (hypertables cannot), so each is deleted through the streams and the
 /// catalogue that name it, before the rows those names live on are removed.
 ///
 /// `attribute_history_instance_claims` is absent deliberately: it is an
@@ -114,8 +115,8 @@ fn is_lock_not_available(error: &sqlx::Error) -> bool {
 /// reset still names it, because a `TRUNCATE` list is not a cascade.
 const PREFIX_DELETES: &[&str] = &[
     // `notification_events` carries the Entity id as text and has no foreign key
-    // to `subscriptions` -- a subscription delete cascades its deliveries but
-    // never the events -- so it is reclaimed here by the Entity-id prefix rather
+    // to `subscriptions` (a subscription delete cascades its deliveries but
+    // never the events), so it is reclaimed here by the Entity-id prefix rather
     // than through any cascade.
     "DELETE FROM notification_events WHERE entity_id LIKE $1",
     "DELETE FROM subscriptions WHERE id LIKE $1",
@@ -236,7 +237,6 @@ mod tests {
     fn reset_script_covers_mutable_tables_and_preserves_cached_dictionaries() {
         for table in [
             "entities",
-            "entity_documents",
             "entity_search",
             "entity_type_members",
             "jsonld_contexts",
@@ -257,7 +257,7 @@ mod tests {
             "scope_history",
             "notification_deliveries",
             "notification_events",
-            "current_attribute_values",
+            "current_attributes",
             "pending_side_effects",
             "temporal_append_intents",
             "write_records",
@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn reset_script_leaves_the_seeded_unit_code_catalogue_in_place() {
         // The catalogue is migration-seeded reference data, and
-        // `current_attribute_values.unit_code_id` references it.
+        // `current_attributes.unit_code_id` references it.
         assert!(!truncated_relations().contains("unit_codes"));
         assert!(!truncated_relations().contains("unit_code_catalog_metadata"));
     }

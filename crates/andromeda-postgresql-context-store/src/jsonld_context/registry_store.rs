@@ -3,19 +3,11 @@
 use crate::{
     jsonld_context::{
         kind_code::{created_kind, kind_of, stored_kind},
+        listing_statement::{listing_page_query, metadata_by_identifier_query},
         mapper::{page_boundary, row_to_identifier, row_to_metadata},
         repo::JsonLdContextRepository,
         rows::{ContextMetadataRow, ContextSummaryRow},
-        statement::{
-            delete_by_identifier,
-            hosted_insert,
-            listing_page_query,
-            metadata_by_identifier_query,
-            payload_by_identifier_query,
-            record_access_update,
-            replace_download_update,
-            stored_context_query,
-        },
+        statement::{delete_by_identifier, hosted_insert, payload_by_identifier_query, record_access_update, replace_download_update, stored_context_query},
     },
     store_fault::{StoreFault, persistence_failure, undecodable},
 };

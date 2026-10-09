@@ -6,3 +6,6 @@ pg_current_xact_id
 ST_IsValid
 ST_SRID
 ST_Zmflag
+sub_eq_keys
+sub_eq_query_key
+sub_path_hash

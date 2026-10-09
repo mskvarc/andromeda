@@ -24,14 +24,12 @@ use strum::{Display, EnumString, IntoStaticStr};
 #[derive(Clone, Copy, Debug, Display, EnumString, Eq, Hash, IntoStaticStr, PartialEq)]
 #[strum(serialize_all = "snake_case")]
 pub enum SizedTable {
-    /// Entity identity and expiry.
+    /// Entity identity, expiry and version token.
     Entities,
-    /// Expanded current entity payloads.
-    EntityDocuments,
     /// Indexed current-entity query axes.
     EntitySearch,
-    /// Current attribute value projection.
-    CurrentAttributeValues,
+    /// Current attribute instances, one row per top-level instance.
+    CurrentAttributes,
     /// Registered subscriptions.
     Subscriptions,
     /// Subscription delivery counters.
@@ -40,11 +38,10 @@ pub enum SizedTable {
 
 impl SizedTable {
     /// Every base table sampled for size.
-    pub const ALL: [SizedTable; 6] = [
+    pub const ALL: [SizedTable; 5] = [
         SizedTable::Entities,
-        SizedTable::EntityDocuments,
         SizedTable::EntitySearch,
-        SizedTable::CurrentAttributeValues,
+        SizedTable::CurrentAttributes,
         SizedTable::Subscriptions,
         SizedTable::SubscriptionDeliveryState,
     ];
@@ -144,7 +141,7 @@ mod tests {
         assert!(sql.contains("pg_stat_user_tables"), "{sql}");
         assert!(sql.contains("pg_total_relation_size"), "{sql}");
         assert!(sql.contains("pg_indexes_size"), "{sql}");
-        assert!(sql.contains("current_attribute_values"), "{sql}");
+        assert!(sql.contains("current_attributes"), "{sql}");
         assert!(sql.contains("subscription_delivery_state"), "{sql}");
     }
 }

@@ -2,8 +2,8 @@
 //!
 //! A clone freezes the source Snapshot's published branch into the target
 //! Snapshot's staging branch. Because each branch is its own schema with its own
-//! identity sequences, a row copies verbatim -- the same `entity_key` and
-//! `stream_key` land in the target -- so there is no surrogate-key remap and no
+//! identity sequences, a row copies verbatim (the same `entity_key` and
+//! `stream_key` land in the target), so there is no surrogate-key remap and no
 //! join: each copied relation is one `INSERT ... SELECT` between the two
 //! schemas, in foreign-key-dependency order. An identity column is copied
 //! through `OVERRIDING SYSTEM VALUE` and its sequence is then continued past the
@@ -36,17 +36,16 @@ use crate::{
 use sqlx::{Executor, PgConnection};
 
 /// The branch relations a clone copies, in the order `BRANCH_TABLES` gives
-/// them, which respects their foreign keys (parents before children).
-const CLONED_TABLES: [&str; 13] = [
+/// them, which respects their references (parents before children).
+const CLONED_TABLES: [&str; 12] = [
     "entities",
     "temporal_entities",
-    "entity_documents",
     "entity_search",
     "entity_type_census",
     "entity_type_attribute_census",
     "attribute_census",
     "entity_type_members",
-    "current_attribute_values",
+    "current_attributes",
     "temporal_attribute_streams",
     "attribute_history",
     "scope_history",

@@ -141,19 +141,19 @@ mod tests {
     #[test]
     fn unsupported_maintenance_commands_quote_seaquery_identifiers() {
         let schema = Alias::new("public");
-        let index = Alias::new("idx_cav_value_string");
-        let table = Alias::new("current_attribute_values");
+        let index = Alias::new("idx_ca_value_string");
+        let table = Alias::new("current_attributes");
         assert_eq!(
             reindex_index_concurrently(&schema, &index).as_sql(),
-            "REINDEX INDEX CONCURRENTLY \"public\".\"idx_cav_value_string\""
+            "REINDEX INDEX CONCURRENTLY \"public\".\"idx_ca_value_string\""
         );
         assert_eq!(
             drop_index_concurrently(&schema, &index).as_sql(),
-            "DROP INDEX CONCURRENTLY \"public\".\"idx_cav_value_string\""
+            "DROP INDEX CONCURRENTLY \"public\".\"idx_ca_value_string\""
         );
         assert_eq!(
             vacuum_non_truncating(&schema, &table).as_sql(),
-            "VACUUM (TRUNCATE FALSE, PARALLEL 0) \"public\".\"current_attribute_values\""
+            "VACUUM (TRUNCATE FALSE, PARALLEL 0) \"public\".\"current_attributes\""
         );
     }
 

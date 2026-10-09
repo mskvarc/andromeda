@@ -339,17 +339,17 @@ mod tests {
         let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
         let sizes = [
             IndexSize {
-                target: IndexTarget::IdxCavValueStringTrgm,
+                target: IndexTarget::IdxCaValueStringTrgm,
                 bytes: profile.minimum_relation_bytes * 10,
             },
             IndexSize {
-                target: IndexTarget::IdxCavValueString,
+                target: IndexTarget::IdxCaValueString,
                 bytes: profile.minimum_relation_bytes,
             },
         ];
         assert_eq!(
             highest_priority_probe_candidate(&sizes, &[], profile, Utc::now()).map(|size| size.target),
-            Some(IndexTarget::IdxCavValueString)
+            Some(IndexTarget::IdxCaValueString)
         );
     }
 
@@ -359,38 +359,38 @@ mod tests {
         let now = Utc::now();
         let sizes = [
             IndexSize {
-                target: IndexTarget::IdxCavValueNumber,
+                target: IndexTarget::IdxCaValueNumber,
                 bytes: profile.minimum_relation_bytes * 2,
             },
             IndexSize {
-                target: IndexTarget::IdxCavValueString,
+                target: IndexTarget::IdxCaValueString,
                 bytes: profile.minimum_relation_bytes,
             },
             IndexSize {
-                target: IndexTarget::IdxCavValueBoolean,
+                target: IndexTarget::IdxCaValueBoolean,
                 bytes: profile.minimum_relation_bytes,
             },
         ];
         let states = [
             IndexProbeState {
-                target: IndexTarget::IdxCavValueNumber,
+                target: IndexTarget::IdxCaValueNumber,
                 last_sampled_at: None,
                 cooldown_until: Some(now + Duration::hours(1)),
             },
             IndexProbeState {
-                target: IndexTarget::IdxCavValueString,
+                target: IndexTarget::IdxCaValueString,
                 last_sampled_at: Some(now - Duration::minutes(1)),
                 cooldown_until: None,
             },
             IndexProbeState {
-                target: IndexTarget::IdxCavValueBoolean,
+                target: IndexTarget::IdxCaValueBoolean,
                 last_sampled_at: Some(now - Duration::minutes(2)),
                 cooldown_until: None,
             },
         ];
         assert_eq!(
             highest_priority_probe_candidate(&sizes, &states, profile, now).map(|size| size.target),
-            Some(IndexTarget::IdxCavValueBoolean)
+            Some(IndexTarget::IdxCaValueBoolean)
         );
     }
 }

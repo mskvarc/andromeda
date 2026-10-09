@@ -4,19 +4,23 @@
 //! the repository-root `.pg_format` config plus the `.pg_format_keywords` and
 //! `.pg_format_functions` token lists that teach it the extension vocabulary
 //! (`TimescaleDB`, `PostGIS`, `COMPRESSION`, `xid8`) its built-in dictionary does
-//! not carry. One fixup runs afterwards: `pg_format` unconditionally opens a
-//! parenthesised list on a line of its own even when the list is one short
-//! line, which no option disables (`identity (\n    cache 1)`, `insert into t
-//! (\n    revision)`, `values (\n    0)`), so every such list is rejoined onto
-//! the line that opens it. A list spanning several lines is left as formatted.
+//! not carry. Function statements are held out of `pg_format`
+//! ([`function_statement`]) and kept as written. One fixup runs afterwards:
+//! `pg_format` unconditionally opens a parenthesised list on a line of its own
+//! even when the list is one short line, which no option disables
+//! (`identity (\n    cache 1)`, `insert into t (\n    revision)`,
+//! `values (\n    0)`), so every such list is rejoined onto the line that opens
+//! it. A list spanning several lines is left as formatted.
 
-use crate::{cli::repository_root, error::XtaskError};
+mod function_statement;
+
+use crate::{cli::repository_root, error::XtaskError, sql_format::function_statement::FunctionShield};
 use regex::Regex;
 use std::{
     fs,
-    io::ErrorKind,
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 use walkdir::WalkDir;
 
@@ -48,11 +52,12 @@ pub(crate) fn run(mode: FormatMode) -> Result<(), XtaskError> {
     // `pg_format` force-breaks `(\n    item)` even for a one-line list; this
     // rejoins it.
     let single_line_list = Regex::new(SINGLE_LINE_LIST).map_err(XtaskError::SqlFixupPattern)?;
+    let shield = FunctionShield::new().map_err(XtaskError::SqlFixupPattern)?;
 
     let mut drifted: Vec<PathBuf> = Vec::new();
     for path in discover(&root.join("migrations"))? {
-        let formatted = format_file(&path, &config, &keywords, &functions, &single_line_list)?;
         let current = fs::read_to_string(&path).map_err(|source| XtaskError::SqlRead { path: path.clone(), source })?;
+        let formatted = format_file(&path, &current, &config, &keywords, &functions, &single_line_list, &shield)?;
         if formatted == current {
             continue;
         }
@@ -89,18 +94,29 @@ fn discover(migrations: &Path) -> Result<Vec<PathBuf>, XtaskError> {
     Ok(files)
 }
 
-/// Run `pg_format` over one file and rejoin its single-line lists, returning
-/// the canonical text without touching the file on disk.
-fn format_file(path: &Path, config: &Path, keywords: &Path, functions: &Path, single_line_list: &Regex) -> Result<String, XtaskError> {
-    let output = Command::new("pg_format")
+/// Run `pg_format` over the text of one file, its function statements held
+/// out, and rejoin its single-line lists, returning the canonical text without
+/// touching the file on disk.
+fn format_file(
+    path: &Path,
+    current: &str,
+    config: &Path,
+    keywords: &Path,
+    functions: &Path,
+    single_line_list: &Regex,
+    shield: &FunctionShield,
+) -> Result<String, XtaskError> {
+    let shielded = shield.shield(current);
+    let mut child = Command::new("pg_format")
         .arg("--config")
         .arg(config)
         .arg("--extra-keyword")
         .arg(keywords)
         .arg("--extra-function")
         .arg(functions)
-        .arg(path)
-        .output()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
         .map_err(|source| {
             if source.kind() == ErrorKind::NotFound {
                 XtaskError::PgFormatMissing
@@ -108,11 +124,23 @@ fn format_file(path: &Path, config: &Path, keywords: &Path, functions: &Path, si
                 XtaskError::Io(source)
             }
         })?;
+    // `pg_format` reads its whole input before it writes, so writing all of
+    // it first cannot deadlock on a full output pipe.
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| XtaskError::PgFormatFailed(path.to_path_buf()))?
+        .write_all(shielded.text.as_bytes())
+        .map_err(XtaskError::Io)?;
+    let output = child.wait_with_output().map_err(XtaskError::Io)?;
     if !output.status.success() {
         return Err(XtaskError::PgFormatFailed(path.to_path_buf()));
     }
     let formatted = String::from_utf8(output.stdout).map_err(|_source| XtaskError::PgFormatOutputNotUtf8(path.to_path_buf()))?;
-    Ok(rejoin_single_line_lists(single_line_list, &formatted))
+    let restored = shield
+        .restore(&shielded, &formatted)
+        .ok_or_else(|| XtaskError::PgFormatLostFunction(path.to_path_buf()))?;
+    Ok(rejoin_single_line_lists(single_line_list, &restored))
 }
 
 /// `formatted` with every parenthesised list `pg_format` broke onto a line of

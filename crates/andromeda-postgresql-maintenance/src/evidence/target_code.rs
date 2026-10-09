@@ -6,17 +6,18 @@ use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 /// The registry member the platform database stores for a target.
 pub(crate) const fn stored_target(target: MaintenanceTarget) -> MaintenanceTargetCode {
     match target {
-        MaintenanceTarget::Index(IndexTarget::UqCurrentAttributeValuesGrain) => MaintenanceTargetCode::UqCurrentAttributeValuesGrain,
-        MaintenanceTarget::Index(IndexTarget::IdxCavValueNumber) => MaintenanceTargetCode::IdxCavValueNumber,
-        MaintenanceTarget::Index(IndexTarget::IdxCavValueString) => MaintenanceTargetCode::IdxCavValueString,
-        MaintenanceTarget::Index(IndexTarget::IdxCavValueStringTrgm) => MaintenanceTargetCode::IdxCavValueStringTrgm,
-        MaintenanceTarget::Index(IndexTarget::IdxCavValueBoolean) => MaintenanceTargetCode::IdxCavValueBoolean,
-        MaintenanceTarget::Index(IndexTarget::IdxCavValueDateTime) => MaintenanceTargetCode::IdxCavValueDateTime,
-        MaintenanceTarget::Index(IndexTarget::IdxCavValueUri) => MaintenanceTargetCode::IdxCavValueUri,
-        MaintenanceTarget::Index(IndexTarget::IdxCavValueGeometry) => MaintenanceTargetCode::IdxCavValueGeometry,
-        MaintenanceTarget::Index(IndexTarget::IdxCavEntityGeometry) => MaintenanceTargetCode::IdxCavEntityGeometry,
-        MaintenanceTarget::Heap(HeapTarget::CurrentAttributeValues) => MaintenanceTargetCode::CurrentAttributeValues,
-        MaintenanceTarget::Heap(HeapTarget::EntityDocuments) => MaintenanceTargetCode::EntityDocuments,
+        MaintenanceTarget::Index(IndexTarget::UqCurrentAttributesGrain) => MaintenanceTargetCode::UqCurrentAttributesGrain,
+        MaintenanceTarget::Index(IndexTarget::IdxCaValueNumber) => MaintenanceTargetCode::IdxCaValueNumber,
+        MaintenanceTarget::Index(IndexTarget::IdxCaValueString) => MaintenanceTargetCode::IdxCaValueString,
+        MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm) => MaintenanceTargetCode::IdxCaValueStringTrgm,
+        MaintenanceTarget::Index(IndexTarget::IdxCaValueBoolean) => MaintenanceTargetCode::IdxCaValueBoolean,
+        MaintenanceTarget::Index(IndexTarget::IdxCaValueDateTime) => MaintenanceTargetCode::IdxCaValueDateTime,
+        MaintenanceTarget::Index(IndexTarget::IdxCaValueUri) => MaintenanceTargetCode::IdxCaValueUri,
+        MaintenanceTarget::Index(IndexTarget::IdxCaValueGeometry) => MaintenanceTargetCode::IdxCaValueGeometry,
+        MaintenanceTarget::Index(IndexTarget::IdxCaEntityGeometry) => MaintenanceTargetCode::IdxCaEntityGeometry,
+        MaintenanceTarget::Index(IndexTarget::IdxCaSubEqKeys) => MaintenanceTargetCode::IdxCaSubEqKeys,
+        MaintenanceTarget::Heap(HeapTarget::CurrentAttributes) => MaintenanceTargetCode::CurrentAttributes,
+        MaintenanceTarget::Heap(HeapTarget::Entities) => MaintenanceTargetCode::Entities,
         MaintenanceTarget::Heap(HeapTarget::SubscriptionDeliveryState) => MaintenanceTargetCode::SubscriptionDeliveryState,
     }
 }
@@ -24,17 +25,18 @@ pub(crate) const fn stored_target(target: MaintenanceTarget) -> MaintenanceTarge
 /// The target a stored registry member names.
 pub(crate) const fn target_of(code: MaintenanceTargetCode) -> MaintenanceTarget {
     match code {
-        MaintenanceTargetCode::UqCurrentAttributeValuesGrain => MaintenanceTarget::Index(IndexTarget::UqCurrentAttributeValuesGrain),
-        MaintenanceTargetCode::IdxCavValueNumber => MaintenanceTarget::Index(IndexTarget::IdxCavValueNumber),
-        MaintenanceTargetCode::IdxCavValueString => MaintenanceTarget::Index(IndexTarget::IdxCavValueString),
-        MaintenanceTargetCode::IdxCavValueStringTrgm => MaintenanceTarget::Index(IndexTarget::IdxCavValueStringTrgm),
-        MaintenanceTargetCode::IdxCavValueBoolean => MaintenanceTarget::Index(IndexTarget::IdxCavValueBoolean),
-        MaintenanceTargetCode::IdxCavValueDateTime => MaintenanceTarget::Index(IndexTarget::IdxCavValueDateTime),
-        MaintenanceTargetCode::IdxCavValueUri => MaintenanceTarget::Index(IndexTarget::IdxCavValueUri),
-        MaintenanceTargetCode::IdxCavValueGeometry => MaintenanceTarget::Index(IndexTarget::IdxCavValueGeometry),
-        MaintenanceTargetCode::IdxCavEntityGeometry => MaintenanceTarget::Index(IndexTarget::IdxCavEntityGeometry),
-        MaintenanceTargetCode::CurrentAttributeValues => MaintenanceTarget::Heap(HeapTarget::CurrentAttributeValues),
-        MaintenanceTargetCode::EntityDocuments => MaintenanceTarget::Heap(HeapTarget::EntityDocuments),
+        MaintenanceTargetCode::UqCurrentAttributesGrain => MaintenanceTarget::Index(IndexTarget::UqCurrentAttributesGrain),
+        MaintenanceTargetCode::IdxCaValueNumber => MaintenanceTarget::Index(IndexTarget::IdxCaValueNumber),
+        MaintenanceTargetCode::IdxCaValueString => MaintenanceTarget::Index(IndexTarget::IdxCaValueString),
+        MaintenanceTargetCode::IdxCaValueStringTrgm => MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm),
+        MaintenanceTargetCode::IdxCaValueBoolean => MaintenanceTarget::Index(IndexTarget::IdxCaValueBoolean),
+        MaintenanceTargetCode::IdxCaValueDateTime => MaintenanceTarget::Index(IndexTarget::IdxCaValueDateTime),
+        MaintenanceTargetCode::IdxCaValueUri => MaintenanceTarget::Index(IndexTarget::IdxCaValueUri),
+        MaintenanceTargetCode::IdxCaValueGeometry => MaintenanceTarget::Index(IndexTarget::IdxCaValueGeometry),
+        MaintenanceTargetCode::IdxCaEntityGeometry => MaintenanceTarget::Index(IndexTarget::IdxCaEntityGeometry),
+        MaintenanceTargetCode::IdxCaSubEqKeys => MaintenanceTarget::Index(IndexTarget::IdxCaSubEqKeys),
+        MaintenanceTargetCode::CurrentAttributes => MaintenanceTarget::Heap(HeapTarget::CurrentAttributes),
+        MaintenanceTargetCode::Entities => MaintenanceTarget::Heap(HeapTarget::Entities),
         MaintenanceTargetCode::SubscriptionDeliveryState => MaintenanceTarget::Heap(HeapTarget::SubscriptionDeliveryState),
     }
 }

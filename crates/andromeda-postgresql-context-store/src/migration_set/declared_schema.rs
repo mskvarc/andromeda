@@ -1,14 +1,29 @@
 //! The schema objects the embedded migrations declare, read back from their
 //! text.
 //!
-//! The tests that hold the migrations to a rule -- a byte bound, a naming
-//! convention, a storage declaration -- need the migration text and, for most
-//! rules, the tables, columns, constraints, indexes and statistics objects that
-//! text declares. This module reads both once, so every such test agrees on
+//! The tests that hold the migrations to a rule (a byte bound, a naming
+//! convention, a storage declaration) need the migration text and, for most
+//! rules, the tables, columns, constraints, indexes, statistics objects,
+//! functions and triggers that text declares. This module reads both once, so every such test agrees on
 //! what the migrations contain. The reader understands exactly the DDL shapes
 //! the migrations use; a statement of any other shape is skipped.
 
-use crate::migration_set::{platform::platform_migrations, tenant::tenant_migrator};
+use crate::migration_set::{
+    ddl_text::{
+        closing_parenthesis,
+        contains_ci,
+        find_ci,
+        first_column_list,
+        rfind_ci,
+        starts_with_ci,
+        statements,
+        strip_prefix_ci,
+        top_level_items,
+        without_comments,
+    },
+    platform::platform_migrations,
+    tenant::tenant_migrator,
+};
 use sqlx::migrate::Migration;
 
 /// Every embedded migration: platform, tenant and branch.
@@ -77,6 +92,8 @@ pub(super) struct DeclaredConstraint {
     pub(super) columns: Vec<String>,
     /// The referenced column list of a foreign key; empty for every other kind.
     pub(super) referenced_columns: Vec<String>,
+    /// Everything after the name, from the constraint kind on.
+    pub(super) definition: String,
 }
 
 /// What a named index-like object is.
@@ -99,10 +116,36 @@ pub(super) struct DeclaredIndex {
     pub(super) name: String,
     /// What the object is.
     pub(super) kind: IndexKind,
+    /// Everything after the name: for an index, the table, method, keys,
+    /// storage parameters and predicate; for a statistics object, its kinds,
+    /// expressions and table.
+    pub(super) definition: String,
 }
 
-/// Every table, column, constraint, index and statistics object the embedded
-/// migrations declare.
+/// One `CREATE [OR REPLACE] FUNCTION`.
+#[derive(Debug)]
+pub(super) struct DeclaredFunction {
+    /// The function name.
+    pub(super) name: String,
+    /// Everything after the name: the arguments, the return type, every
+    /// attribute and the body.
+    pub(super) definition: String,
+}
+
+/// One `CREATE TRIGGER`.
+#[derive(Debug)]
+pub(super) struct DeclaredTrigger {
+    /// The table the trigger fires on.
+    pub(super) table: String,
+    /// The trigger name.
+    pub(super) name: String,
+    /// Everything after the name: timing, event, transition tables, level and
+    /// the function executed.
+    pub(super) definition: String,
+}
+
+/// Every table, column, constraint, index, statistics object, function and
+/// trigger the embedded migrations declare.
 #[derive(Debug, Default)]
 pub(super) struct DeclaredSchema {
     /// Every table, in declaration order.
@@ -113,6 +156,10 @@ pub(super) struct DeclaredSchema {
     pub(super) constraints: Vec<DeclaredConstraint>,
     /// Every index and statistics object.
     pub(super) indexes: Vec<DeclaredIndex>,
+    /// Every function.
+    pub(super) functions: Vec<DeclaredFunction>,
+    /// Every trigger.
+    pub(super) triggers: Vec<DeclaredTrigger>,
 }
 
 impl DeclaredSchema {
@@ -121,7 +168,9 @@ impl DeclaredSchema {
         let mut schema = DeclaredSchema::default();
         for sql in every_migration_sql() {
             let text = without_comments(sql);
-            text.split(';').for_each(|statement| schema.read_statement(statement.trim()));
+            for statement in statements(&text) {
+                schema.read_statement(statement);
+            }
         }
         schema
     }
@@ -138,6 +187,10 @@ impl DeclaredSchema {
             self.read_index(rest, IndexKind::Plain);
         } else if let Some(rest) = strip_prefix_ci(statement, "CREATE STATISTICS ") {
             self.read_statistics(rest);
+        } else if let Some(rest) = strip_prefix_ci(statement, "CREATE FUNCTION ").or_else(|| strip_prefix_ci(statement, "CREATE OR REPLACE FUNCTION ")) {
+            self.read_function(rest);
+        } else if let Some(rest) = strip_prefix_ci(statement, "CREATE TRIGGER ") {
+            self.read_trigger(rest);
         }
     }
 
@@ -214,6 +267,7 @@ impl DeclaredSchema {
             kind,
             columns,
             referenced_columns,
+            definition: definition.to_owned(),
         });
     }
 
@@ -231,6 +285,7 @@ impl DeclaredSchema {
             table: table.to_owned(),
             name: name.to_owned(),
             kind,
+            definition: rest[name.len()..].trim().to_owned(),
         });
     }
 
@@ -243,91 +298,70 @@ impl DeclaredSchema {
                 table: table.to_owned(),
                 name: name.to_owned(),
                 kind: IndexKind::Statistics,
+                definition: rest[name.len()..].trim().to_owned(),
             });
         }
     }
-}
 
-/// `text` with `prefix` stripped from its start, ignoring ASCII case, or `None`
-/// when `text` does not begin with it. SQL keywords are canonically lower case,
-/// but the reader matches them whatever case a statement is written in.
-fn strip_prefix_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
-    let head = text.get(..prefix.len())?;
-    head.eq_ignore_ascii_case(prefix).then(|| &text[prefix.len()..])
-}
-
-/// Whether `text` begins with `prefix`, ignoring ASCII case.
-fn starts_with_ci(text: &str, prefix: &str) -> bool {
-    text.get(..prefix.len()).is_some_and(|head| head.eq_ignore_ascii_case(prefix))
-}
-
-/// The byte offset of the first occurrence of `needle` in `text`, ignoring
-/// ASCII case. `to_ascii_uppercase` preserves byte length, so the offset indexes
-/// `text` as well as its upper-cased copy.
-fn find_ci(text: &str, needle: &str) -> Option<usize> {
-    text.to_ascii_uppercase().find(&needle.to_ascii_uppercase())
-}
-
-/// Whether `text` contains `needle`, ignoring ASCII case.
-fn contains_ci(text: &str, needle: &str) -> bool {
-    find_ci(text, needle).is_some()
-}
-
-/// The byte offset of the last occurrence of `needle` in `text`, ignoring ASCII
-/// case. `to_ascii_uppercase` preserves byte length, so the offset indexes
-/// `text` as well as its upper-cased copy.
-fn rfind_ci(text: &str, needle: &str) -> Option<usize> {
-    text.to_ascii_uppercase().rfind(&needle.to_ascii_uppercase())
-}
-
-/// `sql` with every `--` comment removed.
-fn without_comments(sql: &str) -> String {
-    sql.lines()
-        .map(|line| line.split_once("--").map_or(line, |(code, _)| code))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// The byte offset of the parenthesis that closes the one `text` follows.
-fn closing_parenthesis(text: &str) -> usize {
-    let mut depth = 0_usize;
-    for (at, character) in text.char_indices() {
-        if character == '(' {
-            depth += 1;
-        } else if character == ')' {
-            if depth == 0 {
-                return at;
-            }
-            depth -= 1;
-        }
+    /// Reads `<name> (<arguments>) RETURNS ... AS $$ <body> $$`.
+    fn read_function(&mut self, rest: &str) {
+        let Some((name, definition)) = rest.split_once('(') else {
+            return;
+        };
+        self.functions.push(DeclaredFunction {
+            name: name.trim().to_owned(),
+            definition: format!("({definition}"),
+        });
     }
-    text.len()
-}
 
-/// `text` split on the commas that are not inside parentheses, each item
-/// trimmed and the empty ones dropped.
-fn top_level_items(text: &str) -> Vec<&str> {
-    let mut items = Vec::new();
-    let mut depth = 0_usize;
-    let mut start = 0;
-    for (at, character) in text.char_indices() {
-        if character == '(' {
-            depth += 1;
-        } else if character == ')' {
-            depth = depth.saturating_sub(1);
-        } else if character == ',' && depth == 0 {
-            items.push(text[start..at].trim());
-            start = at + 1;
-        }
+    /// Reads `<name> <timing> <event> ON <table> ...`.
+    fn read_trigger(&mut self, rest: &str) {
+        let mut words = rest.split_whitespace();
+        let Some(name) = words.next() else {
+            return;
+        };
+        let Some(table) = words.skip_while(|word| !word.eq_ignore_ascii_case("ON")).nth(1) else {
+            return;
+        };
+        self.triggers.push(DeclaredTrigger {
+            table: table.to_owned(),
+            name: name.to_owned(),
+            definition: rest.trim_start()[name.len()..].trim().to_owned(),
+        });
     }
-    items.push(text[start..].trim());
-    items.into_iter().filter(|item| !item.is_empty()).collect()
 }
 
-/// The names in the first parenthesised list of `text`.
-fn first_column_list(text: &str) -> Vec<String> {
-    text.split_once('(')
-        .and_then(|(_, rest)| rest.split_once(')'))
-        .map(|(list, _)| list.split(',').map(|column| column.trim().to_owned()).collect())
-        .unwrap_or_default()
+#[cfg(test)]
+mod tests {
+    use crate::migration_set::declared_schema::DeclaredSchema;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn a_trigger_is_read_with_the_table_it_fires_on() {
+        let mut schema = DeclaredSchema::default();
+        schema.read_statement(
+            "create trigger trg_t_check_insert\n    after insert on t referencing new table as new_rows for each statement\n    execute function check_t ()",
+        );
+        let [trigger] = schema.triggers.as_slice() else {
+            panic!("one trigger is read: {:?}", schema.triggers);
+        };
+        assert_eq!((trigger.table.as_str(), trigger.name.as_str()), ("t", "trg_t_check_insert"));
+        assert!(
+            trigger.definition.starts_with("after insert on t referencing new table"),
+            "{}",
+            trigger.definition
+        );
+    }
+
+    #[test]
+    fn a_function_is_read_with_its_attributes_and_body() {
+        let mut schema = DeclaredSchema::default();
+        schema.read_statement("create or replace function f (v integer)\n    returns integer\n    language sql\n    immutable strict parallel safe\n    as $$\n    select\n        v\n$$");
+        let [function] = schema.functions.as_slice() else {
+            panic!("one function is read: {:?}", schema.functions);
+        };
+        assert_eq!(function.name, "f");
+        assert!(function.definition.starts_with("(v integer)"), "{}", function.definition);
+        assert!(function.definition.contains("immutable strict parallel safe"), "{}", function.definition);
+    }
 }

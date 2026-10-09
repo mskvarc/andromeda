@@ -6,8 +6,8 @@
 //! published branch, when its preparation ends. A Snapshot never has both, so
 //! its creation runs the branch migrations once and its publication is a
 //! rename that locks nothing beyond the schema itself.
-//! A branch schema is created by the branch migration set -- the same files
-//! that create the live branch relations in `public` -- run with the schema
+//! A branch schema is created by the branch migration set (the same files
+//! that create the live branch relations in `public`), run with the schema
 //! first on the search path and recorded in the schema's own ledger, so every
 //! column, default, check constraint, index, foreign key, storage parameter,
 //! generated column and compression setting, and every name, is exactly the
@@ -15,8 +15,8 @@
 //! ([`crate::snapshot::branch_upgrade`]). History relations stay plain tables
 //! in a branch schema; only the live branch converts them to hypertables.
 //!
-//! The statements here that sea-query cannot express -- `CREATE SCHEMA`,
-//! `ALTER SCHEMA ... RENAME`, `DROP SCHEMA`, `TRUNCATE` -- interpolate a fixed
+//! The statements here that sea-query cannot express (`CREATE SCHEMA`,
+//! `ALTER SCHEMA ... RENAME`, `DROP SCHEMA`, `TRUNCATE`) interpolate a fixed
 //! table catalogue and a schema name derived from a positive integer key, never
 //! client input, so the rendered DDL carries nothing that could inject.
 
@@ -35,21 +35,20 @@ use sqlx::{Executor, PgConnection};
 const SEARCH_PATH: &str = "search_path";
 
 /// The branch relations every Snapshot schema holds, in an order that respects
-/// intra-branch foreign keys (parents before children), which the relations a
-/// clone copies keep. The branch migrations create them; this list only orders
+/// intra-branch references, foreign keys and statement-level checks alike
+/// (parents before children), which the relations a clone copies keep. The branch migrations create them; this list only orders
 /// the truncation and the copies.
-pub(crate) const BRANCH_TABLES: [&str; 17] = [
+pub(crate) const BRANCH_TABLES: [&str; 16] = [
     "entities",
     "temporal_entities",
     "subscriptions",
     "notification_events",
-    "entity_documents",
     "entity_search",
     "entity_type_census",
     "entity_type_attribute_census",
     "attribute_census",
     "entity_type_members",
-    "current_attribute_values",
+    "current_attributes",
     "temporal_attribute_streams",
     "attribute_history",
     "scope_history",
@@ -63,8 +62,8 @@ pub(crate) const BRANCH_TABLES: [&str; 17] = [
 /// Runs on the caller's transaction: every branch migration becomes a
 /// savepoint of it, so the schema, its relations and its ledger commit or
 /// roll back together with the Snapshot's control record. The migrator takes
-/// no advisory lock -- the schema is new and invisible to every other session
-/// until the transaction commits -- and the search path is changed only for the
+/// no advisory lock (the schema is new and invisible to every other session
+/// until the transaction commits), and the search path is changed only for the
 /// rest of the transaction, then put back.
 ///
 /// # Errors
@@ -110,7 +109,7 @@ pub(crate) async fn steer_search_path(conn: &mut PgConnection, search_path: &str
 }
 
 /// Execute one branch-DDL statement built from the trusted table catalogue and
-/// a schema name derived from a positive key -- never client input, so the
+/// a schema name derived from a positive key, never client input, so the
 /// dynamic text is asserted safe.
 async fn exec_ddl(conn: &mut PgConnection, sql: String) -> Result<(), ContextStoreError> {
     conn.execute(sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))).await?;

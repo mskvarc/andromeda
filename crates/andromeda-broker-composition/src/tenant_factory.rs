@@ -239,9 +239,9 @@ async fn build_tenant_state(
         Arc::new(TenantObligations::new(&storage.pool)),
     ));
     let temporal = compose_temporal_history(&storage.pool, &storage.temporal_repo, &config.temporal, &task_supervisor, &pacer)?;
-    // Every write path reaches the `current_attribute_values` projection
-    // through this complete atomic commit implementation, which writes it in
-    // the transaction that mutates the entity.
+    // Every write path reaches the `current_attributes` rows through this
+    // complete atomic commit implementation, which writes them in the
+    // transaction that mutates the entity.
     let entity_insert_mode = match config.atomic_write.bulk_mode {
         BulkWriteMode::Unnest => EntityInsertMode::Unnest,
         BulkWriteMode::CopyStaging => EntityInsertMode::CopyStaging,

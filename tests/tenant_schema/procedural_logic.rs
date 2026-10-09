@@ -1,12 +1,15 @@
-//! No database procedural logic: the migrated tenant carries no trigger or
-//! function acting on the broker's behalf.
+//! No database procedural logic beyond what a constraint or an index needs: the
+//! migrated tenant carries no trigger or function acting on the broker's behalf.
 //!
 //! Every multi-step flow the broker performs is a Rust-sequenced transaction:
-//! nothing in the tenant schema derives, cascades or filters on the broker's
-//! behalf, because logic living in PL/pgSQL is logic no type, no test and no
-//! reviewer of the broker ever sees. The catalogue checks below state that as a
-//! property of the migrated schema, and the deletion flows show the same flows
-//! producing correct results without it.
+//! nothing in the tenant schema derives or filters on the broker's behalf,
+//! because logic living in PL/pgSQL is logic no type, no test and no reviewer
+//! of the broker ever sees. The only triggers are the statement-level
+//! references of `current_attributes`, which do what a foreign key would (a
+//! referential check and the cascade from `entities`), and the only functions
+//! are those triggers' and the immutable ones an index expression calls. The
+//! catalogue checks below state that as a property of the migrated schema, and
+//! the deletion flows show the same flows producing correct results.
 
 use crate::SUITE;
 use andromeda_test_fixtures::context::CORE_CONTEXT;
@@ -15,9 +18,33 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::json;
 
-/// The one function the schema tolerates: the immutable wrapper an expression
-/// index needs to cast a geometry to a geography.
-const TOLERATED_FUNCTION: &str = "geom_to_geog";
+/// The triggers the schema tolerates, as `table.trigger`: the referential
+/// checks and the cascade standing in for the foreign keys of
+/// `current_attributes`.
+const TOLERATED_TRIGGERS: [&str; 5] = [
+    "current_attributes.trg_current_attributes_dictionary_keys_insert",
+    "current_attributes.trg_current_attributes_dictionary_keys_update",
+    "current_attributes.trg_current_attributes_entities_insert",
+    "current_attributes.trg_current_attributes_entities_update",
+    "entities.trg_entities_current_attributes_cascade",
+];
+
+/// The functions the schema tolerates, one entry per overload: the tolerated
+/// triggers' functions, the immutable wrapper an expression index needs to
+/// cast a geometry to a geography, and the immutable sub-attribute key
+/// functions an expression index and its queries call.
+const TOLERATED_FUNCTIONS: [&str; 10] = [
+    "cascade_entity_current_attributes",
+    "check_current_attribute_dictionary_keys",
+    "check_current_attribute_entities",
+    "geom_to_geog",
+    "sub_eq_keys",
+    "sub_eq_query_key",
+    "sub_eq_query_key",
+    "sub_eq_query_key",
+    "sub_eq_query_key",
+    "sub_path_hash",
+];
 
 /// A temporal entity with two instances of one attribute.
 fn recorded_device(id: &str) -> serde_json::Value {
@@ -33,7 +60,7 @@ fn recorded_device(id: &str) -> serde_json::Value {
 }
 
 #[tokio::test]
-async fn the_migrated_tenant_carries_no_user_trigger_and_no_broker_function() {
+async fn the_migrated_tenant_carries_only_reference_triggers_and_index_functions() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let pool = scope.database_pool();
 
@@ -41,12 +68,13 @@ async fn the_migrated_tenant_carries_no_user_trigger_and_no_broker_function() {
         "SELECT c.relname || '.' || t.tgname FROM pg_trigger t \
          JOIN pg_class c ON c.oid = t.tgrelid \
          JOIN pg_namespace n ON n.oid = c.relnamespace \
-         WHERE NOT t.tgisinternal AND n.nspname = 'public'",
+         WHERE NOT t.tgisinternal AND n.nspname = 'public' \
+         ORDER BY 1",
     )
     .fetch_all(pool)
     .await
     .expect("the trigger catalogue must be readable");
-    assert_eq!(triggers, Vec::<String>::new(), "the tenant schema declares no trigger of its own");
+    assert_eq!(triggers, TOLERATED_TRIGGERS, "the tenant schema declares only the reference triggers");
 
     // Functions an extension installed belong to that extension, not to the
     // broker, so they are excluded through their dependency record.
@@ -60,13 +88,13 @@ async fn the_migrated_tenant_carries_no_user_trigger_and_no_broker_function() {
     .fetch_all(pool)
     .await
     .expect("the function catalogue must be readable");
-    assert_eq!(functions, vec![TOLERATED_FUNCTION.to_owned()], "the schema tolerates exactly one function");
+    assert_eq!(functions, TOLERATED_FUNCTIONS, "the schema declares only the tolerated functions");
 
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Clause 5.6.6: Entity deletion removes the current Entity and its current
-/// projection while the temporal evolution stays queryable.
+/// Clause 5.6.6: Entity deletion removes the current Entity and its attribute
+/// instances while the temporal evolution stays queryable.
 #[tokio::test]
 async fn core_entity_deletion_removes_current_state_and_leaves_temporal_evolution() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
@@ -90,15 +118,15 @@ async fn core_entity_deletion_removes_current_state_and_leaves_temporal_evolutio
         .await
         .expect("the entity relation must be readable");
     assert_eq!(entities, 0, "current state is gone");
-    let projected: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM current_attribute_values cav \
-         JOIN entities e ON e.entity_key = cav.entity_key WHERE e.id = $1",
+    let instances: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM current_attributes ca \
+         JOIN entities e ON e.entity_key = ca.entity_key WHERE e.id = $1",
     )
     .bind(&id)
     .fetch_one(scope.database_pool())
     .await
-    .expect("the current projection must be readable");
-    assert_eq!(projected, 0, "the current projection went with it");
+    .expect("the attribute instances must be readable");
+    assert_eq!(instances, 0, "the attribute instances went with it");
 
     let temporal = client.get_temporal_entity(&id, "", None).await.expect("temporal retrieve request failed");
     assert_eq!(

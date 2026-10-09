@@ -22,9 +22,9 @@ pub enum GuardedEntityWrite {
 /// A contract inside the context store that its own caller broke.
 #[derive(Debug, Error)]
 pub enum StoreInvariant {
-    /// A `current_attribute_values` projection row was offered to the insert
-    /// of an entity it does not belong to, which would let a row of an existing
-    /// entity bypass the upsert.
+    /// A `current_attributes` row was offered to the insert of an entity it
+    /// does not belong to, which would let a row of an existing entity bypass
+    /// the upsert.
     #[error("projection row of entity {row} offered under minted key {minted}")]
     ProjectionRowOfAnotherEntity {
         /// The entity the row is keyed to.

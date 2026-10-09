@@ -132,7 +132,7 @@ impl EntityRowRefs {
     /// over `current_attribute_values` has an `entity_key` column of its own,
     /// and SQL resolves an unqualified name in the innermost scope that offers
     /// one, so `"cav"."entity_key" = "entity_key"` is not a reference to the
-    /// outer row at all — it compares the subquery's column with itself and
+    /// outer row at all: it compares the subquery's column with itself and
     /// silently admits every instance in the tenant.
     ///
     /// `entity_key` and `id` are read from the relation that drives the
@@ -141,7 +141,7 @@ impl EntityRowRefs {
     pub fn identity_column(&self, column: Entities) -> SimpleExpr {
         let relation = match column {
             Entities::EntityKey | Entities::Id => &self.keys,
-            Entities::Table | Entities::CreatedAt | Entities::ExpiresAt | Entities::MinAttributeExpiresAt => &self.identity,
+            Entities::Table | Entities::CreatedAt | Entities::ExpiresAt | Entities::MinAttributeExpiresAt | Entities::ModifiedAt => &self.identity,
         };
         Expr::col((relation.clone(), column.into_iden()))
     }
@@ -160,7 +160,7 @@ impl EntityRowRefs {
 
     /// A column of the `entity_documents` row, reached as the joined row's
     /// column or, when the row is not joined, by a scalar subquery keyed on the
-    /// identity row -- the same two shapes the payload is reached in.
+    /// identity row, the same two shapes the payload is reached in.
     #[must_use]
     pub fn documents_column(&self, column: EntityDocuments) -> SimpleExpr {
         match &self.documents {
@@ -232,8 +232,8 @@ mod tests {
         );
     }
 
-    /// A Snapshot branch schema qualifies the tables a fragment reaches -- the
-    /// key-lookup subquery's `FROM` and any table introduced through `table` --
+    /// A Snapshot branch schema qualifies the tables a fragment reaches (the
+    /// key-lookup subquery's `FROM` and any table introduced through `table`),
     /// while column references stay bare and resolve against them.
     #[test]
     fn a_branch_schema_qualifies_the_tables_a_fragment_reaches() {

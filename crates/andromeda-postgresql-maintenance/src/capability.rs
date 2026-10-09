@@ -60,8 +60,8 @@ fn inspection_privilege_statement() -> SelectStatement {
 
 /// Required PostgreSQL 18 `MAINTAIN` privileges.
 fn maintain_privilege_statement() -> SelectStatement {
-    let cav = current_user_has_table_privilege(Expr::val("public.current_attribute_values"), Expr::val("MAINTAIN"));
-    let documents = current_user_has_table_privilege(Expr::val("public.entity_documents"), Expr::val("MAINTAIN"));
+    let instances = current_user_has_table_privilege(Expr::val("public.current_attributes"), Expr::val("MAINTAIN"));
+    let entities = current_user_has_table_privilege(Expr::val("public.entities"), Expr::val("MAINTAIN"));
     let delivery = current_user_has_table_privilege(Expr::val("public.subscription_delivery_state"), Expr::val("MAINTAIN"));
-    Query::select().expr(cav.and(documents).and(delivery)).to_owned()
+    Query::select().expr(instances.and(entities).and(delivery)).to_owned()
 }

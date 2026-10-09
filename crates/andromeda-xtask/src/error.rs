@@ -132,8 +132,12 @@ pub(crate) enum XtaskError {
     /// `pg_format` emitted output that is not valid UTF-8.
     #[error("pg_format produced non-UTF-8 output for {0}")]
     PgFormatOutputNotUtf8(PathBuf),
-    /// The identity-cache fixup pattern failed to compile.
-    #[error("failed to compile the SQL identity-cache fixup pattern: {0}")]
+    /// `pg_format` dropped, duplicated or reordered the placeholder of a
+    /// function statement, so the statement cannot be put back.
+    #[error("pg_format did not keep the function statement placeholders of {0}")]
+    PgFormatLostFunction(PathBuf),
+    /// A SQL formatting fixup pattern failed to compile.
+    #[error("failed to compile a SQL formatting fixup pattern: {0}")]
     SqlFixupPattern(#[source] regex::Error),
     /// The migrations directory could not be walked.
     #[error("failed to walk the migrations directory: {0}")]

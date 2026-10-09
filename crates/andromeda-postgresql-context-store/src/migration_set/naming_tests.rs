@@ -4,7 +4,7 @@
 //! Every mechanically checkable rule runs over the declared schema, and any
 //! violation fails: the schema carries no deviation from these rules.
 
-use crate::migration_set::declared_schema::{ConstraintKind, DeclaredColumn, DeclaredConstraint, DeclaredIndex, DeclaredSchema, IndexKind};
+use crate::migration_set::declared_schema::{ConstraintKind, DeclaredColumn, DeclaredConstraint, DeclaredIndex, DeclaredSchema, DeclaredTrigger, IndexKind};
 use std::collections::BTreeSet;
 
 /// A convention an object name or declaration breaks.
@@ -34,19 +34,22 @@ enum Rule {
     /// A boolean column that is not a specification member does not read as a
     /// predicate.
     BooleanNotPredicate,
+    /// A trigger is not named `trg_<table>_<what>` after the full name of the
+    /// table it fires on.
+    TriggerName,
 }
 
 /// The constraint and index abbreviations each table may use in place of its
 /// name.
 const TABLE_ABBREVIATIONS: &[(&str, &str)] = &[
-    ("current_attribute_values", "cav"),
+    ("current_attributes", "ca"),
     ("context_source_registrations", "csr"),
     ("pending_side_effects", "pse"),
 ];
 
 /// The registered abbreviations, which may never appear in a table or column
 /// name.
-const ABBREVIATIONS: &[&str] = &["cav", "csr", "pse", "tea"];
+const ABBREVIATIONS: &[&str] = &["ca", "csr", "pse"];
 
 /// Abbreviations no name may use at all.
 const UNREGISTERED_ABBREVIATIONS: &[&str] = &["attr", "db"];
@@ -63,7 +66,7 @@ const SPECIFICATION_MEMBER_COLUMNS: &[(&str, &str)] = &[("subscriptions", "geo_q
 const CATALOG_ASSIGNED_IDENTIFIERS: &[(&str, &str)] = &[
     ("unit_codes", "id"),
     ("attribute_history", "unit_code_id"),
-    ("current_attribute_values", "unit_code_id"),
+    ("current_attributes", "unit_code_id"),
 ];
 
 /// One broken convention.
@@ -217,6 +220,27 @@ fn index_violations(index: &DeclaredIndex) -> Vec<Violation> {
         .collect()
 }
 
+/// Whether `name` is `trg_<table>_<what>` with a non-empty `<what>`.
+fn is_trigger_name(name: &str, table: &str) -> bool {
+    name.strip_prefix("trg_")
+        .and_then(|rest| rest.strip_prefix(table))
+        .and_then(|rest| rest.strip_prefix('_'))
+        .is_some_and(|what| !what.is_empty())
+}
+
+/// The violations of the trigger rules.
+fn trigger_violations(trigger: &DeclaredTrigger) -> Vec<Violation> {
+    let checks = [
+        (!is_trigger_name(&trigger.name, &trigger.table), Rule::TriggerName),
+        (forbidden_words(&trigger.name, false), Rule::ForbiddenWord),
+    ];
+    checks
+        .into_iter()
+        .filter(|(broken, _)| *broken)
+        .map(|(_, rule)| Violation::new(rule, trigger.name.as_str()))
+        .collect()
+}
+
 /// Every violation of every rule in the embedded migrations.
 fn every_violation() -> BTreeSet<Violation> {
     let schema = DeclaredSchema::of_every_migration();
@@ -227,13 +251,14 @@ fn every_violation() -> BTreeSet<Violation> {
         .chain(schema.columns.iter().flat_map(column_violations))
         .chain(schema.constraints.iter().flat_map(constraint_violations))
         .chain(schema.indexes.iter().flat_map(index_violations))
+        .chain(schema.triggers.iter().flat_map(trigger_violations))
         .collect()
 }
 
 #[test]
 fn the_schema_reader_finds_every_kind_of_declared_object() {
     let schema = DeclaredSchema::of_every_migration();
-    assert!(schema.tables.iter().any(|table| table == "current_attribute_values"));
+    assert!(schema.tables.iter().any(|table| table == "current_attributes"));
     assert!(schema.tables.iter().any(|table| table == "tenants"), "platform tables are read");
     assert!(
         schema
@@ -246,11 +271,19 @@ fn the_schema_reader_finds_every_kind_of_declared_object() {
         schema
             .constraints
             .iter()
-            .any(|constraint| constraint.kind == ConstraintKind::ForeignKey && constraint.table == "current_attribute_values"),
+            .any(|constraint| constraint.kind == ConstraintKind::ForeignKey && constraint.table == "entity_type_members"),
         "constraints an ALTER TABLE adds are read"
     );
     assert!(schema.indexes.iter().any(|index| index.kind == IndexKind::Unique));
     assert!(schema.indexes.iter().any(|index| index.kind == IndexKind::Statistics));
+    assert!(
+        schema
+            .triggers
+            .iter()
+            .any(|trigger| trigger.table == "entities" && trigger.name == "trg_entities_current_attributes_cascade"),
+        "triggers are read"
+    );
+    assert!(schema.functions.iter().any(|function| function.name == "sub_eq_keys"), "functions are read");
 }
 
 #[test]
@@ -262,7 +295,7 @@ fn no_migration_breaks_a_naming_or_storage_convention() {
 #[test]
 fn a_table_part_is_the_table_name_or_its_registered_abbreviation() {
     assert!(has_table_prefix("pk_tenants", "pk", "tenants"));
-    assert!(has_table_prefix("idx_cav_value_number", "idx", "current_attribute_values"));
+    assert!(has_table_prefix("idx_ca_value_number", "idx", "current_attributes"));
     assert!(has_table_prefix(
         "chk_context_source_registrations_id_length",
         "chk",
@@ -277,7 +310,16 @@ fn a_table_part_is_the_table_name_or_its_registered_abbreviation() {
 fn abbreviations_are_forbidden_in_table_and_column_names_only() {
     assert!(forbidden_words("csr_delivery_state", true));
     assert!(!forbidden_words("chk_csr_mode", false));
-    assert!(forbidden_words("idx_cav_attr_number", false));
+    assert!(forbidden_words("idx_ca_attr_number", false));
     assert!(forbidden_words("value_geo", true));
     assert!(!forbidden_words("value_geometry", true));
+}
+
+#[test]
+fn a_trigger_name_is_its_full_table_name_and_what_it_does() {
+    assert!(is_trigger_name("trg_current_attributes_entities_insert", "current_attributes"));
+    assert!(!is_trigger_name("trg_ai_entities_insert", "current_attributes"));
+    assert!(!is_trigger_name("trg_current_attributes", "current_attributes"));
+    assert!(!is_trigger_name("trg_current_attributes_", "current_attributes"));
+    assert!(!is_trigger_name("current_attributes_entities_insert", "current_attributes"));
 }

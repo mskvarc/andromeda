@@ -146,7 +146,7 @@ fn index_sizes_statement() -> SelectStatement {
         .expr_as(relation_size(Expr::col(Alias::new("indexrelid"))), Alias::new(CatalogColumn::Bytes.as_str()))
         .from(Alias::new("pg_stat_user_indexes"))
         .and_where(Expr::col(Alias::new("schemaname")).eq("public"))
-        .and_where(Expr::col(Alias::new("relname")).eq("current_attribute_values"))
+        .and_where(Expr::col(Alias::new("relname")).eq("current_attributes"))
         .and_where(Expr::col(Alias::new("indexrelname")).is_in(IndexTarget::ALL.map(IndexTarget::relation_name)))
         .to_owned()
 }
@@ -238,7 +238,7 @@ mod tests {
     fn catalog_queries_are_seaquery_statements_with_closed_filters() {
         let index_sql = index_sizes_statement().to_string(PostgresQueryBuilder);
         assert!(index_sql.contains("pg_stat_user_indexes"), "{index_sql}");
-        assert!(index_sql.contains("idx_cav_value_string_trgm"), "{index_sql}");
+        assert!(index_sql.contains("idx_ca_value_string_trgm"), "{index_sql}");
         let invalid_sql = invalid_indexes_statement().to_string(PostgresQueryBuilder);
         assert!(invalid_sql.contains("pg_index"), "{invalid_sql}");
         assert!(invalid_sql.contains("indisvalid"), "{invalid_sql}");

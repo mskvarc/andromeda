@@ -60,7 +60,7 @@ mod tests {
         let recorder = TelemetryRecorder::detached()?;
         recorder.record_locally(|| {
             StorageGauges::for_tenant("default").record(
-                "current_attribute_values",
+                "current_attributes",
                 TableSizeSample {
                     total_bytes: 4096,
                     index_bytes: 1024,
@@ -69,11 +69,11 @@ mod tests {
         });
         let rendered = recorder.render();
         assert!(
-            rendered.contains(&format!("{DB_TABLE_BYTES}{{tenant=\"default\",table=\"current_attribute_values\"}} 4096")),
+            rendered.contains(&format!("{DB_TABLE_BYTES}{{tenant=\"default\",table=\"current_attributes\"}} 4096")),
             "{rendered}"
         );
         assert!(
-            rendered.contains(&format!("{DB_TABLE_INDEX_BYTES}{{tenant=\"default\",table=\"current_attribute_values\"}} 1024")),
+            rendered.contains(&format!("{DB_TABLE_INDEX_BYTES}{{tenant=\"default\",table=\"current_attributes\"}} 1024")),
             "{rendered}"
         );
         Ok(())

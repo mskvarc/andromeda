@@ -15,8 +15,8 @@ use std::{num::ParseIntError, str::FromStr};
 ///
 /// `temporal_attribute_streams` identifies a multi-attribute instance with
 /// `UNIQUE NULLS NOT DISTINCT (temporal_entity_key, attribute_name_key, dataset_id)`,
-/// which is how ETSI GS CIM 009 v1.9.1 clause 4.5.5 is modelled — an absent
-/// `datasetId` is the one default instance — and `NULLS NOT DISTINCT` is a
+/// which is how ETSI GS CIM 009 v1.9.1 clause 4.5.5 is modelled (an absent
+/// `datasetId` is the one default instance), and `NULLS NOT DISTINCT` is a
 /// PostgreSQL 15 feature.
 pub const REQUIRED_POSTGRES_VERSION: PostgresVersion = PostgresVersion::new(150_000);
 
@@ -31,9 +31,9 @@ pub const REQUIRED_POSTGIS_VERSION: ExtensionVersion = ExtensionVersion::new(3, 
 ///
 /// `attribute_history` and `scope_history` are hypertables created with
 /// `create_hypertable(..., by_range(...))`, chunk-managed with
-/// `set_chunk_time_interval` and aged out with `drop_chunks` — all Apache-2.0
+/// `set_chunk_time_interval` and aged out with `drop_chunks`, all Apache-2.0
 /// core surface. The floor is 2.18 because the TSL columnstore path the TSL
-/// edition additionally takes — `enable_columnstore`, `add_columnstore_policy` —
+/// edition additionally takes (`enable_columnstore`, `add_columnstore_policy`)
 /// is 2.18 surface, and both editions ship the same package version, so one
 /// floor covers both.
 ///
@@ -46,9 +46,9 @@ pub const REQUIRED_TIMESCALEDB_VERSION: ExtensionVersion = ExtensionVersion::new
 
 /// The `server_encoding` the tenant schema requires.
 ///
-/// Every byte bound the migrations state -- the identifier bound on each
-/// identifier column, the String overflow bound on `current_attribute_values`
-/// -- is an `octet_length` in the server encoding, and the broker measures the
+/// Every byte bound the migrations state (the identifier bound on each
+/// identifier column, the String overflow bound on `current_attributes`) is
+/// an `octet_length` in the server encoding, and the broker measures the
 /// same values as UTF-8 octets before it writes them. The two measures agree
 /// only when the server encoding is UTF-8; under another encoding a value the
 /// broker admitted could violate a check, or land in a column its placement
@@ -158,9 +158,9 @@ pub enum ExtensionVersionError {
 /// Refuse a tenant whose server or extensions are below what the schema needs.
 ///
 /// Only the two versioned extensions are checked here. The contrib extensions
-/// the schema also creates — `pg_trgm`, `ltree`, `btree_gist`, `btree_gin`
-/// (the `int4_ops` half of the attribute-aware trigram index on
-/// `current_attribute_values`) — ship with every supported server, so their
+/// the schema also creates (`pg_trgm`, `ltree`, `btree_gist`, and `btree_gin`
+/// for the `int4_ops` half of the attribute-aware trigram index on
+/// `current_attributes`) ship with every supported server, so their
 /// `CREATE EXTENSION IF NOT EXISTS` in the migrations is the check.
 ///
 /// # Errors

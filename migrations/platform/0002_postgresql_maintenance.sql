@@ -16,12 +16,12 @@
 --     11 schema-behind, 12 capability-unavailable, 13 idle, 14 probed,
 --     15 queued, 16 would-act, 17 deferred, 18 acted, 19 action-failed,
 --     20 cancelled
---   target: 1 uq_current_attribute_values_grain, 2 idx_cav_value_number,
---     3 idx_cav_value_string, 4 idx_cav_value_string_trgm,
---     5 idx_cav_value_boolean, 6 idx_cav_value_date_time, 7 idx_cav_value_uri,
---     8 idx_cav_value_geometry, 9 idx_cav_entity_geometry,
---     10 current_attribute_values, 11 entity_documents,
---     12 subscription_delivery_state
+--   target: 1 uq_current_attributes_grain, 2 idx_ca_value_number,
+--     3 idx_ca_value_string, 4 idx_ca_value_string_trgm,
+--     5 idx_ca_value_boolean, 6 idx_ca_value_date_time, 7 idx_ca_value_uri,
+--     8 idx_ca_value_geometry, 9 idx_ca_entity_geometry,
+--     10 idx_ca_sub_eq_keys, 11 current_attributes, 12 entities,
+--     13 subscription_delivery_state
 --   last_action_result: 1 succeeded, 2 failed
 -- ============================================================================
 create table postgresql_maintenance_tenants (
@@ -49,7 +49,7 @@ create table postgresql_maintenance_targets (
     is_action_pending boolean not null default false,
     constraint pk_postgresql_maintenance_targets primary key (tenant_key, target),
     constraint fk_postgresql_maintenance_targets_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
-    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 12),
+    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 13),
     constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 2),
     constraint chk_postgresql_maintenance_targets_breaches_non_negative check (consecutive_breaches >= 0),
     constraint chk_postgresql_maintenance_targets_failures_non_negative check (consecutive_failures >= 0),

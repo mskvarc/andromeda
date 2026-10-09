@@ -1,76 +1,80 @@
 //! The closed set of relations that maintenance may inspect or mutate.
 
 use andromeda_postgresql_schema::{
-    current::{CurrentAttributeValues, EntityDocuments},
+    current::{CurrentAttributes, Entities},
     subscriptions::SubscriptionDeliveryState,
 };
 use andromeda_postgresql_seaquery::maintenance::{MaintenanceSchema, MaintenanceStatement, reindex_index_concurrently, vacuum_non_truncating};
 use sea_query::Iden;
 use strum::{Display, EnumString, IntoStaticStr};
 
-/// An allowlisted `current_attribute_values` index.
+/// An allowlisted `current_attributes` index.
 #[derive(Clone, Copy, Debug, Display, EnumString, Eq, Hash, Iden, IntoStaticStr, PartialEq)]
 #[strum(serialize_all = "snake_case")]
 pub enum IndexTarget {
     /// Natural entity/attribute/dataset grain.
-    UqCurrentAttributeValuesGrain,
+    UqCurrentAttributesGrain,
     /// Numeric predicate index.
-    IdxCavValueNumber,
+    IdxCaValueNumber,
     /// String B-tree and bloat canary for the paired trigram rebuild.
-    IdxCavValueString,
+    IdxCaValueString,
     /// Attribute-aware string trigram GIN, queued only through its canary.
-    IdxCavValueStringTrgm,
+    IdxCaValueStringTrgm,
     /// Boolean predicate index.
-    IdxCavValueBoolean,
+    IdxCaValueBoolean,
     /// Date-time predicate index.
-    IdxCavValueDateTime,
+    IdxCaValueDateTime,
     /// URI predicate index.
-    IdxCavValueUri,
+    IdxCaValueUri,
     /// Attribute-aware geometry `GiST`.
-    IdxCavValueGeometry,
+    IdxCaValueGeometry,
     /// Entity/attribute geometry correlation index.
-    IdxCavEntityGeometry,
+    IdxCaEntityGeometry,
+    /// Sub-attribute equality key GIN.
+    IdxCaSubEqKeys,
 }
 
 impl IndexTarget {
     /// Every index that may be rebuilt or recognized during recovery.
-    pub const ALL: [IndexTarget; 9] = [
-        IndexTarget::UqCurrentAttributeValuesGrain,
-        IndexTarget::IdxCavValueNumber,
-        IndexTarget::IdxCavValueString,
-        IndexTarget::IdxCavValueStringTrgm,
-        IndexTarget::IdxCavValueBoolean,
-        IndexTarget::IdxCavValueDateTime,
-        IndexTarget::IdxCavValueUri,
-        IndexTarget::IdxCavValueGeometry,
-        IndexTarget::IdxCavEntityGeometry,
+    pub const ALL: [IndexTarget; 10] = [
+        IndexTarget::UqCurrentAttributesGrain,
+        IndexTarget::IdxCaValueNumber,
+        IndexTarget::IdxCaValueString,
+        IndexTarget::IdxCaValueStringTrgm,
+        IndexTarget::IdxCaValueBoolean,
+        IndexTarget::IdxCaValueDateTime,
+        IndexTarget::IdxCaValueUri,
+        IndexTarget::IdxCaValueGeometry,
+        IndexTarget::IdxCaEntityGeometry,
+        IndexTarget::IdxCaSubEqKeys,
     ];
 
     /// Indexes eligible for direct physical bloat probing.
     pub const PROBEABLE: [IndexTarget; 8] = [
-        IndexTarget::UqCurrentAttributeValuesGrain,
-        IndexTarget::IdxCavValueNumber,
-        IndexTarget::IdxCavValueString,
-        IndexTarget::IdxCavValueBoolean,
-        IndexTarget::IdxCavValueDateTime,
-        IndexTarget::IdxCavValueUri,
-        IndexTarget::IdxCavValueGeometry,
-        IndexTarget::IdxCavEntityGeometry,
+        IndexTarget::UqCurrentAttributesGrain,
+        IndexTarget::IdxCaValueNumber,
+        IndexTarget::IdxCaValueString,
+        IndexTarget::IdxCaValueBoolean,
+        IndexTarget::IdxCaValueDateTime,
+        IndexTarget::IdxCaValueUri,
+        IndexTarget::IdxCaValueGeometry,
+        IndexTarget::IdxCaEntityGeometry,
     ];
 
     /// The exact database identifier created by tenant migrations.
     #[must_use]
     pub const fn relation_name(self) -> &'static str {
         match self {
-            IndexTarget::UqCurrentAttributeValuesGrain => "uq_current_attribute_values_grain",
-            IndexTarget::IdxCavValueNumber => "idx_cav_value_number",
-            IndexTarget::IdxCavValueString => "idx_cav_value_string",
-            IndexTarget::IdxCavValueStringTrgm => "idx_cav_value_string_trgm",
-            IndexTarget::IdxCavValueBoolean => "idx_cav_value_boolean",
-            IndexTarget::IdxCavValueDateTime => "idx_cav_value_date_time",
-            IndexTarget::IdxCavValueUri => "idx_cav_value_uri",
-            IndexTarget::IdxCavValueGeometry => "idx_cav_value_geometry",
-            IndexTarget::IdxCavEntityGeometry => "idx_cav_entity_geometry",
+            IndexTarget::UqCurrentAttributesGrain => "uq_current_attributes_grain",
+            IndexTarget::IdxCaValueNumber => "idx_ca_value_number",
+            IndexTarget::IdxCaValueString => "idx_ca_value_string",
+            IndexTarget::IdxCaValueStringTrgm => "idx_ca_value_string_trgm",
+            IndexTarget::IdxCaValueBoolean => "idx_ca_value_boolean",
+            IndexTarget::IdxCaValueDateTime => "idx_ca_value_date_time",
+            IndexTarget::IdxCaValueUri => "idx_ca_value_uri",
+            IndexTarget::IdxCaValueGeometry => "idx_ca_value_geometry",
+            IndexTarget::IdxCaEntityGeometry => "idx_ca_entity_geometry",
+            IndexTarget::IdxCaSubEqKeys => "idx_ca_sub_eq_keys",
         }
     }
 
@@ -85,28 +89,24 @@ impl IndexTarget {
 #[derive(Clone, Copy, Debug, Display, EnumString, Eq, Hash, IntoStaticStr, PartialEq)]
 #[strum(serialize_all = "snake_case")]
 pub enum HeapTarget {
-    /// Current attribute value projection.
-    CurrentAttributeValues,
-    /// Expanded current entity documents.
-    EntityDocuments,
+    /// Current attribute instances.
+    CurrentAttributes,
+    /// Current entities, whose version token every write updates.
+    Entities,
     /// Frequently updated subscription delivery counters.
     SubscriptionDeliveryState,
 }
 
 impl HeapTarget {
     /// Every heap relation eligible for cheap sampling and catch-up vacuum.
-    pub const ALL: [HeapTarget; 3] = [
-        HeapTarget::CurrentAttributeValues,
-        HeapTarget::EntityDocuments,
-        HeapTarget::SubscriptionDeliveryState,
-    ];
+    pub const ALL: [HeapTarget; 3] = [HeapTarget::CurrentAttributes, HeapTarget::Entities, HeapTarget::SubscriptionDeliveryState];
 
     /// The exact database identifier created by tenant migrations.
     #[must_use]
     pub const fn relation_name(self) -> &'static str {
         match self {
-            HeapTarget::CurrentAttributeValues => "current_attribute_values",
-            HeapTarget::EntityDocuments => "entity_documents",
+            HeapTarget::CurrentAttributes => "current_attributes",
+            HeapTarget::Entities => "entities",
             HeapTarget::SubscriptionDeliveryState => "subscription_delivery_state",
         }
     }
@@ -115,8 +115,8 @@ impl HeapTarget {
     #[must_use]
     pub fn vacuum_statement(self) -> MaintenanceStatement {
         match self {
-            HeapTarget::CurrentAttributeValues => vacuum_non_truncating(&MaintenanceSchema::Public, &CurrentAttributeValues::Table),
-            HeapTarget::EntityDocuments => vacuum_non_truncating(&MaintenanceSchema::Public, &EntityDocuments::Table),
+            HeapTarget::CurrentAttributes => vacuum_non_truncating(&MaintenanceSchema::Public, &CurrentAttributes::Table),
+            HeapTarget::Entities => vacuum_non_truncating(&MaintenanceSchema::Public, &Entities::Table),
             HeapTarget::SubscriptionDeliveryState => vacuum_non_truncating(&MaintenanceSchema::Public, &SubscriptionDeliveryState::Table),
         }
     }
@@ -125,7 +125,7 @@ impl HeapTarget {
 /// A persistable allowlisted maintenance target.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum MaintenanceTarget {
-    /// One CAV index.
+    /// One `current_attributes` index.
     Index(IndexTarget),
     /// One hot heap.
     Heap(HeapTarget),
@@ -147,16 +147,17 @@ impl MaintenanceTarget {
     pub const fn heap_name(self) -> &'static str {
         match self {
             MaintenanceTarget::Index(
-                IndexTarget::UqCurrentAttributeValuesGrain
-                | IndexTarget::IdxCavValueNumber
-                | IndexTarget::IdxCavValueString
-                | IndexTarget::IdxCavValueStringTrgm
-                | IndexTarget::IdxCavValueBoolean
-                | IndexTarget::IdxCavValueDateTime
-                | IndexTarget::IdxCavValueUri
-                | IndexTarget::IdxCavValueGeometry
-                | IndexTarget::IdxCavEntityGeometry,
-            ) => "current_attribute_values",
+                IndexTarget::UqCurrentAttributesGrain
+                | IndexTarget::IdxCaValueNumber
+                | IndexTarget::IdxCaValueString
+                | IndexTarget::IdxCaValueStringTrgm
+                | IndexTarget::IdxCaValueBoolean
+                | IndexTarget::IdxCaValueDateTime
+                | IndexTarget::IdxCaValueUri
+                | IndexTarget::IdxCaValueGeometry
+                | IndexTarget::IdxCaEntityGeometry
+                | IndexTarget::IdxCaSubEqKeys,
+            ) => "current_attributes",
             MaintenanceTarget::Heap(target) => target.relation_name(),
         }
     }
@@ -164,7 +165,7 @@ impl MaintenanceTarget {
 
 #[cfg(test)]
 mod tests {
-    use crate::candidate::{HeapTarget, IndexTarget};
+    use crate::candidate::{HeapTarget, IndexTarget, MaintenanceTarget};
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
 
@@ -182,5 +183,41 @@ mod tests {
             let command = statement.as_sql();
             assert!(command.starts_with("VACUUM (TRUNCATE FALSE, PARALLEL 0) \"public\"."), "{command}");
         }
+    }
+
+    #[test]
+    fn every_index_target_is_a_current_attributes_index_and_the_key_index_is_one() {
+        for target in IndexTarget::ALL {
+            let name = target.relation_name();
+            assert!(name.starts_with("idx_ca_") || name == "uq_current_attributes_grain", "{name}");
+            assert_eq!(MaintenanceTarget::Index(target).heap_name(), "current_attributes");
+        }
+        assert!(IndexTarget::ALL.contains(&IndexTarget::IdxCaSubEqKeys));
+        assert_eq!(IndexTarget::IdxCaSubEqKeys.relation_name(), "idx_ca_sub_eq_keys");
+    }
+
+    /// `pgstattuple` reads no GIN index.
+    #[test]
+    fn no_gin_index_target_is_probed_directly() {
+        for target in [IndexTarget::IdxCaValueStringTrgm, IndexTarget::IdxCaSubEqKeys] {
+            assert!(!IndexTarget::PROBEABLE.contains(&target), "{target}");
+        }
+    }
+
+    #[test]
+    fn no_target_names_a_dropped_relation() {
+        let names = IndexTarget::ALL
+            .map(IndexTarget::relation_name)
+            .into_iter()
+            .chain(HeapTarget::ALL.map(HeapTarget::relation_name));
+        for name in names {
+            for dropped in ["current_attribute_values", "entity_documents", "cav"] {
+                assert!(!name.contains(dropped), "{name} names {dropped}");
+            }
+        }
+        assert_eq!(
+            HeapTarget::ALL.map(HeapTarget::relation_name),
+            ["current_attributes", "entities", "subscription_delivery_state"]
+        );
     }
 }

@@ -1,26 +1,30 @@
 -- ============================================================================
--- 0018: Entities
+-- 0019: Entities
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.5.5, 4.7.1, 4.8, 4.10, 4.17, 4.18,
 --   4.22, 5.2.23, 5.5.9
 --
--- Current Entity state, as three rows in three relations sharing
--- `entity_key`, and one membership row per type the Entity carries. The split
--- follows the write pattern, not the data model: every attribute write
--- rewrites the payload, almost none changes the Entity's types, scopes or
--- geometries, and its identity never changes. The payload therefore lives
--- apart from every indexed column, so a payload write stays a heap-only update
--- and leaves the type, scope and geometry index entries untouched.
+-- Current Entity state: the identity row, the search row and one membership
+-- row per type the Entity carries, sharing `entity_key`. The attribute
+-- instances live in `current_attributes`. The split follows the write
+-- pattern, not the data model: an attribute write stamps only the identity
+-- row's `modified_at`, which no index covers, so it stays a heap-only update
+-- while its page has room; almost no write changes the Entity's types, scopes
+-- or geometries, and its identity never changes.
 -- ============================================================================
--- Identity and lifecycle.
+-- Identity and lifecycle. The fillfactor leaves the room on each page that
+-- keeps the `modified_at` update of every write heap-only.
 create table entities (
     entity_key bigint generated always as identity (cache 32),
     created_at timestamptz not null default now(),
+    -- Clause 4.8 `modifiedAt`, stamped by every write of the Entity: the
+    -- compare-and-set token an optimistic overwrite states.
+    modified_at timestamptz not null default now(),
     expires_at timestamptz,
-    -- The earliest `expiresAt` any attribute instance of the payload carries,
+    -- The earliest `expiresAt` any attribute instance of the Entity carries,
     -- NULL when none expires. The attribute-expiry sweep ranges over it
-    -- instead of walking every payload, then re-reads each candidate's
-    -- payload and decides per instance.
+    -- instead of walking every instance, then re-reads each candidate's
+    -- instances and decides per instance.
     min_attribute_expires_at timestamptz,
     id text compression lz4 collate "C" not null,
     constraint pk_entities primary key (entity_key),
@@ -28,6 +32,7 @@ create table entities (
     constraint chk_entities_id_length check (octet_length(id) <= 1024)
 )
 with (
+    fillfactor = 80,
     autovacuum_vacuum_scale_factor = 0.005,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
@@ -45,30 +50,8 @@ where
 
 create index idx_entities_id_trgm on entities using gin (id gin_trgm_ops);
 
--- The payload and its version token. It has no index but its primary key,
--- and must never gain one: every payload write is an update of this row, and
--- any index would stop those updates being heap-only.
-create table entity_documents (
-    entity_key bigint not null,
-    -- Clause 4.8 `modifiedAt`, kept here because it moves with the payload:
-    -- the same statement stamps both, and it is the compare-and-set token an
-    -- optimistic overwrite states.
-    modified_at timestamptz not null default now(),
-    payload jsonb compression lz4 not null,
-    constraint pk_entity_documents primary key (entity_key),
-    constraint fk_entity_documents_entity foreign key (entity_key) references entities (entity_key) on delete cascade
-)
-with (
-    fillfactor = 70,
-    autovacuum_vacuum_scale_factor = 0.005,
-    autovacuum_vacuum_threshold = 500,
-    autovacuum_analyze_scale_factor = 0.02,
-    autovacuum_analyze_threshold = 500,
-    autovacuum_vacuum_cost_delay = 0
-);
-
 -- The query axes: types (clause 4.17), the names of the attributes the
--- payload carries (clause 5.2.23 `attrs`), scopes (clause 4.18) and the three
+-- Entity carries (clause 5.2.23 `attrs`), scopes (clause 4.18) and the three
 -- hoisted geometries (clauses 4.7.1 and 4.10). Every index that finds
 -- entities is here, and a row is rewritten only when one of these columns
 -- changes. It keeps the default fillfactor: its updates are rare, and they
@@ -87,16 +70,16 @@ create table entity_search (
     -- NULL when it carries none. A geo-query reads the hoisted instance only
     -- while this is NULL or ahead of NOW(): clause 4.22 invalidates that one
     -- instance at its own expiry, whatever the Entity's other `location`
-    -- instances carry in `current_attribute_values`.
+    -- instances carry in `current_attributes`.
     location_expires_at timestamptz,
     -- `entity_type_names` keys.
     entity_type_name_keys integer[] compression lz4 not null,
     -- `attribute_names` keys.
     attribute_name_keys integer[] compression lz4 not null,
-    -- One element per attribute instance the payload carries (clause 4.5.5:
+    -- One element per attribute instance the Entity carries (clause 4.5.5:
     -- a `datasetId` instance is its own element): its `attribute_names` key,
     -- and at the same position its attribute family code (the
-    -- `current_attribute_values.attribute_kind` codes). Sorted by key and code,
+    -- `current_attributes.attribute_kind` codes). Sorted by key and code,
     -- so a write that lists the same instances in another order does not
     -- rewrite the row. Not indexed: nothing searches them. They are what the
     -- discovery census counts, and the row read back when an update or a
@@ -104,6 +87,9 @@ create table entity_search (
     attribute_instance_name_keys integer[] compression lz4 not null,
     attribute_instance_kinds smallint[] compression lz4 not null,
     scope_paths ltree[] compression lz4,
+    -- The same Scopes as written, in the same order: the label path forgets
+    -- the optional leading `/` of clause 4.18, and this is what reads back.
+    verbatim_scope_paths text[] compression lz4 collate "C",
     location geometry compression lz4,
     location_geography geography compression lz4 generated always as (geom_to_geog(location)) stored,
     observation_space geometry compression lz4,
@@ -111,8 +97,9 @@ create table entity_search (
     constraint pk_entity_search primary key (entity_key),
     constraint fk_entity_search_entity foreign key (entity_key) references entities (entity_key) on delete cascade,
     constraint chk_entity_search_entity_type_name_keys_present check (cardinality(entity_type_name_keys) > 0),
-    constraint chk_entity_search_attribute_instances_aligned check (cardinality(attribute_instance_name_keys) = cardinality(attribute_instance_kinds)),
+    constraint chk_entity_search_current_attributes_aligned check (cardinality(attribute_instance_name_keys) = cardinality(attribute_instance_kinds)),
     constraint chk_entity_search_attribute_instance_kinds check (attribute_instance_kinds <@ '{1,2,3,4,5,6,7,8}'::smallint[]),
+    constraint chk_entity_search_scope_spelling check ((scope_paths is null) = (verbatim_scope_paths is null) and (scope_paths is null or cardinality(scope_paths) = cardinality(verbatim_scope_paths))),
     constraint chk_entity_search_location_valid check (location is null or st_isvalid(location)),
     constraint chk_entity_search_location_srid check (location is null or st_srid(location) = 4326),
     constraint chk_entity_search_location_zm check (location is null or st_zmflag(location) in (0, 2)),

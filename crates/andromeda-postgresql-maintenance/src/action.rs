@@ -171,19 +171,18 @@ fn target_statement(target: MaintenanceTarget) -> MaintenanceStatement {
 const fn target_action(target: MaintenanceTarget) -> MaintenanceAction {
     match target {
         MaintenanceTarget::Index(
-            IndexTarget::UqCurrentAttributeValuesGrain
-            | IndexTarget::IdxCavValueNumber
-            | IndexTarget::IdxCavValueString
-            | IndexTarget::IdxCavValueStringTrgm
-            | IndexTarget::IdxCavValueBoolean
-            | IndexTarget::IdxCavValueDateTime
-            | IndexTarget::IdxCavValueUri
-            | IndexTarget::IdxCavValueGeometry
-            | IndexTarget::IdxCavEntityGeometry,
+            IndexTarget::UqCurrentAttributesGrain
+            | IndexTarget::IdxCaValueNumber
+            | IndexTarget::IdxCaValueString
+            | IndexTarget::IdxCaValueStringTrgm
+            | IndexTarget::IdxCaValueBoolean
+            | IndexTarget::IdxCaValueDateTime
+            | IndexTarget::IdxCaValueUri
+            | IndexTarget::IdxCaValueGeometry
+            | IndexTarget::IdxCaEntityGeometry
+            | IndexTarget::IdxCaSubEqKeys,
         ) => MaintenanceAction::Reindex,
-        MaintenanceTarget::Heap(HeapTarget::CurrentAttributeValues | HeapTarget::EntityDocuments | HeapTarget::SubscriptionDeliveryState) => {
-            MaintenanceAction::Vacuum
-        }
+        MaintenanceTarget::Heap(HeapTarget::CurrentAttributes | HeapTarget::Entities | HeapTarget::SubscriptionDeliveryState) => MaintenanceAction::Vacuum,
     }
 }
 

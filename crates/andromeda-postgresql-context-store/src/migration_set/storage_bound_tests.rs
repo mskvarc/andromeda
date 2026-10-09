@@ -1,8 +1,8 @@
 //! The byte bounds the migrations state, tied to the Rust constants the broker
 //! enforces them with.
 //!
-//! A bound stated twice -- once as a CHECK a migration declares and once as the
-//! constant a parser refuses input with -- drifts the moment one side changes
+//! A bound stated twice (once as a CHECK a migration declares and once as the
+//! constant a parser refuses input with) drifts the moment one side changes
 //! alone. These tests read the embedded migration text, so a migration whose
 //! literal disagrees with the constant fails the build rather than surfacing as
 //! a constraint violation on a request the parser admitted.
@@ -15,20 +15,17 @@ use pretty_assertions::assert_eq;
 /// The longest identifier PostgreSQL keeps without truncating it.
 const POSTGRESQL_IDENTIFIER_BYTE_LIMIT: usize = 63;
 
-/// The two string columns of `current_attribute_values`, whose bound is the
-/// B-tree placement rather than the identifier bound.
+/// The two string columns of `current_attributes`, whose bound is the B-tree
+/// placement rather than the identifier bound.
 const PROJECTED_STRING_COLUMNS: [&str; 2] = ["value_string", "value_long_text"];
 
-/// The two Relationship-object columns of `current_attribute_values`, whose
-/// bound is the B-tree placement of [`INDEXED_URI_BYTE_LIMIT`].
+/// The two Relationship-object columns of `current_attributes`, whose bound
+/// is the B-tree placement of [`INDEXED_URI_BYTE_LIMIT`].
 const PROJECTED_URI_COLUMNS: [&str; 2] = ["value_uri", "value_long_uri"];
 
 /// The constraints that place a Relationship object in exactly one of
 /// [`PROJECTED_URI_COLUMNS`].
-const PROJECTED_URI_CONSTRAINTS: [&str; 2] = [
-    "chk_current_attribute_values_value_uri_length",
-    "chk_current_attribute_values_value_long_uri_length",
-];
+const PROJECTED_URI_CONSTRAINTS: [&str; 2] = ["chk_current_attributes_value_uri_length", "chk_current_attributes_value_long_uri_length"];
 
 /// Every constraint that holds an identifier column to [`IDENTIFIER_BYTE_LIMIT`].
 const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 33] = [
@@ -55,7 +52,7 @@ const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 33] = [
     "chk_attribute_history_verbatim_instance_id_length",
     "chk_attribute_history_instance_claims_id_length",
     "chk_scope_history_verbatim_instance_id_length",
-    "chk_current_attribute_values_dataset_id_length",
+    "chk_current_attributes_dataset_id_length",
     "chk_subscriptions_id_length",
     "chk_notification_events_entity_id_length",
     "chk_temporal_append_intents_entity_id_length",
@@ -66,6 +63,10 @@ const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 33] = [
     "chk_forwarded_subscriptions_remote_subscription_id_length",
     "chk_subscription_notified_registrations_registration_id_length",
 ];
+
+/// The `text` columns of `current_attributes` no check bounds, each with the
+/// reason its migration comment gives.
+const UNBOUNDED_INSTANCE_TEXT_COLUMNS: [(&str, &str); 1] = [("value_language", "no index keys it")];
 
 /// One `octet_length(<column>) <op> <bound>` clause a migration states.
 #[derive(Debug)]
@@ -149,9 +150,60 @@ fn every_declared_constraint_name_fits_a_postgresql_identifier() {
 }
 
 /// A Relationship traversal joins `entities.id` on `value_uri` alone, so every
-/// object that can name a local Entity -- one no longer than an identifier --
-/// must be placed in `value_uri` rather than in `value_long_uri`.
+/// object that can name a local Entity (one no longer than an identifier) must
+/// be placed in `value_uri` rather than in `value_long_uri`.
 #[test]
 fn every_object_that_can_name_a_local_entity_is_placed_in_the_traversed_column() {
     assert_eq!(INDEXED_URI_BYTE_LIMIT, IDENTIFIER_BYTE_LIMIT);
+}
+
+#[test]
+fn every_current_attribute_text_column_is_bounded_or_documented_unbounded() {
+    let schema = DeclaredSchema::of_every_migration();
+    let bounded: Vec<String> = schema
+        .constraints
+        .iter()
+        .filter(|constraint| constraint.table == "current_attributes")
+        .flat_map(|constraint| octet_length_bounds(&constraint.definition))
+        .map(|bound| bound.column)
+        .collect();
+    let text_columns: Vec<&str> = schema
+        .columns
+        .iter()
+        .filter(|column| column.table == "current_attributes" && column.type_word() == "TEXT")
+        .map(|column| column.name.as_str())
+        .collect();
+    assert_eq!(text_columns.len(), 6, "{text_columns:?}");
+    let migration: String = every_migration_sql()
+        .into_iter()
+        .filter(|sql| sql.contains("create table current_attributes"))
+        .collect();
+    for column in text_columns {
+        match UNBOUNDED_INSTANCE_TEXT_COLUMNS.iter().find(|(unbounded, _)| *unbounded == column) {
+            Some((_, reason)) => {
+                assert!(!bounded.iter().any(|bound| bound == column), "{column} is bounded after all");
+                assert!(migration.contains(reason), "the migration does not say of {column} that {reason}");
+            }
+            None => assert!(bounded.iter().any(|bound| bound == column), "{column} has no length check"),
+        }
+    }
+}
+
+/// A composite type takes no check, so the element's strings and URIs are
+/// unbounded, which its migration comment justifies.
+#[test]
+fn the_sub_attribute_element_documents_why_its_text_fields_are_unbounded() {
+    let migration: String = every_migration_sql()
+        .into_iter()
+        .filter(|sql| sql.contains("create type sub_attribute"))
+        .collect();
+    let prose: String = migration
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("-- "))
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        prose.contains("fields carry no length bound and no overflow field: no B-tree keys an element's value"),
+        "{prose}"
+    );
 }

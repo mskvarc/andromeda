@@ -81,12 +81,12 @@ pub(crate) async fn pending_action(connection: &mut PgConnection, tenant: &Regis
     Ok(targets
         .iter()
         .copied()
-        .find(|target| matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCavValueString)))
+        .find(|target| matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCaValueString)))
         .or_else(|| {
             targets
                 .iter()
                 .copied()
-                .find(|target| !matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCavValueStringTrgm)))
+                .find(|target| !matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm)))
         })
         .or_else(|| targets.first().copied()))
 }
@@ -189,8 +189,8 @@ pub(crate) async fn record_decision(
         ) => {}
     }
     execute_update(connection, statement.clone()).await?;
-    if decision == PolicyDecision::Queued && matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCavValueString)) {
-        let trigram = MaintenanceTarget::Index(IndexTarget::IdxCavValueStringTrgm);
+    if decision == PolicyDecision::Queued && matches!(target, MaintenanceTarget::Index(IndexTarget::IdxCaValueString)) {
+        let trigram = MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm);
         ensure_target_state(connection, tenant, trigram).await?;
         let paired = Query::update()
             .table(PostgresqlMaintenanceTargets::Table)

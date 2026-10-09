@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0026: Pending side effects
+-- 0027: Pending side effects
 -- ============================================================================
 -- When a batch entity operation asks for `Prefer: respond-async`, the broker
 -- queues the write's side effects (temporal history, change events) here in
