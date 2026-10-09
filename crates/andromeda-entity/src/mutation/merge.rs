@@ -91,7 +91,7 @@ impl EntityService {
                     merged.merge(&fragment, options.observed_at)?;
                     // Clause 4.8: a merged instance keeps its createdAt and, when its
                     // content changed, takes `now` for modifiedAt.
-                    merged.stamp_attribute_instants(Some(previous), now);
+                    merged.settle(Some(previous), now);
                     let merged = Arc::new(merged);
                     let addressed = AddressedInstances::EntityFragment {
                         fragment: &fragment,

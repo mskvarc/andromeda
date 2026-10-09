@@ -121,7 +121,7 @@ fn evolution_write(
             let CurrentStateFold { mut state, restated, removed } = fold;
             // Clause 4.8: a standing instance takes the write instant as its
             // modifiedAt and keeps the createdAt it had; a new one takes both.
-            state.stamp_attribute_instants(previous.map(|state| &**state), SystemInstant::new(now));
+            state.settle(previous.map(|state| &**state), SystemInstant::new(now));
             let state = Arc::new(state);
             // clone: Arc ref-count bump; the state is also the notification's
             let record = match previous {

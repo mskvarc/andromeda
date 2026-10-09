@@ -105,7 +105,7 @@ impl<'a> StampedUpdate<'a> {
         // its createdAt; an untouched one keeps both. Stamped before the columns
         // and the notification plan read the state, so both see it; only an
         // attribute whose stamps change stops being shared with `previous`.
-        current.stamp_attribute_instants(Some(previous), now);
+        current.settle(Some(previous), now);
         let WrittenState { held, observed } = WrittenState::of(Arc::new(current));
         // Clauses 5.6.8, 5.6.9 and 5.6.20 run the single-entity behaviours per
         // entity, so the batch records exactly what its single-entity sibling
@@ -167,7 +167,7 @@ impl EntityService {
     ) -> Result<ChunkWrite, Box<(Identifier, EntityError)>> {
         // Clause 4.8: a created entity's attribute instances carry the write
         // instant as both createdAt and modifiedAt.
-        state.stamp_attribute_instants(None, now);
+        state.settle(None, now);
         let WrittenState { held: state, observed } = WrittenState::of(Arc::new(state));
         let plan = self.notifier.plan(target, &id, state.types().as_slice(), creation(&state), Some(&state), None);
         let record = match EntityRecord::from_state(state) {

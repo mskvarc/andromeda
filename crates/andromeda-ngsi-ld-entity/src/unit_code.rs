@@ -8,10 +8,22 @@
 use andromeda_unit_catalog::{
     expanded_unit_code::{ExpandedUnitCodeError, UnitCodeRefusal, unit_code_identity},
     unit_code_id::UnitCodeId,
-    unit_code_registry::registry,
+    unit_code_registry::{UnitCodeSnapshotMalformed, UnitCodeUnknown, registry},
     unit_code_token::UnitCodeToken,
 };
 use derive_more::Display;
+use thiserror::Error;
+
+/// A stored catalog identity that names no unit code.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum StoredUnitCodeError {
+    /// The catalog holds no code under the identity, or the code is withdrawn.
+    #[error(transparent)]
+    Unknown(#[from] UnitCodeUnknown),
+    /// The compiled-in catalog snapshot did not parse; the build's fault.
+    #[error(transparent)]
+    Catalog(#[from] UnitCodeSnapshotMalformed),
+}
 
 /// A registered UN/CEFACT common code.
 #[derive(Clone, Copy, Debug, Display, Eq, Hash, PartialEq)]
@@ -39,6 +51,20 @@ impl UnitCode {
             .entry(id)
             .map_err(|_| ExpandedUnitCodeError::Refused(UnitCodeRefusal::NotACommonCode))?;
         Ok(UnitCode { id, token: entry.token() })
+    }
+
+    /// The code the catalog registers under `id`, the identity a store keeps
+    /// in place of the token.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoredUnitCodeError`] when the catalog holds no code under
+    /// `id`, or when the compiled-in snapshot does not parse.
+    pub fn from_id(id: UnitCodeId) -> Result<UnitCode, StoredUnitCodeError> {
+        Ok(UnitCode {
+            id,
+            token: registry()?.entry(id)?.token(),
+        })
     }
 
     /// The persisted catalog identity.

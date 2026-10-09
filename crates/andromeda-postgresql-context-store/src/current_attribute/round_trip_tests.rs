@@ -1,0 +1,982 @@
+//! Flattening a committed state into rows and assembling the rows give back
+//! the same state, for every family at every depth; assembly refuses rows that
+//! break the stored layout's invariants.
+
+use crate::current_attribute::{
+    assemble::{AssemblyError, assemble},
+    flatten::{FlattenError, flatten},
+    name_keys::{KeyNames, NameKeys},
+    row::{CurrentAttributeRow, InstanceMembers},
+    stored_json::StoredJson,
+    stored_value::{LiteralAnnotation, StoredValue},
+    sub_attribute::{ElementRecordError, SubAttributeElement, SubAttributeRecord},
+};
+use andromeda_ngsi_ld_entity::{
+    attributes::Attributes,
+    date_time_text::DateTimeText,
+    entity_state::EntityState,
+    expanded_value::ExpandedValue,
+    family_value::FamilyValue,
+    instance::Instance,
+    literal::LiteralValue,
+    system_instant::SystemInstant,
+};
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference};
+use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
+use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
+use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
+use bigdecimal::BigDecimal;
+use chrono::{TimeZone, Utc};
+use indexmap::IndexSet;
+use sea_query::Iden;
+use serde_json::{Value, json, value::to_raw_value};
+use std::{env, fs};
+
+const NGSI: &str = "https://uri.etsi.org/ngsi-ld/";
+const GEOJSON: &str = "https://purl.org/geojson/vocab#";
+const EX: &str = "https://ex.org/";
+
+/// The expanded IRI of an NGSI-LD core term.
+fn ngsi(term: &str) -> String {
+    format!("{NGSI}{term}")
+}
+
+/// The expanded IRI of an example term.
+fn ex(term: &str) -> String {
+    format!("{EX}{term}")
+}
+
+/// The expanded IRI of an NGSI-LD attribute family.
+fn family(term: &str) -> Value {
+    json!([ngsi(term)])
+}
+
+/// A typed `DateTime` member.
+fn date_time(text: &str) -> Value {
+    json!([{"@type": ngsi("DateTime"), "@value": text}])
+}
+
+/// `instance` with the members of `extra` added.
+fn with(mut instance: Value, extra: &Value) -> Value {
+    if let (Some(instance), Some(extra)) = (instance.as_object_mut(), extra.as_object()) {
+        instance.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone())));
+    }
+    instance
+}
+
+/// A Property instance holding the expanded `values`.
+fn property(values: &Value) -> Value {
+    json!({"@type": family("Property"), ngsi("hasValue"): values})
+}
+
+/// A geometry node: a Point at `coordinates`, with `extra` members.
+fn point(coordinates: &Value, extra: &Value) -> Value {
+    with(
+        json!({"@type": [format!("{GEOJSON}Point")], format!("{GEOJSON}coordinates"): [{"@list": coordinates}]}),
+        extra,
+    )
+}
+
+/// The `bbox` and foreign member of a geometry.
+fn geometry_members() -> Value {
+    json!({
+        format!("{GEOJSON}bbox"): [{"@list": [{"@value": 1.5}, {"@value": 2.5}, {"@value": 3.5}, {"@value": 4.5}]}],
+        ex("title"): [{"@value": "a point"}]
+    })
+}
+
+/// One instance of each of the eight families, every optional member set,
+/// each carrying `sub_attributes`.
+fn every_family(sub_attributes: &Value) -> Value {
+    let geo = point(&json!([{"@value": 13.5}, {"@value": 52.25}]), &geometry_members());
+    json!({
+        ex("speed"): [with(with(property(&json!([{"@value": 55.5}])), &json!({
+            ngsi("unitCode"): [{"@value": "KMH"}],
+            ngsi("hasValueType"): [{"@id": ex("Speed")}],
+            ngsi("observedAt"): date_time("2026-01-01T00:00:00.500Z"),
+            ngsi("expiresAt"): date_time("2027-01-01T00:00:00Z"),
+            ngsi("datasetId"): [{"@id": "urn:ngsi-ld:Dataset:a"}]
+        })), sub_attributes)],
+        ex("location"): [with(json!({
+            "@type": family("GeoProperty"),
+            ngsi("hasValue"): [geo],
+            ngsi("unitCode"): [{"@value": "MTR"}],
+            ngsi("hasValueType"): [{"@id": ex("Location")}],
+            ngsi("observedAt"): date_time("2026-01-01T00:00:01Z")
+        }), sub_attributes)],
+        ex("owner"): [with(json!({
+            "@type": family("Relationship"),
+            ngsi("hasObject"): [{"@id": "urn:ngsi-ld:Person:2"}, {"@id": "urn:ngsi-ld:Person:1"}],
+            ngsi("hasObjectType"): [{"@id": ex("Person")}, {"@id": ex("Agent")}],
+            ngsi("observedAt"): date_time("2026-01-01T00:00:02Z")
+        }), sub_attributes)],
+        ex("name"): [with(json!({
+            "@type": family("LanguageProperty"),
+            ngsi("hasLanguageMap"): [{"@value": "Bahnhof", "@language": "de"}, {"@value": "Station", "@language": "en"}, {"@value": "Gare"}],
+            ngsi("hasValueType"): [{"@id": ex("Name")}]
+        }), sub_attributes)],
+        ex("category"): [with(json!({
+            "@type": family("VocabProperty"),
+            ngsi("hasVocab"): [{"@id": ex("commercial")}, {"@id": ex("office")}],
+            ngsi("hasValueType"): [{"@id": ex("Category")}]
+        }), sub_attributes)],
+        ex("config"): [with(json!({
+            "@type": family("JsonProperty"),
+            ngsi("hasJSON"): [{"@type": "@json", "@value": {"a": [1, 2.5, {"b": null}], "c": "text"}}],
+            ngsi("hasValueType"): [{"@id": ex("Config")}]
+        }), sub_attributes)],
+        ex("readings"): [with(json!({
+            "@type": family("ListProperty"),
+            ngsi("hasValueList"): [{"@list": [{"@value": 1}, {"@value": "two"}, {"@list": [{"@value": true}]}]}],
+            ngsi("unitCode"): [{"@value": "CEL"}],
+            ngsi("hasValueType"): [{"@id": ex("Readings")}]
+        }), sub_attributes)],
+        ex("route"): [with(json!({
+            "@type": family("ListRelationship"),
+            ngsi("hasObjectList"): [{"@list": [{ngsi("hasObject"): [{"@id": "urn:ngsi-ld:Stop:2"}]}, {ngsi("hasObject"): [{"@id": "urn:ngsi-ld:Stop:1"}]}]}],
+            ngsi("hasObjectType"): [{"@id": ex("Stop")}]
+        }), sub_attributes)],
+        ngsi("ngsildproof"): [with(json!({
+            "@type": family("Property"),
+            ngsi("hasValue"): [{"@value": "proof"}],
+            ngsi("entityIdSealed"): [{"@value": "urn:ngsi-ld:Building:1"}],
+            ngsi("entityTypeSealed"): [{"@value": "Building"}, {"@value": "Shop"}]
+        }), sub_attributes)]
+    })
+}
+
+/// One sub-attribute of each of the eight families, each holding one
+/// sub-attribute of the same family.
+fn nested_every_family() -> Value {
+    let inner = every_family(&json!({}));
+    let mut nested = serde_json::Map::new();
+    if let Some(families) = inner.as_object() {
+        // Only an `ngsildproof` attribute carries seals (clause 4.5.2.2), so it
+        // is not renamed into a sub-attribute here.
+        for (name, instances) in families.iter().filter(|(name, _)| **name != ngsi("ngsildproof")) {
+            let child = json!({format!("{name}Inner"): instances});
+            let outer = instances
+                .as_array()
+                .and_then(|instances| instances.first())
+                .map_or(Value::Null, |instance| with(instance.clone(), &child));
+            nested.insert(format!("{name}Sub"), json!([outer]));
+        }
+    }
+    Value::Object(nested)
+}
+
+/// The stored document of an Entity with `attributes`.
+fn document(attributes: &Value) -> Value {
+    json!([with(json!({"@id": "urn:ngsi-ld:Building:1", "@type": [ex("Building")]}), attributes)])
+}
+
+/// The write instant every fixture is committed at.
+fn now() -> SystemInstant {
+    SystemInstant::new(Utc.with_ymd_and_hms(2026, 10, 9, 12, 0, 0).single().expect("a valid instant"))
+}
+
+/// The state a create commits from the stored `document`.
+fn committed(document: &Value) -> EntityState {
+    committed_text(&document.to_string())
+}
+
+/// The state a create commits from the stored document `text`.
+fn committed_text(text: &str) -> EntityState {
+    let mut state = EntityState::from_slice(text.as_bytes()).expect("a stored entity");
+    state.settle(None, now());
+    state
+}
+
+/// Every attribute name and type IRI `attributes` mentions, at any depth.
+fn mentioned(attributes: &Attributes, names: &mut IndexSet<AttributeName>, types: &mut IndexSet<NgsiLdReference>) {
+    for (name, instances) in attributes.iter() {
+        names.insert(name.clone());
+        for (_, instance) in instances.iter() {
+            let value = instance.value();
+            types.extend(value.value_type().cloned());
+            types.extend(value.object_types().iter().cloned());
+            if let FamilyValue::Property { values, .. } = value {
+                for value in values {
+                    if let ExpandedValue::Literal(literal) = value {
+                        types.extend(literal.datatype().cloned());
+                    }
+                }
+            }
+            mentioned(instance.sub_attributes(), names, types);
+        }
+    }
+}
+
+/// Dictionary keys for every name `state` mentions, both ways.
+fn dictionary(state: &EntityState) -> (NameKeys, KeyNames) {
+    let (mut names, mut types) = (IndexSet::new(), IndexSet::new());
+    mentioned(state.attributes(), &mut names, &mut types);
+    let attribute_keys = names.iter().zip(1..).map(|(name, key)| (name.clone(), AttributeNameKey::from(key)));
+    let type_keys = types.iter().zip(1..).map(|(name, key)| (name.clone(), EntityTypeNameKey::from(key)));
+    let keys = NameKeys::new(
+        ResolvedNames::from_pairs(attribute_keys.clone()),
+        ResolvedNames::from_pairs(
+            type_keys
+                .clone()
+                .map(|(name, key)| (name.as_str().parse::<EntityTypeName>().expect("a type IRI"), key)),
+        ),
+    );
+    let key_names = KeyNames::from_pairs(attribute_keys.map(|(name, key)| (key, name)), type_keys.map(|(name, key)| (key, name)));
+    (keys, key_names)
+}
+
+/// The rows of `state`, every element passed through its composite record.
+fn rows(state: &EntityState, keys: &NameKeys) -> Vec<CurrentAttributeRow> {
+    flatten(state.attributes(), keys)
+        .expect("a committed state flattens")
+        .into_iter()
+        .map(|mut row| {
+            row.sub_attributes = row
+                .sub_attributes
+                .into_iter()
+                .map(|element| SubAttributeElement::try_from(SubAttributeRecord::try_from(element).expect("the element encodes")).expect("the record decodes"))
+                .collect();
+            row
+        })
+        .collect()
+}
+
+/// Flatten `state`, assemble its rows, and assert the attributes come back;
+/// the rows are returned for the caller to inspect.
+fn round_trip(state: &EntityState) -> Vec<CurrentAttributeRow> {
+    let (keys, names) = dictionary(state);
+    let assembled = assemble(rows(state, &keys), &names).expect("the rows assemble");
+    pretty_assertions::assert_eq!(&assembled, state.attributes());
+    rows(state, &keys)
+}
+
+/// The value the single row of `rows` holds.
+fn only_value(rows: &[CurrentAttributeRow]) -> &StoredValue {
+    match rows {
+        [row] => &row.members.value,
+        other => panic!("one row expected, got {}", other.len()),
+    }
+}
+
+/// The stored JSON of an object value.
+fn object_text(value: &StoredValue) -> &str {
+    let StoredValue::Object(json) = value else {
+        panic!("an object value expected, got {value:?}");
+    };
+    json.get()
+}
+
+/// The instance `name` holds, by `datasetId`.
+fn held<'a>(attributes: &'a Attributes, name: &str, dataset_id: Option<&str>) -> &'a Instance {
+    let dataset_id = dataset_id.map(|dataset_id| dataset_id.parse().expect("a datasetId"));
+    attributes
+        .get(name)
+        .and_then(|instances| instances.get(dataset_id.as_ref()))
+        .expect("the instance")
+}
+
+#[test]
+fn every_family_round_trips() {
+    let state = committed(&document(&every_family(&nested_every_family())));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(rows.len(), 9);
+    for row in &rows {
+        pretty_assertions::assert_eq!(row.sub_attributes.len(), 16, "eight families, each with its child");
+        assert!(row.sub_attributes.iter().any(|element| element.parent > 0), "a second level");
+    }
+}
+
+#[test]
+fn every_family_round_trips_as_a_sub_attribute() {
+    let state = committed(&document(
+        &json!({ex("holder"): [with(property(&json!([{"@value": 1}])), &every_family(&json!({})))]}),
+    ));
+    let rows = round_trip(&state);
+    let [row] = rows.as_slice() else { panic!("one row") };
+    pretty_assertions::assert_eq!(row.sub_attributes.iter().map(|element| element.parent).collect::<Vec<_>>(), vec![0; 9]);
+}
+
+#[test]
+fn a_number_round_trips_exactly() {
+    let numbers = ["123456789012345678901234567890.000000000000000001", "0", "-5", "1e2"];
+    for number in numbers {
+        let text = format!(
+            r#"[{{"@id": "urn:ngsi-ld:Building:1", "@type": ["{EX}Building"], "{EX}n": [{{"@type": ["{NGSI}Property"], "{NGSI}hasValue": [{{"@value": {number}}}], "{EX}sub": [{{"@type": ["{NGSI}Property"], "{NGSI}hasValue": [{{"@value": {number}}}]}}]}}]}}]"#
+        );
+        let state = committed_text(&text);
+        let rows = round_trip(&state);
+        let expected: JsonNumber = number.parse().expect("a JSON number");
+        let StoredValue::Number { number: stored, .. } = only_value(&rows) else {
+            panic!("a number value")
+        };
+        pretty_assertions::assert_eq!(stored, &expected);
+        let [element] = rows[0].sub_attributes.as_slice() else {
+            panic!("one element")
+        };
+        pretty_assertions::assert_eq!(
+            element.members.value,
+            StoredValue::Number {
+                number: expected,
+                datatype: None
+            }
+        );
+    }
+    let hundred = committed_text(&format!(
+        r#"[{{"@id": "urn:ngsi-ld:Building:1", "@type": ["{EX}Building"], "{EX}n": [{{"@type": ["{NGSI}Property"], "{NGSI}hasValue": [{{"@value": 1e2}}]}}]}}]"#
+    ));
+    let hundred_rows = round_trip(&hundred);
+    let StoredValue::Number { number, .. } = only_value(&hundred_rows) else {
+        panic!("a number value")
+    };
+    pretty_assertions::assert_eq!(number.decimal(), &BigDecimal::from(100));
+}
+
+#[test]
+fn a_datetime_value_renders_its_sub_second_form() {
+    let state = committed(&document(
+        &json!({ex("at"): [property(&json!([{"@type": ngsi("DateTime"), "@value": "2024-01-01T00:00:00.5Z"}]))]}),
+    ));
+    let rows = round_trip(&state);
+    assert!(matches!(only_value(&rows), StoredValue::DateTime { datatype: Some(_), .. }));
+    let FamilyValue::Property { values, .. } = held(state.attributes(), &ex("at"), None).value() else {
+        panic!("a Property")
+    };
+    let [ExpandedValue::Literal(literal)] = values.as_slice() else {
+        panic!("one literal")
+    };
+    pretty_assertions::assert_eq!(literal.value(), &LiteralValue::String("2024-01-01T00:00:00.500Z".into()));
+}
+
+#[test]
+fn a_lexical_datetime_string_keeps_no_datatype() {
+    let state = committed(&document(&json!({ex("at"): [property(&json!([{"@value": "2024-01-01T00:00:00Z"}]))]})));
+    let rows = round_trip(&state);
+    assert!(matches!(only_value(&rows), StoredValue::DateTime { datatype: None, .. }));
+}
+
+#[test]
+fn a_datetime_with_an_offset_comes_back_in_utc() {
+    let state = committed(&document(
+        &json!({ex("at"): [with(property(&json!([{"@value": 1}])), &json!({ngsi("expiresAt"): date_time("2024-01-01T02:00:00+02:00")}))]}),
+    ));
+    round_trip(&state);
+    pretty_assertions::assert_eq!(
+        held(state.attributes(), &ex("at"), None).expires_at().map(DateTimeText::as_str),
+        Some("2024-01-01T00:00:00Z")
+    );
+}
+
+#[test]
+fn a_date_value_keeps_its_text() {
+    let state = committed(&document(
+        &json!({ex("on"): [property(&json!([{"@type": ngsi("Date"), "@value": "2024-01-01"}]))]}),
+    ));
+    let rows = round_trip(&state);
+    assert!(matches!(only_value(&rows), StoredValue::String { text, annotation: LiteralAnnotation::Datatype(_) } if text == "2024-01-01"));
+}
+
+#[test]
+fn a_time_value_keeps_its_text() {
+    let state = committed(&document(
+        &json!({ex("at"): [property(&json!([{"@type": ngsi("Time"), "@value": "12:00:00.5Z"}]))]}),
+    ));
+    let rows = round_trip(&state);
+    assert!(matches!(only_value(&rows), StoredValue::String { text, annotation: LiteralAnnotation::Datatype(_) } if text == "12:00:00.5Z"));
+}
+
+#[test]
+fn a_custom_datatype_keeps_its_lexical_form() {
+    let state = committed(&document(
+        &json!({ex("d"): [property(&json!([{"@type": "http://www.w3.org/2001/XMLSchema#decimal", "@value": "1.10"}]))]}),
+    ));
+    let rows = round_trip(&state);
+    assert!(matches!(only_value(&rows), StoredValue::String { text, annotation: LiteralAnnotation::Datatype(_) } if text == "1.10"));
+}
+
+#[test]
+fn a_typed_number_keeps_its_datatype_beside_the_number() {
+    let state = committed(&document(
+        &json!({ex("n"): [property(&json!([{"@type": "http://www.w3.org/2001/XMLSchema#int", "@value": 5}]))]}),
+    ));
+    let rows = round_trip(&state);
+    assert!(matches!(only_value(&rows), StoredValue::Number { datatype: Some(_), .. }));
+}
+
+#[test]
+fn a_language_tagged_literal_keeps_its_tag() {
+    let state = committed(&document(
+        &json!({ex("greeting"): [property(&json!([{"@value": "Hallo", "@language": "de"}]))]}),
+    ));
+    let rows = round_trip(&state);
+    assert!(matches!(only_value(&rows), StoredValue::String { annotation: LiteralAnnotation::Language(language), .. } if language.as_str() == "de"));
+}
+
+#[test]
+fn a_literal_with_a_direction_is_one_value_object() {
+    let state = committed(&document(
+        &json!({ex("greeting"): [property(&json!([{"@value": "x", "@language": "ar", "@direction": "rtl"}]))]}),
+    ));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(only_value(&rows).kind(), ValueKind::Object);
+}
+
+#[test]
+fn a_multi_valued_property_is_one_value_object() {
+    let state = committed(&document(
+        &json!({ex("mixed"): [property(&json!([{"@value": 1}, {"@value": "a"}, {"@value": true}]))]}),
+    ));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(ValueKind::code(only_value(&rows).kind()), 5);
+    pretty_assertions::assert_eq!(object_text(only_value(&rows)), r#"[1,"a",true]"#);
+}
+
+#[test]
+fn an_empty_property_value_round_trips() {
+    let state = committed(&document(&json!({ex("none"): [property(&json!([]))]})));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(object_text(only_value(&rows)), "[]");
+}
+
+#[test]
+fn a_structured_value_is_one_value_object() {
+    let state = committed(&document(&json!({ex("address"): [property(&json!([{
+        ex("street"): [{"@value": "Main"}],
+        ex("inner"): [{ex("deeper"): [{ex("deepest"): [{"@value": 3}]}]}]
+    }]))]})));
+    let rows = round_trip(&state);
+    let FamilyValue::Property { values, .. } = held(state.attributes(), &ex("address"), None).value() else {
+        panic!("a Property")
+    };
+    let history = StructuredValue::Values(values.iter().map(ExpandedValue::to_fragment).collect())
+        .to_stored_json()
+        .expect("the codec writes the value");
+    pretty_assertions::assert_eq!(object_text(only_value(&rows)), history.get());
+}
+
+#[test]
+fn a_json_property_is_opaque() {
+    let state = committed(&document(
+        &json!({ex("config"): [{"@type": family("JsonProperty"), ngsi("hasJSON"): [{"@type": "@json", "@value": {"a": [1, {"b": null}]}}]}]}),
+    ));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(object_text(only_value(&rows)), r#"{"a":[1,{"b":null}]}"#);
+}
+
+#[test]
+fn a_language_map_round_trips() {
+    let state = committed(&document(
+        &json!({ex("name"): [{"@type": family("LanguageProperty"), ngsi("hasLanguageMap"): [{"@value": "x", "@language": "en"}, {"@value": "y", "@language": "de"}]}]}),
+    ));
+    round_trip(&state);
+}
+
+#[test]
+fn a_single_vocab_term_stays_a_string() {
+    let state = committed(&document(
+        &json!({ex("category"): [{"@type": family("VocabProperty"), ngsi("hasVocab"): [{"@id": ex("office")}]}]}),
+    ));
+    let rows = round_trip(&state);
+    assert!(matches!(only_value(&rows), StoredValue::String { text, annotation: LiteralAnnotation::Plain } if *text == ex("office")));
+}
+
+#[test]
+fn a_single_object_relationship_stays_inline() {
+    let state = committed(&document(
+        &json!({ex("owner"): [{"@type": family("Relationship"), ngsi("hasObject"): [{"@id": "urn:a"}]}]}),
+    ));
+    let rows = round_trip(&state);
+    assert!(matches!(only_value(&rows), StoredValue::Uri(uri) if uri.as_str() == "urn:a"));
+    pretty_assertions::assert_eq!(only_value(&rows).row_column().to_string(), "value_uri");
+}
+
+#[test]
+fn a_multi_object_relationship_keeps_object_order() {
+    let state = committed(&document(
+        &json!({ex("owner"): [{"@type": family("Relationship"), ngsi("hasObject"): [{"@id": "urn:b"}, {"@id": "urn:a"}, {"@id": "urn:c"}]}]}),
+    ));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(object_text(only_value(&rows)), r#"["urn:b","urn:a","urn:c"]"#);
+}
+
+#[test]
+fn a_multi_object_sub_attribute_relationship_keeps_object_order() {
+    let state = committed(&document(&json!({ex("holder"): [with(property(&json!([{"@value": 1}])), &json!({
+        ex("owner"): [{"@type": family("Relationship"), ngsi("hasObject"): [{"@id": "urn:b"}, {"@id": "urn:a"}]}]
+    }))]})));
+    let rows = round_trip(&state);
+    let [element] = rows[0].sub_attributes.as_slice() else {
+        panic!("one element")
+    };
+    pretty_assertions::assert_eq!(object_text(&element.members.value), r#"["urn:b","urn:a"]"#);
+}
+
+#[test]
+fn a_list_relationship_keeps_duplicates() {
+    let item = |target: &str| json!({ngsi("hasObject"): [{"@id": target}]});
+    let state = committed(&document(
+        &json!({ex("route"): [{"@type": family("ListRelationship"), ngsi("hasObjectList"): [{"@list": [item("urn:x"), item("urn:x"), item("urn:y")]}]}]}),
+    ));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(object_text(only_value(&rows)), r#"["urn:x","urn:x","urn:y"]"#);
+}
+
+#[test]
+fn list_relationship_items_written_bare_come_back_wrapped() {
+    let state = committed(&document(
+        &json!({ex("route"): [{"@type": family("ListRelationship"), ngsi("hasObjectList"): [{"@list": [{"@id": "urn:x"}, {"@value": "urn:y"}]}]}]}),
+    ));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(object_text(only_value(&rows)), r#"["urn:x","urn:y"]"#);
+}
+
+#[test]
+fn an_object_longer_than_the_index_bound_goes_to_the_long_column() {
+    let target = format!("urn:ngsi-ld:Building:{}", "b".repeat(1025 - "urn:ngsi-ld:Building:".len()));
+    let state = committed(&document(
+        &json!({ex("owner"): [{"@type": family("Relationship"), ngsi("hasObject"): [{"@id": target}]}]}),
+    ));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(only_value(&rows).row_column().to_string(), "value_long_uri");
+}
+
+#[test]
+fn a_long_sub_attribute_string_stays_in_its_field() {
+    let text = "s".repeat(5000);
+    let state = committed(&document(
+        &json!({ex("holder"): [with(property(&json!([{"@value": 1}])), &json!({ex("note"): [property(&json!([{"@value": text}]))]}))]}),
+    ));
+    let (keys, _) = dictionary(&state);
+    let mut flattened = flatten(state.attributes(), &keys).expect("a committed state flattens");
+    let element = flattened.remove(0).sub_attributes.remove(0);
+    let record = SubAttributeRecord::try_from(element).expect("the element encodes");
+    pretty_assertions::assert_eq!(record.value_string.as_deref().map(str::len), Some(5000));
+    round_trip(&state);
+}
+
+#[test]
+fn relationship_object_types_round_trip() {
+    let relationship =
+        json!({"@type": family("Relationship"), ngsi("hasObject"): [{"@id": "urn:a"}], ngsi("hasObjectType"): [{"@id": ex("A")}, {"@id": ex("B")}]});
+    let state = committed(&document(
+        &json!({ex("owner"): [with(relationship.clone(), &json!({ex("inner"): [relationship]}))]}),
+    ));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(rows[0].members.object_type_keys.len(), 2);
+    pretty_assertions::assert_eq!(rows[0].sub_attributes[0].members.object_type_keys.len(), 2);
+}
+
+#[test]
+fn a_geometry_keeps_its_bbox_and_foreign_members() {
+    let geo = point(&json!([{"@value": 1}, {"@value": 2}]), &geometry_members());
+    let state = committed(&document(&json!({ex("location"): [{"@type": family("GeoProperty"), ngsi("hasValue"): [geo]}]})));
+    let rows = round_trip(&state);
+    assert!(matches!(only_value(&rows), StoredValue::Geometry { members: Some(_), .. }));
+}
+
+#[test]
+fn a_geo_sub_attribute_keeps_its_bbox_and_foreign_members() {
+    let geo = point(&json!([{"@value": 1}, {"@value": 2}]), &geometry_members());
+    let state = committed(&document(&json!({ex("holder"): [with(property(&json!([{"@value": 1}])), &json!({
+        ex("location"): [{"@type": family("GeoProperty"), ngsi("hasValue"): [geo]}]
+    }))]})));
+    let rows = round_trip(&state);
+    assert!(matches!(
+        &rows[0].sub_attributes[0].members.value,
+        StoredValue::Geometry { members: Some(_), .. }
+    ));
+}
+
+#[test]
+fn an_encoded_geometry_stays_a_string() {
+    let encoded = r#"{"type":"Point","coordinates":[1,2]}"#;
+    let state = committed(&document(
+        &json!({ex("location"): [{"@type": family("GeoProperty"), ngsi("hasValue"): [{"@value": encoded}]}]}),
+    ));
+    let rows = round_trip(&state);
+    assert!(matches!(only_value(&rows), StoredValue::String { text, .. } if text == encoded));
+}
+
+#[test]
+fn integer_ordinates_round_trip() {
+    let state = committed(&document(
+        &json!({ex("location"): [{"@type": family("GeoProperty"), ngsi("hasValue"): [point(&json!([{"@value": 13}, {"@value": 52}]), &json!({}))]}]}),
+    ));
+    round_trip(&state);
+    let rendered = String::from_utf8(state.to_vec().expect("the state encodes")).expect("UTF-8");
+    assert!(rendered.contains(r#"[{"@value":13},{"@value":52}]"#), "{rendered}");
+}
+
+#[test]
+fn dataset_instances_keep_their_order() {
+    let instance = |value: i64, dataset_id: Option<&str>| match dataset_id {
+        Some(dataset_id) => with(property(&json!([{"@value": value}])), &json!({ngsi("datasetId"): [{"@id": dataset_id}]})),
+        None => property(&json!([{"@value": value}])),
+    };
+    let state = committed(&document(
+        &json!({ex("speed"): [instance(1, None), instance(2, Some("urn:ds:2")), instance(3, Some("urn:ds:1"))]}),
+    ));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(rows.iter().map(|row| row.ordinal).collect::<Vec<_>>(), vec![0, 1, 2]);
+}
+
+#[test]
+fn sub_attribute_dataset_instances_keep_their_order() {
+    let instance = |value: i64, dataset_id: Option<&str>| match dataset_id {
+        Some(dataset_id) => with(property(&json!([{"@value": value}])), &json!({ngsi("datasetId"): [{"@id": dataset_id}]})),
+        None => property(&json!([{"@value": value}])),
+    };
+    let state = committed(&document(&json!({ex("holder"): [with(property(&json!([{"@value": 0}])), &json!({
+        ex("accuracy"): [instance(1, Some("urn:ds:2")), instance(2, None), instance(3, Some("urn:ds:1"))]
+    }))]})));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(
+        rows[0]
+            .sub_attributes
+            .iter()
+            .map(|element| element.members.dataset_id.as_ref().map(|dataset_id| dataset_id.as_str().to_owned()))
+            .collect::<Vec<_>>(),
+        vec![Some("urn:ds:2".to_owned()), None, Some("urn:ds:1".to_owned())]
+    );
+}
+
+#[test]
+fn attribute_order_is_kept() {
+    // Written as text: a JSON object built in code orders its keys.
+    let attribute = |name: &str, value: i64| format!(r#""{EX}{name}": [{{"@type": ["{NGSI}Property"], "{NGSI}hasValue": [{{"@value": {value}}}]}}]"#);
+    let state = committed_text(&format!(
+        r#"[{{"@id": "urn:ngsi-ld:Building:1", "@type": ["{EX}Building"], {}, {}, {}}}]"#,
+        attribute("z", 1),
+        attribute("a", 2),
+        attribute("m", 3)
+    ));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(rows.iter().map(|row| row.ordinal).collect::<Vec<_>>(), vec![0, 1, 2]);
+    pretty_assertions::assert_eq!(
+        state.attributes().names().map(AttributeName::as_str).collect::<Vec<_>>(),
+        vec![ex("z"), ex("a"), ex("m")]
+    );
+}
+
+#[test]
+fn elements_come_in_pre_order() {
+    let state = committed(&document(&json!({ex("a"): [with(property(&json!([{"@value": 0}])), &json!({
+        ex("b"): [with(property(&json!([{"@value": 1}])), &json!({ex("c"): [property(&json!([{"@value": 2}]))]}))],
+        ex("d"): [property(&json!([{"@value": 3}]))]
+    }))]})));
+    let (keys, _) = dictionary(&state);
+    let rows = round_trip(&state);
+    let key = |name: &str| keys.attribute(&name.parse().expect("a name")).expect("a key");
+    pretty_assertions::assert_eq!(
+        rows[0]
+            .sub_attributes
+            .iter()
+            .map(|element| (element.members.attribute_name_key, element.parent))
+            .collect::<Vec<_>>(),
+        vec![(key(&ex("b")), 0), (key(&ex("c")), 1), (key(&ex("d")), 0)]
+    );
+}
+
+#[test]
+fn nesting_at_the_configured_maximum_round_trips() {
+    let mut chain = property(&json!([{"@value": 31}]));
+    for depth in (1..31).rev() {
+        chain = with(property(&json!([{"@value": depth}])), &json!({ex(&format!("level{}", depth + 1)): [chain]}));
+    }
+    let state = committed(&document(
+        &json!({ex("level0"): [with(property(&json!([{"@value": 0}])), &json!({ex("level1"): [chain]}))]}),
+    ));
+    let rows = round_trip(&state);
+    pretty_assertions::assert_eq!(
+        rows[0].sub_attributes.iter().map(|element| element.parent).collect::<Vec<_>>(),
+        (0..31).collect::<Vec<i16>>()
+    );
+}
+
+#[test]
+fn unit_code_value_type_and_times_round_trip() {
+    let members = json!({
+        ngsi("unitCode"): [{"@value": "KMH"}],
+        ngsi("hasValueType"): [{"@id": ex("Speed")}],
+        ngsi("observedAt"): date_time("2026-01-01T00:00:00.250Z"),
+        ngsi("expiresAt"): date_time("2027-01-01T00:00:00Z")
+    });
+    let inner = with(property(&json!([{"@value": 1}])), &members);
+    let mut state = committed(&document(
+        &json!({ex("speed"): [with(with(property(&json!([{"@value": 2}])), &members), &json!({ex("accuracy"): [inner]}))]}),
+    ));
+    let accuracy = state
+        .attributes_mut()
+        .get_mut(&ex("speed"))
+        .and_then(|speed| speed.get_mut(None))
+        .and_then(|speed| speed.sub_attributes_mut().get_mut(&ex("accuracy")))
+        .and_then(|accuracy| accuracy.get_mut(None))
+        .expect("the sub-attribute");
+    accuracy.set_created_at(Some(now()));
+    accuracy.set_modified_at(Some(now()));
+    let rows = round_trip(&state);
+    let element = &rows[0].sub_attributes[0];
+    assert!(element.members.unit_code_id.is_some() && element.members.value_type_key.is_some());
+    assert!(element.members.observed_at.is_some() && element.members.expires_at.is_some());
+    assert!(element.created_at.is_some() && element.modified_at.is_some());
+}
+
+#[test]
+fn an_entity_without_attributes_is_no_rows() {
+    let state = committed(&document(&json!({})));
+    pretty_assertions::assert_eq!(round_trip(&state).len(), 0);
+}
+
+#[test]
+fn rows_in_any_order_assemble_to_the_same_state() {
+    let state = committed(&document(&every_family(&nested_every_family())));
+    let (keys, names) = dictionary(&state);
+    let mut shuffled = rows(&state, &keys);
+    shuffled.reverse();
+    shuffled.swap(1, 4);
+    pretty_assertions::assert_eq!(&assemble(shuffled, &names).expect("the rows assemble"), state.attributes());
+}
+
+/// The rows of an Entity whose one attribute has three sub-attributes, `a`,
+/// `b` and `c`, under the instance.
+fn three_elements() -> (Vec<CurrentAttributeRow>, KeyNames) {
+    let state = committed(&document(&json!({ex("holder"): [with(property(&json!([{"@value": 0}])), &json!({
+        ex("a"): [property(&json!([{"@value": 1}]))],
+        ex("b"): [property(&json!([{"@value": 2}]))],
+        ex("c"): [property(&json!([{"@value": 3}]))]
+    }))]})));
+    let (keys, names) = dictionary(&state);
+    (rows(&state, &keys), names)
+}
+
+#[test]
+fn a_parent_after_its_child_is_an_assembly_error() {
+    let (mut rows, names) = three_elements();
+    rows[0].sub_attributes[0].parent = 2;
+    assert!(matches!(
+        assemble(rows, &names),
+        Err(AssemblyError::ParentOutOfOrder { position: 1, parent: 2 })
+    ));
+}
+
+#[test]
+fn a_parent_outside_the_array_is_an_assembly_error() {
+    let (mut rows, names) = three_elements();
+    rows[0].sub_attributes[2].parent = 99;
+    assert!(matches!(
+        assemble(rows, &names),
+        Err(AssemblyError::ParentOutsideArray { position: 3, parent: 99 })
+    ));
+}
+
+#[test]
+fn two_siblings_with_one_grain_is_an_assembly_error() {
+    let (mut rows, names) = three_elements();
+    rows[0].sub_attributes[1].members.attribute_name_key = rows[0].sub_attributes[0].members.attribute_name_key;
+    assert!(matches!(assemble(rows, &names), Err(AssemblyError::RepeatedSubAttribute(_))));
+}
+
+#[test]
+fn two_rows_with_one_grain_is_an_assembly_error() {
+    let state = committed(&document(
+        &json!({ex("a"): [property(&json!([{"@value": 1}]))], ex("b"): [property(&json!([{"@value": 2}]))]}),
+    ));
+    let (keys, names) = dictionary(&state);
+    let mut rows = rows(&state, &keys);
+    rows[1].members.attribute_name_key = rows[0].members.attribute_name_key;
+    assert!(matches!(assemble(rows, &names), Err(AssemblyError::RepeatedInstance(_))));
+}
+
+#[test]
+fn a_value_of_another_family_is_an_assembly_error() {
+    let state = committed(&document(&json!({ex("a"): [property(&json!([{"@value": 1}]))]})));
+    let (keys, names) = dictionary(&state);
+    let mut rows = rows(&state, &keys);
+    rows[0].members.attribute_kind = AttributeKind::Relationship;
+    assert!(matches!(assemble(rows, &names), Err(AssemblyError::ValueOfAnotherFamily { .. })));
+}
+
+/// A stored record of a Property element holding the number 1.
+fn number_record() -> SubAttributeRecord {
+    SubAttributeRecord {
+        parent: 0,
+        attribute_name_key: 1,
+        dataset_id: None,
+        attribute_kind: AttributeKind::code(AttributeKind::Property),
+        value_kind: ValueKind::code(ValueKind::Number),
+        value_number: Some(BigDecimal::from(1)),
+        value_string: None,
+        value_boolean: None,
+        value_date_time: None,
+        value_geometry: None,
+        value_geometry_members: None,
+        value_object: None,
+        value_uri: None,
+        value_datatype_key: None,
+        value_language: None,
+        value_type_key: None,
+        object_type_keys: None,
+        proof_seals: None,
+        unit_code_id: None,
+        observed_at: None,
+        created_at: None,
+        modified_at: None,
+        expires_at: None,
+    }
+}
+
+#[test]
+fn an_element_with_two_values_is_an_assembly_error() {
+    let mut record = number_record();
+    record.value_string = Some("a".to_owned());
+    assert!(matches!(
+        SubAttributeElement::try_from(record),
+        Err(ElementRecordError::ValueFields { kind: ValueKind::Number })
+    ));
+}
+
+#[test]
+fn an_element_whose_value_is_in_another_field_is_an_assembly_error() {
+    let mut record = number_record();
+    record.value_number = None;
+    record.value_boolean = Some(true);
+    assert!(matches!(
+        SubAttributeElement::try_from(record),
+        Err(ElementRecordError::ValueFields { kind: ValueKind::Number })
+    ));
+}
+
+#[test]
+fn a_language_beside_a_number_is_an_assembly_error() {
+    let mut record = number_record();
+    record.value_language = Some("en".to_owned());
+    assert!(matches!(SubAttributeElement::try_from(record), Err(ElementRecordError::Annotation)));
+}
+
+#[test]
+fn the_element_round_trips_through_its_record() {
+    let instant = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).single().expect("a valid instant");
+    let full = SubAttributeElement {
+        parent: 3,
+        members: InstanceMembers {
+            attribute_name_key: AttributeNameKey::from(7),
+            dataset_id: Some("urn:ngsi-ld:Dataset:a".parse().expect("a datasetId")),
+            attribute_kind: AttributeKind::GeoProperty,
+            value: StoredValue::Geometry {
+                form: serde_json::from_value::<Geometry>(json!({"type": "Point", "coordinates": [13.5, 52.25, 34.0]}))
+                    .expect("a point")
+                    .into_parts()
+                    .0,
+                members: Some(StoredJson::new(
+                    to_raw_value(&json!({"https://ex.org/title": [{"@value": "x"}]})).expect("JSON"),
+                )),
+            },
+            value_type_key: Some(EntityTypeNameKey::from(3)),
+            object_type_keys: vec![EntityTypeNameKey::from(4), EntityTypeNameKey::from(5)],
+            unit_code_id: Some(1_i16.try_into().expect("a unit code identity")),
+            observed_at: Some(instant),
+            expires_at: Some(instant),
+            proof_seals: Some(StoredJson::new(
+                to_raw_value(&json!({"https://uri.etsi.org/ngsi-ld/entityIdSealed": [{"@value": "x"}]})).expect("JSON"),
+            )),
+        },
+        created_at: Some(instant),
+        modified_at: Some(instant),
+    };
+    let empty = || SubAttributeElement {
+        parent: 0,
+        members: InstanceMembers {
+            attribute_name_key: AttributeNameKey::from(7),
+            dataset_id: None,
+            attribute_kind: AttributeKind::Property,
+            value: StoredValue::Boolean { flag: false, datatype: None },
+            value_type_key: None,
+            object_type_keys: Vec::new(),
+            unit_code_id: None,
+            observed_at: None,
+            expires_at: None,
+            proof_seals: None,
+        },
+        created_at: None,
+        modified_at: None,
+    };
+    let through = |element: SubAttributeElement| {
+        SubAttributeElement::try_from(SubAttributeRecord::try_from(element).expect("the element encodes")).expect("the record decodes")
+    };
+    let full_debug = format!("{full:?}");
+    pretty_assertions::assert_eq!(format!("{:?}", through(full)), full_debug);
+    pretty_assertions::assert_eq!(through(empty()), empty());
+    let record = SubAttributeRecord::try_from(empty()).expect("the element encodes");
+    assert!(record.object_type_keys.is_none() && record.value_geometry_members.is_none() && record.proof_seals.is_none());
+}
+
+#[test]
+fn a_name_without_a_key_is_a_flatten_error() {
+    let state = committed(&document(&json!({ex("a"): [property(&json!([{"@value": 1}]))]})));
+    assert!(matches!(
+        flatten(state.attributes(), &NameKeys::default()),
+        Err(FlattenError::UnresolvedAttribute(_))
+    ));
+}
+
+#[test]
+fn an_unstamped_instance_is_a_flatten_error() {
+    let state = EntityState::from_slice(document(&json!({ex("a"): [property(&json!([{"@value": 1}]))]})).to_string().as_bytes()).expect("a stored entity");
+    let (keys, _) = dictionary(&state);
+    assert!(matches!(flatten(state.attributes(), &keys), Err(FlattenError::Unstamped(_))));
+}
+
+#[test]
+fn an_uncommitted_datetime_spelling_is_a_flatten_error() {
+    let mut state = EntityState::from_slice(
+        document(&json!({ex("at"): [property(&json!([{"@type": ngsi("DateTime"), "@value": "2024-01-01T00:00:00.5Z"}]))]}))
+            .to_string()
+            .as_bytes(),
+    )
+    .expect("a stored entity");
+    state.stamp_attribute_instants(None, now());
+    let (keys, _) = dictionary(&state);
+    assert!(matches!(flatten(state.attributes(), &keys), Err(FlattenError::UncommittedSpelling(_))));
+}
+
+#[test]
+fn an_instance_id_is_a_flatten_error() {
+    let state = committed(&document(
+        &json!({ex("a"): [with(property(&json!([{"@value": 1}])), &json!({ngsi("instanceId"): [{"@id": "urn:ngsi-ld:Instance:1"}]}))]}),
+    ));
+    let (keys, _) = dictionary(&state);
+    assert!(matches!(flatten(state.attributes(), &keys), Err(FlattenError::InstanceIdentifier(_))));
+}
+
+/// Every stored Entity document of a corpus, one per line, flattened and
+/// assembled back to the state the codec decodes from it.
+#[test]
+#[ignore = "reads a stored-document corpus from outside the repository"]
+fn corpus_round_trips() {
+    let path = env::var("ANDROMEDA_STORED_ENTITY_CORPUS").expect("the corpus path");
+    let corpus = fs::read_to_string(path).expect("the corpus reads");
+    let mut checked = 0_usize;
+    for (line, document) in corpus.lines().enumerate().filter(|(_, document)| !document.trim().is_empty()) {
+        let mut state = EntityState::from_slice(document.as_bytes()).unwrap_or_else(|refusal| panic!("line {}: {refusal}", line + 1));
+        state.canonicalize_values(None);
+        let (keys, names) = dictionary(&state);
+        let assembled = assemble(rows(&state, &keys), &names).unwrap_or_else(|error| panic!("line {}: {error}", line + 1));
+        pretty_assertions::assert_eq!(&assembled, state.attributes(), "line {}", line + 1);
+        checked += 1;
+    }
+    assert!(checked > 0, "the corpus holds no document");
+}
+
+#[test]
+fn an_uncommitted_observed_at_spelling_is_a_flatten_error() {
+    let mut state = EntityState::from_slice(
+        document(&json!({ex("a"): [with(property(&json!([{"@value": 1}])), &json!({ngsi("observedAt"): date_time("2024-01-01T00:00:00.5Z")}))]}))
+            .to_string()
+            .as_bytes(),
+    )
+    .expect("a stored entity");
+    state.stamp_attribute_instants(None, now());
+    let (keys, _) = dictionary(&state);
+    assert!(matches!(flatten(state.attributes(), &keys), Err(FlattenError::UncommittedSpelling(_))));
+}

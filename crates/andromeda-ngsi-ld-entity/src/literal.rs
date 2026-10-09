@@ -109,6 +109,22 @@ impl Literal {
         }
     }
 
+    /// The same string literal spelled `text`, keeping its datatype, language
+    /// and direction; `None` when the literal holds no string.
+    #[must_use]
+    pub fn respelled(&self, text: CompactString) -> Option<Literal> {
+        match self.value {
+            LiteralValue::String(_) => Some(Literal {
+                value: LiteralValue::String(text),
+                // clone: the respelled literal keeps the written one's annotations.
+                datatype: self.datatype.clone(),
+                language: self.language.clone(),
+                direction: self.direction,
+            }),
+            LiteralValue::Number(_) | LiteralValue::Boolean(_) => None,
+        }
+    }
+
     /// The scalar.
     #[must_use]
     pub const fn value(&self) -> &LiteralValue {

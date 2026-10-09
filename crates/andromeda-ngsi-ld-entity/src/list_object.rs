@@ -4,9 +4,9 @@
 //! (`[{"object": uri}]`), which expands to `{"hasObject": [{"@id": uri}]}`;
 //! clause 4.5.22.3 writes the concise list as the bare targets, which expands
 //! to `{"@id": uri}`, except under a context that does not type `objectList`
-//! `@id` (the core context), where it expands to `{"@value": uri}`. All three
-//! spellings occur in stored documents, and each item
-//! is written back the way it was stored.
+//! `@id` (the core context), where it expands to `{"@value": uri}`. A written
+//! list may use any of the three; a write commits every item in the normalized
+//! spelling.
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 

@@ -35,7 +35,7 @@ impl EntityService {
             // Clause 4.8: a created entity's attribute instances carry the write
             // instant as both createdAt and modifiedAt.
             let mut created = EntityState::try_from(admitted.into_document())?;
-            created.stamp_attribute_instants(None, SystemInstant::new(Utc::now()));
+            created.settle(None, SystemInstant::new(Utc::now()));
             let WrittenState { held: created, observed } = WrittenState::of(Arc::new(created));
             let plan = self
                 .notifier

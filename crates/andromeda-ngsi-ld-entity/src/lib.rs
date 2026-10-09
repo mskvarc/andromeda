@@ -27,6 +27,7 @@ pub mod admission;
 pub mod attribute_instances;
 pub mod attributes;
 pub mod codec;
+pub mod committed_values;
 pub mod conversion;
 pub mod date_time_text;
 pub mod document;

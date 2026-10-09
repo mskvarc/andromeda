@@ -67,7 +67,7 @@ impl EntityService {
                 let not_appended = member_attribute_names(appended.append_attributes(&fragment, overwrite)?)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
                 // its createdAt across the read-modify-write.
-                appended.stamp_attribute_instants(Some(previous), SystemInstant::new(Utc::now()));
+                appended.settle(Some(previous), SystemInstant::new(Utc::now()));
                 let appended = Arc::new(appended);
                 let addressed = AddressedInstances::EntityFragment {
                     fragment: &fragment,

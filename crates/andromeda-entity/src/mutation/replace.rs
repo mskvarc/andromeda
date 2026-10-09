@@ -59,7 +59,7 @@ impl EntityService {
                     // state, which overwrites every stamp an earlier attempt left;
                     // the replacement is copied only while an earlier attempt's
                     // write still shares it.
-                    Arc::make_mut(&mut replacement).stamp_attribute_instants(Some(previous), now);
+                    Arc::make_mut(&mut replacement).settle(Some(previous), now);
                     // clone: Arc ref-count bump; the write stores the replacement
                     let WrittenState { held, observed } = WrittenState::of(Arc::clone(&replacement));
                     let history = mutation_history(AddressedInstances::Replacement, previous, &observed);

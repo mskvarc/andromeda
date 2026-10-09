@@ -62,7 +62,7 @@ impl EntityService {
                 replaced.replace_attribute(&attribute, &replacement)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
                 // its createdAt across the read-modify-write.
-                replaced.stamp_attribute_instants(Some(previous), SystemInstant::new(Utc::now()));
+                replaced.settle(Some(previous), SystemInstant::new(Utc::now()));
                 let replaced = Arc::new(replaced);
                 let addressed = AddressedInstances::AttributeFragment {
                     attribute: &attribute,

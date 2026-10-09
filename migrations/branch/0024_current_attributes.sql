@@ -25,10 +25,10 @@
 -- Value kind 0, the tombstone, never appears: a deleted attribute is an absent
 -- row, not a marker.
 --
--- Clause 4.6.3 DateTime lands in `value_date_time`; Date and Time land in
--- `value_string` in canonical fixed-width form (`YYYY-MM-DD`,
--- `HH:MM:SS.ffffffZ`), so byte order is chronological and a clause 4.9
--- comparison orders them correctly.
+-- A clause 4.6.3 DateTime lands in `value_date_time`, whether its datatype is
+-- declared or read off its lexical form; `value_datatype_key` tells the two
+-- apart. Date and Time land in `value_string` as written: their text is their
+-- value.
 --
 -- `value_object` holds every value that is not one scalar: a structured
 -- value, several values, a JSON literal, a LanguageProperty map, several
@@ -68,8 +68,8 @@ create table current_attributes (
     value_date_time timestamptz,
     observed_at timestamptz,
     expires_at timestamptz,
-    -- `entity_type_names` key of the datatype of a typed literal held in
-    -- `value_string` or `value_long_text`.
+    -- `entity_type_names` key of the datatype a typed literal declares, beside
+    -- the scalar column holding its value.
     value_datatype_key integer,
     -- `entity_type_names` key of the clause 4.5.2 `valueType`.
     value_type_key integer,
@@ -103,6 +103,9 @@ create table current_attributes (
     -- `entity_type_names` keys of the clause 4.5.3 `objectType` list, in
     -- written order.
     object_type_keys integer[] compression lz4,
+    -- The clause 4.5.2.2 `entityIdSealed` and `entityTypeSealed` members of an
+    -- instance, NULL when it carries neither.
+    proof_seals jsonb compression lz4,
     -- The instance's sub-attributes, NULL when it has none.
     sub_attributes sub_attribute[] compression lz4,
     -- The grain has a nullable `dataset_id`, so it is a unique constraint and
@@ -114,7 +117,8 @@ create table current_attributes (
     constraint chk_current_attributes_ordinal_non_negative check (ordinal >= 0),
     constraint chk_current_attributes_value_presence check (num_nonnulls (value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri, value_long_text, value_long_uri) = 1),
     constraint chk_current_attributes_value_kind_column check ((value_kind = 1 and value_number is not null) or (value_kind = 2 and num_nonnulls (value_string, value_long_text) = 1) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and num_nonnulls (value_uri, value_long_uri) = 1)),
-    constraint chk_current_attributes_value_literal_annotation check (num_nonnulls (value_datatype_key, value_language) = 0 or (value_kind = 2 and num_nonnulls (value_datatype_key, value_language) = 1)),
+    constraint chk_current_attributes_value_datatype_with_scalar check (value_datatype_key is null or value_kind in (1, 2, 3, 6)),
+    constraint chk_current_attributes_value_language_with_string check (value_language is null or (value_kind = 2 and value_datatype_key is null)),
     constraint chk_current_attributes_value_geometry_members_with_geometry check (value_geometry_members is null or value_geometry is not null),
     constraint chk_current_attributes_value_geometry_valid check (value_geometry is null or st_isvalid(value_geometry)),
     constraint chk_current_attributes_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),

@@ -23,6 +23,8 @@ pub mod context_space;
 pub mod csource_registration;
 /// Repository for NGSI-LD context source subscriptions.
 pub mod csource_subscription;
+/// The `current_attributes` rows an Entity's attributes are stored as.
+pub mod current_attribute;
 /// The current-state projection of the attribute instances entities hold.
 pub mod current_attribute_values;
 /// Persistence layer for NGSI-LD entities.

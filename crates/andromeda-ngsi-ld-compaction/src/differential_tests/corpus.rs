@@ -41,7 +41,7 @@ pub(crate) async fn stored_documents(engine: &JsonLdEngine) -> Vec<StoredDocumen
     for written in written_entities() {
         let expanded = expanded(engine, &written.entity, &written.context).await;
         let mut state = EntityState::from_slice(&serde_json::to_vec(&expanded).expect("the expansion renders")).expect("the corpus entity is a state");
-        state.stamp_attribute_instants(None, stamped_at);
+        state.settle(None, stamped_at);
         let expanded = serde_json::to_value(&state).expect("the stamped state renders");
         stored.push(StoredDocument { name: written.name, expanded });
     }

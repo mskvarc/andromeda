@@ -28,6 +28,7 @@ mod instance_decode;
 mod instance_encode;
 mod member_decode;
 mod object_key;
+mod proof_seals_codec;
 mod public_encode;
 mod raw_scalar;
 mod state_codec;

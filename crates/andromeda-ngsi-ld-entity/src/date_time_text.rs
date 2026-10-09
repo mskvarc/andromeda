@@ -7,7 +7,7 @@
 //! comparisons read.
 
 use andromeda_ngsi_ld_lexicon::rfc3339::{parse_client_instant, sub_second};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use compact_str::CompactString;
 use derive_more::Display;
 use std::str::FromStr;
@@ -35,9 +35,11 @@ impl DateTimeText {
     /// A `DateTime` the broker writes on the client's behalf from an instant
     /// it holds (the Table 6.5.3.4-1 `observedAt` request parameter), spelled
     /// the one way the broker renders an instant: UTC, `Z`, and exactly the
-    /// sub-second precision the instant carries.
+    /// sub-second precision the instant carries, truncated to the microsecond
+    /// a store keeps.
     #[must_use]
     pub fn from_instant(instant: DateTime<Utc>) -> DateTimeText {
+        let instant = instant.trunc_subsecs(6);
         DateTimeText {
             text: CompactString::from(sub_second(instant)),
             instant,

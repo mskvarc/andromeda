@@ -29,7 +29,8 @@
 -- fields carry no length bound and no overflow field: no B-tree keys an
 -- element's value, so nothing limits its length. `attribute_name_key` is an
 -- `attribute_names` key; `value_datatype_key`, `value_type_key` and
--- `object_type_keys` are `entity_type_names` keys.
+-- `object_type_keys` are `entity_type_names` keys. `proof_seals` holds the
+-- clause 4.5.2.2 `entityIdSealed` and `entityTypeSealed` members.
 create type sub_attribute as (
     parent smallint,
     attribute_name_key integer,
@@ -48,6 +49,7 @@ create type sub_attribute as (
     value_language text,
     value_type_key integer,
     object_type_keys integer[],
+    proof_seals jsonb,
     unit_code_id smallint,
     observed_at timestamptz,
     created_at timestamptz,

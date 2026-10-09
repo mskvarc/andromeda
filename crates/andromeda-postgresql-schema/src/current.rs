@@ -204,8 +204,8 @@ pub enum CurrentAttributes {
     ObservedAt,
     /// The instance's own clause 4.22 `expiresAt`, NULL when it never expires
     ExpiresAt,
-    /// `entity_type_names` key of a typed literal's datatype IRI, beside
-    /// `value_string` only
+    /// `entity_type_names` key of the datatype IRI a typed literal declares,
+    /// beside the scalar column holding its value
     ValueDatatypeKey,
     /// `entity_type_names` key of the clause 4.5.2 `valueType`, NULL when the
     /// instance carries none
@@ -241,6 +241,9 @@ pub enum CurrentAttributes {
     /// `entity_type_names` keys of a Relationship's clause 4.5.3 `objectType`,
     /// in written order, NULL when it carries none
     ObjectTypeKeys,
+    /// The clause 4.5.2.2 `entityIdSealed` and `entityTypeSealed` members,
+    /// NULL when the instance carries neither
+    ProofSeals,
     /// The instance's sub-attribute tree as an array of
     /// [`SubAttribute`] elements in written order, parents before
     /// children, NULL when the instance has no sub-attribute
@@ -288,8 +291,8 @@ pub enum SubAttribute {
     ValueObject,
     /// URI value, when `value_kind` selects it
     ValueUri,
-    /// `entity_type_names` key of a typed literal's datatype IRI, beside
-    /// `value_string` only
+    /// `entity_type_names` key of the datatype IRI a typed literal declares,
+    /// beside the scalar column holding its value
     ValueDatatypeKey,
     /// Language tag of a language-tagged String, beside `value_string` only
     ValueLanguage,
@@ -299,6 +302,9 @@ pub enum SubAttribute {
     /// `entity_type_names` keys of a Relationship's clause 4.5.3 `objectType`,
     /// in written order, NULL when it carries none
     ObjectTypeKeys,
+    /// The clause 4.5.2.2 `entityIdSealed` and `entityTypeSealed` members,
+    /// NULL when the element carries neither
+    ProofSeals,
     /// `unit_codes` key of the element's `unitCode` (clause 4.5.2)
     UnitCodeId,
     /// The element's clause 4.5.2 `observedAt`, NULL when it carries none
@@ -440,6 +446,7 @@ mod tests {
             CurrentAttributes::ValueLongText,
             CurrentAttributes::ValueLongUri,
             CurrentAttributes::ObjectTypeKeys,
+            CurrentAttributes::ProofSeals,
             CurrentAttributes::SubAttributes,
         ]
         .map(|name| name.to_string());
@@ -472,6 +479,7 @@ mod tests {
                 "value_long_text",
                 "value_long_uri",
                 "object_type_keys",
+                "proof_seals",
                 "sub_attributes",
             ]
         );
@@ -497,6 +505,7 @@ mod tests {
             SubAttribute::ValueLanguage,
             SubAttribute::ValueTypeKey,
             SubAttribute::ObjectTypeKeys,
+            SubAttribute::ProofSeals,
             SubAttribute::UnitCodeId,
             SubAttribute::ObservedAt,
             SubAttribute::CreatedAt,
@@ -525,6 +534,7 @@ mod tests {
                 "value_language",
                 "value_type_key",
                 "object_type_keys",
+                "proof_seals",
                 "unit_code_id",
                 "observed_at",
                 "created_at",
