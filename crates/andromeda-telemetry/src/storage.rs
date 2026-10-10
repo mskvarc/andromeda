@@ -1,18 +1,34 @@
-//! Gauges describing the on-disk size of the live schema's base tables.
+//! Gauges describing the on-disk size of the live schema's base tables and the
+//! share of their updates that were heap-only.
 
 use crate::{
-    names::{DB_TABLE_BYTES, DB_TABLE_INDEX_BYTES, LABEL_TABLE, LABEL_TENANT},
+    names::{DB_TABLE_BYTES, DB_TABLE_HOT_UPDATE_RATIO, DB_TABLE_INDEX_BYTES, LABEL_TABLE, LABEL_TENANT},
     sample_value::SampleValue,
 };
-use metrics::gauge;
+use metrics::{IntoF64, gauge};
 
-/// A point-in-time size sample of one base table.
+/// A point-in-time size and update sample of one base table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TableSizeSample {
     /// Total on-disk bytes, indexes and TOAST included.
     pub total_bytes: u64,
     /// On-disk bytes held by the table's indexes.
     pub index_bytes: u64,
+    /// Rows updated since the table's statistics were reset.
+    pub updated_tuples: u64,
+    /// The updates among them that were heap-only.
+    pub hot_updated_tuples: u64,
+}
+
+impl TableSizeSample {
+    /// Heap-only updates as a share of all updates, 0 for a table that took
+    /// none.
+    fn hot_update_ratio(self) -> f64 {
+        match self.updated_tuples {
+            0 => 0.0,
+            updated => SampleValue::from(self.hot_updated_tuples).into_f64() / SampleValue::from(updated).into_f64(),
+        }
+    }
 }
 
 /// The size gauges one tenant's tables publish.
@@ -35,7 +51,7 @@ impl StorageGauges {
         StorageGauges { tenant: tenant.into() }
     }
 
-    /// Publish one table's `sample` on both gauges under `table`.
+    /// Publish one table's `sample` on every gauge under `table`.
     ///
     /// The `table` label is a fixed base-table name the caller supplies from a
     /// closed set, not free-form input.
@@ -43,6 +59,7 @@ impl StorageGauges {
         // clone: the metrics facade owns each label value it stores.
         gauge!(DB_TABLE_BYTES, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(SampleValue::from(sample.total_bytes));
         gauge!(DB_TABLE_INDEX_BYTES, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(SampleValue::from(sample.index_bytes));
+        gauge!(DB_TABLE_HOT_UPDATE_RATIO, LABEL_TENANT => self.tenant.clone(), LABEL_TABLE => table).set(sample.hot_update_ratio());
     }
 }
 
@@ -50,13 +67,13 @@ impl StorageGauges {
 mod tests {
     use crate::{
         error::TelemetryError,
-        names::{DB_TABLE_BYTES, DB_TABLE_INDEX_BYTES},
+        names::{DB_TABLE_BYTES, DB_TABLE_HOT_UPDATE_RATIO, DB_TABLE_INDEX_BYTES},
         recorder::TelemetryRecorder,
         storage::{StorageGauges, TableSizeSample},
     };
 
     #[test]
-    fn a_sample_sets_both_gauges_under_the_tenant_and_table_labels() -> Result<(), TelemetryError> {
+    fn a_sample_sets_every_gauge_under_the_tenant_and_table_labels() -> Result<(), TelemetryError> {
         let recorder = TelemetryRecorder::detached()?;
         recorder.record_locally(|| {
             StorageGauges::for_tenant("default").record(
@@ -64,6 +81,8 @@ mod tests {
                 TableSizeSample {
                     total_bytes: 4096,
                     index_bytes: 1024,
+                    updated_tuples: 8,
+                    hot_updated_tuples: 6,
                 },
             );
         });
@@ -76,6 +95,32 @@ mod tests {
             rendered.contains(&format!("{DB_TABLE_INDEX_BYTES}{{tenant=\"default\",table=\"current_attributes\"}} 1024")),
             "{rendered}"
         );
+        assert!(
+            rendered.contains(&format!("{DB_TABLE_HOT_UPDATE_RATIO}{{tenant=\"default\",table=\"current_attributes\"}} 0.75")),
+            "{rendered}"
+        );
         Ok(())
+    }
+
+    #[test]
+    fn hot_ratio_is_zero_without_updates() {
+        let sample = TableSizeSample {
+            total_bytes: 4096,
+            index_bytes: 1024,
+            updated_tuples: 0,
+            hot_updated_tuples: 0,
+        };
+        pretty_assertions::assert_eq!(sample.hot_update_ratio().to_bits(), 0.0_f64.to_bits());
+    }
+
+    #[test]
+    fn hot_ratio_is_the_heap_only_share_of_updates() {
+        let sample = TableSizeSample {
+            total_bytes: 4096,
+            index_bytes: 1024,
+            updated_tuples: 4,
+            hot_updated_tuples: 1,
+        };
+        pretty_assertions::assert_eq!(sample.hot_update_ratio().to_bits(), 0.25_f64.to_bits());
     }
 }

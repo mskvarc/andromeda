@@ -40,6 +40,10 @@ pub enum CatalogCounter {
     TableTotalBytes,
     /// Index size of an allowlisted base table.
     TableIndexBytes,
+    /// `n_tup_upd` of an allowlisted base table.
+    TableUpdatedTuples,
+    /// `n_tup_hot_upd` of an allowlisted base table.
+    TableHotUpdatedTuples,
     /// Samples in a target's recorded breach run.
     BreachSamples,
     /// Consecutive failed actions recorded for a target.

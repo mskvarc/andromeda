@@ -1,9 +1,10 @@
 //! On-disk size sampling for the live schema's fixed set of base tables.
 //!
 //! A coarse, bounded read used only for storage-transparency gauges: it reports
-//! the total and index bytes of a closed allowlist of `public` base tables.
-//! Snapshot schemas are deliberately excluded so the series count stays fixed no
-//! matter how many snapshots exist.
+//! the total and index bytes of a closed allowlist of `public` base tables, and
+//! the updates each table took and how many of them were heap-only. Snapshot
+//! schemas are deliberately excluded so the series count stays fixed no matter
+//! how many snapshots exist.
 
 use crate::{
     catalog_counter::{CatalogCounter, non_negative},
@@ -62,9 +63,16 @@ pub struct TableSize {
     pub total_bytes: u64,
     /// On-disk bytes held by the table's indexes.
     pub index_bytes: u64,
+    /// `n_tup_upd`: rows updated since the table's statistics were reset,
+    /// heap-only updates included.
+    pub updated_tuples: u64,
+    /// `n_tup_hot_upd`: the updates that touched no index, because the new
+    /// row version fit on the old one's page and no indexed column changed.
+    pub hot_updated_tuples: u64,
 }
 
-/// Read total and index bytes for every allowlisted base table in `public`.
+/// Read total and index bytes and update counters for every allowlisted base
+/// table in `public`.
 ///
 /// # Errors
 ///
@@ -81,17 +89,21 @@ pub async fn table_sizes(connection: &mut PgConnection) -> Result<Vec<TableSize>
                 table,
                 total_bytes: non_negative(row.try_get(SizeColumn::TotalBytes.as_str())?, CatalogCounter::TableTotalBytes)?,
                 index_bytes: non_negative(row.try_get(SizeColumn::IndexBytes.as_str())?, CatalogCounter::TableIndexBytes)?,
+                updated_tuples: non_negative(row.try_get(SizeColumn::UpdatedTuples.as_str())?, CatalogCounter::TableUpdatedTuples)?,
+                hot_updated_tuples: non_negative(row.try_get(SizeColumn::HotUpdatedTuples.as_str())?, CatalogCounter::TableHotUpdatedTuples)?,
             })
         })
         .collect()
 }
 
-/// Cheap catalog size query for every allowlisted base table.
+/// Cheap catalog size and update-counter query for every allowlisted base table.
 fn table_sizes_statement() -> SelectStatement {
     Query::select()
         .column(Alias::new(SizeColumn::Relname.as_str()))
         .expr_as(total_relation_size(Expr::col(Alias::new("relid"))), Alias::new(SizeColumn::TotalBytes.as_str()))
         .expr_as(indexes_size(Expr::col(Alias::new("relid"))), Alias::new(SizeColumn::IndexBytes.as_str()))
+        .expr_as(Expr::col(Alias::new("n_tup_upd")), Alias::new(SizeColumn::UpdatedTuples.as_str()))
+        .expr_as(Expr::col(Alias::new("n_tup_hot_upd")), Alias::new(SizeColumn::HotUpdatedTuples.as_str()))
         .from(Alias::new("pg_stat_user_tables"))
         .and_where(Expr::col(Alias::new("schemaname")).eq("public"))
         .and_where(Expr::col(Alias::new("relname")).is_in(SizedTable::ALL.map(<&'static str>::from)))
@@ -107,6 +119,10 @@ enum SizeColumn {
     TotalBytes,
     /// Index physical bytes projection.
     IndexBytes,
+    /// Updated-rows projection.
+    UpdatedTuples,
+    /// Heap-only updated-rows projection.
+    HotUpdatedTuples,
 }
 
 impl SizeColumn {
@@ -116,6 +132,8 @@ impl SizeColumn {
             SizeColumn::Relname => "relname",
             SizeColumn::TotalBytes => "total_bytes",
             SizeColumn::IndexBytes => "index_bytes",
+            SizeColumn::UpdatedTuples => "updated_tuples",
+            SizeColumn::HotUpdatedTuples => "hot_updated_tuples",
         }
     }
 }
@@ -143,5 +161,14 @@ mod tests {
         assert!(sql.contains("pg_indexes_size"), "{sql}");
         assert!(sql.contains("current_attributes"), "{sql}");
         assert!(sql.contains("subscription_delivery_state"), "{sql}");
+    }
+
+    #[test]
+    fn size_sample_reads_update_and_hot_update_counters() {
+        let sql = table_sizes_statement().to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""n_tup_upd" AS "updated_tuples""#), "{sql}");
+        assert!(sql.contains(r#""n_tup_hot_upd" AS "hot_updated_tuples""#), "{sql}");
+        assert!(sql.contains("'entities'"), "{sql}");
+        assert!(sql.contains("'entity_search'"), "{sql}");
     }
 }

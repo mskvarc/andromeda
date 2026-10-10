@@ -28,6 +28,9 @@ pub const DB_POOL_IDLE_CONNECTIONS: &str = "andromeda_db_pool_idle_connections";
 pub const DB_TABLE_BYTES: &str = "andromeda_db_table_bytes";
 /// Gauge of on-disk bytes held by one live-schema base table's indexes.
 pub const DB_TABLE_INDEX_BYTES: &str = "andromeda_db_table_index_bytes";
+/// Gauge of the share, from 0 to 1, of one live-schema base table's updates
+/// since its statistics reset that were heap-only (touched no index).
+pub const DB_TABLE_HOT_UPDATE_RATIO: &str = "andromeda_db_table_hot_update_ratio";
 /// Counter of durable-queue item outcomes.
 pub const QUEUE_OUTCOMES_TOTAL: &str = "andromeda_queue_outcomes_total";
 /// Counter of entity-service operations, labelled by operation and outcome.

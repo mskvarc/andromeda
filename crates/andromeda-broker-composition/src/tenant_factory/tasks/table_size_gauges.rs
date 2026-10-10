@@ -1,4 +1,5 @@
-//! Periodic sampling of one tenant's base-table sizes into the metrics gauges.
+//! Periodic sampling of one tenant's base-table sizes and heap-only update
+//! shares into the metrics gauges.
 
 use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, background_pacer::BackgroundPacer, error::TenantAssemblyError};
 use andromeda_postgresql_maintenance::{error::MaintenanceError, table_size::table_sizes};
@@ -74,6 +75,8 @@ pub(super) fn register_table_size_gauges(
                             TableSizeSample {
                                 total_bytes: sample.total_bytes,
                                 index_bytes: sample.index_bytes,
+                                updated_tuples: sample.updated_tuples,
+                                hot_updated_tuples: sample.hot_updated_tuples,
                             },
                         );
                     }
