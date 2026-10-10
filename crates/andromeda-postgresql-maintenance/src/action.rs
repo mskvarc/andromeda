@@ -7,6 +7,7 @@ use crate::{
     controller::PassOutcome,
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
+    gin_density::{self, Density, DensityReading},
     inspection,
     policy::{
         ActionEnding,
@@ -21,7 +22,7 @@ use crate::{
         safety_deferral,
     },
     safety_gate_inspection,
-    state::{RegisteredTenant, target_record, tenant_inspection},
+    state::{RegisteredTenant, density_baseline, target_record, tenant_inspection},
     vacuum_horizon::{self, HorizonHolder},
 };
 use andromeda_postgresql_context_store::maintenance_config::MaintenanceMode;
@@ -143,24 +144,49 @@ pub(crate) async fn execute_pending(
             let duration = started.elapsed();
             let comparison = read_comparison(tenant_connection, baseline).await?;
             record_action(action, MaintenanceActionOutcome::Succeeded, duration, Some(comparison.effect()));
-            let verdict = action_verdict(profile, comparison);
+            let verdict = action_verdict(profile, target, comparison);
             let cooldown_until = cooldown_after(profile, ActionEnding::Completed(verdict), Utc::now());
             target_record::record_action_completion(platform, tenant, target, verdict, cooldown_until, comparison).await?;
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Acted).await?;
             match comparison {
                 ActionComparison::Index { before_bytes, after_bytes } => {
-                    info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), before_bytes, after_bytes, reclaimed_bytes = before_bytes.saturating_sub(after_bytes), duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
+                    info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), before_bytes, after_bytes, reclaimed_bytes = before_bytes.saturating_sub(after_bytes), verdict = ?verdict, cooldown_until = %cooldown_until, duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
+                    if let MaintenanceTarget::Index(index) = target
+                        && index.density_column().is_some()
+                    {
+                        reset_density_baseline(platform, tenant_connection, tenant, index).await?;
+                    }
                 }
                 ActionComparison::Heap { before, after } => {
                     info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), dead_tuples_before = before.dead, dead_tuples_after = after.dead, removed_dead_tuples = before.dead.saturating_sub(after.dead), live_tuples_after = after.live, dead_percent_after = ?comparison.post_vacuum_dead_percent(), verdict = ?verdict, cooldown_until = %cooldown_until, duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
+                    if verdict == ActionVerdict::Ineffective {
+                        report_horizon_holders(tenant_connection, tenant, target).await?;
+                    }
                 }
-            }
-            if verdict == ActionVerdict::Ineffective {
-                report_horizon_holders(tenant_connection, tenant, target).await?;
             }
             Ok(PassOutcome::Acted)
         }
     }
+}
+
+/// Record a rebuilt density-measured GIN's density as its new baseline, read
+/// the way a catalog sample reads it. A GIN whose covered rows the statistics
+/// no longer describe has its baseline cleared, so its next observation
+/// records one.
+async fn reset_density_baseline(
+    platform: &mut PgConnection,
+    tenant_connection: &mut PgConnection,
+    tenant: &RegisteredTenant,
+    index: IndexTarget,
+) -> Result<(), MaintenanceError> {
+    let sizes = inspection::index_sizes(tenant_connection).await?;
+    let coverage = gin_density::gin_coverage(tenant_connection).await?;
+    let baseline = gin_density::density_readings(&sizes, &coverage)
+        .find(|reading| reading.target == index)
+        .and_then(DensityReading::density);
+    density_baseline::record_density_baseline(platform, tenant, index, baseline).await?;
+    info!(tenant = tenant.log_name(), database = %tenant.database, target = index.relation_name(), baseline_millibytes_per_row = ?baseline.map(Density::millibytes_per_row), "PostgreSQL maintenance density baseline reset after rebuild");
+    Ok(())
 }
 
 /// Log every holder of the vacuum horizon after a vacuum that could not
@@ -265,7 +291,9 @@ const fn target_action(target: MaintenanceTarget) -> MaintenanceAction {
             | IndexTarget::IdxCaValueUri
             | IndexTarget::IdxCaValueGeometry
             | IndexTarget::IdxCaEntityGeometry
-            | IndexTarget::IdxCaSubEqKeys,
+            | IndexTarget::IdxCaSubEqKeys
+            | IndexTarget::IdxCaValueObject
+            | IndexTarget::IdxCaValueLongTextTrgm,
         ) => MaintenanceAction::Reindex,
         MaintenanceTarget::Heap(HeapTarget::CurrentAttributes | HeapTarget::Entities | HeapTarget::SubscriptionDeliveryState) => MaintenanceAction::Vacuum,
     }

@@ -29,8 +29,14 @@
 --
 -- `cooldown_until` is set by every action: the profile's success cooldown
 -- after an effective action, its shorter ineffective cooldown after a vacuum
--- that left the dead share at or above its threshold, and a backoff doubling
--- with `consecutive_failures` (capped at 24 hours) after a failure.
+-- that left the dead share at or above its threshold or a density-measured GIN
+-- rebuild that reclaimed less than the profile's reclaim floor, and a backoff
+-- doubling with `consecutive_failures` (capped at 24 hours) after a failure.
+--
+-- `baseline_density` is a density-measured GIN's bytes per covered row, in
+-- thousandths of a byte, recorded on its first observation and again after
+-- each successful rebuild. It stays NULL for every other target, and for a GIN
+-- whose covered rows the statistics do not yet describe.
 --
 -- Codes:
 --
@@ -45,7 +51,8 @@
 --     5 idx_ca_value_boolean, 6 idx_ca_value_date_time, 7 idx_ca_value_uri,
 --     8 idx_ca_value_geometry, 9 idx_ca_entity_geometry,
 --     10 idx_ca_sub_eq_keys, 11 current_attributes, 12 entities,
---     13 subscription_delivery_state
+--     13 subscription_delivery_state, 14 idx_ca_value_object,
+--     15 idx_ca_value_long_text_trgm
 --   last_action_result: 1 succeeded, 2 failed, 3 ineffective
 -- ============================================================================
 create table postgresql_maintenance_tenants (
@@ -71,6 +78,7 @@ create table postgresql_maintenance_targets (
     last_after_bytes bigint,
     last_dead_tuples_before bigint,
     last_dead_tuples_after bigint,
+    baseline_density bigint,
     first_breach_at timestamptz,
     breach_samples integer not null default 0,
     consecutive_failures integer not null default 0,
@@ -79,11 +87,12 @@ create table postgresql_maintenance_targets (
     is_action_pending boolean not null default false,
     constraint pk_postgresql_maintenance_targets primary key (tenant_key, target),
     constraint fk_postgresql_maintenance_targets_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
-    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 13),
+    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 15),
     constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 3),
     constraint chk_postgresql_maintenance_targets_breach_run check (breach_samples >= 0 and (first_breach_at is null) = (breach_samples = 0)),
     constraint chk_postgresql_maintenance_targets_failures_non_negative check (consecutive_failures >= 0),
     constraint chk_postgresql_maintenance_targets_sizes_non_negative check ((last_before_bytes is null or last_before_bytes >= 0) and (last_after_bytes is null or last_after_bytes >= 0)),
-    constraint chk_postgresql_maintenance_targets_dead_tuples_non_negative check ((last_dead_tuples_before is null or last_dead_tuples_before >= 0) and (last_dead_tuples_after is null or last_dead_tuples_after >= 0))
+    constraint chk_postgresql_maintenance_targets_dead_tuples_non_negative check ((last_dead_tuples_before is null or last_dead_tuples_before >= 0) and (last_dead_tuples_after is null or last_dead_tuples_after >= 0)),
+    constraint chk_postgresql_maintenance_targets_baseline_density_positive check (baseline_density is null or baseline_density > 0)
 );
 

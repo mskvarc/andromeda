@@ -25,6 +25,7 @@ mod fleet_observation;
 mod fleet_triage;
 mod freeze_policy;
 mod freeze_report;
+mod gin_density;
 mod inspection;
 /// Threshold and safety-gate decision policy.
 pub mod policy;

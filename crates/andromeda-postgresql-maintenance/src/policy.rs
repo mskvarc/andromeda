@@ -1,6 +1,6 @@
 //! Pure profile thresholds and maintenance decision policy.
 
-use crate::{action_measurement::ActionComparison, vacuum_horizon::HorizonHolderKind};
+use crate::{action_measurement::ActionComparison, candidate::MaintenanceTarget, vacuum_horizon::HorizonHolderKind};
 use andromeda_postgresql_context_store::maintenance_config::{MaintenanceMode, MaintenanceProfile};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::time::Duration;
@@ -299,18 +299,30 @@ pub fn breach_after(breach: Option<BreachRun>, decision: PolicyDecision, sample:
 pub enum ActionVerdict {
     /// The action achieved its purpose.
     Effective,
-    /// A vacuum completed, yet the dead share it left still meets the
-    /// threshold that queued it: something held the horizon.
+    /// A vacuum left the dead share at or above the threshold that queued it,
+    /// because something held the horizon; or a rebuild of a density-measured
+    /// GIN reclaimed less than the reclaim floor, because its density grew
+    /// with its values rather than with bloat.
     Ineffective,
 }
 
 /// Judge a completed action by the reading taken after it.
 ///
-/// A rebuild is always effective, and so is a vacuum of a heap left empty.
-pub(crate) fn action_verdict(profile: PolicyProfile, comparison: ActionComparison) -> ActionVerdict {
-    match comparison.post_vacuum_dead_percent() {
-        Some(dead_percent) if dead_percent >= profile.heap_dead_percent => ActionVerdict::Ineffective,
-        Some(_) | None => ActionVerdict::Effective,
+/// A vacuum of a heap left empty is effective. A rebuild of an index probed or
+/// queued through a canary is always effective: its free space was measured,
+/// not inferred.
+pub(crate) fn action_verdict(profile: PolicyProfile, target: MaintenanceTarget, comparison: ActionComparison) -> ActionVerdict {
+    match comparison {
+        ActionComparison::Index { before_bytes, after_bytes } => match target {
+            MaintenanceTarget::Index(index) if index.density_column().is_some() && before_bytes.saturating_sub(after_bytes) < profile.minimum_reclaim_bytes => {
+                ActionVerdict::Ineffective
+            }
+            MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_) => ActionVerdict::Effective,
+        },
+        ActionComparison::Heap { after, .. } => match after.dead_percent() {
+            Some(dead_percent) if dead_percent >= profile.heap_dead_percent => ActionVerdict::Ineffective,
+            Some(_) | None => ActionVerdict::Effective,
+        },
     }
 }
 
@@ -354,6 +366,7 @@ fn failure_backoff(base: ChronoDuration, consecutive_failures: u32) -> ChronoDur
 mod tests {
     use crate::{
         action_measurement::{ActionComparison, TupleCounts},
+        candidate::{HeapTarget, MaintenanceTarget},
         policy::{
             ActionEnding,
             ActionVerdict,
@@ -651,10 +664,11 @@ mod tests {
             before: TupleCounts { dead: 50_000, live },
             after: TupleCounts { dead, live },
         };
+        let heap = MaintenanceTarget::Heap(HeapTarget::CurrentAttributes);
         assert_eq!(profile.heap_dead_percent, 10);
-        assert_eq!(action_verdict(profile, vacuum(20, 80)), ActionVerdict::Ineffective);
-        assert_eq!(action_verdict(profile, vacuum(5, 95)), ActionVerdict::Effective);
-        assert_eq!(action_verdict(profile, vacuum(0, 0)), ActionVerdict::Effective);
+        assert_eq!(action_verdict(profile, heap, vacuum(20, 80)), ActionVerdict::Ineffective);
+        assert_eq!(action_verdict(profile, heap, vacuum(5, 95)), ActionVerdict::Effective);
+        assert_eq!(action_verdict(profile, heap, vacuum(0, 0)), ActionVerdict::Effective);
     }
 
     #[test]

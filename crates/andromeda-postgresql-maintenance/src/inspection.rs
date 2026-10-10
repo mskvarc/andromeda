@@ -277,8 +277,8 @@ mod tests {
         assert!(invalid_sql.contains("indisvalid"), "{invalid_sql}");
     }
 
-    /// The size sample reads the GIN indexes too, so a canary's queued GIN
-    /// reports its bytes before and after its rebuild.
+    /// The size sample reads the GIN indexes too: a density is computed from
+    /// it, and a queued GIN reports its bytes before and after its rebuild.
     #[test]
     fn the_index_size_sample_reads_every_current_attributes_index_the_key_gin_included() {
         let sql = index_sizes_statement().to_string(PostgresQueryBuilder);

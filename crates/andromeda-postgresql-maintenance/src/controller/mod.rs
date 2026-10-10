@@ -1,6 +1,7 @@
 //! One bounded, fleet-serialized PostgreSQL maintenance controller pass.
 
-mod heap_sampling;
+mod catalog_sampling;
+mod density_sampling;
 mod index_probing;
 mod probe_selection;
 
@@ -8,11 +9,13 @@ use crate::{
     action,
     btree_estimate,
     capability::{self, CapabilityStatus, MutationPrivilege},
+    controller::catalog_sampling::CatalogSample,
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
     fleet_observation,
     fleet_triage,
     freeze_report,
+    gin_density,
     inspection::{self, InvalidIndex},
     policy::{PolicyProfile, SafetyGates},
     state::{self, RegisteredTenant, target_record, tenant_inspection},
@@ -172,9 +175,12 @@ impl MaintenanceController {
         let index_sizes = inspection::index_sizes(&mut connection).await?;
         let estimates = btree_estimate::btree_estimates(&mut connection).await?;
         let heap_samples = inspection::heap_samples(&mut connection, profile).await?;
+        let coverage = gin_density::gin_coverage(&mut connection).await?;
         let pending_before_sampling = target_record::pending_action(platform, tenant).await?;
         let probe_states = target_record::index_probe_states(platform, tenant).await?;
-        let sampling_outcome = heap_sampling::record_heap_samples(self.config.mode, platform, tenant, &heap_samples, profile).await?;
+        let density_samples = density_sampling::density_samples(platform, tenant, &index_sizes, &coverage, profile).await?;
+        let samples = heap_samples.iter().map(CatalogSample::of_heap).chain(density_samples).collect::<Vec<_>>();
+        let sampling_outcome = catalog_sampling::record_catalog_samples(self.config.mode, platform, tenant, &samples, profile).await?;
 
         for index in &invalid {
             if index.recovery_artifact().is_none() {

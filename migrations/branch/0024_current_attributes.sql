@@ -168,22 +168,26 @@ where
     value_uri is not null;
 
 -- A long String is too long to key a B-tree on, so a `q` comparison over it
--- drives from the attribute key alone and filters the value on the heap.
+-- drives from the attribute key alone and filters the value on the heap. It
+-- is not a maintenance target: a value update leaves its key unchanged, so
+-- bottom-up index deletion removes the version churn as it happens.
 create index idx_ca_value_long_text on current_attributes (attribute_name_key)
 where
     value_long_text is not null;
 
 -- Patterns over long Strings, and their equality, which `gin_trgm_ops` also
--- serves. Neither long-text index is a maintenance target: they cover rare
--- values, and vacuuming the table reclaims their dead entries.
+-- serves. A maintenance target measured by its density: each long value
+-- yields on the order of a thousand trigram keys, and vacuum removes dead
+-- entries without merging entry-tree pages.
 create index idx_ca_value_long_text_trgm on current_attributes using gin (attribute_name_key int4_ops, value_long_text gin_trgm_ops) with (fastupdate = off)
 where
     value_long_text is not null;
 
 -- A long Relationship object is too long to key a B-tree on, so a `q`
 -- equality over it drives from the attribute key alone and filters the value
--- on the heap. Like the long-text indexes it covers rare values and is not a
--- maintenance target.
+-- on the heap. It is not a maintenance target: a value update leaves its key
+-- unchanged, so bottom-up index deletion removes the version churn as it
+-- happens.
 create index idx_ca_value_long_uri on current_attributes (attribute_name_key)
 where
     value_long_uri is not null;

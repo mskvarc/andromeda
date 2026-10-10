@@ -71,6 +71,10 @@ pub enum PostgresqlMaintenanceTargets {
     /// Dead tuples immediately after the last successful vacuum, NULL for an
     /// index target.
     LastDeadTuplesAfter,
+    /// A density-measured GIN's bytes per covered row in thousandths of a
+    /// byte, set on its first observation and after each successful rebuild;
+    /// NULL for every other target.
+    BaselineDensity,
 }
 
 #[cfg(test)]
@@ -93,5 +97,6 @@ mod tests {
         assert_eq!(PostgresqlMaintenanceTargets::LastDeadTuplesAfter.to_string(), "last_dead_tuples_after");
         assert_eq!(PostgresqlMaintenanceTargets::FirstBreachAt.to_string(), "first_breach_at");
         assert_eq!(PostgresqlMaintenanceTargets::BreachSamples.to_string(), "breach_samples");
+        assert_eq!(PostgresqlMaintenanceTargets::BaselineDensity.to_string(), "baseline_density");
     }
 }

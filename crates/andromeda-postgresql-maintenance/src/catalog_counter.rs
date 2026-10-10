@@ -24,6 +24,8 @@ pub enum CatalogCounter {
     IndexKeyWidth,
     /// The server's page size.
     BlockSize,
+    /// Rows a density-measured GIN covers, from `pg_class` and `pg_stats`.
+    CoveredRows,
     /// Free bytes a detailed index probe measured.
     IndexFreeBytes,
     /// Physical length a detailed index probe measured.
@@ -64,6 +66,8 @@ pub enum CatalogCounter {
     BeforeDeadTuples,
     /// Dead tuples recorded after a vacuum.
     AfterDeadTuples,
+    /// A density-measured GIN's recorded baseline density.
+    BaselineDensity,
 }
 
 /// Convert one PostgreSQL counter that the catalog guarantees is non-negative.

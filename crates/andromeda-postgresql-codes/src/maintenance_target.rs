@@ -37,6 +37,10 @@ compact_code_registry! {
             Entities = 12, "entities";
             /// The subscription delivery-state heap.
             SubscriptionDeliveryState = 13, "subscription_delivery_state";
+            /// The current attributes' JSON object containment index.
+            IdxCaValueObject = 14, "idx_ca_value_object";
+            /// The current attributes' long-string trigram index.
+            IdxCaValueLongTextTrgm = 15, "idx_ca_value_long_text_trgm";
         }
     }
 }
@@ -48,15 +52,17 @@ mod tests {
 
     #[test]
     fn the_members_are_numbered_as_the_migration_documents_them() {
-        assert_eq!(MaintenanceTargetCode::ALL.len(), 13);
+        assert_eq!(MaintenanceTargetCode::ALL.len(), 15);
         assert_eq!(MaintenanceTargetCode::UqCurrentAttributesGrain.code(), 1);
         assert_eq!(MaintenanceTargetCode::IdxCaSubEqKeys.code(), 10);
         assert_eq!(MaintenanceTargetCode::SubscriptionDeliveryState.code(), 13);
+        assert_eq!(MaintenanceTargetCode::IdxCaValueObject.code(), 14);
+        assert_eq!(MaintenanceTargetCode::IdxCaValueLongTextTrgm.code(), 15);
     }
 
     #[test]
     fn zero_and_the_number_after_the_last_member_fail_to_decode() {
         assert!(MaintenanceTargetCode::try_from(0).is_err());
-        assert!(MaintenanceTargetCode::try_from(14).is_err());
+        assert!(MaintenanceTargetCode::try_from(16).is_err());
     }
 }

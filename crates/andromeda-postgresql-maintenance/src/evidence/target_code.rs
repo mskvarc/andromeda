@@ -19,6 +19,8 @@ pub(crate) const fn stored_target(target: MaintenanceTarget) -> MaintenanceTarge
         MaintenanceTarget::Heap(HeapTarget::CurrentAttributes) => MaintenanceTargetCode::CurrentAttributes,
         MaintenanceTarget::Heap(HeapTarget::Entities) => MaintenanceTargetCode::Entities,
         MaintenanceTarget::Heap(HeapTarget::SubscriptionDeliveryState) => MaintenanceTargetCode::SubscriptionDeliveryState,
+        MaintenanceTarget::Index(IndexTarget::IdxCaValueObject) => MaintenanceTargetCode::IdxCaValueObject,
+        MaintenanceTarget::Index(IndexTarget::IdxCaValueLongTextTrgm) => MaintenanceTargetCode::IdxCaValueLongTextTrgm,
     }
 }
 
@@ -38,6 +40,8 @@ pub(crate) const fn target_of(code: MaintenanceTargetCode) -> MaintenanceTarget 
         MaintenanceTargetCode::CurrentAttributes => MaintenanceTarget::Heap(HeapTarget::CurrentAttributes),
         MaintenanceTargetCode::Entities => MaintenanceTarget::Heap(HeapTarget::Entities),
         MaintenanceTargetCode::SubscriptionDeliveryState => MaintenanceTarget::Heap(HeapTarget::SubscriptionDeliveryState),
+        MaintenanceTargetCode::IdxCaValueObject => MaintenanceTarget::Index(IndexTarget::IdxCaValueObject),
+        MaintenanceTargetCode::IdxCaValueLongTextTrgm => MaintenanceTarget::Index(IndexTarget::IdxCaValueLongTextTrgm),
     }
 }
 

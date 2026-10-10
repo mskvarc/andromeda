@@ -106,7 +106,7 @@ fn stored_count(row: &PgRow, column: PostgresqlMaintenanceTargets, counter: Cata
     })
 }
 
-/// Return the first pending action whose backoff has elapsed, keeping each
+/// Return the first pending action whose backoff has elapsed, keeping the
 /// canary B-tree ahead of its GIN pair.
 pub(crate) async fn pending_action(connection: &mut PgConnection, tenant: &RegisteredTenant) -> Result<Option<MaintenanceTarget>, MaintenanceError> {
     let statement = pending_actions_statement()
@@ -164,9 +164,9 @@ async fn read_pending_actions(connection: &mut PgConnection, statement: &SelectS
 
 /// The pending target to act on first: any due target but a GIN queued
 /// through a canary, so a canary is rebuilt on an earlier pass than its GIN,
-/// and a due GIN once nothing else is pending. A target still in its failure
+/// and a due canary-queued GIN once nothing else is pending. A target still in its failure
 /// backoff is skipped, so it does not hold back the rest of the tenant's pass,
-/// yet it still holds back every GIN.
+/// yet it still holds back every canary-queued GIN.
 fn first_pending(pending: &[PendingAction], now: DateTime<Utc>) -> Option<MaintenanceTarget> {
     let is_gin = |action: &PendingAction| match action.target {
         MaintenanceTarget::Index(index) => index.canary().is_some(),
@@ -470,22 +470,16 @@ mod tests {
 
     #[test]
     fn a_canary_is_acted_on_before_the_gin_it_queued() {
-        for (canary, gin) in [
-            (IndexTarget::IdxCaValueString, IndexTarget::IdxCaValueStringTrgm),
-            (IndexTarget::UqCurrentAttributesGrain, IndexTarget::IdxCaSubEqKeys),
-        ] {
-            assert_eq!(
-                first_pending(&[due(MaintenanceTarget::Index(gin)), due(MaintenanceTarget::Index(canary))], Utc::now()),
-                Some(MaintenanceTarget::Index(canary))
-            );
-        }
+        let canary = MaintenanceTarget::Index(IndexTarget::IdxCaValueString);
+        let gin = MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm);
+        assert_eq!(first_pending(&[due(gin), due(canary)], Utc::now()), Some(canary));
     }
 
     #[test]
     fn a_gin_is_acted_on_once_nothing_else_is_pending() {
         assert_eq!(
-            first_pending(&[due(MaintenanceTarget::Index(IndexTarget::IdxCaSubEqKeys))], Utc::now()),
-            Some(MaintenanceTarget::Index(IndexTarget::IdxCaSubEqKeys))
+            first_pending(&[due(MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm))], Utc::now()),
+            Some(MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm))
         );
         assert_eq!(first_pending(&[], Utc::now()), None);
     }
@@ -495,13 +489,22 @@ mod tests {
         assert_eq!(
             first_pending(
                 &[
-                    due(MaintenanceTarget::Index(IndexTarget::IdxCaSubEqKeys)),
+                    due(MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm)),
                     due(MaintenanceTarget::Heap(HeapTarget::CurrentAttributes)),
                 ],
                 Utc::now()
             ),
             Some(MaintenanceTarget::Heap(HeapTarget::CurrentAttributes))
         );
+    }
+
+    /// A density-measured GIN is queued by its own sample, so no canary has
+    /// to be rebuilt first: it is acted on in target order like a B-tree.
+    #[test]
+    fn a_density_measured_gin_is_not_held_back_behind_other_work() {
+        let gin = MaintenanceTarget::Index(IndexTarget::IdxCaSubEqKeys);
+        let heap = MaintenanceTarget::Heap(HeapTarget::Entities);
+        assert_eq!(first_pending(&[due(gin), due(heap)], Utc::now()), Some(gin));
     }
 
     #[test]

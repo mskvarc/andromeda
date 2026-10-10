@@ -9,11 +9,15 @@ use sea_query::Iden;
 use strum::{Display, EnumString, IntoStaticStr};
 
 /// An allowlisted `current_attributes` index.
+///
+/// `idx_ca_value_long_text` and `idx_ca_value_long_uri` are left out: both are
+/// keyed on the attribute key alone, so a value update leaves their key
+/// unchanged and bottom-up index deletion removes the version churn as it
+/// happens.
 #[derive(Clone, Copy, Debug, Display, EnumString, Eq, Hash, Iden, IntoStaticStr, PartialEq)]
 #[strum(serialize_all = "snake_case")]
 pub enum IndexTarget {
-    /// Natural entity/attribute/dataset grain, and bloat canary for the paired
-    /// sub-attribute key rebuild.
+    /// Natural entity/attribute/dataset grain.
     UqCurrentAttributesGrain,
     /// Numeric predicate index.
     IdxCaValueNumber,
@@ -31,13 +35,45 @@ pub enum IndexTarget {
     IdxCaValueGeometry,
     /// Entity/attribute geometry correlation index.
     IdxCaEntityGeometry,
-    /// Sub-attribute equality key GIN, queued only through its canary.
+    /// Sub-attribute equality key GIN, measured by its density.
     IdxCaSubEqKeys,
+    /// JSON object containment GIN, measured by its density.
+    IdxCaValueObject,
+    /// Attribute-aware long-string trigram GIN, measured by its density.
+    IdxCaValueLongTextTrgm,
+}
+
+/// The nullable column whose non-null rows a density-measured GIN covers: each
+/// such GIN is partial on that column being non-null.
+#[derive(Clone, Copy, Debug, Display, EnumString, Eq, Hash, IntoStaticStr, PartialEq)]
+#[strum(serialize_all = "snake_case")]
+pub enum DensityColumn {
+    /// `sub_attributes`, covered by `idx_ca_sub_eq_keys`.
+    SubAttributes,
+    /// `value_object`, covered by `idx_ca_value_object`.
+    ValueObject,
+    /// `value_long_text`, covered by `idx_ca_value_long_text_trgm`.
+    ValueLongText,
+}
+
+impl DensityColumn {
+    /// Every column a density-measured GIN covers.
+    pub const ALL: [DensityColumn; 3] = [DensityColumn::SubAttributes, DensityColumn::ValueObject, DensityColumn::ValueLongText];
+
+    /// The GIN that covers this column's non-null rows.
+    #[must_use]
+    pub const fn gin(self) -> IndexTarget {
+        match self {
+            DensityColumn::SubAttributes => IndexTarget::IdxCaSubEqKeys,
+            DensityColumn::ValueObject => IndexTarget::IdxCaValueObject,
+            DensityColumn::ValueLongText => IndexTarget::IdxCaValueLongTextTrgm,
+        }
+    }
 }
 
 impl IndexTarget {
     /// Every index that may be rebuilt or recognized during recovery.
-    pub const ALL: [IndexTarget; 10] = [
+    pub const ALL: [IndexTarget; 12] = [
         IndexTarget::UqCurrentAttributesGrain,
         IndexTarget::IdxCaValueNumber,
         IndexTarget::IdxCaValueString,
@@ -48,6 +84,8 @@ impl IndexTarget {
         IndexTarget::IdxCaValueGeometry,
         IndexTarget::IdxCaEntityGeometry,
         IndexTarget::IdxCaSubEqKeys,
+        IndexTarget::IdxCaValueObject,
+        IndexTarget::IdxCaValueLongTextTrgm,
     ];
 
     /// Indexes eligible for direct physical bloat probing.
@@ -65,25 +103,26 @@ impl IndexTarget {
     /// The GIN index queued together with this probeable B-tree, its bloat
     /// canary.
     ///
-    /// `pgstattuple` reads no GIN index, so a GIN is never measured itself: the
-    /// B-tree over the rows whose churn bloats it stands in for it. The string
-    /// B-tree covers exactly the rows the trigram GIN covers. The grain covers
-    /// every row the sub-attribute key GIN covers, and a row whose
-    /// `sub_attributes` change is never a heap-only update (the key expression
-    /// reads the column), so each such change also leaves a dead grain entry.
+    /// `pgstattuple` reads no GIN index, so a GIN is never probed itself. A
+    /// canary stands in for it only when every change that bloats the GIN also
+    /// leaves a dead canary entry that only vacuum removes: the string B-tree's
+    /// key contains `value_string`, and it covers exactly the rows the trigram
+    /// GIN covers. Every other GIN is measured by its density.
     #[must_use]
     pub const fn paired_gin(self) -> Option<IndexTarget> {
         match self {
             IndexTarget::IdxCaValueString => Some(IndexTarget::IdxCaValueStringTrgm),
-            IndexTarget::UqCurrentAttributesGrain => Some(IndexTarget::IdxCaSubEqKeys),
-            IndexTarget::IdxCaValueNumber
+            IndexTarget::UqCurrentAttributesGrain
+            | IndexTarget::IdxCaValueNumber
             | IndexTarget::IdxCaValueStringTrgm
             | IndexTarget::IdxCaValueBoolean
             | IndexTarget::IdxCaValueDateTime
             | IndexTarget::IdxCaValueUri
             | IndexTarget::IdxCaValueGeometry
             | IndexTarget::IdxCaEntityGeometry
-            | IndexTarget::IdxCaSubEqKeys => None,
+            | IndexTarget::IdxCaSubEqKeys
+            | IndexTarget::IdxCaValueObject
+            | IndexTarget::IdxCaValueLongTextTrgm => None,
         }
     }
 
@@ -93,10 +132,32 @@ impl IndexTarget {
     pub const fn canary(self) -> Option<IndexTarget> {
         match self {
             IndexTarget::IdxCaValueStringTrgm => Some(IndexTarget::IdxCaValueString),
-            IndexTarget::IdxCaSubEqKeys => Some(IndexTarget::UqCurrentAttributesGrain),
             IndexTarget::UqCurrentAttributesGrain
             | IndexTarget::IdxCaValueNumber
             | IndexTarget::IdxCaValueString
+            | IndexTarget::IdxCaValueBoolean
+            | IndexTarget::IdxCaValueDateTime
+            | IndexTarget::IdxCaValueUri
+            | IndexTarget::IdxCaValueGeometry
+            | IndexTarget::IdxCaEntityGeometry
+            | IndexTarget::IdxCaSubEqKeys
+            | IndexTarget::IdxCaValueObject
+            | IndexTarget::IdxCaValueLongTextTrgm => None,
+        }
+    }
+
+    /// The column whose non-null rows this GIN covers, `Some` exactly for a
+    /// GIN measured by its density rather than through a canary.
+    #[must_use]
+    pub const fn density_column(self) -> Option<DensityColumn> {
+        match self {
+            IndexTarget::IdxCaSubEqKeys => Some(DensityColumn::SubAttributes),
+            IndexTarget::IdxCaValueObject => Some(DensityColumn::ValueObject),
+            IndexTarget::IdxCaValueLongTextTrgm => Some(DensityColumn::ValueLongText),
+            IndexTarget::UqCurrentAttributesGrain
+            | IndexTarget::IdxCaValueNumber
+            | IndexTarget::IdxCaValueString
+            | IndexTarget::IdxCaValueStringTrgm
             | IndexTarget::IdxCaValueBoolean
             | IndexTarget::IdxCaValueDateTime
             | IndexTarget::IdxCaValueUri
@@ -119,6 +180,8 @@ impl IndexTarget {
             IndexTarget::IdxCaValueGeometry => "idx_ca_value_geometry",
             IndexTarget::IdxCaEntityGeometry => "idx_ca_entity_geometry",
             IndexTarget::IdxCaSubEqKeys => "idx_ca_sub_eq_keys",
+            IndexTarget::IdxCaValueObject => "idx_ca_value_object",
+            IndexTarget::IdxCaValueLongTextTrgm => "idx_ca_value_long_text_trgm",
         }
     }
 
@@ -200,7 +263,9 @@ impl MaintenanceTarget {
                 | IndexTarget::IdxCaValueUri
                 | IndexTarget::IdxCaValueGeometry
                 | IndexTarget::IdxCaEntityGeometry
-                | IndexTarget::IdxCaSubEqKeys,
+                | IndexTarget::IdxCaSubEqKeys
+                | IndexTarget::IdxCaValueObject
+                | IndexTarget::IdxCaValueLongTextTrgm,
             ) => "current_attributes",
             MaintenanceTarget::Heap(target) => target.relation_name(),
         }
@@ -209,9 +274,9 @@ impl MaintenanceTarget {
 
 #[cfg(test)]
 mod tests {
-    use crate::candidate::{HeapTarget, IndexTarget, MaintenanceTarget};
+    use crate::candidate::{DensityColumn, HeapTarget, IndexTarget, MaintenanceTarget};
     use pretty_assertions::assert_eq;
-    use std::collections::HashSet;
+    use std::{collections::HashSet, str::FromStr};
 
     #[test]
     fn every_allowlisted_index_has_one_fixed_concurrent_command() {
@@ -243,42 +308,64 @@ mod tests {
     /// `pgstattuple` reads no GIN index.
     #[test]
     fn no_gin_index_target_is_probed_directly() {
-        for target in [IndexTarget::IdxCaValueStringTrgm, IndexTarget::IdxCaSubEqKeys] {
+        for target in [
+            IndexTarget::IdxCaValueStringTrgm,
+            IndexTarget::IdxCaSubEqKeys,
+            IndexTarget::IdxCaValueObject,
+            IndexTarget::IdxCaValueLongTextTrgm,
+        ] {
             assert!(!IndexTarget::PROBEABLE.contains(&target), "{target}");
         }
     }
 
-    /// An index outside the probe set is never measured, so only a canary can
-    /// queue it; without one it would bloat unattended.
+    /// An index outside the probe set is a GIN, never measured itself; without
+    /// exactly one signal it would bloat unattended, or be queued twice.
     #[test]
-    fn every_index_no_probe_measures_is_queued_through_a_probeable_canary() {
+    fn every_gin_target_is_measured_by_canary_or_density() {
         for target in IndexTarget::ALL.into_iter().filter(|target| !IndexTarget::PROBEABLE.contains(target)) {
-            assert_eq!(
-                target.canary().map(|canary| (IndexTarget::PROBEABLE.contains(&canary), canary.paired_gin())),
-                Some((true, Some(target))),
-                "{target} is queued by a probed canary pairing it"
-            );
+            let by_canary = target
+                .canary()
+                .is_some_and(|canary| IndexTarget::PROBEABLE.contains(&canary) && canary.paired_gin() == Some(target));
+            let by_density = target.density_column().is_some_and(|column| column.gin() == target);
+            assert!(by_canary != by_density, "{target}: canary {by_canary}, density {by_density}");
+        }
+        for target in IndexTarget::PROBEABLE {
+            assert_eq!(target.density_column(), None, "{target} is probed");
         }
     }
 
     #[test]
-    fn the_grain_is_the_canary_of_the_sub_attribute_key_gin() {
-        assert_eq!(IndexTarget::UqCurrentAttributesGrain.paired_gin(), Some(IndexTarget::IdxCaSubEqKeys));
-        assert_eq!(IndexTarget::IdxCaSubEqKeys.canary(), Some(IndexTarget::UqCurrentAttributesGrain));
-        assert_eq!(IndexTarget::IdxCaValueString.paired_gin(), Some(IndexTarget::IdxCaValueStringTrgm));
-    }
-
-    #[test]
-    fn a_canary_and_its_gin_name_each_other_and_no_other_index_is_paired() {
+    fn only_the_string_pair_uses_a_canary() {
         for target in IndexTarget::ALL {
-            if let Some(gin) = target.paired_gin() {
-                assert_eq!(gin.canary(), Some(target), "{target}");
-            }
-            if let Some(canary) = target.canary() {
-                assert_eq!(canary.paired_gin(), Some(target), "{target}");
-                assert_eq!(target.paired_gin(), None, "{target} is a GIN, never a canary");
-            }
+            let expected_gin = (target == IndexTarget::IdxCaValueString).then_some(IndexTarget::IdxCaValueStringTrgm);
+            let expected_canary = (target == IndexTarget::IdxCaValueStringTrgm).then_some(IndexTarget::IdxCaValueString);
+            assert_eq!(target.paired_gin(), expected_gin, "{target}");
+            assert_eq!(target.canary(), expected_canary, "{target}");
         }
+    }
+
+    #[test]
+    fn each_density_column_names_the_gin_partial_on_it() {
+        assert_eq!(
+            DensityColumn::ALL.map(|column| (<&str>::from(column), column.gin().relation_name())),
+            [
+                ("sub_attributes", "idx_ca_sub_eq_keys"),
+                ("value_object", "idx_ca_value_object"),
+                ("value_long_text", "idx_ca_value_long_text_trgm"),
+            ]
+        );
+        for column in DensityColumn::ALL {
+            assert_eq!(column.gin().density_column(), Some(column), "{column}");
+        }
+    }
+
+    #[test]
+    fn long_text_and_long_uri_btrees_are_not_targets() {
+        for name in ["idx_ca_value_long_text", "idx_ca_value_long_uri"] {
+            assert!(IndexTarget::from_str(name).is_err(), "{name}");
+        }
+        assert_eq!(IndexTarget::from_str("idx_ca_value_long_text_trgm"), Ok(IndexTarget::IdxCaValueLongTextTrgm));
+        assert_eq!(IndexTarget::from_str("idx_ca_value_object"), Ok(IndexTarget::IdxCaValueObject));
     }
 
     #[test]

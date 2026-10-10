@@ -2,9 +2,12 @@
 //!
 //! The controller's state lives in the platform database: this module owns the
 //! fleet-wide lock and the identity of a registered tenant,
-//! [`tenant_inspection`] owns what is recorded per tenant and
-//! [`target_record`] what is recorded per target.
+//! [`tenant_inspection`] owns what is recorded per tenant,
+//! [`target_record`] what is recorded per target and [`density_baseline`] the
+//! baseline a density-measured GIN is compared with.
 
+/// The recorded density baseline of each density-measured GIN.
+pub(crate) mod density_baseline;
 /// The durable decision and action state of one maintenance target.
 pub(crate) mod target_record;
 /// The durable evidence of one tenant's inspection.
