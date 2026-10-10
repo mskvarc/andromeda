@@ -36,6 +36,12 @@ pub enum CatalogCounter {
     ConsecutiveFailures,
     /// Age in transactions of an ID holding the vacuum horizon.
     TransactionAge,
+    /// Transaction or multixact ID age of a database's oldest unfrozen ID.
+    DatabaseFreezeAge,
+    /// A server's anti-wraparound freeze maximum setting.
+    FreezeMaxAge,
+    /// Transaction or multixact ID age of a relation's oldest unfrozen ID.
+    RelationFreezeAge,
     /// Relation bytes of a recorded degradation sample.
     SampleRelationBytes,
     /// Reclaimable bytes of a recorded degradation sample.

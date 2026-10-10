@@ -64,6 +64,12 @@ pub const POSTGRESQL_MAINTENANCE_ACTION_SECONDS: &str = "andromeda_postgresql_ma
 pub const POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES: &str = "andromeda_postgresql_maintenance_reclaimed_bytes";
 /// Histogram of dead tuples removed by PostgreSQL maintenance vacuums.
 pub const POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES: &str = "andromeda_postgresql_maintenance_removed_dead_tuples";
+/// Gauge of the oldest database transaction ID age (`age(datfrozenxid)`) across the tenant fleet.
+pub const POSTGRESQL_FREEZE_AGE_MAX: &str = "andromeda_postgresql_freeze_age_max";
+/// Gauge of the oldest database multixact ID age (`mxid_age(datminmxid)`) across the tenant fleet.
+pub const POSTGRESQL_MULTIXACT_AGE_MAX: &str = "andromeda_postgresql_multixact_age_max";
+/// Gauge of tenant databases at each freeze pressure level.
+pub const POSTGRESQL_DATABASES_FREEZE_PRESSURE: &str = "andromeda_postgresql_databases_freeze_pressure";
 /// Gauge of tenant runtimes currently held in the bounded runtime cache.
 pub const TENANT_RUNTIMES_CACHED: &str = "andromeda_tenant_runtimes_cached";
 /// Counter of cold tenant-runtime builds, labelled by outcome.
@@ -103,3 +109,5 @@ pub const LABEL_STAGE: &str = "stage";
 pub const LABEL_DECISION: &str = "decision";
 /// The `action` label naming a bounded maintenance operation family.
 pub const LABEL_ACTION: &str = "action";
+/// The `level` label naming a database freeze pressure level.
+pub const LABEL_LEVEL: &str = "level";

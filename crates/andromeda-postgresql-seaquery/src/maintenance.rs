@@ -118,6 +118,15 @@ pub fn transaction_age(xid: SimpleExpr) -> SimpleExpr {
     cast(Func::cust(MaintenanceFunction::Age).arg(xid).into(), PostgresType::Bigint)
 }
 
+/// `mxid_age(mxid)::bigint`: how many multixact IDs have been assigned since
+/// `mxid`.
+///
+/// `mxid_age` returns `integer`; the cast matches [`transaction_age`].
+#[must_use]
+pub fn multixact_age(mxid: SimpleExpr) -> SimpleExpr {
+    cast(Func::cust(MaintenanceFunction::MxidAge).arg(mxid).into(), PostgresType::Bigint)
+}
+
 /// Maintenance-related PostgreSQL functions absent from `SeaQuery`.
 #[derive(Clone, Copy, Iden)]
 enum MaintenanceFunction {
@@ -141,11 +150,13 @@ enum MaintenanceFunction {
     PgBackendPid,
     /// `age`.
     Age,
+    /// `mxid_age`.
+    MxidAge,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::maintenance::{drop_index_concurrently, reindex_index_concurrently, session_settings, transaction_age, vacuum_non_truncating};
+    use crate::maintenance::{drop_index_concurrently, multixact_age, reindex_index_concurrently, session_settings, transaction_age, vacuum_non_truncating};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 
@@ -156,6 +167,15 @@ mod tests {
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert_eq!(sql, "SELECT age(\"backend_xmin\")::bigint");
+    }
+
+    #[test]
+    fn a_multixact_age_is_read_as_a_bigint() {
+        let sql = Query::select()
+            .expr(multixact_age(Expr::col(Alias::new("datminmxid"))))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT mxid_age(\"datminmxid\")::bigint");
     }
 
     #[test]

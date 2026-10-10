@@ -6,6 +6,8 @@ use crate::{
     capability::{self, CapabilityStatus, MutationPrivilege},
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
+    fleet_observation,
+    freeze_report,
     inspection::{self, HeapSample, IndexSize, InvalidIndex},
     policy::{DeferralReason, PolicyDecision, PolicyProfile, SafetyGates, decide, safety_deferral},
     safety_gate_inspection,
@@ -24,8 +26,8 @@ use andromeda_postgresql_context_store::{
 use andromeda_postgresql_pool::pool_options::configure_pool_options;
 use andromeda_telemetry::maintenance::{MaintenanceDecision, record_decision};
 use chrono::{DateTime, Utc};
-use sqlx::{PgConnection, PgPool};
-use std::time::Duration;
+use sqlx::{PgConnection, PgPool, Postgres, pool::PoolConnection};
+use std::{ops::ControlFlow, time::Duration};
 use strum::Display;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -137,33 +139,19 @@ impl MaintenanceController {
         if cancellation.is_cancelled() {
             return Ok(PassOutcome::Cancelled);
         }
+        let fleet = fleet_observation::observe_fleet(platform).await?;
+        fleet.record_telemetry();
         let Some(tenant) = state::select_least_recently_inspected(platform).await? else {
             return Ok(PassOutcome::NoTenant);
         };
         tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::Started).await?;
-        let tenant_url = self.direct_url.with_database_name(&tenant.database);
-        let pool_result = tokio::select! {
-            () = cancellation.cancelled() => return Ok(PassOutcome::Cancelled),
-            result = configure_pool_options(1, self.acquire_timeout).connect(tenant_url.as_str()) => result,
+        let mut connection = match self.open_tenant_session(platform, &tenant, cancellation).await? {
+            ControlFlow::Continue(connection) => connection,
+            ControlFlow::Break(outcome) => return Ok(outcome),
         };
-        let tenant_pool = match pool_result {
-            Ok(pool) => pool,
-            Err(error) => {
-                tenant_inspection::mark_tenant_failure(platform, &tenant).await?;
-                warn!(tenant = tenant.log_name(), database = %tenant.database, error = %error, decision = "tenant-unavailable", "PostgreSQL maintenance pass deferred");
-                return Ok(PassOutcome::TenantUnavailable);
-            }
-        };
-        let contract = current_tenant_schema_contract()?;
-        if let Err(error) = verify_schema_contract(&tenant_pool, &contract).await {
-            tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::SchemaBehind).await?;
-            warn!(tenant = tenant.log_name(), database = %tenant.database, error = %error, decision = "schema-behind", "PostgreSQL maintenance does not migrate idle tenant schemas");
-            tenant_pool.close().await;
-            return Ok(PassOutcome::SchemaBehind);
+        if let Some(database) = fleet.database(tenant.key) {
+            freeze_report::report_freeze_pressure(&mut connection, &tenant, database).await?;
         }
-        let mut connection = tenant_pool.acquire().await?;
-        connection.close_on_drop();
-        inspection::configure_session(&mut connection).await?;
         let mutation = match self.config.mode {
             MaintenanceMode::Disabled | MaintenanceMode::Observe => MutationPrivilege::NotRequired,
             MaintenanceMode::Automatic => MutationPrivilege::Required,
@@ -233,6 +221,41 @@ impl MaintenanceController {
         info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), relation_bytes = measured.relation_bytes, reclaimable_bytes = measured.reclaimable_bytes, degraded_percent = measured.degraded_percent, decision = ?decision, "PostgreSQL maintenance index probe completed");
         tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::of_pass(outcome)).await?;
         Ok(outcome)
+    }
+
+    /// Connect to the selected tenant's database and configure one maintenance
+    /// session, or break with the outcome that ends the pass: cancellation, an
+    /// unreachable database, or a schema behind this binary's contract.
+    async fn open_tenant_session(
+        &self,
+        platform: &mut PgConnection,
+        tenant: &RegisteredTenant,
+        cancellation: &CancellationToken,
+    ) -> Result<ControlFlow<PassOutcome, PoolConnection<Postgres>>, MaintenanceError> {
+        let tenant_url = self.direct_url.with_database_name(&tenant.database);
+        let pool_result = tokio::select! {
+            () = cancellation.cancelled() => return Ok(ControlFlow::Break(PassOutcome::Cancelled)),
+            result = configure_pool_options(1, self.acquire_timeout).connect(tenant_url.as_str()) => result,
+        };
+        let tenant_pool = match pool_result {
+            Ok(pool) => pool,
+            Err(error) => {
+                tenant_inspection::mark_tenant_failure(platform, tenant).await?;
+                warn!(tenant = tenant.log_name(), database = %tenant.database, error = %error, decision = "tenant-unavailable", "PostgreSQL maintenance pass deferred");
+                return Ok(ControlFlow::Break(PassOutcome::TenantUnavailable));
+            }
+        };
+        let contract = current_tenant_schema_contract()?;
+        if let Err(error) = verify_schema_contract(&tenant_pool, &contract).await {
+            tenant_inspection::mark_inspected(platform, tenant, InspectionResult::SchemaBehind).await?;
+            warn!(tenant = tenant.log_name(), database = %tenant.database, error = %error, decision = "schema-behind", "PostgreSQL maintenance does not migrate idle tenant schemas");
+            tenant_pool.close().await;
+            return Ok(ControlFlow::Break(PassOutcome::SchemaBehind));
+        }
+        let mut connection = tenant_pool.acquire().await?;
+        connection.close_on_drop();
+        inspection::configure_session(&mut connection).await?;
+        Ok(ControlFlow::Continue(connection))
     }
 
     /// Persist cheap heap evidence without executing newly queued work in this pass.

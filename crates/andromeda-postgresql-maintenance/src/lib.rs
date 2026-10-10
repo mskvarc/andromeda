@@ -20,6 +20,8 @@ pub mod controller;
 /// Typed controller failures.
 pub mod error;
 mod evidence;
+mod fleet_observation;
+mod freeze_report;
 mod inspection;
 /// Threshold and safety-gate decision policy.
 pub mod policy;

@@ -4,18 +4,22 @@ use crate::{
     names::{
         LABEL_ACTION,
         LABEL_DECISION,
+        LABEL_LEVEL,
         LABEL_OUTCOME,
+        POSTGRESQL_DATABASES_FREEZE_PRESSURE,
+        POSTGRESQL_FREEZE_AGE_MAX,
         POSTGRESQL_MAINTENANCE_ACTION_SECONDS,
         POSTGRESQL_MAINTENANCE_ACTIONS_TOTAL,
         POSTGRESQL_MAINTENANCE_DECISIONS_TOTAL,
         POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES,
         POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES,
+        POSTGRESQL_MULTIXACT_AGE_MAX,
     },
     sample_value::SampleValue,
 };
-use metrics::{counter, histogram};
+use metrics::{counter, gauge, histogram};
 use std::time::Duration;
-use strum::IntoStaticStr;
+use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 
 /// Stable maintenance pass decision labels.
 #[derive(Clone, Copy, Debug, IntoStaticStr, Eq, PartialEq)]
@@ -88,6 +92,31 @@ pub enum ActionEffect {
     RemovedDeadTuples(u64),
 }
 
+/// Stable database freeze pressure labels.
+#[derive(Clone, Copy, Debug, EnumIter, IntoStaticStr, Eq, PartialEq)]
+#[strum(serialize_all = "kebab-case")]
+pub enum FreezePressureLevel {
+    /// Anti-wraparound vacuum is within its window.
+    Normal,
+    /// Anti-wraparound vacuum is overdue.
+    Overdue,
+    /// About half of the wraparound limit is spent.
+    Critical,
+}
+
+/// Record one observation of the tenant fleet's freeze ages: the oldest
+/// transaction ID and multixact ages, and how many databases stand at each
+/// pressure level. Every level is set, so one that empties reads zero.
+pub fn record_fleet_freeze(transaction_age_max: u64, multixact_age_max: u64, levels: &[FreezePressureLevel]) {
+    gauge!(POSTGRESQL_FREEZE_AGE_MAX).set(SampleValue::from(transaction_age_max));
+    gauge!(POSTGRESQL_MULTIXACT_AGE_MAX).set(SampleValue::from(multixact_age_max));
+    for level in FreezePressureLevel::iter() {
+        let databases = levels.iter().filter(|observed| **observed == level).count();
+        let level: &'static str = level.into();
+        gauge!(POSTGRESQL_DATABASES_FREEZE_PRESSURE, LABEL_LEVEL => level).set(SampleValue::from(databases));
+    }
+}
+
 /// Count one bounded pass decision without a tenant label.
 pub fn record_decision(decision: MaintenanceDecision) {
     let decision: &'static str = decision.into();
@@ -116,12 +145,24 @@ pub fn record_action(action: MaintenanceAction, outcome: MaintenanceActionOutcom
 mod tests {
     use crate::{
         error::TelemetryError,
-        maintenance::{ActionEffect, MaintenanceAction, MaintenanceActionOutcome, MaintenanceDecision, record_action, record_decision},
+        maintenance::{
+            ActionEffect,
+            FreezePressureLevel,
+            MaintenanceAction,
+            MaintenanceActionOutcome,
+            MaintenanceDecision,
+            record_action,
+            record_decision,
+            record_fleet_freeze,
+        },
         names::{
+            POSTGRESQL_DATABASES_FREEZE_PRESSURE,
+            POSTGRESQL_FREEZE_AGE_MAX,
             POSTGRESQL_MAINTENANCE_ACTIONS_TOTAL,
             POSTGRESQL_MAINTENANCE_DECISIONS_TOTAL,
             POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES,
             POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES,
+            POSTGRESQL_MULTIXACT_AGE_MAX,
         },
         recorder::TelemetryRecorder,
     };
@@ -160,6 +201,29 @@ mod tests {
         let rendered = recorder.render();
         assert!(rendered.contains(POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES), "{rendered}");
         assert!(!rendered.contains(POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn fleet_freeze_gauges_count_every_level_without_a_tenant_dimension() -> Result<(), TelemetryError> {
+        let recorder = TelemetryRecorder::detached()?;
+        recorder.record_locally(|| {
+            record_fleet_freeze(
+                260_000_000,
+                1_000,
+                &[FreezePressureLevel::Normal, FreezePressureLevel::Overdue, FreezePressureLevel::Normal],
+            );
+        });
+        let rendered = recorder.render();
+        assert!(rendered.contains(&format!("{POSTGRESQL_FREEZE_AGE_MAX} 260000000")), "{rendered}");
+        assert!(rendered.contains(&format!("{POSTGRESQL_MULTIXACT_AGE_MAX} 1000")), "{rendered}");
+        for (level, databases) in [("normal", 2), ("overdue", 1), ("critical", 0)] {
+            assert!(
+                rendered.contains(&format!("{POSTGRESQL_DATABASES_FREEZE_PRESSURE}{{level=\"{level}\"}} {databases}")),
+                "{rendered}"
+            );
+        }
+        assert!(!rendered.contains("tenant="), "{rendered}");
         Ok(())
     }
 }

@@ -25,7 +25,7 @@ const GLOBAL_LOCK_KEY: &str = "andromeda-postgresql-maintenance";
 
 /// Stable primary key of one platform tenant row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TenantKey(i64);
+pub(crate) struct TenantKey(pub(crate) i64);
 
 /// One registered database selected independently of the runtime cache.
 #[derive(Clone, Debug, Eq, PartialEq)]
