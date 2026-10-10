@@ -45,6 +45,11 @@
 -- no foreign key can hold it; a visit deletes the rows of a branch whose
 -- schema no longer exists.
 --
+-- `postgresql_maintenance_fleet` holds the one row of state that belongs to
+-- the cluster rather than to a tenant. `autovacuum_saturated_passes` counts
+-- the consecutive passes that found every autovacuum worker slot busy; a pass
+-- that finds one free resets it to zero. The row is written by the first pass.
+--
 -- Codes:
 --
 --   last_result: 1 started, 2 unavailable, 3 ready, 4 missing-pgstattuple,
@@ -107,3 +112,10 @@ create table postgresql_maintenance_targets (
     constraint chk_postgresql_maintenance_targets_baseline_density_positive check (baseline_density is null or baseline_density > 0)
 );
 
+create table postgresql_maintenance_fleet (
+    singleton boolean not null default true,
+    autovacuum_saturated_passes integer not null default 0,
+    constraint pk_postgresql_maintenance_fleet primary key (singleton),
+    constraint chk_postgresql_maintenance_fleet_singleton check (singleton),
+    constraint chk_postgresql_maintenance_fleet_saturated_passes_non_negative check (autovacuum_saturated_passes >= 0)
+);

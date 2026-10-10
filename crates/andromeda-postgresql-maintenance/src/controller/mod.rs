@@ -8,6 +8,7 @@ mod probe_selection;
 
 use crate::{
     action,
+    autovacuum_health,
     branch::Branch,
     branch_selection,
     capability::{self, CapabilityStatus, MutationPrivilege},
@@ -143,6 +144,7 @@ impl MaintenanceController {
         }
         let fleet = fleet_observation::observe_fleet(platform).await?;
         fleet.record_telemetry();
+        autovacuum_health::observe_workers(platform).await?;
         let now = Utc::now();
         let records = tenant_inspection::inspection_records(platform).await?;
         let due = pending_action::tenants_with_due_actions(platform, now).await?;

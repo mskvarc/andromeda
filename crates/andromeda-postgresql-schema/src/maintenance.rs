@@ -80,9 +80,21 @@ pub enum PostgresqlMaintenanceTargets {
     BaselineDensity,
 }
 
+/// The one row of maintenance state that belongs to the whole cluster.
+#[derive(Clone, Copy, Iden)]
+pub enum PostgresqlMaintenanceFleet {
+    /// Table name: `postgresql_maintenance_fleet`.
+    Table,
+    /// Always `true`: the primary key that keeps the table to one row.
+    Singleton,
+    /// Consecutive passes that found every autovacuum worker slot busy, zero
+    /// once a pass finds one free.
+    AutovacuumSaturatedPasses,
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::maintenance::{PostgresqlMaintenanceTargets, PostgresqlMaintenanceTenants};
+    use crate::maintenance::{PostgresqlMaintenanceFleet, PostgresqlMaintenanceTargets, PostgresqlMaintenanceTenants};
     use pretty_assertions::assert_eq;
     use sea_query::Iden;
 
@@ -102,5 +114,8 @@ mod tests {
         assert_eq!(PostgresqlMaintenanceTargets::BreachSamples.to_string(), "breach_samples");
         assert_eq!(PostgresqlMaintenanceTargets::BaselineDensity.to_string(), "baseline_density");
         assert_eq!(PostgresqlMaintenanceTargets::SnapshotKey.to_string(), "snapshot_key");
+        assert_eq!(PostgresqlMaintenanceFleet::Table.to_string(), "postgresql_maintenance_fleet");
+        assert_eq!(PostgresqlMaintenanceFleet::Singleton.to_string(), "singleton");
+        assert_eq!(PostgresqlMaintenanceFleet::AutovacuumSaturatedPasses.to_string(), "autovacuum_saturated_passes");
     }
 }

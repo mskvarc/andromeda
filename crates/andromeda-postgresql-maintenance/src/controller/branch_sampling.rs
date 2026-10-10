@@ -1,7 +1,9 @@
-//! The cheap catalog evidence of every branch a visit works in, and the index
-//! probes it leaves to the probe budget.
+//! The cheap catalog evidence of every branch a visit works in, the heaps
+//! autovacuum has missed there, and the index probes it leaves to the probe
+//! budget.
 
 use crate::{
+    autovacuum_health,
     branch::Branch,
     btree_estimate,
     controller::{
@@ -17,6 +19,7 @@ use crate::{
     state::{RegisteredTenant, target_record},
 };
 use andromeda_postgresql_context_store::maintenance_config::MaintenanceMode;
+use andromeda_telemetry::maintenance::record_overdue_relations;
 use chrono::Utc;
 use sqlx::PgConnection;
 
@@ -31,8 +34,9 @@ pub(crate) struct BranchSampling {
     pub(crate) probe_candidates: Vec<IndexSize>,
 }
 
-/// Record the catalog samples of every branch in `branches`, in order, and
-/// collect each branch's probe candidates.
+/// Record the catalog samples of every branch in `branches`, in order, report
+/// the heaps autovacuum has missed in each, and collect each branch's probe
+/// candidates.
 pub(crate) async fn sample_branches(
     mode: MaintenanceMode,
     platform: &mut PgConnection,
@@ -45,7 +49,9 @@ pub(crate) async fn sample_branches(
         flagged: None,
         probe_candidates: Vec::new(),
     };
+    let mut overdue_relations = 0;
     for &branch in branches {
+        overdue_relations += autovacuum_health::report_overdue_heaps(connection, tenant, branch).await?;
         let index_sizes = inspection::index_sizes(connection, branch).await?;
         let estimates = btree_estimate::btree_estimates(connection, branch).await?;
         let heap_samples = inspection::heap_samples(connection, branch, profile).await?;
@@ -59,6 +65,7 @@ pub(crate) async fn sample_branches(
             .probe_candidates
             .extend(probe_selection::probe_order(&index_sizes, &probe_states, &estimates, profile, Utc::now()));
     }
+    record_overdue_relations(overdue_relations);
     Ok(sampling)
 }
 

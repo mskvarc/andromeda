@@ -69,6 +69,14 @@ pub enum CatalogCounter {
     AfterDeadTuples,
     /// A density-measured GIN's recorded baseline density.
     BaselineDensity,
+    /// Dead tuples past which autovacuum vacuums a table.
+    AutovacuumTrigger,
+    /// Autovacuum workers running across the cluster.
+    AutovacuumWorkers,
+    /// The server's `autovacuum_max_workers` setting.
+    AutovacuumMaxWorkers,
+    /// Consecutive passes that found every autovacuum worker slot busy.
+    SaturatedPasses,
 }
 
 /// Convert one PostgreSQL counter that the catalog guarantees is non-negative.

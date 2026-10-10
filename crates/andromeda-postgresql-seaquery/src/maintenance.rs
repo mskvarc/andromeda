@@ -4,7 +4,7 @@
 //! Caller-supplied catalog values remain ordinary bound expressions.
 
 use crate::{cast::cast, column_reference::quoted, pg_type::PostgresType};
-use sea_query::{Expr, Func, FunctionCall, Iden, SimpleExpr};
+use sea_query::{Alias, Expr, ExprTrait, Func, FunctionCall, Iden, Query, QueryStatementBuilder, SimpleExpr};
 
 /// Schema identifiers used by PostgreSQL maintenance statements.
 #[derive(Clone, Copy, Iden)]
@@ -127,6 +127,26 @@ pub fn multixact_age(mxid: SimpleExpr) -> SimpleExpr {
     cast(Func::cust(MaintenanceFunction::MxidAge).arg(mxid).into(), PostgresType::Bigint)
 }
 
+/// `(SELECT option_value FROM pg_options_to_table(reloptions) WHERE
+/// option_name = name)`: one storage parameter a relation sets, as text, or
+/// NULL when the relation leaves it to the server setting.
+///
+/// `reloptions` is a `pg_class.reloptions` array; the parameter name is bound.
+/// The scalar subquery yields at most one row because a relation sets each
+/// storage parameter once.
+#[must_use]
+pub fn storage_parameter(reloptions: SimpleExpr, name: &str) -> SimpleExpr {
+    let subquery = Query::select()
+        .column(Alias::new("option_value"))
+        .from_function(
+            Func::cust(MaintenanceFunction::PgOptionsToTable).arg(reloptions),
+            Alias::new("storage_parameter"),
+        )
+        .and_where(Expr::col(Alias::new("option_name")).eq(name.to_owned()))
+        .to_owned();
+    SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))
+}
+
 /// Maintenance-related PostgreSQL functions absent from `SeaQuery`.
 #[derive(Clone, Copy, Iden)]
 enum MaintenanceFunction {
@@ -152,11 +172,21 @@ enum MaintenanceFunction {
     Age,
     /// `mxid_age`.
     MxidAge,
+    /// `pg_options_to_table`.
+    PgOptionsToTable,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::maintenance::{drop_index_concurrently, multixact_age, reindex_index_concurrently, session_settings, transaction_age, vacuum_non_truncating};
+    use crate::maintenance::{
+        drop_index_concurrently,
+        multixact_age,
+        reindex_index_concurrently,
+        session_settings,
+        storage_parameter,
+        transaction_age,
+        vacuum_non_truncating,
+    };
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 
@@ -176,6 +206,21 @@ mod tests {
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert_eq!(sql, "SELECT mxid_age(\"datminmxid\")::bigint");
+    }
+
+    #[test]
+    fn a_storage_parameter_is_read_from_the_relation_options_by_bound_name() {
+        let sql = Query::select()
+            .expr(storage_parameter(
+                Expr::col((Alias::new("c"), Alias::new("reloptions"))),
+                "autovacuum_vacuum_threshold",
+            ))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"SELECT (SELECT "option_value" FROM pg_options_to_table("c"."reloptions") AS "storage_parameter" WHERE "option_name" = 'autovacuum_vacuum_threshold')"#
+        );
     }
 
     #[test]

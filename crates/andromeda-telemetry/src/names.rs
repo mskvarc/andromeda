@@ -70,6 +70,12 @@ pub const POSTGRESQL_FREEZE_AGE_MAX: &str = "andromeda_postgresql_freeze_age_max
 pub const POSTGRESQL_MULTIXACT_AGE_MAX: &str = "andromeda_postgresql_multixact_age_max";
 /// Gauge of tenant databases at each freeze pressure level.
 pub const POSTGRESQL_DATABASES_FREEZE_PRESSURE: &str = "andromeda_postgresql_databases_freeze_pressure";
+/// Gauge of autovacuum workers running across the PostgreSQL cluster when a maintenance pass last looked.
+pub const POSTGRESQL_AUTOVACUUM_WORKERS_BUSY: &str = "andromeda_postgresql_autovacuum_workers_busy";
+/// Gauge of the cluster's `autovacuum_max_workers` when a maintenance pass last looked.
+pub const POSTGRESQL_AUTOVACUUM_WORKERS_MAX: &str = "andromeda_postgresql_autovacuum_workers_max";
+/// Gauge of relations whose dead tuples exceed twice their autovacuum trigger with no vacuum running, in the most recent tenant visit.
+pub const POSTGRESQL_OVERDUE_RELATIONS: &str = "andromeda_postgresql_overdue_relations";
 /// Gauge of tenant runtimes currently held in the bounded runtime cache.
 pub const TENANT_RUNTIMES_CACHED: &str = "andromeda_tenant_runtimes_cached";
 /// Counter of cold tenant-runtime builds, labelled by outcome.

@@ -6,6 +6,8 @@ use crate::{
         LABEL_DECISION,
         LABEL_LEVEL,
         LABEL_OUTCOME,
+        POSTGRESQL_AUTOVACUUM_WORKERS_BUSY,
+        POSTGRESQL_AUTOVACUUM_WORKERS_MAX,
         POSTGRESQL_DATABASES_FREEZE_PRESSURE,
         POSTGRESQL_FREEZE_AGE_MAX,
         POSTGRESQL_MAINTENANCE_ACTION_SECONDS,
@@ -14,6 +16,7 @@ use crate::{
         POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES,
         POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES,
         POSTGRESQL_MULTIXACT_AGE_MAX,
+        POSTGRESQL_OVERDUE_RELATIONS,
     },
     sample_value::SampleValue,
 };
@@ -117,6 +120,19 @@ pub fn record_fleet_freeze(transaction_age_max: u64, multixact_age_max: u64, lev
     }
 }
 
+/// Record one observation of the cluster's autovacuum workers: how many are
+/// running and how many `autovacuum_max_workers` allows.
+pub fn record_autovacuum_workers(busy: u64, max: u64) {
+    gauge!(POSTGRESQL_AUTOVACUUM_WORKERS_BUSY).set(SampleValue::from(busy));
+    gauge!(POSTGRESQL_AUTOVACUUM_WORKERS_MAX).set(SampleValue::from(max));
+}
+
+/// Record how many relations one tenant visit found overdue for autovacuum,
+/// zero included, without naming the tenant.
+pub fn record_overdue_relations(relations: usize) {
+    gauge!(POSTGRESQL_OVERDUE_RELATIONS).set(SampleValue::from(relations));
+}
+
 /// Count one bounded pass decision without a tenant label.
 pub fn record_decision(decision: MaintenanceDecision) {
     let decision: &'static str = decision.into();
@@ -152,10 +168,14 @@ mod tests {
             MaintenanceActionOutcome,
             MaintenanceDecision,
             record_action,
+            record_autovacuum_workers,
             record_decision,
             record_fleet_freeze,
+            record_overdue_relations,
         },
         names::{
+            POSTGRESQL_AUTOVACUUM_WORKERS_BUSY,
+            POSTGRESQL_AUTOVACUUM_WORKERS_MAX,
             POSTGRESQL_DATABASES_FREEZE_PRESSURE,
             POSTGRESQL_FREEZE_AGE_MAX,
             POSTGRESQL_MAINTENANCE_ACTIONS_TOTAL,
@@ -163,6 +183,7 @@ mod tests {
             POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES,
             POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES,
             POSTGRESQL_MULTIXACT_AGE_MAX,
+            POSTGRESQL_OVERDUE_RELATIONS,
         },
         recorder::TelemetryRecorder,
     };
@@ -223,6 +244,21 @@ mod tests {
                 "{rendered}"
             );
         }
+        assert!(!rendered.contains("tenant="), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn autovacuum_health_gauges_have_no_tenant_dimension() -> Result<(), TelemetryError> {
+        let recorder = TelemetryRecorder::detached()?;
+        recorder.record_locally(|| {
+            record_autovacuum_workers(3, 3);
+            record_overdue_relations(2);
+        });
+        let rendered = recorder.render();
+        assert!(rendered.contains(&format!("{POSTGRESQL_AUTOVACUUM_WORKERS_BUSY} 3")), "{rendered}");
+        assert!(rendered.contains(&format!("{POSTGRESQL_AUTOVACUUM_WORKERS_MAX} 3")), "{rendered}");
+        assert!(rendered.contains(&format!("{POSTGRESQL_OVERDUE_RELATIONS} 2")), "{rendered}");
         assert!(!rendered.contains("tenant="), "{rendered}");
         Ok(())
     }

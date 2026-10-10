@@ -10,6 +10,8 @@
 mod action;
 mod action_measurement;
 mod artifact;
+mod autovacuum_health;
+mod autovacuum_trigger;
 mod branch;
 mod branch_selection;
 mod btree_estimate;

@@ -1,7 +1,7 @@
 //! The generic SQL operators sea-query has no native form for: array
 //! containment in both directions, POSIX regex matching and extraction, the
-//! presence-and-value conjunction, and the total negation of a predicate over
-//! nullable columns.
+//! presence-and-value conjunction, the total negation of a predicate over
+//! nullable columns, and the NULL a sentinel value stands for.
 
 use crate::{literal::false_literal, pg_operator::PgBinaryOperator, pg_type::PostgresType};
 use sea_query::{Expr, ExprTrait, Func, Iden, SimpleExpr};
@@ -104,6 +104,21 @@ pub fn regex_substring(text: SimpleExpr, pattern: SimpleExpr) -> SimpleExpr {
     Func::cust(TextFunction::Substring).args([text, pattern]).into()
 }
 
+/// The function a sentinel value is mapped to NULL with.
+#[derive(Iden, Clone, Copy)]
+enum ConditionalFunction {
+    /// `nullif(value, sentinel)`.
+    #[iden = "nullif"]
+    NullIf,
+}
+
+/// `nullif(value, sentinel)`: NULL when `value` equals `sentinel`, `value`
+/// otherwise.
+#[must_use]
+pub fn null_if(value: SimpleExpr, sentinel: SimpleExpr) -> SimpleExpr {
+    Func::cust(ConditionalFunction::NullIf).args([value, sentinel]).into()
+}
+
 /// The total negation of a predicate: `NOT COALESCE(predicate, FALSE)`.
 ///
 /// Plain `NOT` propagates the unknown a comparison against a NULL yields, and
@@ -124,6 +139,13 @@ pub fn negate_total(predicate: SimpleExpr) -> SimpleExpr {
 mod tests {
     use super::*;
     use sea_query::{PostgresQueryBuilder, Query};
+
+    #[test]
+    fn a_sentinel_renders_as_nullif() {
+        let expr = null_if(Expr::col("limit"), Expr::val("-1"));
+        let sql = Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
+        assert_eq!(sql, r#"SELECT nullif("limit", '-1')"#);
+    }
 
     #[test]
     fn regex_extraction_renders_the_two_argument_substring() {

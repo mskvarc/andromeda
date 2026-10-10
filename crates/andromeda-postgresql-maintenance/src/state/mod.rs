@@ -2,12 +2,15 @@
 //!
 //! The controller's state lives in the platform database: this module owns the
 //! fleet-wide lock and the identity of a registered tenant,
-//! [`tenant_inspection`] owns what is recorded per tenant,
+//! [`autovacuum_saturation`] owns the cluster's run of passes with every
+//! autovacuum worker busy, [`tenant_inspection`] owns what is recorded per tenant,
 //! [`target_record`] what is recorded per target, [`pending_action`] which
 //! queued action a visit runs next, [`branch_rows`] which context branch a
 //! target row belongs to and [`density_baseline`] the baseline a
 //! density-measured GIN is compared with.
 
+/// The cluster's run of passes that found every autovacuum worker busy.
+pub(crate) mod autovacuum_saturation;
 /// The context branch dimension of the target rows.
 pub(crate) mod branch_rows;
 /// The recorded density baseline of each density-measured GIN.
