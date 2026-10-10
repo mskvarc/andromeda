@@ -3,7 +3,7 @@
 //! Relation identifiers are rendered through `SeaQuery`'s [`Iden`] contract.
 //! Caller-supplied catalog values remain ordinary bound expressions.
 
-use crate::column_reference::quoted;
+use crate::{cast::cast, column_reference::quoted, pg_type::PostgresType};
 use sea_query::{Expr, Func, FunctionCall, Iden, SimpleExpr};
 
 /// Schema identifiers used by PostgreSQL maintenance statements.
@@ -109,6 +109,15 @@ pub fn backend_pid() -> SimpleExpr {
     Func::cust(MaintenanceFunction::PgBackendPid).into()
 }
 
+/// `age(xid)::bigint`: how many transactions have started since `xid`.
+///
+/// `age` returns `integer`; the cast lets every age decode as one signed
+/// 64-bit type. A frozen or special transaction ID ages as `2147483647`.
+#[must_use]
+pub fn transaction_age(xid: SimpleExpr) -> SimpleExpr {
+    cast(Func::cust(MaintenanceFunction::Age).arg(xid).into(), PostgresType::Bigint)
+}
+
 /// Maintenance-related PostgreSQL functions absent from `SeaQuery`.
 #[derive(Clone, Copy, Iden)]
 enum MaintenanceFunction {
@@ -130,13 +139,24 @@ enum MaintenanceFunction {
     Pgstattuple,
     /// `pg_backend_pid`.
     PgBackendPid,
+    /// `age`.
+    Age,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::maintenance::{drop_index_concurrently, reindex_index_concurrently, session_settings, vacuum_non_truncating};
+    use crate::maintenance::{drop_index_concurrently, reindex_index_concurrently, session_settings, transaction_age, vacuum_non_truncating};
     use pretty_assertions::assert_eq;
-    use sea_query::Alias;
+    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+
+    #[test]
+    fn a_transaction_age_is_read_as_a_bigint() {
+        let sql = Query::select()
+            .expr(transaction_age(Expr::col(Alias::new("backend_xmin"))))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT age(\"backend_xmin\")::bigint");
+    }
 
     #[test]
     fn unsupported_maintenance_commands_quote_seaquery_identifiers() {

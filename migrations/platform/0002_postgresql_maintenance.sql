@@ -14,6 +14,11 @@
 -- truncation never shrinks its heap's file. The pair that does not apply to a
 -- target stays NULL.
 --
+-- `cooldown_until` is set by every action: the profile's success cooldown
+-- after an effective action, its shorter ineffective cooldown after a vacuum
+-- that left the dead share at or above its threshold, and a backoff doubling
+-- with `consecutive_failures` (capped at 24 hours) after a failure.
+--
 -- Codes:
 --
 --   last_result: 1 started, 2 unavailable, 3 ready, 4 missing-pgstattuple,
@@ -28,7 +33,7 @@
 --     8 idx_ca_value_geometry, 9 idx_ca_entity_geometry,
 --     10 idx_ca_sub_eq_keys, 11 current_attributes, 12 entities,
 --     13 subscription_delivery_state
---   last_action_result: 1 succeeded, 2 failed
+--   last_action_result: 1 succeeded, 2 failed, 3 ineffective
 -- ============================================================================
 create table postgresql_maintenance_tenants (
     tenant_key bigint not null,
@@ -58,7 +63,7 @@ create table postgresql_maintenance_targets (
     constraint pk_postgresql_maintenance_targets primary key (tenant_key, target),
     constraint fk_postgresql_maintenance_targets_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
     constraint chk_postgresql_maintenance_targets_target check (target between 1 and 13),
-    constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 2),
+    constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 3),
     constraint chk_postgresql_maintenance_targets_breaches_non_negative check (consecutive_breaches >= 0),
     constraint chk_postgresql_maintenance_targets_failures_non_negative check (consecutive_failures >= 0),
     constraint chk_postgresql_maintenance_targets_sizes_non_negative check ((last_before_bytes is null or last_before_bytes >= 0) and (last_after_bytes is null or last_after_bytes >= 0)),

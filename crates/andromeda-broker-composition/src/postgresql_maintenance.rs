@@ -76,6 +76,7 @@ const fn classify_failure(error: MaintenanceError) -> TaskFailure<MaintenanceErr
         | MaintenanceError::Statement(_)
         | MaintenanceError::TenantName(_)
         | MaintenanceError::UnknownTarget(_)
+        | MaintenanceError::UnknownHorizonHolder(_)
         | MaintenanceError::UnreadableCode(_)
         | MaintenanceError::ProbeTargetNotAnIndex(_) => FailureClass::InvariantViolation,
     };

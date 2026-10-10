@@ -8,9 +8,21 @@ use crate::{
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
     inspection,
-    policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, decide, safety_deferral},
+    policy::{
+        ActionEnding,
+        ActionVerdict,
+        DeferralReason,
+        DegradationSample,
+        PolicyDecision,
+        PolicyProfile,
+        action_verdict,
+        cooldown_after,
+        decide,
+        safety_deferral,
+    },
     safety_gate_inspection,
     state::{RegisteredTenant, target_record, tenant_inspection},
+    vacuum_horizon::{self, HorizonHolder},
 };
 use andromeda_postgresql_context_store::maintenance_config::MaintenanceMode;
 use andromeda_postgresql_seaquery::maintenance::MaintenanceStatement;
@@ -94,11 +106,12 @@ pub(crate) async fn execute_pending(
             | DeferralReason::Cooldown
             | DeferralReason::ActiveBackendRatio
             | DeferralReason::LongTransaction
+            | DeferralReason::HorizonHeld
             | DeferralReason::ActiveMaintenance
             | DeferralReason::WaitingRelationLock),
         ) => {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Deferred).await?;
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), decision = "deferred", reason = ?reason, "PostgreSQL maintenance pending action deferred");
+            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), decision = "deferred", reason = ?reason, horizon_holder = ?gates.held_horizon, "PostgreSQL maintenance pending action deferred");
             return Ok(PassOutcome::Deferred);
         }
         PolicyDecision::Queued => {
@@ -118,28 +131,67 @@ pub(crate) async fn execute_pending(
         }
         StatementOutcome::Failed(error) => {
             record_action(action, MaintenanceActionOutcome::Failed, started.elapsed(), None);
-            target_record::record_action_failure(platform, tenant, target).await?;
+            let consecutive_failures = target_state.consecutive_failures.saturating_add(1);
+            let cooldown_until = cooldown_after(profile, ActionEnding::Failed { consecutive_failures }, Utc::now());
+            target_record::record_action_failure(platform, tenant, target, cooldown_until).await?;
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::ActionFailed).await?;
-            warn!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), error = %error, duration_seconds = started.elapsed().as_secs_f64(), decision = "action-failed", "PostgreSQL maintenance action failed");
+            warn!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), error = %error, duration_seconds = started.elapsed().as_secs_f64(), consecutive_failures, cooldown_until = %cooldown_until, decision = "action-failed", "PostgreSQL maintenance action failed");
             Ok(PassOutcome::ActionFailed)
         }
         StatementOutcome::Succeeded => {
             let duration = started.elapsed();
             let comparison = read_comparison(tenant_connection, baseline).await?;
             record_action(action, MaintenanceActionOutcome::Succeeded, duration, Some(comparison.effect()));
-            target_record::record_action_success(platform, tenant, target, Utc::now() + profile.successful_cooldown, comparison).await?;
+            let verdict = action_verdict(profile, comparison);
+            let cooldown_until = cooldown_after(profile, ActionEnding::Completed(verdict), Utc::now());
+            target_record::record_action_completion(platform, tenant, target, verdict, cooldown_until, comparison).await?;
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Acted).await?;
             match comparison {
                 ActionComparison::Index { before_bytes, after_bytes } => {
                     info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), before_bytes, after_bytes, reclaimed_bytes = before_bytes.saturating_sub(after_bytes), duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
                 }
                 ActionComparison::Heap { before, after } => {
-                    info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), dead_tuples_before = before.dead, dead_tuples_after = after.dead, removed_dead_tuples = before.dead.saturating_sub(after.dead), live_tuples_after = after.live, dead_percent_after = ?comparison.post_vacuum_dead_percent(), duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
+                    info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), dead_tuples_before = before.dead, dead_tuples_after = after.dead, removed_dead_tuples = before.dead.saturating_sub(after.dead), live_tuples_after = after.live, dead_percent_after = ?comparison.post_vacuum_dead_percent(), verdict = ?verdict, cooldown_until = %cooldown_until, duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
                 }
+            }
+            if verdict == ActionVerdict::Ineffective {
+                report_horizon_holders(tenant_connection, tenant, target).await?;
             }
             Ok(PassOutcome::Acted)
         }
     }
+}
+
+/// Log every holder of the vacuum horizon after a vacuum that could not
+/// remove what it was queued for, so an operator can release the one that
+/// held it.
+async fn report_horizon_holders(connection: &mut PgConnection, tenant: &RegisteredTenant, target: MaintenanceTarget) -> Result<(), MaintenanceError> {
+    let holders = vacuum_horizon::horizon_holders(connection).await?;
+    if holders.is_empty() {
+        warn!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), decision = "ineffective", "PostgreSQL vacuum left dead tuples while no horizon holder remains");
+    }
+    for holder in holders {
+        let kind: &'static str = holder.kind().into();
+        match holder {
+            HorizonHolder::ClientBackend { xmin_age, transaction_seconds } => {
+                warn!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), holder = kind, xmin_age, transaction_seconds = ?transaction_seconds, decision = "ineffective", "PostgreSQL vacuum horizon holder");
+            }
+            HorizonHolder::PreparedTransaction { xid_age, prepared_seconds } => {
+                warn!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), holder = kind, xmin_age = xid_age, prepared_seconds, decision = "ineffective", "PostgreSQL vacuum horizon holder");
+            }
+            HorizonHolder::ReplicationSlot {
+                xmin_age,
+                catalog_xmin_age,
+                activity,
+            } => {
+                warn!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), holder = kind, xmin_age = ?xmin_age, catalog_xmin_age = ?catalog_xmin_age, activity = ?activity, decision = "ineffective", "PostgreSQL vacuum horizon holder");
+            }
+            HorizonHolder::StandbyFeedback { xmin_age } => {
+                warn!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), holder = kind, xmin_age, decision = "ineffective", "PostgreSQL vacuum horizon holder");
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Read the measure of a target's action before the action runs.

@@ -6,6 +6,7 @@ use crate::{
     error::MaintenanceError,
     policy::SafetyGates,
     scalar_query::{select_bool, select_i64, select_optional_instant},
+    vacuum_horizon,
 };
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -17,12 +18,16 @@ use chrono::Utc;
 use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, Query, SelectStatement};
 use sqlx::PgConnection;
 
-/// Measure load, long transactions, active maintenance and waiting locks.
+/// Measure load, long transactions, the vacuum horizon of a heap target,
+/// active maintenance and waiting locks.
+///
+/// Only a vacuum is gated on the horizon: a rebuild produces a compact index
+/// whatever the horizon, so its holders are not read for an index target.
 pub(crate) async fn safety_gates(connection: &mut PgConnection, target: MaintenanceTarget) -> Result<SafetyGates, MaintenanceError> {
     let heap = format!("public.{}", target.heap_name());
-    let relation = match target {
-        MaintenanceTarget::Index(index) => Some(format!("public.{}", index.relation_name())),
-        MaintenanceTarget::Heap(_) => None,
+    let (relation, held_horizon) = match target {
+        MaintenanceTarget::Index(index) => (Some(format!("public.{}", index.relation_name())), None),
+        MaintenanceTarget::Heap(_) => (None, vacuum_horizon::horizon_held_by(&vacuum_horizon::horizon_holders(connection).await?)),
     };
     let active = select_i64(connection, active_backend_statement()).await?;
     let maximum = select_i64(connection, maximum_connections_statement()).await?;
@@ -38,6 +43,7 @@ pub(crate) async fn safety_gates(connection: &mut PgConnection, target: Maintena
     Ok(SafetyGates {
         active_backend_percent: if maximum == 0 { 100 } else { percent(active, maximum) },
         oldest_transaction_seconds,
+        held_horizon,
         active_maintenance,
         waiting_relation_lock,
     })

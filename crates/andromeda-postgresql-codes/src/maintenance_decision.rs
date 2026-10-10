@@ -36,6 +36,9 @@ compact_code_registry! {
             WaitingRelationLock = 12, "waiting-relation-lock";
             /// Queued together with its paired index.
             PairedQueued = 13, "paired-queued";
+            /// Deferred: a holder that never advances on its own holds the
+            /// vacuum horizon.
+            HorizonHeld = 14, "horizon-held";
         }
     }
 }
@@ -47,14 +50,15 @@ mod tests {
 
     #[test]
     fn the_members_are_numbered_as_the_migration_documents_them() {
-        assert_eq!(MaintenanceDecisionCode::ALL.len(), 13);
+        assert_eq!(MaintenanceDecisionCode::ALL.len(), 14);
         assert_eq!(MaintenanceDecisionCode::Act.code(), 1);
         assert_eq!(MaintenanceDecisionCode::PairedQueued.code(), 13);
+        assert_eq!(MaintenanceDecisionCode::HorizonHeld.code(), 14);
     }
 
     #[test]
     fn zero_and_the_number_after_the_last_member_fail_to_decode() {
         assert!(MaintenanceDecisionCode::try_from(0).is_err());
-        assert!(MaintenanceDecisionCode::try_from(14).is_err());
+        assert!(MaintenanceDecisionCode::try_from(15).is_err());
     }
 }

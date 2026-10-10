@@ -28,6 +28,8 @@ mod scalar_query;
 mod state;
 /// Bounded on-disk size sampling of the live schema's base tables.
 pub mod table_size;
+/// Holders of a tenant database's vacuum horizon.
+pub mod vacuum_horizon;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

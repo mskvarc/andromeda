@@ -1,5 +1,6 @@
 //! Pure profile thresholds and maintenance decision policy.
 
+use crate::{action_measurement::ActionComparison, vacuum_horizon::HorizonHolderKind};
 use andromeda_postgresql_context_store::maintenance_config::{MaintenanceMode, MaintenanceProfile};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::time::Duration;
@@ -23,6 +24,9 @@ pub struct PolicyProfile {
     pub heap_dead_percent: u8,
     /// Successful-action cooldown.
     pub successful_cooldown: ChronoDuration,
+    /// Cooldown after an ineffective vacuum, and the base of the failure
+    /// backoff.
+    pub ineffective_cooldown: ChronoDuration,
     /// Maximum permitted active backend ratio percentage.
     pub maximum_active_backend_percent: u8,
 }
@@ -42,6 +46,7 @@ impl PolicyProfile {
                 index_free_percent: 50,
                 heap_dead_percent: 20,
                 successful_cooldown: ChronoDuration::hours(24),
+                ineffective_cooldown: ChronoDuration::hours(1),
                 maximum_active_backend_percent: 25,
             },
             MaintenanceProfile::Responsive => PolicyProfile {
@@ -53,6 +58,7 @@ impl PolicyProfile {
                 index_free_percent: 35,
                 heap_dead_percent: 10,
                 successful_cooldown: ChronoDuration::hours(6),
+                ineffective_cooldown: ChronoDuration::minutes(15),
                 maximum_active_backend_percent: 50,
             },
         }
@@ -66,6 +72,9 @@ pub struct SafetyGates {
     pub active_backend_percent: u8,
     /// Age in whole seconds of the oldest open transaction.
     pub oldest_transaction_seconds: u64,
+    /// Kind of the first vacuum horizon holder that will not release the
+    /// horizon on its own, `None` when none does or the target is an index.
+    pub held_horizon: Option<HorizonHolderKind>,
     /// Whether a concurrent index build or vacuum already targets the relation.
     pub active_maintenance: bool,
     /// Whether another backend waits for a lock on the relation.
@@ -79,8 +88,10 @@ pub struct TargetState {
     pub consecutive_breaches: u32,
     /// Work already qualified on an earlier pass.
     pub is_action_pending: bool,
-    /// Successful-action cooldown deadline.
+    /// Cooldown deadline after an action, absent before the first action.
     pub cooldown_until: Option<DateTime<Utc>>,
+    /// Number of immediately preceding failed actions.
+    pub consecutive_failures: u32,
 }
 
 /// Why a pass deliberately declined expensive work.
@@ -94,12 +105,15 @@ pub enum DeferralReason {
     BelowThreshold,
     /// More consecutive qualifying samples are required.
     ConsecutiveSamples,
-    /// The target remains in its successful-action cooldown.
+    /// The target remains in the cooldown its last action set.
     Cooldown,
     /// Too many database backends are currently active.
     ActiveBackendRatio,
     /// A transaction has remained open for more than 30 seconds.
     LongTransaction,
+    /// A prepared transaction or an inactive replication slot holds the
+    /// vacuum horizon, so a vacuum could remove nothing it protects.
+    HorizonHeld,
     /// PostgreSQL already reports a build or vacuum on the target.
     ActiveMaintenance,
     /// Another backend is waiting for a relation lock.
@@ -165,6 +179,9 @@ pub(crate) const fn safety_deferral(profile: PolicyProfile, gates: SafetyGates) 
     if gates.oldest_transaction_seconds > 30 {
         return Some(DeferralReason::LongTransaction);
     }
+    if gates.held_horizon.is_some() {
+        return Some(DeferralReason::HorizonHeld);
+    }
     if gates.active_maintenance {
         return Some(DeferralReason::ActiveMaintenance);
     }
@@ -189,17 +206,8 @@ pub fn decide(
     {
         return PolicyDecision::Deferred(DeferralReason::Cooldown);
     }
-    if gates.active_backend_percent > profile.maximum_active_backend_percent {
-        return PolicyDecision::Deferred(DeferralReason::ActiveBackendRatio);
-    }
-    if gates.oldest_transaction_seconds > 30 {
-        return PolicyDecision::Deferred(DeferralReason::LongTransaction);
-    }
-    if gates.active_maintenance {
-        return PolicyDecision::Deferred(DeferralReason::ActiveMaintenance);
-    }
-    if gates.waiting_relation_lock {
-        return PolicyDecision::Deferred(DeferralReason::WaitingRelationLock);
+    if let Some(reason) = safety_deferral(profile, gates) {
+        return PolicyDecision::Deferred(reason);
     }
     if state.is_action_pending {
         return match mode {
@@ -219,9 +227,81 @@ pub fn decide(
     }
 }
 
+/// Whether a completed action achieved what it was queued for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActionVerdict {
+    /// The action achieved its purpose.
+    Effective,
+    /// A vacuum completed, yet the dead share it left still meets the
+    /// threshold that queued it: something held the horizon.
+    Ineffective,
+}
+
+/// Judge a completed action by the reading taken after it.
+///
+/// A rebuild is always effective, and so is a vacuum of a heap left empty.
+pub(crate) fn action_verdict(profile: PolicyProfile, comparison: ActionComparison) -> ActionVerdict {
+    match comparison.post_vacuum_dead_percent() {
+        Some(dead_percent) if dead_percent >= profile.heap_dead_percent => ActionVerdict::Ineffective,
+        Some(_) | None => ActionVerdict::Effective,
+    }
+}
+
+/// How one executed action ended, as the cooldown reads it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActionEnding {
+    /// The statement completed.
+    Completed(ActionVerdict),
+    /// The statement failed.
+    Failed {
+        /// Consecutive failures including this one.
+        consecutive_failures: u32,
+    },
+}
+
+/// The cooldown deadline an action's ending sets on its target.
+///
+/// A failure backs off exponentially from the ineffective cooldown, doubling
+/// with each consecutive failure up to 24 hours, so a rebuild that keeps
+/// failing stops leaving an artifact to recover on every visit.
+#[must_use]
+pub fn cooldown_after(profile: PolicyProfile, ending: ActionEnding, now: DateTime<Utc>) -> DateTime<Utc> {
+    now + match ending {
+        ActionEnding::Completed(ActionVerdict::Effective) => profile.successful_cooldown,
+        ActionEnding::Completed(ActionVerdict::Ineffective) => profile.ineffective_cooldown,
+        ActionEnding::Failed { consecutive_failures } => failure_backoff(profile.ineffective_cooldown, consecutive_failures),
+    }
+}
+
+/// `base * 2^(consecutive_failures - 1)`, capped at 24 hours. A product too
+/// large to represent is past the cap.
+fn failure_backoff(base: ChronoDuration, consecutive_failures: u32) -> ChronoDuration {
+    let cap = ChronoDuration::hours(24);
+    2_i32
+        .checked_pow(consecutive_failures.saturating_sub(1))
+        .and_then(|factor| base.checked_mul(factor))
+        .map_or(cap, |backoff| backoff.min(cap))
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, SafetyGates, TargetState, decide};
+    use crate::{
+        action_measurement::{ActionComparison, TupleCounts},
+        policy::{
+            ActionEnding,
+            ActionVerdict,
+            DeferralReason,
+            DegradationSample,
+            PolicyDecision,
+            PolicyProfile,
+            SafetyGates,
+            TargetState,
+            action_verdict,
+            cooldown_after,
+            decide,
+        },
+        vacuum_horizon::HorizonHolderKind,
+    };
     use andromeda_postgresql_context_store::maintenance_config::{MaintenanceMode, MaintenanceProfile};
     use chrono::{Duration as ChronoDuration, Utc};
     use pretty_assertions::assert_eq;
@@ -239,6 +319,7 @@ mod tests {
         SafetyGates {
             active_backend_percent: 0,
             oldest_transaction_seconds: 0,
+            held_horizon: None,
             active_maintenance: false,
             waiting_relation_lock: false,
         }
@@ -327,6 +408,13 @@ mod tests {
             ),
             (
                 SafetyGates {
+                    held_horizon: Some(HorizonHolderKind::PreparedTransaction),
+                    ..idle_gates()
+                },
+                DeferralReason::HorizonHeld,
+            ),
+            (
+                SafetyGates {
                     active_maintenance: true,
                     ..idle_gates()
                 },
@@ -353,6 +441,61 @@ mod tests {
                     now,
                 ),
                 PolicyDecision::Deferred(reason)
+            );
+        }
+    }
+
+    #[test]
+    fn vacuum_is_ineffective_when_the_dead_share_still_meets_the_threshold() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let vacuum = |dead, live| ActionComparison::Heap {
+            before: TupleCounts { dead: 50_000, live },
+            after: TupleCounts { dead, live },
+        };
+        assert_eq!(profile.heap_dead_percent, 10);
+        assert_eq!(action_verdict(profile, vacuum(20, 80)), ActionVerdict::Ineffective);
+        assert_eq!(action_verdict(profile, vacuum(5, 95)), ActionVerdict::Effective);
+        assert_eq!(action_verdict(profile, vacuum(0, 0)), ActionVerdict::Effective);
+    }
+
+    #[test]
+    fn ineffective_vacuum_takes_the_short_cooldown() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let now = Utc::now();
+        assert_eq!(
+            cooldown_after(profile, ActionEnding::Completed(ActionVerdict::Ineffective), now),
+            now + ChronoDuration::minutes(15)
+        );
+        assert_eq!(
+            cooldown_after(profile, ActionEnding::Completed(ActionVerdict::Effective), now),
+            now + ChronoDuration::hours(6)
+        );
+        assert_eq!(
+            PolicyProfile::from_profile(MaintenanceProfile::Conservative).ineffective_cooldown,
+            ChronoDuration::hours(1)
+        );
+    }
+
+    #[test]
+    fn failed_action_backs_off_exponentially() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let now = Utc::now();
+        for (consecutive_failures, minutes) in [(1, 15), (2, 30), (3, 60)] {
+            assert_eq!(
+                cooldown_after(profile, ActionEnding::Failed { consecutive_failures }, now),
+                now + ChronoDuration::minutes(minutes)
+            );
+        }
+    }
+
+    #[test]
+    fn failure_backoff_caps_at_twenty_four_hours() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let now = Utc::now();
+        for (consecutive_failures, hours) in [(7, 16), (8, 24), (40, 24)] {
+            assert_eq!(
+                cooldown_after(profile, ActionEnding::Failed { consecutive_failures }, now),
+                now + ChronoDuration::hours(hours)
             );
         }
     }

@@ -14,6 +14,8 @@ compact_code_registry! {
             Succeeded = 1, "succeeded";
             /// The action failed.
             Failed = 2, "failed";
+            /// The action completed without the effect it was queued for.
+            Ineffective = 3, "ineffective";
         }
     }
 }
@@ -25,14 +27,15 @@ mod tests {
 
     #[test]
     fn the_members_are_numbered_as_the_migration_documents_them() {
-        assert_eq!(MaintenanceActionResultCode::ALL.len(), 2);
+        assert_eq!(MaintenanceActionResultCode::ALL.len(), 3);
         assert_eq!(MaintenanceActionResultCode::Succeeded.code(), 1);
         assert_eq!(MaintenanceActionResultCode::Failed.code(), 2);
+        assert_eq!(MaintenanceActionResultCode::Ineffective.code(), 3);
     }
 
     #[test]
     fn zero_and_the_number_after_the_last_member_fail_to_decode() {
         assert!(MaintenanceActionResultCode::try_from(0).is_err());
-        assert!(MaintenanceActionResultCode::try_from(3).is_err());
+        assert!(MaintenanceActionResultCode::try_from(4).is_err());
     }
 }

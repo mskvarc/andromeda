@@ -225,6 +225,7 @@ impl MaintenanceController {
                 | DeferralReason::Cooldown
                 | DeferralReason::ActiveBackendRatio
                 | DeferralReason::LongTransaction
+                | DeferralReason::HorizonHeld
                 | DeferralReason::ActiveMaintenance
                 | DeferralReason::WaitingRelationLock,
             ) => sampling_outcome.unwrap_or(PassOutcome::Probed),
@@ -262,6 +263,7 @@ impl MaintenanceController {
                     | DeferralReason::Cooldown
                     | DeferralReason::ActiveBackendRatio
                     | DeferralReason::LongTransaction
+                    | DeferralReason::HorizonHeld
                     | DeferralReason::ActiveMaintenance
                     | DeferralReason::WaitingRelationLock,
                 ) => {}
@@ -296,6 +298,7 @@ const fn idle_gates() -> SafetyGates {
     SafetyGates {
         active_backend_percent: 0,
         oldest_transaction_seconds: 0,
+        held_horizon: None,
         active_maintenance: false,
         waiting_relation_lock: false,
     }

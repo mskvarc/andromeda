@@ -32,6 +32,10 @@ pub enum CatalogCounter {
     TableIndexBytes,
     /// Consecutive threshold breaches recorded for a target.
     ConsecutiveBreaches,
+    /// Consecutive failed actions recorded for a target.
+    ConsecutiveFailures,
+    /// Age in transactions of an ID holding the vacuum horizon.
+    TransactionAge,
     /// Relation bytes of a recorded degradation sample.
     SampleRelationBytes,
     /// Reclaimable bytes of a recorded degradation sample.

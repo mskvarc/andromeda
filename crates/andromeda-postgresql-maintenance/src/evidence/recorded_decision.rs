@@ -32,6 +32,7 @@ impl RecordedDecision {
             RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::ActiveMaintenance)) => MaintenanceDecisionCode::ActiveMaintenance,
             RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::WaitingRelationLock)) => MaintenanceDecisionCode::WaitingRelationLock,
             RecordedDecision::PairedQueued => MaintenanceDecisionCode::PairedQueued,
+            RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::HorizonHeld)) => MaintenanceDecisionCode::HorizonHeld,
         }
     }
 }
@@ -46,7 +47,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     /// Every decision the controller can record, in registry order.
-    const EVERY_DECISION: [RecordedDecision; 13] = [
+    const EVERY_DECISION: [RecordedDecision; 14] = [
         RecordedDecision::Policy(PolicyDecision::Act),
         RecordedDecision::Policy(PolicyDecision::Queued),
         RecordedDecision::Policy(PolicyDecision::WouldAct),
@@ -60,6 +61,7 @@ mod tests {
         RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::ActiveMaintenance)),
         RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::WaitingRelationLock)),
         RecordedDecision::PairedQueued,
+        RecordedDecision::Policy(PolicyDecision::Deferred(DeferralReason::HorizonHeld)),
     ];
 
     /// The mapping is one-to-one and onto: every decision has its own number

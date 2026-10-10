@@ -44,6 +44,9 @@ pub enum MaintenanceError {
     /// Durable state holds a code no release assigned.
     #[error("platform maintenance state is unreadable: {0}")]
     UnreadableCode(#[from] UnknownCompactCode),
+    /// The vacuum horizon report named a holder kind this binary never asks for.
+    #[error("PostgreSQL vacuum horizon report named an unknown holder kind: {0}")]
+    UnknownHorizonHolder(#[source] strum::ParseError),
     /// Durable index-probe state names a target that is not an index.
     #[error("platform maintenance state records an index probe for non-index target '{}'", .0.label())]
     ProbeTargetNotAnIndex(MaintenanceTargetCode),

@@ -1,5 +1,6 @@
 //! How one maintenance action ended.
 
+use crate::policy::ActionVerdict;
 use andromeda_postgresql_codes::maintenance_action_result::MaintenanceActionResultCode;
 use strum::EnumIter;
 
@@ -10,6 +11,8 @@ pub(crate) enum ActionResult {
     Succeeded,
     /// The statement failed; the action stays pending for a later retry.
     Failed,
+    /// A vacuum completed but left the dead share at or above its threshold.
+    Ineffective,
 }
 
 impl ActionResult {
@@ -18,6 +21,15 @@ impl ActionResult {
         match self {
             ActionResult::Succeeded => MaintenanceActionResultCode::Succeeded,
             ActionResult::Failed => MaintenanceActionResultCode::Failed,
+            ActionResult::Ineffective => MaintenanceActionResultCode::Ineffective,
+        }
+    }
+
+    /// The result of a statement that completed with this verdict.
+    pub(crate) const fn of_verdict(verdict: ActionVerdict) -> ActionResult {
+        match verdict {
+            ActionVerdict::Effective => ActionResult::Succeeded,
+            ActionVerdict::Ineffective => ActionResult::Ineffective,
         }
     }
 }
@@ -41,5 +53,6 @@ mod tests {
     fn the_stored_label_names_the_result() {
         assert_eq!(ActionResult::Succeeded.code().label(), "succeeded");
         assert_eq!(ActionResult::Failed.code().label(), "failed");
+        assert_eq!(ActionResult::Ineffective.code().label(), "ineffective");
     }
 }
