@@ -40,6 +40,12 @@ pub fn vacuum_non_truncating(schema: &dyn Iden, relation: &dyn Iden) -> Maintena
     MaintenanceStatement(format!("VACUUM (TRUNCATE FALSE, PARALLEL 0) {}.{}", quoted(schema), quoted(relation)))
 }
 
+/// Build `ANALYZE schema.relation`, which refreshes the relation's planner
+/// statistics from a bounded sample of its rows.
+pub fn analyze(schema: &dyn Iden, relation: &dyn Iden) -> MaintenanceStatement {
+    MaintenanceStatement(format!("ANALYZE {}.{}", quoted(schema), quoted(relation)))
+}
+
 /// Build the fixed settings for one short-lived maintenance session.
 #[must_use]
 pub fn session_settings() -> [MaintenanceStatement; 4] {
@@ -179,6 +185,7 @@ enum MaintenanceFunction {
 #[cfg(test)]
 mod tests {
     use crate::maintenance::{
+        analyze,
         drop_index_concurrently,
         multixact_age,
         reindex_index_concurrently,
@@ -240,6 +247,7 @@ mod tests {
             vacuum_non_truncating(&schema, &table).as_sql(),
             "VACUUM (TRUNCATE FALSE, PARALLEL 0) \"public\".\"current_attributes\""
         );
+        assert_eq!(analyze(&schema, &table).as_sql(), "ANALYZE \"public\".\"current_attributes\"");
     }
 
     #[test]

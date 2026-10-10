@@ -1,6 +1,6 @@
 //! Pure profile thresholds and maintenance decision policy.
 
-use crate::{action_measurement::ActionComparison, candidate::MaintenanceTarget, vacuum_horizon::HorizonHolderKind};
+use crate::{statistics_freshness::StatisticsFreshness, vacuum_horizon::HorizonHolderKind};
 use andromeda_postgresql_context_store::maintenance_config::{MaintenanceMode, MaintenanceProfile};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::time::Duration;
@@ -142,7 +142,8 @@ pub enum DeferralReason {
     RelationTooSmall,
     /// The fixed profile excludes the estimated reclaim.
     ReclaimTooSmall,
-    /// The measured degradation percentage is below threshold.
+    /// The measured degradation percentage is below threshold, or a heap's
+    /// statistics are fresh.
     BelowThreshold,
     /// The target has not yet breached for the profile's qualifying duration
     /// over enough samples.
@@ -243,19 +244,8 @@ pub fn decide(
     gates: SafetyGates,
     now: DateTime<Utc>,
 ) -> PolicyDecision {
-    if let Some(until) = state.cooldown_until
-        && until > now
-    {
-        return PolicyDecision::Deferred(DeferralReason::Cooldown);
-    }
-    if let Some(reason) = safety_deferral(profile, gates) {
-        return PolicyDecision::Deferred(reason);
-    }
-    if state.is_action_pending {
-        return match mode {
-            MaintenanceMode::Disabled | MaintenanceMode::Observe => PolicyDecision::WouldAct,
-            MaintenanceMode::Automatic => PolicyDecision::Act,
-        };
+    if let Some(decision) = gated_decision(mode, profile, state, gates, now) {
+        return decision;
     }
     if let Err(reason) = sample.qualification(profile) {
         return PolicyDecision::Deferred(reason);
@@ -263,6 +253,49 @@ pub fn decide(
     if !BreachRun::extended(state.breach, now).qualifies(profile, now) {
         return PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples);
     }
+    newly_qualified(mode)
+}
+
+/// Apply cooldown and load gates to a heap's statistics, which qualify for
+/// `ANALYZE` on one stale sample: an analyze reads a bounded sample, so
+/// neither a breach duration nor the size floors apply.
+pub(crate) fn decide_analyze(
+    mode: MaintenanceMode,
+    profile: PolicyProfile,
+    state: TargetState,
+    freshness: StatisticsFreshness,
+    gates: SafetyGates,
+    now: DateTime<Utc>,
+) -> PolicyDecision {
+    if let Some(decision) = gated_decision(mode, profile, state, gates, now) {
+        return decision;
+    }
+    match freshness {
+        StatisticsFreshness::Stale => newly_qualified(mode),
+        StatisticsFreshness::Fresh => PolicyDecision::Deferred(DeferralReason::BelowThreshold),
+    }
+}
+
+/// The decision every target takes before its own qualification: deferred in
+/// its cooldown or by a load gate, and acted on once pending. `None` leaves
+/// the target to its qualification.
+fn gated_decision(mode: MaintenanceMode, profile: PolicyProfile, state: TargetState, gates: SafetyGates, now: DateTime<Utc>) -> Option<PolicyDecision> {
+    if let Some(until) = state.cooldown_until
+        && until > now
+    {
+        return Some(PolicyDecision::Deferred(DeferralReason::Cooldown));
+    }
+    if let Some(reason) = safety_deferral(profile, gates) {
+        return Some(PolicyDecision::Deferred(reason));
+    }
+    state.is_action_pending.then_some(match mode {
+        MaintenanceMode::Disabled | MaintenanceMode::Observe => PolicyDecision::WouldAct,
+        MaintenanceMode::Automatic => PolicyDecision::Act,
+    })
+}
+
+/// The decision on work that qualified on this sample.
+const fn newly_qualified(mode: MaintenanceMode) -> PolicyDecision {
     match mode {
         MaintenanceMode::Disabled | MaintenanceMode::Observe => PolicyDecision::WouldAct,
         MaintenanceMode::Automatic => PolicyDecision::Queued,
@@ -294,94 +327,11 @@ pub fn breach_after(breach: Option<BreachRun>, decision: PolicyDecision, sample:
     }
 }
 
-/// Whether a completed action achieved what it was queued for.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ActionVerdict {
-    /// The action achieved its purpose.
-    Effective,
-    /// A vacuum left the dead share at or above the threshold that queued it,
-    /// because something held the horizon; or a rebuild of a density-measured
-    /// GIN reclaimed less than the reclaim floor, because its density grew
-    /// with its values rather than with bloat.
-    Ineffective,
-}
-
-/// Judge a completed action by the reading taken after it.
-///
-/// A vacuum of a heap left empty is effective. A rebuild of an index probed or
-/// queued through a canary is always effective: its free space was measured,
-/// not inferred.
-pub(crate) fn action_verdict(profile: PolicyProfile, target: MaintenanceTarget, comparison: ActionComparison) -> ActionVerdict {
-    match comparison {
-        ActionComparison::Index { before_bytes, after_bytes } => match target {
-            MaintenanceTarget::Index(index) if index.density_column().is_some() && before_bytes.saturating_sub(after_bytes) < profile.minimum_reclaim_bytes => {
-                ActionVerdict::Ineffective
-            }
-            MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_) => ActionVerdict::Effective,
-        },
-        ActionComparison::Heap { after, .. } => match after.dead_percent() {
-            Some(dead_percent) if dead_percent >= profile.heap_dead_percent => ActionVerdict::Ineffective,
-            Some(_) | None => ActionVerdict::Effective,
-        },
-    }
-}
-
-/// How one executed action ended, as the cooldown reads it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ActionEnding {
-    /// The statement completed.
-    Completed(ActionVerdict),
-    /// The statement failed.
-    Failed {
-        /// Consecutive failures including this one.
-        consecutive_failures: u32,
-    },
-}
-
-/// The cooldown deadline an action's ending sets on its target.
-///
-/// A failure backs off exponentially from the ineffective cooldown, doubling
-/// with each consecutive failure up to 24 hours, so a rebuild that keeps
-/// failing stops leaving an artifact to recover on every visit.
-#[must_use]
-pub fn cooldown_after(profile: PolicyProfile, ending: ActionEnding, now: DateTime<Utc>) -> DateTime<Utc> {
-    now + match ending {
-        ActionEnding::Completed(ActionVerdict::Effective) => profile.successful_cooldown,
-        ActionEnding::Completed(ActionVerdict::Ineffective) => profile.ineffective_cooldown,
-        ActionEnding::Failed { consecutive_failures } => failure_backoff(profile.ineffective_cooldown, consecutive_failures),
-    }
-}
-
-/// `base * 2^(consecutive_failures - 1)`, capped at 24 hours. A product too
-/// large to represent is past the cap.
-fn failure_backoff(base: ChronoDuration, consecutive_failures: u32) -> ChronoDuration {
-    let cap = ChronoDuration::hours(24);
-    2_i32
-        .checked_pow(consecutive_failures.saturating_sub(1))
-        .and_then(|factor| base.checked_mul(factor))
-        .map_or(cap, |backoff| backoff.min(cap))
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
-        action_measurement::{ActionComparison, TupleCounts},
-        candidate::{HeapTarget, MaintenanceTarget},
-        policy::{
-            ActionEnding,
-            ActionVerdict,
-            BreachRun,
-            DeferralReason,
-            DegradationSample,
-            PolicyDecision,
-            PolicyProfile,
-            SafetyGates,
-            TargetState,
-            action_verdict,
-            breach_after,
-            cooldown_after,
-            decide,
-        },
+        policy::{BreachRun, DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, SafetyGates, TargetState, breach_after, decide, decide_analyze},
+        statistics_freshness::StatisticsFreshness,
         vacuum_horizon::HorizonHolderKind,
     };
     use andromeda_postgresql_context_store::maintenance_config::{MaintenanceMode, MaintenanceProfile};
@@ -657,59 +607,48 @@ mod tests {
         }
     }
 
+    /// An analyze reads a bounded sample, so one stale sample of a heap of any
+    /// size qualifies it, while cooldown and load gates still defer it.
     #[test]
-    fn vacuum_is_ineffective_when_the_dead_share_still_meets_the_threshold() {
-        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
-        let vacuum = |dead, live| ActionComparison::Heap {
-            before: TupleCounts { dead: 50_000, live },
-            after: TupleCounts { dead, live },
+    fn stale_statistics_qualify_on_one_sample_within_the_gates() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Conservative);
+        let now = Utc::now();
+        let fresh_state = TargetState::default();
+        assert_eq!(
+            decide_analyze(MaintenanceMode::Automatic, profile, fresh_state, StatisticsFreshness::Stale, idle_gates(), now),
+            PolicyDecision::Queued
+        );
+        assert_eq!(
+            decide_analyze(MaintenanceMode::Observe, profile, fresh_state, StatisticsFreshness::Stale, idle_gates(), now),
+            PolicyDecision::WouldAct
+        );
+        assert_eq!(
+            decide_analyze(MaintenanceMode::Automatic, profile, fresh_state, StatisticsFreshness::Fresh, idle_gates(), now),
+            PolicyDecision::Deferred(DeferralReason::BelowThreshold)
+        );
+        let cooling = TargetState {
+            cooldown_until: Some(now + ChronoDuration::minutes(30)),
+            ..TargetState::default()
         };
-        let heap = MaintenanceTarget::Heap(HeapTarget::CurrentAttributes);
-        assert_eq!(profile.heap_dead_percent, 10);
-        assert_eq!(action_verdict(profile, heap, vacuum(20, 80)), ActionVerdict::Ineffective);
-        assert_eq!(action_verdict(profile, heap, vacuum(5, 95)), ActionVerdict::Effective);
-        assert_eq!(action_verdict(profile, heap, vacuum(0, 0)), ActionVerdict::Effective);
-    }
-
-    #[test]
-    fn ineffective_vacuum_takes_the_short_cooldown() {
-        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
-        let now = Utc::now();
         assert_eq!(
-            cooldown_after(profile, ActionEnding::Completed(ActionVerdict::Ineffective), now),
-            now + ChronoDuration::minutes(15)
+            decide_analyze(MaintenanceMode::Automatic, profile, cooling, StatisticsFreshness::Stale, idle_gates(), now),
+            PolicyDecision::Deferred(DeferralReason::Cooldown)
         );
+        let busy = SafetyGates {
+            active_maintenance: true,
+            ..idle_gates()
+        };
         assert_eq!(
-            cooldown_after(profile, ActionEnding::Completed(ActionVerdict::Effective), now),
-            now + ChronoDuration::hours(6)
+            decide_analyze(MaintenanceMode::Automatic, profile, fresh_state, StatisticsFreshness::Stale, busy, now),
+            PolicyDecision::Deferred(DeferralReason::ActiveMaintenance)
         );
+        let pending = TargetState {
+            is_action_pending: true,
+            ..TargetState::default()
+        };
         assert_eq!(
-            PolicyProfile::from_profile(MaintenanceProfile::Conservative).ineffective_cooldown,
-            ChronoDuration::hours(1)
+            decide_analyze(MaintenanceMode::Automatic, profile, pending, StatisticsFreshness::Fresh, idle_gates(), now),
+            PolicyDecision::Act
         );
-    }
-
-    #[test]
-    fn failed_action_backs_off_exponentially() {
-        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
-        let now = Utc::now();
-        for (consecutive_failures, minutes) in [(1, 15), (2, 30), (3, 60)] {
-            assert_eq!(
-                cooldown_after(profile, ActionEnding::Failed { consecutive_failures }, now),
-                now + ChronoDuration::minutes(minutes)
-            );
-        }
-    }
-
-    #[test]
-    fn failure_backoff_caps_at_twenty_four_hours() {
-        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
-        let now = Utc::now();
-        for (consecutive_failures, hours) in [(7, 16), (8, 24), (40, 24)] {
-            assert_eq!(
-                cooldown_after(profile, ActionEnding::Failed { consecutive_failures }, now),
-                now + ChronoDuration::hours(hours)
-            );
-        }
     }
 }

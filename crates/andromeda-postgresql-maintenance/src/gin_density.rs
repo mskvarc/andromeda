@@ -167,10 +167,11 @@ fn gin_coverage_statement(branch: Branch) -> SelectStatement {
 mod tests {
     use crate::{
         action_measurement::ActionComparison,
+        action_policy::{ActionVerdict, action_verdict},
         branch::Branch,
         candidate::{IndexTarget, MaintenanceTarget},
         gin_density::{Density, DensityReading, gin_coverage_statement},
-        policy::{ActionVerdict, PolicyProfile, action_verdict},
+        policy::PolicyProfile,
     };
     use andromeda_postgresql_context_store::maintenance_config::MaintenanceProfile;
     use pretty_assertions::assert_eq;

@@ -4,7 +4,7 @@
 use crate::{
     branch::Branch,
     candidate::MaintenanceTarget,
-    controller::catalog_sampling::CatalogSample,
+    controller::catalog_sampling::{CatalogSample, SampleEvidence},
     error::MaintenanceError,
     gin_density::{self, GinCoverage},
     inspection::IndexSize,
@@ -44,7 +44,7 @@ pub(crate) async fn density_samples(
         };
         samples.extend(reading.sample(baseline, profile).map(|degradation| CatalogSample {
             target: MaintenanceTarget::Index(reading.target),
-            degradation,
+            evidence: SampleEvidence::Degradation(degradation),
         }));
     }
     Ok(samples)

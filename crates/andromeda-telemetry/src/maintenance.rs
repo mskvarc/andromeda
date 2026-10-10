@@ -66,6 +66,8 @@ pub enum MaintenanceAction {
     Reindex,
     /// One ordinary catch-up vacuum.
     Vacuum,
+    /// One catch-up `ANALYZE` of a heap's planner statistics.
+    Analyze,
     /// One documented invalid-index artifact drop.
     Recovery,
 }

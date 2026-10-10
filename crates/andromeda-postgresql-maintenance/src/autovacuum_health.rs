@@ -9,18 +9,14 @@
 //! still qualifies on its own samples.
 
 use crate::{
-    autovacuum_trigger::{TABLE_STATISTICS, TriggerColumn, autovacuum_triggers_statement, statistics_column},
+    autovacuum_trigger::{TriggerColumn, autovacuum_triggers_statement, progress_reported, statistics_column},
     branch::Branch,
     candidate::HeapTarget,
     catalog_counter::{CatalogCounter, non_negative},
     error::MaintenanceError,
     state::{RegisteredTenant, autovacuum_saturation},
 };
-use andromeda_postgresql_seaquery::{
-    cast::cast,
-    introspection::{current_database, current_setting},
-    pg_type::PostgresType,
-};
+use andromeda_postgresql_seaquery::{cast::cast, introspection::current_setting, pg_type::PostgresType};
 use andromeda_telemetry::maintenance::record_autovacuum_workers;
 use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, Iden, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
@@ -145,21 +141,11 @@ enum WorkerColumn {
 }
 
 /// Every heap of `branch` with its dead tuples, its trigger and whether a
-/// vacuum of it is running.
-///
-/// `pg_stat_progress_vacuum` lists every database's vacuums and `relid` is an
-/// OID unique only within one database, so the progress row must also name
-/// the tenant's database.
+/// vacuum of it is running in the tenant's database.
 fn heap_autovacuum_statement(branch: Branch) -> SelectStatement {
-    let running = Query::select()
-        .expr(Expr::val(1))
-        .from(Alias::new("pg_stat_progress_vacuum"))
-        .and_where(Expr::col((Alias::new("pg_stat_progress_vacuum"), Alias::new("relid"))).equals((Alias::new(TABLE_STATISTICS), Alias::new("relid"))))
-        .and_where(Expr::col((Alias::new("pg_stat_progress_vacuum"), Alias::new("datname"))).eq(current_database()))
-        .to_owned();
     autovacuum_triggers_statement(branch)
         .expr_as(statistics_column("n_dead_tup"), HealthColumn::DeadTuples)
-        .expr_as(Expr::exists(running), HealthColumn::VacuumRunning)
+        .expr_as(progress_reported("pg_stat_progress_vacuum"), HealthColumn::VacuumRunning)
         .to_owned()
 }
 

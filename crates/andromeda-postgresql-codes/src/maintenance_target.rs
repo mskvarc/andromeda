@@ -6,7 +6,9 @@ compact_code_registry! {
     /// A relation the opt-in PostgreSQL maintenance controller may act on.
     ///
     /// The labels are the relation names the controller inspects, which is how an
-    /// operator recognises a target in the platform tables.
+    /// operator recognises a target in the platform tables. A heap's planner
+    /// statistics, refreshed by `ANALYZE` rather than by vacuum, are a target of
+    /// their own, labelled with the heap's name and a `_statistics` suffix.
     MaintenanceTargetCode {
         frozen_prefix: 13,
         frozen_digest: 0xe988_1329_b9bc_1c59,
@@ -51,6 +53,26 @@ compact_code_registry! {
             TemporalAppendIntents = 19, "temporal_append_intents";
             /// The snapshot notification outbox queue heap.
             SnapshotNotificationOutbox = 20, "snapshot_notification_outbox";
+            /// The entity search projection's heap.
+            EntitySearch = 21, "entity_search";
+            /// The current attributes' planner statistics.
+            CurrentAttributesStatistics = 22, "current_attributes_statistics";
+            /// The current entities' planner statistics.
+            EntitiesStatistics = 23, "entities_statistics";
+            /// The subscription delivery-state planner statistics.
+            SubscriptionDeliveryStateStatistics = 24, "subscription_delivery_state_statistics";
+            /// The notification events queue's planner statistics.
+            NotificationEventsStatistics = 25, "notification_events_statistics";
+            /// The notification deliveries queue's planner statistics.
+            NotificationDeliveriesStatistics = 26, "notification_deliveries_statistics";
+            /// The pending side effects queue's planner statistics.
+            PendingSideEffectsStatistics = 27, "pending_side_effects_statistics";
+            /// The temporal append intents queue's planner statistics.
+            TemporalAppendIntentsStatistics = 28, "temporal_append_intents_statistics";
+            /// The snapshot notification outbox queue's planner statistics.
+            SnapshotNotificationOutboxStatistics = 29, "snapshot_notification_outbox_statistics";
+            /// The entity search projection's planner statistics.
+            EntitySearchStatistics = 30, "entity_search_statistics";
         }
     }
 }
@@ -62,7 +84,7 @@ mod tests {
 
     #[test]
     fn the_members_are_numbered_as_the_migration_documents_them() {
-        assert_eq!(MaintenanceTargetCode::ALL.len(), 20);
+        assert_eq!(MaintenanceTargetCode::ALL.len(), 30);
         assert_eq!(MaintenanceTargetCode::UqCurrentAttributesGrain.code(), 1);
         assert_eq!(MaintenanceTargetCode::IdxCaSubEqKeys.code(), 10);
         assert_eq!(MaintenanceTargetCode::SubscriptionDeliveryState.code(), 13);
@@ -70,11 +92,14 @@ mod tests {
         assert_eq!(MaintenanceTargetCode::IdxCaValueLongTextTrgm.code(), 15);
         assert_eq!(MaintenanceTargetCode::NotificationEvents.code(), 16);
         assert_eq!(MaintenanceTargetCode::SnapshotNotificationOutbox.code(), 20);
+        assert_eq!(MaintenanceTargetCode::EntitySearch.code(), 21);
+        assert_eq!(MaintenanceTargetCode::CurrentAttributesStatistics.code(), 22);
+        assert_eq!(MaintenanceTargetCode::EntitySearchStatistics.code(), 30);
     }
 
     #[test]
     fn zero_and_the_number_after_the_last_member_fail_to_decode() {
         assert!(MaintenanceTargetCode::try_from(0).is_err());
-        assert!(MaintenanceTargetCode::try_from(21).is_err());
+        assert!(MaintenanceTargetCode::try_from(31).is_err());
     }
 }

@@ -1,18 +1,21 @@
-//! The dead tuples at which autovacuum vacuums a table on its own.
+//! The dead tuples at which autovacuum vacuums a table on its own, and the
+//! modified tuples at which it analyzes it.
 //!
 //! Autovacuum vacuums a table once its dead tuples exceed
-//! `min(threshold + scale_factor * reltuples, max_threshold)`. Each of the
-//! three parameters is the table's storage parameter when the table sets one
-//! and the server setting otherwise; a `max_threshold` of -1 sets no cap, and
-//! a `reltuples` of -1 (never vacuumed or analyzed) counts as zero. The
-//! statement computes the trigger in SQL from the table's own `reloptions`, so
-//! a table the migrations tune is judged against its own trigger, and reads it
-//! for every heap one branch holds.
+//! `min(threshold + scale_factor * reltuples, max_threshold)`, and analyzes it
+//! once the tuples modified since its last analyze exceed
+//! `threshold + scale_factor * reltuples` with the analyze parameters, which
+//! have no cap. Each parameter is the table's storage parameter when the table
+//! sets one and the server setting otherwise; a `max_threshold` of -1 sets no
+//! cap, and a `reltuples` of -1 (never vacuumed or analyzed) counts as zero.
+//! The statement computes both triggers in SQL from the table's own
+//! `reloptions`, so a table the migrations tune is judged against its own
+//! triggers, and reads them for every heap one branch holds.
 
 use crate::{branch::Branch, candidate::HeapTarget};
 use andromeda_postgresql_seaquery::{
     cast::{cast, cast_compound},
-    introspection::{current_setting, current_setting_missing_ok},
+    introspection::{current_database, current_setting, current_setting_missing_ok},
     maintenance::storage_parameter,
     operator::null_if,
     pg_type::PostgresType,
@@ -32,6 +35,9 @@ pub(crate) enum TriggerColumn {
     Relname,
     /// Dead tuples past which autovacuum vacuums the table.
     VacuumTrigger,
+    /// Tuples modified since the last analyze past which autovacuum analyzes
+    /// the table.
+    AnalyzeTrigger,
 }
 
 /// A column of the table statistics view, qualified by its alias.
@@ -39,13 +45,31 @@ pub(crate) fn statistics_column(column: &'static str) -> Expr {
     Expr::col((Alias::new(TABLE_STATISTICS), Alias::new(column)))
 }
 
-/// The effective autovacuum vacuum trigger of every heap `branch` holds,
-/// beside its name. Callers extend the statement with the counters they
-/// compare against it.
+/// Whether the progress view `view` (`pg_stat_progress_vacuum`,
+/// `pg_stat_progress_analyze`) reports an operation on the table of the
+/// statistics row.
+///
+/// A progress view lists every database's operations and `relid` is an OID
+/// unique only within one database, so the progress row must also name the
+/// tenant's database.
+pub(crate) fn progress_reported(view: &'static str) -> SimpleExpr {
+    let running = Query::select()
+        .expr(Expr::val(1))
+        .from(Alias::new(view))
+        .and_where(Expr::col((Alias::new(view), Alias::new("relid"))).equals((Alias::new(TABLE_STATISTICS), Alias::new("relid"))))
+        .and_where(Expr::col((Alias::new(view), Alias::new("datname"))).eq(current_database()))
+        .to_owned();
+    Expr::exists(running)
+}
+
+/// The effective autovacuum vacuum and analyze triggers of every heap
+/// `branch` holds, beside its name. Callers extend the statement with the
+/// counters they compare against them.
 pub(crate) fn autovacuum_triggers_statement(branch: Branch) -> SelectStatement {
     Query::select()
         .expr_as(statistics_column("relname"), TriggerColumn::Relname)
         .expr_as(vacuum_trigger(), TriggerColumn::VacuumTrigger)
+        .expr_as(analyze_trigger(), TriggerColumn::AnalyzeTrigger)
         .from_as(Alias::new("pg_stat_user_tables"), Alias::new(TABLE_STATISTICS))
         .join_as(
             JoinType::InnerJoin,
@@ -65,13 +89,7 @@ pub(crate) fn autovacuum_triggers_statement(branch: Branch) -> SelectStatement {
 /// and a server without `autovacuum_vacuum_max_threshold` (read missing-ok)
 /// leave the uncapped trigger.
 fn vacuum_trigger() -> SimpleExpr {
-    let reltuples: SimpleExpr = Func::greatest([
-        cast(Expr::col((Alias::new(TABLE_CLASS), Alias::new("reltuples"))), PostgresType::Numeric),
-        Expr::val(0),
-    ])
-    .into();
-    let threshold = cast(effective_parameter("autovacuum_vacuum_threshold"), PostgresType::Numeric);
-    let scale_factor = cast(effective_parameter("autovacuum_vacuum_scale_factor"), PostgresType::Numeric);
+    let uncapped = uncapped_trigger("autovacuum_vacuum_threshold", "autovacuum_vacuum_scale_factor");
     let cap = cast(
         null_if(
             Func::coalesce([
@@ -83,8 +101,29 @@ fn vacuum_trigger() -> SimpleExpr {
         ),
         PostgresType::Numeric,
     );
-    let uncapped = cast_compound(threshold.add(scale_factor.mul(reltuples)), PostgresType::Numeric);
     cast(Func::least([uncapped, cap]).into(), PostgresType::Bigint)
+}
+
+/// `(threshold + scale_factor * reltuples)::bigint` with the analyze
+/// parameters, each the table's own or the server's.
+fn analyze_trigger() -> SimpleExpr {
+    cast(
+        uncapped_trigger("autovacuum_analyze_threshold", "autovacuum_analyze_scale_factor"),
+        PostgresType::Bigint,
+    )
+}
+
+/// `threshold + scale_factor * reltuples` in `numeric`, the two named
+/// parameters each the table's own or the server's.
+fn uncapped_trigger(threshold: &'static str, scale_factor: &'static str) -> SimpleExpr {
+    let reltuples: SimpleExpr = Func::greatest([
+        cast(Expr::col((Alias::new(TABLE_CLASS), Alias::new("reltuples"))), PostgresType::Numeric),
+        Expr::val(0),
+    ])
+    .into();
+    let threshold = cast(effective_parameter(threshold), PostgresType::Numeric);
+    let scale_factor = cast(effective_parameter(scale_factor), PostgresType::Numeric);
+    cast_compound(threshold.add(scale_factor.mul(reltuples)), PostgresType::Numeric)
 }
 
 /// A storage parameter as the table sets it, falling back to the server
@@ -108,14 +147,22 @@ mod tests {
     fn trigger_statement_reads_reloptions_with_server_fallback() {
         let sql = autovacuum_triggers_statement(Branch::Live).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"pg_options_to_table("c"."reloptions")"#), "{sql}");
-        for parameter in ["autovacuum_vacuum_threshold", "autovacuum_vacuum_scale_factor"] {
+        for parameter in [
+            "autovacuum_vacuum_threshold",
+            "autovacuum_vacuum_scale_factor",
+            "autovacuum_analyze_threshold",
+            "autovacuum_analyze_scale_factor",
+        ] {
             assert!(sql.contains(&format!("\"option_name\" = '{parameter}'")), "{parameter}: {sql}");
             assert!(sql.contains(&format!("current_setting('{parameter}')")), "{parameter}: {sql}");
         }
         assert!(sql.contains(r#""option_name" = 'autovacuum_vacuum_max_threshold'"#), "{sql}");
         assert!(sql.contains("current_setting('autovacuum_vacuum_max_threshold', TRUE)"), "{sql}");
+        assert!(!sql.contains("autovacuum_analyze_max_threshold"), "analyze has no cap: {sql}");
         assert!(sql.contains("'-1')"), "a cap of -1 sets none: {sql}");
         assert!(sql.contains(r#"GREATEST("c"."reltuples"::numeric, 0)"#), "{sql}");
+        assert!(sql.contains(r#"AS "vacuum_trigger""#), "{sql}");
+        assert!(sql.contains(r#"AS "analyze_trigger""#), "{sql}");
         assert!(sql.contains(r#"JOIN "pg_class" AS "c" ON "c"."oid" = "s"."relid""#), "{sql}");
         assert!(sql.contains(r#""s"."schemaname" = 'public'"#), "{sql}");
         for heap in HeapTarget::ALL {

@@ -2,6 +2,7 @@
 
 use crate::{
     action_measurement::ActionComparison,
+    action_policy::ActionVerdict,
     branch::{Branch, BranchTarget},
     candidate::{IndexTarget, MaintenanceTarget},
     catalog_counter::{CatalogCounter, persisted_count},
@@ -11,7 +12,7 @@ use crate::{
         recorded_decision::RecordedDecision,
         target_code::{stored_target, target_of},
     },
-    policy::{ActionVerdict, BreachRun, DegradationSample, PolicyDecision, TargetState, breach_after},
+    policy::{BreachRun, DegradationSample, PolicyDecision, TargetState, breach_after},
     state::{
         RegisteredTenant,
         TenantKey,
@@ -176,7 +177,7 @@ pub(crate) async fn record_decision(
     execute_update(connection, statement.clone()).await?;
     let paired_gin = match target.target() {
         MaintenanceTarget::Index(index) => index.paired_gin(),
-        MaintenanceTarget::Heap(_) => None,
+        MaintenanceTarget::Heap(_) | MaintenanceTarget::Statistics(_) => None,
     };
     if decision == PolicyDecision::Queued
         && let Some(gin) = paired_gin
@@ -212,7 +213,8 @@ pub(crate) async fn record_action_completion(
 }
 
 /// Build the completed-action update, recording the readings of the kind the
-/// action is measured by and clearing the other kind.
+/// action is measured by and clearing the other kind. An analyze records
+/// neither.
 fn action_completion_update(
     tenant: TenantKey,
     target: BranchTarget,
@@ -233,6 +235,7 @@ fn action_completion_update(
             Some(persisted_count(before.dead, CatalogCounter::BeforeDeadTuples)?),
             Some(persisted_count(after.dead, CatalogCounter::AfterDeadTuples)?),
         ),
+        ActionComparison::Statistics { .. } => (None, None, None, None),
     };
     Ok(Query::update()
         .table(PostgresqlMaintenanceTargets::Table)
@@ -303,10 +306,10 @@ fn target_state_insert(tenant: TenantKey, target: BranchTarget) -> Result<Insert
 mod tests {
     use crate::{
         action_measurement::{ActionComparison, TupleCounts},
+        action_policy::ActionVerdict,
         branch::{Branch, BranchTarget},
         candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
         error::MaintenanceError,
-        policy::ActionVerdict,
         state::{
             TenantKey,
             target_record::{action_completion_update, target_state_insert},

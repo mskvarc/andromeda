@@ -9,6 +9,7 @@
 
 mod action;
 mod action_measurement;
+mod action_policy;
 mod artifact;
 mod autovacuum_health;
 mod autovacuum_trigger;
@@ -36,6 +37,7 @@ pub mod policy;
 mod safety_gate_inspection;
 mod scalar_query;
 mod state;
+mod statistics_freshness;
 /// Bounded on-disk size sampling of the live schema's base tables.
 pub mod table_size;
 /// Holders of a tenant database's vacuum horizon.

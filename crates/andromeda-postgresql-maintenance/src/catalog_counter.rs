@@ -77,6 +77,11 @@ pub enum CatalogCounter {
     AutovacuumMaxWorkers,
     /// Consecutive passes that found every autovacuum worker slot busy.
     SaturatedPasses,
+    /// Tuples modified since a table's last analyze past which autovacuum
+    /// analyzes it.
+    AnalyzeTrigger,
+    /// `n_mod_since_analyze`: tuples a table modified since its last analyze.
+    ModifiedSinceAnalyze,
 }
 
 /// Convert one PostgreSQL counter that the catalog guarantees is non-negative.

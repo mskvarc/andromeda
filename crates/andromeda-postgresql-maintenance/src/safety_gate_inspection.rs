@@ -24,13 +24,15 @@ use sqlx::PgConnection;
 /// branch.
 ///
 /// Only a vacuum is gated on the horizon: a rebuild produces a compact index
-/// whatever the horizon, so its holders are not read for an index target.
+/// and an analyze samples live rows whatever the horizon, so its holders are
+/// read for neither.
 pub(crate) async fn safety_gates(connection: &mut PgConnection, row: BranchTarget) -> Result<SafetyGates, MaintenanceError> {
     let branch = row.branch();
     let heap = branch.qualified(row.target().heap().relation_name());
     let (relation, held_horizon) = match row.target() {
         MaintenanceTarget::Index(index) => (Some(branch.qualified(index.relation_name())), None),
         MaintenanceTarget::Heap(_) => (None, vacuum_horizon::horizon_held_by(&vacuum_horizon::horizon_holders(connection).await?)),
+        MaintenanceTarget::Statistics(_) => (None, None),
     };
     let active = select_i64(connection, active_backend_statement()).await?;
     let maximum = select_i64(connection, maximum_connections_statement()).await?;
@@ -95,19 +97,31 @@ fn maximum_connections_statement() -> SelectStatement {
     Query::select().expr(cast(current_setting("max_connections"), PostgresType::Bigint)).to_owned()
 }
 
-/// Whether PostgreSQL reports a build or vacuum on the relation.
+/// Whether PostgreSQL reports a build, vacuum or analyze on the heap in this
+/// database. Each takes the heap's `SHARE UPDATE EXCLUSIVE` lock, so any of
+/// them blocks every maintenance action on it.
+///
+/// A progress view lists every database's operations and `relid` is an OID
+/// unique only within one database, so the progress row must also name this
+/// database.
 fn active_maintenance_statement(relation: &str) -> SelectStatement {
-    let build = Query::select()
-        .expr(Expr::val(1))
-        .from(Alias::new("pg_stat_progress_create_index"))
-        .and_where(Expr::col(Alias::new("relid")).eq(to_regclass(Expr::val(relation))))
-        .to_owned();
-    let vacuum = Query::select()
-        .expr(Expr::val(1))
-        .from(Alias::new("pg_stat_progress_vacuum"))
-        .and_where(Expr::col(Alias::new("relid")).eq(to_regclass(Expr::val(relation))))
-        .to_owned();
-    Query::select().expr(Expr::exists(build).or(Expr::exists(vacuum))).to_owned()
+    let reported = |view: &'static str| {
+        Expr::exists(
+            Query::select()
+                .expr(Expr::val(1))
+                .from(Alias::new(view))
+                .and_where(Expr::col(Alias::new("relid")).eq(to_regclass(Expr::val(relation))))
+                .and_where(Expr::col(Alias::new("datname")).eq(current_database()))
+                .to_owned(),
+        )
+    };
+    Query::select()
+        .expr(
+            reported("pg_stat_progress_create_index")
+                .or(reported("pg_stat_progress_vacuum"))
+                .or(reported("pg_stat_progress_analyze")),
+        )
+        .to_owned()
 }
 
 /// Whether another backend in this database waits for a relation lock.
@@ -135,7 +149,7 @@ fn waiting_lock_statement(heap: &str, index: Option<&str>) -> SelectStatement {
 
 #[cfg(test)]
 mod tests {
-    use crate::safety_gate_inspection::{active_backend_statement, oldest_transaction_statement, waiting_lock_statement};
+    use crate::safety_gate_inspection::{active_backend_statement, active_maintenance_statement, oldest_transaction_statement, waiting_lock_statement};
     use sea_query::PostgresQueryBuilder;
 
     #[test]
@@ -151,6 +165,19 @@ mod tests {
         assert!(sql.contains("\"datname\" = current_database()"), "{sql}");
         assert!(sql.contains("\"backend_type\" = 'client backend'"), "{sql}");
         assert!(sql.contains("\"backend_xid\" IS NOT NULL OR \"backend_xmin\" IS NOT NULL"), "{sql}");
+    }
+
+    #[test]
+    fn active_maintenance_gate_reads_builds_vacuums_and_analyzes_of_the_current_database() {
+        let sql = active_maintenance_statement("public.entity_search").to_string(PostgresQueryBuilder);
+        for view in ["pg_stat_progress_create_index", "pg_stat_progress_vacuum", "pg_stat_progress_analyze"] {
+            assert!(
+                sql.contains(&format!(
+                    "EXISTS(SELECT 1 FROM \"{view}\" WHERE \"relid\" = to_regclass('public.entity_search') AND \"datname\" = current_database())"
+                )),
+                "{view}: {sql}"
+            );
+        }
     }
 
     #[test]

@@ -38,6 +38,11 @@
 -- each successful rebuild. It stays NULL for every other target, and for a GIN
 -- whose covered rows the statistics do not yet describe.
 --
+-- A heap's planner statistics are a target of their own (targets 22 to 30),
+-- refreshed by `ANALYZE`: an analyze row records no sample evidence and
+-- neither reading pair, only its decision, its pending action and its
+-- cooldown.
+--
 -- A target row belongs to one context branch of its tenant: `snapshot_key`
 -- is the Snapshot whose published branch schema holds the relation, NULL for
 -- the live branch. The grain therefore contains a nullable column and the
@@ -66,7 +71,15 @@
 --     13 subscription_delivery_state, 14 idx_ca_value_object,
 --     15 idx_ca_value_long_text_trgm, 16 notification_events,
 --     17 notification_deliveries, 18 pending_side_effects,
---     19 temporal_append_intents, 20 snapshot_notification_outbox
+--     19 temporal_append_intents, 20 snapshot_notification_outbox,
+--     21 entity_search, 22 current_attributes_statistics,
+--     23 entities_statistics, 24 subscription_delivery_state_statistics,
+--     25 notification_events_statistics,
+--     26 notification_deliveries_statistics,
+--     27 pending_side_effects_statistics,
+--     28 temporal_append_intents_statistics,
+--     29 snapshot_notification_outbox_statistics,
+--     30 entity_search_statistics
 --   last_action_result: 1 succeeded, 2 failed, 3 ineffective
 -- ============================================================================
 create table postgresql_maintenance_tenants (
@@ -103,7 +116,7 @@ create table postgresql_maintenance_targets (
     constraint uq_postgresql_maintenance_targets_grain unique nulls not distinct (tenant_key, snapshot_key, target),
     constraint fk_postgresql_maintenance_targets_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
     constraint chk_postgresql_maintenance_targets_snapshot_key_positive check (snapshot_key is null or snapshot_key > 0),
-    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 20),
+    constraint chk_postgresql_maintenance_targets_target check (target between 1 and 30),
     constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 3),
     constraint chk_postgresql_maintenance_targets_breach_run check (breach_samples >= 0 and (first_breach_at is null) = (breach_samples = 0)),
     constraint chk_postgresql_maintenance_targets_failures_non_negative check (consecutive_failures >= 0),

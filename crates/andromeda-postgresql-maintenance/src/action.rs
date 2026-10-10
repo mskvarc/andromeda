@@ -2,6 +2,7 @@
 
 use crate::{
     action_measurement::{ActionBaseline, ActionComparison},
+    action_policy::{ActionEnding, ActionVerdict, action_verdict, cooldown_after},
     artifact::RecoveryArtifact,
     branch::{Branch, BranchTarget},
     candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
@@ -10,20 +11,10 @@ use crate::{
     evidence::inspection_result::InspectionResult,
     gin_density::{self, Density, DensityReading},
     inspection,
-    policy::{
-        ActionEnding,
-        ActionVerdict,
-        DeferralReason,
-        DegradationSample,
-        PolicyDecision,
-        PolicyProfile,
-        action_verdict,
-        cooldown_after,
-        decide,
-        safety_deferral,
-    },
+    policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, decide, safety_deferral},
     safety_gate_inspection,
     state::{RegisteredTenant, density_baseline, target_record, tenant_inspection},
+    statistics_freshness,
     vacuum_horizon::{self, HorizonHolder},
 };
 use andromeda_postgresql_context_store::maintenance_config::MaintenanceMode;
@@ -93,6 +84,7 @@ pub(crate) async fn execute_pending(
     cancellation: &CancellationToken,
 ) -> Result<PassOutcome, MaintenanceError> {
     let (branch, target) = (row.branch(), row.target());
+    let action = target_action(target);
     let gates = safety_gate_inspection::safety_gates(tenant_connection, row).await?;
     let target_state = target_record::load_target_state(platform, tenant, row).await?;
     let now = Utc::now();
@@ -101,7 +93,7 @@ pub(crate) async fn execute_pending(
     match decision {
         PolicyDecision::WouldAct => {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::WouldAct).await?;
-            info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), decision = "would-act", "PostgreSQL maintenance pending action observed");
+            info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), action = ?action, decision = "would-act", "PostgreSQL maintenance pending action observed");
             return Ok(PassOutcome::WouldAct);
         }
         PolicyDecision::Deferred(
@@ -117,7 +109,7 @@ pub(crate) async fn execute_pending(
             | DeferralReason::WaitingRelationLock),
         ) => {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Deferred).await?;
-            info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), decision = "deferred", reason = ?reason, horizon_holder = ?gates.held_horizon, "PostgreSQL maintenance pending action deferred");
+            info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), action = ?action, decision = "deferred", reason = ?reason, horizon_holder = ?gates.held_horizon, "PostgreSQL maintenance pending action deferred");
             return Ok(PassOutcome::Deferred);
         }
         PolicyDecision::Queued => {
@@ -128,7 +120,6 @@ pub(crate) async fn execute_pending(
     }
     let baseline = read_baseline(tenant_connection, row).await?;
     let statement = target_statement(row);
-    let action = target_action(target);
     let started = Instant::now();
     match execute_statement(tenant_connection, &statement, cancellation).await {
         StatementOutcome::Cancelled => {
@@ -138,18 +129,18 @@ pub(crate) async fn execute_pending(
         StatementOutcome::Failed(error) => {
             record_action(action, MaintenanceActionOutcome::Failed, started.elapsed(), None);
             let consecutive_failures = target_state.consecutive_failures.saturating_add(1);
-            let cooldown_until = cooldown_after(profile, ActionEnding::Failed { consecutive_failures }, Utc::now());
+            let cooldown_until = cooldown_after(profile, target, ActionEnding::Failed { consecutive_failures }, Utc::now());
             target_record::record_action_failure(platform, tenant, row, cooldown_until).await?;
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::ActionFailed).await?;
-            warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), error = %error, duration_seconds = started.elapsed().as_secs_f64(), consecutive_failures, cooldown_until = %cooldown_until, decision = "action-failed", "PostgreSQL maintenance action failed");
+            warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), action = ?action, error = %error, duration_seconds = started.elapsed().as_secs_f64(), consecutive_failures, cooldown_until = %cooldown_until, decision = "action-failed", "PostgreSQL maintenance action failed");
             Ok(PassOutcome::ActionFailed)
         }
         StatementOutcome::Succeeded => {
             let duration = started.elapsed();
             let comparison = read_comparison(tenant_connection, branch, baseline).await?;
-            record_action(action, MaintenanceActionOutcome::Succeeded, duration, Some(comparison.effect()));
+            record_action(action, MaintenanceActionOutcome::Succeeded, duration, comparison.effect());
             let verdict = action_verdict(profile, target, comparison);
-            let cooldown_until = cooldown_after(profile, ActionEnding::Completed(verdict), Utc::now());
+            let cooldown_until = cooldown_after(profile, target, ActionEnding::Completed(verdict), Utc::now());
             target_record::record_action_completion(platform, tenant, row, verdict, cooldown_until, comparison).await?;
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Acted).await?;
             match comparison {
@@ -166,6 +157,12 @@ pub(crate) async fn execute_pending(
                     if verdict == ActionVerdict::Ineffective {
                         report_horizon_holders(tenant_connection, tenant, target).await?;
                     }
+                }
+                ActionComparison::Statistics {
+                    before_modified,
+                    after_modified,
+                } => {
+                    info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), action = ?action, modified_since_analyze_before = before_modified, modified_since_analyze_after = after_modified, cooldown_until = %cooldown_until, duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
                 }
             }
             Ok(PassOutcome::Acted)
@@ -238,6 +235,10 @@ async fn read_baseline(connection: &mut PgConnection, row: BranchTarget) -> Resu
             heap,
             before: inspection::heap_tuple_counts(connection, branch, heap).await?,
         },
+        MaintenanceTarget::Statistics(heap) => ActionBaseline::Statistics {
+            heap,
+            before_modified: statistics_freshness::modified_since_analyze(connection, branch, heap).await?,
+        },
     })
 }
 
@@ -252,6 +253,10 @@ async fn read_comparison(connection: &mut PgConnection, branch: Branch, baseline
         ActionBaseline::Heap { heap, before } => ActionComparison::Heap {
             before,
             after: inspection::heap_tuple_counts(connection, branch, heap).await?,
+        },
+        ActionBaseline::Statistics { heap, before_modified } => ActionComparison::Statistics {
+            before_modified,
+            after_modified: statistics_freshness::modified_since_analyze(connection, branch, heap).await?,
         },
     })
 }
@@ -283,6 +288,7 @@ fn target_statement(row: BranchTarget) -> MaintenanceStatement {
     match row.target() {
         MaintenanceTarget::Index(index) => index.reindex_statement(row.branch()),
         MaintenanceTarget::Heap(heap) => heap.vacuum_statement(row.branch()),
+        MaintenanceTarget::Statistics(heap) => heap.analyze_statement(row.branch()),
     }
 }
 
@@ -311,8 +317,20 @@ const fn target_action(target: MaintenanceTarget) -> MaintenanceAction {
             | HeapTarget::NotificationDeliveries
             | HeapTarget::PendingSideEffects
             | HeapTarget::TemporalAppendIntents
-            | HeapTarget::SnapshotNotificationOutbox,
+            | HeapTarget::SnapshotNotificationOutbox
+            | HeapTarget::EntitySearch,
         ) => MaintenanceAction::Vacuum,
+        MaintenanceTarget::Statistics(
+            HeapTarget::CurrentAttributes
+            | HeapTarget::Entities
+            | HeapTarget::SubscriptionDeliveryState
+            | HeapTarget::NotificationEvents
+            | HeapTarget::NotificationDeliveries
+            | HeapTarget::PendingSideEffects
+            | HeapTarget::TemporalAppendIntents
+            | HeapTarget::SnapshotNotificationOutbox
+            | HeapTarget::EntitySearch,
+        ) => MaintenanceAction::Analyze,
     }
 }
 

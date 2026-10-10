@@ -4,6 +4,8 @@
 //! A rebuild writes a new index file, so physical bytes measure it. A vacuum
 //! runs without truncation and never shrinks its heap's file, so bytes would
 //! report nothing for every vacuum; its dead-tuple count measures it instead.
+//! An analyze is measured by the tuples modified since the heap's last
+//! analyze, which it resets; it reclaims nothing.
 
 use crate::{
     candidate::{HeapTarget, IndexTarget},
@@ -47,6 +49,13 @@ pub(crate) enum ActionBaseline {
         /// Tuple counts before the vacuum.
         before: TupleCounts,
     },
+    /// A heap about to be analyzed, with its modified tuples.
+    Statistics {
+        /// The heap.
+        heap: HeapTarget,
+        /// Tuples modified since the last analyze, before this one.
+        before_modified: u64,
+    },
 }
 
 /// One action's target read immediately before and after it.
@@ -66,23 +75,32 @@ pub(crate) enum ActionComparison {
         /// Tuple counts after the vacuum.
         after: TupleCounts,
     },
+    /// A heap analyze, compared by the tuples modified since the last analyze.
+    Statistics {
+        /// Modified tuples before the analyze.
+        before_modified: u64,
+        /// Modified tuples after the analyze, those written while it ran.
+        after_modified: u64,
+    },
 }
 
 impl ActionComparison {
-    /// What the action achieved. A counter that rose, because writes outran
-    /// the action, reports zero.
-    pub(crate) const fn effect(self) -> ActionEffect {
+    /// What the action achieved, `None` for an analyze, which reclaims
+    /// nothing. A counter that rose, because writes outran the action, reports
+    /// zero.
+    pub(crate) const fn effect(self) -> Option<ActionEffect> {
         match self {
-            ActionComparison::Index { before_bytes, after_bytes } => ActionEffect::ReclaimedBytes(before_bytes.saturating_sub(after_bytes)),
-            ActionComparison::Heap { before, after } => ActionEffect::RemovedDeadTuples(before.dead.saturating_sub(after.dead)),
+            ActionComparison::Index { before_bytes, after_bytes } => Some(ActionEffect::ReclaimedBytes(before_bytes.saturating_sub(after_bytes))),
+            ActionComparison::Heap { before, after } => Some(ActionEffect::RemovedDeadTuples(before.dead.saturating_sub(after.dead))),
+            ActionComparison::Statistics { .. } => None,
         }
     }
 
-    /// The dead share a vacuum left behind, `None` for a rebuild and for an
-    /// empty heap.
+    /// The dead share a vacuum left behind, `None` for a rebuild, an analyze
+    /// and an empty heap.
     pub(crate) fn post_vacuum_dead_percent(self) -> Option<u8> {
         match self {
-            ActionComparison::Index { .. } => None,
+            ActionComparison::Index { .. } | ActionComparison::Statistics { .. } => None,
             ActionComparison::Heap { after, .. } => after.dead_percent(),
         }
     }
@@ -102,7 +120,7 @@ mod tests {
             before: TupleCounts { dead: 50_000, live: 100_000 },
             after: TupleCounts { dead: 1_000, live: 100_000 },
         };
-        assert_eq!(comparison.effect(), ActionEffect::RemovedDeadTuples(49_000));
+        assert_eq!(comparison.effect(), Some(ActionEffect::RemovedDeadTuples(49_000)));
     }
 
     #[test]
@@ -111,7 +129,7 @@ mod tests {
             before_bytes: 100 * MIB,
             after_bytes: 40 * MIB,
         };
-        assert_eq!(comparison.effect(), ActionEffect::ReclaimedBytes(62_914_560));
+        assert_eq!(comparison.effect(), Some(ActionEffect::ReclaimedBytes(62_914_560)));
         assert_eq!(comparison.post_vacuum_dead_percent(), None);
     }
 
@@ -121,7 +139,17 @@ mod tests {
             before: TupleCounts { dead: 10, live: 100 },
             after: TupleCounts { dead: 20, live: 100 },
         };
-        assert_eq!(comparison.effect(), ActionEffect::RemovedDeadTuples(0));
+        assert_eq!(comparison.effect(), Some(ActionEffect::RemovedDeadTuples(0)));
+    }
+
+    #[test]
+    fn an_analyze_has_no_reclaim_effect() {
+        let comparison = ActionComparison::Statistics {
+            before_modified: 50_000,
+            after_modified: 12,
+        };
+        assert_eq!(comparison.effect(), None);
+        assert_eq!(comparison.post_vacuum_dead_percent(), None);
     }
 
     #[test]

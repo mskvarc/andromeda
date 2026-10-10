@@ -1,6 +1,6 @@
 //! How one maintenance action ended.
 
-use crate::policy::ActionVerdict;
+use crate::action_policy::ActionVerdict;
 use andromeda_postgresql_codes::maintenance_action_result::MaintenanceActionResultCode;
 use strum::EnumIter;
 

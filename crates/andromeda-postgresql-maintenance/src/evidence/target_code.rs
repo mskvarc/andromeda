@@ -26,6 +26,16 @@ pub(crate) const fn stored_target(target: MaintenanceTarget) -> MaintenanceTarge
         MaintenanceTarget::Heap(HeapTarget::PendingSideEffects) => MaintenanceTargetCode::PendingSideEffects,
         MaintenanceTarget::Heap(HeapTarget::TemporalAppendIntents) => MaintenanceTargetCode::TemporalAppendIntents,
         MaintenanceTarget::Heap(HeapTarget::SnapshotNotificationOutbox) => MaintenanceTargetCode::SnapshotNotificationOutbox,
+        MaintenanceTarget::Heap(HeapTarget::EntitySearch) => MaintenanceTargetCode::EntitySearch,
+        MaintenanceTarget::Statistics(HeapTarget::CurrentAttributes) => MaintenanceTargetCode::CurrentAttributesStatistics,
+        MaintenanceTarget::Statistics(HeapTarget::Entities) => MaintenanceTargetCode::EntitiesStatistics,
+        MaintenanceTarget::Statistics(HeapTarget::SubscriptionDeliveryState) => MaintenanceTargetCode::SubscriptionDeliveryStateStatistics,
+        MaintenanceTarget::Statistics(HeapTarget::NotificationEvents) => MaintenanceTargetCode::NotificationEventsStatistics,
+        MaintenanceTarget::Statistics(HeapTarget::NotificationDeliveries) => MaintenanceTargetCode::NotificationDeliveriesStatistics,
+        MaintenanceTarget::Statistics(HeapTarget::PendingSideEffects) => MaintenanceTargetCode::PendingSideEffectsStatistics,
+        MaintenanceTarget::Statistics(HeapTarget::TemporalAppendIntents) => MaintenanceTargetCode::TemporalAppendIntentsStatistics,
+        MaintenanceTarget::Statistics(HeapTarget::SnapshotNotificationOutbox) => MaintenanceTargetCode::SnapshotNotificationOutboxStatistics,
+        MaintenanceTarget::Statistics(HeapTarget::EntitySearch) => MaintenanceTargetCode::EntitySearchStatistics,
     }
 }
 
@@ -52,6 +62,16 @@ pub(crate) const fn target_of(code: MaintenanceTargetCode) -> MaintenanceTarget 
         MaintenanceTargetCode::PendingSideEffects => MaintenanceTarget::Heap(HeapTarget::PendingSideEffects),
         MaintenanceTargetCode::TemporalAppendIntents => MaintenanceTarget::Heap(HeapTarget::TemporalAppendIntents),
         MaintenanceTargetCode::SnapshotNotificationOutbox => MaintenanceTarget::Heap(HeapTarget::SnapshotNotificationOutbox),
+        MaintenanceTargetCode::EntitySearch => MaintenanceTarget::Heap(HeapTarget::EntitySearch),
+        MaintenanceTargetCode::CurrentAttributesStatistics => MaintenanceTarget::Statistics(HeapTarget::CurrentAttributes),
+        MaintenanceTargetCode::EntitiesStatistics => MaintenanceTarget::Statistics(HeapTarget::Entities),
+        MaintenanceTargetCode::SubscriptionDeliveryStateStatistics => MaintenanceTarget::Statistics(HeapTarget::SubscriptionDeliveryState),
+        MaintenanceTargetCode::NotificationEventsStatistics => MaintenanceTarget::Statistics(HeapTarget::NotificationEvents),
+        MaintenanceTargetCode::NotificationDeliveriesStatistics => MaintenanceTarget::Statistics(HeapTarget::NotificationDeliveries),
+        MaintenanceTargetCode::PendingSideEffectsStatistics => MaintenanceTarget::Statistics(HeapTarget::PendingSideEffects),
+        MaintenanceTargetCode::TemporalAppendIntentsStatistics => MaintenanceTarget::Statistics(HeapTarget::TemporalAppendIntents),
+        MaintenanceTargetCode::SnapshotNotificationOutboxStatistics => MaintenanceTarget::Statistics(HeapTarget::SnapshotNotificationOutbox),
+        MaintenanceTargetCode::EntitySearchStatistics => MaintenanceTarget::Statistics(HeapTarget::EntitySearch),
     }
 }
 
@@ -69,7 +89,8 @@ mod tests {
         let targets = IndexTarget::ALL
             .into_iter()
             .map(MaintenanceTarget::Index)
-            .chain(HeapTarget::ALL.into_iter().map(MaintenanceTarget::Heap));
+            .chain(HeapTarget::ALL.into_iter().map(MaintenanceTarget::Heap))
+            .chain(HeapTarget::ALL.into_iter().map(MaintenanceTarget::Statistics));
         for target in targets {
             assert_eq!(target_of(stored_target(target)), target);
         }
@@ -78,11 +99,17 @@ mod tests {
         }
     }
 
-    /// The registry's label is the relation name the controller inspects.
+    /// The registry's label is the relation name the controller inspects, with
+    /// a suffix for a heap's statistics, since a label names one target.
     #[test]
     fn the_stored_label_of_a_target_is_its_relation_name() {
         for code in MaintenanceTargetCode::ALL {
-            assert_eq!(code.label(), target_of(*code).relation_name());
+            let target = target_of(*code);
+            let expected = match target {
+                MaintenanceTarget::Index(_) | MaintenanceTarget::Heap(_) => target.relation_name().to_owned(),
+                MaintenanceTarget::Statistics(heap) => format!("{}_statistics", heap.relation_name()),
+            };
+            assert_eq!(code.label(), expected);
         }
     }
 }

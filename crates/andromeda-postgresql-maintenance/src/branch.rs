@@ -149,15 +149,16 @@ mod tests {
             HeapTarget::TemporalAppendIntents,
             HeapTarget::SnapshotNotificationOutbox,
         ] {
-            let target = MaintenanceTarget::Heap(heap);
-            assert!(
-                matches!(
-                    BranchTarget::new(Branch::Snapshot(key(7)), target),
-                    Err(MaintenanceError::LiveOnlyTarget { target: rejected, snapshot }) if rejected == target && snapshot == key(7)
-                ),
-                "{heap}"
-            );
-            assert!(BranchTarget::new(Branch::Live, target).is_ok(), "{heap}");
+            for target in [MaintenanceTarget::Heap(heap), MaintenanceTarget::Statistics(heap)] {
+                assert!(
+                    matches!(
+                        BranchTarget::new(Branch::Snapshot(key(7)), target),
+                        Err(MaintenanceError::LiveOnlyTarget { target: rejected, snapshot }) if rejected == target && snapshot == key(7)
+                    ),
+                    "{heap}"
+                );
+                assert!(BranchTarget::new(Branch::Live, target).is_ok(), "{heap}");
+            }
         }
     }
 
@@ -172,6 +173,7 @@ mod tests {
                 HeapTarget::SubscriptionDeliveryState,
                 HeapTarget::NotificationEvents,
                 HeapTarget::NotificationDeliveries,
+                HeapTarget::EntitySearch,
             ]
         );
         assert_eq!(Branch::Snapshot(key(7)).qualified("entities"), "snap_7.entities");
@@ -186,6 +188,8 @@ mod tests {
             MaintenanceTarget::Heap(HeapTarget::SubscriptionDeliveryState),
             MaintenanceTarget::Heap(HeapTarget::NotificationEvents),
             MaintenanceTarget::Heap(HeapTarget::NotificationDeliveries),
+            MaintenanceTarget::Heap(HeapTarget::EntitySearch),
+            MaintenanceTarget::Statistics(HeapTarget::EntitySearch),
             MaintenanceTarget::Index(IndexTarget::IdxCaValueNumber),
         ] {
             let in_branch = BranchTarget::new(Branch::Snapshot(key(7)), target).expect("a branch relation is a branch target");
