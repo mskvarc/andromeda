@@ -36,6 +36,7 @@ use andromeda_postgresql_seaquery::{
     literal::false_literal,
     operator::{array_contained_by_keys, array_contains_key},
     pg_array::has_elements,
+    statement_planning::StatementPlanning,
 };
 use sea_query::{Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Query, SelectStatement};
 
@@ -51,6 +52,10 @@ pub struct EntityQuery {
     /// The order the page's rows come back in, which the store presents
     /// ascending.
     pub read_order: ReadOrder,
+    /// How PostgreSQL may plan `select`: a keyed page is planned with its
+    /// bound values, since only they let the planner price the key index
+    /// against walking the selection.
+    pub planning: StatementPlanning,
 }
 
 /// A compiled identifier-only entity query.
@@ -124,14 +129,14 @@ pub fn build_query(
         | (CountPolicy::Emit, PageStart::Offset(_) | PageStart::Cursor(_), Some(_))
         | (CountPolicy::Omit, PageStart::Offset(_) | PageStart::Cursor(_), None | Some(_)) => CountPolicy::Omit,
     };
-    let (select, read_order) = match keyed {
+    let (select, read_order, planning) = match keyed {
         None => {
             let mut page = Query::select();
             relations.apply_from(&mut page, schema.as_ref());
             // clone: the count statement filters on the same condition.
             page.cond_where(condition.clone());
             let (keys, read_order) = window_and_sort_keys(&mut page, &rows, query, window, &names.attributes)?;
-            (heads_of(page, &rows, keys, counted_on_page), read_order)
+            (heads_of(page, &rows, keys, counted_on_page), read_order, StatementPlanning::Cached)
         }
         Some((q_expr, keyed)) => {
             let source = PageSource {
@@ -143,7 +148,7 @@ pub fn build_query(
                 names,
             };
             let (page, read_order) = keyed_page(&source, q_expr, keyed)?;
-            (heads_over(page, &rows, CountPolicy::Omit), read_order)
+            (heads_over(page, &rows, CountPolicy::Omit), read_order, StatementPlanning::BoundValues)
         }
     };
 
@@ -162,7 +167,12 @@ pub fn build_query(
         }
     };
 
-    Ok(EntityQuery { select, total, read_order })
+    Ok(EntityQuery {
+        select,
+        total,
+        read_order,
+        planning,
+    })
 }
 
 /// Builds a parameterized SQL query to retrieve only the identifiers of the

@@ -24,6 +24,7 @@ use andromeda_postgresql_query::{
     projected_attribute_names::projected_attribute_names,
     projected_type_names::projected_type_names,
 };
+use andromeda_postgresql_seaquery::statement_planning::{StatementPlanning, begin_bound_value_planning};
 use iri_rs::IriBuf;
 use sea_query::{PostgresQueryBuilder, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
@@ -68,8 +69,7 @@ impl EntityRepository {
         let names = self.resolve_names(&planned.query).await?;
         let built = entity_sql::build_query(target, &planned.query, &planned.window, planned.count, &names)?;
 
-        let (sql, values) = built.select.build_sqlx(PostgresQueryBuilder);
-        let head_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
+        let head_rows = self.page_heads(&built.select, built.planning).await?;
         let window_count = page_total(&head_rows, matches!(built.total, EntityTotal::OnPageRows { .. }));
         let returned = ReturnedAttributes::of(&planned.query.projection, &planned.query.selection.attrs);
         let selection = RowSelection::of(&returned, &names.attributes);
@@ -88,6 +88,27 @@ impl EntityRepository {
         };
 
         Ok(planned.outcome(rows, total_count))
+    }
+
+    /// Run the head statement of a page as `planning` asks: on the pool, or
+    /// in a transaction of its own that plans it with its bound values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the statement fails, or the
+    /// transaction it runs in cannot begin or commit.
+    async fn page_heads(&self, select: &SelectStatement, planning: StatementPlanning) -> Result<Vec<PgRow>, ContextStoreError> {
+        let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+        let statement = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values);
+        match planning {
+            StatementPlanning::Cached => Ok(statement.fetch_all(&self.pool).await?),
+            StatementPlanning::BoundValues => {
+                let mut transaction = self.pool.begin_with(begin_bound_value_planning()).await?;
+                let rows = statement.fetch_all(&mut *transaction).await?;
+                transaction.commit().await?;
+                Ok(rows)
+            }
+        }
     }
 
     /// Run a `COUNT` statement and read back its one value.

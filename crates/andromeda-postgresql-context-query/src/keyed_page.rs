@@ -236,6 +236,8 @@ mod tests {
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     };
+    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     fn names() -> QueryNames {
@@ -320,5 +322,32 @@ mod tests {
         let (sql, _) = built.select.build(PostgresQueryBuilder);
         assert!(!sql.contains("short_walk") && !sql.contains("sub_eq_keys"), "{sql}");
         assert!(sql.contains("OFFSET"), "{sql}");
+    }
+
+    /// Without the operand a generic plan cannot estimate the key overlap and
+    /// reads the attribute's rows through its name index instead, so the
+    /// keyed page is planned with its bound values.
+    #[test]
+    fn a_keyed_page_is_planned_with_its_bound_values() {
+        let built = build_query(
+            &ContextTarget::Live,
+            &query("\"https://example.com/temperature\".\"https://example.com/source\"==\"uncalibrated\""),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names(),
+        )
+        .expect("valid entity query");
+        assert_eq!(built.planning, StatementPlanning::BoundValues);
+    }
+
+    #[test]
+    fn a_page_without_a_keyed_term_takes_any_cached_plan() {
+        for q in [
+            "\"https://example.com/temperature\".\"https://example.com/source\"~=\"^sensor-4[0-9]$\"",
+            "\"https://example.com/temperature\">1",
+        ] {
+            let built = build_query(&ContextTarget::Live, &query(q), &PageWindow::offset(100, 0), CountPolicy::Omit, &names()).expect("valid entity query");
+            assert_eq!(built.planning, StatementPlanning::Cached, "{q}");
+        }
     }
 }
