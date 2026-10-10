@@ -8,6 +8,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 mod action;
+mod action_measurement;
 mod artifact;
 /// Compile-time maintenance targets and their fixed statements.
 pub mod candidate;

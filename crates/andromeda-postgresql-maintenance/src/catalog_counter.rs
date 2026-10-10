@@ -40,6 +40,10 @@ pub enum CatalogCounter {
     BeforeBytes,
     /// Relation bytes recorded after a maintenance action.
     AfterBytes,
+    /// Dead tuples recorded before a vacuum.
+    BeforeDeadTuples,
+    /// Dead tuples recorded after a vacuum.
+    AfterDeadTuples,
 }
 
 /// Convert one PostgreSQL counter that the catalog guarantees is non-negative.

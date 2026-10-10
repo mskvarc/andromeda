@@ -1,6 +1,7 @@
 //! The durable decision and action state of one maintenance target.
 
 use crate::{
+    action_measurement::ActionComparison,
     candidate::{IndexTarget, MaintenanceTarget},
     catalog_counter::CatalogCounter,
     error::MaintenanceError,
@@ -15,7 +16,7 @@ use crate::{
 use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, Iden, InsertStatement, OnConflict, Order, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
+use sea_query::{Expr, ExprTrait, Iden, InsertStatement, OnConflict, Order, PostgresQueryBuilder, Query, UpdateStatement, error::Error as SeaQueryError};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgConnection, Row};
 
@@ -146,11 +147,11 @@ pub(crate) async fn record_decision(
             .value(PostgresqlMaintenanceTargets::LastSampledAt, Expr::current_timestamp())
             .value(
                 PostgresqlMaintenanceTargets::LastRelationBytes,
-                persisted_bytes(sample.relation_bytes, CatalogCounter::SampleRelationBytes)?,
+                persisted_count(sample.relation_bytes, CatalogCounter::SampleRelationBytes)?,
             )
             .value(
                 PostgresqlMaintenanceTargets::LastReclaimableBytes,
-                persisted_bytes(sample.reclaimable_bytes, CatalogCounter::SampleReclaimableBytes)?,
+                persisted_count(sample.reclaimable_bytes, CatalogCounter::SampleReclaimableBytes)?,
             )
             .value(PostgresqlMaintenanceTargets::LastDegradedPercent, i16::from(sample.degraded_percent))
             .value(PostgresqlMaintenanceTargets::LastThresholdPercent, i16::from(sample.threshold_percent));
@@ -214,16 +215,41 @@ pub(crate) async fn record_decision(
     Ok(())
 }
 
-/// Persist a successful action, its cooldown and measured byte delta.
+/// Persist a successful action, its cooldown and the readings around it.
 pub(crate) async fn record_action_success(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
     target: MaintenanceTarget,
     cooldown_until: DateTime<Utc>,
-    before_bytes: u64,
-    after_bytes: u64,
+    comparison: ActionComparison,
 ) -> Result<(), MaintenanceError> {
-    let statement = Query::update()
+    let statement = action_success_update(tenant.key, target, cooldown_until, comparison)?;
+    execute_update(connection, statement).await
+}
+
+/// Build the successful-action update, recording the readings of the kind the
+/// action is measured by and clearing the other kind.
+fn action_success_update(
+    tenant: TenantKey,
+    target: MaintenanceTarget,
+    cooldown_until: DateTime<Utc>,
+    comparison: ActionComparison,
+) -> Result<UpdateStatement, MaintenanceError> {
+    let (before_bytes, after_bytes, dead_tuples_before, dead_tuples_after) = match comparison {
+        ActionComparison::Index { before_bytes, after_bytes } => (
+            Some(persisted_count(before_bytes, CatalogCounter::BeforeBytes)?),
+            Some(persisted_count(after_bytes, CatalogCounter::AfterBytes)?),
+            None,
+            None,
+        ),
+        ActionComparison::Heap { before, after } => (
+            None,
+            None,
+            Some(persisted_count(before.dead, CatalogCounter::BeforeDeadTuples)?),
+            Some(persisted_count(after.dead, CatalogCounter::AfterDeadTuples)?),
+        ),
+    };
+    Ok(Query::update()
         .table(PostgresqlMaintenanceTargets::Table)
         .value(PostgresqlMaintenanceTargets::ConsecutiveBreaches, 0)
         .value(PostgresqlMaintenanceTargets::IsActionPending, false)
@@ -231,18 +257,13 @@ pub(crate) async fn record_action_success(
         .value(PostgresqlMaintenanceTargets::ConsecutiveFailures, 0)
         .value(PostgresqlMaintenanceTargets::LastActionAt, Expr::current_timestamp())
         .value(PostgresqlMaintenanceTargets::LastActionResult, ActionResult::Succeeded.code().code())
-        .value(
-            PostgresqlMaintenanceTargets::LastBeforeBytes,
-            persisted_bytes(before_bytes, CatalogCounter::BeforeBytes)?,
-        )
-        .value(
-            PostgresqlMaintenanceTargets::LastAfterBytes,
-            persisted_bytes(after_bytes, CatalogCounter::AfterBytes)?,
-        )
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
+        .value(PostgresqlMaintenanceTargets::LastBeforeBytes, before_bytes)
+        .value(PostgresqlMaintenanceTargets::LastAfterBytes, after_bytes)
+        .value(PostgresqlMaintenanceTargets::LastDeadTuplesBefore, dead_tuples_before)
+        .value(PostgresqlMaintenanceTargets::LastDeadTuplesAfter, dead_tuples_after)
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.0))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target).code()))
-        .to_owned();
-    execute_update(connection, statement).await
+        .to_owned())
 }
 
 /// Persist a failed action while keeping it pending for a later retry.
@@ -283,18 +304,55 @@ fn target_state_insert(tenant: TenantKey, target: MaintenanceTarget) -> Result<I
     Ok(statement.clone())
 }
 
-/// Convert a physical byte count to the platform schema's signed storage type.
-fn persisted_bytes(value: u64, counter: CatalogCounter) -> Result<i64, MaintenanceError> {
+/// Convert a byte or tuple count to the platform schema's signed storage type.
+fn persisted_count(value: u64, counter: CatalogCounter) -> Result<i64, MaintenanceError> {
     i64::try_from(value).map_err(|_| MaintenanceError::CatalogValueOverflow { counter, value })
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
+        action_measurement::{ActionComparison, TupleCounts},
         candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
-        state::target_record::first_pending,
+        error::MaintenanceError,
+        state::{
+            TenantKey,
+            target_record::{action_success_update, first_pending},
+        },
     };
+    use chrono::Utc;
     use pretty_assertions::assert_eq;
+    use sea_query::PostgresQueryBuilder;
+
+    #[test]
+    fn a_vacuum_records_dead_tuples_and_clears_the_byte_pair() -> Result<(), MaintenanceError> {
+        let comparison = ActionComparison::Heap {
+            before: TupleCounts { dead: 50_000, live: 100_000 },
+            after: TupleCounts { dead: 1_000, live: 100_000 },
+        };
+        let sql = action_success_update(TenantKey(7), MaintenanceTarget::Heap(HeapTarget::CurrentAttributes), Utc::now(), comparison)?
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""last_dead_tuples_before" = 50000"#), "{sql}");
+        assert!(sql.contains(r#""last_dead_tuples_after" = 1000"#), "{sql}");
+        assert!(sql.contains(r#""last_before_bytes" = NULL"#), "{sql}");
+        assert!(sql.contains(r#""last_after_bytes" = NULL"#), "{sql}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_rebuild_records_bytes_and_clears_the_dead_tuple_pair() -> Result<(), MaintenanceError> {
+        let comparison = ActionComparison::Index {
+            before_bytes: 104_857_600,
+            after_bytes: 41_943_040,
+        };
+        let sql = action_success_update(TenantKey(7), MaintenanceTarget::Index(IndexTarget::IdxCaValueNumber), Utc::now(), comparison)?
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""last_before_bytes" = 104857600"#), "{sql}");
+        assert!(sql.contains(r#""last_after_bytes" = 41943040"#), "{sql}");
+        assert!(sql.contains(r#""last_dead_tuples_before" = NULL"#), "{sql}");
+        assert!(sql.contains(r#""last_dead_tuples_after" = NULL"#), "{sql}");
+        Ok(())
+    }
 
     #[test]
     fn a_canary_is_acted_on_before_the_gin_it_queued() {

@@ -8,6 +8,12 @@
 -- currently holds in memory, and a target row keeps the consecutive-sample
 -- evidence that stops one noisy sample from triggering an action.
 --
+-- A rebuild's effect is recorded as physical bytes (`last_before_bytes`,
+-- `last_after_bytes`) and a vacuum's as dead tuples
+-- (`last_dead_tuples_before`, `last_dead_tuples_after`): a vacuum without
+-- truncation never shrinks its heap's file. The pair that does not apply to a
+-- target stays NULL.
+--
 -- Codes:
 --
 --   last_result: 1 started, 2 unavailable, 3 ready, 4 missing-pgstattuple,
@@ -42,6 +48,8 @@ create table postgresql_maintenance_targets (
     last_action_at timestamptz,
     last_before_bytes bigint,
     last_after_bytes bigint,
+    last_dead_tuples_before bigint,
+    last_dead_tuples_after bigint,
     consecutive_breaches integer not null default 0,
     consecutive_failures integer not null default 0,
     target smallint not null,
@@ -53,7 +61,8 @@ create table postgresql_maintenance_targets (
     constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 2),
     constraint chk_postgresql_maintenance_targets_breaches_non_negative check (consecutive_breaches >= 0),
     constraint chk_postgresql_maintenance_targets_failures_non_negative check (consecutive_failures >= 0),
-    constraint chk_postgresql_maintenance_targets_sizes_non_negative check ((last_before_bytes is null or last_before_bytes >= 0) and (last_after_bytes is null or last_after_bytes >= 0))
+    constraint chk_postgresql_maintenance_targets_sizes_non_negative check ((last_before_bytes is null or last_before_bytes >= 0) and (last_after_bytes is null or last_after_bytes >= 0)),
+    constraint chk_postgresql_maintenance_targets_dead_tuples_non_negative check ((last_dead_tuples_before is null or last_dead_tuples_before >= 0) and (last_dead_tuples_after is null or last_dead_tuples_after >= 0))
 );
 
 -- Tenant selection: never-inspected tenants first, then the least recently

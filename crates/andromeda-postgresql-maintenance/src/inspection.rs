@@ -1,8 +1,9 @@
 //! Cheap catalog sampling and bounded physical probes.
 
 use crate::{
+    action_measurement::TupleCounts,
     artifact::RecoveryArtifact,
-    candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
+    candidate::{HeapTarget, IndexTarget},
     catalog_counter::{CatalogCounter, non_negative, percent},
     error::MaintenanceError,
     policy::{DegradationSample, PolicyProfile},
@@ -86,13 +87,13 @@ pub(crate) async fn heap_samples(connection: &mut PgConnection, profile: PolicyP
             let live = non_negative(row.try_get(CatalogColumn::LiveTuples.as_str())?, CatalogCounter::LiveTuples)?;
             let dead = non_negative(row.try_get(CatalogColumn::DeadTuples.as_str())?, CatalogCounter::DeadTuples)?;
             let bytes = non_negative(row.try_get(CatalogColumn::Bytes.as_str())?, CatalogCounter::HeapBytes)?;
-            let tuples = live.saturating_add(dead);
+            let counts = TupleCounts { dead, live };
             Ok(HeapSample {
                 target,
                 degradation: DegradationSample {
                     relation_bytes: bytes,
-                    reclaimable_bytes: bytes.saturating_mul(dead).checked_div(tuples).unwrap_or_default(),
-                    degraded_percent: if tuples == 0 { 0 } else { percent(dead, tuples) },
+                    reclaimable_bytes: bytes.saturating_mul(dead).checked_div(live.saturating_add(dead)).unwrap_or_default(),
+                    degraded_percent: counts.dead_percent().unwrap_or_default(),
                     threshold_percent: profile.heap_dead_percent,
                 },
             })
@@ -127,16 +128,26 @@ pub(crate) async fn invalid_indexes(connection: &mut PgConnection) -> Result<Vec
     Ok(names.into_iter().map(|name| InvalidIndex { name }).collect())
 }
 
-/// Read current physical bytes for before/after action reporting.
-pub(crate) async fn relation_bytes(connection: &mut PgConnection, target: MaintenanceTarget) -> Result<u64, MaintenanceError> {
-    let relation = match target {
-        MaintenanceTarget::Index(index) => index.relation_name(),
-        MaintenanceTarget::Heap(heap) => heap.relation_name(),
-    };
+/// Read an index's current physical bytes, compared across its rebuild.
+pub(crate) async fn index_bytes(connection: &mut PgConnection, index: IndexTarget) -> Result<u64, MaintenanceError> {
     let statement = Query::select()
-        .expr(total_relation_size(to_regclass(Expr::val(format!("public.{relation}")))))
+        .expr(total_relation_size(to_regclass(Expr::val(format!("public.{}", index.relation_name())))))
         .to_owned();
     non_negative(select_i64(connection, statement).await?, CatalogCounter::RelationBytes)
+}
+
+/// Read a heap's current tuple counts, compared across its vacuum.
+///
+/// The read runs as its own statement outside any transaction, so it never
+/// sees the statistics snapshot an earlier read cached; a vacuum publishes its
+/// remaining dead tuples as `n_dead_tup` when it finishes.
+pub(crate) async fn heap_tuple_counts(connection: &mut PgConnection, heap: HeapTarget) -> Result<TupleCounts, MaintenanceError> {
+    let (sql, values) = heap_tuple_counts_statement(heap).build_sqlx(PostgresQueryBuilder);
+    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(connection).await?;
+    Ok(TupleCounts {
+        dead: non_negative(row.try_get(CatalogColumn::DeadTuples.as_str())?, CatalogCounter::DeadTuples)?,
+        live: non_negative(row.try_get(CatalogColumn::LiveTuples.as_str())?, CatalogCounter::LiveTuples)?,
+    })
 }
 
 /// Cheap catalog size query for every allowlisted index.
@@ -161,6 +172,17 @@ fn heap_samples_statement() -> SelectStatement {
         .from(Alias::new("pg_stat_user_tables"))
         .and_where(Expr::col(Alias::new("schemaname")).eq("public"))
         .and_where(Expr::col(Alias::new("relname")).is_in(HeapTarget::ALL.map(HeapTarget::relation_name)))
+        .to_owned()
+}
+
+/// Dead and live tuple counts of one allowlisted heap.
+fn heap_tuple_counts_statement(heap: HeapTarget) -> SelectStatement {
+    Query::select()
+        .expr_as(Expr::col(Alias::new("n_dead_tup")), Alias::new(CatalogColumn::DeadTuples.as_str()))
+        .expr_as(Expr::col(Alias::new("n_live_tup")), Alias::new(CatalogColumn::LiveTuples.as_str()))
+        .from(Alias::new("pg_stat_user_tables"))
+        .and_where(Expr::col(Alias::new("schemaname")).eq("public"))
+        .and_where(Expr::col(Alias::new("relname")).eq(heap.relation_name()))
         .to_owned()
 }
 
@@ -233,9 +255,17 @@ impl CatalogColumn {
 mod tests {
     use crate::{
         candidate::{HeapTarget, IndexTarget},
-        inspection::{heap_samples_statement, index_sizes_statement, invalid_indexes_statement},
+        inspection::{heap_samples_statement, heap_tuple_counts_statement, index_sizes_statement, invalid_indexes_statement},
     };
     use sea_query::PostgresQueryBuilder;
+
+    #[test]
+    fn the_action_tuple_count_read_names_one_heap() {
+        let sql = heap_tuple_counts_statement(HeapTarget::Entities).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""n_dead_tup" AS "dead_tuples""#), "{sql}");
+        assert!(sql.contains(r#""n_live_tup" AS "live_tuples""#), "{sql}");
+        assert!(sql.contains(r#""relname" = 'entities'"#), "{sql}");
+    }
 
     #[test]
     fn catalog_queries_are_seaquery_statements_with_closed_filters() {

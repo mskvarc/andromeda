@@ -50,10 +50,18 @@ pub enum PostgresqlMaintenanceTargets {
     LastActionAt,
     /// Most recent action result (`MaintenanceActionResultCode`).
     LastActionResult,
-    /// Physical bytes immediately before the last successful action.
+    /// Physical bytes immediately before the last successful rebuild, NULL
+    /// for a heap target.
     LastBeforeBytes,
-    /// Physical bytes immediately after the last successful action.
+    /// Physical bytes immediately after the last successful rebuild, NULL
+    /// for a heap target.
     LastAfterBytes,
+    /// Dead tuples immediately before the last successful vacuum, NULL for an
+    /// index target.
+    LastDeadTuplesBefore,
+    /// Dead tuples immediately after the last successful vacuum, NULL for an
+    /// index target.
+    LastDeadTuplesAfter,
 }
 
 #[cfg(test)]
@@ -70,5 +78,7 @@ mod tests {
         assert_eq!(PostgresqlMaintenanceTargets::IsActionPending.to_string(), "is_action_pending");
         assert_eq!(PostgresqlMaintenanceTargets::LastReclaimableBytes.to_string(), "last_reclaimable_bytes");
         assert_eq!(PostgresqlMaintenanceTargets::LastBeforeBytes.to_string(), "last_before_bytes");
+        assert_eq!(PostgresqlMaintenanceTargets::LastDeadTuplesBefore.to_string(), "last_dead_tuples_before");
+        assert_eq!(PostgresqlMaintenanceTargets::LastDeadTuplesAfter.to_string(), "last_dead_tuples_after");
     }
 }

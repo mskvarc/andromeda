@@ -62,6 +62,8 @@ pub const POSTGRESQL_MAINTENANCE_ACTIONS_TOTAL: &str = "andromeda_postgresql_mai
 pub const POSTGRESQL_MAINTENANCE_ACTION_SECONDS: &str = "andromeda_postgresql_maintenance_action_seconds";
 /// Histogram of bytes physically reclaimed by PostgreSQL maintenance actions.
 pub const POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES: &str = "andromeda_postgresql_maintenance_reclaimed_bytes";
+/// Histogram of dead tuples removed by PostgreSQL maintenance vacuums.
+pub const POSTGRESQL_MAINTENANCE_REMOVED_DEAD_TUPLES: &str = "andromeda_postgresql_maintenance_removed_dead_tuples";
 /// Gauge of tenant runtimes currently held in the bounded runtime cache.
 pub const TENANT_RUNTIMES_CACHED: &str = "andromeda_tenant_runtimes_cached";
 /// Counter of cold tenant-runtime builds, labelled by outcome.

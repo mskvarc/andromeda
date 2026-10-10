@@ -1,6 +1,7 @@
 //! Cancellation-aware execution and recovery for qualified maintenance work.
 
 use crate::{
+    action_measurement::{ActionBaseline, ActionComparison},
     artifact::RecoveryArtifact,
     candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
     controller::PassOutcome,
@@ -106,7 +107,7 @@ pub(crate) async fn execute_pending(
         }
         PolicyDecision::Act => {}
     }
-    let before = inspection::relation_bytes(tenant_connection, target).await?;
+    let baseline = read_baseline(tenant_connection, target).await?;
     let statement = target_statement(target);
     let action = target_action(target);
     let started = Instant::now();
@@ -123,19 +124,50 @@ pub(crate) async fn execute_pending(
             Ok(PassOutcome::ActionFailed)
         }
         StatementOutcome::Succeeded => {
-            let after = inspection::relation_bytes(tenant_connection, target).await?;
-            record_action(
-                action,
-                MaintenanceActionOutcome::Succeeded,
-                started.elapsed(),
-                Some(before.saturating_sub(after)),
-            );
-            target_record::record_action_success(platform, tenant, target, Utc::now() + profile.successful_cooldown, before, after).await?;
+            let duration = started.elapsed();
+            let comparison = read_comparison(tenant_connection, baseline).await?;
+            record_action(action, MaintenanceActionOutcome::Succeeded, duration, Some(comparison.effect()));
+            target_record::record_action_success(platform, tenant, target, Utc::now() + profile.successful_cooldown, comparison).await?;
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Acted).await?;
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), before_bytes = before, after_bytes = after, reclaimed_bytes = before.saturating_sub(after), duration_seconds = started.elapsed().as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
+            match comparison {
+                ActionComparison::Index { before_bytes, after_bytes } => {
+                    info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), before_bytes, after_bytes, reclaimed_bytes = before_bytes.saturating_sub(after_bytes), duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
+                }
+                ActionComparison::Heap { before, after } => {
+                    info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), dead_tuples_before = before.dead, dead_tuples_after = after.dead, removed_dead_tuples = before.dead.saturating_sub(after.dead), live_tuples_after = after.live, dead_percent_after = ?comparison.post_vacuum_dead_percent(), duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
+                }
+            }
             Ok(PassOutcome::Acted)
         }
     }
+}
+
+/// Read the measure of a target's action before the action runs.
+async fn read_baseline(connection: &mut PgConnection, target: MaintenanceTarget) -> Result<ActionBaseline, MaintenanceError> {
+    Ok(match target {
+        MaintenanceTarget::Index(index) => ActionBaseline::Index {
+            index,
+            before_bytes: inspection::index_bytes(connection, index).await?,
+        },
+        MaintenanceTarget::Heap(heap) => ActionBaseline::Heap {
+            heap,
+            before: inspection::heap_tuple_counts(connection, heap).await?,
+        },
+    })
+}
+
+/// Read the same measure after the action and pair it with the baseline.
+async fn read_comparison(connection: &mut PgConnection, baseline: ActionBaseline) -> Result<ActionComparison, MaintenanceError> {
+    Ok(match baseline {
+        ActionBaseline::Index { index, before_bytes } => ActionComparison::Index {
+            before_bytes,
+            after_bytes: inspection::index_bytes(connection, index).await?,
+        },
+        ActionBaseline::Heap { heap, before } => ActionComparison::Heap {
+            before,
+            after: inspection::heap_tuple_counts(connection, heap).await?,
+        },
+    })
 }
 
 /// One maintenance statement's cancellation-aware result.
