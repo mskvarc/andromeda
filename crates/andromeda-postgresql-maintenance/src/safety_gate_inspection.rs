@@ -24,7 +24,7 @@ use sqlx::PgConnection;
 /// Only a vacuum is gated on the horizon: a rebuild produces a compact index
 /// whatever the horizon, so its holders are not read for an index target.
 pub(crate) async fn safety_gates(connection: &mut PgConnection, target: MaintenanceTarget) -> Result<SafetyGates, MaintenanceError> {
-    let heap = format!("public.{}", target.heap_name());
+    let heap = format!("public.{}", target.heap().relation_name());
     let (relation, held_horizon) = match target {
         MaintenanceTarget::Index(index) => (Some(format!("public.{}", index.relation_name())), None),
         MaintenanceTarget::Heap(_) => (None, vacuum_horizon::horizon_held_by(&vacuum_horizon::horizon_holders(connection).await?)),

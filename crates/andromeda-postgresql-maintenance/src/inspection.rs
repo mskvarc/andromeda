@@ -150,15 +150,16 @@ pub(crate) async fn heap_tuple_counts(connection: &mut PgConnection, heap: HeapT
     })
 }
 
-/// Cheap catalog size query for every allowlisted index.
+/// Cheap catalog size query for every allowlisted index, each matched on its
+/// own heap.
 fn index_sizes_statement() -> SelectStatement {
+    let pairs = IndexTarget::ALL.map(|index| Expr::tuple([Expr::val(index.heap().relation_name()), Expr::val(index.relation_name())]));
     Query::select()
         .column(Alias::new(CatalogColumn::Indexrelname.as_str()))
         .expr_as(relation_size(Expr::col(Alias::new("indexrelid"))), Alias::new(CatalogColumn::Bytes.as_str()))
         .from(Alias::new("pg_stat_user_indexes"))
         .and_where(Expr::col(Alias::new("schemaname")).eq("public"))
-        .and_where(Expr::col(Alias::new("relname")).eq("current_attributes"))
-        .and_where(Expr::col(Alias::new("indexrelname")).is_in(IndexTarget::ALL.map(IndexTarget::relation_name)))
+        .and_where(Expr::tuple([Expr::col(Alias::new("relname")), Expr::col(Alias::new("indexrelname"))]).is_in(pairs))
         .to_owned()
 }
 
@@ -280,17 +281,18 @@ mod tests {
     /// The size sample reads the GIN indexes too: a density is computed from
     /// it, and a queued GIN reports its bytes before and after its rebuild.
     #[test]
-    fn the_index_size_sample_reads_every_current_attributes_index_the_key_gin_included() {
+    fn index_size_sample_filters_by_heap_and_index_pairs() {
         let sql = index_sizes_statement().to_string(PostgresQueryBuilder);
-        assert!(sql.contains("\"relname\" = 'current_attributes'"), "{sql}");
+        assert!(sql.contains(r#"("relname", "indexrelname") IN ("#), "{sql}");
         for target in IndexTarget::ALL {
-            assert!(sql.contains(&format!("'{}'", target.relation_name())), "{target}: {sql}");
+            let pair = format!("('{}', '{}')", target.heap().relation_name(), target.relation_name());
+            assert!(sql.contains(&pair), "{target}: {sql}");
         }
-        assert!(sql.contains("'idx_ca_sub_eq_keys'"), "{sql}");
+        assert!(!sql.contains(r#""relname" = 'current_attributes'"#), "{sql}");
     }
 
     #[test]
-    fn the_heap_sample_reads_current_attributes_and_entities() {
+    fn the_heap_sample_reads_every_hot_and_queue_heap() {
         let sql = heap_samples_statement().to_string(PostgresQueryBuilder);
         assert!(sql.contains("pg_stat_user_tables"), "{sql}");
         for target in HeapTarget::ALL {

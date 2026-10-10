@@ -114,7 +114,7 @@ fn catalog_column(alias: &'static str, column: &'static str) -> Expr {
 }
 
 /// Every probeable B-tree in the application schema with its pages, entries
-/// and key width.
+/// and key width, its columns' widths read from its own heap's statistics.
 ///
 /// The `having` keeps only indexes whose every column has a `pg_stats` row:
 /// the inner join drops a column without one, and its width would be missing
@@ -145,6 +145,18 @@ fn btree_layouts_statement() -> SelectStatement {
         )
         .join_as(
             JoinType::InnerJoin,
+            Alias::new("pg_index"),
+            Alias::new("i"),
+            catalog_column("i", "indexrelid").equals((Alias::new("c"), Alias::new("oid"))),
+        )
+        .join_as(
+            JoinType::InnerJoin,
+            Alias::new("pg_class"),
+            Alias::new("t"),
+            catalog_column("t", "oid").equals((Alias::new("i"), Alias::new("indrelid"))),
+        )
+        .join_as(
+            JoinType::InnerJoin,
             Alias::new("pg_attribute"),
             Alias::new("a"),
             catalog_column("a", "attrelid").equals((Alias::new("c"), Alias::new("oid"))),
@@ -155,7 +167,7 @@ fn btree_layouts_statement() -> SelectStatement {
             Alias::new("s"),
             catalog_column("s", "schemaname")
                 .equals((Alias::new("n"), Alias::new("nspname")))
-                .and(catalog_column("s", "tablename").eq("current_attributes"))
+                .and(catalog_column("s", "tablename").equals((Alias::new("t"), Alias::new("relname"))))
                 .and(catalog_column("s", "attname").equals((Alias::new("a"), Alias::new("attname"))))
                 .and(catalog_column("s", "inherited").eq(false)),
         )
@@ -225,7 +237,12 @@ mod tests {
     fn the_layout_statement_reads_only_probeable_btrees_with_complete_statistics() {
         let sql = btree_layouts_statement().to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"JOIN "pg_stats" AS "s""#), "{sql}");
-        assert!(sql.contains(r#""s"."tablename" = 'current_attributes'"#), "{sql}");
+        assert!(sql.contains(r#"JOIN "pg_class" AS "t" ON "t"."oid" = "i"."indrelid""#), "{sql}");
+        assert!(
+            sql.contains(r#""s"."tablename" = "t"."relname""#),
+            "an index reads its own heap's statistics: {sql}"
+        );
+        assert!(!sql.contains("'current_attributes'"), "{sql}");
         assert!(sql.contains(r#""am"."amname" = 'btree'"#), "{sql}");
         assert!(sql.contains(r#""c"."reltuples" >= 0"#), "an index never analyzed has no estimate: {sql}");
         assert!(sql.contains(r#"HAVING COUNT(*) = "c"."relnatts""#), "{sql}");

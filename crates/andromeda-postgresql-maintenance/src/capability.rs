@@ -1,6 +1,6 @@
 //! Per-database validation of the extension and privileges maintenance needs.
 
-use crate::{error::MaintenanceError, scalar_query::select_bool};
+use crate::{candidate::HeapTarget, error::MaintenanceError, scalar_query::select_bool};
 use andromeda_postgresql_seaquery::maintenance::{current_user_has_function_privilege, current_user_has_table_privilege, to_regprocedure};
 use sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement};
 use sqlx::PgConnection;
@@ -58,10 +58,27 @@ fn inspection_privilege_statement() -> SelectStatement {
     Query::select().expr(exact.and(approximate)).to_owned()
 }
 
-/// Required PostgreSQL 18 `MAINTAIN` privileges.
+/// Required PostgreSQL 18 `MAINTAIN` privileges on every allowlisted heap;
+/// an index is rebuilt under its heap's privilege.
 fn maintain_privilege_statement() -> SelectStatement {
-    let instances = current_user_has_table_privilege(Expr::val("public.current_attributes"), Expr::val("MAINTAIN"));
-    let entities = current_user_has_table_privilege(Expr::val("public.entities"), Expr::val("MAINTAIN"));
-    let delivery = current_user_has_table_privilege(Expr::val("public.subscription_delivery_state"), Expr::val("MAINTAIN"));
-    Query::select().expr(instances.and(entities).and(delivery)).to_owned()
+    let granted = HeapTarget::ALL
+        .map(|heap| current_user_has_table_privilege(Expr::val(format!("public.{}", heap.relation_name())), Expr::val("MAINTAIN")))
+        .into_iter()
+        .fold(Expr::val(true), ExprTrait::and);
+    Query::select().expr(granted).to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{candidate::HeapTarget, capability::maintain_privilege_statement};
+    use sea_query::PostgresQueryBuilder;
+
+    #[test]
+    fn automatic_mode_requires_maintain_on_every_allowlisted_heap() {
+        let sql = maintain_privilege_statement().to_string(PostgresQueryBuilder);
+        for heap in HeapTarget::ALL {
+            let privilege = format!("has_table_privilege(current_user, 'public.{}', 'MAINTAIN')", heap.relation_name());
+            assert!(sql.contains(&privilege), "{heap}: {sql}");
+        }
+    }
 }

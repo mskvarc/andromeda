@@ -132,9 +132,10 @@ fn catalog_column(alias: &'static str, column: &'static str) -> Expr {
     Expr::col((Alias::new(alias), Alias::new(column)))
 }
 
-/// The non-null rows of each density column of `current_attributes`.
+/// The non-null rows of each density column, read on the heap of the GIN
+/// partial on it.
 fn gin_coverage_statement() -> SelectStatement {
-    let columns = DensityColumn::ALL.map(<&'static str>::from);
+    let pairs = DensityColumn::ALL.map(|column| Expr::tuple([Expr::val(column.gin().heap().relation_name()), Expr::val(<&'static str>::from(column))]));
     let covered = catalog_column("c", "reltuples").mul(Expr::val(1).sub(catalog_column("s", "null_frac")));
     Query::select()
         .column((Alias::new("s"), Alias::new("attname")))
@@ -156,9 +157,8 @@ fn gin_coverage_statement() -> SelectStatement {
                 .and(catalog_column("s", "inherited").eq(false)),
         )
         .and_where(catalog_column("n", "nspname").eq("public"))
-        .and_where(catalog_column("c", "relname").eq("current_attributes"))
         .and_where(catalog_column("c", "reltuples").gte(0))
-        .and_where(catalog_column("s", "attname").is_in(columns))
+        .and_where(Expr::tuple([catalog_column("c", "relname"), catalog_column("s", "attname")]).is_in(pairs))
         .to_owned()
 }
 
@@ -263,11 +263,12 @@ mod tests {
     fn density_statement_reads_null_frac_and_reltuples() {
         let sql = gin_coverage_statement().to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"("c"."reltuples" * (1 - "s"."null_frac"))::bigint AS "covered_rows""#), "{sql}");
-        assert!(sql.contains(r#""c"."relname" = 'current_attributes'"#), "{sql}");
         assert!(sql.contains(r#""s"."inherited" = FALSE"#), "{sql}");
         assert!(sql.contains(r#""c"."reltuples" >= 0"#), "a table never analyzed covers nothing: {sql}");
         assert!(
-            sql.contains(r#""s"."attname" IN ('sub_attributes', 'value_object', 'value_long_text')"#),
+            sql.contains(
+                r#"("c"."relname", "s"."attname") IN (('current_attributes', 'sub_attributes'), ('current_attributes', 'value_object'), ('current_attributes', 'value_long_text'))"#
+            ),
             "{sql}"
         );
     }

@@ -2,6 +2,9 @@
 
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities},
+    notification::{NotificationDeliveries, NotificationEvents},
+    queue::{PendingSideEffects, TemporalAppendIntents},
+    snapshot::SnapshotNotificationOutbox,
     subscriptions::SubscriptionDeliveryState,
 };
 use andromeda_postgresql_seaquery::maintenance::{MaintenanceSchema, MaintenanceStatement, reindex_index_concurrently, vacuum_non_truncating};
@@ -166,6 +169,26 @@ impl IndexTarget {
         }
     }
 
+    /// The heap the index belongs to, whose load and lock gates apply to its
+    /// rebuild.
+    #[must_use]
+    pub const fn heap(self) -> HeapTarget {
+        match self {
+            IndexTarget::UqCurrentAttributesGrain
+            | IndexTarget::IdxCaValueNumber
+            | IndexTarget::IdxCaValueString
+            | IndexTarget::IdxCaValueStringTrgm
+            | IndexTarget::IdxCaValueBoolean
+            | IndexTarget::IdxCaValueDateTime
+            | IndexTarget::IdxCaValueUri
+            | IndexTarget::IdxCaValueGeometry
+            | IndexTarget::IdxCaEntityGeometry
+            | IndexTarget::IdxCaSubEqKeys
+            | IndexTarget::IdxCaValueObject
+            | IndexTarget::IdxCaValueLongTextTrgm => HeapTarget::CurrentAttributes,
+        }
+    }
+
     /// The exact database identifier created by tenant migrations.
     #[must_use]
     pub const fn relation_name(self) -> &'static str {
@@ -202,11 +225,30 @@ pub enum HeapTarget {
     Entities,
     /// Frequently updated subscription delivery counters.
     SubscriptionDeliveryState,
+    /// Notification events awaiting fan-out to their deliveries.
+    NotificationEvents,
+    /// Notification deliveries, leased by every claim.
+    NotificationDeliveries,
+    /// Write side effects awaiting their retry.
+    PendingSideEffects,
+    /// Temporal history appends awaiting their retry.
+    TemporalAppendIntents,
+    /// Snapshot notifications awaiting delivery, leased by every claim.
+    SnapshotNotificationOutbox,
 }
 
 impl HeapTarget {
     /// Every heap relation eligible for cheap sampling and catch-up vacuum.
-    pub const ALL: [HeapTarget; 3] = [HeapTarget::CurrentAttributes, HeapTarget::Entities, HeapTarget::SubscriptionDeliveryState];
+    pub const ALL: [HeapTarget; 8] = [
+        HeapTarget::CurrentAttributes,
+        HeapTarget::Entities,
+        HeapTarget::SubscriptionDeliveryState,
+        HeapTarget::NotificationEvents,
+        HeapTarget::NotificationDeliveries,
+        HeapTarget::PendingSideEffects,
+        HeapTarget::TemporalAppendIntents,
+        HeapTarget::SnapshotNotificationOutbox,
+    ];
 
     /// The exact database identifier created by tenant migrations.
     #[must_use]
@@ -215,6 +257,11 @@ impl HeapTarget {
             HeapTarget::CurrentAttributes => "current_attributes",
             HeapTarget::Entities => "entities",
             HeapTarget::SubscriptionDeliveryState => "subscription_delivery_state",
+            HeapTarget::NotificationEvents => "notification_events",
+            HeapTarget::NotificationDeliveries => "notification_deliveries",
+            HeapTarget::PendingSideEffects => "pending_side_effects",
+            HeapTarget::TemporalAppendIntents => "temporal_append_intents",
+            HeapTarget::SnapshotNotificationOutbox => "snapshot_notification_outbox",
         }
     }
 
@@ -225,6 +272,11 @@ impl HeapTarget {
             HeapTarget::CurrentAttributes => vacuum_non_truncating(&MaintenanceSchema::Public, &CurrentAttributes::Table),
             HeapTarget::Entities => vacuum_non_truncating(&MaintenanceSchema::Public, &Entities::Table),
             HeapTarget::SubscriptionDeliveryState => vacuum_non_truncating(&MaintenanceSchema::Public, &SubscriptionDeliveryState::Table),
+            HeapTarget::NotificationEvents => vacuum_non_truncating(&MaintenanceSchema::Public, &NotificationEvents::Table),
+            HeapTarget::NotificationDeliveries => vacuum_non_truncating(&MaintenanceSchema::Public, &NotificationDeliveries::Table),
+            HeapTarget::PendingSideEffects => vacuum_non_truncating(&MaintenanceSchema::Public, &PendingSideEffects::Table),
+            HeapTarget::TemporalAppendIntents => vacuum_non_truncating(&MaintenanceSchema::Public, &TemporalAppendIntents::Table),
+            HeapTarget::SnapshotNotificationOutbox => vacuum_non_truncating(&MaintenanceSchema::Public, &SnapshotNotificationOutbox::Table),
         }
     }
 }
@@ -232,9 +284,9 @@ impl HeapTarget {
 /// A persistable allowlisted maintenance target.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum MaintenanceTarget {
-    /// One `current_attributes` index.
+    /// One allowlisted index.
     Index(IndexTarget),
-    /// One hot heap.
+    /// One hot or queue heap.
     Heap(HeapTarget),
 }
 
@@ -249,25 +301,13 @@ impl MaintenanceTarget {
         }
     }
 
-    /// Parent heap whose load and lock gates apply to the target.
+    /// The heap whose load and lock gates apply to the target: the target
+    /// itself, or the heap an index belongs to.
     #[must_use]
-    pub const fn heap_name(self) -> &'static str {
+    pub const fn heap(self) -> HeapTarget {
         match self {
-            MaintenanceTarget::Index(
-                IndexTarget::UqCurrentAttributesGrain
-                | IndexTarget::IdxCaValueNumber
-                | IndexTarget::IdxCaValueString
-                | IndexTarget::IdxCaValueStringTrgm
-                | IndexTarget::IdxCaValueBoolean
-                | IndexTarget::IdxCaValueDateTime
-                | IndexTarget::IdxCaValueUri
-                | IndexTarget::IdxCaValueGeometry
-                | IndexTarget::IdxCaEntityGeometry
-                | IndexTarget::IdxCaSubEqKeys
-                | IndexTarget::IdxCaValueObject
-                | IndexTarget::IdxCaValueLongTextTrgm,
-            ) => "current_attributes",
-            MaintenanceTarget::Heap(target) => target.relation_name(),
+            MaintenanceTarget::Index(target) => target.heap(),
+            MaintenanceTarget::Heap(target) => target,
         }
     }
 }
@@ -295,14 +335,28 @@ mod tests {
     }
 
     #[test]
-    fn every_index_target_is_a_current_attributes_index_and_the_key_index_is_one() {
-        for target in IndexTarget::ALL {
-            let name = target.relation_name();
-            assert!(name.starts_with("idx_ca_") || name == "uq_current_attributes_grain", "{name}");
-            assert_eq!(MaintenanceTarget::Index(target).heap_name(), "current_attributes");
+    fn every_index_target_names_the_heap_that_owns_it() {
+        let expected = [
+            (IndexTarget::UqCurrentAttributesGrain, HeapTarget::CurrentAttributes),
+            (IndexTarget::IdxCaValueNumber, HeapTarget::CurrentAttributes),
+            (IndexTarget::IdxCaValueString, HeapTarget::CurrentAttributes),
+            (IndexTarget::IdxCaValueStringTrgm, HeapTarget::CurrentAttributes),
+            (IndexTarget::IdxCaValueBoolean, HeapTarget::CurrentAttributes),
+            (IndexTarget::IdxCaValueDateTime, HeapTarget::CurrentAttributes),
+            (IndexTarget::IdxCaValueUri, HeapTarget::CurrentAttributes),
+            (IndexTarget::IdxCaValueGeometry, HeapTarget::CurrentAttributes),
+            (IndexTarget::IdxCaEntityGeometry, HeapTarget::CurrentAttributes),
+            (IndexTarget::IdxCaSubEqKeys, HeapTarget::CurrentAttributes),
+            (IndexTarget::IdxCaValueObject, HeapTarget::CurrentAttributes),
+            (IndexTarget::IdxCaValueLongTextTrgm, HeapTarget::CurrentAttributes),
+        ];
+        assert_eq!(IndexTarget::ALL.map(|target| (target, target.heap())), expected);
+        for (index, heap) in expected {
+            assert_eq!(MaintenanceTarget::Index(index).heap(), heap, "{index}");
         }
-        assert!(IndexTarget::ALL.contains(&IndexTarget::IdxCaSubEqKeys));
-        assert_eq!(IndexTarget::IdxCaSubEqKeys.relation_name(), "idx_ca_sub_eq_keys");
+        for heap in HeapTarget::ALL {
+            assert_eq!(MaintenanceTarget::Heap(heap).heap(), heap);
+        }
     }
 
     /// `pgstattuple` reads no GIN index.
@@ -369,10 +423,37 @@ mod tests {
     }
 
     #[test]
-    fn the_heap_targets_are_the_attribute_rows_the_entities_and_the_delivery_state() {
+    fn the_heap_targets_are_the_hot_heaps_and_the_queues() {
         assert_eq!(
             HeapTarget::ALL.map(HeapTarget::relation_name),
-            ["current_attributes", "entities", "subscription_delivery_state"]
+            [
+                "current_attributes",
+                "entities",
+                "subscription_delivery_state",
+                "notification_events",
+                "notification_deliveries",
+                "pending_side_effects",
+                "temporal_append_intents",
+                "snapshot_notification_outbox",
+            ]
         );
+    }
+
+    #[test]
+    fn every_queue_heap_has_a_fixed_non_truncating_vacuum() {
+        for (heap, table) in [
+            (HeapTarget::NotificationEvents, "notification_events"),
+            (HeapTarget::NotificationDeliveries, "notification_deliveries"),
+            (HeapTarget::PendingSideEffects, "pending_side_effects"),
+            (HeapTarget::TemporalAppendIntents, "temporal_append_intents"),
+            (HeapTarget::SnapshotNotificationOutbox, "snapshot_notification_outbox"),
+        ] {
+            let statement = heap.vacuum_statement();
+            assert_eq!(
+                statement.as_sql(),
+                format!("VACUUM (TRUNCATE FALSE, PARALLEL 0) \"public\".\"{table}\""),
+                "{heap}"
+            );
+        }
     }
 }

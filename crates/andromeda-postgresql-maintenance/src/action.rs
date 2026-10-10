@@ -295,7 +295,16 @@ const fn target_action(target: MaintenanceTarget) -> MaintenanceAction {
             | IndexTarget::IdxCaValueObject
             | IndexTarget::IdxCaValueLongTextTrgm,
         ) => MaintenanceAction::Reindex,
-        MaintenanceTarget::Heap(HeapTarget::CurrentAttributes | HeapTarget::Entities | HeapTarget::SubscriptionDeliveryState) => MaintenanceAction::Vacuum,
+        MaintenanceTarget::Heap(
+            HeapTarget::CurrentAttributes
+            | HeapTarget::Entities
+            | HeapTarget::SubscriptionDeliveryState
+            | HeapTarget::NotificationEvents
+            | HeapTarget::NotificationDeliveries
+            | HeapTarget::PendingSideEffects
+            | HeapTarget::TemporalAppendIntents
+            | HeapTarget::SnapshotNotificationOutbox,
+        ) => MaintenanceAction::Vacuum,
     }
 }
 

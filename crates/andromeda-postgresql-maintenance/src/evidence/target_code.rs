@@ -21,6 +21,11 @@ pub(crate) const fn stored_target(target: MaintenanceTarget) -> MaintenanceTarge
         MaintenanceTarget::Heap(HeapTarget::SubscriptionDeliveryState) => MaintenanceTargetCode::SubscriptionDeliveryState,
         MaintenanceTarget::Index(IndexTarget::IdxCaValueObject) => MaintenanceTargetCode::IdxCaValueObject,
         MaintenanceTarget::Index(IndexTarget::IdxCaValueLongTextTrgm) => MaintenanceTargetCode::IdxCaValueLongTextTrgm,
+        MaintenanceTarget::Heap(HeapTarget::NotificationEvents) => MaintenanceTargetCode::NotificationEvents,
+        MaintenanceTarget::Heap(HeapTarget::NotificationDeliveries) => MaintenanceTargetCode::NotificationDeliveries,
+        MaintenanceTarget::Heap(HeapTarget::PendingSideEffects) => MaintenanceTargetCode::PendingSideEffects,
+        MaintenanceTarget::Heap(HeapTarget::TemporalAppendIntents) => MaintenanceTargetCode::TemporalAppendIntents,
+        MaintenanceTarget::Heap(HeapTarget::SnapshotNotificationOutbox) => MaintenanceTargetCode::SnapshotNotificationOutbox,
     }
 }
 
@@ -42,6 +47,11 @@ pub(crate) const fn target_of(code: MaintenanceTargetCode) -> MaintenanceTarget 
         MaintenanceTargetCode::SubscriptionDeliveryState => MaintenanceTarget::Heap(HeapTarget::SubscriptionDeliveryState),
         MaintenanceTargetCode::IdxCaValueObject => MaintenanceTarget::Index(IndexTarget::IdxCaValueObject),
         MaintenanceTargetCode::IdxCaValueLongTextTrgm => MaintenanceTarget::Index(IndexTarget::IdxCaValueLongTextTrgm),
+        MaintenanceTargetCode::NotificationEvents => MaintenanceTarget::Heap(HeapTarget::NotificationEvents),
+        MaintenanceTargetCode::NotificationDeliveries => MaintenanceTarget::Heap(HeapTarget::NotificationDeliveries),
+        MaintenanceTargetCode::PendingSideEffects => MaintenanceTarget::Heap(HeapTarget::PendingSideEffects),
+        MaintenanceTargetCode::TemporalAppendIntents => MaintenanceTarget::Heap(HeapTarget::TemporalAppendIntents),
+        MaintenanceTargetCode::SnapshotNotificationOutbox => MaintenanceTarget::Heap(HeapTarget::SnapshotNotificationOutbox),
     }
 }
 
@@ -55,7 +65,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn every_target_survives_a_round_trip_through_its_stored_number() {
+    fn target_codes_round_trip_for_every_target() {
         let targets = IndexTarget::ALL
             .into_iter()
             .map(MaintenanceTarget::Index)
