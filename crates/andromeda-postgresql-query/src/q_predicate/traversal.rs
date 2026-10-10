@@ -151,33 +151,71 @@ impl LinkedHop {
 
     /// The Relationship's current instances joined to the entities they name,
     /// correlated against `outer`.
-    ///
-    /// Clause 4.9 follows every object: a Relationship holding one object
-    /// keeps it in `value_uri` (or `value_long_uri`, past the B-tree bound),
-    /// and one holding several, like a `ListRelationship`, keeps them in
-    /// `value_object` as a JSON array of URIs in written order. Both expand to
-    /// one row per object through `jsonb_array_elements_text`, the single
-    /// object wrapped in a one-element array. Only a Relationship or a
-    /// `ListRelationship` instance is expanded: the same attribute name may
-    /// hold another family's `value_object` in this entity, which is no array
-    /// of objects.
     fn current_objects(&self, relationship_id: AttributeNameKey, outer: &EntityRowRefs) -> SelectStatement {
         // Fresh alias handles rather than clones: each names the same relation
         // the hop introduced.
         let hop = || Alias::new(self.attributes.as_str());
-        let linked = || Alias::new(self.linked_entity.as_str());
-        let objects = || Alias::new(self.objects.as_str());
         let single: SimpleExpr = Func::coalesce([
             SeaExpr::col((hop(), CurrentAttributes::ValueUri)),
             SeaExpr::col((hop(), CurrentAttributes::ValueLongUri)),
         ])
         .into();
-        let every_object: SimpleExpr = Func::coalesce([SeaExpr::col((hop(), CurrentAttributes::ValueObject)), jsonb_build_array(single)]).into();
-        let relationship_kinds = [AttributeKind::Relationship, AttributeKind::ListRelationship].map(|kind| int_literal(i64::from(kind.code())));
         let mut probe = Query::select();
+        probe.expr(int_literal(1)).from(outer.table(CurrentAttributes::Table).alias(hop()));
+        self.join_linked_entities(
+            &mut probe,
+            SeaExpr::col((hop(), CurrentAttributes::ValueObject)),
+            single,
+            outer.table(Entities::Table),
+        );
         probe
-            .expr(int_literal(1))
-            .from(outer.table(CurrentAttributes::Table).alias(hop()))
+            // The correlation is added first: it binds nothing, so the
+            // Relationship's dictionary key is still the probe's first bound
+            // value, ahead of the guard's types and the inner predicate's operands.
+            .and_where(SeaExpr::col((hop(), CurrentAttributes::EntityKey)).eq(outer.entity_key_column()))
+            .and_where(SeaExpr::col((hop(), CurrentAttributes::AttributeNameKey)).eq(relationship_id.get()))
+            .and_where(SeaExpr::col((hop(), CurrentAttributes::AttributeKind)).is_in(relationship_kinds()))
+            // Clause 4.22: a past-due Relationship instance links nothing.
+            .and_where(instance_stands(SeaExpr::col((hop(), CurrentAttributes::ExpiresAt))));
+        probe
+    }
+
+    /// The Relationship's instances valid within the window joined to the
+    /// entities they name, correlated against the window's temporal entity.
+    ///
+    /// History keeps a Relationship's objects as current state does, a single
+    /// one in `value_uri` and several in `value_object`, so each instance
+    /// expands the same way.
+    fn windowed_objects(&self, relationship_id: AttributeNameKey, window: &HistoryWindow) -> WindowProbes {
+        let aliases = HistoryAliases::at_depth(self.depth);
+        window.probes_of(relationship_id, &aliases).map(|mut probe| {
+            self.join_linked_entities(
+                &mut probe,
+                aliases.instance_column(AttributeHistory::ValueObject),
+                aliases.instance_column(AttributeHistory::ValueUri),
+                qualified(window.schema(), Entities::Table),
+            );
+            probe.and_where(SeaExpr::expr(aliases.instance_column(AttributeHistory::AttributeKind)).is_in(relationship_kinds()));
+            probe
+        })
+    }
+
+    /// Join to `probe` one row per object its instance holds and the entity
+    /// each object names in `entities`.
+    ///
+    /// Clause 4.9 follows every object: a Relationship holding one object
+    /// keeps it in `single_object`, and one holding several, like a
+    /// `ListRelationship`, keeps them in `value_object` as a JSON array of URIs
+    /// in written order. Both expand to one row per object through
+    /// `jsonb_array_elements_text`, the single object wrapped in a one-element
+    /// array. The caller restricts the instance to [`relationship_kinds`]: the
+    /// same attribute name may hold another family's `value_object`, which is
+    /// no array of objects.
+    fn join_linked_entities(&self, probe: &mut SelectStatement, value_object: SimpleExpr, single_object: SimpleExpr, entities: TableRef) {
+        let linked = || Alias::new(self.linked_entity.as_str());
+        let objects = || Alias::new(self.objects.as_str());
+        let every_object: SimpleExpr = Func::coalesce([value_object, jsonb_build_array(single_object)]).into();
+        probe
             .join(
                 JoinType::Join,
                 TableRef::FunctionCall(jsonb_array_elements_text(every_object), objects().into()),
@@ -186,36 +224,16 @@ impl LinkedHop {
             // The object is the linked Entity's URI (clause 4.5.3).
             .join_as(
                 JoinType::Join,
-                outer.table(Entities::Table),
+                entities,
                 linked(),
                 SeaExpr::col((linked(), Entities::Id)).eq(SeaExpr::col(objects())),
-            )
-            // The correlation is added first: it binds nothing, so the
-            // Relationship's dictionary key is still the probe's first bound
-            // value, ahead of the guard's types and the inner predicate's operands.
-            .and_where(SeaExpr::col((hop(), CurrentAttributes::EntityKey)).eq(outer.entity_key_column()))
-            .and_where(SeaExpr::col((hop(), CurrentAttributes::AttributeNameKey)).eq(relationship_id.get()))
-            .and_where(SeaExpr::col((hop(), CurrentAttributes::AttributeKind)).is_in(relationship_kinds))
-            // Clause 4.22: a past-due Relationship instance links nothing.
-            .and_where(instance_stands(SeaExpr::col((hop(), CurrentAttributes::ExpiresAt))));
-        probe
-    }
-
-    /// The Relationship's instances valid within the window joined to the
-    /// entities they name, correlated against the window's temporal entity.
-    fn windowed_objects(&self, relationship_id: AttributeNameKey, window: &HistoryWindow) -> WindowProbes {
-        let aliases = HistoryAliases::at_depth(self.depth);
-        let linked = || Alias::new(self.linked_entity.as_str());
-        window.probes_of(relationship_id, &aliases).map(|mut probe| {
-            probe.join_as(
-                JoinType::Join,
-                qualified(window.schema(), Entities::Table),
-                linked(),
-                SeaExpr::col((linked(), Entities::Id)).eq(aliases.instance_column(AttributeHistory::ValueUri)),
             );
-            probe
-        })
     }
+}
+
+/// The attribute kinds whose instances hold objects a hop follows.
+fn relationship_kinds() -> [SimpleExpr; 2] {
+    [AttributeKind::Relationship, AttributeKind::ListRelationship].map(|kind| int_literal(i64::from(kind.code())))
 }
 
 /// The hop's entity-type constraint against the linked entity's `entity_type_name_keys`
@@ -285,12 +303,44 @@ mod tests {
         let sql = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned().to_string(PostgresQueryBuilder);
         assert_eq!(sql.matches("EXISTS").count(), 2, "{sql}");
         for fragment in [
-            r#"JOIN "entities" AS "le1" ON "le1"."id" = "qh_ln1"."value_uri""#,
+            r#"JOIN "entities" AS "le1" ON "le1"."id" = "lo1""#,
             r#""qs_ln1"."temporal_entity_key" = "e"."temporal_entity_key""#,
             r#""le1"."entity_key" = 5"#,
         ] {
             assert_eq!(sql.matches(fragment).count(), 2, "{fragment}: {sql}");
         }
         assert!(sql.contains(r#"AS "qe_ln1" ON TRUE"#), "{sql}");
+    }
+
+    /// Clause 4.9: a temporal hop follows every object a history instance
+    /// holds, the several objects of a Relationship or a `ListRelationship` in
+    /// `value_object` and a single one in `value_uri`, in each of the window's
+    /// probes, and expands only an instance of those two kinds (2 and 8).
+    #[test]
+    fn a_windowed_hop_follows_every_object_of_a_history_instance() {
+        let start = DateTime::parse_from_rfc3339("2019-01-01T00:00:00Z")
+            .expect("a valid instant")
+            .with_timezone(&Utc);
+        let window = HistoryWindow::builder()
+            .schema(None)
+            .temporal_entity_key(Expr::col((Alias::new("e"), Alias::new("temporal_entity_key"))))
+            .axis(AttributeHistory::ObservedAt)
+            .interval(TimeInterval::After(start))
+            .build();
+        let probe = LinkedHop::at_depth(1).probe(
+            AttributeNameKey::from(4),
+            &[],
+            &ResolvedNames::default(),
+            &InstanceScan::History(&window),
+            Condition::all(),
+        );
+        let sql = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned().to_string(PostgresQueryBuilder);
+        for fragment in [
+            r#"JOIN jsonb_array_elements_text(COALESCE("qh_ln1"."value_object", jsonb_build_array("qh_ln1"."value_uri"))) AS "lo1" ON TRUE"#,
+            r#""qh_ln1"."attribute_kind" IN (2, 8)"#,
+        ] {
+            assert_eq!(sql.matches(fragment).count(), 2, "{fragment}: {sql}");
+        }
+        assert!(!sql.contains(r#""le1"."id" = "qh_ln1"."value_uri""#), "{sql}");
     }
 }
