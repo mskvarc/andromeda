@@ -9,7 +9,7 @@ use crate::{
 };
 use andromeda_postgresql_seaquery::{
     cast::cast,
-    introspection::current_setting,
+    introspection::{current_database, current_setting},
     maintenance::{backend_pid, to_regclass},
     pg_type::PostgresType,
 };
@@ -43,21 +43,39 @@ pub(crate) async fn safety_gates(connection: &mut PgConnection, target: Maintena
     })
 }
 
-/// Active foreground backend count.
+/// Active foreground backend count across the cluster.
+///
+/// CPU and I/O are shared by every database, so the count is cluster-wide.
+/// Parallel workers carry foreground work; autovacuum workers, WAL senders and
+/// background workers report `active` without competing with requests.
 fn active_backend_statement() -> SelectStatement {
     Query::select()
         .expr(Func::count(Expr::col(Asterisk)))
         .from(Alias::new("pg_stat_activity"))
+        .and_where(Expr::col(Alias::new("backend_type")).is_in(["client backend", "parallel worker"]))
         .and_where(Expr::col(Alias::new("state")).eq("active"))
         .and_where(Expr::col(Alias::new("pid")).ne(backend_pid()))
         .to_owned()
 }
 
-/// Oldest foreground transaction start.
+/// Oldest start of a client transaction holding this database's horizon.
+///
+/// The removable horizon of a non-shared relation depends only on its own
+/// database, and `REINDEX CONCURRENTLY` waits only for snapshots there. A
+/// writer idle in a read committed transaction holds no snapshot between
+/// statements, but its transaction ID still holds the horizon and its locks
+/// still block a concurrent rebuild.
 fn oldest_transaction_statement() -> SelectStatement {
     Query::select()
         .expr(Func::min(Expr::col(Alias::new("xact_start"))))
         .from(Alias::new("pg_stat_activity"))
+        .and_where(Expr::col(Alias::new("datname")).eq(current_database()))
+        .and_where(Expr::col(Alias::new("backend_type")).eq("client backend"))
+        .and_where(
+            Expr::col(Alias::new("backend_xid"))
+                .is_not_null()
+                .or(Expr::col(Alias::new("backend_xmin")).is_not_null()),
+        )
         .and_where(Expr::col(Alias::new("xact_start")).is_not_null())
         .and_where(Expr::col(Alias::new("pid")).ne(backend_pid()))
         .to_owned()
@@ -83,11 +101,20 @@ fn active_maintenance_statement(relation: &str) -> SelectStatement {
     Query::select().expr(Expr::exists(build).or(Expr::exists(vacuum))).to_owned()
 }
 
-/// Whether another backend waits for a relation lock.
+/// Whether another backend in this database waits for a relation lock.
+///
+/// `pg_locks.relation` is an OID unique only within one database, so the
+/// lock's database is pinned to the current one.
 fn waiting_lock_statement(heap: &str, index: Option<&str>) -> SelectStatement {
+    let current_database_oid = Query::select()
+        .column(Alias::new("oid"))
+        .from(Alias::new("pg_database"))
+        .and_where(Expr::col(Alias::new("datname")).eq(current_database()))
+        .to_owned();
     let waiting = Query::select()
         .expr(Expr::val(1))
         .from(Alias::new("pg_locks"))
+        .and_where(Expr::col(Alias::new("database")).in_subquery(current_database_oid))
         .and_where(match index {
             Some(index) => Expr::col(Alias::new("relation")).is_in([to_regclass(Expr::val(heap)), to_regclass(Expr::val(index))]),
             None => Expr::col(Alias::new("relation")).eq(to_regclass(Expr::val(heap))),
@@ -95,4 +122,35 @@ fn waiting_lock_statement(heap: &str, index: Option<&str>) -> SelectStatement {
         .and_where(Expr::col(Alias::new("granted")).eq(false))
         .to_owned();
     Query::select().expr(Expr::exists(waiting)).to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::safety_gate_inspection::{active_backend_statement, oldest_transaction_statement, waiting_lock_statement};
+    use sea_query::PostgresQueryBuilder;
+
+    #[test]
+    fn active_backend_gate_counts_foreground_backends_only() {
+        let sql = active_backend_statement().to_string(PostgresQueryBuilder);
+        assert!(sql.contains("\"backend_type\" IN ('client backend', 'parallel worker')"), "{sql}");
+        assert!(!sql.contains("datname"), "{sql}");
+    }
+
+    #[test]
+    fn long_transaction_gate_is_scoped_to_the_current_database_and_horizon_holders() {
+        let sql = oldest_transaction_statement().to_string(PostgresQueryBuilder);
+        assert!(sql.contains("\"datname\" = current_database()"), "{sql}");
+        assert!(sql.contains("\"backend_type\" = 'client backend'"), "{sql}");
+        assert!(sql.contains("\"backend_xid\" IS NOT NULL OR \"backend_xmin\" IS NOT NULL"), "{sql}");
+    }
+
+    #[test]
+    fn lock_gate_is_scoped_to_the_current_database() {
+        let sql = waiting_lock_statement("public.current_attributes", Some("public.idx_ca_value_string")).to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains("\"database\" IN (SELECT \"oid\" FROM \"pg_database\" WHERE \"datname\" = current_database())"),
+            "{sql}"
+        );
+        assert!(sql.contains("\"granted\" = FALSE"), "{sql}");
+    }
 }
