@@ -67,6 +67,7 @@ pub(crate) fn probe_order(
 #[cfg(test)]
 mod tests {
     use crate::{
+        branch::Branch,
         btree_estimate::BtreeEstimate,
         candidate::IndexTarget,
         controller::probe_selection::probe_order,
@@ -87,14 +88,17 @@ mod tests {
         let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
         let sizes = [
             IndexSize {
+                branch: Branch::Live,
                 target: IndexTarget::IdxCaValueStringTrgm,
                 bytes: profile.minimum_relation_bytes * 10,
             },
             IndexSize {
+                branch: Branch::Live,
                 target: IndexTarget::IdxCaSubEqKeys,
                 bytes: profile.minimum_relation_bytes * 20,
             },
             IndexSize {
+                branch: Branch::Live,
                 target: IndexTarget::IdxCaValueString,
                 bytes: profile.minimum_relation_bytes,
             },
@@ -108,14 +112,17 @@ mod tests {
         let now = Utc::now();
         let sizes = [
             IndexSize {
+                branch: Branch::Live,
                 target: IndexTarget::IdxCaValueNumber,
                 bytes: profile.minimum_relation_bytes * 2,
             },
             IndexSize {
+                branch: Branch::Live,
                 target: IndexTarget::IdxCaValueString,
                 bytes: profile.minimum_relation_bytes,
             },
             IndexSize {
+                branch: Branch::Live,
                 target: IndexTarget::IdxCaValueBoolean,
                 bytes: profile.minimum_relation_bytes,
             },
@@ -148,6 +155,7 @@ mod tests {
         let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
         let now = Utc::now();
         let size = |target| IndexSize {
+            branch: Branch::Live,
             target,
             bytes: profile.minimum_relation_bytes,
         };
@@ -188,10 +196,12 @@ mod tests {
         let now = Utc::now();
         let sizes = [
             IndexSize {
+                branch: Branch::Live,
                 target: IndexTarget::IdxCaValueGeometry,
                 bytes: profile.minimum_relation_bytes,
             },
             IndexSize {
+                branch: Branch::Live,
                 target: IndexTarget::IdxCaValueUri,
                 bytes: profile.minimum_relation_bytes,
             },

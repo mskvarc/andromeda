@@ -1,5 +1,6 @@
 //! The closed set of relations that maintenance may inspect or mutate.
 
+use crate::branch::Branch;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities},
     notification::{NotificationDeliveries, NotificationEvents},
@@ -7,7 +8,7 @@ use andromeda_postgresql_schema::{
     snapshot::SnapshotNotificationOutbox,
     subscriptions::SubscriptionDeliveryState,
 };
-use andromeda_postgresql_seaquery::maintenance::{MaintenanceSchema, MaintenanceStatement, reindex_index_concurrently, vacuum_non_truncating};
+use andromeda_postgresql_seaquery::maintenance::{MaintenanceStatement, reindex_index_concurrently, vacuum_non_truncating};
 use sea_query::Iden;
 use strum::{Display, EnumString, IntoStaticStr};
 
@@ -208,10 +209,10 @@ impl IndexTarget {
         }
     }
 
-    /// A fixed concurrent rebuild statement; no external identifier enters SQL.
-    #[must_use]
-    pub fn reindex_statement(self) -> MaintenanceStatement {
-        reindex_index_concurrently(&MaintenanceSchema::Public, &self)
+    /// A fixed concurrent rebuild statement in `branch`'s schema; no external
+    /// identifier enters SQL.
+    pub(crate) fn reindex_statement(self, branch: Branch) -> MaintenanceStatement {
+        reindex_index_concurrently(&branch.schema(), &self)
     }
 }
 
@@ -265,18 +266,19 @@ impl HeapTarget {
         }
     }
 
-    /// A fixed non-truncating, non-parallel ordinary vacuum statement.
-    #[must_use]
-    pub fn vacuum_statement(self) -> MaintenanceStatement {
+    /// A fixed non-truncating, non-parallel ordinary vacuum statement in
+    /// `branch`'s schema.
+    pub(crate) fn vacuum_statement(self, branch: Branch) -> MaintenanceStatement {
+        let schema = branch.schema();
         match self {
-            HeapTarget::CurrentAttributes => vacuum_non_truncating(&MaintenanceSchema::Public, &CurrentAttributes::Table),
-            HeapTarget::Entities => vacuum_non_truncating(&MaintenanceSchema::Public, &Entities::Table),
-            HeapTarget::SubscriptionDeliveryState => vacuum_non_truncating(&MaintenanceSchema::Public, &SubscriptionDeliveryState::Table),
-            HeapTarget::NotificationEvents => vacuum_non_truncating(&MaintenanceSchema::Public, &NotificationEvents::Table),
-            HeapTarget::NotificationDeliveries => vacuum_non_truncating(&MaintenanceSchema::Public, &NotificationDeliveries::Table),
-            HeapTarget::PendingSideEffects => vacuum_non_truncating(&MaintenanceSchema::Public, &PendingSideEffects::Table),
-            HeapTarget::TemporalAppendIntents => vacuum_non_truncating(&MaintenanceSchema::Public, &TemporalAppendIntents::Table),
-            HeapTarget::SnapshotNotificationOutbox => vacuum_non_truncating(&MaintenanceSchema::Public, &SnapshotNotificationOutbox::Table),
+            HeapTarget::CurrentAttributes => vacuum_non_truncating(&schema, &CurrentAttributes::Table),
+            HeapTarget::Entities => vacuum_non_truncating(&schema, &Entities::Table),
+            HeapTarget::SubscriptionDeliveryState => vacuum_non_truncating(&schema, &SubscriptionDeliveryState::Table),
+            HeapTarget::NotificationEvents => vacuum_non_truncating(&schema, &NotificationEvents::Table),
+            HeapTarget::NotificationDeliveries => vacuum_non_truncating(&schema, &NotificationDeliveries::Table),
+            HeapTarget::PendingSideEffects => vacuum_non_truncating(&schema, &PendingSideEffects::Table),
+            HeapTarget::TemporalAppendIntents => vacuum_non_truncating(&schema, &TemporalAppendIntents::Table),
+            HeapTarget::SnapshotNotificationOutbox => vacuum_non_truncating(&schema, &SnapshotNotificationOutbox::Table),
         }
     }
 
@@ -337,13 +339,17 @@ impl MaintenanceTarget {
 
 #[cfg(test)]
 mod tests {
-    use crate::candidate::{DensityColumn, HeapTarget, IndexTarget, MaintenanceTarget};
+    use crate::{
+        branch::Branch,
+        candidate::{DensityColumn, HeapTarget, IndexTarget, MaintenanceTarget},
+    };
+    use andromeda_context_space::snapshot_key::SnapshotKey;
     use pretty_assertions::assert_eq;
     use std::{collections::HashSet, str::FromStr};
 
     #[test]
     fn every_allowlisted_index_has_one_fixed_concurrent_command() {
-        let commands = IndexTarget::ALL.map(|target| target.reindex_statement().as_sql().to_owned());
+        let commands = IndexTarget::ALL.map(|target| target.reindex_statement(Branch::Live).as_sql().to_owned());
         assert!(commands.iter().all(|command| command.starts_with("REINDEX INDEX CONCURRENTLY \"public\".")));
         assert_eq!(commands.into_iter().collect::<HashSet<_>>().len(), IndexTarget::ALL.len());
     }
@@ -351,10 +357,23 @@ mod tests {
     #[test]
     fn every_heap_command_disables_truncation_and_parallel_workers() {
         for target in HeapTarget::ALL {
-            let statement = target.vacuum_statement();
+            let statement = target.vacuum_statement(Branch::Live);
             let command = statement.as_sql();
             assert!(command.starts_with("VACUUM (TRUNCATE FALSE, PARALLEL 0) \"public\"."), "{command}");
         }
+    }
+
+    #[test]
+    fn a_snapshot_branch_action_runs_in_the_branch_schema() {
+        let branch = Branch::Snapshot(SnapshotKey::try_from(42).expect("positive snapshot key"));
+        assert_eq!(
+            IndexTarget::IdxCaValueNumber.reindex_statement(branch).as_sql(),
+            "REINDEX INDEX CONCURRENTLY \"snap_42\".\"idx_ca_value_number\""
+        );
+        assert_eq!(
+            HeapTarget::CurrentAttributes.vacuum_statement(branch).as_sql(),
+            "VACUUM (TRUNCATE FALSE, PARALLEL 0) \"snap_42\".\"current_attributes\""
+        );
     }
 
     #[test]
@@ -471,7 +490,7 @@ mod tests {
             (HeapTarget::TemporalAppendIntents, "temporal_append_intents"),
             (HeapTarget::SnapshotNotificationOutbox, "snapshot_notification_outbox"),
         ] {
-            let statement = heap.vacuum_statement();
+            let statement = heap.vacuum_statement(Branch::Live);
             assert_eq!(
                 statement.as_sql(),
                 format!("VACUUM (TRUNCATE FALSE, PARALLEL 0) \"public\".\"{table}\""),

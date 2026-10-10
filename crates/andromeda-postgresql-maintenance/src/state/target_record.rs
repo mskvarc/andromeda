@@ -303,7 +303,7 @@ fn target_state_insert(tenant: TenantKey, target: BranchTarget) -> Result<Insert
 mod tests {
     use crate::{
         action_measurement::{ActionComparison, TupleCounts},
-        branch::BranchTarget,
+        branch::{Branch, BranchTarget},
         candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
         error::MaintenanceError,
         policy::ActionVerdict,
@@ -316,6 +316,10 @@ mod tests {
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
+    fn live(target: MaintenanceTarget) -> BranchTarget {
+        BranchTarget::new(Branch::Live, target).expect("the live branch holds every target")
+    }
+
     #[test]
     fn a_vacuum_records_dead_tuples_and_clears_the_byte_pair() -> Result<(), MaintenanceError> {
         let comparison = ActionComparison::Heap {
@@ -324,7 +328,7 @@ mod tests {
         };
         let sql = action_completion_update(
             TenantKey(7),
-            BranchTarget::live(MaintenanceTarget::Heap(HeapTarget::CurrentAttributes)),
+            live(MaintenanceTarget::Heap(HeapTarget::CurrentAttributes)),
             ActionVerdict::Effective,
             Utc::now(),
             comparison,
@@ -347,7 +351,7 @@ mod tests {
         };
         let sql = action_completion_update(
             TenantKey(7),
-            BranchTarget::live(MaintenanceTarget::Index(IndexTarget::IdxCaValueNumber)),
+            live(MaintenanceTarget::Index(IndexTarget::IdxCaValueNumber)),
             ActionVerdict::Effective,
             Utc::now(),
             comparison,
@@ -368,7 +372,7 @@ mod tests {
         };
         let sql = action_completion_update(
             TenantKey(7),
-            BranchTarget::live(MaintenanceTarget::Heap(HeapTarget::CurrentAttributes)),
+            live(MaintenanceTarget::Heap(HeapTarget::CurrentAttributes)),
             ActionVerdict::Ineffective,
             Utc::now(),
             comparison,
@@ -384,7 +388,7 @@ mod tests {
 
     #[test]
     fn a_live_target_row_is_inserted_with_no_snapshot_key_on_the_branch_grain() -> Result<(), MaintenanceError> {
-        let sql = target_state_insert(TenantKey(7), BranchTarget::live(MaintenanceTarget::Heap(HeapTarget::Entities)))?.to_string(PostgresQueryBuilder);
+        let sql = target_state_insert(TenantKey(7), live(MaintenanceTarget::Heap(HeapTarget::Entities)))?.to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
             r#"INSERT INTO "postgresql_maintenance_targets" ("tenant_key", "snapshot_key", "target") VALUES (7, NULL, 12) ON CONFLICT ("tenant_key", "snapshot_key", "target") DO NOTHING"#

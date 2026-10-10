@@ -52,7 +52,8 @@ pub enum CatalogCounter {
     FreezeMaxAge,
     /// Transaction or multixact ID age of a relation's oldest unfrozen ID.
     RelationFreezeAge,
-    /// Rows a database updated or deleted since its statistics were reset.
+    /// Rows a database, or the tables of one Snapshot branch, updated or
+    /// deleted since their statistics were reset.
     TupleChanges,
     /// Relation bytes of a recorded degradation sample.
     SampleRelationBytes,

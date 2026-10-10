@@ -1,7 +1,7 @@
 //! Typed failures produced by platform coordination and tenant inspection.
 
 use crate::{candidate::MaintenanceTarget, catalog_counter::CatalogCounter};
-use andromeda_context_space::snapshot_key::SnapshotKey;
+use andromeda_context_space::snapshot_key::{SnapshotKey, SnapshotKeyError};
 use andromeda_ngsi_ld_lexicon::tenant::InvalidTenantName;
 use andromeda_postgresql_codes::{maintenance_target::MaintenanceTargetCode, registry::UnknownCompactCode};
 use andromeda_postgresql_context_store::schema_contract::error::SchemaContractError;
@@ -64,6 +64,20 @@ pub enum MaintenanceError {
     /// neither the live nor a published Snapshot branch.
     #[error("PostgreSQL catalog returned a schema that is no maintenance branch")]
     UnknownBranchSchema,
+    /// A stored Snapshot key, in the platform target rows or a tenant's
+    /// Snapshot control records, is not positive.
+    #[error("stored Snapshot key is invalid: {0}")]
+    InvalidSnapshotKey(#[from] SnapshotKeyError),
+    /// A tenant's Snapshot control record holds a status no release assigned.
+    #[error("tenant Snapshot control record holds an unknown status: {0}")]
+    UnreadableSnapshotStatus(#[source] UnknownCompactCode),
+    /// A Snapshot branch lock this session took was no longer held when it
+    /// released it.
+    #[error("the PostgreSQL maintenance lock of Snapshot {} branch was not held", .snapshot.as_i64())]
+    BranchLockNotHeld {
+        /// The Snapshot whose branch lock was released.
+        snapshot: SnapshotKey,
+    },
     /// A target was addressed in a Snapshot branch whose schema never holds
     /// its heap.
     #[error("maintenance target '{}' exists only in the live branch, not in Snapshot {}", .target.relation_name(), .snapshot.as_i64())]

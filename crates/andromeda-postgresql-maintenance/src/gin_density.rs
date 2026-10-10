@@ -15,6 +15,7 @@
 //! becomes the new baseline.
 
 use crate::{
+    branch::Branch,
     candidate::{DensityColumn, IndexTarget},
     catalog_counter::{CatalogCounter, non_negative, percent},
     error::MaintenanceError,
@@ -102,12 +103,12 @@ pub(crate) fn density_readings<'pass>(sizes: &'pass [IndexSize], coverage: &'pas
     })
 }
 
-/// Read how many rows each density-measured GIN covers.
+/// Read how many rows each density-measured GIN of `branch` covers.
 ///
 /// A table never analyzed (`reltuples` of -1), or a column `pg_stats` does
 /// not describe, gives its GIN no coverage.
-pub(crate) async fn gin_coverage(connection: &mut PgConnection) -> Result<Vec<GinCoverage>, MaintenanceError> {
-    let (sql, values) = gin_coverage_statement().build_sqlx(PostgresQueryBuilder);
+pub(crate) async fn gin_coverage(connection: &mut PgConnection, branch: Branch) -> Result<Vec<GinCoverage>, MaintenanceError> {
+    let (sql, values) = gin_coverage_statement(branch).build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
@@ -132,9 +133,9 @@ fn catalog_column(alias: &'static str, column: &'static str) -> Expr {
     Expr::col((Alias::new(alias), Alias::new(column)))
 }
 
-/// The non-null rows of each density column, read on the heap of the GIN
-/// partial on it.
-fn gin_coverage_statement() -> SelectStatement {
+/// The non-null rows of each density column in `branch`'s schema, read on the
+/// heap of the GIN partial on it.
+fn gin_coverage_statement(branch: Branch) -> SelectStatement {
     let pairs = DensityColumn::ALL.map(|column| Expr::tuple([Expr::val(column.gin().heap().relation_name()), Expr::val(<&'static str>::from(column))]));
     let covered = catalog_column("c", "reltuples").mul(Expr::val(1).sub(catalog_column("s", "null_frac")));
     Query::select()
@@ -156,7 +157,7 @@ fn gin_coverage_statement() -> SelectStatement {
                 .and(catalog_column("s", "tablename").equals((Alias::new("c"), Alias::new("relname"))))
                 .and(catalog_column("s", "inherited").eq(false)),
         )
-        .and_where(catalog_column("n", "nspname").eq("public"))
+        .and_where(catalog_column("n", "nspname").eq(branch.schema_name()))
         .and_where(catalog_column("c", "reltuples").gte(0))
         .and_where(Expr::tuple([catalog_column("c", "relname"), catalog_column("s", "attname")]).is_in(pairs))
         .to_owned()
@@ -166,6 +167,7 @@ fn gin_coverage_statement() -> SelectStatement {
 mod tests {
     use crate::{
         action_measurement::ActionComparison,
+        branch::Branch,
         candidate::{IndexTarget, MaintenanceTarget},
         gin_density::{Density, DensityReading, gin_coverage_statement},
         policy::{ActionVerdict, PolicyProfile, action_verdict},
@@ -261,7 +263,8 @@ mod tests {
 
     #[test]
     fn density_statement_reads_null_frac_and_reltuples() {
-        let sql = gin_coverage_statement().to_string(PostgresQueryBuilder);
+        let sql = gin_coverage_statement(Branch::Live).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""n"."nspname" = 'public'"#), "{sql}");
         assert!(sql.contains(r#"("c"."reltuples" * (1 - "s"."null_frac"))::bigint AS "covered_rows""#), "{sql}");
         assert!(sql.contains(r#""s"."inherited" = FALSE"#), "{sql}");
         assert!(sql.contains(r#""c"."reltuples" >= 0"#), "a table never analyzed covers nothing: {sql}");

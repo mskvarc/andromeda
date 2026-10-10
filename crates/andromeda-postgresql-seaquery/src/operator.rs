@@ -1,6 +1,7 @@
 //! The generic SQL operators sea-query has no native form for: array
-//! containment in both directions, POSIX regex, the presence-and-value
-//! conjunction, and the total negation of a predicate over nullable columns.
+//! containment in both directions, POSIX regex matching and extraction, the
+//! presence-and-value conjunction, and the total negation of a predicate over
+//! nullable columns.
 
 use crate::{literal::false_literal, pg_operator::PgBinaryOperator, pg_type::PostgresType};
 use sea_query::{Expr, ExprTrait, Func, Iden, SimpleExpr};
@@ -87,6 +88,22 @@ pub fn regex_match(col: SimpleExpr, pattern: SimpleExpr) -> SimpleExpr {
     col.posix_matches(pattern)
 }
 
+/// The function a POSIX regex extraction is spelled with.
+#[derive(Iden, Clone, Copy)]
+enum TextFunction {
+    /// `substring(text, pattern)`.
+    #[iden = "substring"]
+    Substring,
+}
+
+/// Regex extraction: `substring(text, pattern)`, the part of `text` the first
+/// parenthesised subexpression of the POSIX `pattern` matches, or the whole
+/// match when the pattern has none. NULL when `text` does not match.
+#[must_use]
+pub fn regex_substring(text: SimpleExpr, pattern: SimpleExpr) -> SimpleExpr {
+    Func::cust(TextFunction::Substring).args([text, pattern]).into()
+}
+
 /// The total negation of a predicate: `NOT COALESCE(predicate, FALSE)`.
 ///
 /// Plain `NOT` propagates the unknown a comparison against a NULL yields, and
@@ -107,6 +124,13 @@ pub fn negate_total(predicate: SimpleExpr) -> SimpleExpr {
 mod tests {
     use super::*;
     use sea_query::{PostgresQueryBuilder, Query};
+
+    #[test]
+    fn regex_extraction_renders_the_two_argument_substring() {
+        let expr = regex_substring(Expr::col("nspname"), Expr::val("^snap_([1-9][0-9]*)$"));
+        let sql = Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
+        assert_eq!(sql, r#"SELECT substring("nspname", '^snap_([1-9][0-9]*)$')"#);
+    }
 
     /// GIN `array_ops` has an operator class for containment and none for
     /// `= ANY`, so the rendered leaf must be the containment form.

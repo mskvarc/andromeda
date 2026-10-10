@@ -1,6 +1,6 @@
 //! Per-database validation of the extension and privileges maintenance needs.
 
-use crate::{candidate::HeapTarget, error::MaintenanceError, scalar_query::select_bool};
+use crate::{branch::Branch, error::MaintenanceError, scalar_query::select_bool};
 use andromeda_postgresql_seaquery::maintenance::{current_user_has_function_privilege, current_user_has_table_privilege, to_regprocedure};
 use sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement};
 use sqlx::PgConnection;
@@ -35,10 +35,15 @@ pub(crate) async fn validate_capabilities(connection: &mut PgConnection, mutatio
     if !select_bool(connection, inspection_privilege_statement()).await? {
         return Ok(CapabilityStatus::MissingPgstattupleExecute);
     }
-    if mutation == MutationPrivilege::Required && !select_bool(connection, maintain_privilege_statement()).await? {
+    if mutation == MutationPrivilege::Required && !branch_maintainable(connection, Branch::Live).await? {
         return Ok(CapabilityStatus::MissingMaintain);
     }
     Ok(CapabilityStatus::Ready)
+}
+
+/// Whether the role holds `MAINTAIN` on every allowlisted heap `branch` holds.
+pub(crate) async fn branch_maintainable(connection: &mut PgConnection, branch: Branch) -> Result<bool, MaintenanceError> {
+    select_bool(connection, maintain_privilege_statement(branch)).await
 }
 
 /// `pg_extension` presence query.
@@ -58,27 +63,39 @@ fn inspection_privilege_statement() -> SelectStatement {
     Query::select().expr(exact.and(approximate)).to_owned()
 }
 
-/// Required PostgreSQL 18 `MAINTAIN` privileges on every allowlisted heap;
-/// an index is rebuilt under its heap's privilege.
-fn maintain_privilege_statement() -> SelectStatement {
-    let granted = HeapTarget::ALL
-        .map(|heap| current_user_has_table_privilege(Expr::val(format!("public.{}", heap.relation_name())), Expr::val("MAINTAIN")))
-        .into_iter()
+/// Required PostgreSQL 18 `MAINTAIN` privileges on every allowlisted heap
+/// `branch` holds; an index is rebuilt under its heap's privilege.
+fn maintain_privilege_statement(branch: Branch) -> SelectStatement {
+    let granted = branch
+        .heaps()
+        .map(|heap| current_user_has_table_privilege(Expr::val(branch.qualified(heap.relation_name())), Expr::val("MAINTAIN")))
         .fold(Expr::val(true), ExprTrait::and);
     Query::select().expr(granted).to_owned()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{candidate::HeapTarget, capability::maintain_privilege_statement};
+    use crate::{branch::Branch, candidate::HeapTarget, capability::maintain_privilege_statement};
+    use andromeda_context_space::snapshot_key::SnapshotKey;
     use sea_query::PostgresQueryBuilder;
 
     #[test]
     fn automatic_mode_requires_maintain_on_every_allowlisted_heap() {
-        let sql = maintain_privilege_statement().to_string(PostgresQueryBuilder);
+        let sql = maintain_privilege_statement(Branch::Live).to_string(PostgresQueryBuilder);
         for heap in HeapTarget::ALL {
             let privilege = format!("has_table_privilege(current_user, 'public.{}', 'MAINTAIN')", heap.relation_name());
             assert!(sql.contains(&privilege), "{heap}: {sql}");
         }
+    }
+
+    #[test]
+    fn a_snapshot_branch_requires_maintain_on_its_branch_heaps_only() {
+        let branch = Branch::Snapshot(SnapshotKey::try_from(7).expect("positive snapshot key"));
+        let sql = maintain_privilege_statement(branch).to_string(PostgresQueryBuilder);
+        for heap in HeapTarget::ALL {
+            let privilege = format!("has_table_privilege(current_user, 'snap_7.{}', 'MAINTAIN')", heap.relation_name());
+            assert_eq!(sql.contains(&privilege), branch.heaps().any(|held| held == heap), "{heap}: {sql}");
+        }
+        assert!(!sql.contains("'public."), "{sql}");
     }
 }

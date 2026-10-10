@@ -81,6 +81,9 @@ const fn classify_failure(error: MaintenanceError) -> TaskFailure<MaintenanceErr
         | MaintenanceError::ProbeTargetNotAnIndex(_)
         | MaintenanceError::InvalidDensityBaseline { .. }
         | MaintenanceError::UnknownBranchSchema
+        | MaintenanceError::InvalidSnapshotKey(_)
+        | MaintenanceError::UnreadableSnapshotStatus(_)
+        | MaintenanceError::BranchLockNotHeld { .. }
         | MaintenanceError::LiveOnlyTarget { .. } => FailureClass::InvariantViolation,
     };
     TaskFailure::new(class, error)

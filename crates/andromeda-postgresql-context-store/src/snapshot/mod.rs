@@ -3,6 +3,9 @@
 use crate::store_fault::{StoreFault, persistence_failure};
 use andromeda_snapshot::error::SnapshotError;
 
+/// The advisory lock a reap and PostgreSQL maintenance share per Snapshot
+/// branch.
+pub mod branch_lock;
 /// Per-Snapshot branch schema creation, promotion and teardown.
 mod branch_schema;
 /// Bringing every Snapshot's branch schemas up to the binary's branch version.

@@ -34,6 +34,12 @@ pub fn snapshot_schema_name(key: SnapshotKey, branch: SnapshotBranch) -> String 
 /// selects them: a staging schema never matches.
 pub const PUBLISHED_SNAPSHOT_SCHEMA_PATTERN: &str = "^snap_[1-9][0-9]*$";
 
+/// A POSIX regular expression matching every Snapshot branch schema name
+/// [`snapshot_schema_name`] renders, published and staging alike. Its first
+/// parenthesised subexpression is the Snapshot key, so `substring(name,
+/// pattern)` extracts it.
+pub const SNAPSHOT_SCHEMA_PATTERN: &str = "^snap_([1-9][0-9]*)(_stg)?$";
+
 /// The Snapshot whose published branch `schema` is, or `None` for any other
 /// schema, a staging branch included.
 ///
@@ -107,7 +113,7 @@ pub fn schema_prefix(target: &ContextTarget) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::{BranchSchema, published_snapshot_key, snapshot_schema_name, table_of};
+    use crate::{BranchSchema, PUBLISHED_SNAPSHOT_SCHEMA_PATTERN, SNAPSHOT_SCHEMA_PATTERN, published_snapshot_key, snapshot_schema_name, table_of};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use sea_query::{Asterisk, PostgresQueryBuilder, Query};
 
@@ -138,6 +144,16 @@ mod tests {
         for schema in ["snap_7_stg", "snap_07", "snap_0", "snap_-7", "snap_", "public", "snapshot_7"] {
             pretty_assertions::assert_eq!(published_snapshot_key(schema), None, "{schema}");
         }
+    }
+
+    /// Both patterns name the key alike: dropping the staging suffix and the
+    /// key capture from the branch pattern leaves the published one.
+    #[test]
+    fn the_branch_pattern_is_the_published_pattern_with_an_optional_staging_suffix() {
+        pretty_assertions::assert_eq!(
+            SNAPSHOT_SCHEMA_PATTERN.replace("(_stg)?", "").replace(['(', ')'], ""),
+            PUBLISHED_SNAPSHOT_SCHEMA_PATTERN
+        );
     }
 
     #[test]

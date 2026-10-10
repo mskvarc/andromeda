@@ -2,7 +2,7 @@
 //! estimate and each density-measured GIN's density.
 
 use crate::{
-    branch::BranchTarget,
+    branch::{Branch, BranchTarget},
     candidate::MaintenanceTarget,
     controller::{PassOutcome, idle_gates},
     error::MaintenanceError,
@@ -34,24 +34,25 @@ impl CatalogSample {
     }
 }
 
-/// Persist the live branch's cheap catalog evidence without executing newly
+/// Persist the cheap catalog evidence of `branch` without executing newly
 /// queued work in this pass.
 pub(crate) async fn record_catalog_samples(
     mode: MaintenanceMode,
     platform: &mut PgConnection,
     tenant: &RegisteredTenant,
+    branch: Branch,
     samples: &[CatalogSample],
     profile: PolicyProfile,
 ) -> Result<Option<PassOutcome>, MaintenanceError> {
     let mut outcome = None;
     for sample in samples {
         let target = sample.target;
-        let row = BranchTarget::live(target);
+        let row = BranchTarget::new(branch, target)?;
         let target_state = target_record::load_target_state(platform, tenant, row).await?;
         let now = Utc::now();
         let decision = decide(mode, profile, target_state, sample.degradation, idle_gates(), now);
         target_record::record_decision(platform, tenant, row, Some(sample.degradation), decision, target_state.breach, now).await?;
-        info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), relation_bytes = sample.degradation.relation_bytes, reclaimable_bytes = sample.degradation.reclaimable_bytes, degraded_percent = sample.degradation.degraded_percent, decision = ?decision, "PostgreSQL maintenance catalog sample completed");
+        info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), relation_bytes = sample.degradation.relation_bytes, reclaimable_bytes = sample.degradation.reclaimable_bytes, degraded_percent = sample.degradation.degraded_percent, decision = ?decision, "PostgreSQL maintenance catalog sample completed");
         match decision {
             PolicyDecision::Queued => outcome = Some(PassOutcome::Queued),
             PolicyDecision::WouldAct if outcome.is_none() => outcome = Some(PassOutcome::WouldAct),

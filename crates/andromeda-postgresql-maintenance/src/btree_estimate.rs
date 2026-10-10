@@ -8,6 +8,7 @@
 //! It orders probes and never decides whether an index is bloated.
 
 use crate::{
+    branch::Branch,
     candidate::IndexTarget,
     catalog_counter::{CatalogCounter, non_negative, percent},
     error::MaintenanceError,
@@ -78,12 +79,13 @@ pub(crate) struct BtreeEstimate {
     pub(crate) free_percent: u8,
 }
 
-/// Estimate every probeable B-tree whose layout the catalogs fully describe.
+/// Estimate every probeable B-tree of `branch` whose layout the catalogs
+/// fully describe.
 ///
 /// An index never analyzed (`reltuples` of -1), or with an indexed column
 /// `pg_stats` does not describe, has no estimate.
-pub(crate) async fn btree_estimates(connection: &mut PgConnection) -> Result<Vec<BtreeEstimate>, MaintenanceError> {
-    let (sql, values) = btree_layouts_statement().build_sqlx(PostgresQueryBuilder);
+pub(crate) async fn btree_estimates(connection: &mut PgConnection, branch: Branch) -> Result<Vec<BtreeEstimate>, MaintenanceError> {
+    let (sql, values) = btree_layouts_statement(branch).build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
@@ -113,13 +115,13 @@ fn catalog_column(alias: &'static str, column: &'static str) -> Expr {
     Expr::col((Alias::new(alias), Alias::new(column)))
 }
 
-/// Every probeable B-tree in the application schema with its pages, entries
-/// and key width, its columns' widths read from its own heap's statistics.
+/// Every probeable B-tree in `branch`'s schema with its pages, entries and key
+/// width, its columns' widths read from its own heap's statistics.
 ///
 /// The `having` keeps only indexes whose every column has a `pg_stats` row:
 /// the inner join drops a column without one, and its width would be missing
 /// from the sum.
-fn btree_layouts_statement() -> SelectStatement {
+fn btree_layouts_statement(branch: Branch) -> SelectStatement {
     let probeable = IndexTarget::PROBEABLE.map(IndexTarget::relation_name);
     Query::select()
         .column((Alias::new("c"), Alias::new("relname")))
@@ -171,7 +173,7 @@ fn btree_layouts_statement() -> SelectStatement {
                 .and(catalog_column("s", "attname").equals((Alias::new("a"), Alias::new("attname"))))
                 .and(catalog_column("s", "inherited").eq(false)),
         )
-        .and_where(catalog_column("n", "nspname").eq("public"))
+        .and_where(catalog_column("n", "nspname").eq(branch.schema_name()))
         .and_where(catalog_column("am", "amname").eq("btree"))
         .and_where(catalog_column("c", "relname").is_in(probeable))
         .and_where(catalog_column("c", "reltuples").gte(0))
@@ -199,7 +201,10 @@ fn layout_of(row: &PgRow) -> Result<BtreeLayout, MaintenanceError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::btree_estimate::{BtreeLayout, btree_layouts_statement};
+    use crate::{
+        branch::Branch,
+        btree_estimate::{BtreeLayout, btree_layouts_statement},
+    };
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
@@ -235,7 +240,8 @@ mod tests {
 
     #[test]
     fn the_layout_statement_reads_only_probeable_btrees_with_complete_statistics() {
-        let sql = btree_layouts_statement().to_string(PostgresQueryBuilder);
+        let sql = btree_layouts_statement(Branch::Live).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""n"."nspname" = 'public'"#), "{sql}");
         assert!(sql.contains(r#"JOIN "pg_stats" AS "s""#), "{sql}");
         assert!(sql.contains(r#"JOIN "pg_class" AS "t" ON "t"."oid" = "i"."indrelid""#), "{sql}");
         assert!(

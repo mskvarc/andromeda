@@ -3,21 +3,34 @@
 //! A qualified action stays pending on its target row until it completes. A
 //! visit runs one: any due target before a GIN its canary queued, so the
 //! canary is rebuilt on an earlier pass, and a target in its failure backoff
-//! is skipped without holding back the rest.
+//! is skipped without holding back the rest. A canary and its GIN live in the
+//! same branch, so the pending actions of each branch are ordered on their own.
 
 use crate::{
-    branch::Branch,
+    branch::{Branch, BranchTarget},
     candidate::MaintenanceTarget,
     error::MaintenanceError,
     evidence::target_code::target_of,
     state::{RegisteredTenant, TenantKey, branch_rows::branch_rows},
 };
+use andromeda_context_space::snapshot_key::SnapshotKey;
 use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, Iden, Order, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query::{Expr, ExprTrait, Iden, NullOrdering, Order, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgConnection, Row};
+
+/// One queued action of one tenant's branch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingRow {
+    /// The tenant.
+    tenant: TenantKey,
+    /// The branch whose target row holds the action.
+    branch: Branch,
+    /// The action.
+    action: PendingAction,
+}
 
 /// One queued action and the cooldown its last attempt set.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,54 +53,84 @@ pub(crate) async fn pending_action(
         .and_where(branch_rows(branch))
         .to_owned();
     let pending = read_pending_actions(connection, &statement).await?;
-    let pending = pending.into_iter().map(|(_, action)| action).collect::<Vec<_>>();
+    let pending = pending.into_iter().map(|row| row.action).collect::<Vec<_>>();
     Ok(first_pending(&pending, Utc::now()))
 }
 
-/// Every tenant that [`pending_action`] would give a live-branch action to
-/// now. Each branch's pending actions are ordered on their own, so the rows of
-/// one branch are never mixed with another's.
-pub(crate) async fn tenants_with_due_actions(connection: &mut PgConnection, now: DateTime<Utc>) -> Result<Vec<TenantKey>, MaintenanceError> {
-    let statement = pending_actions_statement().and_where(branch_rows(Branch::Live)).to_owned();
-    let pending = read_pending_actions(connection, &statement).await?;
-    Ok(pending
-        .chunk_by(|(left, _), (right, _)| left == right)
-        .filter_map(|tenant_pending| {
-            let actions = tenant_pending.iter().map(|&(_, action)| action).collect::<Vec<_>>();
-            first_pending(&actions, now).and(tenant_pending.first().map(|&(tenant, _)| tenant))
-        })
-        .collect())
+/// The first pending action of `branches`, searched in order, each branch's
+/// chosen by [`pending_action`].
+pub(crate) async fn first_branch_action(
+    connection: &mut PgConnection,
+    tenant: &RegisteredTenant,
+    branches: &[Branch],
+) -> Result<Option<BranchTarget>, MaintenanceError> {
+    for &branch in branches {
+        if let Some(target) = pending_action(connection, tenant, branch).await? {
+            return Ok(Some(BranchTarget::new(branch, target)?));
+        }
+    }
+    Ok(None)
 }
 
-/// Every pending action, grouped by tenant and ordered by target code.
+/// Every tenant to which [`pending_action`] would give an action of some
+/// branch now.
+pub(crate) async fn tenants_with_due_actions(connection: &mut PgConnection, now: DateTime<Utc>) -> Result<Vec<TenantKey>, MaintenanceError> {
+    let pending = read_pending_actions(connection, &pending_actions_statement()).await?;
+    Ok(due_tenants(&pending, now))
+}
+
+/// The tenants of `pending`, ordered by tenant and branch, with a due action
+/// in at least one branch, each once. Each branch's actions are ordered on
+/// their own, so a canary backing off in one branch never holds back a GIN of
+/// another.
+fn due_tenants(pending: &[PendingRow], now: DateTime<Utc>) -> Vec<TenantKey> {
+    let mut due = pending
+        .chunk_by(|left, right| (left.tenant, left.branch) == (right.tenant, right.branch))
+        .filter_map(|branch_pending| {
+            let actions = branch_pending.iter().map(|row| row.action).collect::<Vec<_>>();
+            first_pending(&actions, now).and(branch_pending.first().map(|row| row.tenant))
+        })
+        .collect::<Vec<_>>();
+    due.dedup();
+    due
+}
+
+/// Every pending action, grouped by tenant and branch and ordered by target
+/// code.
 fn pending_actions_statement() -> SelectStatement {
     Query::select()
         .columns([
             PostgresqlMaintenanceTargets::TenantKey,
+            PostgresqlMaintenanceTargets::SnapshotKey,
             PostgresqlMaintenanceTargets::Target,
             PostgresqlMaintenanceTargets::CooldownUntil,
         ])
         .from(PostgresqlMaintenanceTargets::Table)
         .and_where(Expr::col(PostgresqlMaintenanceTargets::IsActionPending).eq(true))
         .order_by(PostgresqlMaintenanceTargets::TenantKey, Order::Asc)
+        .order_by_with_nulls(PostgresqlMaintenanceTargets::SnapshotKey, Order::Asc, NullOrdering::First)
         .order_by(PostgresqlMaintenanceTargets::Target, Order::Asc)
         .to_owned()
 }
 
-/// Run a pending-action statement and decode each row with its tenant.
-async fn read_pending_actions(connection: &mut PgConnection, statement: &SelectStatement) -> Result<Vec<(TenantKey, PendingAction)>, MaintenanceError> {
+/// Run a pending-action statement and decode each row with its tenant and
+/// branch.
+async fn read_pending_actions(connection: &mut PgConnection, statement: &SelectStatement) -> Result<Vec<PendingRow>, MaintenanceError> {
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
     rows.iter()
         .map(|row| {
-            let tenant = TenantKey(row.try_get(PostgresqlMaintenanceTargets::TenantKey.to_string().as_str())?);
-            let action = PendingAction {
-                target: target_of(MaintenanceTargetCode::try_from(
-                    row.try_get::<i16, _>(PostgresqlMaintenanceTargets::Target.to_string().as_str())?,
-                )?),
-                cooldown_until: row.try_get(PostgresqlMaintenanceTargets::CooldownUntil.to_string().as_str())?,
-            };
-            Ok((tenant, action))
+            let snapshot_key = row.try_get::<Option<i64>, _>(PostgresqlMaintenanceTargets::SnapshotKey.to_string().as_str())?;
+            Ok(PendingRow {
+                tenant: TenantKey(row.try_get(PostgresqlMaintenanceTargets::TenantKey.to_string().as_str())?),
+                branch: snapshot_key.map(SnapshotKey::try_from).transpose()?.map_or(Branch::Live, Branch::Snapshot),
+                action: PendingAction {
+                    target: target_of(MaintenanceTargetCode::try_from(
+                        row.try_get::<i16, _>(PostgresqlMaintenanceTargets::Target.to_string().as_str())?,
+                    )?),
+                    cooldown_until: row.try_get(PostgresqlMaintenanceTargets::CooldownUntil.to_string().as_str())?,
+                },
+            })
         })
         .collect()
 }
@@ -114,11 +157,17 @@ fn first_pending(pending: &[PendingAction], now: DateTime<Utc>) -> Option<Mainte
 #[cfg(test)]
 mod tests {
     use crate::{
+        branch::Branch,
         candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
-        state::pending_action::{PendingAction, first_pending},
+        state::{
+            TenantKey,
+            pending_action::{PendingAction, PendingRow, due_tenants, first_pending, pending_actions_statement},
+        },
     };
+    use andromeda_context_space::snapshot_key::SnapshotKey;
     use chrono::{DateTime, Duration, Utc};
     use pretty_assertions::assert_eq;
+    use sea_query::PostgresQueryBuilder;
 
     /// A pending target never attempted, so due at once.
     const fn due(target: MaintenanceTarget) -> PendingAction {
@@ -170,6 +219,43 @@ mod tests {
         let gin = MaintenanceTarget::Index(IndexTarget::IdxCaSubEqKeys);
         let heap = MaintenanceTarget::Heap(HeapTarget::Entities);
         assert_eq!(first_pending(&[due(gin), due(heap)], Utc::now()), Some(gin));
+    }
+
+    /// Tenant 1's live canary backs off, which holds back its live GIN, while
+    /// Snapshot 7's GIN has nothing ahead of it in its own branch. Tenant 2's
+    /// only action backs off.
+    #[test]
+    fn a_due_action_in_any_branch_ranks_its_tenant_once() {
+        let now = Utc::now();
+        let snapshot = Branch::Snapshot(SnapshotKey::try_from(7).expect("positive snapshot key"));
+        let canary = MaintenanceTarget::Index(IndexTarget::IdxCaValueString);
+        let gin = MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm);
+        let row = |tenant: i64, branch: Branch, action: PendingAction| PendingRow {
+            tenant: TenantKey(tenant),
+            branch,
+            action,
+        };
+        let held_back = [row(1, Branch::Live, backing_off(canary, now)), row(1, Branch::Live, due(gin))];
+        assert_eq!(due_tenants(&held_back, now), []);
+        let pending = [
+            row(1, Branch::Live, backing_off(canary, now)),
+            row(1, Branch::Live, due(gin)),
+            row(1, snapshot, due(gin)),
+            row(2, Branch::Live, backing_off(canary, now)),
+        ];
+        assert_eq!(due_tenants(&pending, now), [TenantKey(1)]);
+        let both = [row(1, Branch::Live, due(canary)), row(1, snapshot, due(gin))];
+        assert_eq!(due_tenants(&both, now), [TenantKey(1)]);
+    }
+
+    #[test]
+    fn pending_actions_are_read_in_tenant_then_branch_order() {
+        let sql = pending_actions_statement().to_string(PostgresQueryBuilder);
+        assert!(
+            sql.ends_with(r#"ORDER BY "tenant_key" ASC, "snapshot_key" ASC NULLS FIRST, "target" ASC"#),
+            "{sql}"
+        );
+        assert!(!sql.contains(r#""snapshot_key" IS NULL"#), "every branch is read: {sql}");
     }
 
     #[test]

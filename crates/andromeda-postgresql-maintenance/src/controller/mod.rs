@@ -1,5 +1,6 @@
 //! One bounded, fleet-serialized PostgreSQL maintenance controller pass.
 
+mod branch_sampling;
 mod catalog_sampling;
 mod density_sampling;
 mod index_probing;
@@ -8,18 +9,16 @@ mod probe_selection;
 use crate::{
     action,
     branch::Branch,
-    btree_estimate,
+    branch_selection,
     capability::{self, CapabilityStatus, MutationPrivilege},
-    controller::catalog_sampling::CatalogSample,
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
     fleet_observation,
     fleet_triage,
     freeze_report,
-    gin_density,
     inspection::{self, InvalidIndex},
     policy::{PolicyProfile, SafetyGates},
-    state::{self, RegisteredTenant, branch_rows, pending_action, target_record, tenant_inspection},
+    state::{self, RegisteredTenant, branch_rows, pending_action, tenant_inspection},
 };
 use andromeda_postgresql_context_store::{
     maintenance_config::{MaintenanceConfig, MaintenanceMode},
@@ -30,7 +29,7 @@ use andromeda_postgresql_pool::pool_options::configure_pool_options;
 use andromeda_telemetry::maintenance::{MaintenanceDecision, record_decision};
 use chrono::Utc;
 use sqlx::{PgConnection, PgPool, Postgres, pool::PoolConnection};
-use std::{ops::ControlFlow, time::Duration};
+use std::{iter, ops::ControlFlow, time::Duration};
 use strum::Display;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -172,45 +171,37 @@ impl MaintenanceController {
         }
 
         let profile = PolicyProfile::from_profile(self.config.profile);
-        let branches = inspection::published_branches(&mut connection).await?;
-        branch_rows::prune_vanished_branches(platform, tenant, &branches).await?;
+        let published = inspection::published_branches(&mut connection).await?;
+        branch_rows::prune_vanished_branches(platform, tenant, &published).await?;
+        let snapshots = branch_selection::lock_branches(&mut connection, tenant, mutation).await?;
+        let branches = iter::once(Branch::Live).chain(snapshots.into_iter().map(Branch::Snapshot)).collect::<Vec<_>>();
         let invalid = inspection::invalid_indexes(&mut connection).await?;
-        let index_sizes = inspection::index_sizes(&mut connection).await?;
-        let estimates = btree_estimate::btree_estimates(&mut connection).await?;
-        let heap_samples = inspection::heap_samples(&mut connection, profile).await?;
-        let coverage = gin_density::gin_coverage(&mut connection).await?;
-        let pending_before_sampling = pending_action::pending_action(platform, tenant, Branch::Live).await?;
-        let probe_states = target_record::index_probe_states(platform, tenant, Branch::Live).await?;
-        let density_samples = density_sampling::density_samples(platform, tenant, &index_sizes, &coverage, profile).await?;
-        let samples = heap_samples.iter().map(CatalogSample::of_heap).chain(density_samples).collect::<Vec<_>>();
-        let sampling_outcome = catalog_sampling::record_catalog_samples(self.config.mode, platform, tenant, &samples, profile).await?;
+        let pending_before_sampling = pending_action::first_branch_action(platform, tenant, &branches).await?;
+        let sampling = branch_sampling::sample_branches(self.config.mode, platform, &mut connection, tenant, &branches, profile).await?;
 
-        for index in &invalid {
-            match (index.branch(), index.recovery_artifact()) {
-                (branch, None) => {
-                    warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = index.name(), decision = "invalid-index-reported", "Invalid non-maintenance index requires operator investigation");
-                }
-                (branch @ Branch::Snapshot(_), Some(artifact)) => {
-                    warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = index.name(), artifact_kind = ?artifact.kind, decision = "branch-artifact-reported", "Concurrent-index recovery artifact in a Snapshot branch reported; recovery runs only in the live branch");
-                }
-                (Branch::Live, Some(_)) => {}
-            }
-        }
+        report_invalid_indexes(tenant, &invalid, &branches);
         if let Some(artifact) = invalid
             .iter()
-            .filter(|index| index.branch() == Branch::Live)
+            .filter(|index| branches.contains(&index.branch()))
             .find_map(InvalidIndex::recovery_artifact)
         {
             return action::recover_artifact(self.config.mode, platform, &mut connection, tenant, artifact, profile, cancellation).await;
         }
-        if let Some(target) = pending_before_sampling {
-            return action::execute_pending(self.config.mode, platform, &mut connection, tenant, target, profile, cancellation).await;
+        if let Some(row) = pending_before_sampling {
+            return action::execute_pending(self.config.mode, platform, &mut connection, tenant, row, profile, cancellation).await;
         }
 
-        let candidates = probe_selection::probe_order(&index_sizes, &probe_states, &estimates, profile, Utc::now());
-        let outcome = index_probing::probe_indexes(self.config.mode, platform, &mut connection, tenant, &candidates, profile, cancellation)
-            .await?
-            .pass_outcome(sampling_outcome);
+        let outcome = index_probing::probe_indexes(
+            self.config.mode,
+            platform,
+            &mut connection,
+            tenant,
+            &sampling.probe_candidates,
+            profile,
+            cancellation,
+        )
+        .await?
+        .pass_outcome(sampling.flagged);
         if outcome != PassOutcome::Cancelled {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::of_pass(outcome)).await?;
         }
@@ -250,6 +241,24 @@ impl MaintenanceController {
         connection.close_on_drop();
         inspection::configure_session(&mut connection).await?;
         Ok(ControlFlow::Continue(connection))
+    }
+}
+
+/// Log every invalid index the visit leaves alone: one no allowlisted index
+/// left behind, and a recovery artifact in a Snapshot branch the visit does
+/// not work in, which a visit that does will drop.
+fn report_invalid_indexes(tenant: &RegisteredTenant, invalid: &[InvalidIndex], branches: &[Branch]) {
+    for index in invalid {
+        let branch = index.branch();
+        match index.recovery_artifact() {
+            None => {
+                warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = index.name(), decision = "invalid-index-reported", "Invalid non-maintenance index requires operator investigation");
+            }
+            Some(artifact) if !branches.contains(&branch) => {
+                warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = index.name(), artifact_kind = ?artifact.kind, decision = "branch-artifact-reported", "Concurrent-index recovery artifact in a Snapshot branch this visit does not work in reported");
+            }
+            Some(_) => {}
+        }
     }
 }
 

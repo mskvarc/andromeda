@@ -107,9 +107,10 @@ pub(crate) async fn probe_indexes(
         }
         let started = Instant::now();
         let target = MaintenanceTarget::Index(size.target);
-        let gates = safety_gate_inspection::safety_gates(connection, target).await?;
+        let row = BranchTarget::new(size.branch, target)?;
+        let gates = safety_gate_inspection::safety_gates(connection, row).await?;
         if let Some(reason) = safety_deferral(profile, gates) {
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), decision = "deferred", reason = ?reason, "PostgreSQL maintenance probe deferred");
+            info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?size.branch, target = target.relation_name(), decision = "deferred", reason = ?reason, "PostgreSQL maintenance probe deferred");
             return Ok(match run {
                 ProbeRun::NoCandidate => ProbeRun::Deferred,
                 ProbeRun::Deferred | ProbeRun::Cancelled | ProbeRun::Completed { .. } => run,
@@ -119,12 +120,11 @@ pub(crate) async fn probe_indexes(
             () = cancellation.cancelled() => return Ok(ProbeRun::Cancelled),
             result = inspection::probe_index(connection, size, profile) => result?,
         };
-        let row = BranchTarget::live(target);
         let target_state = target_record::load_target_state(platform, tenant, row).await?;
         let now = Utc::now();
         let decision = decide(mode, profile, target_state, measured, idle_gates(), now);
         target_record::record_decision(platform, tenant, row, Some(measured), decision, target_state.breach, now).await?;
-        info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), relation_bytes = measured.relation_bytes, reclaimable_bytes = measured.reclaimable_bytes, degraded_percent = measured.degraded_percent, decision = ?decision, "PostgreSQL maintenance index probe completed");
+        info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?size.branch, target = target.relation_name(), relation_bytes = measured.relation_bytes, reclaimable_bytes = measured.reclaimable_bytes, degraded_percent = measured.degraded_percent, decision = ?decision, "PostgreSQL maintenance index probe completed");
         run = ProbeRun::Completed {
             flagged: flagged_after(run, decision),
         };

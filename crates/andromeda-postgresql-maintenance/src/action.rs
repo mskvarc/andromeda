@@ -45,16 +45,17 @@ pub(crate) async fn recover_artifact(
     profile: PolicyProfile,
     cancellation: &CancellationToken,
 ) -> Result<PassOutcome, MaintenanceError> {
-    let target = MaintenanceTarget::Index(artifact.name.owner());
-    let gates = safety_gate_inspection::safety_gates(tenant_connection, target).await?;
+    let branch = artifact.name.branch();
+    let row = BranchTarget::new(branch, MaintenanceTarget::Index(artifact.name.owner()))?;
+    let gates = safety_gate_inspection::safety_gates(tenant_connection, row).await?;
     if let Some(reason) = safety_deferral(profile, gates) {
         tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Deferred).await?;
-        info!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "deferred", reason = ?reason, "PostgreSQL maintenance recovery deferred");
+        info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "deferred", reason = ?reason, "PostgreSQL maintenance recovery deferred");
         return Ok(PassOutcome::Deferred);
     }
     if mode != MaintenanceMode::Automatic {
         tenant_inspection::mark_inspected(platform, tenant, InspectionResult::WouldAct).await?;
-        info!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "would-drop-artifact", "PostgreSQL maintenance recovery observed");
+        info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "would-drop-artifact", "PostgreSQL maintenance recovery observed");
         return Ok(PassOutcome::WouldAct);
     }
     let statement = artifact.name.drop_statement();
@@ -64,7 +65,7 @@ pub(crate) async fn recover_artifact(
         StatementOutcome::Succeeded => {
             record_action(MaintenanceAction::Recovery, MaintenanceActionOutcome::Succeeded, started.elapsed(), None);
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Acted).await?;
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "dropped-artifact", "PostgreSQL concurrent-index recovery completed");
+            info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, decision = "dropped-artifact", "PostgreSQL concurrent-index recovery completed");
             Ok(PassOutcome::Acted)
         }
         StatementOutcome::Cancelled => {
@@ -74,24 +75,25 @@ pub(crate) async fn recover_artifact(
         StatementOutcome::Failed(error) => {
             record_action(MaintenanceAction::Recovery, MaintenanceActionOutcome::Failed, started.elapsed(), None);
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::ActionFailed).await?;
-            warn!(tenant = tenant.log_name(), database = %tenant.database, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, error = %error, decision = "artifact-drop-failed", "PostgreSQL concurrent-index recovery failed");
+            warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = artifact.name.as_str(), artifact_kind = ?artifact.kind, error = %error, decision = "artifact-drop-failed", "PostgreSQL concurrent-index recovery failed");
             Ok(PassOutcome::ActionFailed)
         }
     }
 }
 
-/// Execute one action of the live branch qualified on an earlier pass.
+/// Execute one action qualified on an earlier pass, in the branch its target
+/// row belongs to.
 pub(crate) async fn execute_pending(
     mode: MaintenanceMode,
     platform: &mut PgConnection,
     tenant_connection: &mut PgConnection,
     tenant: &RegisteredTenant,
-    target: MaintenanceTarget,
+    row: BranchTarget,
     profile: PolicyProfile,
     cancellation: &CancellationToken,
 ) -> Result<PassOutcome, MaintenanceError> {
-    let gates = safety_gate_inspection::safety_gates(tenant_connection, target).await?;
-    let row = BranchTarget::live(target);
+    let (branch, target) = (row.branch(), row.target());
+    let gates = safety_gate_inspection::safety_gates(tenant_connection, row).await?;
     let target_state = target_record::load_target_state(platform, tenant, row).await?;
     let now = Utc::now();
     let decision = decide(mode, profile, target_state, empty_sample(), gates, now);
@@ -99,7 +101,7 @@ pub(crate) async fn execute_pending(
     match decision {
         PolicyDecision::WouldAct => {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::WouldAct).await?;
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), decision = "would-act", "PostgreSQL maintenance pending action observed");
+            info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), decision = "would-act", "PostgreSQL maintenance pending action observed");
             return Ok(PassOutcome::WouldAct);
         }
         PolicyDecision::Deferred(
@@ -115,7 +117,7 @@ pub(crate) async fn execute_pending(
             | DeferralReason::WaitingRelationLock),
         ) => {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Deferred).await?;
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), decision = "deferred", reason = ?reason, horizon_holder = ?gates.held_horizon, "PostgreSQL maintenance pending action deferred");
+            info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), decision = "deferred", reason = ?reason, horizon_holder = ?gates.held_horizon, "PostgreSQL maintenance pending action deferred");
             return Ok(PassOutcome::Deferred);
         }
         PolicyDecision::Queued => {
@@ -124,8 +126,8 @@ pub(crate) async fn execute_pending(
         }
         PolicyDecision::Act => {}
     }
-    let baseline = read_baseline(tenant_connection, target).await?;
-    let statement = target_statement(target);
+    let baseline = read_baseline(tenant_connection, row).await?;
+    let statement = target_statement(row);
     let action = target_action(target);
     let started = Instant::now();
     match execute_statement(tenant_connection, &statement, cancellation).await {
@@ -139,12 +141,12 @@ pub(crate) async fn execute_pending(
             let cooldown_until = cooldown_after(profile, ActionEnding::Failed { consecutive_failures }, Utc::now());
             target_record::record_action_failure(platform, tenant, row, cooldown_until).await?;
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::ActionFailed).await?;
-            warn!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), error = %error, duration_seconds = started.elapsed().as_secs_f64(), consecutive_failures, cooldown_until = %cooldown_until, decision = "action-failed", "PostgreSQL maintenance action failed");
+            warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), error = %error, duration_seconds = started.elapsed().as_secs_f64(), consecutive_failures, cooldown_until = %cooldown_until, decision = "action-failed", "PostgreSQL maintenance action failed");
             Ok(PassOutcome::ActionFailed)
         }
         StatementOutcome::Succeeded => {
             let duration = started.elapsed();
-            let comparison = read_comparison(tenant_connection, baseline).await?;
+            let comparison = read_comparison(tenant_connection, branch, baseline).await?;
             record_action(action, MaintenanceActionOutcome::Succeeded, duration, Some(comparison.effect()));
             let verdict = action_verdict(profile, target, comparison);
             let cooldown_until = cooldown_after(profile, ActionEnding::Completed(verdict), Utc::now());
@@ -152,15 +154,15 @@ pub(crate) async fn execute_pending(
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Acted).await?;
             match comparison {
                 ActionComparison::Index { before_bytes, after_bytes } => {
-                    info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), before_bytes, after_bytes, reclaimed_bytes = before_bytes.saturating_sub(after_bytes), verdict = ?verdict, cooldown_until = %cooldown_until, duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
+                    info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), before_bytes, after_bytes, reclaimed_bytes = before_bytes.saturating_sub(after_bytes), verdict = ?verdict, cooldown_until = %cooldown_until, duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
                     if let MaintenanceTarget::Index(index) = target
                         && index.density_column().is_some()
                     {
-                        reset_density_baseline(platform, tenant_connection, tenant, index).await?;
+                        reset_density_baseline(platform, tenant_connection, tenant, branch, index).await?;
                     }
                 }
                 ActionComparison::Heap { before, after } => {
-                    info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), dead_tuples_before = before.dead, dead_tuples_after = after.dead, removed_dead_tuples = before.dead.saturating_sub(after.dead), live_tuples_after = after.live, dead_percent_after = ?comparison.post_vacuum_dead_percent(), verdict = ?verdict, cooldown_until = %cooldown_until, duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
+                    info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = target.relation_name(), dead_tuples_before = before.dead, dead_tuples_after = after.dead, removed_dead_tuples = before.dead.saturating_sub(after.dead), live_tuples_after = after.live, dead_percent_after = ?comparison.post_vacuum_dead_percent(), verdict = ?verdict, cooldown_until = %cooldown_until, duration_seconds = duration.as_secs_f64(), decision = "acted", "PostgreSQL maintenance action completed");
                     if verdict == ActionVerdict::Ineffective {
                         report_horizon_holders(tenant_connection, tenant, target).await?;
                     }
@@ -179,15 +181,16 @@ async fn reset_density_baseline(
     platform: &mut PgConnection,
     tenant_connection: &mut PgConnection,
     tenant: &RegisteredTenant,
+    branch: Branch,
     index: IndexTarget,
 ) -> Result<(), MaintenanceError> {
-    let sizes = inspection::index_sizes(tenant_connection).await?;
-    let coverage = gin_density::gin_coverage(tenant_connection).await?;
+    let sizes = inspection::index_sizes(tenant_connection, branch).await?;
+    let coverage = gin_density::gin_coverage(tenant_connection, branch).await?;
     let baseline = gin_density::density_readings(&sizes, &coverage)
         .find(|reading| reading.target == index)
         .and_then(DensityReading::density);
-    density_baseline::record_density_baseline(platform, tenant, Branch::Live, index, baseline).await?;
-    info!(tenant = tenant.log_name(), database = %tenant.database, target = index.relation_name(), baseline_millibytes_per_row = ?baseline.map(Density::millibytes_per_row), "PostgreSQL maintenance density baseline reset after rebuild");
+    density_baseline::record_density_baseline(platform, tenant, branch, index, baseline).await?;
+    info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = index.relation_name(), baseline_millibytes_per_row = ?baseline.map(Density::millibytes_per_row), "PostgreSQL maintenance density baseline reset after rebuild");
     Ok(())
 }
 
@@ -224,29 +227,31 @@ async fn report_horizon_holders(connection: &mut PgConnection, tenant: &Register
 }
 
 /// Read the measure of a target's action before the action runs.
-async fn read_baseline(connection: &mut PgConnection, target: MaintenanceTarget) -> Result<ActionBaseline, MaintenanceError> {
-    Ok(match target {
+async fn read_baseline(connection: &mut PgConnection, row: BranchTarget) -> Result<ActionBaseline, MaintenanceError> {
+    let branch = row.branch();
+    Ok(match row.target() {
         MaintenanceTarget::Index(index) => ActionBaseline::Index {
             index,
-            before_bytes: inspection::index_bytes(connection, index).await?,
+            before_bytes: inspection::index_bytes(connection, branch, index).await?,
         },
         MaintenanceTarget::Heap(heap) => ActionBaseline::Heap {
             heap,
-            before: inspection::heap_tuple_counts(connection, heap).await?,
+            before: inspection::heap_tuple_counts(connection, branch, heap).await?,
         },
     })
 }
 
-/// Read the same measure after the action and pair it with the baseline.
-async fn read_comparison(connection: &mut PgConnection, baseline: ActionBaseline) -> Result<ActionComparison, MaintenanceError> {
+/// Read the same measure in `branch` after the action and pair it with the
+/// baseline.
+async fn read_comparison(connection: &mut PgConnection, branch: Branch, baseline: ActionBaseline) -> Result<ActionComparison, MaintenanceError> {
     Ok(match baseline {
         ActionBaseline::Index { index, before_bytes } => ActionComparison::Index {
             before_bytes,
-            after_bytes: inspection::index_bytes(connection, index).await?,
+            after_bytes: inspection::index_bytes(connection, branch, index).await?,
         },
         ActionBaseline::Heap { heap, before } => ActionComparison::Heap {
             before,
-            after: inspection::heap_tuple_counts(connection, heap).await?,
+            after: inspection::heap_tuple_counts(connection, branch, heap).await?,
         },
     })
 }
@@ -272,11 +277,12 @@ async fn execute_statement(connection: &mut PgConnection, statement: &Maintenanc
     }
 }
 
-/// Resolve the fixed statement belonging to one closed-set target.
-fn target_statement(target: MaintenanceTarget) -> MaintenanceStatement {
-    match target {
-        MaintenanceTarget::Index(index) => index.reindex_statement(),
-        MaintenanceTarget::Heap(heap) => heap.vacuum_statement(),
+/// Resolve the fixed statement belonging to one closed-set target in the
+/// branch whose schema holds it.
+fn target_statement(row: BranchTarget) -> MaintenanceStatement {
+    match row.target() {
+        MaintenanceTarget::Index(index) => index.reindex_statement(row.branch()),
+        MaintenanceTarget::Heap(heap) => heap.vacuum_statement(row.branch()),
     }
 }
 

@@ -1,6 +1,7 @@
 //! Measuring the execution safety gates before a maintenance action.
 
 use crate::{
+    branch::BranchTarget,
     candidate::MaintenanceTarget,
     catalog_counter::{CatalogCounter, non_negative, percent},
     error::MaintenanceError,
@@ -19,14 +20,16 @@ use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, Query, SelectStatement};
 use sqlx::PgConnection;
 
 /// Measure load, long transactions, the vacuum horizon of a heap target,
-/// active maintenance and waiting locks.
+/// and active maintenance and waiting locks on the target's relations in its
+/// branch.
 ///
 /// Only a vacuum is gated on the horizon: a rebuild produces a compact index
 /// whatever the horizon, so its holders are not read for an index target.
-pub(crate) async fn safety_gates(connection: &mut PgConnection, target: MaintenanceTarget) -> Result<SafetyGates, MaintenanceError> {
-    let heap = format!("public.{}", target.heap().relation_name());
-    let (relation, held_horizon) = match target {
-        MaintenanceTarget::Index(index) => (Some(format!("public.{}", index.relation_name())), None),
+pub(crate) async fn safety_gates(connection: &mut PgConnection, row: BranchTarget) -> Result<SafetyGates, MaintenanceError> {
+    let branch = row.branch();
+    let heap = branch.qualified(row.target().heap().relation_name());
+    let (relation, held_horizon) = match row.target() {
+        MaintenanceTarget::Index(index) => (Some(branch.qualified(index.relation_name())), None),
         MaintenanceTarget::Heap(_) => (None, vacuum_horizon::horizon_held_by(&vacuum_horizon::horizon_holders(connection).await?)),
     };
     let active = select_i64(connection, active_backend_statement()).await?;

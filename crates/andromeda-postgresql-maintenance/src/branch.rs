@@ -7,7 +7,7 @@
 //! never a maintenance branch.
 
 use crate::{
-    candidate::{MaintenanceTarget, RelationPresence},
+    candidate::{HeapTarget, MaintenanceTarget, RelationPresence},
     error::MaintenanceError,
 };
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
@@ -37,10 +37,31 @@ impl Branch {
 
     /// The schema identifier statements on this branch are qualified with.
     pub(crate) fn schema(self) -> Alias {
+        Alias::new(self.schema_name())
+    }
+
+    /// The name of this branch's schema, as the catalogs report it.
+    pub(crate) fn schema_name(self) -> String {
         match self {
-            Branch::Live => Alias::new(MaintenanceSchema::Public.to_string()),
-            Branch::Snapshot(key) => Alias::new(snapshot_schema_name(key, SnapshotBranch::Published)),
+            Branch::Live => MaintenanceSchema::Public.to_string(),
+            Branch::Snapshot(key) => snapshot_schema_name(key, SnapshotBranch::Published),
         }
+    }
+
+    /// `schema.relation`, the name a `regclass` lookup resolves a relation of
+    /// this branch by. Both parts are unquoted identifiers: the schema name is
+    /// `public` or derived from a positive key, the relation an allowlisted name.
+    pub(crate) fn qualified(self, relation: &str) -> String {
+        format!("{}.{relation}", self.schema_name())
+    }
+
+    /// The heap targets this branch's schema holds: every one in the live
+    /// branch, the branch relations in a Snapshot branch.
+    pub(crate) fn heaps(self) -> impl Iterator<Item = HeapTarget> {
+        HeapTarget::ALL.into_iter().filter(move |heap| match (self, heap.presence()) {
+            (Branch::Live, RelationPresence::EveryBranch | RelationPresence::LiveOnly) | (Branch::Snapshot(_), RelationPresence::EveryBranch) => true,
+            (Branch::Snapshot(_), RelationPresence::LiveOnly) => false,
+        })
     }
 
     /// The Snapshot whose branch this is, `None` for the live branch.
@@ -62,11 +83,6 @@ pub(crate) struct BranchTarget {
 }
 
 impl BranchTarget {
-    /// A target of the live branch, which holds every target.
-    pub(crate) const fn live(target: MaintenanceTarget) -> BranchTarget {
-        BranchTarget { branch: Branch::Live, target }
-    }
-
     /// A target in `branch`.
     ///
     /// # Errors
@@ -143,6 +159,23 @@ mod tests {
             );
             assert!(BranchTarget::new(Branch::Live, target).is_ok(), "{heap}");
         }
+    }
+
+    #[test]
+    fn a_snapshot_branch_holds_only_the_branch_heaps() {
+        assert_eq!(Branch::Live.heaps().collect::<Vec<_>>(), HeapTarget::ALL);
+        assert_eq!(
+            Branch::Snapshot(key(7)).heaps().collect::<Vec<_>>(),
+            [
+                HeapTarget::CurrentAttributes,
+                HeapTarget::Entities,
+                HeapTarget::SubscriptionDeliveryState,
+                HeapTarget::NotificationEvents,
+                HeapTarget::NotificationDeliveries,
+            ]
+        );
+        assert_eq!(Branch::Snapshot(key(7)).qualified("entities"), "snap_7.entities");
+        assert_eq!(Branch::Live.qualified("entities"), "public.entities");
     }
 
     #[test]

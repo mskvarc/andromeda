@@ -30,6 +30,11 @@ impl ArtifactIndexName {
         drop_index_concurrently(&self.branch.schema(), &Alias::new(&self.name))
     }
 
+    /// The branch whose schema holds the artifact.
+    pub(crate) const fn branch(&self) -> Branch {
+        self.branch
+    }
+
     /// Borrow the catalog identifier for structured reporting.
     pub(crate) fn as_str(&self) -> &str {
         &self.name

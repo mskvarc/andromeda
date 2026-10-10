@@ -12,6 +12,9 @@ enum LockFunction {
     /// `pg_advisory_xact_lock(key)`.
     #[iden = "pg_advisory_xact_lock"]
     AdvisoryXactLock,
+    /// `pg_try_advisory_xact_lock(key)`.
+    #[iden = "pg_try_advisory_xact_lock"]
+    TryAdvisoryXactLock,
     /// `pg_try_advisory_lock(key)`.
     #[iden = "pg_try_advisory_lock"]
     TryAdvisoryLock,
@@ -45,9 +48,17 @@ pub fn advisory_xact_lock(key: SimpleExpr) -> SimpleExpr {
     Func::cust(LockFunction::AdvisoryXactLock).args([hashed]).into()
 }
 
+/// `pg_try_advisory_xact_lock(hashtext(key))` - take a transaction advisory
+/// lock without waiting, released when the transaction ends.
+#[must_use]
+pub fn try_advisory_xact_lock(key: SimpleExpr) -> SimpleExpr {
+    let hashed = SimpleExpr::from(Func::cust(LockFunction::Hashtext).args([key]));
+    Func::cust(LockFunction::TryAdvisoryXactLock).args([hashed]).into()
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::advisory_lock::{advisory_unlock, advisory_xact_lock, try_advisory_lock};
+    use crate::advisory_lock::{advisory_unlock, advisory_xact_lock, try_advisory_lock, try_advisory_xact_lock};
     use pretty_assertions::assert_eq;
     use sea_query::{Expr, PostgresQueryBuilder, Query};
 
@@ -64,7 +75,11 @@ mod tests {
 
     #[test]
     fn session_lock_calls_bind_and_hash_the_key() {
-        for expression in [try_advisory_lock(Expr::val("fleet")), advisory_unlock(Expr::val("fleet"))] {
+        for expression in [
+            try_advisory_lock(Expr::val("fleet")),
+            advisory_unlock(Expr::val("fleet")),
+            try_advisory_xact_lock(Expr::val("fleet")),
+        ] {
             let (sql, values) = Query::select().expr(expression).to_owned().build(PostgresQueryBuilder);
             assert!(sql.contains("hashtext($1)"), "{sql}");
             assert_eq!(values.0.len(), 1, "{sql}");

@@ -11,6 +11,7 @@ mod action;
 mod action_measurement;
 mod artifact;
 mod branch;
+mod branch_selection;
 mod btree_estimate;
 /// Compile-time maintenance targets and their fixed statements.
 pub mod candidate;
