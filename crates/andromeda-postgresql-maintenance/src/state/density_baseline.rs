@@ -1,12 +1,17 @@
 //! The recorded density baseline of each density-measured GIN.
 
 use crate::{
+    branch::Branch,
     candidate::{DensityColumn, IndexTarget, MaintenanceTarget},
     catalog_counter::{CatalogCounter, persisted_count},
     error::MaintenanceError,
     evidence::target_code::{stored_target, target_of},
     gin_density::Density,
-    state::RegisteredTenant,
+    state::{
+        RegisteredTenant,
+        branch_rows::{branch_rows, stored_snapshot_key},
+        target_record::TARGET_GRAIN,
+    },
 };
 use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
@@ -24,14 +29,19 @@ pub(crate) struct DensityBaseline {
     pub(crate) density: Density,
 }
 
-/// Read every density-measured GIN's recorded baseline for one tenant; a GIN
-/// without one is absent.
-pub(crate) async fn density_baselines(connection: &mut PgConnection, tenant: &RegisteredTenant) -> Result<Vec<DensityBaseline>, MaintenanceError> {
+/// Read every density-measured GIN's recorded baseline in one branch of a
+/// tenant; a GIN without one is absent.
+pub(crate) async fn density_baselines(
+    connection: &mut PgConnection,
+    tenant: &RegisteredTenant,
+    branch: Branch,
+) -> Result<Vec<DensityBaseline>, MaintenanceError> {
     let codes = DensityColumn::ALL.map(|column| stored_target(MaintenanceTarget::Index(column.gin())).code());
     let statement = Query::select()
         .columns([PostgresqlMaintenanceTargets::Target, PostgresqlMaintenanceTargets::BaselineDensity])
         .from(PostgresqlMaintenanceTargets::Table)
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
+        .and_where(branch_rows(branch))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).is_in(codes))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::BaselineDensity).is_not_null())
         .to_owned();
@@ -55,40 +65,44 @@ pub(crate) async fn density_baselines(connection: &mut PgConnection, tenant: &Re
         .collect()
 }
 
-/// Record `baseline` as the GIN's baseline, creating its target row on its
-/// first observation. `None` clears it, so the next observation records one.
+/// Record `baseline` as the baseline of the GIN in `branch`, creating its
+/// target row on its first observation. `None` clears it, so the next
+/// observation records one.
 pub(crate) async fn record_density_baseline(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
+    branch: Branch,
     target: IndexTarget,
     baseline: Option<Density>,
 ) -> Result<(), MaintenanceError> {
-    let (sql, values) = density_baseline_upsert(tenant, target, baseline)?.build_sqlx(PostgresQueryBuilder);
+    let (sql, values) = density_baseline_upsert(tenant, branch, target, baseline)?.build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(connection).await?;
     Ok(())
 }
 
 /// The baseline upsert, leaving every other column of an existing row as it
 /// was.
-fn density_baseline_upsert(tenant: &RegisteredTenant, target: IndexTarget, baseline: Option<Density>) -> Result<InsertStatement, MaintenanceError> {
+fn density_baseline_upsert(
+    tenant: &RegisteredTenant,
+    branch: Branch,
+    target: IndexTarget,
+    baseline: Option<Density>,
+) -> Result<InsertStatement, MaintenanceError> {
     let stored = baseline
         .map(|density| persisted_count(density.millibytes_per_row(), CatalogCounter::BaselineDensity))
         .transpose()?;
     let mut statement = Query::insert();
     statement
         .into_table(PostgresqlMaintenanceTargets::Table)
-        .columns([
-            PostgresqlMaintenanceTargets::TenantKey,
-            PostgresqlMaintenanceTargets::Target,
-            PostgresqlMaintenanceTargets::BaselineDensity,
-        ])
+        .columns(TARGET_GRAIN.into_iter().chain([PostgresqlMaintenanceTargets::BaselineDensity]))
         .values([
             tenant.key.0.into(),
+            stored_snapshot_key(branch).into(),
             stored_target(MaintenanceTarget::Index(target)).code().into(),
             stored.into(),
         ])?
         .on_conflict(
-            OnConflict::columns([PostgresqlMaintenanceTargets::TenantKey, PostgresqlMaintenanceTargets::Target])
+            OnConflict::columns(TARGET_GRAIN)
                 .update_column(PostgresqlMaintenanceTargets::BaselineDensity)
                 .to_owned(),
         );
@@ -98,6 +112,7 @@ fn density_baseline_upsert(tenant: &RegisteredTenant, target: IndexTarget, basel
 #[cfg(test)]
 mod tests {
     use crate::{
+        branch::Branch,
         candidate::IndexTarget,
         error::MaintenanceError,
         gin_density::Density,
@@ -118,10 +133,10 @@ mod tests {
     #[test]
     fn a_baseline_is_upserted_without_touching_the_rest_of_the_row() -> Result<(), MaintenanceError> {
         let density = NonZeroU64::new(2_500).map(Density::from_millibytes);
-        let sql = density_baseline_upsert(&tenant(), IndexTarget::IdxCaValueObject, density)?.to_string(PostgresQueryBuilder);
-        assert!(sql.contains("VALUES (7, 14, 2500)"), "{sql}");
+        let sql = density_baseline_upsert(&tenant(), Branch::Live, IndexTarget::IdxCaValueObject, density)?.to_string(PostgresQueryBuilder);
+        assert!(sql.contains("VALUES (7, NULL, 14, 2500)"), "{sql}");
         assert!(
-            sql.ends_with(r#"ON CONFLICT ("tenant_key", "target") DO UPDATE SET "baseline_density" = "excluded"."baseline_density""#),
+            sql.ends_with(r#"ON CONFLICT ("tenant_key", "snapshot_key", "target") DO UPDATE SET "baseline_density" = "excluded"."baseline_density""#),
             "{sql}"
         );
         Ok(())
@@ -129,8 +144,8 @@ mod tests {
 
     #[test]
     fn a_cleared_baseline_is_stored_as_null() -> Result<(), MaintenanceError> {
-        let sql = density_baseline_upsert(&tenant(), IndexTarget::IdxCaSubEqKeys, None)?.to_string(PostgresQueryBuilder);
-        assert!(sql.contains("VALUES (7, 10, NULL)"), "{sql}");
+        let sql = density_baseline_upsert(&tenant(), Branch::Live, IndexTarget::IdxCaSubEqKeys, None)?.to_string(PostgresQueryBuilder);
+        assert!(sql.contains("VALUES (7, NULL, 10, NULL)"), "{sql}");
         Ok(())
     }
 }

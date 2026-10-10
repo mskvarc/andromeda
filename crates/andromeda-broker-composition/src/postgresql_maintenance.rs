@@ -79,7 +79,9 @@ const fn classify_failure(error: MaintenanceError) -> TaskFailure<MaintenanceErr
         | MaintenanceError::UnknownHorizonHolder(_)
         | MaintenanceError::UnreadableCode(_)
         | MaintenanceError::ProbeTargetNotAnIndex(_)
-        | MaintenanceError::InvalidDensityBaseline { .. } => FailureClass::InvariantViolation,
+        | MaintenanceError::InvalidDensityBaseline { .. }
+        | MaintenanceError::UnknownBranchSchema
+        | MaintenanceError::LiveOnlyTarget { .. } => FailureClass::InvariantViolation,
     };
     TaskFailure::new(class, error)
 }

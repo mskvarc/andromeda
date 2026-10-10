@@ -10,6 +10,7 @@
 mod action;
 mod action_measurement;
 mod artifact;
+mod branch;
 mod btree_estimate;
 /// Compile-time maintenance targets and their fixed statements.
 pub mod candidate;
@@ -40,7 +41,9 @@ pub mod vacuum_horizon;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-context-space",
         "andromeda-ngsi-ld-lexicon",
+        "andromeda-postgresql-branch",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-context-store",
         "andromeda-postgresql-pool",

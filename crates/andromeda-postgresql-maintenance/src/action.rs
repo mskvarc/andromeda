@@ -3,6 +3,7 @@
 use crate::{
     action_measurement::{ActionBaseline, ActionComparison},
     artifact::RecoveryArtifact,
+    branch::{Branch, BranchTarget},
     candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
     controller::PassOutcome,
     error::MaintenanceError,
@@ -79,7 +80,7 @@ pub(crate) async fn recover_artifact(
     }
 }
 
-/// Execute one action qualified on an earlier pass.
+/// Execute one action of the live branch qualified on an earlier pass.
 pub(crate) async fn execute_pending(
     mode: MaintenanceMode,
     platform: &mut PgConnection,
@@ -90,10 +91,11 @@ pub(crate) async fn execute_pending(
     cancellation: &CancellationToken,
 ) -> Result<PassOutcome, MaintenanceError> {
     let gates = safety_gate_inspection::safety_gates(tenant_connection, target).await?;
-    let target_state = target_record::load_target_state(platform, tenant, target).await?;
+    let row = BranchTarget::live(target);
+    let target_state = target_record::load_target_state(platform, tenant, row).await?;
     let now = Utc::now();
     let decision = decide(mode, profile, target_state, empty_sample(), gates, now);
-    target_record::record_decision(platform, tenant, target, None, decision, target_state.breach, now).await?;
+    target_record::record_decision(platform, tenant, row, None, decision, target_state.breach, now).await?;
     match decision {
         PolicyDecision::WouldAct => {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::WouldAct).await?;
@@ -135,7 +137,7 @@ pub(crate) async fn execute_pending(
             record_action(action, MaintenanceActionOutcome::Failed, started.elapsed(), None);
             let consecutive_failures = target_state.consecutive_failures.saturating_add(1);
             let cooldown_until = cooldown_after(profile, ActionEnding::Failed { consecutive_failures }, Utc::now());
-            target_record::record_action_failure(platform, tenant, target, cooldown_until).await?;
+            target_record::record_action_failure(platform, tenant, row, cooldown_until).await?;
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::ActionFailed).await?;
             warn!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), error = %error, duration_seconds = started.elapsed().as_secs_f64(), consecutive_failures, cooldown_until = %cooldown_until, decision = "action-failed", "PostgreSQL maintenance action failed");
             Ok(PassOutcome::ActionFailed)
@@ -146,7 +148,7 @@ pub(crate) async fn execute_pending(
             record_action(action, MaintenanceActionOutcome::Succeeded, duration, Some(comparison.effect()));
             let verdict = action_verdict(profile, target, comparison);
             let cooldown_until = cooldown_after(profile, ActionEnding::Completed(verdict), Utc::now());
-            target_record::record_action_completion(platform, tenant, target, verdict, cooldown_until, comparison).await?;
+            target_record::record_action_completion(platform, tenant, row, verdict, cooldown_until, comparison).await?;
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Acted).await?;
             match comparison {
                 ActionComparison::Index { before_bytes, after_bytes } => {
@@ -184,7 +186,7 @@ async fn reset_density_baseline(
     let baseline = gin_density::density_readings(&sizes, &coverage)
         .find(|reading| reading.target == index)
         .and_then(DensityReading::density);
-    density_baseline::record_density_baseline(platform, tenant, index, baseline).await?;
+    density_baseline::record_density_baseline(platform, tenant, Branch::Live, index, baseline).await?;
     info!(tenant = tenant.log_name(), database = %tenant.database, target = index.relation_name(), baseline_millibytes_per_row = ?baseline.map(Density::millibytes_per_row), "PostgreSQL maintenance density baseline reset after rebuild");
     Ok(())
 }

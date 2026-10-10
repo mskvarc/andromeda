@@ -29,6 +29,22 @@ pub fn snapshot_schema_name(key: SnapshotKey, branch: SnapshotBranch) -> String 
     }
 }
 
+/// A POSIX regular expression matching exactly the published Snapshot branch
+/// schema names [`snapshot_schema_name`] renders, for a catalog statement that
+/// selects them: a staging schema never matches.
+pub const PUBLISHED_SNAPSHOT_SCHEMA_PATTERN: &str = "^snap_[1-9][0-9]*$";
+
+/// The Snapshot whose published branch `schema` is, or `None` for any other
+/// schema, a staging branch included.
+///
+/// A name is accepted only when [`snapshot_schema_name`] renders it back
+/// unchanged, so `snap_07` and `snap_0` are not branches.
+#[must_use]
+pub fn published_snapshot_key(schema: &str) -> Option<SnapshotKey> {
+    let key = SnapshotKey::try_from(schema.strip_prefix("snap_")?.parse::<i64>().ok()?).ok()?;
+    (snapshot_schema_name(key, SnapshotBranch::Published) == schema).then_some(key)
+}
+
 /// The branch schema a context target's statements are qualified with.
 ///
 /// Constructed once per statement and reused for every table it names: the live
@@ -91,7 +107,7 @@ pub fn schema_prefix(target: &ContextTarget) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::{BranchSchema, snapshot_schema_name, table_of};
+    use crate::{BranchSchema, published_snapshot_key, snapshot_schema_name, table_of};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use sea_query::{Asterisk, PostgresQueryBuilder, Query};
 
@@ -109,6 +125,19 @@ mod tests {
         let key = SnapshotKey::try_from(7).expect("positive key");
         pretty_assertions::assert_eq!(snapshot_schema_name(key, SnapshotBranch::Published), "snap_7");
         pretty_assertions::assert_eq!(snapshot_schema_name(key, SnapshotBranch::Staging), "snap_7_stg");
+    }
+
+    #[test]
+    fn a_published_schema_name_reads_back_as_its_key() {
+        let key = SnapshotKey::try_from(42).expect("positive key");
+        pretty_assertions::assert_eq!(published_snapshot_key(&snapshot_schema_name(key, SnapshotBranch::Published)), Some(key));
+    }
+
+    #[test]
+    fn staging_and_foreign_schema_names_are_not_published_branches() {
+        for schema in ["snap_7_stg", "snap_07", "snap_0", "snap_-7", "snap_", "public", "snapshot_7"] {
+            pretty_assertions::assert_eq!(published_snapshot_key(schema), None, "{schema}");
+        }
     }
 
     #[test]

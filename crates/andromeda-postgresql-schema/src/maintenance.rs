@@ -30,6 +30,9 @@ pub enum PostgresqlMaintenanceTargets {
     Table,
     /// Foreign key to the platform tenant registry.
     TenantKey,
+    /// The Snapshot whose published branch schema holds the relation, NULL for
+    /// the live branch.
+    SnapshotKey,
     /// Closed-set relation (`MaintenanceTargetCode`).
     Target,
     /// Most recent cheap or detailed sample instant.
@@ -98,5 +101,6 @@ mod tests {
         assert_eq!(PostgresqlMaintenanceTargets::FirstBreachAt.to_string(), "first_breach_at");
         assert_eq!(PostgresqlMaintenanceTargets::BreachSamples.to_string(), "breach_samples");
         assert_eq!(PostgresqlMaintenanceTargets::BaselineDensity.to_string(), "baseline_density");
+        assert_eq!(PostgresqlMaintenanceTargets::SnapshotKey.to_string(), "snapshot_key");
     }
 }

@@ -7,6 +7,7 @@ mod probe_selection;
 
 use crate::{
     action,
+    branch::Branch,
     btree_estimate,
     capability::{self, CapabilityStatus, MutationPrivilege},
     controller::catalog_sampling::CatalogSample,
@@ -18,7 +19,7 @@ use crate::{
     gin_density,
     inspection::{self, InvalidIndex},
     policy::{PolicyProfile, SafetyGates},
-    state::{self, RegisteredTenant, target_record, tenant_inspection},
+    state::{self, RegisteredTenant, branch_rows, pending_action, target_record, tenant_inspection},
 };
 use andromeda_postgresql_context_store::{
     maintenance_config::{MaintenanceConfig, MaintenanceMode},
@@ -145,7 +146,7 @@ impl MaintenanceController {
         fleet.record_telemetry();
         let now = Utc::now();
         let records = tenant_inspection::inspection_records(platform).await?;
-        let due = target_record::tenants_with_due_actions(platform, now).await?;
+        let due = pending_action::tenants_with_due_actions(platform, now).await?;
         let standings = fleet_triage::standings(records, &fleet, &due);
         let Some(tenant) = fleet_triage::select_tenant(&standings, now) else {
             return Ok(PassOutcome::NoTenant);
@@ -171,23 +172,35 @@ impl MaintenanceController {
         }
 
         let profile = PolicyProfile::from_profile(self.config.profile);
+        let branches = inspection::published_branches(&mut connection).await?;
+        branch_rows::prune_vanished_branches(platform, tenant, &branches).await?;
         let invalid = inspection::invalid_indexes(&mut connection).await?;
         let index_sizes = inspection::index_sizes(&mut connection).await?;
         let estimates = btree_estimate::btree_estimates(&mut connection).await?;
         let heap_samples = inspection::heap_samples(&mut connection, profile).await?;
         let coverage = gin_density::gin_coverage(&mut connection).await?;
-        let pending_before_sampling = target_record::pending_action(platform, tenant).await?;
-        let probe_states = target_record::index_probe_states(platform, tenant).await?;
+        let pending_before_sampling = pending_action::pending_action(platform, tenant, Branch::Live).await?;
+        let probe_states = target_record::index_probe_states(platform, tenant, Branch::Live).await?;
         let density_samples = density_sampling::density_samples(platform, tenant, &index_sizes, &coverage, profile).await?;
         let samples = heap_samples.iter().map(CatalogSample::of_heap).chain(density_samples).collect::<Vec<_>>();
         let sampling_outcome = catalog_sampling::record_catalog_samples(self.config.mode, platform, tenant, &samples, profile).await?;
 
         for index in &invalid {
-            if index.recovery_artifact().is_none() {
-                warn!(tenant = tenant.log_name(), database = %tenant.database, target = index.name(), decision = "invalid-index-reported", "Invalid non-maintenance index requires operator investigation");
+            match (index.branch(), index.recovery_artifact()) {
+                (branch, None) => {
+                    warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = index.name(), decision = "invalid-index-reported", "Invalid non-maintenance index requires operator investigation");
+                }
+                (branch @ Branch::Snapshot(_), Some(artifact)) => {
+                    warn!(tenant = tenant.log_name(), database = %tenant.database, branch = ?branch, target = index.name(), artifact_kind = ?artifact.kind, decision = "branch-artifact-reported", "Concurrent-index recovery artifact in a Snapshot branch reported; recovery runs only in the live branch");
+                }
+                (Branch::Live, Some(_)) => {}
             }
         }
-        if let Some(artifact) = invalid.iter().find_map(InvalidIndex::recovery_artifact) {
+        if let Some(artifact) = invalid
+            .iter()
+            .filter(|index| index.branch() == Branch::Live)
+            .find_map(InvalidIndex::recovery_artifact)
+        {
             return action::recover_artifact(self.config.mode, platform, &mut connection, tenant, artifact, profile, cancellation).await;
         }
         if let Some(target) = pending_before_sampling {

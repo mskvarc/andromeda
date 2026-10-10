@@ -1776,7 +1776,9 @@ name = "andromeda-postgresql-maintenance"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-context-space",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-postgresql-branch",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-pool",

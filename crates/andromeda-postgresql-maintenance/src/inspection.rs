@@ -3,14 +3,17 @@
 use crate::{
     action_measurement::TupleCounts,
     artifact::RecoveryArtifact,
+    branch::Branch,
     candidate::{HeapTarget, IndexTarget},
     catalog_counter::{CatalogCounter, non_negative, percent},
     error::MaintenanceError,
     policy::{DegradationSample, PolicyProfile},
     scalar_query::select_i64,
 };
+use andromeda_context_space::snapshot_key::SnapshotKey;
+use andromeda_postgresql_branch::{PUBLISHED_SNAPSHOT_SCHEMA_PATTERN, published_snapshot_key};
 use andromeda_postgresql_seaquery::maintenance::{pgstattuple, relation_size, session_settings, to_regclass, total_relation_size};
-use sea_query::{Alias, Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query::{Alias, Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr, extension::postgres::PgBinOper};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{Executor, PgConnection, Row};
 use std::str::FromStr;
@@ -36,6 +39,8 @@ pub(crate) struct HeapSample {
 /// An invalid index reported by PostgreSQL.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct InvalidIndex {
+    /// The branch whose schema holds the index.
+    branch: Branch,
     /// Catalog name, retained for reporting and validated artifact recovery.
     name: String,
 }
@@ -43,7 +48,12 @@ pub(crate) struct InvalidIndex {
 impl InvalidIndex {
     /// Return a recovery artifact only when the name belongs to the allowlist.
     pub(crate) fn recovery_artifact(&self) -> Option<RecoveryArtifact> {
-        RecoveryArtifact::parse(&self.name)
+        RecoveryArtifact::parse(self.branch, &self.name)
+    }
+
+    /// The branch whose schema holds the index.
+    pub(crate) const fn branch(&self) -> Branch {
+        self.branch
     }
 
     /// Borrow the catalog name for structured reporting.
@@ -119,13 +129,34 @@ pub(crate) async fn probe_index(connection: &mut PgConnection, size: IndexSize, 
     })
 }
 
-/// Read every invalid user index so unrelated corruption is still visible.
+/// Read every invalid index of the live branch and of every published
+/// Snapshot branch, so unrelated corruption is still visible.
 pub(crate) async fn invalid_indexes(connection: &mut PgConnection) -> Result<Vec<InvalidIndex>, MaintenanceError> {
     let (sql, values) = invalid_indexes_statement().build_sqlx(PostgresQueryBuilder);
-    let names = sqlx::query_scalar_with::<_, String, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
+    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
+    rows.into_iter()
+        .map(|row| {
+            let schema = row.try_get::<String, _>(CatalogColumn::Nspname.as_str())?;
+            let branch = Branch::from_schema(&schema).ok_or(MaintenanceError::UnknownBranchSchema)?;
+            Ok(InvalidIndex {
+                branch,
+                name: row.try_get(CatalogColumn::Relname.as_str())?,
+            })
+        })
+        .collect()
+}
+
+/// Read the Snapshot key of every published branch schema the tenant
+/// database holds.
+pub(crate) async fn published_branches(connection: &mut PgConnection) -> Result<Vec<SnapshotKey>, MaintenanceError> {
+    let (sql, values) = published_branches_statement().build_sqlx(PostgresQueryBuilder);
+    let schemas = sqlx::query_scalar_with::<_, String, _>(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_all(connection)
         .await?;
-    Ok(names.into_iter().map(|name| InvalidIndex { name }).collect())
+    schemas
+        .into_iter()
+        .map(|schema| published_snapshot_key(&schema).ok_or(MaintenanceError::UnknownBranchSchema))
+        .collect()
 }
 
 /// Read an index's current physical bytes, compared across its rebuild.
@@ -195,9 +226,12 @@ fn pgstattuple_statement(relation: &str) -> SelectStatement {
         .to_owned()
 }
 
-/// Every invalid index in the application schema.
+/// Every invalid index in the application schema and the published Snapshot
+/// branch schemas.
 fn invalid_indexes_statement() -> SelectStatement {
+    let schema = || Expr::col((Alias::new("n"), Alias::new("nspname")));
     Query::select()
+        .column((Alias::new("n"), Alias::new("nspname")))
         .column((Alias::new("c"), Alias::new("relname")))
         .from_as(Alias::new("pg_index"), Alias::new("i"))
         .join_as(
@@ -212,10 +246,26 @@ fn invalid_indexes_statement() -> SelectStatement {
             Alias::new("n"),
             Expr::col((Alias::new("n"), Alias::new("oid"))).equals((Alias::new("c"), Alias::new("relnamespace"))),
         )
-        .and_where(Expr::col((Alias::new("n"), Alias::new("nspname"))).eq("public"))
+        .and_where(schema().eq("public").or(published_branch_schema(schema())))
         .and_where(Expr::col((Alias::new("i"), Alias::new("indisvalid"))).eq(false))
+        .order_by((Alias::new("n"), Alias::new("nspname")), sea_query::Order::Asc)
         .order_by((Alias::new("c"), Alias::new("relname")), sea_query::Order::Asc)
         .to_owned()
+}
+
+/// Every published Snapshot branch schema.
+fn published_branches_statement() -> SelectStatement {
+    Query::select()
+        .column(Alias::new(CatalogColumn::Nspname.as_str()))
+        .from(Alias::new("pg_namespace"))
+        .and_where(published_branch_schema(Expr::col(Alias::new(CatalogColumn::Nspname.as_str()))))
+        .to_owned()
+}
+
+/// Whether a schema name is a published Snapshot branch's, never a staging
+/// one's.
+fn published_branch_schema(schema: Expr) -> SimpleExpr {
+    schema.binary(PgBinOper::Regex, Expr::val(PUBLISHED_SNAPSHOT_SCHEMA_PATTERN))
 }
 
 /// Stable projected field names decoded from catalog rows.
@@ -223,8 +273,10 @@ fn invalid_indexes_statement() -> SelectStatement {
 enum CatalogColumn {
     /// `pg_stat_user_indexes.indexrelname` projection.
     Indexrelname,
-    /// Heap relation-name projection.
+    /// Heap or index relation-name projection.
     Relname,
+    /// Schema-name projection.
+    Nspname,
     /// Estimated live tuple count projection.
     LiveTuples,
     /// Estimated dead tuple count projection.
@@ -243,6 +295,7 @@ impl CatalogColumn {
         match self {
             CatalogColumn::Indexrelname => "indexrelname",
             CatalogColumn::Relname => "relname",
+            CatalogColumn::Nspname => "nspname",
             CatalogColumn::LiveTuples => "live_tuples",
             CatalogColumn::DeadTuples => "dead_tuples",
             CatalogColumn::Bytes => "bytes",
@@ -256,7 +309,7 @@ impl CatalogColumn {
 mod tests {
     use crate::{
         candidate::{HeapTarget, IndexTarget},
-        inspection::{heap_samples_statement, heap_tuple_counts_statement, index_sizes_statement, invalid_indexes_statement},
+        inspection::{heap_samples_statement, heap_tuple_counts_statement, index_sizes_statement, invalid_indexes_statement, published_branches_statement},
     };
     use sea_query::PostgresQueryBuilder;
 
@@ -299,5 +352,19 @@ mod tests {
             assert!(sql.contains(&format!("'{}'", target.relation_name())), "{target}: {sql}");
         }
         assert!(sql.contains("'current_attributes'"), "{sql}");
+    }
+
+    #[test]
+    fn invalid_index_statement_covers_public_and_published_branch_schemas() {
+        let sql = invalid_indexes_statement().to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"SELECT "n"."nspname", "c"."relname""#), "{sql}");
+        assert!(sql.contains(r#"("n"."nspname" = 'public' OR ("n"."nspname" ~ '^snap_[1-9][0-9]*$'))"#), "{sql}");
+        assert!(!sql.contains("_stg"), "{sql}");
+    }
+
+    #[test]
+    fn the_published_branch_read_matches_only_published_snapshot_schemas() {
+        let sql = published_branches_statement().to_string(PostgresQueryBuilder);
+        assert_eq!(sql, r#"SELECT "nspname" FROM "pg_namespace" WHERE "nspname" ~ '^snap_[1-9][0-9]*$'"#);
     }
 }

@@ -1,6 +1,7 @@
 //! Typed failures produced by platform coordination and tenant inspection.
 
-use crate::catalog_counter::CatalogCounter;
+use crate::{candidate::MaintenanceTarget, catalog_counter::CatalogCounter};
+use andromeda_context_space::snapshot_key::SnapshotKey;
 use andromeda_ngsi_ld_lexicon::tenant::InvalidTenantName;
 use andromeda_postgresql_codes::{maintenance_target::MaintenanceTargetCode, registry::UnknownCompactCode};
 use andromeda_postgresql_context_store::schema_contract::error::SchemaContractError;
@@ -58,5 +59,18 @@ pub enum MaintenanceError {
         target: MaintenanceTargetCode,
         /// The stored baseline.
         value: i64,
+    },
+    /// A catalog statement selecting branch schemas returned a schema that is
+    /// neither the live nor a published Snapshot branch.
+    #[error("PostgreSQL catalog returned a schema that is no maintenance branch")]
+    UnknownBranchSchema,
+    /// A target was addressed in a Snapshot branch whose schema never holds
+    /// its heap.
+    #[error("maintenance target '{}' exists only in the live branch, not in Snapshot {}", .target.relation_name(), .snapshot.as_i64())]
+    LiveOnlyTarget {
+        /// The live-only target.
+        target: MaintenanceTarget,
+        /// The Snapshot branch it was addressed in.
+        snapshot: SnapshotKey,
     },
 }

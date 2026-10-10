@@ -2,6 +2,7 @@
 //! recorded baseline.
 
 use crate::{
+    branch::Branch,
     candidate::MaintenanceTarget,
     controller::catalog_sampling::CatalogSample,
     error::MaintenanceError,
@@ -13,7 +14,8 @@ use crate::{
 use sqlx::PgConnection;
 use tracing::info;
 
-/// Sample every density-measured GIN the catalogs describe. A GIN with no
+/// Sample every density-measured GIN of the live branch the catalogs
+/// describe. A GIN with no
 /// recorded baseline records its current density as one and is sampled
 /// against it, so its first sample is never degraded.
 pub(crate) async fn density_samples(
@@ -23,7 +25,7 @@ pub(crate) async fn density_samples(
     coverage: &[GinCoverage],
     profile: PolicyProfile,
 ) -> Result<Vec<CatalogSample>, MaintenanceError> {
-    let baselines = density_baseline::density_baselines(platform, tenant).await?;
+    let baselines = density_baseline::density_baselines(platform, tenant, Branch::Live).await?;
     let mut samples = Vec::new();
     for reading in gin_density::density_readings(sizes, coverage) {
         let Some(current) = reading.density() else {
@@ -36,7 +38,7 @@ pub(crate) async fn density_samples(
         let baseline = if let Some(baseline) = recorded {
             baseline
         } else {
-            density_baseline::record_density_baseline(platform, tenant, reading.target, Some(current)).await?;
+            density_baseline::record_density_baseline(platform, tenant, Branch::Live, reading.target, Some(current)).await?;
             info!(tenant = tenant.log_name(), database = %tenant.database, target = reading.target.relation_name(), baseline_millibytes_per_row = current.millibytes_per_row(), covered_rows = reading.covered_rows, "PostgreSQL maintenance density baseline recorded");
             current
         };

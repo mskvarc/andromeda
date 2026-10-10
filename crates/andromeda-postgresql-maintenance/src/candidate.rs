@@ -279,6 +279,29 @@ impl HeapTarget {
             HeapTarget::SnapshotNotificationOutbox => vacuum_non_truncating(&MaintenanceSchema::Public, &SnapshotNotificationOutbox::Table),
         }
     }
+
+    /// The context branches whose schema holds the heap.
+    #[must_use]
+    pub const fn presence(self) -> RelationPresence {
+        match self {
+            HeapTarget::CurrentAttributes
+            | HeapTarget::Entities
+            | HeapTarget::SubscriptionDeliveryState
+            | HeapTarget::NotificationEvents
+            | HeapTarget::NotificationDeliveries => RelationPresence::EveryBranch,
+            HeapTarget::PendingSideEffects | HeapTarget::TemporalAppendIntents | HeapTarget::SnapshotNotificationOutbox => RelationPresence::LiveOnly,
+        }
+    }
+}
+
+/// Which context branches hold a relation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RelationPresence {
+    /// Created by the branch migrations, so the live schema and every
+    /// Snapshot branch schema hold it.
+    EveryBranch,
+    /// Created by the tenant migrations, so only the live schema holds it.
+    LiveOnly,
 }
 
 /// A persistable allowlisted maintenance target.

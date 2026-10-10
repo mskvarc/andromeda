@@ -9,7 +9,9 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-context-space.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-postgresql-branch.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-pool.workspace = true

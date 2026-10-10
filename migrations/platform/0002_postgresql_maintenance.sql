@@ -38,6 +38,13 @@
 -- each successful rebuild. It stays NULL for every other target, and for a GIN
 -- whose covered rows the statistics do not yet describe.
 --
+-- A target row belongs to one context branch of its tenant: `snapshot_key`
+-- is the Snapshot whose published branch schema holds the relation, NULL for
+-- the live branch. The grain therefore contains a nullable column and the
+-- table has no primary key. A Snapshot key lives in the tenant database, so
+-- no foreign key can hold it; a visit deletes the rows of a branch whose
+-- schema no longer exists.
+--
 -- Codes:
 --
 --   last_result: 1 started, 2 unavailable, 3 ready, 4 missing-pgstattuple,
@@ -73,6 +80,7 @@ create table postgresql_maintenance_tenants (
 
 create table postgresql_maintenance_targets (
     tenant_key bigint not null,
+    snapshot_key bigint,
     last_sampled_at timestamptz,
     cooldown_until timestamptz,
     last_action_at timestamptz,
@@ -87,8 +95,9 @@ create table postgresql_maintenance_targets (
     target smallint not null,
     last_action_result smallint,
     is_action_pending boolean not null default false,
-    constraint pk_postgresql_maintenance_targets primary key (tenant_key, target),
+    constraint uq_postgresql_maintenance_targets_grain unique nulls not distinct (tenant_key, snapshot_key, target),
     constraint fk_postgresql_maintenance_targets_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
+    constraint chk_postgresql_maintenance_targets_snapshot_key_positive check (snapshot_key is null or snapshot_key > 0),
     constraint chk_postgresql_maintenance_targets_target check (target between 1 and 20),
     constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 3),
     constraint chk_postgresql_maintenance_targets_breach_run check (breach_samples >= 0 and (first_breach_at is null) = (breach_samples = 0)),

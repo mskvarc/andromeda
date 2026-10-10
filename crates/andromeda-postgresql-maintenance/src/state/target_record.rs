@@ -2,6 +2,7 @@
 
 use crate::{
     action_measurement::ActionComparison,
+    branch::{Branch, BranchTarget},
     candidate::{IndexTarget, MaintenanceTarget},
     catalog_counter::{CatalogCounter, persisted_count},
     error::MaintenanceError,
@@ -11,26 +12,27 @@ use crate::{
         target_code::{stored_target, target_of},
     },
     policy::{ActionVerdict, BreachRun, DegradationSample, PolicyDecision, TargetState, breach_after},
-    state::{RegisteredTenant, TenantKey, execute_update},
+    state::{
+        RegisteredTenant,
+        TenantKey,
+        branch_rows::{branch_rows, stored_snapshot_key},
+        execute_update,
+    },
 };
 use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
 use chrono::{DateTime, Utc};
-use sea_query::{
-    Expr,
-    ExprTrait,
-    Iden,
-    InsertStatement,
-    OnConflict,
-    Order,
-    PostgresQueryBuilder,
-    Query,
-    SelectStatement,
-    UpdateStatement,
-    error::Error as SeaQueryError,
-};
+use sea_query::{Expr, ExprTrait, Iden, InsertStatement, OnConflict, PostgresQueryBuilder, Query, UpdateStatement, error::Error as SeaQueryError};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgConnection, Row, postgres::PgRow};
+
+/// The columns identifying one target row: its tenant, its branch and its
+/// target.
+pub(crate) const TARGET_GRAIN: [PostgresqlMaintenanceTargets; 3] = [
+    PostgresqlMaintenanceTargets::TenantKey,
+    PostgresqlMaintenanceTargets::SnapshotKey,
+    PostgresqlMaintenanceTargets::Target,
+];
 
 /// Durable ordering and cooldown metadata for one detailed index probe.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,21 +45,8 @@ pub(crate) struct IndexProbeState {
     pub(crate) cooldown_until: Option<DateTime<Utc>>,
 }
 
-/// One queued action and the cooldown its last attempt set.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct PendingAction {
-    /// The queued target.
-    target: MaintenanceTarget,
-    /// Backoff deadline of a failed attempt, absent before any attempt.
-    cooldown_until: Option<DateTime<Utc>>,
-}
-
 /// Read one target's persisted decision state.
-pub(crate) async fn load_target_state(
-    connection: &mut PgConnection,
-    tenant: &RegisteredTenant,
-    target: MaintenanceTarget,
-) -> Result<TargetState, MaintenanceError> {
+pub(crate) async fn load_target_state(connection: &mut PgConnection, tenant: &RegisteredTenant, target: BranchTarget) -> Result<TargetState, MaintenanceError> {
     let statement = Query::select()
         .columns([
             PostgresqlMaintenanceTargets::FirstBreachAt,
@@ -68,7 +57,8 @@ pub(crate) async fn load_target_state(
         ])
         .from(PostgresqlMaintenanceTargets::Table)
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target).code()))
+        .and_where(branch_rows(target.branch()))
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target.target()).code()))
         .to_owned();
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(connection).await?;
@@ -106,83 +96,13 @@ fn stored_count(row: &PgRow, column: PostgresqlMaintenanceTargets, counter: Cata
     })
 }
 
-/// Return the first pending action whose backoff has elapsed, keeping the
-/// canary B-tree ahead of its GIN pair.
-pub(crate) async fn pending_action(connection: &mut PgConnection, tenant: &RegisteredTenant) -> Result<Option<MaintenanceTarget>, MaintenanceError> {
-    let statement = pending_actions_statement()
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
-        .to_owned();
-    let pending = read_pending_actions(connection, &statement).await?;
-    let pending = pending.into_iter().map(|(_, action)| action).collect::<Vec<_>>();
-    Ok(first_pending(&pending, Utc::now()))
-}
-
-/// Every tenant that [`pending_action`] would give an action to now.
-pub(crate) async fn tenants_with_due_actions(connection: &mut PgConnection, now: DateTime<Utc>) -> Result<Vec<TenantKey>, MaintenanceError> {
-    let pending = read_pending_actions(connection, &pending_actions_statement()).await?;
-    Ok(pending
-        .chunk_by(|(left, _), (right, _)| left == right)
-        .filter_map(|tenant_pending| {
-            let actions = tenant_pending.iter().map(|&(_, action)| action).collect::<Vec<_>>();
-            first_pending(&actions, now).and(tenant_pending.first().map(|&(tenant, _)| tenant))
-        })
-        .collect())
-}
-
-/// Every pending action, grouped by tenant and ordered by target code.
-fn pending_actions_statement() -> SelectStatement {
-    Query::select()
-        .columns([
-            PostgresqlMaintenanceTargets::TenantKey,
-            PostgresqlMaintenanceTargets::Target,
-            PostgresqlMaintenanceTargets::CooldownUntil,
-        ])
-        .from(PostgresqlMaintenanceTargets::Table)
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::IsActionPending).eq(true))
-        .order_by(PostgresqlMaintenanceTargets::TenantKey, Order::Asc)
-        .order_by(PostgresqlMaintenanceTargets::Target, Order::Asc)
-        .to_owned()
-}
-
-/// Run a pending-action statement and decode each row with its tenant.
-async fn read_pending_actions(connection: &mut PgConnection, statement: &SelectStatement) -> Result<Vec<(TenantKey, PendingAction)>, MaintenanceError> {
-    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
-    rows.iter()
-        .map(|row| {
-            let tenant = TenantKey(row.try_get(PostgresqlMaintenanceTargets::TenantKey.to_string().as_str())?);
-            let action = PendingAction {
-                target: target_of(MaintenanceTargetCode::try_from(
-                    row.try_get::<i16, _>(PostgresqlMaintenanceTargets::Target.to_string().as_str())?,
-                )?),
-                cooldown_until: row.try_get(PostgresqlMaintenanceTargets::CooldownUntil.to_string().as_str())?,
-            };
-            Ok((tenant, action))
-        })
-        .collect()
-}
-
-/// The pending target to act on first: any due target but a GIN queued
-/// through a canary, so a canary is rebuilt on an earlier pass than its GIN,
-/// and a due canary-queued GIN once nothing else is pending. A target still in its failure
-/// backoff is skipped, so it does not hold back the rest of the tenant's pass,
-/// yet it still holds back every canary-queued GIN.
-fn first_pending(pending: &[PendingAction], now: DateTime<Utc>) -> Option<MaintenanceTarget> {
-    let is_gin = |action: &PendingAction| match action.target {
-        MaintenanceTarget::Index(index) => index.canary().is_some(),
-        MaintenanceTarget::Heap(_) => false,
-    };
-    let is_due = |action: &PendingAction| action.cooldown_until.is_none_or(|until| until <= now);
-    if pending.iter().all(is_gin) {
-        pending.iter().find(|action| is_due(action))
-    } else {
-        pending.iter().find(|action| !is_gin(action) && is_due(action))
-    }
-    .map(|action| action.target)
-}
-
-/// Read detailed-probe ordering and cooldown state in one platform query.
-pub(crate) async fn index_probe_states(connection: &mut PgConnection, tenant: &RegisteredTenant) -> Result<Vec<IndexProbeState>, MaintenanceError> {
+/// Read the detailed-probe ordering and cooldown state of `branch` in one
+/// platform query.
+pub(crate) async fn index_probe_states(
+    connection: &mut PgConnection,
+    tenant: &RegisteredTenant,
+    branch: Branch,
+) -> Result<Vec<IndexProbeState>, MaintenanceError> {
     let statement = Query::select()
         .columns([
             PostgresqlMaintenanceTargets::Target,
@@ -191,6 +111,7 @@ pub(crate) async fn index_probe_states(connection: &mut PgConnection, tenant: &R
         ])
         .from(PostgresqlMaintenanceTargets::Table)
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
+        .and_where(branch_rows(branch))
         .and_where(
             Expr::col(PostgresqlMaintenanceTargets::Target).is_in(IndexTarget::PROBEABLE.map(|target| stored_target(MaintenanceTarget::Index(target)).code())),
         )
@@ -218,7 +139,7 @@ pub(crate) async fn index_probe_states(connection: &mut PgConnection, tenant: &R
 pub(crate) async fn record_decision(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
-    target: MaintenanceTarget,
+    target: BranchTarget,
     sample: Option<DegradationSample>,
     decision: PolicyDecision,
     prior: Option<BreachRun>,
@@ -233,7 +154,8 @@ pub(crate) async fn record_decision(
         .value(PostgresqlMaintenanceTargets::FirstBreachAt, breach.map(|run| run.since))
         .value(PostgresqlMaintenanceTargets::BreachSamples, persisted_breach_samples(breach)?)
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target).code()));
+        .and_where(branch_rows(target.branch()))
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target.target()).code()));
     if let Some(sample) = sample {
         statement
             .value(PostgresqlMaintenanceTargets::LastSampledAt, Expr::current_timestamp())
@@ -252,21 +174,22 @@ pub(crate) async fn record_decision(
         statement.value(PostgresqlMaintenanceTargets::IsActionPending, true);
     }
     execute_update(connection, statement.clone()).await?;
-    let paired_gin = match target {
+    let paired_gin = match target.target() {
         MaintenanceTarget::Index(index) => index.paired_gin(),
         MaintenanceTarget::Heap(_) => None,
     };
     if decision == PolicyDecision::Queued
         && let Some(gin) = paired_gin
     {
-        let gin = MaintenanceTarget::Index(gin);
+        let gin = BranchTarget::new(target.branch(), MaintenanceTarget::Index(gin))?;
         ensure_target_state(connection, tenant, gin).await?;
         let paired = Query::update()
             .table(PostgresqlMaintenanceTargets::Table)
             .value(PostgresqlMaintenanceTargets::IsActionPending, true)
             .value(PostgresqlMaintenanceTargets::LastDecision, RecordedDecision::PairedQueued.code().code())
             .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
-            .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(gin).code()))
+            .and_where(branch_rows(gin.branch()))
+            .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(gin.target()).code()))
             .to_owned();
         execute_update(connection, paired).await?;
     }
@@ -279,7 +202,7 @@ pub(crate) async fn record_decision(
 pub(crate) async fn record_action_completion(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
-    target: MaintenanceTarget,
+    target: BranchTarget,
     verdict: ActionVerdict,
     cooldown_until: DateTime<Utc>,
     comparison: ActionComparison,
@@ -292,7 +215,7 @@ pub(crate) async fn record_action_completion(
 /// action is measured by and clearing the other kind.
 fn action_completion_update(
     tenant: TenantKey,
-    target: MaintenanceTarget,
+    target: BranchTarget,
     verdict: ActionVerdict,
     cooldown_until: DateTime<Utc>,
     comparison: ActionComparison,
@@ -325,7 +248,8 @@ fn action_completion_update(
         .value(PostgresqlMaintenanceTargets::LastDeadTuplesBefore, dead_tuples_before)
         .value(PostgresqlMaintenanceTargets::LastDeadTuplesAfter, dead_tuples_after)
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.0))
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target).code()))
+        .and_where(branch_rows(target.branch()))
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target.target()).code()))
         .to_owned())
 }
 
@@ -334,7 +258,7 @@ fn action_completion_update(
 pub(crate) async fn record_action_failure(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
-    target: MaintenanceTarget,
+    target: BranchTarget,
     cooldown_until: DateTime<Utc>,
 ) -> Result<(), MaintenanceError> {
     let statement = Query::update()
@@ -347,30 +271,31 @@ pub(crate) async fn record_action_failure(
         .value(PostgresqlMaintenanceTargets::LastActionAt, Expr::current_timestamp())
         .value(PostgresqlMaintenanceTargets::LastActionResult, ActionResult::Failed.code().code())
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target).code()))
+        .and_where(branch_rows(target.branch()))
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target.target()).code()))
         .to_owned();
     execute_update(connection, statement).await
 }
 
 /// Insert a target-state row if this is its first sample.
-async fn ensure_target_state(connection: &mut PgConnection, tenant: &RegisteredTenant, target: MaintenanceTarget) -> Result<(), MaintenanceError> {
+async fn ensure_target_state(connection: &mut PgConnection, tenant: &RegisteredTenant, target: BranchTarget) -> Result<(), MaintenanceError> {
     let (sql, values) = target_state_insert(tenant.key, target)?.build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(connection).await?;
     Ok(())
 }
 
 /// Build the idempotent target-state insert.
-fn target_state_insert(tenant: TenantKey, target: MaintenanceTarget) -> Result<InsertStatement, SeaQueryError> {
+fn target_state_insert(tenant: TenantKey, target: BranchTarget) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(PostgresqlMaintenanceTargets::Table)
-        .columns([PostgresqlMaintenanceTargets::TenantKey, PostgresqlMaintenanceTargets::Target])
-        .values([tenant.0.into(), stored_target(target).code().into()])?
-        .on_conflict(
-            OnConflict::columns([PostgresqlMaintenanceTargets::TenantKey, PostgresqlMaintenanceTargets::Target])
-                .do_nothing()
-                .to_owned(),
-        );
+        .columns(TARGET_GRAIN)
+        .values([
+            tenant.0.into(),
+            stored_snapshot_key(target.branch()).into(),
+            stored_target(target.target()).code().into(),
+        ])?
+        .on_conflict(OnConflict::columns(TARGET_GRAIN).do_nothing().to_owned());
     Ok(statement.clone())
 }
 
@@ -378,15 +303,16 @@ fn target_state_insert(tenant: TenantKey, target: MaintenanceTarget) -> Result<I
 mod tests {
     use crate::{
         action_measurement::{ActionComparison, TupleCounts},
+        branch::BranchTarget,
         candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
         error::MaintenanceError,
         policy::ActionVerdict,
         state::{
             TenantKey,
-            target_record::{PendingAction, action_completion_update, first_pending},
+            target_record::{action_completion_update, target_state_insert},
         },
     };
-    use chrono::{DateTime, Duration, Utc};
+    use chrono::Utc;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
@@ -398,7 +324,7 @@ mod tests {
         };
         let sql = action_completion_update(
             TenantKey(7),
-            MaintenanceTarget::Heap(HeapTarget::CurrentAttributes),
+            BranchTarget::live(MaintenanceTarget::Heap(HeapTarget::CurrentAttributes)),
             ActionVerdict::Effective,
             Utc::now(),
             comparison,
@@ -407,6 +333,7 @@ mod tests {
         assert!(sql.contains(r#""last_action_result" = 1"#), "{sql}");
         assert!(sql.contains(r#""last_dead_tuples_before" = 50000"#), "{sql}");
         assert!(sql.contains(r#""last_dead_tuples_after" = 1000"#), "{sql}");
+        assert!(sql.contains(r#""tenant_key" = 7 AND "snapshot_key" IS NULL AND "target" = 11"#), "{sql}");
         assert!(sql.contains(r#""last_before_bytes" = NULL"#), "{sql}");
         assert!(sql.contains(r#""last_after_bytes" = NULL"#), "{sql}");
         Ok(())
@@ -420,7 +347,7 @@ mod tests {
         };
         let sql = action_completion_update(
             TenantKey(7),
-            MaintenanceTarget::Index(IndexTarget::IdxCaValueNumber),
+            BranchTarget::live(MaintenanceTarget::Index(IndexTarget::IdxCaValueNumber)),
             ActionVerdict::Effective,
             Utc::now(),
             comparison,
@@ -441,7 +368,7 @@ mod tests {
         };
         let sql = action_completion_update(
             TenantKey(7),
-            MaintenanceTarget::Heap(HeapTarget::CurrentAttributes),
+            BranchTarget::live(MaintenanceTarget::Heap(HeapTarget::CurrentAttributes)),
             ActionVerdict::Ineffective,
             Utc::now(),
             comparison,
@@ -455,67 +382,13 @@ mod tests {
         Ok(())
     }
 
-    /// A pending target never attempted, so due at once.
-    const fn due(target: MaintenanceTarget) -> PendingAction {
-        PendingAction { target, cooldown_until: None }
-    }
-
-    /// A pending target whose failure backoff ends after `now`.
-    fn backing_off(target: MaintenanceTarget, now: DateTime<Utc>) -> PendingAction {
-        PendingAction {
-            target,
-            cooldown_until: Some(now + Duration::minutes(15)),
-        }
-    }
-
     #[test]
-    fn a_canary_is_acted_on_before_the_gin_it_queued() {
-        let canary = MaintenanceTarget::Index(IndexTarget::IdxCaValueString);
-        let gin = MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm);
-        assert_eq!(first_pending(&[due(gin), due(canary)], Utc::now()), Some(canary));
-    }
-
-    #[test]
-    fn a_gin_is_acted_on_once_nothing_else_is_pending() {
+    fn a_live_target_row_is_inserted_with_no_snapshot_key_on_the_branch_grain() -> Result<(), MaintenanceError> {
+        let sql = target_state_insert(TenantKey(7), BranchTarget::live(MaintenanceTarget::Heap(HeapTarget::Entities)))?.to_string(PostgresQueryBuilder);
         assert_eq!(
-            first_pending(&[due(MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm))], Utc::now()),
-            Some(MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm))
+            sql,
+            r#"INSERT INTO "postgresql_maintenance_targets" ("tenant_key", "snapshot_key", "target") VALUES (7, NULL, 12) ON CONFLICT ("tenant_key", "snapshot_key", "target") DO NOTHING"#
         );
-        assert_eq!(first_pending(&[], Utc::now()), None);
-    }
-
-    #[test]
-    fn a_pending_heap_goes_ahead_of_a_gin() {
-        assert_eq!(
-            first_pending(
-                &[
-                    due(MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm)),
-                    due(MaintenanceTarget::Heap(HeapTarget::CurrentAttributes)),
-                ],
-                Utc::now()
-            ),
-            Some(MaintenanceTarget::Heap(HeapTarget::CurrentAttributes))
-        );
-    }
-
-    /// A density-measured GIN is queued by its own sample, so no canary has
-    /// to be rebuilt first: it is acted on in target order like a B-tree.
-    #[test]
-    fn a_density_measured_gin_is_not_held_back_behind_other_work() {
-        let gin = MaintenanceTarget::Index(IndexTarget::IdxCaSubEqKeys);
-        let heap = MaintenanceTarget::Heap(HeapTarget::Entities);
-        assert_eq!(first_pending(&[due(gin), due(heap)], Utc::now()), Some(gin));
-    }
-
-    #[test]
-    fn a_backing_off_action_is_skipped_and_still_holds_back_its_gin() {
-        let now = Utc::now();
-        let canary = MaintenanceTarget::Index(IndexTarget::IdxCaValueString);
-        let gin = MaintenanceTarget::Index(IndexTarget::IdxCaValueStringTrgm);
-        let heap = MaintenanceTarget::Heap(HeapTarget::Entities);
-        assert_eq!(first_pending(&[backing_off(canary, now), due(heap)], now), Some(heap));
-        assert_eq!(first_pending(&[backing_off(canary, now), due(gin)], now), None);
-        assert_eq!(first_pending(&[backing_off(gin, now)], now), None);
-        assert_eq!(first_pending(&[backing_off(canary, now)], now + Duration::minutes(15)), Some(canary));
+        Ok(())
     }
 }

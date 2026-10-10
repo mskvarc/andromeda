@@ -2,6 +2,7 @@
 //! estimate and each density-measured GIN's density.
 
 use crate::{
+    branch::BranchTarget,
     candidate::MaintenanceTarget,
     controller::{PassOutcome, idle_gates},
     error::MaintenanceError,
@@ -33,8 +34,8 @@ impl CatalogSample {
     }
 }
 
-/// Persist cheap catalog evidence without executing newly queued work in this
-/// pass.
+/// Persist the live branch's cheap catalog evidence without executing newly
+/// queued work in this pass.
 pub(crate) async fn record_catalog_samples(
     mode: MaintenanceMode,
     platform: &mut PgConnection,
@@ -45,10 +46,11 @@ pub(crate) async fn record_catalog_samples(
     let mut outcome = None;
     for sample in samples {
         let target = sample.target;
-        let target_state = target_record::load_target_state(platform, tenant, target).await?;
+        let row = BranchTarget::live(target);
+        let target_state = target_record::load_target_state(platform, tenant, row).await?;
         let now = Utc::now();
         let decision = decide(mode, profile, target_state, sample.degradation, idle_gates(), now);
-        target_record::record_decision(platform, tenant, target, Some(sample.degradation), decision, target_state.breach, now).await?;
+        target_record::record_decision(platform, tenant, row, Some(sample.degradation), decision, target_state.breach, now).await?;
         info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), relation_bytes = sample.degradation.relation_bytes, reclaimable_bytes = sample.degradation.reclaimable_bytes, degraded_percent = sample.degradation.degraded_percent, decision = ?decision, "PostgreSQL maintenance catalog sample completed");
         match decision {
             PolicyDecision::Queued => outcome = Some(PassOutcome::Queued),
