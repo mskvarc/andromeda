@@ -5,8 +5,14 @@
 -- relation it may act on. Every broker replica runs the controller, and the
 -- platform database is where the replicas coordinate: `last_inspected_at`
 -- keeps tenant selection fair across restarts, including tenants no replica
--- currently holds in memory, and a target row keeps the consecutive-sample
--- evidence that stops one noisy sample from triggering an action.
+-- currently holds in memory, and a target row keeps the breach evidence that
+-- stops one noisy sample from triggering an action.
+--
+-- A breach run is the unbroken sequence of samples meeting every threshold:
+-- `first_breach_at` is when its first sample was taken and `breach_samples`
+-- how many it holds. Work qualifies once a run spans the profile's qualifying
+-- duration over at least two samples; a sample below threshold and a
+-- completed action close the run.
 --
 -- A rebuild's effect is recorded as physical bytes (`last_before_bytes`,
 -- `last_after_bytes`) and a vacuum's as dead tuples
@@ -55,7 +61,8 @@ create table postgresql_maintenance_targets (
     last_after_bytes bigint,
     last_dead_tuples_before bigint,
     last_dead_tuples_after bigint,
-    consecutive_breaches integer not null default 0,
+    first_breach_at timestamptz,
+    breach_samples integer not null default 0,
     consecutive_failures integer not null default 0,
     target smallint not null,
     last_action_result smallint,
@@ -64,7 +71,7 @@ create table postgresql_maintenance_targets (
     constraint fk_postgresql_maintenance_targets_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
     constraint chk_postgresql_maintenance_targets_target check (target between 1 and 13),
     constraint chk_postgresql_maintenance_targets_last_action_result check (last_action_result is null or last_action_result between 1 and 3),
-    constraint chk_postgresql_maintenance_targets_breaches_non_negative check (consecutive_breaches >= 0),
+    constraint chk_postgresql_maintenance_targets_breach_run check (breach_samples >= 0 and (first_breach_at is null) = (breach_samples = 0)),
     constraint chk_postgresql_maintenance_targets_failures_non_negative check (consecutive_failures >= 0),
     constraint chk_postgresql_maintenance_targets_sizes_non_negative check ((last_before_bytes is null or last_before_bytes >= 0) and (last_after_bytes is null or last_after_bytes >= 0)),
     constraint chk_postgresql_maintenance_targets_dead_tuples_non_negative check ((last_dead_tuples_before is null or last_dead_tuples_before >= 0) and (last_dead_tuples_after is null or last_dead_tuples_after >= 0))

@@ -12,8 +12,9 @@ pub struct PolicyProfile {
     pub cadence: Duration,
     /// Upper bound for deterministic task jitter.
     pub maximum_jitter: Duration,
-    /// Consecutive qualifying observations required before queuing work.
-    pub qualifying_samples: u32,
+    /// How long a target must breach every threshold, over at least
+    /// [`MINIMUM_BREACH_SAMPLES`] samples, before work is queued.
+    pub qualifying_duration: ChronoDuration,
     /// Small relations are never probed or maintained.
     pub minimum_relation_bytes: u64,
     /// Minimum estimated bytes maintenance must reclaim.
@@ -40,7 +41,7 @@ impl PolicyProfile {
             MaintenanceProfile::Conservative => PolicyProfile {
                 cadence: Duration::from_secs(60),
                 maximum_jitter: Duration::from_secs(15),
-                qualifying_samples: 3,
+                qualifying_duration: ChronoDuration::minutes(10),
                 minimum_relation_bytes: 64 * MIB,
                 minimum_reclaim_bytes: 64 * MIB,
                 index_free_percent: 50,
@@ -52,7 +53,7 @@ impl PolicyProfile {
             MaintenanceProfile::Responsive => PolicyProfile {
                 cadence: Duration::from_secs(15),
                 maximum_jitter: Duration::from_secs(5),
-                qualifying_samples: 2,
+                qualifying_duration: ChronoDuration::minutes(3),
                 minimum_relation_bytes: 16 * MIB,
                 minimum_reclaim_bytes: 16 * MIB,
                 index_free_percent: 35,
@@ -81,11 +82,47 @@ pub struct SafetyGates {
     pub waiting_relation_lock: bool,
 }
 
+/// Fewest samples a breach run needs to qualify, however long it spans: one
+/// sample is a single reading, never evidence of a lasting state.
+pub const MINIMUM_BREACH_SAMPLES: u32 = 2;
+
+/// An unbroken run of samples that met every degradation threshold.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BreachRun {
+    /// When the run's first sample was taken.
+    pub since: DateTime<Utc>,
+    /// Samples in the run, at least one.
+    pub samples: u32,
+}
+
+impl BreachRun {
+    /// The run once a sample taken at `now` breaches too: the open run
+    /// lengthened, or a new run starting at `now`.
+    #[must_use]
+    pub const fn extended(run: Option<BreachRun>, now: DateTime<Utc>) -> BreachRun {
+        match run {
+            Some(run) => BreachRun {
+                since: run.since,
+                samples: run.samples.saturating_add(1),
+            },
+            None => BreachRun { since: now, samples: 1 },
+        }
+    }
+
+    /// Whether the run has lasted the profile's qualifying duration, inclusive,
+    /// over at least [`MINIMUM_BREACH_SAMPLES`] samples.
+    #[must_use]
+    pub fn qualifies(self, profile: PolicyProfile, now: DateTime<Utc>) -> bool {
+        self.samples >= MINIMUM_BREACH_SAMPLES && now.signed_duration_since(self.since) >= profile.qualifying_duration
+    }
+}
+
 /// A persisted target's decision-relevant state.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TargetState {
-    /// Number of immediately preceding qualifying samples.
-    pub consecutive_breaches: u32,
+    /// The open breach run, `None` when the last sample did not breach or an
+    /// action has completed since.
+    pub breach: Option<BreachRun>,
     /// Work already qualified on an earlier pass.
     pub is_action_pending: bool,
     /// Cooldown deadline after an action, absent before the first action.
@@ -103,7 +140,8 @@ pub enum DeferralReason {
     ReclaimTooSmall,
     /// The measured degradation percentage is below threshold.
     BelowThreshold,
-    /// More consecutive qualifying samples are required.
+    /// The target has not yet breached for the profile's qualifying duration
+    /// over enough samples.
     ConsecutiveSamples,
     /// The target remains in the cooldown its last action set.
     Cooldown,
@@ -191,7 +229,7 @@ pub(crate) const fn safety_deferral(profile: PolicyProfile, gates: SafetyGates) 
     None
 }
 
-/// Apply fixed thresholds, consecutive evidence, cooldown and load gates.
+/// Apply fixed thresholds, breach duration, cooldown and load gates.
 #[must_use]
 pub fn decide(
     mode: MaintenanceMode,
@@ -218,12 +256,37 @@ pub fn decide(
     if let Err(reason) = sample.qualification(profile) {
         return PolicyDecision::Deferred(reason);
     }
-    if state.consecutive_breaches.saturating_add(1) < profile.qualifying_samples {
+    if !BreachRun::extended(state.breach, now).qualifies(profile, now) {
         return PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples);
     }
     match mode {
         MaintenanceMode::Disabled | MaintenanceMode::Observe => PolicyDecision::WouldAct,
         MaintenanceMode::Automatic => PolicyDecision::Queued,
+    }
+}
+
+/// The breach run to persist after `decision`, judged on a sample taken at
+/// `now` (`sample` is `None` when a pending action was decided on without
+/// one).
+///
+/// A breaching sample lengthens the run and a sample under any threshold
+/// closes it. A decision taken before the sample was judged (cooldown, a load
+/// gate, a pending action) leaves the run as it was.
+#[must_use]
+pub fn breach_after(breach: Option<BreachRun>, decision: PolicyDecision, sample: Option<DegradationSample>, now: DateTime<Utc>) -> Option<BreachRun> {
+    match decision {
+        PolicyDecision::Queued | PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples) => Some(BreachRun::extended(breach, now)),
+        PolicyDecision::WouldAct => sample.map_or(breach, |_| Some(BreachRun::extended(breach, now))),
+        PolicyDecision::Deferred(DeferralReason::RelationTooSmall | DeferralReason::ReclaimTooSmall | DeferralReason::BelowThreshold) => None,
+        PolicyDecision::Act
+        | PolicyDecision::Deferred(
+            DeferralReason::Cooldown
+            | DeferralReason::ActiveBackendRatio
+            | DeferralReason::LongTransaction
+            | DeferralReason::HorizonHeld
+            | DeferralReason::ActiveMaintenance
+            | DeferralReason::WaitingRelationLock,
+        ) => breach,
     }
 }
 
@@ -337,6 +400,7 @@ mod tests {
         policy::{
             ActionEnding,
             ActionVerdict,
+            BreachRun,
             DeferralReason,
             DegradationSample,
             FreezeAge,
@@ -346,6 +410,7 @@ mod tests {
             SafetyGates,
             TargetState,
             action_verdict,
+            breach_after,
             cooldown_after,
             decide,
             freeze_pressure,
@@ -353,7 +418,7 @@ mod tests {
         vacuum_horizon::HorizonHolderKind,
     };
     use andromeda_postgresql_context_store::maintenance_config::{MaintenanceMode, MaintenanceProfile};
-    use chrono::{Duration as ChronoDuration, Utc};
+    use chrono::{DateTime, Duration as ChronoDuration, Utc};
     use pretty_assertions::assert_eq;
 
     fn qualifying(profile: PolicyProfile) -> DegradationSample {
@@ -381,25 +446,34 @@ mod tests {
         let responsive = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
         assert_eq!(conservative.cadence.as_secs(), 60);
         assert_eq!(conservative.maximum_jitter.as_secs(), 15);
-        assert_eq!(conservative.qualifying_samples, 3);
+        assert_eq!(conservative.qualifying_duration, ChronoDuration::minutes(10));
         assert_eq!(conservative.index_free_percent, 50);
         assert_eq!(conservative.heap_dead_percent, 20);
         assert_eq!(responsive.cadence.as_secs(), 15);
         assert_eq!(responsive.maximum_jitter.as_secs(), 5);
-        assert_eq!(responsive.qualifying_samples, 2);
+        assert_eq!(responsive.qualifying_duration, ChronoDuration::minutes(3));
         assert_eq!(responsive.index_free_percent, 35);
         assert_eq!(responsive.heap_dead_percent, 10);
+    }
+
+    /// A target whose single breaching sample was taken `minutes` ago.
+    fn breached_minutes_ago(minutes: i64, now: DateTime<Utc>) -> TargetState {
+        TargetState {
+            breach: Some(BreachRun {
+                since: now - ChronoDuration::minutes(minutes),
+                samples: 1,
+            }),
+            ..TargetState::default()
+        }
     }
 
     #[test]
     fn every_threshold_is_inclusive_and_a_reset_sample_is_deferred() {
         let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
-        let state = TargetState {
-            consecutive_breaches: 1,
-            ..TargetState::default()
-        };
+        let now = Utc::now();
+        let state = breached_minutes_ago(3, now);
         assert_eq!(
-            decide(MaintenanceMode::Automatic, profile, state, qualifying(profile), idle_gates(), Utc::now()),
+            decide(MaintenanceMode::Automatic, profile, state, qualifying(profile), idle_gates(), now),
             PolicyDecision::Queued
         );
         let below = DegradationSample {
@@ -409,7 +483,7 @@ mod tests {
             threshold_percent: profile.index_free_percent,
         };
         assert_eq!(
-            decide(MaintenanceMode::Automatic, profile, state, below, idle_gates(), Utc::now()),
+            decide(MaintenanceMode::Automatic, profile, state, below, idle_gates(), now),
             PolicyDecision::Deferred(DeferralReason::BelowThreshold)
         );
     }
@@ -417,14 +491,133 @@ mod tests {
     #[test]
     fn observe_mode_reports_but_never_authorizes_mutation() {
         let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
-        let state = TargetState {
-            consecutive_breaches: 1,
-            ..TargetState::default()
-        };
+        let now = Utc::now();
         assert_eq!(
-            decide(MaintenanceMode::Observe, profile, state, qualifying(profile), idle_gates(), Utc::now()),
+            decide(
+                MaintenanceMode::Observe,
+                profile,
+                breached_minutes_ago(3, now),
+                qualifying(profile),
+                idle_gates(),
+                now
+            ),
             PolicyDecision::WouldAct
         );
+    }
+
+    #[test]
+    fn one_sample_never_qualifies() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let now = Utc::now();
+        assert_eq!(
+            decide(
+                MaintenanceMode::Automatic,
+                profile,
+                TargetState::default(),
+                qualifying(profile),
+                idle_gates(),
+                now
+            ),
+            PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples)
+        );
+        assert!(
+            !BreachRun {
+                since: now - ChronoDuration::hours(1),
+                samples: 1
+            }
+            .qualifies(profile, now)
+        );
+    }
+
+    #[test]
+    fn two_samples_inside_the_duration_do_not_qualify() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let now = Utc::now();
+        assert_eq!(
+            decide(
+                MaintenanceMode::Automatic,
+                profile,
+                breached_minutes_ago(2, now),
+                qualifying(profile),
+                idle_gates(),
+                now
+            ),
+            PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples)
+        );
+    }
+
+    #[test]
+    fn two_samples_spanning_the_duration_qualify() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let now = Utc::now();
+        assert_eq!(
+            decide(
+                MaintenanceMode::Automatic,
+                profile,
+                breached_minutes_ago(3, now),
+                qualifying(profile),
+                idle_gates(),
+                now
+            ),
+            PolicyDecision::Queued
+        );
+        let conservative = PolicyProfile::from_profile(MaintenanceProfile::Conservative);
+        assert_eq!(
+            decide(
+                MaintenanceMode::Automatic,
+                conservative,
+                breached_minutes_ago(9, now),
+                qualifying(conservative),
+                idle_gates(),
+                now
+            ),
+            PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples)
+        );
+        assert_eq!(
+            decide(
+                MaintenanceMode::Automatic,
+                conservative,
+                breached_minutes_ago(10, now),
+                qualifying(conservative),
+                idle_gates(),
+                now
+            ),
+            PolicyDecision::Queued
+        );
+    }
+
+    #[test]
+    fn a_sample_below_threshold_clears_the_breach() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let now = Utc::now();
+        let state = breached_minutes_ago(2, now);
+        let below = DegradationSample {
+            degraded_percent: profile.index_free_percent - 1,
+            ..qualifying(profile)
+        };
+        let decision = decide(MaintenanceMode::Automatic, profile, state, below, idle_gates(), now);
+        assert_eq!(decision, PolicyDecision::Deferred(DeferralReason::BelowThreshold));
+        assert_eq!(breach_after(state.breach, decision, Some(below), now), None);
+    }
+
+    #[test]
+    fn a_breaching_sample_lengthens_the_run_and_a_gated_one_leaves_it() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let now = Utc::now();
+        let state = breached_minutes_ago(2, now);
+        let sample = qualifying(profile);
+        let decision = decide(MaintenanceMode::Automatic, profile, state, sample, idle_gates(), now);
+        assert_eq!(
+            breach_after(state.breach, decision, Some(sample), now),
+            Some(BreachRun {
+                since: now - ChronoDuration::minutes(2),
+                samples: 2,
+            })
+        );
+        assert_eq!(breach_after(None, decision, Some(sample), now), Some(BreachRun { since: now, samples: 1 }));
+        let gated = PolicyDecision::Deferred(DeferralReason::LongTransaction);
+        assert_eq!(breach_after(state.breach, gated, Some(sample), now), state.breach);
+        assert_eq!(breach_after(state.breach, PolicyDecision::WouldAct, None, now), state.breach);
     }
 
     #[test]

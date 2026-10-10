@@ -30,8 +30,8 @@ pub enum CatalogCounter {
     TableTotalBytes,
     /// Index size of an allowlisted base table.
     TableIndexBytes,
-    /// Consecutive threshold breaches recorded for a target.
-    ConsecutiveBreaches,
+    /// Samples in a target's recorded breach run.
+    BreachSamples,
     /// Consecutive failed actions recorded for a target.
     ConsecutiveFailures,
     /// Age in transactions of an ID holding the vacuum horizon.

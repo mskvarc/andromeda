@@ -10,7 +10,7 @@ use crate::{
         recorded_decision::RecordedDecision,
         target_code::{stored_target, target_of},
     },
-    policy::{ActionVerdict, DeferralReason, DegradationSample, PolicyDecision, TargetState},
+    policy::{ActionVerdict, BreachRun, DegradationSample, PolicyDecision, TargetState, breach_after},
     state::{RegisteredTenant, TenantKey, execute_update},
 };
 use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
@@ -48,7 +48,8 @@ pub(crate) async fn load_target_state(
 ) -> Result<TargetState, MaintenanceError> {
     let statement = Query::select()
         .columns([
-            PostgresqlMaintenanceTargets::ConsecutiveBreaches,
+            PostgresqlMaintenanceTargets::FirstBreachAt,
+            PostgresqlMaintenanceTargets::BreachSamples,
             PostgresqlMaintenanceTargets::IsActionPending,
             PostgresqlMaintenanceTargets::CooldownUntil,
             PostgresqlMaintenanceTargets::ConsecutiveFailures,
@@ -60,12 +61,27 @@ pub(crate) async fn load_target_state(
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(connection).await?;
     row.map_or(Ok(TargetState::default()), |row| {
+        let first_breach_at: Option<DateTime<Utc>> = row.try_get(PostgresqlMaintenanceTargets::FirstBreachAt.to_string().as_str())?;
+        let breach_samples = stored_count(&row, PostgresqlMaintenanceTargets::BreachSamples, CatalogCounter::BreachSamples)?;
         Ok(TargetState {
-            consecutive_breaches: stored_count(&row, PostgresqlMaintenanceTargets::ConsecutiveBreaches, CatalogCounter::ConsecutiveBreaches)?,
+            breach: first_breach_at.map(|since| BreachRun {
+                since,
+                samples: breach_samples,
+            }),
             is_action_pending: row.try_get(PostgresqlMaintenanceTargets::IsActionPending.to_string().as_str())?,
             cooldown_until: row.try_get(PostgresqlMaintenanceTargets::CooldownUntil.to_string().as_str())?,
             consecutive_failures: stored_count(&row, PostgresqlMaintenanceTargets::ConsecutiveFailures, CatalogCounter::ConsecutiveFailures)?,
         })
+    })
+}
+
+/// Convert a breach run's sample count to the platform schema's `integer`,
+/// zero when no run is open.
+fn persisted_breach_samples(breach: Option<BreachRun>) -> Result<i32, MaintenanceError> {
+    let samples = breach.map_or(0, |run| run.samples);
+    i32::try_from(samples).map_err(|_| MaintenanceError::CatalogValueOverflow {
+        counter: CatalogCounter::BreachSamples,
+        value: u64::from(samples),
     })
 }
 
@@ -154,19 +170,26 @@ pub(crate) async fn index_probe_states(connection: &mut PgConnection, tenant: &R
         .collect()
 }
 
-/// Persist sample evidence and any newly queued action.
+/// Persist sample evidence, the breach run `decision` leaves of `prior` (the
+/// run read before deciding) and any newly queued action. `now` is the instant
+/// the decision was taken at.
 pub(crate) async fn record_decision(
     connection: &mut PgConnection,
     tenant: &RegisteredTenant,
     target: MaintenanceTarget,
     sample: Option<DegradationSample>,
     decision: PolicyDecision,
+    prior: Option<BreachRun>,
+    now: DateTime<Utc>,
 ) -> Result<(), MaintenanceError> {
     ensure_target_state(connection, tenant, target).await?;
+    let breach = breach_after(prior, decision, sample, now);
     let mut statement = Query::update();
     statement
         .table(PostgresqlMaintenanceTargets::Table)
         .value(PostgresqlMaintenanceTargets::LastDecision, RecordedDecision::Policy(decision).code().code())
+        .value(PostgresqlMaintenanceTargets::FirstBreachAt, breach.map(|run| run.since))
+        .value(PostgresqlMaintenanceTargets::BreachSamples, persisted_breach_samples(breach)?)
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
         .and_where(Expr::col(PostgresqlMaintenanceTargets::Target).eq(stored_target(target).code()));
     if let Some(sample) = sample {
@@ -183,43 +206,8 @@ pub(crate) async fn record_decision(
             .value(PostgresqlMaintenanceTargets::LastDegradedPercent, i16::from(sample.degraded_percent))
             .value(PostgresqlMaintenanceTargets::LastThresholdPercent, i16::from(sample.threshold_percent));
     }
-    match decision {
-        PolicyDecision::Act => {
-            statement.value(PostgresqlMaintenanceTargets::IsActionPending, true);
-        }
-        PolicyDecision::Queued => {
-            statement
-                .value(
-                    PostgresqlMaintenanceTargets::ConsecutiveBreaches,
-                    Expr::col(PostgresqlMaintenanceTargets::ConsecutiveBreaches).add(1),
-                )
-                .value(PostgresqlMaintenanceTargets::IsActionPending, true);
-        }
-        PolicyDecision::WouldAct => {
-            if sample.is_some() {
-                statement.value(
-                    PostgresqlMaintenanceTargets::ConsecutiveBreaches,
-                    Expr::col(PostgresqlMaintenanceTargets::ConsecutiveBreaches).add(1),
-                );
-            }
-        }
-        PolicyDecision::Deferred(DeferralReason::ConsecutiveSamples) => {
-            statement.value(
-                PostgresqlMaintenanceTargets::ConsecutiveBreaches,
-                Expr::col(PostgresqlMaintenanceTargets::ConsecutiveBreaches).add(1),
-            );
-        }
-        PolicyDecision::Deferred(DeferralReason::RelationTooSmall | DeferralReason::ReclaimTooSmall | DeferralReason::BelowThreshold) => {
-            statement.value(PostgresqlMaintenanceTargets::ConsecutiveBreaches, 0);
-        }
-        PolicyDecision::Deferred(
-            DeferralReason::Cooldown
-            | DeferralReason::ActiveBackendRatio
-            | DeferralReason::LongTransaction
-            | DeferralReason::HorizonHeld
-            | DeferralReason::ActiveMaintenance
-            | DeferralReason::WaitingRelationLock,
-        ) => {}
+    if matches!(decision, PolicyDecision::Act | PolicyDecision::Queued) {
+        statement.value(PostgresqlMaintenanceTargets::IsActionPending, true);
     }
     execute_update(connection, statement.clone()).await?;
     let paired_gin = match target {
@@ -283,7 +271,8 @@ fn action_completion_update(
     };
     Ok(Query::update()
         .table(PostgresqlMaintenanceTargets::Table)
-        .value(PostgresqlMaintenanceTargets::ConsecutiveBreaches, 0)
+        .value(PostgresqlMaintenanceTargets::FirstBreachAt, Option::<DateTime<Utc>>::None)
+        .value(PostgresqlMaintenanceTargets::BreachSamples, 0)
         .value(PostgresqlMaintenanceTargets::IsActionPending, false)
         .value(PostgresqlMaintenanceTargets::CooldownUntil, cooldown_until)
         .value(PostgresqlMaintenanceTargets::ConsecutiveFailures, 0)
@@ -424,6 +413,8 @@ mod tests {
         assert!(sql.contains(r#""last_action_result" = 3"#), "{sql}");
         assert!(sql.contains(r#""is_action_pending" = FALSE"#), "{sql}");
         assert!(sql.contains(r#""consecutive_failures" = 0"#), "{sql}");
+        assert!(sql.contains(r#""first_breach_at" = NULL"#), "{sql}");
+        assert!(sql.contains(r#""breach_samples" = 0"#), "{sql}");
         Ok(())
     }
 

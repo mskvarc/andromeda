@@ -90,8 +90,9 @@ pub(crate) async fn execute_pending(
 ) -> Result<PassOutcome, MaintenanceError> {
     let gates = safety_gate_inspection::safety_gates(tenant_connection, target).await?;
     let target_state = target_record::load_target_state(platform, tenant, target).await?;
-    let decision = decide(mode, profile, target_state, empty_sample(), gates, Utc::now());
-    target_record::record_decision(platform, tenant, target, None, decision).await?;
+    let now = Utc::now();
+    let decision = decide(mode, profile, target_state, empty_sample(), gates, now);
+    target_record::record_decision(platform, tenant, target, None, decision, target_state.breach, now).await?;
     match decision {
         PolicyDecision::WouldAct => {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::WouldAct).await?;

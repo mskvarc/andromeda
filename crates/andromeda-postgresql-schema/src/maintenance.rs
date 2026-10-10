@@ -38,8 +38,11 @@ pub enum PostgresqlMaintenanceTargets {
     LastThresholdPercent,
     /// Policy decision for the most recent evaluation (`MaintenanceDecisionCode`).
     LastDecision,
-    /// Consecutive samples meeting every degradation threshold.
-    ConsecutiveBreaches,
+    /// First sample of the unbroken run meeting every degradation threshold,
+    /// NULL when no run is open.
+    FirstBreachAt,
+    /// Samples in the open breach run, zero when none is open.
+    BreachSamples,
     /// Whether a later pass should execute the qualified operation.
     IsActionPending,
     /// Successful-action cooldown deadline.
@@ -80,5 +83,7 @@ mod tests {
         assert_eq!(PostgresqlMaintenanceTargets::LastBeforeBytes.to_string(), "last_before_bytes");
         assert_eq!(PostgresqlMaintenanceTargets::LastDeadTuplesBefore.to_string(), "last_dead_tuples_before");
         assert_eq!(PostgresqlMaintenanceTargets::LastDeadTuplesAfter.to_string(), "last_dead_tuples_after");
+        assert_eq!(PostgresqlMaintenanceTargets::FirstBreachAt.to_string(), "first_breach_at");
+        assert_eq!(PostgresqlMaintenanceTargets::BreachSamples.to_string(), "breach_samples");
     }
 }

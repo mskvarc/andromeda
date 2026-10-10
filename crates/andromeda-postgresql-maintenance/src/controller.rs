@@ -200,8 +200,9 @@ impl MaintenanceController {
             result = inspection::probe_index(&mut connection, size, profile) => result?,
         };
         let target_state = target_record::load_target_state(platform, &tenant, target).await?;
-        let decision = decide(self.config.mode, profile, target_state, measured, idle_gates(), Utc::now());
-        target_record::record_decision(platform, &tenant, target, Some(measured), decision).await?;
+        let now = Utc::now();
+        let decision = decide(self.config.mode, profile, target_state, measured, idle_gates(), now);
+        target_record::record_decision(platform, &tenant, target, Some(measured), decision, target_state.breach, now).await?;
         let outcome = match decision {
             PolicyDecision::Queued => PassOutcome::Queued,
             PolicyDecision::WouldAct | PolicyDecision::Act => PassOutcome::WouldAct,
@@ -270,8 +271,9 @@ impl MaintenanceController {
         for sample in samples {
             let target = MaintenanceTarget::Heap(sample.target);
             let target_state = target_record::load_target_state(platform, tenant, target).await?;
-            let decision = decide(self.config.mode, profile, target_state, sample.degradation, idle_gates(), Utc::now());
-            target_record::record_decision(platform, tenant, target, Some(sample.degradation), decision).await?;
+            let now = Utc::now();
+            let decision = decide(self.config.mode, profile, target_state, sample.degradation, idle_gates(), now);
+            target_record::record_decision(platform, tenant, target, Some(sample.degradation), decision, target_state.breach, now).await?;
             info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), relation_bytes = sample.degradation.relation_bytes, reclaimable_bytes = sample.degradation.reclaimable_bytes, degraded_percent = sample.degradation.degraded_percent, decision = ?decision, "PostgreSQL maintenance heap sample completed");
             match decision {
                 PolicyDecision::Queued => outcome = Some(PassOutcome::Queued),
