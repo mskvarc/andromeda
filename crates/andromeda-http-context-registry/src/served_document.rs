@@ -15,11 +15,12 @@
 //! RFC 7232 section 5 obliges it to evaluate `If-None-Match`: a remote broker
 //! revalidating every `max-age` gets 304 without the document. The same path
 //! serves a different answer per tenant, errors included, so every Serve
-//! response carries `Vary: NGSILD-Tenant` (RFC 9111 section 4.1,
+//! response carries `Vary: ngsild-tenant` (RFC 9111 section 4.1,
 //! [`vary_on_tenant`]), or a shared cache between a client and the broker
 //! could hand one tenant's answer to another.
 
 use andromeda_context_registry::served_context::ServedContext;
+use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
 use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::loader::cache_lifetime::CacheLifetime;
@@ -28,11 +29,8 @@ use axum::{
     http::{HeaderValue, StatusCode, header::VARY},
     response::{IntoResponse, Response},
 };
-use headers::{CacheControl, ContentType, ETag, HeaderMapExt, IfNoneMatch};
+use headers::{CacheControl, ContentType, ETag, Header, HeaderMapExt, IfNoneMatch};
 use sha2::{Digest, Sha256};
-
-/// The request header a Serve answer is selected by besides its URL.
-static VARY_ON_TENANT: HeaderValue = HeaderValue::from_static("NGSILD-Tenant");
 
 /// The response one Serve answer takes, given the request's `If-None-Match`.
 ///
@@ -100,7 +98,7 @@ fn stored_document_response(document: &JsonLiteral, revalidation: CacheLifetime,
 /// for an unknown identifier or tenant and a 422 for a Cached entry carry it
 /// as the 200 does: each depends on the tenant the request addressed.
 pub(crate) async fn vary_on_tenant(mut response: Response) -> Response {
-    response.headers_mut().append(VARY, VARY_ON_TENANT.clone()); // clone: a header value is a cheap shared byte buffer
+    response.headers_mut().append(VARY, HeaderValue::from(NgsiLdTenant::name().clone())); // clone: a header name is a cheap shared byte buffer
     response
 }
 
@@ -224,7 +222,7 @@ mod tests {
         let marked = vary_on_tenant(compressed).await;
 
         let varied: Vec<&str> = marked.headers().get_all(VARY).iter().filter_map(|value| value.to_str().ok()).collect();
-        pretty_assertions::assert_eq!(varied, vec!["accept-encoding", "NGSILD-Tenant"]);
+        pretty_assertions::assert_eq!(varied, vec!["accept-encoding", "ngsild-tenant"]);
         pretty_assertions::assert_eq!(marked.status(), StatusCode::NOT_FOUND);
     }
 
