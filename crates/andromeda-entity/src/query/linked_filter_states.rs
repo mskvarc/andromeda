@@ -123,6 +123,7 @@ mod tests {
         filter::parser::parse,
         geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
         page_window::PageWindow,
+        projection::returned_attributes::ReturnedAttributes,
     };
     use andromeda_tenancy::tenant_ref::TenantRef;
     use async_trait::async_trait;
@@ -176,7 +177,12 @@ mod tests {
                 .collect())
         }
 
-        async fn get_with_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
+        async fn get_with_sys_attrs(
+            &self,
+            _target: &ContextTarget,
+            _id: &Identifier,
+            _returned: &ReturnedAttributes<'_>,
+        ) -> Result<Option<RetrievedEntity>, EntityError> {
             Err(unread("get_with_sys_attrs"))
         }
 

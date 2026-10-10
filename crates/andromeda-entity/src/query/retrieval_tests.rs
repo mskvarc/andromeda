@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::PageWindow,
-    projection::{compiled::Projection, term::ProjectionTerm},
+    projection::{compiled::Projection, returned_attributes::ReturnedAttributes, term::ProjectionTerm},
     type_selection::grammar::TypeExprRaw,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -65,7 +65,12 @@ impl EntityReader for RetrievalStore {
         Err(unexpected("get_batch"))
     }
 
-    async fn get_with_sys_attrs(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
+    async fn get_with_sys_attrs(
+        &self,
+        _target: &ContextTarget,
+        id: &Identifier,
+        _returned: &ReturnedAttributes<'_>,
+    ) -> Result<Option<RetrievedEntity>, EntityError> {
         // clone: the store hands out its row, as a real store does
         Ok((self.retrieved.state.id() == id).then(|| self.retrieved.clone()))
     }

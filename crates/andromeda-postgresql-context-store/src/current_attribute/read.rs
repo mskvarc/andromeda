@@ -15,12 +15,15 @@ use crate::{
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::entity_key::EntityKey;
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::pg_array::{all, any};
 use chrono::{DateTime, Utc};
+use iri_rs::IriBuf;
 use sea_query::{Expr, ExprTrait, Func, Iden, Query, SelectStatement, SimpleExpr};
 use sqlx::{FromRow, Row, postgres::PgRow};
 
@@ -41,6 +44,19 @@ pub enum RowSelection {
 }
 
 impl RowSelection {
+    /// The rows holding the Attributes `returned` lets a response hold, by
+    /// the keys `attributes` resolved. A name with no key is held by no row:
+    /// it takes nothing when named and sets nothing apart when excluded.
+    #[must_use]
+    pub fn of(returned: &ReturnedAttributes<'_>, attributes: &ResolvedNames<AttributeName>) -> RowSelection {
+        let keys = |iris: &[&IriBuf]| iris.iter().filter_map(|iri| attributes.get_str(iri.as_str())).collect();
+        match returned {
+            ReturnedAttributes::Every => RowSelection::Every,
+            ReturnedAttributes::Named(iris) => RowSelection::Named(keys(iris)),
+            ReturnedAttributes::AllBut(iris) => RowSelection::AllBut(keys(iris)),
+        }
+    }
+
     /// Whether the selection takes no row at all.
     #[must_use]
     pub const fn takes_none(&self) -> bool {
@@ -180,8 +196,11 @@ pub fn row_of(row: &PgRow) -> Result<Option<CurrentAttributeRow>, ContextStoreEr
 mod tests {
     use crate::current_attribute::read::{RowSelection, rows_of};
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
     use andromeda_postgresql_codes::entity_key::EntityKey;
-    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
+    use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Value};
 
@@ -245,6 +264,47 @@ mod tests {
         assert_eq!(RowSelection::AllBut(Vec::new()).condition(), None);
         assert!(!RowSelection::AllBut(Vec::new()).takes_none());
         assert!(RowSelection::Named(Vec::new()).takes_none());
+    }
+
+    fn iri(name: &str) -> IriBuf {
+        IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI")
+    }
+
+    fn known() -> ResolvedNames<AttributeName> {
+        ResolvedNames::from_pairs(
+            [("a", 4), ("b", 7)]
+                .into_iter()
+                .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("a name"), AttributeNameKey::from(key))),
+        )
+    }
+
+    #[test]
+    fn named_attributes_take_the_rows_of_those_the_dictionary_holds() {
+        let (a, b, never) = (iri("a"), iri("b"), iri("never-written"));
+        assert_eq!(
+            RowSelection::of(&ReturnedAttributes::Named(vec![&a, &b, &never]), &known()),
+            RowSelection::Named(names(&[4, 7]))
+        );
+    }
+
+    /// Clause 4.21: `pick=id,type` returns no attribute, so no row is read.
+    #[test]
+    fn no_named_attribute_takes_no_row() {
+        assert!(RowSelection::of(&ReturnedAttributes::Named(Vec::new()), &known()).takes_none());
+    }
+
+    #[test]
+    fn excluded_attributes_take_every_row_but_theirs() {
+        let (a, never) = (iri("a"), iri("never-written"));
+        assert_eq!(
+            RowSelection::of(&ReturnedAttributes::AllBut(vec![&a, &never]), &known()),
+            RowSelection::AllBut(names(&[4]))
+        );
+    }
+
+    #[test]
+    fn every_attribute_takes_every_row() {
+        assert_eq!(RowSelection::of(&ReturnedAttributes::Every, &known()), RowSelection::Every);
     }
 
     #[test]

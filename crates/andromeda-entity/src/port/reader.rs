@@ -5,6 +5,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
+use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
 use futures::future::BoxFuture;
 use std::{collections::HashMap, sync::Arc};
 
@@ -57,15 +58,22 @@ pub trait EntityReader: Send + Sync + 'static {
         Self: 'async_trait;
     /// Read one stored state together with its entity-level clause 4.8
     /// system times, in one read (clause 5.6.3 retrieval with `sysAttrs`).
-    fn get_with_sys_attrs<'life0, 'life1, 'life2, 'async_trait>(
+    ///
+    /// The state holds at least the Attributes `returned` lets the response
+    /// hold; a reader may leave every other Attribute out, so the caller
+    /// still narrows what it is handed.
+    fn get_with_sys_attrs<'life0, 'life1, 'life2, 'life3, 'life4, 'async_trait>(
         &'life0 self,
         target: &'life1 ContextTarget,
         id: &'life2 Identifier,
+        returned: &'life3 ReturnedAttributes<'life4>,
     ) -> BoxFuture<'async_trait, Result<Option<RetrievedEntity>, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
+        'life3: 'async_trait,
+        'life4: 'async_trait,
         Self: 'async_trait;
     /// Read one entity's clause 4.8 system attributes.
     fn get_sys_attrs<'life0, 'life1, 'life2, 'async_trait>(

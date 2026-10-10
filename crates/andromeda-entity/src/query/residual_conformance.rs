@@ -45,6 +45,7 @@ mod tests {
         filter::{eval::evaluate, parser},
         geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand, query::GeoQuery},
         page_window::{PageStart, PageWindow},
+        projection::returned_attributes::ReturnedAttributes,
         queried_entity::linked_entities::NoLinkedEntities,
         scope::query::ScopeQuery,
     };
@@ -169,7 +170,12 @@ mod tests {
                 .collect())
         }
 
-        async fn get_with_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
+        async fn get_with_sys_attrs(
+            &self,
+            _target: &ContextTarget,
+            _id: &Identifier,
+            _returned: &ReturnedAttributes<'_>,
+        ) -> Result<Option<RetrievedEntity>, EntityError> {
             Err(unused("get_with_sys_attrs"))
         }
 

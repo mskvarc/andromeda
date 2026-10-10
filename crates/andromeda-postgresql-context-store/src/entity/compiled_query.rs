@@ -8,7 +8,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{port::retrieved_entity::RetrievedEntity, query_outcome::QueryOutcome};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
@@ -71,7 +71,8 @@ impl EntityRepository {
         let (sql, values) = built.select.build_sqlx(PostgresQueryBuilder);
         let head_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
         let window_count = page_total(&head_rows, matches!(built.total, EntityTotal::OnPageRows { .. }));
-        let selection = row_selection(&planned.query, &names.attributes);
+        let returned = ReturnedAttributes::of(&planned.query.projection, &planned.query.selection.attrs);
+        let selection = RowSelection::of(&returned, &names.attributes);
         let mut rows = self.entities_of_heads(target, &head_rows, &selection).await?;
         built.read_order.present(&mut rows);
         let rows = rows;
@@ -195,86 +196,5 @@ fn page_total(rows: &[PgRow], read_total_count: bool) -> Option<i64> {
     match (read_total_count, rows.first()) {
         (true, Some(first)) => first.try_get::<i64, _>(TOTAL_COUNT_COLUMN).ok(),
         (true, None) | (false, _) => None,
-    }
-}
-
-/// The rows of a page's Entities the query's `attrs` or clause 4.21
-/// projection can return, by the keys `attributes` resolved. A name with no
-/// key is held by no row: it takes nothing when named and sets nothing apart
-/// when excluded.
-fn row_selection(query: &CompiledEntityQuery, attributes: &ResolvedNames<AttributeName>) -> RowSelection {
-    let keys = |iris: Vec<&IriBuf>| iris.into_iter().filter_map(|iri| attributes.get_str(iri.as_str())).collect();
-    match ReturnedAttributes::of(&query.projection, &query.selection.attrs) {
-        ReturnedAttributes::Every => RowSelection::Every,
-        ReturnedAttributes::Named(iris) => RowSelection::Named(keys(iris)),
-        ReturnedAttributes::AllBut(iris) => RowSelection::AllBut(keys(iris)),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{current_attribute::read::RowSelection, entity::compiled_query::row_selection};
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::{
-        entity::compiled::CompiledEntityQuery,
-        entity_selection::EntitySelection,
-        projection::{compiled::Projection, term::ProjectionTerm},
-    };
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
-    use iri_rs::IriBuf;
-    use pretty_assertions::assert_eq;
-
-    fn iri(name: &str) -> IriBuf {
-        IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI")
-    }
-
-    fn query(projection: Projection, attrs: Vec<IriBuf>) -> CompiledEntityQuery {
-        CompiledEntityQuery::builder()
-            .selection(EntitySelection::builder().attrs(attrs).build())
-            .projection(projection)
-            .build()
-    }
-
-    fn known() -> ResolvedNames<AttributeName> {
-        ResolvedNames::from_pairs(
-            [("a", 4), ("b", 7)]
-                .into_iter()
-                .map(|(name, key)| (format!("https://example.com/{name}").parse().expect("a name"), AttributeNameKey::from(key))),
-        )
-    }
-
-    /// Clause 4.21: `pick=id,type` returns no attribute, so the page reads no
-    /// `current_attributes` row at all.
-    #[test]
-    fn pick_of_id_and_type_reads_no_instance_rows() {
-        let projection = Projection::builder().pick(vec![ProjectionTerm::Id, ProjectionTerm::Type]).build();
-        assert!(row_selection(&query(projection, Vec::new()), &known()).takes_none());
-    }
-
-    #[test]
-    fn attrs_reads_the_rows_of_the_named_attributes_the_dictionary_holds() {
-        assert_eq!(
-            row_selection(&query(Projection::default(), vec![iri("a"), iri("b"), iri("never-written")]), &known()),
-            RowSelection::Named(vec![AttributeNameKey::from(4), AttributeNameKey::from(7)])
-        );
-    }
-
-    #[test]
-    fn omit_reads_every_row_but_those_of_the_omitted_attributes() {
-        let projection = Projection::builder()
-            .omit(vec![ProjectionTerm::Attribute {
-                iri: iri("a"),
-                linked: Vec::new(),
-            }])
-            .build();
-        assert_eq!(
-            row_selection(&query(projection, Vec::new()), &known()),
-            RowSelection::AllBut(vec![AttributeNameKey::from(4)])
-        );
-    }
-
-    #[test]
-    fn no_projection_reads_every_row() {
-        assert_eq!(row_selection(&query(Projection::default(), Vec::new()), &known()), RowSelection::Every);
     }
 }

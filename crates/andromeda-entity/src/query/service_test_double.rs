@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::PageWindow,
+    projection::returned_attributes::ReturnedAttributes,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use async_trait::async_trait;
@@ -51,7 +52,12 @@ impl EntityReader for UnusedStore {
         Err(unused("get_batch"))
     }
 
-    async fn get_with_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
+    async fn get_with_sys_attrs(
+        &self,
+        _target: &ContextTarget,
+        _id: &Identifier,
+        _returned: &ReturnedAttributes<'_>,
+    ) -> Result<Option<RetrievedEntity>, EntityError> {
         Err(unused("get_with_sys_attrs"))
     }
 

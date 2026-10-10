@@ -24,13 +24,14 @@ use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
     page_window::PageWindow,
-    projection::compiled::Projection,
+    projection::{compiled::Projection, returned_attributes::ReturnedAttributes},
     type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use andromeda_telemetry::entity::{self, EntityOperation};
 use chrono::{DateTime, Utc};
+use iri_rs::IriBuf;
 use std::sync::Arc;
 
 /// What a clause 5.6.3 retrieval narrows the retrieved entity down to.
@@ -77,10 +78,13 @@ impl EntityQueryService {
     ) -> Result<ReceivedState, EntityError> {
         let timer = entity::start(EntityOperation::Retrieve);
         let result: Result<ReceivedState, EntityError> = async {
+            let wanted_iris = self.expand_attribute_names(narrowing.attrs, context).await?;
+            let unprojected = Projection::default();
+            let returned = ReturnedAttributes::of(narrowing.projection.unwrap_or(&unprojected), &wanted_iris);
             // Clause 4.8: the entity-level system times sit on the stored row
             // beside the state, so they are read with it rather than asked for
             // in a second read.
-            let Some(RetrievedEntity { state, sys_attrs }) = self.reader.get_with_sys_attrs(target, id).await? else {
+            let Some(RetrievedEntity { state, sys_attrs }) = self.reader.get_with_sys_attrs(target, id, &returned).await? else {
                 return Err(EntityError::not_found(id));
             };
             // Clause 5.7.1.4: the target is the entity "whose id (URI), and
@@ -95,7 +99,7 @@ impl EntityQueryService {
             }
 
             let now = Utc::now();
-            let state = self.narrow_to_selection(state, id, narrowing, context, now).await?;
+            let state = narrow_to_selection(state, id, narrowing, &wanted_iris, now)?;
             // Tables 6.4.3.2-1 and 5.2.14.1-1 make `attrs` "a synonym for
             // pick", so the clause 5.7.1.4 rule `attrs` obeys is the same rule here,
             // and clause 5.7.1.5 reduces the Entity "down to only contain the
@@ -111,51 +115,6 @@ impl EntityQueryService {
         .await;
         timer.finish_result(&result);
         result
-    }
-
-    /// Narrow a retrieved state to the `attrs` list (clause 5.7.2) and the
-    /// clause 4.21 projection the request selected, by expanded name, before
-    /// it is compacted.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EntityError::not_found`] when `attrs` leaves the entity with
-    /// no attribute standing at `now`, and whatever the context expansion
-    /// failed with otherwise.
-    async fn narrow_to_selection(
-        &self,
-        state: Arc<EntityState>,
-        id: &Identifier,
-        narrowing: &RetrievalNarrowing<'_>,
-        context: &ContextSpec,
-        now: DateTime<Utc>,
-    ) -> Result<Arc<EntityState>, EntityError> {
-        if narrowing.attrs.is_empty() && narrowing.projection.is_none() {
-            return Ok(state);
-        }
-        // clone: a state copy shares every attribute, the narrowing only drops
-        // some of them from the copy's map.
-        let mut narrowed = Arc::unwrap_or_clone(state);
-        let wanted_iris = if narrowing.attrs.is_empty() {
-            Vec::new()
-        } else {
-            self.expand_attribute_names(narrowing.attrs, context).await?
-        };
-        // Clause 4.21 is applied before the clause 4.5.23 traversal reads the
-        // entity's Relationships, matching the query path, where the projection
-        // runs inside the query and the join follows it.
-        narrow_state(&mut narrowed, ListInForce::of(narrowing.projection, &wanted_iris));
-
-        // Clause 5.7.1.4: "If the optional Attribute list is present and the
-        // NGSI-LD endpoint does know about a matching Entity for the Entity
-        // ID, but this Entity does not have any of the Attributes in the
-        // Attribute list, then an error of type ResourceNotFound shall be
-        // raised." An attribute whose every instance expired is not one the
-        // entity has (clause 4.22).
-        if !wanted_iris.is_empty() && !keeps_a_standing_attribute(&narrowed, now) {
-            return Err(EntityError::not_found(id));
-        }
-        Ok(Arc::new(narrowed))
     }
 
     /// Select the page `window` selects of a parameterized entity query
@@ -229,4 +188,42 @@ impl EntityQueryService {
 /// here keeps one and the page stays the size the store cut it to.
 fn narrow_to_query(state: &mut EntityState, query: &CompiledEntityQuery) {
     narrow_state(state, ListInForce::of(Some(&query.projection), &query.selection.attrs));
+}
+
+/// Narrow a retrieved state to the `attrs` list (clause 5.7.2), expanded to
+/// `wanted_iris`, and the clause 4.21 projection the request selected, before
+/// it is compacted.
+///
+/// # Errors
+///
+/// Returns [`EntityError::not_found`] when `attrs` leaves the entity with no
+/// attribute standing at `now`.
+fn narrow_to_selection(
+    state: Arc<EntityState>,
+    id: &Identifier,
+    narrowing: &RetrievalNarrowing<'_>,
+    wanted_iris: &[IriBuf],
+    now: DateTime<Utc>,
+) -> Result<Arc<EntityState>, EntityError> {
+    if narrowing.attrs.is_empty() && narrowing.projection.is_none() {
+        return Ok(state);
+    }
+    // clone: a state copy shares every attribute, the narrowing only drops
+    // some of them from the copy's map.
+    let mut narrowed = Arc::unwrap_or_clone(state);
+    // Clause 4.21 is applied before the clause 4.5.23 traversal reads the
+    // entity's Relationships, matching the query path, where the projection
+    // runs inside the query and the join follows it.
+    narrow_state(&mut narrowed, ListInForce::of(narrowing.projection, wanted_iris));
+
+    // Clause 5.7.1.4: "If the optional Attribute list is present and the
+    // NGSI-LD endpoint does know about a matching Entity for the Entity
+    // ID, but this Entity does not have any of the Attributes in the
+    // Attribute list, then an error of type ResourceNotFound shall be
+    // raised." An attribute whose every instance expired is not one the
+    // entity has (clause 4.22).
+    if !wanted_iris.is_empty() && !keeps_a_standing_attribute(&narrowed, now) {
+        return Err(EntityError::not_found(id));
+    }
+    Ok(Arc::new(narrowed))
 }

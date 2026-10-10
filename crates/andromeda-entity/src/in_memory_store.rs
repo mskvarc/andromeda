@@ -27,6 +27,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
+use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use std::{
@@ -256,7 +257,12 @@ impl EntityReader for InMemoryStore {
             .collect())
     }
 
-    async fn get_with_sys_attrs(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
+    async fn get_with_sys_attrs(
+        &self,
+        _target: &ContextTarget,
+        id: &Identifier,
+        _returned: &ReturnedAttributes<'_>,
+    ) -> Result<Option<RetrievedEntity>, EntityError> {
         Ok(self.read(id).map(|(state, modified_at)| RetrievedEntity {
             state,
             sys_attrs: SysAttrsSnapshot {

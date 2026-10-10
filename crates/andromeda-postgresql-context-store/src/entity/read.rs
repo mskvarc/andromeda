@@ -1,22 +1,25 @@
 //! The statements that read Entities' current state by identifier.
 //!
 //! An Entity is its head (its `entities` and `entity_search` rows) and its
-//! `current_attributes` rows. A read by identifier takes all of them in one
+//! `current_attributes` rows. A read by identifier takes them in one
 //! statement: the rows are left-joined to the head, so an Entity without
-//! attributes still reads back, and nothing is sorted, since assembly orders
-//! the rows by ordinal. The compare-and-set token a read-modify-write states
-//! its precondition against is the head's `modified_at`.
+//! attributes, or without one the read selects, still reads back, and nothing
+//! is sorted, since assembly orders the rows by ordinal. A retrieval narrowed
+//! by `attrs` or a clause 4.21 projection reads the rows of the Attributes it
+//! can return and no other. The compare-and-set token a read-modify-write
+//! states its precondition against is the head's `modified_at`.
 
 use crate::{
-    current_attribute::read::{Rows, select_row_columns},
+    current_attribute::read::{RowSelection, Rows, select_row_columns},
     entity::{entity_types::Search, mapper::stored_uri, repo::EntityRepository, stored_entities::GatheredEntities},
     error::ContextStoreError,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{entity_snapshot::EntitySnapshot, port::retrieved_entity::RetrievedEntity};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
+use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_context_query::entity_head::select_head;
 use andromeda_postgresql_schema::current::{CurrentAttributes, E, Entities, EntitySearch};
@@ -35,7 +38,7 @@ impl EntityRepository {
     /// when the stored rows no longer read back as an entity state.
     pub async fn get(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<EntityState>, ContextStoreError> {
         Ok(self
-            .get_with_sys_attrs(target, id)
+            .get_with_sys_attrs(target, id, &ReturnedAttributes::Every)
             .await?
             .map(|retrieved| Arc::unwrap_or_clone(retrieved.state)))
     }
@@ -52,7 +55,9 @@ impl EntityRepository {
             return Ok(HashMap::new());
         }
         let id_strs: Vec<&str> = ids.iter().map(Identifier::as_str).collect();
-        let retrieved = self.read_joined(entities_query(target, any(text_array(&id_strs)))).await?;
+        let retrieved = self
+            .read_joined(entities_query(target, any(text_array(&id_strs)), &RowSelection::Every))
+            .await?;
         // clone: the identifier keys the map and stays in the state it names
         Ok(retrieved.into_iter().map(|entity| (entity.state.id().clone(), entity)).collect())
     }
@@ -64,7 +69,7 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when the read or a name lookup fails, or
     /// when the stored rows no longer read back as an entity state.
     pub async fn get_snapshot(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<EntitySnapshot>, ContextStoreError> {
-        Ok(self.get_with_sys_attrs(target, id).await?.map(snapshot_of))
+        Ok(self.get_with_sys_attrs(target, id, &ReturnedAttributes::Every).await?.map(snapshot_of))
     }
 
     /// Retrieve stored states and `modified_at` for several entities in one
@@ -84,14 +89,38 @@ impl EntityRepository {
     }
 
     /// Retrieve an entity's stored state together with its clause 4.8 system
-    /// attributes, in one statement.
+    /// attributes, in one statement, holding the Attributes `returned` lets a
+    /// response hold and no other.
     ///
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when the read or a name lookup fails, or
     /// when the stored rows no longer read back as an entity state.
-    pub async fn get_with_sys_attrs(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<RetrievedEntity>, ContextStoreError> {
-        Ok(self.read_joined(entities_query(target, Expr::val(id.as_str()))).await?.pop())
+    pub async fn get_with_sys_attrs(
+        &self,
+        target: &ContextTarget,
+        id: &Identifier,
+        returned: &ReturnedAttributes<'_>,
+    ) -> Result<Option<RetrievedEntity>, ContextStoreError> {
+        let selection = self.row_selection(returned).await?;
+        Ok(self.read_joined(entities_query(target, Expr::val(id.as_str()), &selection)).await?.pop())
+    }
+
+    /// The rows holding the Attributes `returned` lets a response hold, its
+    /// names resolved through the attribute dictionary. A name that is no
+    /// Attribute name is held by no row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when the name lookup fails.
+    async fn row_selection(&self, returned: &ReturnedAttributes<'_>) -> Result<RowSelection, ContextStoreError> {
+        let iris = match returned {
+            ReturnedAttributes::Every => return Ok(RowSelection::Every),
+            ReturnedAttributes::Named(iris) | ReturnedAttributes::AllBut(iris) => iris,
+        };
+        let names: Vec<AttributeName> = iris.iter().filter_map(|iri| iri.as_str().parse().ok()).collect();
+        let attributes = self.attribute_names.lookup(&names).await?;
+        Ok(RowSelection::of(returned, &attributes))
     }
 
     /// Retrieve system attributes for a single entity.
@@ -150,16 +179,24 @@ fn sys_attrs_of(row: &PgRow) -> Result<SysAttrsSnapshot, ContextStoreError> {
     })
 }
 
-/// The heads and rows of the Entities whose identifier equals `ids`, a bound
-/// identifier or `ANY` of a bound array:
+/// The heads of the Entities whose identifier equals `ids`, a bound
+/// identifier or `ANY` of a bound array, each with the rows `selection` takes.
+/// The selection is a condition of the join, so a head whose rows it takes
+/// none of still reads back:
 ///
 /// ```sql
 /// SELECT <head>, <row columns>
 /// FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key
 /// LEFT JOIN current_attributes ca ON ca.entity_key = e.entity_key
+///     [AND ca.attribute_name_key = ANY(<keys>) | <> ALL(<keys>)]
 /// WHERE e.id = <ids>
 /// ```
-fn entities_query(target: &ContextTarget, ids: SimpleExpr) -> SelectStatement {
+fn entities_query(target: &ContextTarget, ids: SimpleExpr, selection: &RowSelection) -> SelectStatement {
+    let same_entity = Expr::col((Rows, CurrentAttributes::EntityKey)).equals((E, Entities::EntityKey));
+    let join = match selection.condition() {
+        Some(condition) => same_entity.and(condition),
+        None => same_entity,
+    };
     let mut statement = Query::select();
     select_head(&mut statement, E, Search);
     select_row_columns(&mut statement);
@@ -171,12 +208,7 @@ fn entities_query(target: &ContextTarget, ids: SimpleExpr) -> SelectStatement {
             Search,
             Expr::col((Search, EntitySearch::EntityKey)).equals((E, Entities::EntityKey)),
         )
-        .join_as(
-            JoinType::LeftJoin,
-            table_of(target, CurrentAttributes::Table),
-            Rows,
-            Expr::col((Rows, CurrentAttributes::EntityKey)).equals((E, Entities::EntityKey)),
-        )
+        .join_as(JoinType::LeftJoin, table_of(target, CurrentAttributes::Table), Rows, join)
         .and_where(Expr::col((E, Entities::Id)).eq(ids));
     statement
 }
@@ -193,14 +225,24 @@ fn sys_attrs_query(target: &ContextTarget, ids: SimpleExpr) -> SelectStatement {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity::read::{entities_query, sys_attrs_query};
+    use crate::{
+        current_attribute::read::RowSelection,
+        entity::read::{entities_query, sys_attrs_query},
+    };
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
     use andromeda_postgresql_seaquery::pg_array::{any, text_array};
     use pretty_assertions::assert_eq;
-    use sea_query::{Expr, PostgresQueryBuilder};
+    use sea_query::{Expr, PostgresQueryBuilder, Value};
+
+    const JOIN: &str = r#"LEFT JOIN "current_attributes" AS "ca" ON "ca"."entity_key" = "e"."entity_key""#;
 
     fn retrieve() -> String {
-        entities_query(&ContextTarget::Live, Expr::val("urn:x")).to_string(PostgresQueryBuilder)
+        entities_query(&ContextTarget::Live, Expr::val("urn:x"), &RowSelection::Every).to_string(PostgresQueryBuilder)
+    }
+
+    fn names(keys: &[i32]) -> Vec<AttributeNameKey> {
+        keys.iter().copied().map(AttributeNameKey::from).collect()
     }
 
     /// Assembly orders the rows by ordinal, so the retrieve reads the
@@ -209,12 +251,54 @@ mod tests {
     #[test]
     fn a_retrieve_reads_rows_without_a_sort() {
         let sql = retrieve();
+        assert!(sql.ends_with(&format!(r#"{JOIN} WHERE "e"."id" = 'urn:x'"#)), "{sql}");
+        assert!(!sql.contains("ORDER BY"), "{sql}");
+    }
+
+    /// Clause 4.21: `attrs=a,b` returns `a` and `b` alone, so only their rows
+    /// are joined. The names are a condition of the join, not of the
+    /// statement, so the head reads back even when the Entity holds neither.
+    #[test]
+    fn a_retrieve_narrowed_to_named_attributes_joins_their_rows_alone() {
+        let selection = RowSelection::Named(names(&[4, 7]));
+        let (sql, values) = entities_query(&ContextTarget::Live, Expr::val("urn:x"), &selection).build(PostgresQueryBuilder);
         assert!(
-            sql.contains(r#"LEFT JOIN "current_attributes" AS "ca" ON "ca"."entity_key" = "e"."entity_key""#),
+            sql.ends_with(&format!(r#"{JOIN} AND "ca"."attribute_name_key" = ANY($1) WHERE "e"."id" = $2"#)),
             "{sql}"
         );
-        assert!(sql.ends_with(r#"WHERE "e"."id" = 'urn:x'"#), "{sql}");
-        assert!(!sql.contains("ORDER BY"), "{sql}");
+        assert_eq!(values.0, vec![Value::from(vec![4_i32, 7]), Value::from("urn:x")]);
+    }
+
+    /// Clause 4.21: `pick=id,type` returns no attribute; the head is still
+    /// read, with no row joined to it.
+    #[test]
+    fn a_retrieve_selecting_no_attribute_keeps_the_head() {
+        let (sql, values) = entities_query(&ContextTarget::Live, Expr::val("urn:x"), &RowSelection::Named(Vec::new())).build(PostgresQueryBuilder);
+        assert!(
+            sql.ends_with(&format!(r#"{JOIN} AND "ca"."attribute_name_key" = ANY($1) WHERE "e"."id" = $2"#)),
+            "{sql}"
+        );
+        assert_eq!(values.0[0], Value::from(Vec::<i32>::new()));
+    }
+
+    /// Clause 4.21: `omit=a` returns every attribute but `a`.
+    #[test]
+    fn a_retrieve_omitting_attributes_joins_every_other_row() {
+        let (sql, values) = entities_query(&ContextTarget::Live, Expr::val("urn:x"), &RowSelection::AllBut(names(&[4]))).build(PostgresQueryBuilder);
+        assert!(
+            sql.ends_with(&format!(r#"{JOIN} AND "ca"."attribute_name_key" <> ALL($1) WHERE "e"."id" = $2"#)),
+            "{sql}"
+        );
+        assert_eq!(values.0[0], Value::from(vec![4_i32]));
+    }
+
+    /// An omission naming no stored attribute is no selection at all.
+    #[test]
+    fn a_retrieve_omitting_nothing_joins_every_row() {
+        assert_eq!(
+            entities_query(&ContextTarget::Live, Expr::val("urn:x"), &RowSelection::AllBut(Vec::new())).to_string(PostgresQueryBuilder),
+            retrieve()
+        );
     }
 
     /// The token a read-modify-write states its precondition against is the
@@ -228,7 +312,7 @@ mod tests {
 
     #[test]
     fn a_batch_reads_through_one_array_membership_test() {
-        let (sql, values) = entities_query(&ContextTarget::Live, any(text_array(&["urn:a", "urn:b"]))).build(PostgresQueryBuilder);
+        let (sql, values) = entities_query(&ContextTarget::Live, any(text_array(&["urn:a", "urn:b"])), &RowSelection::Every).build(PostgresQueryBuilder);
         assert!(
             sql.ends_with(r#"WHERE "e"."id" = ANY($1)"#),
             "a batch must not expand to a placeholder per id: {sql}"

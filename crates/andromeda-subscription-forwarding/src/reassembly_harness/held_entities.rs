@@ -12,7 +12,12 @@ use andromeda_entity::{
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
+    entity::compiled::CompiledEntityQuery,
+    page_window::PageWindow,
+    projection::returned_attributes::ReturnedAttributes,
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::{collections::HashMap, sync::Arc};
@@ -66,7 +71,12 @@ impl EntityReader for HeldEntities {
             .collect())
     }
 
-    async fn get_with_sys_attrs(&self, _target: &ContextTarget, id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
+    async fn get_with_sys_attrs(
+        &self,
+        _target: &ContextTarget,
+        id: &Identifier,
+        _returned: &ReturnedAttributes<'_>,
+    ) -> Result<Option<RetrievedEntity>, EntityError> {
         Ok(self.states.get(id).map(|state| RetrievedEntity {
             state: Arc::clone(state),
             sys_attrs: HeldEntities::system_times(),

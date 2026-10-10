@@ -40,6 +40,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     page_window::PageWindow,
+    projection::returned_attributes::ReturnedAttributes,
     split_filter::LeafTruths,
     temporal::{compiled::CompiledTemporalQuery, history_delete::TemporalHistoryDeleteScope},
 };
@@ -180,7 +181,12 @@ impl EntityReader for StubBroker {
             .collect())
     }
 
-    async fn get_with_sys_attrs(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
+    async fn get_with_sys_attrs(
+        &self,
+        _target: &ContextTarget,
+        _id: &Identifier,
+        _returned: &ReturnedAttributes<'_>,
+    ) -> Result<Option<RetrievedEntity>, EntityError> {
         panic!("get_with_sys_attrs is not exercised by the traversal harness")
     }
 

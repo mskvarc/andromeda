@@ -8,6 +8,7 @@ use andromeda_entity::{
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
+use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
 use async_trait::async_trait;
 use std::{collections::HashMap, sync::Arc};
 
@@ -24,8 +25,15 @@ impl EntityReader for EntityRepository {
         EntityRepository::get_batch(self, target, ids).await.map_err(|error| classify(&error))
     }
 
-    async fn get_with_sys_attrs(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<RetrievedEntity>, EntityError> {
-        EntityRepository::get_with_sys_attrs(self, target, id).await.map_err(|error| classify(&error))
+    async fn get_with_sys_attrs(
+        &self,
+        target: &ContextTarget,
+        id: &Identifier,
+        returned: &ReturnedAttributes<'_>,
+    ) -> Result<Option<RetrievedEntity>, EntityError> {
+        EntityRepository::get_with_sys_attrs(self, target, id, returned)
+            .await
+            .map_err(|error| classify(&error))
     }
 
     async fn get_snapshot(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
