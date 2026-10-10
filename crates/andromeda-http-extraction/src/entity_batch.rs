@@ -129,7 +129,7 @@ where
         // absent Content-Length with a bare 411 before the Content-Type is
         // looked at: a request that declares no payload length has declared no
         // payload for the media type to describe.
-        let declared = declared_body_length(&parts.headers).map_err(|error| error.into_rejection(uri.clone()).into_response())?; // clone: the media-type refusal below names the same request
+        let declared = declared_body_length(&parts.headers, &parts.extensions).map_err(|error| error.into_rejection(uri.clone()).into_response())?; // clone: the media-type refusal below names the same request
         // Clause 6.3.4: "Unsupported Media Type, i.e. 'Content-Type' header is
         // not 'application/json' nor 'application/ld+json', shall result in
         // just a 415 HTTP status code (without any payload body)". This is the

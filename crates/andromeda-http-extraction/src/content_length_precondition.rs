@@ -11,12 +11,17 @@
 //! single operation, the array of a batch operation, the document of a hosted
 //! `@context` -- checks it here rather than each on its own, so no body-taking
 //! route can be reached without the precondition having been applied.
+//!
+//! The precondition reads the request as the client sent it. Decoding a
+//! `Content-Encoding` removes the `Content-Length` header, since the decoded
+//! body no longer has the declared length, so the layer that decodes records the
+//! header it received as a [`ReceivedContentLength`] before it does.
 
 use crate::addressed_uri::addressed_uri;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use axum::{
     extract::FromRequestParts,
-    http::{HeaderMap, StatusCode, Uri, header::CONTENT_LENGTH, request::Parts},
+    http::{Extensions, HeaderMap, HeaderValue, StatusCode, Uri, header::CONTENT_LENGTH, request::Parts},
 };
 use std::{
     future::{Future, ready},
@@ -40,6 +45,23 @@ impl DeclaredBodyLength {
     #[must_use]
     pub const fn bytes(self) -> NonZeroU64 {
         self.0
+    }
+}
+
+/// The `Content-Length` a request carried when it was received, recorded
+/// before a decoding of its `Content-Encoding` removed the header.
+///
+/// `None` is a request received without the header, which the precondition
+/// refuses as absent even though the body was decoded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceivedContentLength(Option<HeaderValue>);
+
+impl ReceivedContentLength {
+    /// The `Content-Length` the received `headers` carry.
+    #[must_use]
+    pub fn of(headers: &HeaderMap) -> ReceivedContentLength {
+        // clone: the header stays on the request for the decoding layer to remove
+        ReceivedContentLength(headers.get(CONTENT_LENGTH).cloned())
     }
 }
 
@@ -78,9 +100,11 @@ impl ContentLengthPreconditionError {
     }
 }
 
-/// Apply the clause 6.3.4 `Content-Length` precondition to a request's headers.
+/// Apply the clause 6.3.4 `Content-Length` precondition to a request.
 ///
-/// The header is read untyped on purpose: [`headers::ContentLength`] reports an
+/// A [`ReceivedContentLength`] in `extensions` is the header the client sent
+/// for a body the stack decoded, and is read instead of `headers`, which no
+/// longer carry it. The header is read untyped on purpose: [`headers::ContentLength`] reports an
 /// absent header and an unparsable one alike, and clause 6.3.4 answers the
 /// first with a `411` and the second with an `InvalidRequest`.
 ///
@@ -91,8 +115,12 @@ impl ContentLengthPreconditionError {
 /// value it declares is not a decimal byte count, and
 /// [`ContentLengthPreconditionError::Empty`] when it declares a zero-length
 /// payload body.
-pub fn declared_body_length(headers: &HeaderMap) -> Result<DeclaredBodyLength, ContentLengthPreconditionError> {
-    let declared = headers.get(CONTENT_LENGTH).ok_or(ContentLengthPreconditionError::Absent)?;
+pub fn declared_body_length(headers: &HeaderMap, extensions: &Extensions) -> Result<DeclaredBodyLength, ContentLengthPreconditionError> {
+    let declared = match extensions.get::<ReceivedContentLength>() {
+        Some(ReceivedContentLength(received)) => received.as_ref(),
+        None => headers.get(CONTENT_LENGTH),
+    };
+    let declared = declared.ok_or(ContentLengthPreconditionError::Absent)?;
     let declared = declared
         .to_str()
         .ok()
@@ -108,18 +136,18 @@ where
     type Rejection = ExtractorRejection;
 
     fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<DeclaredBodyLength, Self::Rejection>> {
-        ready(declared_body_length(&parts.headers).map_err(|error| error.into_rejection(addressed_uri(parts))))
+        ready(declared_body_length(&parts.headers, &parts.extensions).map_err(|error| error.into_rejection(addressed_uri(parts))))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::content_length_precondition::{ContentLengthPreconditionError, DeclaredBodyLength, declared_body_length};
+    use crate::content_length_precondition::{ContentLengthPreconditionError, DeclaredBodyLength, ReceivedContentLength, declared_body_length};
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use axum::{
         body::{Body, to_bytes},
         extract::FromRequestParts,
-        http::{HeaderMap, HeaderValue, Request, StatusCode, header::CONTENT_LENGTH},
+        http::{Extensions, HeaderMap, HeaderValue, Request, StatusCode, header::CONTENT_LENGTH},
         response::IntoResponse,
     };
     use std::num::NonZeroU64;
@@ -136,7 +164,7 @@ mod tests {
     #[test]
     fn a_declared_length_is_admitted_as_the_payload_length() {
         pretty_assertions::assert_eq!(
-            declared_body_length(&headers_declaring("42")),
+            declared_body_length(&headers_declaring("42"), &Extensions::new()),
             Ok(DeclaredBodyLength(NonZeroU64::new(42).expect("42 is not zero")))
         );
     }
@@ -145,7 +173,10 @@ mod tests {
     /// with "just a 411 HTTP status code (without any payload body)".
     #[test]
     fn an_absent_content_length_is_the_411_precondition() {
-        pretty_assertions::assert_eq!(declared_body_length(&HeaderMap::new()), Err(ContentLengthPreconditionError::Absent));
+        pretty_assertions::assert_eq!(
+            declared_body_length(&HeaderMap::new(), &Extensions::new()),
+            Err(ContentLengthPreconditionError::Absent)
+        );
     }
 
     /// A `Content-Length` that is not a decimal byte count declares no length,
@@ -156,7 +187,7 @@ mod tests {
             let mut headers = HeaderMap::new();
             headers.insert(CONTENT_LENGTH, HeaderValue::from_str(value).expect("visible ASCII header value"));
             pretty_assertions::assert_eq!(
-                declared_body_length(&headers),
+                declared_body_length(&headers, &Extensions::new()),
                 Err(ContentLengthPreconditionError::Malformed),
                 "Content-Length: {value}"
             );
@@ -167,7 +198,34 @@ mod tests {
     /// declared zero is refused rather than passed to a body decoder.
     #[test]
     fn a_zero_content_length_declares_an_empty_body() {
-        pretty_assertions::assert_eq!(declared_body_length(&headers_declaring("0")), Err(ContentLengthPreconditionError::Empty));
+        pretty_assertions::assert_eq!(
+            declared_body_length(&headers_declaring("0"), &Extensions::new()),
+            Err(ContentLengthPreconditionError::Empty)
+        );
+    }
+
+    /// A decoded body's request no longer carries the header; the length the
+    /// client declared for the encoded body is the one admitted.
+    #[test]
+    fn a_received_length_stands_for_the_header_a_decoding_removed() {
+        let mut extensions = Extensions::new();
+        extensions.insert(ReceivedContentLength::of(&headers_declaring("42")));
+        pretty_assertions::assert_eq!(
+            declared_body_length(&HeaderMap::new(), &extensions),
+            Ok(DeclaredBodyLength(NonZeroU64::new(42).expect("42 is not zero")))
+        );
+    }
+
+    /// Clause 6.3.4: a request received without the header is refused as
+    /// absent even after its body was decoded.
+    #[test]
+    fn a_received_request_without_a_length_is_the_411_precondition() {
+        let mut extensions = Extensions::new();
+        extensions.insert(ReceivedContentLength::of(&HeaderMap::new()));
+        pretty_assertions::assert_eq!(
+            declared_body_length(&headers_declaring("42"), &extensions),
+            Err(ContentLengthPreconditionError::Absent)
+        );
     }
 
     /// Clause 6.3.4: the `411` carries no payload body; the other two failures

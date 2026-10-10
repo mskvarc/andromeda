@@ -187,7 +187,7 @@ async fn read_body<S: Send + Sync>(req: Request, state: &S) -> Result<ReadBody, 
     // Clause 6.3.4: the payload length is checked before the payload is
     // looked at, so an absent Content-Length is the bare 411 the clause
     // requires rather than a decoding failure.
-    let declared = declared_body_length(req.headers()).map_err(|error| error.into_rejection(uri.clone()))?;
+    let declared = declared_body_length(req.headers(), req.extensions()).map_err(|error| error.into_rejection(uri.clone()))?;
     let content_type_raw = req
         .headers()
         .typed_get::<headers::ContentType>()

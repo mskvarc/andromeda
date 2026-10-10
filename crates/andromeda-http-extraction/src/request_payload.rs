@@ -60,7 +60,7 @@ where
     async fn from_request(request: Request, state: &S) -> Result<RequestPayload, ExtractorRejection> {
         let instance = addressed_request_uri(&request);
         // clone: the precondition's refusal and the payload's each name the request.
-        let declared = declared_body_length(request.headers()).map_err(|error| error.into_rejection(instance.clone()))?;
+        let declared = declared_body_length(request.headers(), request.extensions()).map_err(|error| error.into_rejection(instance.clone()))?;
         // Clause 6.3.4: the `Content-Type` is `application/json` or
         // `application/ld+json` (`application/merge-patch+json` for PATCH
         // alone); anything else is "just a 415 HTTP status code".

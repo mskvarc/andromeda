@@ -15,7 +15,7 @@ use crate::{
         compression_layer::build_compression_layer,
         cors_layer::build_cors_layer,
         csrf_layer::{CsrfLayerError, build_csrf_layer},
-        decompression_layer::build_decompression_layer,
+        decompression_layer::{build_decompression_layer, record_received_content_length},
         encoded_entity_tag::EncodedEntityTags,
         helmet_layer::build_helmet_layer,
         metric_layer::http_metric_layer,
@@ -248,7 +248,9 @@ impl HttpStack {
                 }));
         }
         if let Some(decompression) = &self.decompression {
-            router = router.layer(decompression.clone());
+            router = router
+                .layer(decompression.clone())
+                .layer(middleware::map_request(record_received_content_length));
         }
         router = self.apply_diagnostic_layers(router);
         // Outermost of the diagnostic core so the matched route is populated by
@@ -277,6 +279,9 @@ impl HttpStack {
         NormalizePathLayer::trim_trailing_slash().layer(router)
     }
 }
+
+#[cfg(test)]
+mod content_coding_tests;
 
 #[cfg(test)]
 mod revalidation_tests;

@@ -39,7 +39,7 @@ where
         // before the `Content-Type` is looked at, and an unsupported media type
         // with "just a 415 HTTP status code (without any payload body)".
         // clone: each refusal below names the same request.
-        let declared = declared_body_length(request.headers()).map_err(|error| error.into_rejection(instance.clone()))?;
+        let declared = declared_body_length(request.headers(), request.extensions()).map_err(|error| error.into_rejection(instance.clone()))?;
         if !announces_json(request.headers()) {
             return Err(ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE));
         }

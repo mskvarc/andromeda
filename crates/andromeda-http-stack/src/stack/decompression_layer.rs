@@ -1,6 +1,9 @@
-//! Mapping of the decompression configuration onto a `tower-http` layer.
+//! Mapping of the decompression configuration onto a `tower-http` layer, and
+//! the record of the `Content-Length` that decoding removes.
 
 use crate::config::{content_coding::ContentCoding, decompression::DecompressionConfig};
+use andromeda_http_extraction::content_length_precondition::ReceivedContentLength;
+use axum::extract::Request;
 use tower_http::decompression::RequestDecompressionLayer;
 
 /// Build the request-decompression layer, or `None` when no coding is accepted.
@@ -26,6 +29,17 @@ pub(crate) fn build_decompression_layer(config: &DecompressionConfig) -> Option<
         layer = layer.no_zstd();
     }
     Some(layer.pass_through_unaccepted(config.pass_through_unaccepted))
+}
+
+/// Record the `Content-Length` a request was received with, ahead of the
+/// decompression layer that removes it from a decoded request.
+///
+/// ETSI GS CIM 009 v1.9.1 clause 6.3.4 checks the length the client declared,
+/// which only this record keeps once the body is decoded.
+pub(crate) async fn record_received_content_length(mut request: Request) -> Request {
+    let received = ReceivedContentLength::of(request.headers());
+    request.extensions_mut().insert(received);
+    request
 }
 
 #[cfg(test)]
