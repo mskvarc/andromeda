@@ -15,6 +15,12 @@ pub enum PostgresqlMaintenanceTenants {
     ConsecutiveFailures,
     /// Last-pass outcome (`MaintenanceInspectionResultCode`).
     LastResult,
+    /// The database's `tup_updated + tup_deleted` when its last visit
+    /// started, NULL before a visit observed the database.
+    LastTupleChanges,
+    /// The database's `stats_reset` when its last visit started, NULL before
+    /// a visit observed it or while its statistics were never reset.
+    LastStatsReset,
 }
 
 /// Per-target degradation evidence, pending work and action results.
@@ -77,6 +83,8 @@ mod tests {
     fn platform_maintenance_identifiers_match_the_migration() {
         assert_eq!(PostgresqlMaintenanceTenants::Table.to_string(), "postgresql_maintenance_tenants");
         assert_eq!(PostgresqlMaintenanceTenants::LastInspectedAt.to_string(), "last_inspected_at");
+        assert_eq!(PostgresqlMaintenanceTenants::LastTupleChanges.to_string(), "last_tuple_changes");
+        assert_eq!(PostgresqlMaintenanceTenants::LastStatsReset.to_string(), "last_stats_reset");
         assert_eq!(PostgresqlMaintenanceTargets::Table.to_string(), "postgresql_maintenance_targets");
         assert_eq!(PostgresqlMaintenanceTargets::IsActionPending.to_string(), "is_action_pending");
         assert_eq!(PostgresqlMaintenanceTargets::LastReclaimableBytes.to_string(), "last_reclaimable_bytes");

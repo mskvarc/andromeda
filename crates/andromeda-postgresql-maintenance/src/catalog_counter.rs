@@ -42,6 +42,8 @@ pub enum CatalogCounter {
     FreezeMaxAge,
     /// Transaction or multixact ID age of a relation's oldest unfrozen ID.
     RelationFreezeAge,
+    /// Rows a database updated or deleted since its statistics were reset.
+    TupleChanges,
     /// Relation bytes of a recorded degradation sample.
     SampleRelationBytes,
     /// Reclaimable bytes of a recorded degradation sample.
@@ -59,6 +61,11 @@ pub enum CatalogCounter {
 /// Convert one PostgreSQL counter that the catalog guarantees is non-negative.
 pub(crate) fn non_negative(value: i64, counter: CatalogCounter) -> Result<u64, MaintenanceError> {
     u64::try_from(value).map_err(|_| MaintenanceError::NegativeCatalogValue { counter, value })
+}
+
+/// Convert a count to the platform schema's signed `bigint` storage type.
+pub(crate) fn persisted_count(value: u64, counter: CatalogCounter) -> Result<i64, MaintenanceError> {
+    i64::try_from(value).map_err(|_| MaintenanceError::CatalogValueOverflow { counter, value })
 }
 
 /// Compute a saturating integer percentage with bounded cardinality.

@@ -29,7 +29,7 @@ pub enum MaintenanceDecision {
     Disabled,
     /// Another replica owns the fleet lock.
     GlobalLockUnavailable,
-    /// No tenant is registered.
+    /// No tenant is registered, or none is due a visit.
     NoTenant,
     /// Tenant database could not be reached.
     TenantUnavailable,

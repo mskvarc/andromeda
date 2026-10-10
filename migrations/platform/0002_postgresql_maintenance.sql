@@ -3,10 +3,17 @@
 -- ============================================================================
 -- What the opt-in maintenance controller knows about each tenant and each
 -- relation it may act on. Every broker replica runs the controller, and the
--- platform database is where the replicas coordinate: `last_inspected_at`
--- keeps tenant selection fair across restarts, including tenants no replica
+-- platform database is where the replicas coordinate: a tenant row keeps what
+-- tenant selection orders by across restarts, including tenants no replica
 -- currently holds in memory, and a target row keeps the breach evidence that
 -- stops one noisy sample from triggering an action.
+--
+-- `last_tuple_changes` and `last_stats_reset` are the tenant database's
+-- `pg_stat_database` counters (`tup_updated + tup_deleted`, `stats_reset`) as
+-- observed when its last visit started. The rows a database changed since
+-- then are its churn; a changed `stats_reset` or a lower counter means the
+-- statistics were reset, and the whole current counter counts as churn. Both
+-- stay NULL until a visit observes the database.
 --
 -- A breach run is the unbroken sequence of samples meeting every threshold:
 -- `first_breach_at` is when its first sample was taken and `breach_samples`
@@ -46,9 +53,12 @@ create table postgresql_maintenance_tenants (
     last_inspected_at timestamptz,
     consecutive_failures integer not null default 0,
     last_result smallint,
+    last_tuple_changes bigint,
+    last_stats_reset timestamptz,
     constraint pk_postgresql_maintenance_tenants primary key (tenant_key),
     constraint fk_postgresql_maintenance_tenants_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
     constraint chk_postgresql_maintenance_tenants_failures_non_negative check (consecutive_failures >= 0),
+    constraint chk_postgresql_maintenance_tenants_tuple_changes_non_negative check (last_tuple_changes is null or last_tuple_changes >= 0),
     constraint chk_postgresql_maintenance_tenants_last_result check (last_result is null or last_result between 1 and 20)
 );
 
@@ -76,8 +86,4 @@ create table postgresql_maintenance_targets (
     constraint chk_postgresql_maintenance_targets_sizes_non_negative check ((last_before_bytes is null or last_before_bytes >= 0) and (last_after_bytes is null or last_after_bytes >= 0)),
     constraint chk_postgresql_maintenance_targets_dead_tuples_non_negative check ((last_dead_tuples_before is null or last_dead_tuples_before >= 0) and (last_dead_tuples_after is null or last_dead_tuples_after >= 0))
 );
-
--- Tenant selection: never-inspected tenants first, then the least recently
--- inspected.
-create index idx_postgresql_maintenance_tenants_last_inspected_at on postgresql_maintenance_tenants (last_inspected_at nulls first, tenant_key);
 

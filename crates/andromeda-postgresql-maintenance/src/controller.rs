@@ -7,6 +7,7 @@ use crate::{
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
     fleet_observation,
+    fleet_triage,
     freeze_report,
     inspection::{self, HeapSample, IndexSize, InvalidIndex},
     policy::{DeferralReason, PolicyDecision, PolicyProfile, SafetyGates, decide, safety_deferral},
@@ -40,7 +41,7 @@ pub enum PassOutcome {
     Disabled,
     /// Another broker replica owns the fleet lock.
     GlobalLockUnavailable,
-    /// No active tenant is registered.
+    /// No active tenant is registered, or none is due a visit.
     NoTenant,
     /// The selected database could not be reached.
     TenantUnavailable,
@@ -141,16 +142,21 @@ impl MaintenanceController {
         }
         let fleet = fleet_observation::observe_fleet(platform).await?;
         fleet.record_telemetry();
-        let Some(tenant) = state::select_least_recently_inspected(platform).await? else {
+        let now = Utc::now();
+        let records = tenant_inspection::inspection_records(platform).await?;
+        let due = target_record::tenants_with_due_actions(platform, now).await?;
+        let standings = fleet_triage::standings(records, &fleet, &due);
+        let Some(tenant) = fleet_triage::select_tenant(&standings, now) else {
             return Ok(PassOutcome::NoTenant);
         };
-        tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::Started).await?;
-        let mut connection = match self.open_tenant_session(platform, &tenant, cancellation).await? {
+        let observed = fleet.database(tenant.key);
+        tenant_inspection::mark_started(platform, tenant, observed.map(|database| database.changes)).await?;
+        let mut connection = match self.open_tenant_session(platform, tenant, cancellation).await? {
             ControlFlow::Continue(connection) => connection,
             ControlFlow::Break(outcome) => return Ok(outcome),
         };
-        if let Some(database) = fleet.database(tenant.key) {
-            freeze_report::report_freeze_pressure(&mut connection, &tenant, database).await?;
+        if let Some(database) = observed {
+            freeze_report::report_freeze_pressure(&mut connection, tenant, database.freeze).await?;
         }
         let mutation = match self.config.mode {
             MaintenanceMode::Disabled | MaintenanceMode::Observe => MutationPrivilege::NotRequired,
@@ -158,7 +164,7 @@ impl MaintenanceController {
         };
         let capability = capability::validate_capabilities(&mut connection, mutation).await?;
         if capability != CapabilityStatus::Ready {
-            tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::of_capability(capability)).await?;
+            tenant_inspection::mark_inspected(platform, tenant, InspectionResult::of_capability(capability)).await?;
             warn!(tenant = tenant.log_name(), database = %tenant.database, capability = ?capability, decision = "capability-unavailable", "PostgreSQL maintenance pass deferred");
             return Ok(PassOutcome::CapabilityUnavailable);
         }
@@ -167,9 +173,9 @@ impl MaintenanceController {
         let invalid = inspection::invalid_indexes(&mut connection).await?;
         let index_sizes = inspection::index_sizes(&mut connection).await?;
         let heap_samples = inspection::heap_samples(&mut connection, profile).await?;
-        let pending_before_sampling = target_record::pending_action(platform, &tenant).await?;
-        let probe_states = target_record::index_probe_states(platform, &tenant).await?;
-        let sampling_outcome = self.record_heap_samples(platform, &tenant, &heap_samples, profile).await?;
+        let pending_before_sampling = target_record::pending_action(platform, tenant).await?;
+        let probe_states = target_record::index_probe_states(platform, tenant).await?;
+        let sampling_outcome = self.record_heap_samples(platform, tenant, &heap_samples, profile).await?;
 
         for index in &invalid {
             if index.recovery_artifact().is_none() {
@@ -177,32 +183,32 @@ impl MaintenanceController {
             }
         }
         if let Some(artifact) = invalid.iter().find_map(InvalidIndex::recovery_artifact) {
-            return action::recover_artifact(self.config.mode, platform, &mut connection, &tenant, artifact, profile, cancellation).await;
+            return action::recover_artifact(self.config.mode, platform, &mut connection, tenant, artifact, profile, cancellation).await;
         }
         if let Some(target) = pending_before_sampling {
-            return action::execute_pending(self.config.mode, platform, &mut connection, &tenant, target, profile, cancellation).await;
+            return action::execute_pending(self.config.mode, platform, &mut connection, tenant, target, profile, cancellation).await;
         }
 
         let Some(size) = highest_priority_probe_candidate(&index_sizes, &probe_states, profile, Utc::now()) else {
             let outcome = sampling_outcome.unwrap_or(PassOutcome::Idle);
-            tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::of_pass(outcome)).await?;
+            tenant_inspection::mark_inspected(platform, tenant, InspectionResult::of_pass(outcome)).await?;
             return Ok(outcome);
         };
         let target = MaintenanceTarget::Index(size.target);
         let gates = safety_gate_inspection::safety_gates(&mut connection, target).await?;
         if let Some(reason) = safety_deferral(profile, gates) {
             info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), decision = "deferred", reason = ?reason, "PostgreSQL maintenance probe deferred");
-            tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::Deferred).await?;
+            tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Deferred).await?;
             return Ok(PassOutcome::Deferred);
         }
         let measured = tokio::select! {
             () = cancellation.cancelled() => return Ok(PassOutcome::Cancelled),
             result = inspection::probe_index(&mut connection, size, profile) => result?,
         };
-        let target_state = target_record::load_target_state(platform, &tenant, target).await?;
+        let target_state = target_record::load_target_state(platform, tenant, target).await?;
         let now = Utc::now();
         let decision = decide(self.config.mode, profile, target_state, measured, idle_gates(), now);
-        target_record::record_decision(platform, &tenant, target, Some(measured), decision, target_state.breach, now).await?;
+        target_record::record_decision(platform, tenant, target, Some(measured), decision, target_state.breach, now).await?;
         let outcome = match decision {
             PolicyDecision::Queued => PassOutcome::Queued,
             PolicyDecision::WouldAct | PolicyDecision::Act => PassOutcome::WouldAct,
@@ -220,7 +226,7 @@ impl MaintenanceController {
             ) => sampling_outcome.unwrap_or(PassOutcome::Probed),
         };
         info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), relation_bytes = measured.relation_bytes, reclaimable_bytes = measured.reclaimable_bytes, degraded_percent = measured.degraded_percent, decision = ?decision, "PostgreSQL maintenance index probe completed");
-        tenant_inspection::mark_inspected(platform, &tenant, InspectionResult::of_pass(outcome)).await?;
+        tenant_inspection::mark_inspected(platform, tenant, InspectionResult::of_pass(outcome)).await?;
         Ok(outcome)
     }
 

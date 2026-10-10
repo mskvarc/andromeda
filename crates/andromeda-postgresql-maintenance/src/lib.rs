@@ -21,6 +21,7 @@ pub mod controller;
 pub mod error;
 mod evidence;
 mod fleet_observation;
+mod fleet_triage;
 mod freeze_report;
 mod inspection;
 /// Threshold and safety-gate decision policy.

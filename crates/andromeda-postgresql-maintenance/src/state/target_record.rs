@@ -3,7 +3,7 @@
 use crate::{
     action_measurement::ActionComparison,
     candidate::{IndexTarget, MaintenanceTarget},
-    catalog_counter::CatalogCounter,
+    catalog_counter::{CatalogCounter, persisted_count},
     error::MaintenanceError,
     evidence::{
         action_result::ActionResult,
@@ -16,7 +16,19 @@ use crate::{
 use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, ExprTrait, Iden, InsertStatement, OnConflict, Order, PostgresQueryBuilder, Query, UpdateStatement, error::Error as SeaQueryError};
+use sea_query::{
+    Expr,
+    ExprTrait,
+    Iden,
+    InsertStatement,
+    OnConflict,
+    Order,
+    PostgresQueryBuilder,
+    Query,
+    SelectStatement,
+    UpdateStatement,
+    error::Error as SeaQueryError,
+};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgConnection, Row, postgres::PgRow};
 
@@ -97,27 +109,57 @@ fn stored_count(row: &PgRow, column: PostgresqlMaintenanceTargets, counter: Cata
 /// Return the first pending action whose backoff has elapsed, keeping each
 /// canary B-tree ahead of its GIN pair.
 pub(crate) async fn pending_action(connection: &mut PgConnection, tenant: &RegisteredTenant) -> Result<Option<MaintenanceTarget>, MaintenanceError> {
-    let statement = Query::select()
-        .columns([PostgresqlMaintenanceTargets::Target, PostgresqlMaintenanceTargets::CooldownUntil])
-        .from(PostgresqlMaintenanceTargets::Table)
+    let statement = pending_actions_statement()
         .and_where(Expr::col(PostgresqlMaintenanceTargets::TenantKey).eq(tenant.key.0))
-        .and_where(Expr::col(PostgresqlMaintenanceTargets::IsActionPending).eq(true))
-        .order_by(PostgresqlMaintenanceTargets::Target, Order::Asc)
         .to_owned();
+    let pending = read_pending_actions(connection, &statement).await?;
+    let pending = pending.into_iter().map(|(_, action)| action).collect::<Vec<_>>();
+    Ok(first_pending(&pending, Utc::now()))
+}
+
+/// Every tenant that [`pending_action`] would give an action to now.
+pub(crate) async fn tenants_with_due_actions(connection: &mut PgConnection, now: DateTime<Utc>) -> Result<Vec<TenantKey>, MaintenanceError> {
+    let pending = read_pending_actions(connection, &pending_actions_statement()).await?;
+    Ok(pending
+        .chunk_by(|(left, _), (right, _)| left == right)
+        .filter_map(|tenant_pending| {
+            let actions = tenant_pending.iter().map(|&(_, action)| action).collect::<Vec<_>>();
+            first_pending(&actions, now).and(tenant_pending.first().map(|&(tenant, _)| tenant))
+        })
+        .collect())
+}
+
+/// Every pending action, grouped by tenant and ordered by target code.
+fn pending_actions_statement() -> SelectStatement {
+    Query::select()
+        .columns([
+            PostgresqlMaintenanceTargets::TenantKey,
+            PostgresqlMaintenanceTargets::Target,
+            PostgresqlMaintenanceTargets::CooldownUntil,
+        ])
+        .from(PostgresqlMaintenanceTargets::Table)
+        .and_where(Expr::col(PostgresqlMaintenanceTargets::IsActionPending).eq(true))
+        .order_by(PostgresqlMaintenanceTargets::TenantKey, Order::Asc)
+        .order_by(PostgresqlMaintenanceTargets::Target, Order::Asc)
+        .to_owned()
+}
+
+/// Run a pending-action statement and decode each row with its tenant.
+async fn read_pending_actions(connection: &mut PgConnection, statement: &SelectStatement) -> Result<Vec<(TenantKey, PendingAction)>, MaintenanceError> {
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
-    let pending = rows
-        .iter()
+    rows.iter()
         .map(|row| {
-            Ok(PendingAction {
+            let tenant = TenantKey(row.try_get(PostgresqlMaintenanceTargets::TenantKey.to_string().as_str())?);
+            let action = PendingAction {
                 target: target_of(MaintenanceTargetCode::try_from(
                     row.try_get::<i16, _>(PostgresqlMaintenanceTargets::Target.to_string().as_str())?,
                 )?),
                 cooldown_until: row.try_get(PostgresqlMaintenanceTargets::CooldownUntil.to_string().as_str())?,
-            })
+            };
+            Ok((tenant, action))
         })
-        .collect::<Result<Vec<_>, MaintenanceError>>()?;
-    Ok(first_pending(&pending, Utc::now()))
+        .collect()
 }
 
 /// The pending target to act on first: any due target but a GIN queued
@@ -330,11 +372,6 @@ fn target_state_insert(tenant: TenantKey, target: MaintenanceTarget) -> Result<I
                 .to_owned(),
         );
     Ok(statement.clone())
-}
-
-/// Convert a byte or tuple count to the platform schema's signed storage type.
-fn persisted_count(value: u64, counter: CatalogCounter) -> Result<i64, MaintenanceError> {
-    i64::try_from(value).map_err(|_| MaintenanceError::CatalogValueOverflow { counter, value })
 }
 
 #[cfg(test)]

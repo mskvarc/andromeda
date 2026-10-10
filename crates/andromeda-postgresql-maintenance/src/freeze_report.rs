@@ -53,7 +53,7 @@ macro_rules! pressure_event {
 }
 
 /// Log a raised freeze pressure with the relations and horizon holders behind
-/// it. A database under normal pressure is not visited.
+/// it. A database under normal pressure is not read.
 pub(crate) async fn report_freeze_pressure(connection: &mut PgConnection, tenant: &RegisteredTenant, database: DatabaseFreeze) -> Result<(), MaintenanceError> {
     let pressure = database.pressure();
     if pressure == FreezePressure::Normal {
