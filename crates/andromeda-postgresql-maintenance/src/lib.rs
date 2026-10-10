@@ -10,6 +10,7 @@
 mod action;
 mod action_measurement;
 mod artifact;
+mod btree_estimate;
 /// Compile-time maintenance targets and their fixed statements.
 pub mod candidate;
 mod capability;
@@ -22,6 +23,7 @@ pub mod error;
 mod evidence;
 mod fleet_observation;
 mod fleet_triage;
+mod freeze_policy;
 mod freeze_report;
 mod inspection;
 /// Threshold and safety-gate decision policy.

@@ -1,23 +1,21 @@
 //! One bounded, fleet-serialized PostgreSQL maintenance controller pass.
 
+mod heap_sampling;
+mod index_probing;
+mod probe_selection;
+
 use crate::{
     action,
-    candidate::{IndexTarget, MaintenanceTarget},
+    btree_estimate,
     capability::{self, CapabilityStatus, MutationPrivilege},
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
     fleet_observation,
     fleet_triage,
     freeze_report,
-    inspection::{self, HeapSample, IndexSize, InvalidIndex},
-    policy::{DeferralReason, PolicyDecision, PolicyProfile, SafetyGates, decide, safety_deferral},
-    safety_gate_inspection,
-    state::{
-        self,
-        RegisteredTenant,
-        target_record::{self, IndexProbeState},
-        tenant_inspection,
-    },
+    inspection::{self, InvalidIndex},
+    policy::{PolicyProfile, SafetyGates},
+    state::{self, RegisteredTenant, target_record, tenant_inspection},
 };
 use andromeda_postgresql_context_store::{
     maintenance_config::{MaintenanceConfig, MaintenanceMode},
@@ -26,7 +24,7 @@ use andromeda_postgresql_context_store::{
 };
 use andromeda_postgresql_pool::pool_options::configure_pool_options;
 use andromeda_telemetry::maintenance::{MaintenanceDecision, record_decision};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sqlx::{PgConnection, PgPool, Postgres, pool::PoolConnection};
 use std::{ops::ControlFlow, time::Duration};
 use strum::Display;
@@ -51,7 +49,7 @@ pub enum PassOutcome {
     CapabilityUnavailable,
     /// Cheap inspection found no target requiring a detailed probe.
     Idle,
-    /// One physical index probe completed.
+    /// Detailed index probes completed and none queued or would act.
     Probed,
     /// A target accumulated enough consecutive evidence and was queued.
     Queued,
@@ -172,10 +170,11 @@ impl MaintenanceController {
         let profile = PolicyProfile::from_profile(self.config.profile);
         let invalid = inspection::invalid_indexes(&mut connection).await?;
         let index_sizes = inspection::index_sizes(&mut connection).await?;
+        let estimates = btree_estimate::btree_estimates(&mut connection).await?;
         let heap_samples = inspection::heap_samples(&mut connection, profile).await?;
         let pending_before_sampling = target_record::pending_action(platform, tenant).await?;
         let probe_states = target_record::index_probe_states(platform, tenant).await?;
-        let sampling_outcome = self.record_heap_samples(platform, tenant, &heap_samples, profile).await?;
+        let sampling_outcome = heap_sampling::record_heap_samples(self.config.mode, platform, tenant, &heap_samples, profile).await?;
 
         for index in &invalid {
             if index.recovery_artifact().is_none() {
@@ -189,44 +188,13 @@ impl MaintenanceController {
             return action::execute_pending(self.config.mode, platform, &mut connection, tenant, target, profile, cancellation).await;
         }
 
-        let Some(size) = highest_priority_probe_candidate(&index_sizes, &probe_states, profile, Utc::now()) else {
-            let outcome = sampling_outcome.unwrap_or(PassOutcome::Idle);
+        let candidates = probe_selection::probe_order(&index_sizes, &probe_states, &estimates, profile, Utc::now());
+        let outcome = index_probing::probe_indexes(self.config.mode, platform, &mut connection, tenant, &candidates, profile, cancellation)
+            .await?
+            .pass_outcome(sampling_outcome);
+        if outcome != PassOutcome::Cancelled {
             tenant_inspection::mark_inspected(platform, tenant, InspectionResult::of_pass(outcome)).await?;
-            return Ok(outcome);
-        };
-        let target = MaintenanceTarget::Index(size.target);
-        let gates = safety_gate_inspection::safety_gates(&mut connection, target).await?;
-        if let Some(reason) = safety_deferral(profile, gates) {
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), decision = "deferred", reason = ?reason, "PostgreSQL maintenance probe deferred");
-            tenant_inspection::mark_inspected(platform, tenant, InspectionResult::Deferred).await?;
-            return Ok(PassOutcome::Deferred);
         }
-        let measured = tokio::select! {
-            () = cancellation.cancelled() => return Ok(PassOutcome::Cancelled),
-            result = inspection::probe_index(&mut connection, size, profile) => result?,
-        };
-        let target_state = target_record::load_target_state(platform, tenant, target).await?;
-        let now = Utc::now();
-        let decision = decide(self.config.mode, profile, target_state, measured, idle_gates(), now);
-        target_record::record_decision(platform, tenant, target, Some(measured), decision, target_state.breach, now).await?;
-        let outcome = match decision {
-            PolicyDecision::Queued => PassOutcome::Queued,
-            PolicyDecision::WouldAct | PolicyDecision::Act => PassOutcome::WouldAct,
-            PolicyDecision::Deferred(
-                DeferralReason::RelationTooSmall
-                | DeferralReason::ReclaimTooSmall
-                | DeferralReason::BelowThreshold
-                | DeferralReason::ConsecutiveSamples
-                | DeferralReason::Cooldown
-                | DeferralReason::ActiveBackendRatio
-                | DeferralReason::LongTransaction
-                | DeferralReason::HorizonHeld
-                | DeferralReason::ActiveMaintenance
-                | DeferralReason::WaitingRelationLock,
-            ) => sampling_outcome.unwrap_or(PassOutcome::Probed),
-        };
-        info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), relation_bytes = measured.relation_bytes, reclaimable_bytes = measured.reclaimable_bytes, degraded_percent = measured.degraded_percent, decision = ?decision, "PostgreSQL maintenance index probe completed");
-        tenant_inspection::mark_inspected(platform, tenant, InspectionResult::of_pass(outcome)).await?;
         Ok(outcome)
     }
 
@@ -264,64 +232,6 @@ impl MaintenanceController {
         inspection::configure_session(&mut connection).await?;
         Ok(ControlFlow::Continue(connection))
     }
-
-    /// Persist cheap heap evidence without executing newly queued work in this pass.
-    async fn record_heap_samples(
-        &self,
-        platform: &mut PgConnection,
-        tenant: &RegisteredTenant,
-        samples: &[HeapSample],
-        profile: PolicyProfile,
-    ) -> Result<Option<PassOutcome>, MaintenanceError> {
-        let mut outcome = None;
-        for sample in samples {
-            let target = MaintenanceTarget::Heap(sample.target);
-            let target_state = target_record::load_target_state(platform, tenant, target).await?;
-            let now = Utc::now();
-            let decision = decide(self.config.mode, profile, target_state, sample.degradation, idle_gates(), now);
-            target_record::record_decision(platform, tenant, target, Some(sample.degradation), decision, target_state.breach, now).await?;
-            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), relation_bytes = sample.degradation.relation_bytes, reclaimable_bytes = sample.degradation.reclaimable_bytes, degraded_percent = sample.degradation.degraded_percent, decision = ?decision, "PostgreSQL maintenance heap sample completed");
-            match decision {
-                PolicyDecision::Queued => outcome = Some(PassOutcome::Queued),
-                PolicyDecision::WouldAct if outcome.is_none() => outcome = Some(PassOutcome::WouldAct),
-                PolicyDecision::Act
-                | PolicyDecision::WouldAct
-                | PolicyDecision::Deferred(
-                    DeferralReason::RelationTooSmall
-                    | DeferralReason::ReclaimTooSmall
-                    | DeferralReason::BelowThreshold
-                    | DeferralReason::ConsecutiveSamples
-                    | DeferralReason::Cooldown
-                    | DeferralReason::ActiveBackendRatio
-                    | DeferralReason::LongTransaction
-                    | DeferralReason::HorizonHeld
-                    | DeferralReason::ActiveMaintenance
-                    | DeferralReason::WaitingRelationLock,
-                ) => {}
-            }
-        }
-        Ok(outcome)
-    }
-}
-
-/// Pick the least-recently-probed eligible index, breaking ties by size.
-fn highest_priority_probe_candidate(sizes: &[IndexSize], states: &[IndexProbeState], profile: PolicyProfile, now: DateTime<Utc>) -> Option<IndexSize> {
-    sizes
-        .iter()
-        .copied()
-        .filter(|size| size.bytes >= profile.minimum_relation_bytes && IndexTarget::PROBEABLE.contains(&size.target))
-        .filter(|size| {
-            states
-                .iter()
-                .find(|state| state.target == size.target)
-                .and_then(|state| state.cooldown_until)
-                .is_none_or(|cooldown_until| cooldown_until <= now)
-        })
-        .min_by(|left, right| {
-            let left_sampled = states.iter().find(|state| state.target == left.target).and_then(|state| state.last_sampled_at);
-            let right_sampled = states.iter().find(|state| state.target == right.target).and_then(|state| state.last_sampled_at);
-            left_sampled.cmp(&right_sampled).then_with(|| right.bytes.cmp(&left.bytes))
-        })
 }
 
 /// Safety gates used while merely accumulating cheap evidence.
@@ -352,83 +262,5 @@ const fn metric_decision(outcome: PassOutcome) -> MaintenanceDecision {
         PassOutcome::Acted => MaintenanceDecision::Acted,
         PassOutcome::ActionFailed => MaintenanceDecision::ActionFailed,
         PassOutcome::Cancelled => MaintenanceDecision::Cancelled,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        candidate::IndexTarget,
-        controller::highest_priority_probe_candidate,
-        inspection::IndexSize,
-        policy::PolicyProfile,
-        state::target_record::IndexProbeState,
-    };
-    use andromeda_postgresql_context_store::maintenance_config::MaintenanceProfile;
-    use chrono::{Duration, Utc};
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn no_gin_is_ever_selected_for_direct_probe() {
-        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
-        let sizes = [
-            IndexSize {
-                target: IndexTarget::IdxCaValueStringTrgm,
-                bytes: profile.minimum_relation_bytes * 10,
-            },
-            IndexSize {
-                target: IndexTarget::IdxCaSubEqKeys,
-                bytes: profile.minimum_relation_bytes * 20,
-            },
-            IndexSize {
-                target: IndexTarget::IdxCaValueString,
-                bytes: profile.minimum_relation_bytes,
-            },
-        ];
-        assert_eq!(
-            highest_priority_probe_candidate(&sizes, &[], profile, Utc::now()).map(|size| size.target),
-            Some(IndexTarget::IdxCaValueString)
-        );
-    }
-
-    #[test]
-    fn detailed_probes_rotate_and_skip_successful_cooldowns() {
-        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
-        let now = Utc::now();
-        let sizes = [
-            IndexSize {
-                target: IndexTarget::IdxCaValueNumber,
-                bytes: profile.minimum_relation_bytes * 2,
-            },
-            IndexSize {
-                target: IndexTarget::IdxCaValueString,
-                bytes: profile.minimum_relation_bytes,
-            },
-            IndexSize {
-                target: IndexTarget::IdxCaValueBoolean,
-                bytes: profile.minimum_relation_bytes,
-            },
-        ];
-        let states = [
-            IndexProbeState {
-                target: IndexTarget::IdxCaValueNumber,
-                last_sampled_at: None,
-                cooldown_until: Some(now + Duration::hours(1)),
-            },
-            IndexProbeState {
-                target: IndexTarget::IdxCaValueString,
-                last_sampled_at: Some(now - Duration::minutes(1)),
-                cooldown_until: None,
-            },
-            IndexProbeState {
-                target: IndexTarget::IdxCaValueBoolean,
-                last_sampled_at: Some(now - Duration::minutes(2)),
-                cooldown_until: None,
-            },
-        ];
-        assert_eq!(
-            highest_priority_probe_candidate(&sizes, &states, profile, now).map(|size| size.target),
-            Some(IndexTarget::IdxCaValueBoolean)
-        );
     }
 }

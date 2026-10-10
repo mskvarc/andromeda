@@ -11,7 +11,7 @@ use crate::{
     catalog_counter::{CatalogCounter, non_negative},
     error::MaintenanceError,
     fleet_observation::DatabaseFreeze,
-    policy::FreezePressure,
+    freeze_policy::FreezePressure,
     state::RegisteredTenant,
     vacuum_horizon::horizon_holders,
 };

@@ -10,7 +10,7 @@
 use crate::{
     catalog_counter::{CatalogCounter, non_negative},
     error::MaintenanceError,
-    policy::{FreezeAge, FreezePressure, freeze_pressure},
+    freeze_policy::{FreezeAge, FreezePressure, freeze_pressure},
     state::TenantKey,
 };
 use andromeda_postgresql_codes::tenant_status::TenantStatusCode;

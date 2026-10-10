@@ -16,6 +16,14 @@ pub enum CatalogCounter {
     DeadTuples,
     /// Total relation size of an allowlisted heap.
     HeapBytes,
+    /// Pages an allowlisted index holds, from `pg_class`.
+    IndexPages,
+    /// Entries an allowlisted index holds, from `pg_class`.
+    IndexTuples,
+    /// Average key width of an allowlisted index, from `pg_stats`.
+    IndexKeyWidth,
+    /// The server's page size.
+    BlockSize,
     /// Free bytes a detailed index probe measured.
     IndexFreeBytes,
     /// Physical length a detailed index probe measured.

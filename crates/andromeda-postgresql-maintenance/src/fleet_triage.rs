@@ -15,7 +15,7 @@
 
 use crate::{
     fleet_observation::{ChangeCounters, DatabaseObservation, FleetObservation},
-    policy::FreezePressure,
+    freeze_policy::FreezePressure,
     state::{RegisteredTenant, TenantKey, tenant_inspection::InspectionRecord},
 };
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -128,7 +128,7 @@ mod tests {
     use crate::{
         fleet_observation::{ChangeCounters, DatabaseFreeze, DatabaseObservation},
         fleet_triage::{TenantStanding, select_tenant},
-        policy::FreezeAge,
+        freeze_policy::FreezeAge,
         state::{RegisteredTenant, TenantKey, tenant_inspection::InspectionRecord},
     };
     use andromeda_tenancy::database_name::TenantDatabaseName;
