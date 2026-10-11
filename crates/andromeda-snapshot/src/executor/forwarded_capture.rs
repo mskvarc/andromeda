@@ -12,27 +12,14 @@ use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::outcome::ForwardedEntities;
 use andromeda_ngsi_ld_entity::{
     admission::attribute_nesting_admission::admit_document_nesting,
-    document::{EntityDocument, attribute_member::AttributeMember},
+    document::EntityDocument,
     entity_state::EntityState,
-    refusal::EntityRefusal,
+    system_instant::SystemInstant,
 };
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_model::entity_system_times::EntitySystemTimes;
 use andromeda_ngsi_ld_representation::attribute_nesting::{AttributeNestingExceeded, AttributeNestingLimit};
 use chrono::{DateTime, Utc};
-use thiserror::Error;
-
-/// Why a merged capture could not be turned into the states the branch holds.
-#[derive(Debug, Error)]
-pub(crate) enum MergedCaptureError {
-    /// A merged version is a document no entity state can be.
-    #[error("failed to read captured entity: {0}")]
-    Refused(#[from] EntityRefusal),
-    /// A merged entity nests an attribute deeper than the branch could read
-    /// back once it holds it.
-    #[error("failed to capture entity: {0}")]
-    AttributeNesting(#[from] AttributeNestingExceeded),
-}
 
 /// The merge of one capture's local states with its source entities.
 pub(crate) struct ForwardedCapture {
@@ -54,14 +41,14 @@ impl ForwardedCapture {
     ///
     /// # Errors
     ///
-    /// Returns [`MergedCaptureError`] when a merged version is no state the
-    /// branch can hold.
+    /// Returns [`AttributeNestingExceeded`] when a merged version nests an
+    /// attribute deeper than the branch could read back once it holds it.
     pub(crate) fn merged(
         &self,
         local: Vec<EntityState>,
         claimed: Vec<ForwardedEntities>,
         captured_at: DateTime<Utc>,
-    ) -> Result<Vec<EntityState>, MergedCaptureError> {
+    ) -> Result<Vec<EntityState>, AttributeNestingExceeded> {
         let versions = local
             .into_iter()
             .map(|state| ReceivedState {
@@ -75,27 +62,26 @@ impl ForwardedCapture {
 
     /// Merged versions as the states the branch holds at `captured_at`.
     ///
-    /// An instance expired at `captured_at` is not captured (clause 4.22), and
-    /// no instance keeps the clause 4.8 system times it was read with: the
-    /// captured entity is a write the branch records anew.
+    /// An instance expired at `captured_at` is not captured (clause 4.22). The
+    /// captured entity is a write the branch records anew, so every instance,
+    /// at every depth, takes `captured_at` as its clause 4.8 `createdAt` and
+    /// `modifiedAt` in place of whatever times it was read with or without: a
+    /// source answers without them unless asked for `sysAttrs`, and the
+    /// branch stores no instance that lacks them.
     ///
     /// # Errors
     ///
-    /// Returns [`MergedCaptureError`] when a version is no state the branch
-    /// can hold, or nests an attribute deeper than the limit admits.
-    pub(crate) fn states(&self, versions: Vec<ReceivedState>, captured_at: DateTime<Utc>) -> Result<Vec<EntityState>, MergedCaptureError> {
+    /// Returns [`AttributeNestingExceeded`] when a version nests an attribute
+    /// deeper than the limit admits.
+    pub(crate) fn states(&self, versions: Vec<ReceivedState>, captured_at: DateTime<Utc>) -> Result<Vec<EntityState>, AttributeNestingExceeded> {
         versions
             .into_iter()
             .map(|version| {
                 let mut state = version.state;
                 state.remove_expired_instances(captured_at);
-                let mut document = EntityDocument::from(&state);
-                document
-                    .attributes_mut()
-                    .values_mut()
-                    .for_each(AttributeMember::forget_system_instants_throughout);
-                admit_document_nesting(self.attribute_nesting, &document)?;
-                Ok(EntityState::try_from(document)?)
+                admit_document_nesting(self.attribute_nesting, &EntityDocument::from(&state))?;
+                state.stamp_attribute_instants(None, SystemInstant::new(captured_at));
+                Ok(state)
             })
             .collect()
     }
@@ -103,19 +89,20 @@ impl ForwardedCapture {
 
 #[cfg(test)]
 mod tests {
-    use crate::executor::forwarded_capture::{ForwardedCapture, MergedCaptureError};
+    use crate::executor::forwarded_capture::ForwardedCapture;
     use andromeda_federation::outcome::ForwardedEntities;
-    use andromeda_ngsi_ld_entity::entity_state::EntityState;
+    use andromeda_ngsi_ld_entity::{entity_state::EntityState, system_instant::SystemInstant};
     use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
     use andromeda_ngsi_ld_model::{entity_system_times::EntitySystemTimes, registration::forwarding_mode::ForwardingMode};
     use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
     use chrono::Utc;
     use serde_json::{Value, json};
-    use std::num::NonZeroUsize;
+    use std::{iter::once, num::NonZeroUsize};
 
     const SPEED: &str = "https://uri.etsi.org/ngsi-ld/default-context/speed";
     const BRAND: &str = "https://uri.etsi.org/ngsi-ld/default-context/brand";
     const READING: &str = "https://uri.etsi.org/ngsi-ld/default-context/reading";
+    const ACCURACY: &str = "https://uri.etsi.org/ngsi-ld/default-context/accuracy";
 
     /// The limit every capture of these tests holds attributes to.
     fn limit() -> AttributeNestingLimit {
@@ -197,11 +184,62 @@ mod tests {
         let refused = capture
             .states(vec![nested_source_entity(5)], Utc::now())
             .expect_err("five levels pass the limit");
-        let MergedCaptureError::AttributeNesting(exceeded) = refused else {
-            panic!("refused for its nesting: {refused}");
-        };
-        pretty_assertions::assert_eq!(exceeded.attribute.as_str(), READING);
-        pretty_assertions::assert_eq!(exceeded.limit, limit());
+        pretty_assertions::assert_eq!(refused.attribute.as_str(), READING);
+        pretty_assertions::assert_eq!(refused.limit, limit());
+    }
+
+    /// The clause 4.8 times of the `attribute` instance, and of its `accuracy`
+    /// sub-attribute when it has one.
+    fn stamps(state: &EntityState, attribute: &str) -> Vec<(Option<SystemInstant>, Option<SystemInstant>)> {
+        let instance = state.attributes().get(attribute).and_then(|held| held.get(None)).expect("the instance");
+        let nested = instance.sub_attributes().get(ACCURACY).and_then(|held| held.get(None));
+        once(instance)
+            .chain(nested)
+            .map(|instance| (instance.created_at(), instance.modified_at()))
+            .collect()
+    }
+
+    /// A source answers without system times unless asked for `sysAttrs`;
+    /// the branch stores none without them, so its entity, sub-attributes
+    /// included, is captured as written at the capture instant.
+    #[test]
+    fn a_source_entity_answered_without_system_times_is_stamped_at_the_capture_instant() {
+        let stored = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Vehicle"],
+            SPEED: [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 5}],
+                ACCURACY: [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]
+            }]
+        }]);
+        let source = EntityState::from_slice(stored.to_string().as_bytes()).expect("a stored state");
+        pretty_assertions::assert_eq!(stamps(&source, SPEED), vec![(None, None), (None, None)]);
+        let captured_at = Utc::now();
+        let states = ForwardedCapture::new(limit()).states(vec![version(source)], captured_at).expect("captures");
+        let at = Some(SystemInstant::new(captured_at));
+        pretty_assertions::assert_eq!(stamps(&states[0], SPEED), vec![(at, at), (at, at)]);
+    }
+
+    /// A local state merged with a source's answer is a write the branch
+    /// records anew: the times it was stored with give way to the capture
+    /// instant, like those of the attribute the source added.
+    #[test]
+    fn a_merged_local_state_takes_the_capture_instant_in_place_of_its_stored_times() {
+        let mut local = state("urn:ngsi-ld:Vehicle:1", SPEED, &json!(10));
+        local.stamp_attribute_instants(None, "2020-01-01T00:00:00Z".parse().expect("RFC 3339"));
+        let claimed = vec![ForwardedEntities {
+            registration_id: Some("urn:ngsi-ld:ContextSourceRegistration:1".parse().expect("a valid URI")),
+            mode: ForwardingMode::Inclusive,
+            entities: vec![version(state("urn:ngsi-ld:Vehicle:1", BRAND, &json!(4)))],
+            warnings: Vec::new(),
+            linked_map: None,
+        }];
+        let captured_at = Utc::now();
+        let merged = ForwardedCapture::new(limit()).merged(vec![local], claimed, captured_at).expect("merges");
+        let at = Some(SystemInstant::new(captured_at));
+        pretty_assertions::assert_eq!(stamps(&merged[0], SPEED), vec![(at, at)]);
+        pretty_assertions::assert_eq!(stamps(&merged[0], BRAND), vec![(at, at)]);
     }
 
     /// Nothing to merge captures nothing.

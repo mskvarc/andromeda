@@ -20,7 +20,7 @@ use crate::{
         SnapshotExecutor,
         captured_state::narrow_captured,
         execution::entity_query_failure,
-        forwarded_capture::{ForwardedCapture, MergedCaptureError},
+        forwarded_capture::ForwardedCapture,
         status::{failure_detail, success_detail},
         translation::entity_parameters,
     },
@@ -46,6 +46,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     page_window::{PageStart, PageWindow},
 };
+use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingExceeded;
 use andromeda_ngsi_ld_request::query::entity::{operation::EntityQueryOperation, parameters::EntityQueryParameters};
 use chrono::{DateTime, Utc};
 use std::{collections::HashSet, sync::Arc};
@@ -290,7 +291,7 @@ fn merge_claimed(
     states: Vec<EntityState>,
     claimed: Vec<ForwardedEntities>,
     captured_at: DateTime<Utc>,
-) -> Result<Vec<EntityState>, MergedCaptureError> {
+) -> Result<Vec<EntityState>, AttributeNestingExceeded> {
     if claimed.is_empty() {
         return Ok(states);
     }
