@@ -21,7 +21,7 @@ use andromeda_ngsi_ld_model::{
         AggregationMinMax,
         GroupKeyValue,
         TemporalAggregationRow,
-        aggregated_entity::AggregatedTemporalEntity,
+        aggregated_entity::{AggregatedTemporalEntity, AggregationLayout},
         temporal_attribute::TemporalAttribute,
         temporal_body::TemporalBody,
         temporal_entity::TemporalEntity,
@@ -320,6 +320,14 @@ fn bucket(bucket_start: Option<&str>, bucket_end: Option<&str>) -> TemporalAggre
     }
 }
 
+/// Triples nested `depth` grouping terms deep, the whole range one period.
+const fn standard_layout(depth: usize) -> AggregationLayout<'static> {
+    AggregationLayout {
+        grouping_depth: depth,
+        timeline: None,
+    }
+}
+
 /// The aggregated instance the rows write for the weight attribute.
 fn aggregated(rows: &[TemporalAggregationRow], methods: &[AggrMethod], depth: usize) -> Value {
     let entity = AggregatedTemporalEntity::from_rows(
@@ -327,9 +335,10 @@ fn aggregated(rows: &[TemporalAggregationRow], methods: &[AggrMethod], depth: us
         EntityTypeValue::Single("Vehicle".parse().expect("a type")),
         rows,
         methods,
-        depth,
+        standard_layout(depth),
         AttributeName::clone,
-    );
+    )
+    .expect("no timeline to exceed");
     let body = TemporalBody::Aggregated(entity);
     let format = if depth == 0 {
         TemporalFormat::AggregatedValues
@@ -510,9 +519,10 @@ fn an_aggregated_entity_collapses_its_dataset_set_below_1_3() {
         EntityTypeValue::Single("Vehicle".parse().expect("a type")),
         &[default_instance, named_instance],
         &[AggrMethod::TotalCount],
-        0,
+        standard_layout(0),
         AttributeName::clone,
-    );
+    )
+    .expect("no timeline to exceed");
     let body = TemporalBody::Aggregated(entity);
     let result = written(
         &body,
@@ -546,14 +556,17 @@ fn a_response_context_member_comes_first_in_every_temporal_body() {
     }
     let mut row = bucket(None, None);
     row.total_count = Some(1);
-    let aggregate = TemporalBody::Aggregated(AggregatedTemporalEntity::from_rows(
-        "urn:ngsi-ld:Vehicle:1".parse().expect("an identifier"),
-        EntityTypeValue::Single("Vehicle".parse().expect("a type")),
-        &[row],
-        &[AggrMethod::TotalCount],
-        0,
-        AttributeName::clone,
-    ));
+    let aggregate = TemporalBody::Aggregated(
+        AggregatedTemporalEntity::from_rows(
+            "urn:ngsi-ld:Vehicle:1".parse().expect("an identifier"),
+            EntityTypeValue::Single("Vehicle".parse().expect("a type")),
+            &[row],
+            &[AggrMethod::TotalCount],
+            standard_layout(0),
+            AttributeName::clone,
+        )
+        .expect("no timeline to exceed"),
+    );
     let text = embedded_text(&aggregate, representation(TemporalFormat::AggregatedValues, TimeProp::Observed));
     assert!(text.starts_with(r#"{"@context":"https://example.org/ctx.jsonld","#), "{text}");
 }

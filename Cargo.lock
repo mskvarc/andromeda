@@ -1427,6 +1427,7 @@ dependencies = [
  "iri-rs",
  "iso8601-duration",
  "langtag",
+ "num-traits",
  "pretty_assertions",
  "regex",
  "regex-syntax",

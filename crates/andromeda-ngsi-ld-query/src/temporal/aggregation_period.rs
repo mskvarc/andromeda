@@ -1,7 +1,7 @@
 //! The `aggrPeriodDuration` bucket width of an aggregated temporal query
 //! (clause 4.5.19).
 
-use crate::error::QueryError;
+use crate::{error::QueryError, temporal::period_stride::PeriodStride};
 use iso8601_duration::Duration;
 
 /// A non-zero aggregation bucket width.
@@ -45,6 +45,13 @@ impl AggregationPeriod {
     #[must_use]
     pub fn as_iso8601(&self) -> String {
         self.0.to_string()
+    }
+
+    /// How far one period reaches from its start, `None` for a width the store
+    /// cannot bucket on.
+    #[must_use]
+    pub fn stride(&self) -> Option<PeriodStride> {
+        PeriodStride::of(&self.0)
     }
 }
 

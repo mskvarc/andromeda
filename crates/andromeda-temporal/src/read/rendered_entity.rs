@@ -16,8 +16,8 @@ use crate::{error::TemporalError, grouping_depth::grouping_depth, service::Tempo
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_compaction::{aggregated_entity::aggregated_entity, entity_compactor::EntityCompactor};
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, temporal_history::TemporalHistory};
-use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
+use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, aggregated_entity::AggregationLayout, temporal_history::TemporalHistory};
+use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, period_timeline::PeriodTimeline};
 use andromeda_ngsi_ld_render::temporal::{
     entity::TemporalEntityRenderer,
     history_row::TimeRange,
@@ -173,8 +173,9 @@ impl TemporalService {
     /// # Errors
     ///
     /// Returns [`TemporalError`] when the aggregation cannot be read, the
-    /// grouped extension's group bound is exceeded, or a name cannot be
-    /// compacted.
+    /// grouped extension's group bound is exceeded, an attribute's time range
+    /// divides into more periods than the broker answers, or a name
+    /// cannot be compacted.
     async fn render_aggregated_entity(
         &self,
         target: &ContextTarget,
@@ -196,14 +197,19 @@ impl TemporalService {
             }
         }
         let presence = presence_of(rows.is_empty());
+        let timeline = PeriodTimeline::of(compiled, u64::from(self.limits.aggregation_max_periods));
         let aggregates = aggregated_entity(
             entity_id.clone(), // clone: the aggregated entity owns the identifier it names
             entity_types,
             &rows,
             &compiled.representation.aggr_methods,
-            grouping_depth(compiled),
+            AggregationLayout {
+                grouping_depth: grouping_depth(compiled),
+                timeline: timeline.as_ref(),
+            },
             compactor.names().await?,
-        );
+        )
+        .map_err(TemporalError::from_period_limit)?;
         Ok(RenderedTemporalEntity {
             history: TemporalHistory::Aggregates(aggregates),
             presence,

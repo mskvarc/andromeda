@@ -5,12 +5,17 @@ use crate::{
         AggregationMinMax,
         GroupKeyValue,
         TemporalAggregationRow,
-        aggregated_entity::{AggregateValue, AggregatedTemporalEntity, AggregatedValues},
+        aggregated_entity::{AggregateValue, AggregatedTemporalEntity, AggregatedTriple, AggregatedValues, AggregationLayout},
     },
 };
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_number::JsonNumber;
-use chrono::{DateTime, Utc};
+use andromeda_ngsi_ld_query::temporal::{
+    period_stride::PeriodStride,
+    period_timeline::{PeriodLimitExceeded, PeriodTimeline},
+    window::TimeInterval,
+};
+use chrono::{DateTime, TimeDelta, Utc};
 
 const WEIGHT: &str = "https://uri.etsi.org/ngsi-ld/default-context/weight";
 
@@ -42,15 +47,91 @@ fn bucket(start: &str, end: &str) -> TemporalAggregationRow {
     }
 }
 
-fn entity(rows: &[TemporalAggregationRow], methods: &[AggrMethod], depth: usize) -> AggregatedTemporalEntity {
+fn laid_out(rows: &[TemporalAggregationRow], methods: &[AggrMethod], layout: AggregationLayout<'_>) -> Result<AggregatedTemporalEntity, PeriodLimitExceeded> {
     AggregatedTemporalEntity::from_rows(
         "urn:ngsi-ld:Vehicle:1".parse().expect("an identifier"),
         EntityTypeValue::Single("Vehicle".parse().expect("a type")),
         rows,
         methods,
-        depth,
+        layout,
         AttributeName::clone,
     )
+}
+
+fn entity(rows: &[TemporalAggregationRow], methods: &[AggrMethod], depth: usize) -> AggregatedTemporalEntity {
+    laid_out(
+        rows,
+        methods,
+        AggregationLayout {
+            grouping_depth: depth,
+            timeline: None,
+        },
+    )
+    .expect("no timeline to exceed")
+}
+
+/// An hourly timeline over 00:00 to 03:00 of the first day of 2026.
+fn three_hours(maximum: u64) -> PeriodTimeline {
+    PeriodTimeline::new(
+        PeriodStride::Fixed(TimeDelta::hours(1)),
+        TimeInterval::Between {
+            from: instant("2026-01-01T00:00:00Z"),
+            to: instant("2026-01-01T03:00:00Z"),
+        },
+        maximum,
+    )
+}
+
+/// Clause 4.5.19: "as many array elements as there are periods in the time
+/// range of the query", so the hour holding no instance has its triple. Its
+/// count is zero and its average has nothing to be calculated over.
+#[test]
+fn a_period_holding_no_instance_has_its_triple() {
+    let mut first = bucket("2026-01-01T00:00:00Z", "2026-01-01T01:00:00Z");
+    first.total_count = Some(1);
+    let mut third = bucket("2026-01-01T02:00:00Z", "2026-01-01T03:00:00Z");
+    third.total_count = Some(1);
+    let timeline = three_hours(100);
+    let aggregated = laid_out(
+        &[first, third],
+        &[AggrMethod::TotalCount, AggrMethod::Avg],
+        AggregationLayout {
+            grouping_depth: 0,
+            timeline: Some(&timeline),
+        },
+    )
+    .expect("within the maximum");
+    let instances = &aggregated.attrs[&weight()];
+    let AggregatedValues::Triples(counts) = &instances[0].aggregates[0].values else {
+        panic!("totalCount is triples");
+    };
+    pretty_assertions::assert_eq!(counts.len(), 3);
+    pretty_assertions::assert_eq!(
+        counts[1],
+        AggregatedTriple {
+            value: AggregateValue::Count(0),
+            start: Some(instant("2026-01-01T01:00:00Z")),
+            end: Some(instant("2026-01-01T02:00:00Z")),
+        }
+    );
+    let AggregatedValues::Triples(averages) = &instances[0].aggregates[1].values else {
+        panic!("avg is triples");
+    };
+    pretty_assertions::assert_eq!(averages[1].value, AggregateValue::Absent);
+}
+
+#[test]
+fn a_range_of_more_periods_than_the_timeline_answers_is_refused() {
+    let timeline = three_hours(2);
+    let refused = laid_out(
+        &[bucket("2026-01-01T00:00:00Z", "2026-01-01T01:00:00Z")],
+        &[AggrMethod::Avg],
+        AggregationLayout {
+            grouping_depth: 0,
+            timeline: Some(&timeline),
+        },
+    );
+    pretty_assertions::assert_eq!(refused, Err(PeriodLimitExceeded { periods: 3, maximum: 2 }));
 }
 
 /// Clause 4.5.19: one triple per period and method, the exact numbers kept.

@@ -220,6 +220,7 @@ fn compose_temporal_service(
         Arc::clone(notifier),
         TemporalServiceLimits {
             instance_limits: config.temporal.instance_limits(),
+            aggregation_max_periods: config.temporal.max_aggregation_periods,
             // The delete-by-query extension's `TooManyResults` bound; inert
             // unless the extension is routed, which composition gates
             // separately.
