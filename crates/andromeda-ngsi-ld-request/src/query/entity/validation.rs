@@ -118,8 +118,8 @@ impl EntityQueryParameters {
             return Err(ParameterError::DatasetIdWithDeleteAll);
         }
         check_projection_exclusivity(ProjectionSelectors {
-            pick: Presence::of(self.pick.as_deref()),
-            omit: Presence::of(self.omit.as_deref()),
+            pick: self.pick.as_deref(),
+            omit: self.omit.as_deref(),
             attrs: Presence::of(self.attrs.as_deref()),
         })?;
         let linked = LinkedRequest::builder()

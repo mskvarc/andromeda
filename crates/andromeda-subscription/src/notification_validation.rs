@@ -42,8 +42,10 @@ pub(crate) const fn validate_endpoint_present(notification: &NotificationRequest
 /// notification breaks.
 pub(crate) fn validate_notification(notification: &NotificationRequest, q: Option<&Expr>) -> Result<(), SubscriptionError> {
     validate_show_changes_format(notification)?;
-    validate_projection_exclusivity(notification)?;
-    admit_linked_references(notification, q)
+    let pick = notification.pick.as_deref().map(projection_terms);
+    let omit = notification.omit.as_deref().map(projection_terms);
+    validate_projection_exclusivity(notification, pick.as_deref(), omit.as_deref())?;
+    admit_linked_references(notification, pick.as_deref(), omit.as_deref(), q)
 }
 
 /// Reject a notification combining clause 4.21 selectors that shape the same
@@ -55,10 +57,14 @@ pub(crate) fn validate_notification(notification: &NotificationRequest, q: Optio
 /// rule itself is owned by
 /// [`andromeda_ngsi_ld_query::projection::exclusivity`], which the query
 /// bindings apply to their own parameters.
-fn validate_projection_exclusivity(notification: &NotificationRequest) -> Result<(), SubscriptionError> {
+fn validate_projection_exclusivity(
+    notification: &NotificationRequest,
+    pick: Option<&[RawProjectionTerm]>,
+    omit: Option<&[RawProjectionTerm]>,
+) -> Result<(), SubscriptionError> {
     check_projection_exclusivity(ProjectionSelectors {
-        pick: Presence::of(notification.pick.as_ref()),
-        omit: Presence::of(notification.omit.as_ref()),
+        pick,
+        omit,
         attrs: Presence::of(notification.attributes.as_ref()),
     })
     .map_err(|conflict| SubscriptionError::Validation(SubscriptionValidationReason::Projection(conflict)))
@@ -70,12 +76,15 @@ fn validate_projection_exclusivity(notification: &NotificationRequest) -> Result
 ///
 /// Clause 5.8.1.4 adds a Subscription that passes the clause 5.2.12 checks,
 /// none of which bounds these references, so the engine admits every one.
-fn admit_linked_references(notification: &NotificationRequest, q: Option<&Expr>) -> Result<(), SubscriptionError> {
-    let pick = notification.pick.as_deref().map(projection_terms);
-    let omit = notification.omit.as_deref().map(projection_terms);
+fn admit_linked_references(
+    notification: &NotificationRequest,
+    pick: Option<&[RawProjectionTerm]>,
+    omit: Option<&[RawProjectionTerm]>,
+    q: Option<&Expr>,
+) -> Result<(), SubscriptionError> {
     let request = LinkedRequest::builder()
-        .pick(pick.as_deref())
-        .omit(omit.as_deref())
+        .pick(pick)
+        .omit(omit)
         .q(q)
         .join(notification.join)
         .join_level(notification.join_level)
@@ -119,6 +128,7 @@ mod tests {
         subscription_validation_reason::SubscriptionValidationReason,
     };
     use andromeda_ngsi_ld_model::notification_request::NotificationRequest;
+    use andromeda_ngsi_ld_query::projection::exclusivity::ProjectionConflict;
     use serde_json::{Value, json};
 
     fn notification(wire: Value) -> NotificationRequest {
@@ -163,6 +173,33 @@ mod tests {
                 "{wire}: {result:?}"
             );
         }
+    }
+
+    /// Two strings of one member are one list: a member in either string of
+    /// `pick` and in `omit` is named in both.
+    #[test]
+    fn a_member_named_in_both_pick_and_omit_is_refused() {
+        for wire in [
+            json!({"pick": ["id"], "omit": ["id"]}),
+            json!({"pick": ["name", "speed"], "omit": ["type,speed"]}),
+        ] {
+            let result = validate_notification(&notification(wire.clone()), None);
+            assert!(
+                matches!(
+                    &result,
+                    Err(SubscriptionError::Validation(SubscriptionValidationReason::Projection(
+                        ProjectionConflict::MemberPickedAndOmitted { .. }
+                    )))
+                ),
+                "{wire}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pick_and_omit_of_different_members_are_admitted() {
+        let result = validate_notification(&notification(json!({"pick": ["id", "speed"], "omit": ["type"]})), None);
+        assert!(result.is_ok(), "{result:?}");
     }
 
     /// Clause 5.8.1.4: no clause 5.2.12 check bounds a Linked Entity

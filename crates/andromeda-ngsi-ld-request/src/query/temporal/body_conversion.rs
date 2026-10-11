@@ -88,8 +88,8 @@ impl TryFrom<Query> for TemporalQueryParameters {
         // governs the query string's, so the body cannot smuggle two selectors
         // past the rule the GET binding enforces.
         check_projection_exclusivity(ProjectionSelectors {
-            pick: Presence::of(parameters.pick.as_deref()),
-            omit: Presence::of(parameters.omit.as_deref()),
+            pick: parameters.pick.as_deref(),
+            omit: parameters.omit.as_deref(),
             attrs: Presence::of(parameters.attrs.as_deref()),
         })?;
         Ok(parameters)
@@ -98,9 +98,10 @@ impl TryFrom<Query> for TemporalQueryParameters {
 
 #[cfg(test)]
 mod tests {
-    use crate::query::temporal::TemporalQueryParameters;
+    use crate::{error::ParameterError, query::temporal::TemporalQueryParameters};
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, time_prop::TimeProp, time_rel::TimeRel};
     use andromeda_ngsi_ld_model::query::body::Query;
+    use andromeda_ngsi_ld_query::projection::exclusivity::ProjectionConflict;
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
 
@@ -115,6 +116,16 @@ mod tests {
         let request = canonical(r#"{"type":"Query","pick":["speed"],"omit":["fuel"],"temporalQ":{"timerel":"after","timeAt":"2024-01-01T00:00:00Z"}}"#);
         let params = TemporalQueryParameters::try_from(request).expect("pick and omit may be combined");
         assert!(params.pick.is_some() && params.omit.is_some());
+    }
+
+    #[test]
+    fn a_canonical_temporal_query_naming_a_member_in_both_pick_and_omit_is_rejected() {
+        let request = canonical(r#"{"type":"Query","pick":["speed"],"omit":["speed"],"temporalQ":{"timerel":"after","timeAt":"2024-01-01T00:00:00Z"}}"#);
+        let err = TemporalQueryParameters::try_from(request).expect_err("a member in both is refused");
+        assert!(
+            matches!(err, ParameterError::Projection(ProjectionConflict::MemberPickedAndOmitted { .. })),
+            "{err:?}"
+        );
     }
 
     /// The POST body carries the join the same way the query string does

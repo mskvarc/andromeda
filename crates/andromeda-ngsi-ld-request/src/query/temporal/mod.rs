@@ -391,6 +391,17 @@ mod tests {
     }
 
     #[test]
+    fn a_member_in_both_pick_and_omit_is_rejected() {
+        let err = params_from_query("pick=speed&omit=speed")
+            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .expect_err("a member in both is refused");
+        assert!(
+            matches!(err, ParameterError::Projection(ProjectionConflict::MemberPickedAndOmitted { .. })),
+            "{err:?}"
+        );
+    }
+
+    #[test]
     fn pick_or_omit_with_attrs_is_rejected() {
         for query in [
             "timerel=after&timeAt=2024-01-01T00:00:00Z&pick=speed&attrs=fuelLevel",
