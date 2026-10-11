@@ -92,12 +92,23 @@ impl TimeInterval {
         }
     }
 
-    /// The closing instant, which only `between` carries.
+    /// The instant the interval opens at, which `after` and `between` carry.
+    /// `None` when the interval reaches back without limit.
     #[must_use]
-    pub const fn end(&self) -> Option<&DateTime<Utc>> {
+    pub const fn opening(&self) -> Option<&DateTime<Utc>> {
         match self {
-            TimeInterval::Unbounded | TimeInterval::Before(_) | TimeInterval::After(_) => None,
-            TimeInterval::Between { to, .. } => Some(to),
+            TimeInterval::Unbounded | TimeInterval::Before(_) => None,
+            TimeInterval::After(from) | TimeInterval::Between { from, .. } => Some(from),
+        }
+    }
+
+    /// The instant the interval closes at, which `before` and `between` carry.
+    /// `None` when the interval reaches forward without limit.
+    #[must_use]
+    pub const fn closing(&self) -> Option<&DateTime<Utc>> {
+        match self {
+            TimeInterval::Unbounded | TimeInterval::After(_) => None,
+            TimeInterval::Before(to) | TimeInterval::Between { to, .. } => Some(to),
         }
     }
 
@@ -210,10 +221,25 @@ mod tests {
     }
 
     #[test]
-    fn an_end_instant_belongs_only_to_between() {
+    fn each_relation_opens_and_closes_where_it_bounds_the_axis() {
         let reference = instant("2024-01-01T00:00:00Z");
-        assert_eq!(TimeInterval::Before(reference).end(), None);
-        assert_eq!(TimeInterval::After(reference).end(), None);
+        let end = instant("2024-01-01T03:00:00Z");
+        let between = TimeInterval::Between { from: reference, to: end };
+        assert_eq!((TimeInterval::Unbounded.opening(), TimeInterval::Unbounded.closing()), (None, None));
+        assert_eq!(
+            (TimeInterval::Before(reference).opening(), TimeInterval::Before(reference).closing()),
+            (None, Some(&reference))
+        );
+        assert_eq!(
+            (TimeInterval::After(reference).opening(), TimeInterval::After(reference).closing()),
+            (Some(&reference), None)
+        );
+        assert_eq!((between.opening(), between.closing()), (Some(&reference), Some(&end)));
+    }
+
+    #[test]
+    fn every_bounded_interval_carries_its_reference_instant() {
+        let reference = instant("2024-01-01T00:00:00Z");
         assert_eq!(TimeInterval::Unbounded.reference(), None);
         assert_eq!(TimeInterval::Before(reference).reference(), Some(&reference));
     }

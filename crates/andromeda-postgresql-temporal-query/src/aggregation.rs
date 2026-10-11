@@ -36,6 +36,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     timescale::time_bucket,
 };
+use chrono::{DateTime, Utc};
 use sea_query::{Alias, Condition, DynIden, Expr, ExprTrait, Func, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
 
 /// Lateral projection that computes one bucket boundary per history row.
@@ -160,6 +161,15 @@ fn bucket_subquery(axis: AttributeHistory, width: SimpleExpr, origin: SimpleExpr
         .to_owned()
 }
 
+/// One bound of the whole-range period, typed so the column decodes the same
+/// whether the query set that bound or left it open.
+fn whole_range_bound(instant: Option<&DateTime<Utc>>) -> SimpleExpr {
+    match instant {
+        Some(instant) => cast(Expr::val(*instant), PostgresType::Timestamptz),
+        None => typed_null(PostgresType::Timestamptz),
+    }
+}
+
 /// Build the aggregation query with `time_bucket` windows.
 #[must_use]
 pub fn build_aggregation_query(schema: Option<&DynIden>, compiled: &CompiledTemporalQuery, condition: Condition) -> SelectStatement {
@@ -200,8 +210,12 @@ pub fn build_aggregation_query(schema: Option<&DynIden>, compiled: &CompiledTemp
         select.expr_as(bucket_start, BucketStart);
         select.expr_as(bucket_end, Alias::new("bucket_end"));
     } else {
-        select.expr_as(typed_null(PostgresType::Timestamptz), Alias::new("bucket_start"));
-        select.expr_as(typed_null(PostgresType::Timestamptz), Alias::new("bucket_end"));
+        // Clause 4.5.19.1: the one period spans the whole time range of the
+        // temporal query, so its start and end DateTimes are the query bounds.
+        // A side the query leaves open names no instant.
+        let interval = compiled.window.interval;
+        select.expr_as(whole_range_bound(interval.opening()), BucketStart);
+        select.expr_as(whole_range_bound(interval.closing()), Alias::new("bucket_end"));
     }
 
     for (expr, alias) in aggregate_columns(&compiled.representation.aggr_methods) {
@@ -243,7 +257,12 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
-        temporal::{aggregation_period::AggregationPeriod, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
+        temporal::{
+            aggregation_period::AggregationPeriod,
+            instance_selection::InstanceSelection,
+            representation::Representation,
+            window::{TemporalWindow, TimeInterval},
+        },
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_postgresql_schema::temporal::TemporalEntities;
@@ -468,6 +487,33 @@ mod tests {
             assert!(!sql.contains("time_bucket"), "{period}: {sql}");
             assert!(sql.contains("NULL::timestamptz AS \"bucket_start\""), "{period}: {sql}");
         }
+    }
+
+    /// Clause 4.5.19.1: the one period of a whole-range aggregation spans the
+    /// time range of the temporal query, so a `between` query reports its own
+    /// bounds as the period's start and end instants.
+    #[test]
+    fn a_whole_range_period_over_a_between_query_spans_the_query_bounds() {
+        let from = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").expect("valid instant").with_timezone(&Utc);
+        let to = DateTime::parse_from_rfc3339("2024-01-01T03:00:00Z").expect("valid instant").with_timezone(&Utc);
+        let mut compiled = aggregated(vec![AggrMethod::Avg], Some("PT0S"));
+        compiled.window.interval = TimeInterval::Between { from, to };
+        let sql = sql_of(&compiled);
+        assert!(!sql.contains("time_bucket"), "{sql}");
+        assert!(sql.contains("'2024-01-01 00:00:00.000000 +00:00'::timestamptz AS \"bucket_start\""), "{sql}");
+        assert!(sql.contains("'2024-01-01 03:00:00.000000 +00:00'::timestamptz AS \"bucket_end\""), "{sql}");
+    }
+
+    /// A `before` query opens without limit, so only the end of its one period
+    /// is an instant.
+    #[test]
+    fn a_whole_range_period_over_a_before_query_names_only_its_closing_instant() {
+        let to = DateTime::parse_from_rfc3339("2024-01-01T03:00:00Z").expect("valid instant").with_timezone(&Utc);
+        let mut compiled = aggregated(vec![AggrMethod::Avg], None);
+        compiled.window.interval = TimeInterval::Before(to);
+        let sql = sql_of(&compiled);
+        assert!(sql.contains("NULL::timestamptz AS \"bucket_start\""), "{sql}");
+        assert!(sql.contains("'2024-01-01 03:00:00.000000 +00:00'::timestamptz AS \"bucket_end\""), "{sql}");
     }
 
     #[test]

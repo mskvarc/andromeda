@@ -283,9 +283,11 @@ pub struct TemporalAggregationRow {
     pub attribute_type: AttributeType,
     /// Multi-attribute discriminator, absent for the default instance.
     pub dataset_id: Option<Identifier>,
-    /// Start of the aggregation bucket.
+    /// Start of the aggregation bucket. `None` only for the whole-range period
+    /// of a query that sets no opening instant.
     pub bucket_start: Option<DateTime<Utc>>,
-    /// End of the aggregation bucket.
+    /// End of the aggregation bucket. `None` only for the whole-range period
+    /// of a query that sets no closing instant.
     pub bucket_end: Option<DateTime<Utc>>,
     /// Arithmetic mean, or the mean time of day for a `Time`-valued Property.
     pub avg: Option<AggregationAverage>,
