@@ -15,7 +15,7 @@ use crate::{
     safety_gate_inspection,
     state::{RegisteredTenant, density_baseline, target_record, tenant_inspection},
     statistics_freshness,
-    vacuum_horizon::{self, HorizonHolder},
+    vacuum_horizon::{self, HorizonHolder, HorizonScope},
 };
 use andromeda_postgresql_context_store::maintenance_config::MaintenanceMode;
 use andromeda_postgresql_seaquery::maintenance::MaintenanceStatement;
@@ -195,7 +195,7 @@ async fn reset_density_baseline(
 /// remove what it was queued for, so an operator can release the one that
 /// held it.
 async fn report_horizon_holders(connection: &mut PgConnection, tenant: &RegisteredTenant, target: MaintenanceTarget) -> Result<(), MaintenanceError> {
-    let holders = vacuum_horizon::horizon_holders(connection).await?;
+    let holders = vacuum_horizon::horizon_holders(connection, HorizonScope::TenantDatabase).await?;
     if holders.is_empty() {
         warn!(tenant = tenant.log_name(), database = %tenant.database, target = target.relation_name(), decision = "ineffective", "PostgreSQL vacuum left dead tuples while no horizon holder remains");
     }

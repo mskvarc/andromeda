@@ -9,11 +9,12 @@
 -- stops one noisy sample from triggering an action.
 --
 -- `last_tuple_changes` and `last_stats_reset` are the tenant database's
--- `pg_stat_database` counters (`tup_updated + tup_deleted`, `stats_reset`) as
--- observed when its last visit started. The rows a database changed since
--- then are its churn; a changed `stats_reset` or a lower counter means the
--- statistics were reset, and the whole current counter counts as churn. Both
--- stay NULL until a visit observes the database.
+-- `pg_stat_database` counters (`tup_inserted + tup_updated + tup_deleted`,
+-- `stats_reset`) as observed when its last visit started. The rows a database
+-- changed since then are its churn; a changed `stats_reset` or a lower counter
+-- means the statistics were reset, which erases the changes in between and
+-- makes the tenant due on its own. Both stay NULL until a visit observes the
+-- database.
 --
 -- A breach run is the unbroken sequence of samples meeting every threshold:
 -- `first_breach_at` is when its first sample was taken and `breach_samples`

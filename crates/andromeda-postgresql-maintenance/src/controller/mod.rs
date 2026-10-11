@@ -19,7 +19,7 @@ use crate::{
     freeze_report,
     inspection::{self, InvalidIndex},
     policy::{PolicyProfile, SafetyGates},
-    state::{self, RegisteredTenant, branch_rows, pending_action, tenant_inspection},
+    state::{self, RegisteredTenant, branch_rows, open_breach, pending_action, tenant_inspection},
 };
 use andromeda_postgresql_context_store::{
     maintenance_config::{MaintenanceConfig, MaintenanceMode},
@@ -148,8 +148,10 @@ impl MaintenanceController {
         let now = Utc::now();
         let records = tenant_inspection::inspection_records(platform).await?;
         let due = pending_action::tenants_with_due_actions(platform, now).await?;
-        let standings = fleet_triage::standings(records, &fleet, &due);
-        let Some(tenant) = fleet_triage::select_tenant(&standings, now) else {
+        let breaches = open_breach::open_breaches(platform).await?;
+        let standings = fleet_triage::standings(records, &fleet, &due, &breaches);
+        let qualifying_duration = PolicyProfile::from_profile(self.config.profile).qualifying_duration;
+        let Some(tenant) = fleet_triage::select_tenant(&standings, qualifying_duration, now) else {
             return Ok(PassOutcome::NoTenant);
         };
         let observed = fleet.database(tenant.key);

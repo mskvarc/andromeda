@@ -25,7 +25,7 @@ mod metadata_change;
 mod preparation_claim;
 mod quota;
 /// Reaping Snapshots by deletion, expiry and quota eviction.
-mod reap;
+pub(crate) mod reap;
 /// Reading and advancing a Snapshot's control record and preparation state.
 pub(crate) mod record;
 /// The snapshot repository struct.

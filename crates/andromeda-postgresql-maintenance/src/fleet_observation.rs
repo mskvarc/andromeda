@@ -47,7 +47,8 @@ impl DatabaseFreeze {
 /// them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ChangeCounters {
-    /// `tup_updated + tup_deleted` since the statistics were last reset.
+    /// `tup_inserted + tup_updated + tup_deleted` since the statistics were
+    /// last reset.
     pub(crate) tuple_changes: u64,
     /// When the database's statistics were last reset, `None` if never.
     pub(crate) stats_reset: Option<DateTime<Utc>>,
@@ -115,7 +116,7 @@ enum FleetColumn {
     MultixactIdAge,
     /// `autovacuum_multixact_freeze_max_age`.
     MultixactFreezeMaximum,
-    /// `tup_updated + tup_deleted`.
+    /// `tup_inserted + tup_updated + tup_deleted`.
     TupleChanges,
 }
 
@@ -151,7 +152,9 @@ fn fleet_observation_statement() -> SelectStatement {
             FleetColumn::MultixactFreezeMaximum,
         )
         .expr_as(
-            catalog_column("pg_stat_database", "tup_updated").add(catalog_column("pg_stat_database", "tup_deleted")),
+            catalog_column("pg_stat_database", "tup_inserted")
+                .add(catalog_column("pg_stat_database", "tup_updated"))
+                .add(catalog_column("pg_stat_database", "tup_deleted")),
             FleetColumn::TupleChanges,
         )
         .expr_as(catalog_column("pg_stat_database", "stats_reset"), FleetInstant::StatsReset)
@@ -230,7 +233,10 @@ mod tests {
         let sql = fleet_observation_statement().to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"JOIN "pg_stat_database""#), "{sql}");
         assert!(sql.contains(r#""pg_stat_database"."datid" = "pg_database"."oid""#), "{sql}");
-        assert!(sql.contains(r#""pg_stat_database"."tup_updated" + "pg_stat_database"."tup_deleted""#), "{sql}");
+        assert!(
+            sql.contains(r#""pg_stat_database"."tup_inserted" + "pg_stat_database"."tup_updated" + "pg_stat_database"."tup_deleted""#),
+            "inserts leave planner statistics stale, so they count as churn: {sql}"
+        );
         assert!(sql.contains(r#""pg_stat_database"."stats_reset""#), "{sql}");
         assert!(sql.contains(r#"FROM "pg_database""#), "both catalogs are read by one statement: {sql}");
     }

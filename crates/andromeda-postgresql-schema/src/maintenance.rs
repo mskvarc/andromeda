@@ -15,8 +15,8 @@ pub enum PostgresqlMaintenanceTenants {
     ConsecutiveFailures,
     /// Last-pass outcome (`MaintenanceInspectionResultCode`).
     LastResult,
-    /// The database's `tup_updated + tup_deleted` when its last visit
-    /// started, NULL before a visit observed the database.
+    /// The database's `tup_inserted + tup_updated + tup_deleted` when its
+    /// last visit started, NULL before a visit observed the database.
     LastTupleChanges,
     /// The database's `stats_reset` when its last visit started, NULL before
     /// a visit observed it or while its statistics were never reset.

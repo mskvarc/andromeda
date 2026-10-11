@@ -60,8 +60,11 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         }
         let database = record.database;
 
+        // A source due at once reports the database's clock at the probe's
+        // statement, which is later than `now`, so the deadline is compared
+        // with the instant the answer arrived.
         match self.probe.earliest_pending_work(&database).await {
-            Ok(PendingWork::DueAt(due)) if due <= now => self.load_woken(&tenant_ref, database, tenant).await,
+            Ok(PendingWork::DueAt(due)) if due <= SystemTime::now() => self.load_woken(&tenant_ref, database, tenant).await,
             Ok(PendingWork::DueAt(due)) => {
                 self.settle_schedule(tenant, now, self.waker.next_wake(PendingWork::DueAt(due), now)).await;
                 WakeOutcome::NothingDue

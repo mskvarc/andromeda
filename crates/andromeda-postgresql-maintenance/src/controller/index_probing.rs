@@ -124,11 +124,12 @@ pub(crate) async fn probe_indexes(
         let now = Utc::now();
         let decision = decide(mode, profile, target_state, measured, idle_gates(), now);
         target_record::record_decision(platform, tenant, row, Some(measured), decision, target_state.breach, now).await?;
-        info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?size.branch, target = target.relation_name(), relation_bytes = measured.relation_bytes, reclaimable_bytes = measured.reclaimable_bytes, degraded_percent = measured.degraded_percent, decision = ?decision, "PostgreSQL maintenance index probe completed");
+        let took = started.elapsed();
+        info!(tenant = tenant.log_name(), database = %tenant.database, branch = ?size.branch, target = target.relation_name(), relation_bytes = measured.relation_bytes, reclaimable_bytes = measured.reclaimable_bytes, degraded_percent = measured.degraded_percent, decision = ?decision, duration_seconds = took.as_secs_f64(), "PostgreSQL maintenance index probe completed");
         run = ProbeRun::Completed {
             flagged: flagged_after(run, decision),
         };
-        if budget.charge(started.elapsed()).is_break() {
+        if budget.charge(took).is_break() {
             break;
         }
     }

@@ -6,6 +6,10 @@
 //! prepared transaction, a replication slot carrying an `xmin` and a
 //! standby's hot-standby feedback hold the horizon just as firmly without
 //! appearing as an open client transaction.
+//!
+//! A tenant heap's horizon depends only on its own database, but a database's
+//! freeze age also covers the shared catalogs, whose horizon any database's
+//! holder pins, so the holders are read in one of two scopes.
 
 use crate::{
     catalog_counter::{CatalogCounter, non_negative},
@@ -27,6 +31,18 @@ use strum::{EnumString, IntoStaticStr};
 /// A prepared transaction younger than this is presumed to be inside an
 /// ordinary two-phase commit that its coordinator is about to finish.
 const PREPARED_TRANSACTION_GRACE_SECONDS: u64 = 30;
+
+/// Which databases' holders a read covers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HorizonScope {
+    /// The holders of the tenant database's own relations: its client
+    /// backends, its prepared transactions, physical slots and slots of the
+    /// database, and standby feedback.
+    TenantDatabase,
+    /// The holders of every database, which pin the shared catalogs and
+    /// through them every database's `datfrozenxid`.
+    Cluster,
+}
 
 /// The kind of one vacuum horizon holder.
 #[derive(Clone, Copy, Debug, EnumString, IntoStaticStr, Eq, PartialEq)]
@@ -127,9 +143,9 @@ pub(crate) fn horizon_held_by(holders: &[HorizonHolder]) -> Option<HorizonHolder
         .map(|holder| holder.kind())
 }
 
-/// Read every holder of the tenant database's vacuum horizon.
-pub(crate) async fn horizon_holders(connection: &mut PgConnection) -> Result<Vec<HorizonHolder>, MaintenanceError> {
-    let (sql, values) = horizon_holders_statement().build_sqlx(PostgresQueryBuilder);
+/// Read every holder of the vacuum horizon within `scope`.
+pub(crate) async fn horizon_holders(connection: &mut PgConnection, scope: HorizonScope) -> Result<Vec<HorizonHolder>, MaintenanceError> {
+    let (sql, values) = horizon_holders_statement(scope).build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(connection).await?;
     let now = Utc::now();
     rows.iter().map(|row| holder_of(row, now)).collect()
@@ -150,14 +166,15 @@ enum HolderColumn {
     IsActive,
 }
 
-/// One statement listing every holder, each arm projecting the same columns.
+/// One statement listing every holder within `scope`, each arm projecting the
+/// same columns.
 ///
-/// Client backends and prepared transactions are pinned to the current
-/// database, because only they hold this database's horizon. A physical slot
-/// (`database` is null) and standby feedback hold every database's horizon.
-/// The maintenance session itself holds a snapshot while it reads and is
-/// excluded.
-fn horizon_holders_statement() -> SelectStatement {
+/// In the tenant database scope, client backends, prepared transactions and
+/// logical slots are pinned to the current database, because only they hold
+/// this database's horizon. A physical slot (`database` is null) and standby
+/// feedback hold every database's horizon. The maintenance session itself
+/// holds a snapshot while it reads and is excluded.
+fn horizon_holders_statement(scope: HorizonScope) -> SelectStatement {
     let mut statement = holder_arm(
         HorizonHolderKind::ClientBackend,
         transaction_age(Expr::col(Alias::new("backend_xmin"))),
@@ -166,12 +183,11 @@ fn horizon_holders_statement() -> SelectStatement {
         typed_null(PostgresType::Boolean),
     )
     .from(Alias::new("pg_stat_activity"))
-    .and_where(Expr::col(Alias::new("datname")).eq(current_database()))
     .and_where(Expr::col(Alias::new("backend_type")).eq("client backend"))
     .and_where(Expr::col(Alias::new("backend_xmin")).is_not_null())
     .and_where(Expr::col(Alias::new("pid")).ne(backend_pid()))
     .to_owned();
-    let prepared = holder_arm(
+    let mut prepared = holder_arm(
         HorizonHolderKind::PreparedTransaction,
         transaction_age(Expr::col(Alias::new("transaction"))),
         typed_null(PostgresType::Bigint),
@@ -179,9 +195,8 @@ fn horizon_holders_statement() -> SelectStatement {
         typed_null(PostgresType::Boolean),
     )
     .from(Alias::new("pg_prepared_xacts"))
-    .and_where(Expr::col(Alias::new("database")).eq(current_database()))
     .to_owned();
-    let slots = holder_arm(
+    let mut slots = holder_arm(
         HorizonHolderKind::ReplicationSlot,
         transaction_age(Expr::col(Alias::new("xmin"))),
         transaction_age(Expr::col(Alias::new("catalog_xmin"))),
@@ -194,12 +209,19 @@ fn horizon_holders_statement() -> SelectStatement {
             .is_not_null()
             .or(Expr::col(Alias::new("catalog_xmin")).is_not_null()),
     )
-    .and_where(
-        Expr::col(Alias::new("database"))
-            .is_null()
-            .or(Expr::col(Alias::new("database")).eq(current_database())),
-    )
     .to_owned();
+    match scope {
+        HorizonScope::TenantDatabase => {
+            statement.and_where(Expr::col(Alias::new("datname")).eq(current_database()));
+            prepared.and_where(Expr::col(Alias::new("database")).eq(current_database()));
+            slots.and_where(
+                Expr::col(Alias::new("database"))
+                    .is_null()
+                    .or(Expr::col(Alias::new("database")).eq(current_database())),
+            );
+        }
+        HorizonScope::Cluster => {}
+    }
     let standbys = holder_arm(
         HorizonHolderKind::StandbyFeedback,
         transaction_age(Expr::col(Alias::new("backend_xmin"))),
@@ -280,7 +302,7 @@ fn seconds_since(since: DateTime<Utc>, now: DateTime<Utc>) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use crate::vacuum_horizon::{HorizonHolder, HorizonHolderKind, SlotActivity, horizon_held_by, horizon_holders_statement};
+    use crate::vacuum_horizon::{HorizonHolder, HorizonHolderKind, HorizonScope, SlotActivity, horizon_held_by, horizon_holders_statement};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
@@ -326,12 +348,22 @@ mod tests {
 
     #[test]
     fn horizon_statement_is_scoped_to_the_current_database() {
-        let sql = horizon_holders_statement().to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"FROM "pg_stat_activity" WHERE "datname" = current_database()"#), "{sql}");
+        let sql = horizon_holders_statement(HorizonScope::TenantDatabase).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""pid" <> pg_backend_pid() AND "datname" = current_database()"#), "{sql}");
         assert!(sql.contains(r#"FROM "pg_prepared_xacts" WHERE "database" = current_database()"#), "{sql}");
         assert!(sql.contains(r#""database" IS NULL OR "database" = current_database()"#), "{sql}");
         assert!(sql.contains(r#""xmin" IS NOT NULL OR "catalog_xmin" IS NOT NULL"#), "{sql}");
         assert!(sql.contains(r#"FROM "pg_stat_replication" WHERE "backend_xmin" IS NOT NULL"#), "{sql}");
+        assert!(sql.contains(r#""pid" <> pg_backend_pid()"#), "{sql}");
+        assert_eq!(sql.matches("UNION ALL").count(), 3, "{sql}");
+    }
+
+    #[test]
+    fn the_cluster_scope_reads_the_holders_of_every_database() {
+        let sql = horizon_holders_statement(HorizonScope::Cluster).to_string(PostgresQueryBuilder);
+        assert!(!sql.contains("current_database()"), "{sql}");
+        assert!(sql.contains(r#"FROM "pg_prepared_xacts""#), "{sql}");
+        assert!(sql.contains(r#"FROM "pg_stat_activity" WHERE "backend_type" = 'client backend'"#), "{sql}");
         assert!(sql.contains(r#""pid" <> pg_backend_pid()"#), "{sql}");
         assert_eq!(sql.matches("UNION ALL").count(), 3, "{sql}");
     }

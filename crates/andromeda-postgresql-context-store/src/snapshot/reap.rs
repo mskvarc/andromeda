@@ -164,7 +164,7 @@ async fn sweep_orphan_branches_once(pool: &PgPool) -> Result<u64, SnapshotError>
 
 /// The Snapshot key of every published or staging branch schema whose
 /// Snapshot has no control record.
-fn orphan_branch_keys_statement() -> SelectStatement {
+pub(crate) fn orphan_branch_keys_statement() -> SelectStatement {
     let namespace = || Expr::col(Alias::new("nspname"));
     let schema_key = || cast(regex_substring(namespace(), Expr::val(SNAPSHOT_SCHEMA_PATTERN)), PostgresType::Bigint);
     let control_record = Query::select()

@@ -5,7 +5,8 @@
 //! [`autovacuum_saturation`] owns the cluster's run of passes with every
 //! autovacuum worker busy, [`tenant_inspection`] owns what is recorded per tenant,
 //! [`target_record`] what is recorded per target, [`pending_action`] which
-//! queued action a visit runs next, [`branch_rows`] which context branch a
+//! queued action a visit runs next, [`open_breach`] which breach runs triage
+//! waits on, [`branch_rows`] which context branch a
 //! target row belongs to and [`density_baseline`] the baseline a
 //! density-measured GIN is compared with.
 
@@ -15,6 +16,8 @@ pub(crate) mod autovacuum_saturation;
 pub(crate) mod branch_rows;
 /// The recorded density baseline of each density-measured GIN.
 pub(crate) mod density_baseline;
+/// The open breach runs that triage waits on.
+pub(crate) mod open_breach;
 /// Which queued action a visit runs next.
 pub(crate) mod pending_action;
 /// The durable decision and action state of one maintenance target.

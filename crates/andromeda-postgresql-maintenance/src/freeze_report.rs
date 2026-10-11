@@ -13,7 +13,7 @@ use crate::{
     fleet_observation::DatabaseFreeze,
     freeze_policy::FreezePressure,
     state::RegisteredTenant,
-    vacuum_horizon::horizon_holders,
+    vacuum_horizon::{HorizonScope, horizon_holders},
 };
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -60,7 +60,7 @@ pub(crate) async fn report_freeze_pressure(connection: &mut PgConnection, tenant
         return Ok(());
     }
     let relations = oldest_relations(connection).await?;
-    let holders = horizon_holders(connection).await?;
+    let holders = horizon_holders(connection, HorizonScope::Cluster).await?;
     pressure_event!(pressure, tenant = tenant.log_name(), database = %tenant.database, pressure = ?pressure, transaction_age = database.transaction.age, transaction_freeze_max_age = database.transaction.freeze_max_age, multixact_age = database.multixact.age, multixact_freeze_max_age = database.multixact.freeze_max_age, horizon_holders = ?holders, "PostgreSQL anti-wraparound vacuum is behind");
     for relation in &relations {
         pressure_event!(pressure, tenant = tenant.log_name(), database = %tenant.database, pressure = ?pressure, relation = relation.relation.as_str(), transaction_age = relation.transaction_age, multixact_age = relation.multixact_age, "PostgreSQL relation holds back its database's freeze age");

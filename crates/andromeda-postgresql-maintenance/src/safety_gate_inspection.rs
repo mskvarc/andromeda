@@ -7,7 +7,7 @@ use crate::{
     error::MaintenanceError,
     policy::SafetyGates,
     scalar_query::{select_bool, select_i64, select_optional_instant},
-    vacuum_horizon,
+    vacuum_horizon::{self, HorizonScope},
 };
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -31,7 +31,10 @@ pub(crate) async fn safety_gates(connection: &mut PgConnection, row: BranchTarge
     let heap = branch.qualified(row.target().heap().relation_name());
     let (relation, held_horizon) = match row.target() {
         MaintenanceTarget::Index(index) => (Some(branch.qualified(index.relation_name())), None),
-        MaintenanceTarget::Heap(_) => (None, vacuum_horizon::horizon_held_by(&vacuum_horizon::horizon_holders(connection).await?)),
+        MaintenanceTarget::Heap(_) => (
+            None,
+            vacuum_horizon::horizon_held_by(&vacuum_horizon::horizon_holders(connection, HorizonScope::TenantDatabase).await?),
+        ),
         MaintenanceTarget::Statistics(_) => (None, None),
     };
     let active = select_i64(connection, active_backend_statement()).await?;

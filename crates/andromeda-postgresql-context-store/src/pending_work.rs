@@ -22,7 +22,7 @@ use crate::{
     error::ContextStoreError,
     migration_set::branch::{BranchSchemaVersion, current_branch_version},
     notification_delivery::branches::{drainable_targets, is_reaped_branch},
-    snapshot::{branch_version::branch_is_current, status_code::stored_status as stored_snapshot_status},
+    snapshot::{branch_version::branch_is_current, reap::orphan_branch_keys_statement, status_code::stored_status as stored_snapshot_status},
     store_fault::persistence_failure,
     subscription_store::{
         delivery_state::interval_anchor_select,
@@ -255,6 +255,7 @@ fn least_due_select(current: BranchSchemaVersion, branches: &[ContextTarget]) ->
             subscription_expiry_min(),
             expiry_min(Csr::Table, Csr::ExpiresAt),
             earliest_min(Snapshots::Table, Snapshots::ExpiresAt),
+            orphan_branch_due(),
             earliest_min(EntityMaps::Table, EntityMaps::ExpiresAt),
             cached_context_expiry_min(),
         ])
@@ -302,6 +303,16 @@ fn preparing_min(current: BranchSchemaVersion) -> SimpleExpr {
 fn expiry_min(table: impl IntoTableRef, column: impl IntoColumnRef + Copy) -> SimpleExpr {
     let mut select = Query::select();
     select.expr(Func::min(Expr::col(column))).from(table).and_where(Expr::col(column).is_not_null());
+    scalar(select)
+}
+
+/// A scalar subquery that is now while a branch schema outlives its
+/// Snapshot's control record, so the expiry sweep that drops it is due. A
+/// Snapshot deleted while PostgreSQL maintenance held its branch lock leaves
+/// such a schema, and no control record is left to carry an expiry.
+fn orphan_branch_due() -> SimpleExpr {
+    let mut select = Query::select();
+    select.expr(now()).and_where(Expr::exists(orphan_branch_keys_statement()));
     scalar(select)
 }
 
@@ -517,6 +528,16 @@ mod tests {
         let sql = least_sql();
         assert!(sql.contains("FROM \"snapshots\""), "{sql}");
         assert!(sql.contains("FROM \"entity_maps\""), "{sql}");
+    }
+
+    #[test]
+    fn the_probe_reports_a_branch_schema_without_a_control_record_as_due_now() {
+        let sql = least_sql();
+        assert!(
+            sql.contains(r#"(SELECT NOW() WHERE EXISTS(SELECT DISTINCT substring("nspname", '^snap_([1-9][0-9]*)(_stg)?$')::bigint"#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#"NOT EXISTS(SELECT 1 FROM "snapshots" WHERE"#), "{sql}");
     }
 
     /// Clause 5.13.1 invalidation is due when the earliest `"Cached"` entry

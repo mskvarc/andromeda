@@ -42,6 +42,9 @@ use tokio::{
 enum FakeProbeOutcome {
     /// A pending-work reading.
     Work(PendingWork),
+    /// Work due at the clock reading the probe takes while it answers, as a
+    /// database source due at once reports it.
+    DueAsAnswered,
     /// The tenant's database is gone (SQLSTATE 3D000 at the store).
     DatabaseGone,
 }
@@ -67,6 +70,13 @@ impl FakeProbe {
         }
     }
 
+    /// A probe reporting work due at the instant it answers.
+    fn due_as_answered() -> FakeProbe {
+        FakeProbe {
+            outcome: FakeProbeOutcome::DueAsAnswered,
+        }
+    }
+
     /// A probe whose tenant database no longer exists.
     fn database_gone() -> FakeProbe {
         FakeProbe {
@@ -80,6 +90,10 @@ impl PendingWorkProbe for FakeProbe {
     async fn earliest_pending_work(&self, database: &TenantDatabaseName) -> Result<PendingWork, PendingWorkError> {
         match &self.outcome {
             FakeProbeOutcome::Work(work) => Ok(*work),
+            FakeProbeOutcome::DueAsAnswered => {
+                sleep(Duration::from_millis(1)).await;
+                Ok(PendingWork::DueAt(SystemTime::now()))
+            }
             FakeProbeOutcome::DatabaseGone => Err(PendingWorkError::DatabaseGone { database: database.clone() }), // clone: the error outlives this borrow
         }
     }
@@ -1249,6 +1263,16 @@ async fn waking_a_cached_tenant_settles_the_row_without_touching_last_used() {
     pretty_assertions::assert_eq!(before, after, "waking a cached tenant does not touch its last use");
     pretty_assertions::assert_eq!(schedule.settle_count(), 1, "the schedule row is settled");
     pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1, "a cached tenant is not rebuilt");
+}
+
+#[tokio::test]
+async fn a_claimed_tenant_whose_work_falls_due_as_the_probe_answers_is_loaded() {
+    let (manager, factory, _shutdowns) = wake_manager(&["acme"], 64, Arc::new(FakeProbe::due_as_answered()), Arc::new(FakeSchedule::inert()));
+
+    let outcome = manager.wake(&named("acme")).await;
+    pretty_assertions::assert_eq!(outcome, WakeOutcome::Loaded);
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1, "work due now is run, not re-armed");
+    assert!(manager.runtimes.contains_key(&TenantRef::Named(named("acme"))), "the woken tenant is cached");
 }
 
 #[tokio::test]
