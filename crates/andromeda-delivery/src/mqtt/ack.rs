@@ -62,7 +62,14 @@ impl AckTracker {
 
     /// Assign the next unsent publish the packet id the event loop reported for
     /// its `Outgoing::Publish`.
+    ///
+    /// A packet identifier is non-zero (MQTT 3.1.1 section 2.3.1, MQTT 5.0
+    /// section 2.2.1). A `QoS` 0 publish carries none, the client reports it as
+    /// 0, and it is never registered, so it takes no waiter.
     pub fn on_outgoing_publish(&mut self, pkid: u16) {
+        if pkid == 0 {
+            return;
+        }
         if let Some(pending) = self.unassigned.pop_front() {
             self.in_flight.insert(pkid, pending);
         }
@@ -138,6 +145,17 @@ mod tests {
         tracker.on_puback(10);
         assert_eq!(first.try_recv(), Ok(()));
         assert_eq!(second.try_recv(), Ok(()));
+    }
+
+    #[test]
+    fn a_qos0_publish_beside_a_qos1_publish_takes_no_waiter() {
+        let mut tracker = AckTracker::default();
+        let mut receiver = tracker.register(AckKind::PubAck);
+        tracker.on_outgoing_publish(0);
+        tracker.on_outgoing_publish(0);
+        tracker.on_outgoing_publish(4);
+        tracker.on_puback(4);
+        assert_eq!(receiver.try_recv(), Ok(()), "the QoS 1 publish is acknowledged by its own PUBACK");
     }
 
     #[test]
