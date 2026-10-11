@@ -9,7 +9,5 @@ pub mod history_delete;
 pub mod instance_page;
 pub mod instance_selection;
 pub mod ordering;
-pub mod period_stride;
-pub mod period_timeline;
 pub mod representation;
 pub mod window;

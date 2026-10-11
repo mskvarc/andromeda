@@ -27,13 +27,6 @@ pub const DEFAULT_COLUMNSTORE_AFTER: HumanDuration = HumanDuration::from_days(30
 /// of the broker regardless of how an operator tunes the maximum below it.
 pub const MAX_LAST_N_CEILING: u32 = 5000;
 
-/// The largest `temporal.max_aggregation_periods` a deployment may configure.
-///
-/// Every period of an aggregated attribute is laid out and written in memory
-/// before the response is sent, so the ceiling bounds the work one request can
-/// ask of the broker regardless of how an operator tunes the maximum below it.
-pub const MAX_AGGREGATION_PERIODS_CEILING: u32 = 1_000_000;
-
 /// The number of seconds in one day, the grain the history-partition day fields
 /// are constrained to.
 const SECONDS_PER_DAY: u64 = 86_400;
@@ -53,13 +46,6 @@ pub enum TemporalConfigError {
     /// The `lastN` maximum was configured above [`MAX_LAST_N_CEILING`].
     #[error("temporal.max_last_n must not exceed {MAX_LAST_N_CEILING}")]
     MaxLastNAboveCeiling,
-    /// The aggregation period maximum was configured as zero.
-    #[error("temporal.max_aggregation_periods must be at least 1")]
-    ZeroMaxAggregationPeriods,
-    /// The aggregation period maximum was configured above
-    /// [`MAX_AGGREGATION_PERIODS_CEILING`].
-    #[error("temporal.max_aggregation_periods must not exceed {MAX_AGGREGATION_PERIODS_CEILING}")]
-    MaxAggregationPeriodsAboveCeiling,
     /// Expiry reconciliation cadence was configured as zero.
     #[error("temporal.expiration_check_interval must be greater than zero")]
     ZeroExpirationCheckInterval,
@@ -149,15 +135,6 @@ pub struct TemporalConfig {
     /// one timestamp at the edge of a page: a page never splits them, and a
     /// group larger than this is refused with `TooManyResults`.
     pub max_last_n: u32,
-    /// The most clause 4.5.19 periods one aggregated attribute answers per
-    /// aggregation method; a time range that divides into more is refused with
-    /// `TooManyResults` before any period is built.
-    ///
-    /// Defaults to 100000, and may be raised to at most 1000000. One period of
-    /// one method costs about 115 bytes of broker memory while the response is
-    /// built, so the default bounds one attribute to about 90 MB with all eight
-    /// methods requested.
-    pub max_aggregation_periods: u32,
     /// Cadence of every `expiresAt` sweep the broker schedules per tenant:
     /// entities (clause 5.2.4), subscriptions (clause 5.8.1.4), context source
     /// registrations (clause 5.9.2.4), snapshots and entity maps, in
@@ -238,7 +215,6 @@ impl Default for TemporalConfig {
             core_write_history: CoreWriteHistory::Recorded,
             default_last_n: 100,
             max_last_n: 1000,
-            max_aggregation_periods: 100_000,
             expiration_check_interval: HumanDuration::from_secs(30),
             intent_fallback: HumanDuration::from_secs(1),
             intent_fallback_max: HumanDuration::from_secs(30),
@@ -279,9 +255,7 @@ impl TemporalConfig {
     ///
     /// Returns the [`TemporalConfigError`] variant naming the first setting
     /// that spans no time or no work: a zero default `lastN` page, a `lastN`
-    /// maximum below that page or above [`MAX_LAST_N_CEILING`], a zero
-    /// aggregation period maximum or one above
-    /// [`MAX_AGGREGATION_PERIODS_CEILING`], expiry cadence,
+    /// maximum below that page or above [`MAX_LAST_N_CEILING`], expiry cadence,
     /// intent fallback cadence, batch size, lease, retry delay, stuck-attempt
     /// threshold, chunk interval, columnstore lag, retention horizon or
     /// retention sweep cadence; a retry ceiling below the retry delay; or a
@@ -296,12 +270,6 @@ impl TemporalConfig {
         }
         if self.max_last_n > MAX_LAST_N_CEILING {
             return Err(TemporalConfigError::MaxLastNAboveCeiling);
-        }
-        if self.max_aggregation_periods == 0 {
-            return Err(TemporalConfigError::ZeroMaxAggregationPeriods);
-        }
-        if self.max_aggregation_periods > MAX_AGGREGATION_PERIODS_CEILING {
-            return Err(TemporalConfigError::MaxAggregationPeriodsAboveCeiling);
         }
         if self.expiration_check_interval.is_zero() {
             return Err(TemporalConfigError::ZeroExpirationCheckInterval);
@@ -386,7 +354,7 @@ impl TemporalConfig {
 #[cfg(test)]
 mod config_tests {
     use crate::{
-        config::{DEFAULT_COLUMNSTORE_AFTER, MAX_AGGREGATION_PERIODS_CEILING, MAX_LAST_N_CEILING, TemporalAppendMode, TemporalConfig, TemporalConfigError},
+        config::{DEFAULT_COLUMNSTORE_AFTER, MAX_LAST_N_CEILING, TemporalAppendMode, TemporalConfig, TemporalConfigError},
         core_write_history::CoreWriteHistory,
         instance_limits::TemporalInstanceLimits,
         storage_policy::TemporalStoragePolicy,
@@ -401,7 +369,6 @@ mod config_tests {
             core_write_history: CoreWriteHistory::Recorded,
             default_last_n: 19,
             max_last_n: 19,
-            max_aggregation_periods: 100_000,
             expiration_check_interval: HumanDuration::from_secs(30),
             intent_fallback: HumanDuration::from_secs(1),
             intent_fallback_max: HumanDuration::from_secs(30),
@@ -495,34 +462,6 @@ mod config_tests {
             ..valid()
         };
         assert_eq!(above.validate(), Err(TemporalConfigError::MaxLastNAboveCeiling));
-    }
-
-    #[test]
-    fn the_default_aggregation_period_maximum_is_one_hundred_thousand() {
-        assert_eq!(TemporalConfig::default().max_aggregation_periods, 100_000);
-    }
-
-    #[test]
-    fn a_zero_aggregation_period_maximum_is_rejected() {
-        let config = TemporalConfig {
-            max_aggregation_periods: 0,
-            ..valid()
-        };
-        assert_eq!(config.validate(), Err(TemporalConfigError::ZeroMaxAggregationPeriods));
-    }
-
-    #[test]
-    fn an_aggregation_period_maximum_at_the_ceiling_is_accepted_and_one_above_is_rejected() {
-        let at_ceiling = TemporalConfig {
-            max_aggregation_periods: MAX_AGGREGATION_PERIODS_CEILING,
-            ..valid()
-        };
-        assert_eq!(at_ceiling.validate(), Ok(()));
-        let above = TemporalConfig {
-            max_aggregation_periods: MAX_AGGREGATION_PERIODS_CEILING + 1,
-            ..valid()
-        };
-        assert_eq!(above.validate(), Err(TemporalConfigError::MaxAggregationPeriodsAboveCeiling));
     }
 
     #[test]

@@ -12,7 +12,7 @@ use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_entity::{history::current_state_fold::CurrentStateFoldError, operation::mutation_error::MutationError, refusal::EntityRefusal};
 use andromeda_ngsi_ld_expansion::error::ExpansionError;
-use andromeda_ngsi_ld_query::{error::QueryError, temporal::period_timeline::PeriodLimitExceeded};
+use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_representation::{attribute_nesting::AttributeNestingExceeded, payload_budget::PayloadBudgetExceeded};
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
@@ -34,13 +34,11 @@ pub enum TemporalError {
     /// configured maximum admits.
     ///
     /// Reported off a pre-count, so an oversized operation is refused whole
-    /// rather than partially executed. Three bounds raise it: the
+    /// rather than partially executed. Two extensions raise it: the
     /// `temporal_delete_by_query` bound on the history instances a purge would
-    /// remove, the `temporal_aggregation_grouping` bound on the distinct
-    /// groups a grouped aggregation would emit, and the
-    /// `max_aggregation_periods` bound on the clause 4.5.19 periods one aggregated attribute answers. Classified
-    /// as `TooManyResults` (403), mirroring the clause 5.6.21.4 bound the
-    /// standard Purge raises.
+    /// remove, and the `temporal_aggregation_grouping` bound on the distinct
+    /// groups a grouped aggregation would emit. Classified as `TooManyResults`
+    /// (403), mirroring the clause 5.6.21.4 bound the standard Purge raises.
     #[error("temporal operation would produce {matched} results, over the configured maximum of {maximum}")]
     TooManyResults {
         /// The number of results the operation matched (instances or groups).
@@ -261,16 +259,6 @@ impl TemporalError {
     #[must_use]
     pub const fn too_many_results(matched: u64, maximum: u64) -> TemporalError {
         TemporalError::TooManyResults { matched, maximum }
-    }
-
-    /// Refuse an aggregation whose time range divides into more periods than
-    /// one aggregated attribute answers.
-    #[must_use]
-    pub const fn from_period_limit(exceeded: PeriodLimitExceeded) -> TemporalError {
-        TemporalError::TooManyResults {
-            matched: exceeded.periods,
-            maximum: exceeded.maximum,
-        }
     }
 
     /// Classify a failed entity operation a temporal operation depends on.

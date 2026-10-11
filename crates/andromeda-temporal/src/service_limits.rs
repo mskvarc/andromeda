@@ -13,9 +13,6 @@ pub struct TemporalServiceLimits {
     /// is refused with `TooManyResults` (the `temporal_delete_by_query`
     /// extension).
     pub delete_by_query_max_matches: u64,
-    /// The most clause 4.5.19 periods one aggregated attribute answers before
-    /// the aggregation is refused with `TooManyResults`.
-    pub aggregation_max_periods: u32,
     /// The maximum distinct aggregation groups one grouped aggregation may
     /// produce before it is refused with `TooManyResults` (the
     /// `temporal_aggregation_grouping` extension).

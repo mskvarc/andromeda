@@ -12,32 +12,24 @@ use crate::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_type::EntityTypeValue,
-    temporal::{
-        TemporalAggregationRow,
-        aggregated_entity::{AggregatedTemporalEntity, AggregationLayout},
-    },
+    temporal::{TemporalAggregationRow, aggregated_entity::AggregatedTemporalEntity},
 };
-use andromeda_ngsi_ld_query::temporal::period_timeline::PeriodLimitExceeded;
 use std::str::FromStr;
 
 /// The aggregated entity `rows` make of `id`, whose `expanded_types`, and every
 /// attribute the rows name, are compacted by `names`.
 ///
-/// `layout` nests the triples of each method and lays out the periods holding
-/// no Attribute instance.
-///
-/// # Errors
-///
-/// Returns [`PeriodLimitExceeded`] when the time range of one attribute
-/// divides into more periods than the layout's timeline answers.
+/// `grouping_depth` is how many grouping terms nest the triples of each
+/// method, none for the standard format.
+#[must_use]
 pub fn aggregated_entity(
     id: Identifier,
     expanded_types: &[EntityTypeName],
     rows: &[TemporalAggregationRow],
     methods: &[AggrMethod],
-    layout: AggregationLayout<'_>,
+    grouping_depth: usize,
     names: &NameCompaction,
-) -> Result<AggregatedTemporalEntity, PeriodLimitExceeded> {
+) -> AggregatedTemporalEntity {
     let mut compacted: Vec<EntityTypeName> = expanded_types
         .iter()
         .map(|expanded| {
@@ -50,7 +42,7 @@ pub fn aggregated_entity(
         1 => compacted.pop().map_or(EntityTypeValue::Multiple(Vec::new()), EntityTypeValue::Single),
         _ => EntityTypeValue::Multiple(compacted),
     };
-    AggregatedTemporalEntity::from_rows(id, type_, rows, methods, layout, |expanded| {
+    AggregatedTemporalEntity::from_rows(id, type_, rows, methods, grouping_depth, |expanded| {
         let term = names.compact_attr_iri(expanded.as_str());
         // A term that is no attribute name leaves the attribute expanded.
         AttributeName::from_str(&term).unwrap_or_else(|_| expanded.clone()) // clone: the aggregated entity owns the attribute name
@@ -62,7 +54,7 @@ mod tests {
     use crate::{aggregated_entity::aggregated_entity, name_compaction::NameCompaction};
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType};
-    use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, aggregated_entity::AggregationLayout};
+    use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 
     /// A row of one attribute, every aggregate absent.
     fn row(attribute: &str) -> TemporalAggregationRow {
@@ -97,13 +89,9 @@ mod tests {
             &["https://uri.etsi.org/ngsi-ld/default-context/Vehicle".parse().expect("a type")],
             &[row("https://uri.etsi.org/ngsi-ld/location"), row("https://example.com/unknown")],
             &[AggrMethod::TotalCount],
-            AggregationLayout {
-                grouping_depth: 0,
-                timeline: None,
-            },
+            0,
             &names,
-        )
-        .expect("no timeline to exceed");
+        );
         let keys: Vec<&str> = aggregated.attrs.keys().map(AttributeName::as_str).collect();
         pretty_assertions::assert_eq!(keys, vec!["location", "https://example.com/unknown"]);
     }

@@ -6,10 +6,12 @@
 //! extension, those triples nested one map key per grouping term. Clause
 //! 4.5.19 gives one aggregate value per attribute, `datasetId` and period, and
 //! the store returns exactly that: one row per period of one attribute
-//! instance, in period order, so each row becomes exactly one triple. The
-//! store has no row for a period holding no Attribute instance, while clause
-//! 4.5.19 still gives that period its triple, so the query's period timeline
-//! lays the empty periods out between the rows.
+//! instance, in period order, so each row becomes exactly one triple. A period
+//! holding no Attribute instance has no row and so no triple: the first member
+//! of a triple is "the value obtained after applying the aggregation method
+//! over the period", a method over no instance obtains no value, and clause
+//! 4.5.0 rules null out as a value. The example of annex C clause C.5.14
+//! answers likewise only the periods holding instances.
 
 use crate::{
     entity_type::EntityTypeValue,
@@ -23,7 +25,6 @@ use andromeda_ngsi_ld_lexicon::{
     rfc3339::sub_second,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::temporal::period_timeline::{PeriodLimitExceeded, PeriodTimeline, TimelinePeriod};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Serialize, Serializer, ser::SerializeSeq};
@@ -97,16 +98,6 @@ pub struct AggregatedAttribute {
     pub aggregates: Vec<MethodAggregate>,
 }
 
-/// How the triples of each method are laid out.
-#[derive(Clone, Copy, Debug)]
-pub struct AggregationLayout<'t> {
-    /// How many grouping terms nest the triples, none for the standard format.
-    pub grouping_depth: usize,
-    /// The periods of the query's time range, absent when the whole range is
-    /// one period.
-    pub timeline: Option<&'t PeriodTimeline>,
-}
-
 /// An entity in its aggregated representation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AggregatedTemporalEntity {
@@ -124,22 +115,16 @@ impl AggregatedTemporalEntity {
     /// `name` names it.
     ///
     /// `grouping_depth` is how many grouping terms nest the triples of each
-    /// method, none for the standard format. `timeline` lays out the periods
-    /// holding no Attribute instance, absent when the whole range is one
-    /// period.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PeriodLimitExceeded`] when the time range of one attribute
-    /// divides into more periods than the timeline answers.
+    /// method, none for the standard format.
+    #[must_use]
     pub fn from_rows(
         id: Identifier,
         type_: EntityTypeValue,
         rows: &[TemporalAggregationRow],
         methods: &[AggrMethod],
-        layout: AggregationLayout<'_>,
+        grouping_depth: usize,
         name: impl Fn(&AttributeName) -> AttributeName,
-    ) -> Result<AggregatedTemporalEntity, PeriodLimitExceeded> {
+    ) -> AggregatedTemporalEntity {
         // The family is carried on the group rather than re-read from a row,
         // which is what removes the "no rows in this group" case an index
         // built by pushing can never actually produce.
@@ -155,20 +140,18 @@ impl AggregatedTemporalEntity {
         for ((attribute, dataset_id), (family, bucket_rows)) in groups {
             let aggregates = methods
                 .iter()
-                .map(|method| {
-                    Ok(MethodAggregate {
-                        method: *method,
-                        values: nested(&bucket_rows, *method, 0, layout)?,
-                    })
+                .map(|method| MethodAggregate {
+                    method: *method,
+                    values: nested(&bucket_rows, *method, 0, grouping_depth),
                 })
-                .collect::<Result<_, PeriodLimitExceeded>>()?;
+                .collect();
             attrs.entry(name(&attribute)).or_default().push(AggregatedAttribute {
                 family,
                 dataset_id,
                 aggregates,
             });
         }
-        Ok(AggregatedTemporalEntity { id, type_, attrs })
+        AggregatedTemporalEntity { id, type_, attrs }
     }
 
     /// Whether the entity holds no aggregated attribute.
@@ -211,54 +194,21 @@ impl AggregatedTemporalEntity {
 /// level, preserving the order the store returned them in (clause 4.23.2 plus
 /// the query's collation, applied by the SQL `ORDER BY`). The leaf, once every
 /// term has been consumed, is the triple array the standard format emits.
-fn nested(rows: &[&TemporalAggregationRow], method: AggrMethod, level: usize, layout: AggregationLayout<'_>) -> Result<AggregatedValues, PeriodLimitExceeded> {
-    if level == layout.grouping_depth {
-        return Ok(AggregatedValues::Triples(triples(rows, method, layout.timeline)?));
+fn nested(rows: &[&TemporalAggregationRow], method: AggrMethod, level: usize, depth: usize) -> AggregatedValues {
+    if level == depth {
+        return AggregatedValues::Triples(rows.iter().map(|row| triple(row, method)).collect());
     }
     let mut buckets: IndexMap<GroupKeyValue, Vec<&TemporalAggregationRow>> = IndexMap::new();
     for row in rows {
         let key = row.group_keys.get(level).cloned().unwrap_or(GroupKeyValue::Absent); // clone: the bucket map owns its keys
         buckets.entry(key).or_default().push(*row);
     }
-    Ok(AggregatedValues::Grouped(
+    AggregatedValues::Grouped(
         buckets
             .into_iter()
-            .map(|(key, sub_rows)| Ok((key, nested(&sub_rows, method, level + 1, layout)?)))
-            .collect::<Result<_, PeriodLimitExceeded>>()?,
-    ))
-}
-
-/// The triples one method contributes over the rows of one attribute
-/// instance, in period order, with every empty period of the timeline in
-/// place.
-fn triples(rows: &[&TemporalAggregationRow], method: AggrMethod, timeline: Option<&PeriodTimeline>) -> Result<Vec<AggregatedTriple>, PeriodLimitExceeded> {
-    let Some(timeline) = timeline else {
-        return Ok(rows.iter().map(|row| triple(row, method)).collect());
-    };
-    Ok(timeline
-        .lay_out(rows, |row| row.bucket_start.zip(row.bucket_end))?
-        .into_iter()
-        .map(|period| match period {
-            TimelinePeriod::Held(row) => triple(row, method),
-            TimelinePeriod::Empty { start, end } => AggregatedTriple {
-                value: empty_period_value(method),
-                start: Some(start),
-                end: Some(end),
-            },
-        })
-        .collect())
-}
-
-/// What one method aggregates to over a period holding no instance.
-///
-/// The counting methods count nothing, which is zero. Every other method of
-/// Table 4.5.19.1-1 is calculated over "the values inside the period", and an
-/// empty period has none to calculate over.
-const fn empty_period_value(method: AggrMethod) -> AggregateValue {
-    match method {
-        AggrMethod::TotalCount | AggrMethod::DistinctCount => AggregateValue::Count(0),
-        AggrMethod::Avg | AggrMethod::Min | AggrMethod::Max | AggrMethod::Sum | AggrMethod::SumSq | AggrMethod::StdDev => AggregateValue::Absent,
-    }
+            .map(|(key, sub_rows)| (key, nested(&sub_rows, method, level + 1, depth)))
+            .collect(),
+    )
 }
 
 /// The `[value, start, end]` triple one method contributes over one row.

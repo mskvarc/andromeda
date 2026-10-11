@@ -19,8 +19,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::{aggregated_entity::aggregated_entity, entity_compactor::EntityCompactor};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::temporal::{aggregated_entity::AggregationLayout, temporal_document::TemporalDocument, temporal_history::TemporalHistory};
-use andromeda_ngsi_ld_query::temporal::period_timeline::PeriodTimeline;
+use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use chrono::Utc;
 
@@ -47,9 +46,9 @@ impl TemporalService {
     /// # Errors
     ///
     /// Returns [`TemporalError`] when the query does not compile, the context
-    /// does not resolve, or an entity's aggregation exceeds the grouping or
-    /// the period bound (`TooManyResults`); any other failure of one entity or
-    /// one part is a warning.
+    /// does not resolve, or an entity's aggregation exceeds the grouping bound
+    /// (`TooManyResults`); any other failure of one entity or one part is a
+    /// warning.
     pub async fn render_merged_aggregations(
         &self,
         target: &ContextTarget,
@@ -65,7 +64,6 @@ impl TemporalService {
         let compactor = self.engine.compactor(context);
         let compactor = EntityCompactor::new(&compactor);
         let recorded_at = Utc::now();
-        let timeline = PeriodTimeline::of(&compiled, u64::from(self.limits.aggregation_max_periods));
         let mut rendering = MergedRendering::default();
         for (entity_id, answers) in parts {
             let mut rows = Vec::new();
@@ -101,20 +99,17 @@ impl TemporalService {
             if aggregated.is_empty() {
                 continue;
             }
-            let names = match compactor.names().await {
-                Ok(names) => names,
-                Err(error) => {
-                    rendering.warnings.push(unreadable(&entity_id, &TemporalError::from(error)));
-                    continue;
-                }
-            };
-            let layout = AggregationLayout {
-                grouping_depth: grouping_depth(&compiled),
-                timeline: timeline.as_ref(),
-            };
-            let entity = aggregated_entity(entity_id, &entity_types, &aggregated, &compiled.representation.aggr_methods, layout, names)
-                .map_err(TemporalError::from_period_limit)?;
-            rendering.entities.push(TemporalHistory::Aggregates(entity));
+            match compactor.names().await {
+                Ok(names) => rendering.entities.push(TemporalHistory::Aggregates(aggregated_entity(
+                    entity_id,
+                    &entity_types,
+                    &aggregated,
+                    &compiled.representation.aggr_methods,
+                    grouping_depth(&compiled),
+                    names,
+                ))),
+                Err(error) => rendering.warnings.push(unreadable(&entity_id, &TemporalError::from(error))),
+            }
         }
         Ok(rendering)
     }
