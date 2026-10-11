@@ -1,7 +1,7 @@
-//! Every batch write records, for the Temporal Evolution and the current-value
-//! projection derived from it, the instances it left in each Entity rather than
-//! the Fragment that asked for them, exactly as its single-entity sibling does
-//! (clauses 5.6.8, 5.6.9 and 5.6.20 run those behaviours per Entity).
+//! Every batch write records, for the Temporal Evolution, the instances it left
+//! in each Entity rather than the Fragment that asked for them, exactly as its
+//! single-entity sibling does (clauses 5.6.8, 5.6.9 and 5.6.20 run those
+//! behaviours per Entity).
 //!
 //! The fixture Building holds `category` = "office" with an `accuracy`
 //! sub-Property, which a Fragment-shaped record would lose.
@@ -12,6 +12,7 @@ use crate::{
     history_recording_assertions::{assert_observes_stored_instances, observed_default_instance, recorded_observation},
     notification_recording_harness::{ACCURACY_IRI, CATEGORY_IRI, ENTITY_ID, NAME_IRI, live_target, recording_service, single_recorded_write},
     side_effect::SideEffectPlacement,
+    side_effect_replay::replay_writes,
     write_kind::{BatchMerge, BatchUpdate, BatchUpsert},
 };
 use andromeda_context_commit::history_record::HistoryRecord;
@@ -81,6 +82,40 @@ async fn batch_merge_defers_the_merged_instance_when_enqueued() {
     assert_observes_stored_instances(&write, &[CATEGORY_IRI]);
 }
 
+/// Clause 5.7.2.4 filters the Entities as stored, and `respond-async` answers
+/// once the batch is stored: the enqueued write commits the updated state as
+/// current state, and the replay of its job records history alone, so a replay
+/// landing after a later write cannot bring the older value back.
+#[tokio::test]
+async fn batch_update_enqueued_commits_its_current_state_and_its_replay_leaves_current_state_alone() {
+    let (service, recorded) = recording_service().await;
+    let admitted = admitted_batch(
+        &service,
+        BatchUpdate,
+        vec![building(&json!({"category": {"type": "Property", "value": "retail"}}))],
+        &ContextSpec::core_only(),
+    )
+    .await;
+    service
+        .batch_update(SideEffectPlacement::DeferredOnLive, admitted, OverwritePolicy::Overwrite)
+        .await
+        .expect("the batch update lands");
+
+    let write = single_recorded_write(&recorded);
+    assert!(write.entity.is_update(), "the enqueued write updates the stored Entity");
+    let stored = serde_json::to_value(write.entity.record().expect("the write stores an entity record").state.as_ref()).expect("the state encodes");
+    assert_eq!(
+        observed_default_instance(&stored, CATEGORY_IRI)[properties::VALUE.as_str()][0]["@value"],
+        json!("retail")
+    );
+
+    let job = write.side_effects.expect("an enqueued write carries its side-effect job");
+    let replayed = replay_writes(job.temporal_entities, Vec::new());
+    assert_eq!(replayed.len(), 1);
+    assert!(replayed[0].entity.is_none(), "a replay leaves current state alone");
+    assert!(replayed[0].history.iter().any(HistoryRecord::is_observations));
+}
+
 /// Clause 5.6.9.4 with `noOverwrite` is an Append Attributes that leaves an
 /// existing attribute untouched: only the appended attribute is recorded.
 #[tokio::test]
@@ -106,8 +141,7 @@ async fn batch_update_without_overwrite_records_only_the_attributes_it_appended(
 }
 
 /// A `noOverwrite` batch update that appended nothing stores no write at all,
-/// so it records no observation and the current-value projection keeps the
-/// value the Entity still holds.
+/// so it records no observation and leaves the Entity as it was.
 #[tokio::test]
 async fn batch_update_without_overwrite_that_appended_nothing_records_no_observation() {
     let (service, recorded) = recording_service().await;

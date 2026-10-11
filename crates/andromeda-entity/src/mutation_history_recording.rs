@@ -1,7 +1,6 @@
-//! Every whole-entity mutation records, for the Temporal Evolution and the
-//! current-value projection derived from it, the instances it left in the
-//! Entity rather than the Fragment that asked for them (clauses 4.5.7 and
-//! 4.5.8), proven without a live broker.
+//! Every whole-entity mutation records, for the Temporal Evolution, the
+//! instances it left in the Entity rather than the Fragment that asked for them
+//! (clauses 4.5.7 and 4.5.8), proven without a live broker.
 
 use crate::{
     admission_fixture::{admitted_context, admitted_entity},

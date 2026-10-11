@@ -1,7 +1,6 @@
-//! Every attribute-level write records, for the Temporal Evolution and the
-//! current-value projection derived from it, the instances it left in the
-//! Entity rather than the Fragment that asked for them (clauses 4.5.7 and
-//! 4.5.8), proven without a live broker.
+//! Every attribute-level write records, for the Temporal Evolution, the
+//! instances it left in the Entity rather than the Fragment that asked for them
+//! (clauses 4.5.7 and 4.5.8), proven without a live broker.
 //!
 //! The fixture Building holds `category` = "office" with an `accuracy`
 //! sub-Property, so a write that recorded its Fragment would lose that
@@ -192,9 +191,8 @@ async fn append_attrs_without_overwrite_records_only_the_attributes_it_appended(
     assert_observes_stored_instances(&write, &[NAME_IRI]);
 }
 
-/// A no-overwrite append that appended nothing records no observation at all,
-/// so the current-value projection keeps the value the Entity still holds. It
-/// changed nothing, so it stores no write either (clause 4.8 keeps the
+/// A no-overwrite append that appended nothing records no observation at all.
+/// It changed nothing, so it stores no write either (clause 4.8 keeps the
 /// entity's `modifiedAt`).
 #[tokio::test]
 async fn append_attrs_without_overwrite_that_appended_nothing_records_no_observation() {
