@@ -12,20 +12,16 @@
 //! ([`andromeda_jsonld::presented_context`]), and it is reduced to one URI the
 //! way a response `Link` is: a presented value that is one URL is stored as it
 //! stands, and anything else is hosted as an `ImplicitlyCreated` wrapper whose
-//! absolute URL is stored (Annex C.8). A wrapper that cannot be hosted fails
+//! absolute URL is stored (Annex C.8). A request that supplied no `@context`
+//! is under the core context (clause 5.5.5), which is one URL, so every created
+//! subscription holds a `jsonldContext`. A wrapper that cannot be hosted fails
 //! the request: storing nothing would notify under the core context alone,
 //! which is not the `@context` applicable for the Subscription.
 
 use crate::{error::SubscriptionError, subscription_context::SubscriptionContext};
-use andromeda_json_literal::piece::JsonKind;
-use andromeda_jsonld::{
-    compound_context_host::WrapperUse,
-    context_spec::ContextSpec,
-    engine::processor::JsonLdEngine,
-    presented_context::ContextLinkTarget,
-    request_context::RequestContext,
-};
+use andromeda_jsonld::{compound_context_host::WrapperUse, engine::processor::JsonLdEngine, presented_context::ContextLinkTarget};
 use andromeda_ngsi_ld_model::clearable::Clearable;
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::IriBuf;
 
 /// Initialise the `jsonldContext` member of a subscription request from the
@@ -33,9 +29,8 @@ use iri_rs::IriBuf;
 /// A create body has nothing stored to delete, so a member it clears names
 /// none either.
 ///
-/// A request that supplied no context of its own, and a subscription the
-/// broker places under the core context, leave the member absent, so its
-/// notifications name the core context (clause 5.5.5).
+/// A subscription the broker places under the core context is initialised
+/// with the core context URL.
 ///
 /// # Errors
 ///
@@ -47,28 +42,18 @@ pub(crate) async fn initialize_notification_context(
     subscription_context: SubscriptionContext<'_>,
     engine: &JsonLdEngine,
 ) -> Result<(), SubscriptionError> {
-    let SubscriptionContext::Request { context, host } = subscription_context else {
-        return Ok(());
-    };
-    if jsonld_context.as_set().is_some() || names_no_context(context) {
+    if jsonld_context.as_set().is_some() {
         return Ok(());
     }
-    let presented = engine.presented_context(context).await?;
-    let stored = match presented.link_target() {
-        ContextLinkTarget::Reference(url) => url,
-        ContextLinkTarget::Hosted(value) => host.host(&value, WrapperUse::StoredReference).await?,
+    let stored = match subscription_context {
+        SubscriptionContext::Request { context, host } => match engine.presented_context(context).await?.link_target() {
+            ContextLinkTarget::Reference(url) => url,
+            ContextLinkTarget::Hosted(value) => host.host(&value, WrapperUse::StoredReference).await?,
+        },
+        SubscriptionContext::CoreOnly => IriBuf::from(NGSI_LD_CORE_CONTEXT_URL),
     };
     *jsonld_context = Clearable::Set(stored);
     Ok(())
-}
-
-/// Whether the request supplied no `@context` of its own.
-fn names_no_context(context: &ContextSpec) -> bool {
-    match context.request_context() {
-        RequestContext::Default => true,
-        RequestContext::Body(body) => body.piece().kind() == JsonKind::Null,
-        RequestContext::Link(_) => false,
-    }
 }
 
 #[cfg(test)]
@@ -219,10 +204,10 @@ mod tests {
         pretty_assertions::assert_eq!(stored_context(payload.as_set()), Some("https://example.com/explicit.jsonld"));
     }
 
-    /// Clause 5.5.5: a request that supplied no context leaves the member
-    /// absent.
+    /// Clauses 5.8.1.4 and 5.5.5: a request that supplied no context is under
+    /// the core context, which initialises the member.
     #[tokio::test]
-    async fn no_supplied_context_leaves_the_field_absent() {
+    async fn no_supplied_context_initialises_the_member_with_the_core_context() {
         let mut payload = Clearable::Absent;
 
         initialize_notification_context(
@@ -234,21 +219,42 @@ mod tests {
             &engine(),
         )
         .await
-        .expect("untouched");
+        .expect("initialised");
 
-        assert!(stored_context(payload.as_set()).is_none(), "{payload:?}");
+        pretty_assertions::assert_eq!(stored_context(payload.as_set()), Some(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+    }
+
+    /// A request whose body `@context` is the JSON null supplied no context
+    /// and is under the core context (clause 5.5.5).
+    #[tokio::test]
+    async fn a_null_body_context_initialises_the_member_with_the_core_context() {
+        let mut payload = Clearable::Absent;
+        let context = ContextSpec::from_body(JsonLiteral::admit("null").expect("an admissible literal"));
+
+        initialize_notification_context(
+            &mut payload,
+            SubscriptionContext::Request {
+                context: &admitted(&context).await,
+                host: &NoCompoundContextHost,
+            },
+            &engine(),
+        )
+        .await
+        .expect("initialised");
+
+        pretty_assertions::assert_eq!(stored_context(payload.as_set()), Some(NGSI_LD_CORE_CONTEXT_URL.as_str()));
     }
 
     /// A subscription the broker places under the core context has nothing to
-    /// host and leaves the member absent.
+    /// host and is initialised with the core context URL.
     #[tokio::test]
-    async fn a_broker_placed_subscription_leaves_the_field_absent() {
+    async fn a_broker_placed_subscription_is_initialised_with_the_core_context() {
         let mut payload = Clearable::Absent;
 
         initialize_notification_context(&mut payload, SubscriptionContext::CoreOnly, &engine())
             .await
-            .expect("untouched");
+            .expect("initialised");
 
-        assert!(stored_context(payload.as_set()).is_none(), "{payload:?}");
+        pretty_assertions::assert_eq!(stored_context(payload.as_set()), Some(NGSI_LD_CORE_CONTEXT_URL.as_str()));
     }
 }
