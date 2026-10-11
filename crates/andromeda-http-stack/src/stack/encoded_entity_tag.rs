@@ -11,10 +11,14 @@
 //! mistakes two different byte sequences for one.
 //!
 //! The layer never encodes a body-less 304, yet RFC 7232 section 4.1 has a 304
-//! carry the `ETag` and `Vary` the 200 would have carried. A 304 answering a
-//! request whose `Accept-Encoding` selects a coding the layer applies stands
-//! for the encoded 200, so it gets the weak tag and `Vary: accept-encoding`
-//! that response carries.
+//! carry the `ETag` and `Vary` the 200 would have carried. The layer names
+//! `accept-encoding` in the `Vary` of every response it would compress,
+//! whatever the request's `Accept-Encoding`, so every 304 names it too: the 304
+//! has no body to tell a compressible 200 from another, and a `Vary` member the
+//! 200 lacked only narrows which requests a cache reuses the response for. A
+//! 304 answering a request whose `Accept-Encoding` selects a coding the layer
+//! applies stands for the encoded 200, so it also gets that response's weak
+//! tag.
 
 use crate::config::content_coding::ContentCoding;
 use axum::{
@@ -54,12 +58,13 @@ impl EncodedEntityTags {
     /// Rewrite `response`, answering a request with `request_headers`, once the
     /// compression layer has seen it.
     pub(crate) fn revalidated(self, request_headers: &HeaderMap, mut response: Response) -> Response {
-        let stands_for_encoded = response.status() == StatusCode::NOT_MODIFIED && self.selects_coding(request_headers);
+        let not_modified = response.status() == StatusCode::NOT_MODIFIED;
+        let stands_for_encoded = not_modified && self.selects_coding(request_headers);
         let headers = response.headers_mut();
-        if stands_for_encoded {
-            weaken(headers);
+        if not_modified {
             vary_on_encoding(headers);
-        } else if is_content_encoded(headers) {
+        }
+        if stands_for_encoded || is_content_encoded(headers) {
             weaken(headers);
         }
         response
@@ -228,16 +233,27 @@ mod tests {
     }
 
     /// A 304 answering a request that selects no coding the layer applies
-    /// stands for the identity 200 and keeps its strong tag.
+    /// stands for the identity 200: it keeps the strong tag, and carries the
+    /// `Vary: accept-encoding` the layer gives that 200 whatever the request
+    /// asked for (RFC 7232 section 4.1).
     #[test]
-    fn a_not_modified_answer_to_an_identity_request_keeps_the_strong_tag() {
-        for accept in ["identity", "br", "gzip;q=0", "gzip;q=0.000", "*;q=0"] {
-            let revalidated = gzip_only().revalidated(&accepting(accept), response(StatusCode::NOT_MODIFIED, None, "\"x\""));
-            pretty_assertions::assert_eq!(tag(&revalidated), Some(&HeaderValue::from_static("\"x\"")), "{accept}");
-            assert!(revalidated.headers().get(VARY).is_none(), "{accept}");
+    fn a_not_modified_answer_to_an_identity_request_keeps_the_strong_tag_and_varies_on_encoding() {
+        let requests = ["identity", "br", "gzip;q=0", "gzip;q=0.000", "*;q=0"].map(accepting);
+        for request in requests.iter().chain([&HeaderMap::new()]) {
+            let revalidated = gzip_only().revalidated(request, response(StatusCode::NOT_MODIFIED, None, "\"x\""));
+            pretty_assertions::assert_eq!(tag(&revalidated), Some(&HeaderValue::from_static("\"x\"")), "{request:?}");
+            pretty_assertions::assert_eq!(
+                revalidated.headers().get(VARY),
+                Some(&HeaderValue::from_static("accept-encoding")),
+                "{request:?}"
+            );
         }
-        let unasked = gzip_only().revalidated(&HeaderMap::new(), response(StatusCode::NOT_MODIFIED, None, "\"x\""));
-        pretty_assertions::assert_eq!(tag(&unasked), Some(&HeaderValue::from_static("\"x\"")));
+    }
+
+    #[test]
+    fn a_full_answer_the_layer_left_unencoded_gains_no_vary() {
+        let unencoded = gzip_only().revalidated(&HeaderMap::new(), response(StatusCode::OK, None, "\"x\""));
+        assert!(unencoded.headers().get(VARY).is_none());
     }
 
     #[test]

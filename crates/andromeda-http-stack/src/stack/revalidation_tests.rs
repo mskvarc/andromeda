@@ -95,13 +95,15 @@ async fn a_gzip_response_and_its_revalidation_carry_the_same_weak_tag_and_vary()
 }
 
 #[tokio::test]
-async fn an_identity_response_and_its_revalidation_keep_the_strong_tag() -> Result<(), Box<dyn Error>> {
+async fn an_identity_response_and_its_revalidation_keep_the_strong_tag_and_carry_the_same_vary() -> Result<(), Box<dyn Error>> {
     let full = answer(&[]).await?;
     pretty_assertions::assert_eq!(full.headers().get(CONTENT_ENCODING), None);
     pretty_assertions::assert_eq!(full.headers().get(ETAG), Some(&HeaderValue::from_static(TAG)));
+    assert!(varies_on_encoding(&full));
 
     let revalidated = answer(&[(IF_NONE_MATCH.as_str(), TAG)]).await?;
     pretty_assertions::assert_eq!(revalidated.status(), StatusCode::NOT_MODIFIED);
     pretty_assertions::assert_eq!(revalidated.headers().get(ETAG), Some(&HeaderValue::from_static(TAG)));
+    assert!(varies_on_encoding(&revalidated), "RFC 7232 section 4.1: the 304 carries the 200's Vary");
     Ok(())
 }
