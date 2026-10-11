@@ -14,6 +14,7 @@ use andromeda_registration::{
         forwarding_outcome::ForwardingOutcome,
         mutation::RegistrationMutation,
         page::RegistrationPage,
+        written_registration::WrittenRegistration,
     },
 };
 use async_trait::async_trait;
@@ -22,7 +23,8 @@ use iri_rs::IriBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A registration store that answers every matching query with its fixed list,
-/// except for the first few, which it fails.
+/// except for the first few, which it fails. A creation is refused as an
+/// unavailable store, and an update or deletion finds no registration.
 pub(crate) struct ScriptedRegistrations {
     /// The registrations every matching query answers.
     registrations: Vec<ContextSourceRegistration>,
@@ -58,8 +60,8 @@ impl RegistrationStore for ScriptedRegistrations {
         Ok(false)
     }
 
-    async fn create(&self, _id: &Identifier, _params: &CreateCsrParams) -> Result<CsourceChangeRevision, RegistrationError> {
-        Ok(CsourceChangeRevision::from(1))
+    async fn create(&self, _id: &Identifier, _params: &CreateCsrParams) -> Result<WrittenRegistration, RegistrationError> {
+        Err(RegistrationError::StoreUnavailable)
     }
 
     async fn get(&self, _id: &Identifier) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
@@ -73,7 +75,7 @@ impl RegistrationStore for ScriptedRegistrations {
         })
     }
 
-    async fn update(&self, _id: &Identifier, _values: &ResolvedCsrUpdate) -> Result<RegistrationMutation, RegistrationError> {
+    async fn update(&self, _id: &Identifier, _values: &ResolvedCsrUpdate) -> Result<RegistrationMutation<WrittenRegistration>, RegistrationError> {
         Ok(RegistrationMutation::Missing)
     }
 
@@ -96,7 +98,7 @@ impl RegistrationStore for ScriptedRegistrations {
         Ok(Vec::new())
     }
 
-    async fn delete(&self, _id: &Identifier) -> Result<RegistrationMutation, RegistrationError> {
+    async fn delete(&self, _id: &Identifier) -> Result<RegistrationMutation<CsourceChangeRevision>, RegistrationError> {
         Ok(RegistrationMutation::Missing)
     }
 

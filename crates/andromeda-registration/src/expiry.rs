@@ -7,7 +7,7 @@ use crate::{
     store::{RegistrationStore, expired_deletion::ExpiredDeletion},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::notification::{CsrChangeEvent, CsrTriggerReason};
+use andromeda_ngsi_ld_model::notification::{CsrChange, CsrChangeEvent};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
@@ -89,8 +89,9 @@ impl RegistrationExpiry {
             if let Some(ref sink) = self.change_sink {
                 sink.publish(CsrChangeEvent {
                     csr_id: identifier.clone(), // clone: outcome and event independently own the identifier.
-                    trigger_reason: CsrTriggerReason::NoLongerMatching,
-                    csr_snapshot: Some(Box::new(registration)),
+                    change: CsrChange::Deleted {
+                        before: Some(Box::new(registration)),
+                    },
                     revision,
                 });
             }

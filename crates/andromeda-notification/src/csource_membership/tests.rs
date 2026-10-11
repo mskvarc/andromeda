@@ -1,11 +1,15 @@
 use crate::{
     csource_membership::{CsourceMembership, PlannedNotification},
-    csource_transition::RegistrationChange,
+    csource_transition::{ChangeStates, RegistrationChange},
     error::NotificationError,
     notified_registration_store::{NotifiedRegistrationStore, Release},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::ContextSourceRegistration, subscription::SubscriptionStatus};
+use andromeda_ngsi_ld_model::{
+    notification::{CsrChange, CsrTriggerReason},
+    registration::ContextSourceRegistration,
+    subscription::SubscriptionStatus,
+};
 use andromeda_subscription::{change::UpsertKind, compiled::CompiledCsrSubscription, geo_filter::SubscriptionGeoFilter};
 use futures::future::BoxFuture;
 use pretty_assertions::assert_eq;
@@ -367,6 +371,38 @@ async fn an_update_into_matching_is_newly_matching_and_a_further_matching_update
 
     assert_eq!(summary(&into_matching), vec![(CsrTriggerReason::NewlyMatching, VEHICLE.to_owned())]);
     assert_eq!(summary(&still_matching), vec![(CsrTriggerReason::Updated, VEHICLE.to_owned())]);
+}
+
+/// Clause 5.11.7 owes one notification per change, and clause 5.3.3 names an
+/// update into matching `newlyMatching`. Both changes are evaluated only after
+/// the update committed, each against the registration it wrote: the creation
+/// of a non-matching registration owes nothing, the update one `newlyMatching`.
+#[tokio::test]
+async fn a_creation_evaluated_after_its_update_into_matching_is_notified_once_by_the_update() {
+    let ledger = Arc::new(InMemoryLedger::default());
+    let membership = broker(&ledger);
+    let subscription = subscription();
+    let subscriptions = [Arc::clone(&subscription)];
+    let created = CsrChange::Created {
+        written: Box::new(registration(REGISTRATION, BUILDING)),
+    };
+    let updated = CsrChange::Updated {
+        before: Box::new(registration(REGISTRATION, BUILDING)),
+        written: Box::new(registration(REGISTRATION, VEHICLE)),
+    };
+
+    let _initial = membership.plan_upsert(&subscription, UpsertKind::Created, &[]).await.expect("recorded");
+    let creation = ChangeStates::of(&created);
+    let on_creation = membership
+        .plan_registration_change(&subscriptions, creation.change, &uri(REGISTRATION), creation.before, creation.after)
+        .await;
+    let update = ChangeStates::of(&updated);
+    let on_update = membership
+        .plan_registration_change(&subscriptions, update.change, &uri(REGISTRATION), update.before, update.after)
+        .await;
+
+    assert_eq!(summary(&on_creation), Vec::new());
+    assert_eq!(summary(&on_update), vec![(CsrTriggerReason::NewlyMatching, VEHICLE.to_owned())]);
 }
 
 /// Clause 5.11.7: deleting a reported registration is `noLongerMatching`

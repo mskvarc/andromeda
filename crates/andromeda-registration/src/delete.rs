@@ -2,7 +2,7 @@
 
 use crate::{RegistrationService, error::RegistrationError};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::notification::{CsrChangeEvent, CsrTriggerReason};
+use andromeda_ngsi_ld_model::notification::{CsrChange, CsrChangeEvent};
 
 impl RegistrationService {
     /// Delete a registration by URI.
@@ -32,8 +32,9 @@ impl RegistrationService {
         }
         self.emit_csr_change(CsrChangeEvent {
             csr_id: id.clone(), // clone: the deletion event outlives the borrowed request identifier.
-            trigger_reason: CsrTriggerReason::NoLongerMatching,
-            csr_snapshot: existing.map(Box::new),
+            change: CsrChange::Deleted {
+                before: existing.map(Box::new),
+            },
             revision,
         });
         Ok(())

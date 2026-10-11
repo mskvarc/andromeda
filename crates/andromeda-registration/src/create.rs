@@ -12,7 +12,7 @@ use crate::{
 };
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::notification::{CsrChangeEvent, CsrTriggerReason};
+use andromeda_ngsi_ld_model::notification::{CsrChange, CsrChangeEvent};
 use std::mem::take;
 
 impl RegistrationService {
@@ -65,12 +65,13 @@ impl RegistrationService {
             expires_at: params.expires_at,
         })?;
         check_conflicts(self.repo.as_ref(), self.entity_probe.as_ref(), params.mode, &params.information, None).await?;
-        let revision = self.repo.create(&id, &params).await?;
+        let written = self.repo.create(&id, &params).await?;
         self.emit_csr_change(CsrChangeEvent {
             csr_id: id.clone(), // clone: the change event and response each own the identifier.
-            trigger_reason: CsrTriggerReason::NewlyMatching,
-            csr_snapshot: None,
-            revision,
+            change: CsrChange::Created {
+                written: Box::new(written.registration),
+            },
+            revision: written.revision,
         });
         Ok(id)
     }

@@ -17,7 +17,7 @@ use crate::{
     csource_delivery::{CsourceDeliveryOutcome, CsourceNotificationDelivery},
     csource_match_set::matching_registrations,
     csource_membership::{CsourceMembership, PlannedNotification},
-    csource_transition::RegistrationChange,
+    csource_transition::ChangeStates,
     error::NotificationError,
     notified_registration_store::NotifiedRegistrationStore,
 };
@@ -303,27 +303,10 @@ impl CsourceNotificationProcessor {
             return;
         };
 
-        let change = RegistrationChange::from_event_reason(event.trigger_reason);
-        let before = event.csr_snapshot.as_deref();
-        let after = match change {
-            RegistrationChange::Created | RegistrationChange::Updated => match self.csr_repo.get(&event.csr_id).await {
-                Ok(Some(csr)) => Some(csr),
-                Ok(None) => {
-                    // The deletion that removed it is reported by its own event.
-                    debug!("CSR {} no longer exists, skipping notification", event.csr_id);
-                    return;
-                }
-                Err(e) => {
-                    error!("Failed to fetch CSR {} for notification: {}", event.csr_id, e);
-                    return;
-                }
-            },
-            RegistrationChange::Deleted => None,
-        };
-
+        let states = ChangeStates::of(&event.change);
         let planned = self
             .membership
-            .plan_registration_change(&found, change, &event.csr_id, before, after.as_ref())
+            .plan_registration_change(&found, states.change, &event.csr_id, states.before, states.after)
             .await;
         stream::iter(planned)
             .for_each_concurrent(CSR_NOTIFICATION_CONCURRENCY, |notification| async move {

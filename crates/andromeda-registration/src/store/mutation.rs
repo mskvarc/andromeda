@@ -2,28 +2,28 @@
 
 use crate::error::RegistrationError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::csource_change_revision::CsourceChangeRevision;
 
-/// Outcome of a mutation against one registration identifier.
+/// Outcome of a mutation against one registration identifier, carrying what
+/// the applied mutation reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegistrationMutation {
-    /// One registration was changed, by a write that drew this revision.
-    Applied(CsourceChangeRevision),
+pub enum RegistrationMutation<T> {
+    /// One registration was changed, and the store reports this about it.
+    Applied(T),
     /// No registration matched the identifier.
     Missing,
 }
 
-impl RegistrationMutation {
+impl<T> RegistrationMutation<T> {
     /// Require a mutation to have changed the requested registration,
-    /// returning the revision the change drew.
+    /// returning what the store reported about the change.
     ///
     /// # Errors
     ///
     /// Returns [`RegistrationError::NotFound`] when the mutation matched no
     /// registration carrying `identifier`.
-    pub fn require_applied(self, identifier: &Identifier) -> Result<CsourceChangeRevision, RegistrationError> {
+    pub fn require_applied(self, identifier: &Identifier) -> Result<T, RegistrationError> {
         match self {
-            RegistrationMutation::Applied(revision) => Ok(revision),
+            RegistrationMutation::Applied(applied) => Ok(applied),
             RegistrationMutation::Missing => Err(RegistrationError::not_found(identifier)),
         }
     }

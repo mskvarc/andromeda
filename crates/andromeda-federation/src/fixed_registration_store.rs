@@ -1,4 +1,4 @@
-//! A fixed in-memory registration store and local-type resolver for the forwarding tests. Registration matching only reads candidates through [`RegistrationStore::find_matching`], which answers the whole fixed list as the superset preselect it is allowed to be; every other call answers nothing.
+//! A fixed in-memory registration store and local-type resolver for the forwarding tests. Registration matching only reads candidates through [`RegistrationStore::find_matching`], which answers the whole fixed list as the superset preselect it is allowed to be; every other read answers nothing, a creation is refused as an unavailable store, and an update or deletion finds no registration.
 
 use crate::{FederationService, config::FederationConfig, local_entity_type::LocalEntityTypeResolver};
 use andromeda_context_space::context_target::ContextTarget;
@@ -16,6 +16,7 @@ use andromeda_registration::{
         forwarding_outcome::ForwardingOutcome,
         mutation::RegistrationMutation,
         page::RegistrationPage,
+        written_registration::WrittenRegistration,
     },
 };
 use chrono::{DateTime, Utc};
@@ -98,13 +99,13 @@ impl RegistrationStore for FixedRegistrationStore {
         &'life0 self,
         _id: &'life1 Identifier,
         _params: &'life2 CreateCsrParams,
-    ) -> BoxFuture<'async_trait, Result<CsourceChangeRevision, RegistrationError>>
+    ) -> BoxFuture<'async_trait, Result<WrittenRegistration, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
     {
-        Box::pin(async { Ok(CsourceChangeRevision::from(1)) })
+        Box::pin(async { Err(RegistrationError::StoreUnavailable) })
     }
 
     fn get<'life0, 'life1, 'async_trait>(
@@ -140,7 +141,7 @@ impl RegistrationStore for FixedRegistrationStore {
         &'life0 self,
         _id: &'life1 Identifier,
         _values: &'life2 ResolvedCsrUpdate,
-    ) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
+    ) -> BoxFuture<'async_trait, Result<RegistrationMutation<WrittenRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -188,7 +189,10 @@ impl RegistrationStore for FixedRegistrationStore {
         Box::pin(async { Ok(Vec::new()) })
     }
 
-    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
+    fn delete<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        _id: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<RegistrationMutation<CsourceChangeRevision>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

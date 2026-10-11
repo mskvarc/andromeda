@@ -6,7 +6,10 @@
 //! selects the registration, and how the notified-registration record answered;
 //! [`crate::csource_membership`] applies them against the record.
 
-use andromeda_ngsi_ld_model::notification::CsrTriggerReason;
+use andromeda_ngsi_ld_model::{
+    notification::{CsrChange, CsrTriggerReason},
+    registration::ContextSourceRegistration,
+};
 
 /// The mutation a committed registration change applied.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,17 +22,41 @@ pub(crate) enum RegistrationChange {
     Deleted,
 }
 
-impl RegistrationChange {
-    /// The mutation a registration change event names by its trigger reason.
+/// One committed change as the rules evaluate it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ChangeStates<'event> {
+    /// The mutation applied.
+    pub(crate) change: RegistrationChange,
+    /// The registration as it stood before an update or deletion.
+    pub(crate) before: Option<&'event ContextSourceRegistration>,
+    /// The registration as the creation or update wrote it, absent once
+    /// deleted.
+    pub(crate) after: Option<&'event ContextSourceRegistration>,
+}
+
+impl<'event> ChangeStates<'event> {
+    /// The states `change` carries.
     ///
-    /// The registration store publishes a creation as `newlyMatching`, an
-    /// update as `updated` and a deletion as `noLongerMatching`; which reason
-    /// a given subscription is notified with is decided per subscription.
-    pub(crate) const fn from_event_reason(reason: CsrTriggerReason) -> RegistrationChange {
-        match reason {
-            CsrTriggerReason::NewlyMatching => RegistrationChange::Created,
-            CsrTriggerReason::Updated => RegistrationChange::Updated,
-            CsrTriggerReason::NoLongerMatching => RegistrationChange::Deleted,
+    /// A change is evaluated against the registration it wrote, never one
+    /// read when it is evaluated: by then a later write may have replaced it,
+    /// and that write is notified by its own change (clause 5.11.7).
+    pub(crate) fn of(change: &'event CsrChange) -> ChangeStates<'event> {
+        match change {
+            CsrChange::Created { written } => ChangeStates {
+                change: RegistrationChange::Created,
+                before: None,
+                after: Some(written),
+            },
+            CsrChange::Updated { before, written } => ChangeStates {
+                change: RegistrationChange::Updated,
+                before: Some(before),
+                after: Some(written),
+            },
+            CsrChange::Deleted { before } => ChangeStates {
+                change: RegistrationChange::Deleted,
+                before: before.as_deref(),
+                after: None,
+            },
         }
     }
 }

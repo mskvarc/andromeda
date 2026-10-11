@@ -19,6 +19,7 @@ use andromeda_registration::{
         forwarding_outcome::ForwardingOutcome,
         mutation::RegistrationMutation,
         page::RegistrationPage,
+        written_registration::WrittenRegistration,
     },
 };
 use async_trait::async_trait;
@@ -100,7 +101,7 @@ impl RegistrationStore for PostgresRegistrationStore {
         registration_read::exists(self, id).await
     }
 
-    async fn create(&self, id: &Identifier, params: &CreateCsrParams) -> Result<CsourceChangeRevision, RegistrationError> {
+    async fn create(&self, id: &Identifier, params: &CreateCsrParams) -> Result<WrittenRegistration, RegistrationError> {
         registration_write::create(self, id, params).await
     }
 
@@ -112,7 +113,7 @@ impl RegistrationStore for PostgresRegistrationStore {
         registration_read::query_compiled(self, compiled, window).await
     }
 
-    async fn update(&self, id: &Identifier, values: &ResolvedCsrUpdate) -> Result<RegistrationMutation, RegistrationError> {
+    async fn update(&self, id: &Identifier, values: &ResolvedCsrUpdate) -> Result<RegistrationMutation<WrittenRegistration>, RegistrationError> {
         registration_write::update(self, id, values).await
     }
 
@@ -132,7 +133,7 @@ impl RegistrationStore for PostgresRegistrationStore {
         registration_write::record_forwarding_outcome(self, id, outcome, at).await
     }
 
-    async fn delete(&self, id: &Identifier) -> Result<RegistrationMutation, RegistrationError> {
+    async fn delete(&self, id: &Identifier) -> Result<RegistrationMutation<CsourceChangeRevision>, RegistrationError> {
         registration_write::delete(self, id).await
     }
 }

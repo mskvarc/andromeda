@@ -12,7 +12,7 @@ use crate::{
 };
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::notification::{CsrChangeEvent, CsrTriggerReason};
+use andromeda_ngsi_ld_model::notification::{CsrChange, CsrChangeEvent};
 use std::mem::take;
 
 impl RegistrationService {
@@ -59,13 +59,15 @@ impl RegistrationService {
             expires_at: resolved.expires_at,
         })?;
         check_conflicts(self.repo.as_ref(), self.entity_probe.as_ref(), resolved.mode, &resolved.information, Some(id)).await?;
-        let revision = self.repo.update(id, &resolved).await?.require_applied(id)?;
+        let written = self.repo.update(id, &resolved).await?.require_applied(id)?;
 
         self.emit_csr_change(CsrChangeEvent {
             csr_id: id.clone(), // clone: the event owns the identifier borrowed from the request path.
-            trigger_reason: CsrTriggerReason::Updated,
-            csr_snapshot: Some(pre_update_snapshot),
-            revision,
+            change: CsrChange::Updated {
+                before: pre_update_snapshot,
+                written: Box::new(written.registration),
+            },
+            revision: written.revision,
         });
         Ok(())
     }
@@ -74,6 +76,7 @@ impl RegistrationService {
 #[cfg(test)]
 mod tests {
     use crate::{
+        RegistrationChangeSink,
         RegistrationService,
         entity_probe::EntityPresence,
         error::RegistrationError,
@@ -90,23 +93,45 @@ mod tests {
     };
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::request_body::RequestBody;
+    use andromeda_ngsi_ld_model::{
+        notification::{CsrChange, CsrChangeEvent},
+        registration::ContextSourceRegistration,
+        request_body::RequestBody,
+    };
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
     use serde_json::{Value, json};
-    use std::{num::NonZeroUsize, sync::Arc};
+    use std::{
+        num::NonZeroUsize,
+        sync::{Arc, Mutex},
+    };
 
     const REGISTRATION_ID: &str = "urn:ngsi-ld:ContextSourceRegistration:update";
+
+    /// Every change event a service published, in order.
+    #[derive(Default)]
+    struct RecordingSink(Mutex<Vec<CsrChangeEvent>>);
+
+    impl RegistrationChangeSink for RecordingSink {
+        fn publish(&self, event: CsrChangeEvent) {
+            self.0.lock().expect("event log").push(event);
+        }
+    }
 
     /// A service over `store`, with remote context fetching disabled so a
     /// remote context can only fail to load.
     fn service(store: &Arc<FixedStore>) -> RegistrationService {
+        service_publishing_to(store, None)
+    }
+
+    /// A service over `store` publishing its change events to `sink`.
+    fn service_publishing_to(store: &Arc<FixedStore>, sink: Option<Arc<dyn RegistrationChangeSink>>) -> RegistrationService {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
         RegistrationService::new(
             Arc::clone(store) as Arc<dyn RegistrationStore>, // clone: the test keeps its own handle to read what was written
             Arc::new(FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent)),
             engine,
-            None,
+            sink,
             GeoQueryAdmission::new(
                 GeometryCensusLimits {
                     positions: GeometryPositionLimit::new(NonZeroUsize::MIN.saturating_add(999_999)),
@@ -177,6 +202,42 @@ mod tests {
             .map(|entity| entity.type_.as_type_expression().to_string())
             .collect();
         pretty_assertions::assert_eq!(types, vec!["https://example.org/Vehicle".to_string()]);
+    }
+
+    /// The entity type the first selector of `registration` names.
+    fn covered_type(registration: &ContextSourceRegistration) -> Option<String> {
+        registration
+            .coverage
+            .information
+            .first()
+            .and_then(|info| info.entities.as_ref())
+            .and_then(|entities| entities.first())
+            .map(|entity| entity.type_.as_type_expression().to_string())
+    }
+
+    /// Clause 5.11.7 notifies each change as it was made, so the update's
+    /// event carries the registration it replaced and the one the store
+    /// reports it wrote, not one read when the event is evaluated.
+    #[tokio::test]
+    async fn the_update_event_carries_the_registration_replaced_and_the_one_written() {
+        let store = baseline_store();
+        let sink = Arc::new(RecordingSink::default());
+        let service = service_publishing_to(&store, Some(Arc::clone(&sink) as Arc<dyn RegistrationChangeSink>));
+        let fragment = json!({ "information": [ { "entities": [ { "type": "https://example.org/Bus" } ] } ] });
+        let context = admitted(&service, ContextSpec::none()).await;
+
+        service
+            .update(&registration_id(), body_of(&fragment), &context)
+            .await
+            .expect("the fragment applies");
+
+        let events = sink.0.lock().expect("event log");
+        pretty_assertions::assert_eq!(events.len(), 1);
+        let CsrChange::Updated { before, written } = &events[0].change else {
+            panic!("an update event, got {:?}", events[0].change);
+        };
+        pretty_assertions::assert_eq!(covered_type(before), Some("https://example.org/Vehicle".to_owned()));
+        pretty_assertions::assert_eq!(covered_type(written), Some("https://example.org/Bus".to_owned()));
     }
 
     /// The fragment is expanded before the registration is looked up, so an

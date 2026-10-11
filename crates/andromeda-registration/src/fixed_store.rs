@@ -10,6 +10,7 @@ use crate::{
         forwarding_outcome::ForwardingOutcome,
         mutation::RegistrationMutation,
         page::RegistrationPage,
+        written_registration::WrittenRegistration,
     },
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -32,8 +33,10 @@ use std::sync::Mutex;
 /// clause 5.10.2.5 trim to the policy layer;
 /// `get` answers the registration carrying the requested identifier;
 /// `find_overlapping` returns every registration, as a superset preselect is
-/// allowed to; `update` records the resolved `information` it received so a
-/// test can assert what the policy layer would have written; `delete` records
+/// allowed to; `create` answers the registration it was handed as written;
+/// `update` records the resolved `information` it received so a test can
+/// assert what the policy layer would have written, and answers the held
+/// registration carrying it; `delete` records
 /// the identifier it was asked to remove, so a test can tell what happened
 /// before the row went from what happened after.
 pub(crate) struct FixedStore {
@@ -99,15 +102,22 @@ impl RegistrationStore for FixedStore {
 
     fn create<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        _id: &'life1 Identifier,
-        _params: &'life2 CreateCsrParams,
-    ) -> BoxFuture<'async_trait, Result<CsourceChangeRevision, RegistrationError>>
+        id: &'life1 Identifier,
+        params: &'life2 CreateCsrParams,
+    ) -> BoxFuture<'async_trait, Result<WrittenRegistration, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
     {
-        Box::pin(async { Ok(CsourceChangeRevision::from(1)) })
+        let mut created = registration(id.as_str(), "inclusive", &json!(params.information));
+        created.access.mode = Some(params.mode);
+        Box::pin(async move {
+            Ok(WrittenRegistration {
+                revision: CsourceChangeRevision::from(1),
+                registration: created,
+            })
+        })
     }
 
     fn get<'life0, 'life1, 'async_trait>(
@@ -141,16 +151,28 @@ impl RegistrationStore for FixedStore {
 
     fn update<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        _id: &'life1 Identifier,
+        id: &'life1 Identifier,
         values: &'life2 ResolvedCsrUpdate,
-    ) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
+    ) -> BoxFuture<'async_trait, Result<RegistrationMutation<WrittenRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
     {
         self.updated_information.lock().expect("update log").push(values.information.clone()); // clone: the fake keeps a record the caller still owns
-        Box::pin(async { Ok(RegistrationMutation::Applied(CsourceChangeRevision::from(1))) })
+        let mutation = match self.registrations.iter().find(|registration| registration.id == *id) {
+            Some(held) => {
+                let mut updated = held.clone(); // clone: the held registration stays as the fake was built
+                updated.coverage.information = values.information.clone(); // clone: the written registration owns what the caller still holds
+                updated.access.mode = Some(values.mode);
+                RegistrationMutation::Applied(WrittenRegistration {
+                    revision: CsourceChangeRevision::from(1),
+                    registration: updated,
+                })
+            }
+            None => RegistrationMutation::Missing,
+        };
+        Box::pin(async move { Ok(mutation) })
     }
 
     fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
@@ -191,7 +213,10 @@ impl RegistrationStore for FixedStore {
         Box::pin(async { Ok(Vec::new()) })
     }
 
-    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
+    fn delete<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<RegistrationMutation<CsourceChangeRevision>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

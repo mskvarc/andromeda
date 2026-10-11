@@ -51,6 +51,7 @@ pub mod forwarding_outcome;
 pub mod mutation;
 pub mod page;
 pub mod update_fragment;
+pub mod written_registration;
 
 use crate::{
     error::RegistrationError,
@@ -61,6 +62,7 @@ use crate::{
         forwarding_outcome::ForwardingOutcome,
         mutation::RegistrationMutation,
         page::RegistrationPage,
+        written_registration::WrittenRegistration,
     },
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -109,8 +111,8 @@ pub trait RegistrationStore: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
-    /// Persist a new registration, returning the change revision the write
-    /// drew.
+    /// Persist a new registration, returning it as written, read in the same
+    /// transaction, with the change revision the write drew.
     ///
     /// Writes the routing projection derived from `params.information` in the
     /// same transaction as the payload, so the registration never becomes
@@ -119,7 +121,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
         &'life0 self,
         id: &'life1 Identifier,
         params: &'life2 CreateCsrParams,
-    ) -> BoxFuture<'async_trait, Result<CsourceChangeRevision, RegistrationError>>
+    ) -> BoxFuture<'async_trait, Result<WrittenRegistration, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -150,7 +152,9 @@ pub trait RegistrationStore: Send + Sync + 'static {
         'life2: 'async_trait,
         Self: 'async_trait;
 
-    /// Replace a registration with a fully resolved value set.
+    /// Replace a registration with a fully resolved value set, returning it
+    /// as written, read in the same transaction, with the change revision the
+    /// write drew.
     ///
     /// Rebuilds the routing projection from `values.information` in the same
     /// transaction as the payload replacement. Because `values` is a resolved
@@ -161,7 +165,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
         &'life0 self,
         id: &'life1 Identifier,
         values: &'life2 ResolvedCsrUpdate,
-    ) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
+    ) -> BoxFuture<'async_trait, Result<RegistrationMutation<WrittenRegistration>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -219,11 +223,15 @@ pub trait RegistrationStore: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
-    /// Delete a registration by identifier.
+    /// Delete a registration by identifier, returning the change revision the
+    /// deletion drew.
     ///
     /// Removes that registration's routing projection rows in the same
     /// transaction as the payload.
-    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
+    fn delete<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Identifier,
+    ) -> BoxFuture<'async_trait, Result<RegistrationMutation<CsourceChangeRevision>, RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -277,7 +285,7 @@ mod tests {
         let Some(identifier) = registration_identifier() else {
             return;
         };
-        let result = RegistrationMutation::Missing.require_applied(&identifier);
+        let result = RegistrationMutation::<CsourceChangeRevision>::Missing.require_applied(&identifier);
         assert!(matches!(result, Err(RegistrationError::NotFound { identifier: missing }) if missing == identifier));
     }
 }

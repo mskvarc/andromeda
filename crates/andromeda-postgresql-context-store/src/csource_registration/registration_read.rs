@@ -21,6 +21,7 @@ use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use sea_query::{Expr as SeaExpr, ExprTrait, Order, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
+use sqlx::PgConnection;
 
 /// Every registration due at or before `cutoff`, in identifier order, with the
 /// shared projection: what the expiry sweep reads and then deletes.
@@ -75,6 +76,19 @@ pub(super) async fn get(store: &PostgresRegistrationStore, id: &Identifier) -> R
         Some(row) => Ok(Some(row_to_csr(&row).map_err(|error| persistence_error(error))?)),
         None => Ok(None),
     }
+}
+
+/// The registration `id` as the transaction on `connection` holds it: what a
+/// write in that transaction has just left, whoever commits after it.
+pub(super) async fn written(connection: &mut PgConnection, id: &Identifier) -> Result<ContextSourceRegistration, RegistrationError> {
+    let mut select = registration_select();
+    select.and_where(SeaExpr::col(Csr::Id).eq(id.as_str()));
+    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .fetch_one(connection)
+        .await
+        .map_err(|error| persistence_error(error))?;
+    row_to_csr(&row).map_err(|error| persistence_error(error))
 }
 
 /// Run a compiled discovery query: the page `window` selects, ascending by

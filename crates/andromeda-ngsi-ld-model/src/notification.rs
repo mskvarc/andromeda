@@ -164,13 +164,39 @@ pub enum CsrTriggerReason {
 pub struct CsrChangeEvent {
     /// Identifier of the mutated registration.
     pub csr_id: Identifier,
-    /// What kind of mutation this was.
-    pub trigger_reason: CsrTriggerReason,
-    /// For update and delete events, the registration as it stood before.
-    pub csr_snapshot: Option<Box<ContextSourceRegistration>>,
+    /// What the mutation did, with the registration states it is evaluated
+    /// against.
+    pub change: CsrChange,
     /// The revision the mutation drew, which orders it against every write of
     /// a context source subscription.
     pub revision: CsourceChangeRevision,
+}
+
+/// What one committed mutation did to a registration.
+///
+/// Each state is the one the mutation itself saw or left, never one read
+/// when the change is evaluated: a later write may have committed by then,
+/// and clause 5.11.7 notifies every change as it was made.
+#[derive(Clone, Debug)]
+pub enum CsrChange {
+    /// The registration was created.
+    Created {
+        /// The registration as the creation wrote it.
+        written: Box<ContextSourceRegistration>,
+    },
+    /// The registration was updated.
+    Updated {
+        /// The registration as it stood before the update.
+        before: Box<ContextSourceRegistration>,
+        /// The registration as the update wrote it.
+        written: Box<ContextSourceRegistration>,
+    },
+    /// The registration was deleted.
+    Deleted {
+        /// The registration as it stood before the deletion, `None` when it
+        /// could not be read first.
+        before: Option<Box<ContextSourceRegistration>>,
+    },
 }
 
 /// NGSI-LD `CsourceNotification` sent to a subscriber (ETSI GS CIM 009 clause
