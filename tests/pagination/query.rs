@@ -167,16 +167,16 @@ async fn pagination_subscriptions_first_page_has_last_next_without_first_or_prev
 }
 
 #[tokio::test]
-async fn pagination_subscriptions_last_page_has_first_prev_without_last_or_next() {
+async fn pagination_subscriptions_last_page_offers_only_prev() {
     let (scope, client) = make_scope().await;
     create_subscriptions(&client, 3, "last").await;
 
-    // The last page names no `last` (clause 5.5.9.1 forbids the self-pointer) and
-    // no `next`; it carries `first` and `prev`.
+    // Clause 5.5.9.1: on the last page "only the pointer to the previous page
+    // shall be provided".
     let (status, headers, _) = query_subscriptions(&client, "limit=1&offset=2", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
-    assert!(pagination.contains("rel=\"first\""));
+    assert!(!pagination.contains("rel=\"first\""));
     assert!(!pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"prev\""));
     assert!(!pagination.contains("rel=\"next\""));
@@ -261,16 +261,16 @@ async fn pagination_registrations_first_page_has_last_next_without_first_or_prev
 }
 
 #[tokio::test]
-async fn pagination_registrations_last_page_has_first_prev_without_last_or_next() {
+async fn pagination_registrations_last_page_offers_only_prev() {
     let (scope, client) = make_scope().await;
     create_registrations(&client, 5, "full-last").await;
 
-    // Last page: no self-pointing `last` (clause 5.5.9.1) and no `next`; `first`
-    // and `prev` both point at earlier pages.
+    // Clause 5.5.9.1: on the last page "only the pointer to the previous page
+    // shall be provided".
     let (status, headers, _) = query_registrations(&client, "type=Building&limit=1&offset=4", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
-    assert!(pagination.contains("rel=\"first\""));
+    assert!(!pagination.contains("rel=\"first\""));
     assert!(!pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"prev\""));
     assert!(!pagination.contains("rel=\"next\""));

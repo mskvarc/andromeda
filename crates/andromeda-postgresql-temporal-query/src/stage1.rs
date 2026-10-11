@@ -734,18 +734,20 @@ mod tests {
         assert!(sql.contains("FALSE"), "{sql}");
     }
 
-    /// A compound-value term is answered by the payload jsonpath over each
-    /// in-window instance rebuilt as a one-instance entity document, inside the
-    /// history probe.
+    /// A compound-value term is answered over each in-window instance rebuilt
+    /// as a one-instance entity document, inside the history probe: the
+    /// document's instances are enumerated and the sub-attribute path is read
+    /// on each of them.
     #[test]
     fn a_q_predicate_on_a_compound_value_reads_the_rebuilt_history_instance() {
         let mut compiled = minimal_compiled();
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/address\"[city]==\"Berlin\"").unwrap());
         let (sql, _) = built(&compiled, &speed_and_address());
         assert!(
-            sql.contains("jsonb_path_query_first(jsonb_build_array(jsonb_build_object('https://example.com/address'"),
+            sql.contains("jsonb_path_query(jsonb_build_array(jsonb_build_object('https://example.com/address'"),
             "{sql}"
         );
+        assert!(sql.contains(r#"jsonb_path_query_first("attribute_instance"."attribute_instance""#), "{sql}");
     }
 
     /// Clause 5.7.4.4 S3: the geospatial restriction is checked against the

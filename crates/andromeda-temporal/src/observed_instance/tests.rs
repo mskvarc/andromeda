@@ -334,16 +334,14 @@ fn a_mixed_array_keeps_each_element_in_its_stored_shape() {
     pretty_assertions::assert_eq!(stored(&recorded(&property(&json!([{"@value": 3}, literal])))), json!([3, literal]));
 }
 
-/// An all-scalar array is stored as bare scalars, whatever `@type` a context
-/// coerced onto an element.
+/// The plain scalars of an array are stored bare, and a scalar with a `@type`
+/// keeps its expanded form: clause 4.5.7 records each instance as the Property
+/// it was, so the datatype written on an element survives the history.
 #[test]
-fn an_all_scalar_array_is_stored_as_bare_scalars() {
-    let value = recorded(&property(&json!([
-        {"@value": "a"},
-        {"@value": "2024-01-01T00:00:00Z", "@type": expanded_classes::DATE_TIME.as_str()},
-        {"@value": true}
-    ])));
-    pretty_assertions::assert_eq!(stored(&value), json!(["a", "2024-01-01T00:00:00Z", true]));
+fn an_array_stores_plain_scalars_bare_and_keeps_a_typed_scalar_expanded() {
+    let typed = json!({"@value": "2024-01-01T00:00:00Z", "@type": expanded_classes::DATE_TIME.as_str()});
+    let value = recorded(&property(&json!([{"@value": "a"}, typed, {"@value": true}])));
+    pretty_assertions::assert_eq!(stored(&value), json!(["a", typed, true]));
 }
 
 /// The clause 5.6.15 instance-replacement path reads its instance here too, so
