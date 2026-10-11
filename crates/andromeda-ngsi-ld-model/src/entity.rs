@@ -120,20 +120,21 @@ impl<M> Entity<M> {
         }
     }
 
-    /// Keep only the Attribute members whose name `keep` accepts, from wherever
-    /// this type keeps them.
+    /// Keep only the Attribute members `keep` accepts, from wherever this type
+    /// keeps them.
     ///
-    /// `keep` sees exactly the names [`Entity::attribute_member_names`] yields,
-    /// and the surviving members of [`Entity::attrs`] keep their order.
-    pub fn retain_attribute_members(&mut self, mut keep: impl FnMut(&str) -> bool) {
-        self.attrs.retain(|name, _| keep(name.as_str()));
-        for (name, member) in [
+    /// `keep` sees exactly the members [`Entity::attribute_members`] yields,
+    /// each mutably so that it can narrow the member it keeps, and the
+    /// surviving members of [`Entity::attrs`] keep their order.
+    pub fn retain_attribute_members(&mut self, mut keep: impl FnMut(&str, &mut M) -> bool) {
+        self.attrs.retain(|name, member| keep(name.as_str(), member));
+        for (name, slot) in [
             (compact_properties::LOCATION, &mut self.location),
             (compact_properties::OBSERVATION_SPACE, &mut self.observation_space),
             (compact_properties::OPERATION_SPACE, &mut self.operation_space),
         ] {
-            if member.is_some() && !keep(name) {
-                *member = None;
+            if slot.as_mut().is_some_and(|member| !keep(name, member)) {
+                *slot = None;
             }
         }
     }
@@ -638,7 +639,7 @@ mod tests {
         let expected: Vec<String> = entity.attribute_member_names().map(str::to_owned).collect();
         let mut seen = Vec::new();
 
-        entity.retain_attribute_members(|name| {
+        entity.retain_attribute_members(|name, _member| {
             seen.push(name.to_owned());
             true
         });
@@ -658,7 +659,7 @@ mod tests {
             .map(str::to_owned)
             .collect();
 
-        entity.retain_attribute_members(|name| name != "brandName");
+        entity.retain_attribute_members(|name, _member| name != "brandName");
 
         let names: Vec<String> = entity.attrs.keys().map(AttributeName::as_str).map(str::to_owned).collect();
         pretty_assertions::assert_eq!(names, expected);
@@ -672,9 +673,24 @@ mod tests {
     fn retaining_attribute_members_drops_a_rejected_geo_property() {
         let mut entity = entity_with_location();
 
-        entity.retain_attribute_members(|name| name != "location");
+        entity.retain_attribute_members(|name, _member| name != "location");
 
         assert!(entity.location.is_none());
         pretty_assertions::assert_eq!(entity.attrs.len(), 3);
+    }
+
+    #[test]
+    fn retaining_attribute_members_offers_each_geo_property_member_itself() {
+        let mut entity = entity_with_location();
+        let mut location_kinds = Vec::new();
+
+        entity.retain_attribute_members(|name, member| {
+            if name == "location" {
+                location_kinds.push(matches!(member, AttributeValue::Single(_)));
+            }
+            true
+        });
+
+        pretty_assertions::assert_eq!(location_kinds, vec![true]);
     }
 }

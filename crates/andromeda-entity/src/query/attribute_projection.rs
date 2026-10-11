@@ -1,10 +1,10 @@
 //! Narrowing a compact entity's attributes down to what the client asked for
 //! (clause 4.21 `pick` and `omit`, clause 5.7.2 `attrs`).
 //!
-//! An entity read from the local store is narrowed before it is compacted
-//! compact, a Linked Entity another broker returned, or an entity on its way
-//! compact, a Linked Entity another broker returned, or an entity on its way
-//! to a subscriber, whose member names have to be expanded to be matched.
+//! An entity read from the local store is narrowed before it is compacted.
+//! This narrows an entity that arrives compact (a Linked Entity another broker
+//! returned, or an entity on its way to a subscriber), whose member names have
+//! to be expanded to be matched.
 
 use crate::{error::EntityError, query::attribute_expansion::AttributeExpansions};
 use andromeda_linked_retrieval::{keyword::Keyword, narrowing::list::ListInForce};
@@ -30,7 +30,7 @@ pub async fn narrow_compact_entity(entity: &mut Entity, list: ListInForce<'_>, e
         return Ok(());
     }
     expansions.cover(entity).await?;
-    entity.retain_attribute_members(|name| list.returns_attribute(name, expansions.index()));
+    entity.retain_attribute_members(|name, _member| list.returns_attribute(name, expansions.index()));
     if !list.keeps_keyword(Keyword::Scope) {
         entity.scope = None;
     }
