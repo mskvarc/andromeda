@@ -20,6 +20,7 @@
 use crate::{
     error::FederationError,
     federation_invariant::FederationInvariant,
+    forwarded_content::AttributeWrite,
     forwarded_names::ForwardedNames,
     forwarding_context::ForwardingDecision,
     term_resolver::TermResolver,
@@ -31,7 +32,7 @@ use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
 use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
-    attribute::instance::AttributeValue,
+    attribute::{instance::AttributeValue, member_reading::MemberReading, merge_member::MergeMember},
     context_source_info::ContextSourceInfo,
     entity::EntityPatch,
     query::body::Query,
@@ -41,6 +42,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_render::{
     contextual_body::ContextualBody,
     forwarded_entity::{ForwardedAttribute, ForwardedEntity},
+    forwarded_fragment::ForwardedFragment,
     version::adapted_payload::AdaptedPayload,
 };
 use indexmap::IndexMap;
@@ -92,6 +94,8 @@ pub(crate) enum OutgoingBody<'a> {
         name: &'a AttributeName,
         /// The admitted instance.
         instance: &'a InstanceDocument,
+        /// What the instance writes of the attribute.
+        write: AttributeWrite,
     },
     /// A reduced subscription (clause 5.8.1.4), whose names are respelled in
     /// the forwarding context.
@@ -118,6 +122,23 @@ async fn compacted_scope_history(
     let compactor = engine.compactor(naming);
     let history = EntityCompactor::new(&compactor).scope_history(scope_history).await?;
     Ok(history.map(TemporalAttribute::into_member))
+}
+
+/// `document`, holding the one attribute a request path names, compacted
+/// under `naming` to the bare Attribute Fragment a source reads (clauses
+/// 5.6.4 and 5.6.19).
+async fn compacted_fragment<M: MemberReading>(
+    engine: &JsonLdEngine,
+    naming: &ContextSpec,
+    document: &EntityDocument,
+) -> Result<EntityPatch<M>, FederationError> {
+    let compactor = engine.compactor(naming);
+    Ok(EntityCompactor::new(&compactor).attribute_fragments(document).await?)
+}
+
+/// The one attribute member `patch` holds.
+fn only_attribute<M>(patch: &EntityPatch<M>) -> Option<&M> {
+    patch.attribute_members().next().map(|(_, member)| member)
 }
 
 /// The document holding the one attribute `instance` of `name`.
@@ -162,10 +183,28 @@ async fn written_body(
                 None => written(inline.as_ref(), &entity),
             }
         }
-        OutgoingBody::Attribute { name, instance } => {
-            let patch = compacted_patch(engine, &naming, &attribute_document(name, instance)).await?;
-            let (_, member) = patch.attribute_members().next().ok_or(FederationInvariant::FragmentWithoutAttribute)?;
-            written(inline.as_ref(), &ForwardedAttribute::new(member, conformance, AdaptedPayload::Entity))
+        OutgoingBody::Attribute { name, instance, write } => {
+            let document = attribute_document(name, instance);
+            match write {
+                AttributeWrite::Fragment => {
+                    let patch = compacted_fragment::<MergeMember>(engine, &naming, &document).await?;
+                    written(
+                        inline.as_ref(),
+                        &ForwardedFragment::new(only_attribute(&patch).ok_or(FederationInvariant::FragmentWithoutAttribute)?, conformance),
+                    )
+                }
+                AttributeWrite::Replacement => {
+                    let patch = compacted_fragment::<AttributeValue>(engine, &naming, &document).await?;
+                    written(
+                        inline.as_ref(),
+                        &ForwardedAttribute::new(
+                            only_attribute(&patch).ok_or(FederationInvariant::FragmentWithoutAttribute)?,
+                            conformance,
+                            AdaptedPayload::Entity,
+                        ),
+                    )
+                }
+            }
         }
         OutgoingBody::Subscription(request) => {
             let resolver = TermResolver::new(engine, inbound);

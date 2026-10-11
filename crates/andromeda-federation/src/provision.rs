@@ -169,7 +169,7 @@ impl FederationService {
             }),
             // The attribute a request path names is written alone (clauses 5.6.4, 5.6.14 and 5.6.19).
             Some(ForwardedContent::Entity(document)) => Some(PlannedContent::Entity(Box::new(Cow::Borrowed(document)))),
-            Some(ForwardedContent::Attribute { name, instance }) => Some(PlannedContent::Attribute { name, instance }),
+            Some(ForwardedContent::Attribute { name, instance, write }) => Some(PlannedContent::Attribute { name, instance, write }),
         };
         // A temporal body's attribute arrays are the clause 4.5.7 sequences of
         // instances in time, which the clause 4.3.6.8 fallback reads apart

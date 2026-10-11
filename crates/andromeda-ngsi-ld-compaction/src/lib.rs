@@ -43,6 +43,7 @@ mod instance_compaction;
 mod member_insertion;
 pub mod name_compaction;
 mod node_compaction;
+mod patch_reading;
 mod processor_fallback;
 mod property_compaction;
 mod reserved_terms;

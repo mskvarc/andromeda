@@ -6,12 +6,13 @@
 //! read by the compact model as every compact document is, through the terms
 //! the request context defines for core terms.
 
-use crate::{compaction_error::CompactionError, term_context::TermContext};
+use crate::{compaction_error::CompactionError, patch_reading::PatchReading, term_context::TermContext};
 use andromeda_json_literal::piece::JsonPiece;
 use andromeda_jsonld::engine::{context_compactor::ContextCompactor, expanded_text::ExpandedText, options::CompactOptions};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
+    attribute::member_reading::MemberReading,
     entity::{Entity, EntityPatch},
     node_refusal::NodeReadError,
     temporal::{temporal_attribute::TemporalAttribute, temporal_entity::TemporalEntity},
@@ -54,9 +55,12 @@ fn read_entity<'n, N: CompactNode<'n, Unreadable = Infallible>>(document: N) -> 
 }
 
 /// The partial entity a compacted document holds, read as [`read_entity`]
-/// reads an entity.
-fn read_patch<'n, N: CompactNode<'n, Unreadable = Infallible>>(document: N) -> Result<EntityPatch, CompactionError> {
-    <EntityPatch>::from_node(first_node(document)).map_err(|error| match error {
+/// reads an entity and its attributes as `reading` says.
+fn read_patch<'n, M: MemberReading, N: CompactNode<'n, Unreadable = Infallible>>(
+    document: N,
+    reading: PatchReading,
+) -> Result<EntityPatch<M>, CompactionError> {
+    reading.read(first_node(document)).map_err(|error| match error {
         NodeReadError::Refused(refused) => CompactionError::Refused(refused),
         NodeReadError::Unreadable(never) => match never {},
     })
@@ -73,14 +77,15 @@ fn first_node<'n, N: CompactNode<'n>>(document: N) -> N {
 
 /// Compact a written document through the processor, reading the compacted
 /// text as the partial entity a fragment is.
-pub(crate) async fn document_patch_through_processor(
+pub(crate) async fn document_patch_through_processor<M: MemberReading>(
     compactor: &ContextCompactor<'_>,
     terms: &TermContext,
     document: &EntityDocument,
-) -> Result<EntityPatch, CompactionError> {
+    reading: PatchReading,
+) -> Result<EntityPatch<M>, CompactionError> {
     let document = serde_json::to_vec(document).map_err(CompactionError::Encode)?;
     let compacted = compactor.compact(ExpandedText::Assembled(&document), CompactOptions::default()).await?;
-    read_patch(AliasedNode::new(JsonPiece::new(&compacted), terms.aliases()))
+    read_patch(AliasedNode::new(JsonPiece::new(&compacted), terms.aliases()), reading)
 }
 
 /// Compact the document of a Temporal Evolution through the processor,

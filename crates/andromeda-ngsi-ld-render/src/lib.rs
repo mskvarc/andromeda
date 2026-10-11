@@ -37,6 +37,7 @@ mod entity_response_fallback_tests;
 mod entity_response_tests;
 pub mod error;
 pub mod forwarded_entity;
+pub mod forwarded_fragment;
 pub mod geometry_selection;
 pub mod joined_notification;
 pub mod language_negotiation;

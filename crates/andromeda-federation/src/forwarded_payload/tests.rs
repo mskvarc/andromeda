@@ -1,4 +1,5 @@
 use crate::{
+    forwarded_content::AttributeWrite,
     forwarded_payload::{ForwardedPayload, ItemBody, OutgoingBody, build_forwarded_payload, build_identifiers_payload, build_items_payload},
     forwarding_context::{BodyPresence, ForwardingContext, Rewording, decide, decide_for_items},
 };
@@ -7,9 +8,9 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{batch_contexts::BatchContexts, context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember};
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
-    attribute::instance::AttributeValue,
+    attribute::{instance::AttributeValue, member_reading::MemberReading, merge_member::MergeMember},
     context_source_info::ContextSourceInfo,
     entity::EntityPatch,
     key_value_pair::KeyValuePair,
@@ -496,7 +497,12 @@ async fn a_forwarded_attribute_body_drops_its_newer_members() {
     .await;
     let (name, member) = document.attributes().first().expect("one attribute");
     let instance = member.instances().first().expect("one instance");
-    let forwarded = forwarded_to_1_0(OutgoingBody::Attribute { name, instance }).await;
+    let forwarded = forwarded_to_1_0(OutgoingBody::Attribute {
+        name,
+        instance,
+        write: AttributeWrite::Replacement,
+    })
+    .await;
     pretty_assertions::assert_eq!(forwarded, json!({"type": "Property", "value": 10}));
 }
 
@@ -604,11 +610,42 @@ async fn an_attribute_body_is_spelled_as_an_attribute_in_the_configured_context(
     let payload = payload(
         &inbound,
         &[("jsonldContext", CONFIGURED_CONTEXT)],
-        Some(OutgoingBody::Attribute { name, instance }),
+        Some(OutgoingBody::Attribute {
+            name,
+            instance,
+            write: AttributeWrite::Replacement,
+        }),
     )
     .await;
     pretty_assertions::assert_eq!(
         forwarded_json(&payload),
         json!({"type": "Property", "value": 10, "velocity": {"type": "Property", "value": 1}})
     );
+}
+
+/// Clause 5.6.4: the Attribute Fragment of a Partial Attribute Update reaches
+/// the source as the client wrote it. A fragment naming neither a `type` nor a
+/// value member is the instance it updates, so the `speed` it holds stays a
+/// member of that instance and is never nested under a `value`.
+#[tokio::test]
+async fn a_partial_update_fragment_is_forwarded_as_the_client_wrote_it() {
+    let inbound = link_spec(USER_CONTEXT);
+    let written = json!({"speed": {"type": "Property", "value": 99, "source": {"type": "Property", "value": "Speedometer"}}});
+    let text = JsonLiteral::admit(&written.to_string()).expect("a JSON text");
+    let member = MergeMember::from_fragment_node("speed", text.piece()).expect("a fragment");
+    let name: AttributeName = "speed".parse().expect("an attribute name");
+    let engine = engine();
+    let expansion = EntityExpansion::prepare(&engine, &inbound).await.expect("the context processes");
+    let fragment = expansion.attribute(&name, &member).await.expect("the fragment expands");
+    let payload = payload(
+        &inbound,
+        &[],
+        Some(OutgoingBody::Attribute {
+            name: fragment.name(),
+            instance: fragment.instance(),
+            write: AttributeWrite::Fragment,
+        }),
+    )
+    .await;
+    pretty_assertions::assert_eq!(forwarded_json(&payload), written);
 }

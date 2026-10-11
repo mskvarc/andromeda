@@ -14,6 +14,7 @@ use crate::{
     compacted::Compacted,
     compaction_error::CompactionError,
     name_compaction::NameCompaction,
+    patch_reading::PatchReading,
     processor_fallback::{
         document_entity_through_processor,
         document_patch_through_processor,
@@ -29,6 +30,7 @@ use andromeda_jsonld::engine::context_compactor::ContextCompactor;
 use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
+    attribute::member_reading::MemberReading,
     entity::{Entity, EntityPatch},
     node_refusal::NodeReadError,
     temporal::{temporal_attribute::TemporalAttribute, temporal_document::TemporalDocument, temporal_entity::TemporalEntity},
@@ -138,16 +140,34 @@ impl<'a> EntityCompactor<'a> {
     ///
     /// As [`EntityCompactor::document_entity`].
     pub async fn patch(&self, document: &EntityDocument) -> Result<EntityPatch, CompactionError> {
+        self.read_patch(document, PatchReading::Members).await
+    }
+
+    /// The compact partial entity a written document is under the request
+    /// context, every attribute read as the bare Attribute Fragment of clauses
+    /// 5.6.4 and 5.6.19 it compacts to: an instance that names neither a
+    /// `type` nor a value member stays the instance it updates.
+    ///
+    /// # Errors
+    ///
+    /// As [`EntityCompactor::document_entity`].
+    pub async fn attribute_fragments<M: MemberReading>(&self, document: &EntityDocument) -> Result<EntityPatch<M>, CompactionError> {
+        self.read_patch(document, PatchReading::Fragments).await
+    }
+
+    /// The compact partial entity a written document is, its attributes read
+    /// as `reading` says.
+    async fn read_patch<M: MemberReading>(&self, document: &EntityDocument, reading: PatchReading) -> Result<EntityPatch<M>, CompactionError> {
         let terms = self.terms().await?;
         let walked = Walk::new(terms).compact_document(document).map(Compacted::Object);
         match walked {
-            Ok(tree) => <EntityPatch>::from_node(AliasedNode::new(&tree, terms.aliases())).map_err(|error| match error {
+            Ok(tree) => reading.read(AliasedNode::new(&tree, terms.aliases())).map_err(|error| match error {
                 NodeReadError::Refused(refused) => CompactionError::Refused(refused),
                 NodeReadError::Unreadable(unwritten) => CompactionError::Encode(unwritten),
             }),
             Err(reason) => {
                 tracing::debug!(%reason, "compacting the fragment through the processor");
-                document_patch_through_processor(self.compactor, terms, document).await
+                document_patch_through_processor(self.compactor, terms, document, reading).await
             }
         }
     }

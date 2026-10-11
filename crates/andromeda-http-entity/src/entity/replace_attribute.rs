@@ -27,7 +27,10 @@ use crate::{
     written_payload_admission::admit_written_attribute,
 };
 use andromeda_entity::{write_kind::ReplaceAttribute, write_target::WriteTarget};
-use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
+use andromeda_federation::{
+    forwarded_content::{AttributeWrite, ForwardedContent},
+    request::TriggeringRequest,
+};
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_model::attribute::{instance::AttributeValue, written_attribute::WrittenAttribute};
@@ -88,6 +91,7 @@ pub(crate) async fn replace_attr(
             Some(ForwardedContent::Attribute {
                 name: admitted.expanded_name(),
                 instance: admitted.instance(),
+                write: AttributeWrite::Replacement,
             }),
         )
         .await

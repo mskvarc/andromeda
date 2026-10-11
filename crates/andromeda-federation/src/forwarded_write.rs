@@ -8,7 +8,7 @@
 use crate::{
     FederationService,
     error::FederationError,
-    forwarded_content::ForwardedContent,
+    forwarded_content::{AttributeWrite, ForwardedContent},
     forwarded_payload::{ItemBody, OutgoingBody, build_identifiers_payload},
     forwarding_context::BodyPresence,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
@@ -78,6 +78,8 @@ pub(crate) enum PlannedContent<'a> {
         name: &'a AttributeName,
         /// The admitted instance.
         instance: &'a InstanceDocument,
+        /// What the instance writes of the attribute.
+        write: AttributeWrite,
     },
 }
 
@@ -87,7 +89,7 @@ impl PlannedContent<'_> {
         match self {
             PlannedContent::Entity(document) => ForwardedContent::Entity(document),
             PlannedContent::Evolution { document, scope_history } => ForwardedContent::Evolution { document, scope_history },
-            PlannedContent::Attribute { name, instance } => ForwardedContent::Attribute { name, instance },
+            PlannedContent::Attribute { name, instance, write } => ForwardedContent::Attribute { name, instance, write: *write },
         }
     }
 }
@@ -263,7 +265,7 @@ const fn outgoing_body(content: ForwardedContent<'_>, element: AdaptedPayload) -
             scope_history,
             element,
         },
-        ForwardedContent::Attribute { name, instance } => OutgoingBody::Attribute { name, instance },
+        ForwardedContent::Attribute { name, instance, write } => OutgoingBody::Attribute { name, instance, write },
     }
 }
 

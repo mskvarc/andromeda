@@ -38,7 +38,19 @@ pub enum ForwardedContent<'a> {
         name: &'a AttributeName,
         /// The admitted instance.
         instance: &'a InstanceDocument,
+        /// What the instance writes of the attribute.
+        write: AttributeWrite,
     },
+}
+
+/// What the one attribute instance a request path names writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttributeWrite {
+    /// Clause 5.6.4: a fragment merged into the attribute held (clause
+    /// 5.5.12), which may leave out its `type` and its value member.
+    Fragment,
+    /// Clause 5.6.19: the whole attribute, in place of the one held.
+    Replacement,
 }
 
 impl ForwardedContent<'_> {
@@ -53,7 +65,7 @@ impl ForwardedContent<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::forwarded_content::ForwardedContent;
+    use crate::forwarded_content::{AttributeWrite, ForwardedContent};
     use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use indexmap::IndexMap;
@@ -92,7 +104,8 @@ mod tests {
         pretty_assertions::assert_eq!(
             ForwardedContent::Attribute {
                 name: &attribute,
-                instance: &instance
+                instance: &instance,
+                write: AttributeWrite::Fragment,
             }
             .written_attributes(),
             vec![attribute.clone()]
