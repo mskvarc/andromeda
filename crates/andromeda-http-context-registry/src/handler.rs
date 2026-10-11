@@ -1,7 +1,7 @@
 //! Handlers for the `/jsonldContexts` endpoints.
 
 use crate::{error::ContextRegistryResultExt, hosted_context_url::hosted_context_path, served_document::served_response, state::ContextRegistryTenantState};
-use andromeda_context_registry::{detail_level::ContextDetailLevel, identifier::ContextIdentifier, listed_contexts::ListedContexts, removal::ContextRemoval};
+use andromeda_context_registry::{detail_level::ContextDetailLevel, identifier::ContextIdentifier, removal::ContextRemoval};
 use andromeda_http_extraction::{
     api_root::ApiRoot,
     content_length_precondition::DeclaredBodyLength,
@@ -125,10 +125,6 @@ pub(crate) async fn query(
         .list(params.kind, detail_level, &window)
         .await
         .with_context_registry_instance(&uri)?;
-    let returned = match &page.contexts {
-        ListedContexts::Detailed(metadata) => metadata.len(),
-        ListedContexts::Summary(identifiers) => identifiers.len(),
-    };
     let mut response = (StatusCode::OK, Json(page.contexts)).into_response();
     append_page_links(
         &mut response,
@@ -137,7 +133,7 @@ pub(crate) async fn query(
         &window,
         PageOutcome {
             total: None,
-            returned,
+            reach: page.reach,
             boundary: page.boundary,
         },
         ResponseMediaType::Json,

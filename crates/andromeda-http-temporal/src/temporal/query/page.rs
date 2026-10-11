@@ -20,7 +20,7 @@ use andromeda_http_extraction::pagination_policy::RequestPagination;
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::pagination::{PageOutcome, append_page_links};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_reach::PageReach, page_window::PageWindow};
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
     pagination::{
@@ -129,14 +129,14 @@ impl QueriedPage {
     ///
     /// In offset mode a query that asked for a count knows its total and drives
     /// `next` from it, plus the Andromeda `first`/`last` pair; one that did not
-    /// signals a following page by the page coming back full. In cursor mode the
-    /// neighbouring cursors are computed from the page's boundary identifiers and
-    /// whether it filled the limit (clause 5.5.9.1), then encoded.
+    /// signals a following page by `reach`. In cursor mode the neighbouring
+    /// cursors are computed from the page's boundary identifiers and `reach`
+    /// (clause 5.5.9.1), then encoded.
     ///
-    /// `returned` counts the matching entities alone. Clause 4.5.23 has a flat
-    /// join append the entities the matches link to, and those accompany the
-    /// result set rather than belonging to it, so they must not decide whether
-    /// a following page exists.
+    /// `reach` is read from the matching entities alone. Clause 4.5.23 has a
+    /// flat join append the entities the matches link to, and those accompany
+    /// the result set rather than belonging to it, so they must not decide
+    /// whether a following page exists.
     ///
     /// A binding that carried its query in the request body emits no link:
     /// clause 6.3.10 asks for a target "that could be dereferenced by an
@@ -148,7 +148,7 @@ impl QueriedPage {
         instance: &Uri,
         media_type: ResponseMediaType,
         total: Option<usize>,
-        returned: usize,
+        reach: PageReach,
         boundary: Option<(Identifier, Identifier)>,
     ) {
         match self.pointers {
@@ -160,7 +160,7 @@ impl QueriedPage {
                     instance,
                     &self.context,
                     &self.window,
-                    PageOutcome { total, returned, boundary },
+                    PageOutcome { total, reach, boundary },
                     media_type,
                 );
             }
@@ -176,6 +176,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         cursor::PageCursor,
+        page_reach::PageReach,
         page_window::{PageStart, PageWindow},
     };
     use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers};
@@ -226,14 +227,14 @@ mod tests {
 
     /// Clause 4.12: a temporal query shall "provide a mechanism to flag NGSI-LD
     /// Clients when there are remaining NGSI-LD Elements to be traversed", which
-    /// clause 6.3.10 binds to `rel="next"`. A page filled to its limit is the
+    /// clause 6.3.10 binds to `rel="next"`. The entity read past the page is the
     /// signal a query that did not ask for a count has.
     #[test]
-    fn a_full_page_offers_the_next_page() {
+    fn a_page_the_collection_continues_past_offers_the_next_page() {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 2, None);
+        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, PageReach::Continues, None);
 
         let link = links(&response);
         assert!(link.contains("rel=\"next\""), "{link}");
@@ -243,11 +244,11 @@ mod tests {
 
     /// The last page has nothing left to traverse, so it offers no `next`.
     #[test]
-    fn a_short_page_offers_no_next_page() {
+    fn an_exhausted_page_offers_no_next_page() {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 1, None);
+        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
 
         pretty_assertions::assert_eq!(links(&response), String::new());
     }
@@ -259,7 +260,7 @@ mod tests {
         let page = offset_page(2, 4, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 1, None);
+        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
 
         let link = links(&response);
         assert!(link.contains("rel=\"prev\""), "{link}");
@@ -267,13 +268,13 @@ mod tests {
     }
 
     /// Clause 6.3.13: a query that asked for a count knows its total, and the
-    /// total rather than the fullness of the page decides `next`.
+    /// total rather than the element read past the page decides `next`.
     #[test]
     fn a_counted_query_decides_the_next_page_from_its_total() {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(7), 2, None);
+        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(7), PageReach::Continues, None);
 
         let link = links(&response);
         assert!(link.contains("rel=\"next\""), "{link}");
@@ -288,7 +289,7 @@ mod tests {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(2), 2, None);
+        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(2), PageReach::Continues, None);
 
         pretty_assertions::assert_eq!(links(&response), String::new());
     }
@@ -301,7 +302,7 @@ mod tests {
         let page = offset_page(2, 2, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(7), 2, None);
+        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(7), PageReach::Continues, None);
 
         let link = links(&response);
         assert!(link.contains("rel=\"first\""), "{link}");
@@ -321,7 +322,7 @@ mod tests {
         let page = offset_page(2, 4, PagePointers::NotDereferenceable);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(99), 2, None);
+        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(99), PageReach::Continues, None);
 
         pretty_assertions::assert_eq!(links(&response), String::new());
     }
@@ -333,7 +334,7 @@ mod tests {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::Json, None, 2, None);
+        page.append_links(&mut response, &instance(), ResponseMediaType::Json, None, PageReach::Continues, None);
 
         let link = links(&response);
         assert!(link.contains("type=\"application/json\""), "{link}");
@@ -352,7 +353,7 @@ mod tests {
         let mut response = StatusCode::OK.into_response();
 
         let boundary = Some((element_id("urn:ngsi-ld:E:001"), element_id("urn:ngsi-ld:E:002")));
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 2, boundary);
+        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, PageReach::Continues, boundary);
 
         let link = links(&response);
         assert!(!link.contains("rel=\"first\""), "{link}");
@@ -372,7 +373,7 @@ mod tests {
         let mut response = StatusCode::OK.into_response();
 
         let boundary = Some((element_id("urn:ngsi-ld:E:003"), element_id("urn:ngsi-ld:E:004")));
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 2, boundary);
+        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, PageReach::Continues, boundary);
 
         let link = links(&response);
         assert!(link.contains("rel=\"prev\""), "{link}");
@@ -388,7 +389,7 @@ mod tests {
         let page = cursor_page(None);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, 0, None);
+        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
 
         pretty_assertions::assert_eq!(links(&response), String::new());
     }

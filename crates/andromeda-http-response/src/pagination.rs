@@ -22,7 +22,7 @@ use andromeda_http_headers::{
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     cursor::{NeighbourCursors, PageCursor},
-    page_fullness::PageFullness,
+    page_reach::PageReach,
     page_window::{PageStart, PageWindow},
 };
 use andromeda_ngsi_ld_request::pagination::page_context::{PAGE_CONTEXT_PARAMETER, PageContext};
@@ -39,9 +39,10 @@ use url::form_urlencoded;
 pub struct PageOutcome {
     /// The clause 6.3.13 total of the collection, when it was counted.
     pub total: Option<i64>,
-    /// How many elements the page returned before any trim the response
+    /// Whether the collection continues past the page in the direction it was
+    /// read, as [`PageWindow::settle`] found it before any trim the response
     /// applies afterwards, so a walk continues past every element it scanned.
-    pub returned: usize,
+    pub reach: PageReach,
     /// The first and last identifiers of the page in identifier order, from
     /// which the neighbouring cursors are computed; absent on an empty page.
     pub boundary: Option<(Identifier, Identifier)>,
@@ -50,10 +51,10 @@ pub struct PageOutcome {
 /// Append the clause 6.3.10 pointers of a page cut by `window` to `response`.
 ///
 /// An offset window points by `limit`/`offset` and decides `next` from the
-/// total when one is known, and from the page having filled its window
-/// otherwise. A cursor window points by the neighbouring cursors of the page's
-/// boundary identifiers and decides `next` from whether the page filled its
-/// window (clause 5.5.9.1). An empty cursor page has no boundary to point
+/// total when one is known, and from whether the collection continues past the
+/// page otherwise. A cursor window points by the neighbouring cursors of the
+/// page's boundary identifiers, decided from whether the collection continues
+/// past the page (clause 5.5.9.1). An empty cursor page has no boundary to point
 /// from, so it carries no pointer, just as an empty offset collection carries
 /// none; neither does a `limit=0` page, which asked for no element at all.
 ///
@@ -73,13 +74,13 @@ pub fn append_page_links(response: &mut Response, uri: &Uri, context: &PageConte
 /// A collection with a known total governs `next` by comparing `offset +
 /// limit` against that total. A query with no count has no total (computing
 /// one on every query is the cost a count-less query avoids), so it signals a
-/// following page by the page having come back full (clause 6.3.10).
+/// following page by the element read past the page (clause 5.5.9.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PageExtent {
     /// A known count of matching resources governs both `prev` and `next`.
     Total(i64),
-    /// No total: `next` is emitted when the returned page filled the window.
-    Fullness(PageFullness),
+    /// No total: `next` is emitted while the collection continues past the page.
+    Reach(PageReach),
 }
 
 /// The already-encoded opaque cursor tokens a keyset-backed page points at
@@ -124,11 +125,10 @@ enum PageLinks {
 impl PageLinks {
     /// The pointers of a page cut by `window` that returned `outcome`.
     fn of_window(window: &PageWindow, outcome: PageOutcome) -> Option<PageLinks> {
-        let fullness = window.fullness(outcome.returned);
         match &window.start {
             PageStart::Offset(offset) => Some(PageLinks::Offset {
                 offset: i64::from(*offset),
-                extent: outcome.total.map_or(PageExtent::Fullness(fullness), PageExtent::Total),
+                extent: outcome.total.map_or(PageExtent::Reach(outcome.reach), PageExtent::Total),
             }),
             PageStart::Cursor(incoming) => {
                 let (first, last) = outcome.boundary?;
@@ -136,7 +136,7 @@ impl PageLinks {
                     incoming.as_ref(),
                     first,
                     last,
-                    fullness,
+                    outcome.reach,
                 ))))
             }
         }
@@ -253,8 +253,8 @@ fn offset_targets(uri: PageUri<'_>, limit: i64, offset: i64, extent: PageExtent)
     let has_prev = offset > 0;
     let has_next = match extent {
         PageExtent::Total(total) => offset + limit < total,
-        PageExtent::Fullness(PageFullness::Full) => true,
-        PageExtent::Fullness(PageFullness::Short) => false,
+        PageExtent::Reach(PageReach::Continues) => true,
+        PageExtent::Reach(PageReach::Exhausted) => false,
     };
 
     let mut links: Vec<(RelationType, String)> = Vec::new();
@@ -335,7 +335,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{
         cursor::{NeighbourCursors, PageCursor},
-        page_fullness::PageFullness,
+        page_reach::PageReach,
         page_window::{PageStart, PageWindow},
     };
     use andromeda_ngsi_ld_request::pagination::page_context::PageContext;
@@ -380,7 +380,7 @@ mod tests {
                 &window,
                 PageOutcome {
                     total: Some(45),
-                    returned: 10,
+                    reach: PageReach::Continues,
                     boundary: None,
                 }
             ),
@@ -405,13 +405,64 @@ mod tests {
                 &window,
                 PageOutcome {
                     total: None,
-                    returned: 2,
+                    reach: PageReach::Continues,
                     boundary,
                 }
             ),
             Some(PageLinks::Cursor(CursorPointers {
                 prev: None,
                 next: Some(PageCursor::After(ngsi_ld_uri("urn:e:2")).encode()),
+                last: Some(PageCursor::End.encode()),
+            }))
+        );
+    }
+
+    /// Clause 5.5.9.1: a page reached backward that holds the first elements
+    /// has no previous elements, so it offers neither `prev` nor `first`, however
+    /// full it is.
+    #[test]
+    fn a_backward_page_holding_the_first_elements_offers_no_prev_or_first() {
+        let window = PageWindow {
+            limit: 2,
+            start: PageStart::Cursor(Some(PageCursor::Before(ngsi_ld_uri("urn:e:3")))),
+        };
+        let outcome = PageOutcome {
+            total: None,
+            reach: PageReach::Exhausted,
+            boundary: Some((ngsi_ld_uri("urn:e:1"), ngsi_ld_uri("urn:e:2"))),
+        };
+        let mut response = empty_response();
+        append_page_links(
+            &mut response,
+            &parse_uri("/entities?limit=2"),
+            &core(),
+            &window,
+            outcome,
+            ResponseMediaType::JsonLd,
+        );
+        let link_str = link_header(&response);
+        assert!(!link_str.contains("rel=\"prev\""), "{link_str}");
+        assert!(!link_str.contains("rel=\"first\""), "{link_str}");
+        assert!(link_str.contains("rel=\"next\""), "{link_str}");
+    }
+
+    /// A page reached backward with elements before it offers `prev` back past its first identifier.
+    #[test]
+    fn a_backward_page_with_elements_before_it_offers_prev() {
+        let window = PageWindow {
+            limit: 2,
+            start: PageStart::Cursor(Some(PageCursor::Before(ngsi_ld_uri("urn:e:5")))),
+        };
+        let outcome = PageOutcome {
+            total: None,
+            reach: PageReach::Continues,
+            boundary: Some((ngsi_ld_uri("urn:e:3"), ngsi_ld_uri("urn:e:4"))),
+        };
+        pretty_assertions::assert_eq!(
+            PageLinks::of_window(&window, outcome),
+            Some(PageLinks::Cursor(CursorPointers {
+                prev: Some(PageCursor::Before(ngsi_ld_uri("urn:e:3")).encode()),
+                next: Some(PageCursor::After(ngsi_ld_uri("urn:e:4")).encode()),
                 last: Some(PageCursor::End.encode()),
             }))
         );
@@ -426,7 +477,7 @@ mod tests {
         };
         let outcome = PageOutcome {
             total: None,
-            returned: 0,
+            reach: PageReach::Exhausted,
             boundary: None,
         };
         pretty_assertions::assert_eq!(PageLinks::of_window(&window, outcome), None);
@@ -616,17 +667,17 @@ mod tests {
         assert!(!link_str.contains("ld+json"), "{link_str}");
     }
 
-    /// An entity query with no count signals a following page by the page having
-    /// come back full (clause 6.3.10), with no total available.
+    /// An entity query with no count signals a following page by the element
+    /// read past the page, with no total available.
     #[test]
-    fn page_fullness_adds_next_when_the_page_is_full() {
+    fn an_uncounted_page_that_continues_offers_next() {
         let mut response = empty_response();
         let uri = parse_uri("/entities?limit=10&offset=0");
         append_pagination_links(
             &mut response,
             &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
-            offset(0, PageExtent::Fullness(PageFullness::Full)),
+            offset(0, PageExtent::Reach(PageReach::Continues)),
             ResponseMediaType::JsonLd,
         );
         let link_str = link_header(&response);
@@ -640,7 +691,7 @@ mod tests {
     fn a_counted_page_reports_its_total_as_the_extent() {
         let outcome = PageOutcome {
             total: Some(25),
-            returned: 10,
+            reach: PageReach::Continues,
             boundary: None,
         };
         pretty_assertions::assert_eq!(
@@ -649,31 +700,31 @@ mod tests {
         );
     }
 
-    /// A query that did not ask for a count has no total, so the fullness of
-    /// the page it returned stands in for one (clause 6.3.10).
+    /// A query that did not ask for a count has no total, so whether the
+    /// collection continues past the page stands in for one.
     #[test]
-    fn an_uncounted_page_reports_its_fullness_as_the_extent() {
+    fn an_uncounted_page_reports_its_reach_as_the_extent() {
         let outcome = PageOutcome {
             total: None,
-            returned: 10,
+            reach: PageReach::Continues,
             boundary: None,
         };
         pretty_assertions::assert_eq!(
             PageLinks::of_window(&PageWindow::offset(10, 0), outcome),
-            Some(offset(0, PageExtent::Fullness(PageFullness::Full)))
+            Some(offset(0, PageExtent::Reach(PageReach::Continues)))
         );
     }
 
-    /// A short final page under the page-fullness rule offers no `next`.
+    /// Clause 5.5.9.1: an uncounted page that exhausted the collection offers no `next`.
     #[test]
-    fn page_fullness_omits_next_when_the_page_is_short() {
+    fn an_uncounted_page_that_exhausted_the_collection_offers_no_next() {
         let mut response = empty_response();
         let uri = parse_uri("/entities?limit=10&offset=10");
         append_pagination_links(
             &mut response,
             &PageUri { uri: &uri, context: &core() },
             &PageWindow::offset(10, 0),
-            offset(10, PageExtent::Fullness(PageFullness::Short)),
+            offset(10, PageExtent::Reach(PageReach::Exhausted)),
             ResponseMediaType::JsonLd,
         );
         let link_str = link_header(&response);
@@ -820,7 +871,7 @@ mod tests {
         let window = PageWindow::offset(1000, 0);
         let outcome = PageOutcome {
             total: None,
-            returned: 1000,
+            reach: PageReach::Continues,
             boundary: None,
         };
         append_page_links(&mut response, &uri, &core(), &window, outcome, ResponseMediaType::JsonLd);
@@ -839,7 +890,7 @@ mod tests {
         let window = PageWindow::offset(10, 10);
         let outcome = PageOutcome {
             total: Some(50),
-            returned: 10,
+            reach: PageReach::Continues,
             boundary: None,
         };
         append_page_links(&mut response, &uri, &context, &window, outcome, ResponseMediaType::JsonLd);

@@ -14,7 +14,7 @@ use andromeda_http_extraction::pagination_policy::RequestPagination;
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::pagination::{PageOutcome, append_page_links};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_reach::PageReach, page_window::PageWindow};
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
     pagination::{
@@ -25,7 +25,6 @@ use andromeda_ngsi_ld_request::{
     query::{QUERY_PAGE_SIZE, entity::parameters::EntityQueryParameters},
 };
 use axum::{http::Uri as HttpUri, response::Response};
-use std::borrow::Cow;
 
 /// Which collection the requested window is cut from (clause 5.5.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,25 +115,30 @@ impl QueryPage {
 
     /// The window the local store reads, and whether it counts.
     ///
-    /// Without a merge the store reads the requested window itself. With one,
+    /// Without a merge the store reads the requested window itself, with the
+    /// element past it that tells whether the collection continues. With one,
     /// it reads the first local rows up to the merge budget, uncounted: the
     /// window and the total are both taken from the merged collection.
-    pub(crate) const fn local_read(&self) -> (Cow<'_, PageWindow>, CountPolicy) {
+    pub(crate) fn local_read(&self) -> (PageWindow, CountPolicy) {
         match self.cut_at {
-            PageCut::Local => (Cow::Borrowed(&self.window), self.count),
-            PageCut::AfterMerge { local_rows } => (Cow::Owned(PageWindow::offset(local_rows, 0)), CountPolicy::Omit),
+            PageCut::Local => (self.window.with_lookahead(), self.count),
+            PageCut::AfterMerge { local_rows } => (PageWindow::offset(local_rows, 0), CountPolicy::Omit),
         }
     }
 
     /// Cut the page out of the collection the query answers with, and report
-    /// the total alongside it when the request asked to be told.
+    /// whether the collection continues past it and, when the request asked to
+    /// be told, the total.
     ///
     /// `local_total` is what the store counted, which stands whenever the store
     /// held the whole collection. A merged collection is ordered by `id` before
     /// the window is cut from it.
-    pub(crate) fn cut<T>(&self, entities: Vec<T>, id: impl Fn(&T) -> &str, local_total: Option<i64>) -> (Vec<T>, Option<i64>) {
+    pub(crate) fn cut<T>(&self, entities: Vec<T>, id: impl Fn(&T) -> &str, local_total: Option<i64>) -> (Vec<T>, PageReach, Option<i64>) {
         match self.cut_at {
-            PageCut::Local => (entities, local_total),
+            PageCut::Local => {
+                let (entities, reach) = self.window.settle(entities);
+                (entities, reach, local_total)
+            }
             PageCut::AfterMerge { .. } => {
                 let total = match self.count {
                     CountPolicy::Emit => Some(i64::try_from(entities.len()).unwrap_or(i64::MAX)),
@@ -149,7 +153,8 @@ impl QueryPage {
                 let mut entities = entities;
                 entities.sort_unstable_by(|left, right| id(left).cmp(id(right)));
                 let entities = entities;
-                (self.window.cut(entities, id), total)
+                let (entities, reach) = self.window.cut_settled(entities, id);
+                (entities, reach, total)
             }
         }
     }
@@ -157,7 +162,8 @@ impl QueryPage {
     /// Add the clause 6.3.10 pagination links over this page.
     ///
     /// `boundary` is the first and last identifier of the page as displayed,
-    /// from which the neighbouring cursors of a cursor page are computed.
+    /// from which the neighbouring cursors of a cursor page are computed, and
+    /// `reach` whether the collection continues past it.
     ///
     /// A binding that carried its query in the request body emits no link:
     /// clause 6.3.10 asks for a target "that could be dereferenced by an
@@ -169,7 +175,7 @@ impl QueryPage {
         instance: &HttpUri,
         media_type: ResponseMediaType,
         total: Option<i64>,
-        returned: usize,
+        reach: PageReach,
         boundary: Option<(Identifier, Identifier)>,
     ) {
         match self.pointers {
@@ -179,7 +185,7 @@ impl QueryPage {
                 instance,
                 &self.context,
                 &self.window,
-                PageOutcome { total, returned, boundary },
+                PageOutcome { total, reach, boundary },
                 media_type,
             ),
         }
@@ -194,11 +200,11 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         cursor::PageCursor,
+        page_reach::PageReach,
         page_window::{PageStart, PageWindow},
     };
     use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers};
     use serde_json::json;
-    use std::borrow::Cow;
 
     fn entity(id: &str) -> Entity {
         serde_json::from_value(json!({"id": id, "type": "Vehicle"})).expect("a valid entity")
@@ -231,7 +237,7 @@ mod tests {
     /// deterministic order, the `id` order the local store pages in.
     #[test]
     fn a_merged_collection_is_cut_from_its_identifier_order() {
-        let (page, total) = merged_page(2, PageStart::Offset(1), CountPolicy::Emit).cut(five_merged(), |entity| entity.id.as_str(), None);
+        let (page, _, total) = merged_page(2, PageStart::Offset(1), CountPolicy::Emit).cut(five_merged(), |entity| entity.id.as_str(), None);
         pretty_assertions::assert_eq!(ids(&page), vec!["urn:b", "urn:c"]);
         pretty_assertions::assert_eq!(total, Some(5));
     }
@@ -242,7 +248,7 @@ mod tests {
     #[test]
     fn a_cursor_continues_a_walk_over_the_merged_collection() {
         let start = PageStart::Cursor(Some(PageCursor::After(uri("urn:b"))));
-        let (page, total) = merged_page(2, start, CountPolicy::Emit).cut(five_merged(), |entity| entity.id.as_str(), None);
+        let (page, _, total) = merged_page(2, start, CountPolicy::Emit).cut(five_merged(), |entity| entity.id.as_str(), None);
         pretty_assertions::assert_eq!(ids(&page), vec!["urn:c", "urn:d"]);
         pretty_assertions::assert_eq!(total, Some(5));
     }
@@ -252,8 +258,19 @@ mod tests {
     #[test]
     fn a_backward_cursor_pages_back_through_the_merged_collection() {
         let start = PageStart::Cursor(Some(PageCursor::Before(uri("urn:d"))));
-        let (page, _) = merged_page(2, start, CountPolicy::Omit).cut(five_merged(), |entity| entity.id.as_str(), None);
+        let (page, reach, _) = merged_page(2, start, CountPolicy::Omit).cut(five_merged(), |entity| entity.id.as_str(), None);
         pretty_assertions::assert_eq!(ids(&page), vec!["urn:b", "urn:c"]);
+        pretty_assertions::assert_eq!(reach, PageReach::Continues);
+    }
+
+    /// Clause 5.5.9.1: a backward page over the merged collection that holds
+    /// its first entities has no previous elements, however full it is.
+    #[test]
+    fn a_backward_page_holding_the_first_merged_entities_is_exhausted() {
+        let start = PageStart::Cursor(Some(PageCursor::Before(uri("urn:c"))));
+        let (page, reach, _) = merged_page(2, start, CountPolicy::Omit).cut(five_merged(), |entity| entity.id.as_str(), None);
+        pretty_assertions::assert_eq!(ids(&page), vec!["urn:a", "urn:b"]);
+        pretty_assertions::assert_eq!(reach, PageReach::Exhausted);
     }
 
     /// Clause 6.3.13: the count of a merged collection is its whole size,
@@ -261,10 +278,10 @@ mod tests {
     #[test]
     fn the_count_of_a_merged_collection_is_its_whole_size() {
         let merged = vec![entity("urn:a"), entity("urn:b"), entity("urn:c")];
-        let (page, total) = merged_page(10, PageStart::Offset(3), CountPolicy::Emit).cut(merged, |entity| entity.id.as_str(), Some(1));
+        let (page, _, total) = merged_page(10, PageStart::Offset(3), CountPolicy::Emit).cut(merged, |entity| entity.id.as_str(), Some(1));
         assert!(page.is_empty());
         pretty_assertions::assert_eq!(total, Some(3));
-        let (_, total) = merged_page(10, PageStart::Offset(0), CountPolicy::Omit).cut(vec![entity("urn:a")], |entity| entity.id.as_str(), Some(1));
+        let (_, _, total) = merged_page(10, PageStart::Offset(0), CountPolicy::Omit).cut(vec![entity("urn:a")], |entity| entity.id.as_str(), Some(1));
         pretty_assertions::assert_eq!(total, None);
     }
 
@@ -275,23 +292,23 @@ mod tests {
             cut_at: PageCut::Local,
             ..merged_page(10, PageStart::Offset(0), CountPolicy::Emit)
         };
-        let (entities, total) = page.cut(vec![entity("urn:b"), entity("urn:a")], |entity| entity.id.as_str(), Some(7));
+        let (entities, _, total) = page.cut(vec![entity("urn:b"), entity("urn:a")], |entity| entity.id.as_str(), Some(7));
         pretty_assertions::assert_eq!(ids(&entities), vec!["urn:b", "urn:a"]);
         pretty_assertions::assert_eq!(total, Some(7));
     }
 
-    /// Without a merge the store reads the requested window, counted as asked.
+    /// Without a merge the store reads the requested window and the element
+    /// past it, counted as asked.
     #[test]
-    fn a_local_page_reads_the_requested_window() {
-        let window = PageWindow::after(5, uri("urn:b"));
+    fn a_local_page_reads_the_requested_window_with_its_lookahead() {
         let page = QueryPage::of(
-            window.clone(),
+            PageWindow::after(5, uri("urn:b")),
             CountPolicy::Emit,
             None,
             PagePointers::OverRequestUri,
             PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
-        ); // clone: the expectation keeps the window
-        pretty_assertions::assert_eq!(page.local_read(), (Cow::Borrowed(&window), CountPolicy::Emit));
+        );
+        pretty_assertions::assert_eq!(page.local_read(), (PageWindow::after(6, uri("urn:b")), CountPolicy::Emit));
     }
 
     /// Clause 5.5.9: a merge reads its local rows through a window of its own,
@@ -302,7 +319,7 @@ mod tests {
         let start = PageStart::Cursor(Some(PageCursor::After(uri("urn:b"))));
         let page = merged_page(2, start.clone(), CountPolicy::Emit); // clone: the expectation keeps the start
         let (local, count) = page.local_read();
-        pretty_assertions::assert_eq!(local.into_owned(), PageWindow::offset(101, 0));
+        pretty_assertions::assert_eq!(local, PageWindow::offset(101, 0));
         pretty_assertions::assert_eq!(count, CountPolicy::Omit);
         pretty_assertions::assert_eq!(page.window, PageWindow { limit: 2, start });
     }

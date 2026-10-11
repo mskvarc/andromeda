@@ -8,6 +8,7 @@ use crate::{
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::content_range::build_content_range;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_query::page_reach::PageReach;
 use andromeda_ngsi_ld_render::response::ResponseRenderer;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::service::TemporalRange;
@@ -28,9 +29,9 @@ pub(crate) struct TemporalCollectionMetadata {
     pub(crate) entity_map_uri: Option<Identifier>,
     /// The clause 6.3.10 element page the `Link` relations point around.
     pub(crate) page: QueriedPage,
-    /// How many matching entities that page carried, counted before a flat
-    /// clause 4.5.23 join appended the entities they link to.
-    pub(crate) returned: usize,
+    /// Whether the matching entities continue past that page in the direction
+    /// it was read; the entities a flat clause 4.5.23 join appends play no part.
+    pub(crate) reach: PageReach,
     /// The first and last identifiers of the matching page, from which a cursor
     /// pointer is computed (clause 5.5.9.1); absent when the page is empty.
     pub(crate) boundary: Option<(Identifier, Identifier)>,
@@ -62,7 +63,7 @@ pub(crate) fn query_response(
         range,
         entity_map_uri,
         page,
-        returned,
+        reach,
         boundary,
     } = metadata;
     let rendered = answer.render(rendering, params, instance)?;
@@ -83,6 +84,6 @@ pub(crate) fn query_response(
     // links bound how many entities the page carries. Neither suppresses the
     // other, so a truncated page still says whether more matches follow.
     let mut response = response.into_response();
-    page.append_links(&mut response, instance, accept.media_type(), total_count, returned, boundary);
+    page.append_links(&mut response, instance, accept.media_type(), total_count, reach, boundary);
     Ok(response)
 }

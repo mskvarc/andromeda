@@ -26,6 +26,7 @@ use andromeda_jsonld::{context_cache::DownloadedContext, engine::processor::Json
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId, tenant::TenantName};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
+use andromeda_ngsi_ld_query::page_reach::PageReach;
 use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::LeasedState, tenant_ref::TenantRef};
 use andromeda_test_harness::resident_tenancy::ResidentTenancy;
@@ -92,6 +93,7 @@ impl ContextRegistryStore for TwoEntryStore {
             Ok(ContextPage {
                 contexts: ListedContexts::Summary(Vec::new()),
                 boundary: None,
+                reach: PageReach::Exhausted,
             })
         })
     }

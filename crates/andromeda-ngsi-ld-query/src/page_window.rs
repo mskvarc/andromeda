@@ -2,7 +2,7 @@
 //!
 //! Clause 5.5.9 offers the opaque pointer of clause 5.5.9.1, carried as a keyset [`PageCursor`], and the transparent `limit`/`offset` pair of clause 5.5.9.2. The pagination policy at the request boundary decides which one a request walks by, and the resulting [`PageWindow`] drives every store and every in-memory cut. A store pages its own rows; a collection assembled in memory (local entities merged with what context sources contributed, clause 5.7.2.4) is sorted by identifier and cut here, so either pointer selects from it exactly what it would select from a store holding the same rows.
 
-use crate::{cursor::PageCursor, page_fullness::PageFullness, read_order::ReadOrder};
+use crate::{cursor::PageCursor, page_reach::PageReach, read_order::ReadOrder};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
 /// Where a page starts in an identifier-ordered collection.
@@ -59,14 +59,40 @@ impl PageWindow {
         }
     }
 
-    /// Whether a page of `returned` elements filled this window; the single definition of the clause 6.3.10 page-fullness signal.
+    /// The window a reader reads for this page: one element more, the one past the page in the direction it is read, whose presence is what tells whether the collection continues there (clause 5.5.9.1). [`PageWindow::settle`] takes it off again.
     #[must_use]
-    pub fn fullness(&self, returned: usize) -> PageFullness {
-        if returned >= usize::try_from(self.limit).unwrap_or(usize::MAX) {
-            PageFullness::Full
-        } else {
-            PageFullness::Short
+    pub fn with_lookahead(&self) -> PageWindow {
+        PageWindow {
+            limit: self.limit.saturating_add(1),
+            // clone: the read window starts where the page does
+            start: self.start.clone(),
         }
+    }
+
+    /// This page of `read`, the elements read through [`PageWindow::with_lookahead`] in the order the page is presented in, and whether the collection continues past it in the direction it was read.
+    ///
+    /// The element past the page sits at the end it was read towards: the last of a page read ascending, the first of one read descending and reversed for presentation.
+    #[must_use]
+    pub fn settle<T>(&self, read: Vec<T>) -> (Vec<T>, PageReach) {
+        let limit = usize::try_from(self.limit).unwrap_or(usize::MAX);
+        let surplus = read.len().saturating_sub(limit);
+        if surplus == 0 {
+            return (read, PageReach::Exhausted);
+        }
+        let mut read = read;
+        match self.start.read_order() {
+            ReadOrder::Ascending => read.truncate(limit),
+            ReadOrder::Descending => {
+                read.drain(..surplus);
+            }
+        }
+        (read, PageReach::Continues)
+    }
+
+    /// Cuts this page from `sorted` as [`PageWindow::cut`] does, together with whether the collection continues past it.
+    #[must_use]
+    pub fn cut_settled<T>(&self, sorted: Vec<T>, key: impl Fn(&T) -> &str) -> (Vec<T>, PageReach) {
+        self.settle(self.with_lookahead().cut(sorted, key))
     }
 
     /// Cuts this window from `sorted`, ascending by the identifier `key` reads, compared byte-wise as the store collates identifiers.
@@ -95,7 +121,7 @@ impl PageWindow {
 mod tests {
     use crate::{
         cursor::PageCursor,
-        page_fullness::PageFullness,
+        page_reach::PageReach,
         page_window::{PageStart, PageWindow},
         read_order::ReadOrder,
     };
@@ -201,16 +227,75 @@ mod tests {
         assert_eq!(page, vec!["urn:e:10".to_string(), "urn:e:9".to_string()]);
     }
 
-    /// Clause 6.3.10: a page that returned its whole limit is full.
+    /// The read window asks for one element past the page, from where the page starts.
     #[test]
-    fn a_window_is_full_when_it_returns_its_limit() {
-        assert_eq!(PageWindow::offset(3, 0).fullness(3), PageFullness::Full);
+    fn the_lookahead_reads_one_element_past_the_page() {
+        let window = PageWindow::after(3, uri("urn:e:2"));
+        assert_eq!(window.with_lookahead(), PageWindow::after(4, uri("urn:e:2")));
     }
 
-    /// A page that returned fewer than its limit reached the end.
+    /// The unbounded window has no element past it to read.
     #[test]
-    fn a_window_is_short_below_its_limit() {
-        assert_eq!(PageWindow::offset(3, 0).fullness(2), PageFullness::Short);
+    fn the_unbounded_window_reads_no_lookahead() {
+        assert_eq!(PageWindow::unbounded().with_lookahead(), PageWindow::unbounded());
+    }
+
+    /// A forward page whose lookahead came back continues past its last element.
+    #[test]
+    fn a_forward_page_with_its_lookahead_continues_past_its_end() {
+        let window = PageWindow::after(2, uri("urn:e:0"));
+        assert_eq!(window.settle(ids(&[1, 2, 3])), (ids(&[1, 2]), PageReach::Continues));
+    }
+
+    /// A full forward page that read no lookahead ends the collection.
+    #[test]
+    fn a_full_forward_page_without_its_lookahead_is_exhausted() {
+        let window = PageWindow::after(2, uri("urn:e:7"));
+        assert_eq!(window.settle(ids(&[8, 9])), (ids(&[8, 9]), PageReach::Exhausted));
+    }
+
+    /// Clause 5.5.9.1: a backward page is read towards the start, so its lookahead is the element before its first one, and it is presented first.
+    #[test]
+    fn a_backward_page_drops_the_lookahead_before_its_first_element() {
+        let window = PageWindow {
+            limit: 2,
+            start: PageStart::Cursor(Some(PageCursor::Before(uri("urn:e:5")))),
+        };
+        assert_eq!(window.settle(ids(&[2, 3, 4])), (ids(&[3, 4]), PageReach::Continues));
+    }
+
+    /// Clause 5.5.9.1: a full backward page holding the first elements has no previous elements.
+    #[test]
+    fn a_full_backward_page_holding_the_first_elements_is_exhausted() {
+        let page = PageWindow {
+            limit: 2,
+            start: PageStart::Cursor(Some(PageCursor::Before(uri("urn:e:2")))),
+        }
+        .cut_settled(collection(), String::as_str);
+        assert_eq!(page, (ids(&[0, 1]), PageReach::Exhausted));
+    }
+
+    /// The from-end page is read towards the start too.
+    #[test]
+    fn the_from_end_page_continues_while_elements_precede_it() {
+        let window = PageWindow {
+            limit: 3,
+            start: PageStart::Cursor(Some(PageCursor::End)),
+        };
+        assert_eq!(window.cut_settled(collection(), String::as_str), (ids(&[7, 8, 9]), PageReach::Continues));
+    }
+
+    /// An offset page is read in the order it is presented, so its lookahead is its last element.
+    #[test]
+    fn an_offset_page_drops_its_trailing_lookahead() {
+        assert_eq!(
+            PageWindow::offset(3, 4).cut_settled(collection(), String::as_str),
+            (ids(&[4, 5, 6]), PageReach::Continues)
+        );
+        assert_eq!(
+            PageWindow::offset(3, 7).cut_settled(collection(), String::as_str),
+            (ids(&[7, 8, 9]), PageReach::Exhausted)
+        );
     }
 
     /// A backward cursor and the from-end cursor are read descending from the

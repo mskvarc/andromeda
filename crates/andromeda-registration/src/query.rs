@@ -23,6 +23,7 @@ use andromeda_ngsi_ld_query::{
         referenced_attributes::referenced_attributes,
     },
     geo::compile as geo_compile,
+    page_reach::PageReach,
     page_window::PageWindow,
     projection::expansion::expand_attrs,
     temporal::window::TimeInterval,
@@ -49,10 +50,10 @@ pub struct DiscoveredRegistrations {
     /// store scanned, not only the ones the clause-5.10.2.5 trim kept. Absent on
     /// an empty page.
     pub boundary: Option<(Identifier, Identifier)>,
-    /// How many registrations the raw store page held before the
-    /// clause-5.10.2.5 trim -- what the clause 6.3.10 page-fullness signal of a
-    /// cursor walk is read from, so a page the trim thinned still continues.
-    pub scanned: usize,
+    /// Whether the collection continues past the raw store page in the
+    /// direction it was read, so a page the clause-5.10.2.5 trim thinned still
+    /// continues (clause 5.5.9.1).
+    pub reach: PageReach,
 }
 
 impl RegistrationService {
@@ -83,18 +84,17 @@ impl RegistrationService {
             .validate()
             .map_err(|error| RegistrationError::Validation(RegistrationValidationReason::QueryParameters(error)))?;
         let compiled = self.compile_csr_query(params, encountered_sources, context).await?;
-        let page = self.repo.query_compiled(&compiled, window).await?;
+        let page = self.repo.query_compiled(&compiled, &window.with_lookahead()).await?;
+        let total = page.total;
+        let (scanned, reach) = window.settle(page.registrations);
         // Clause 5.5.9.1: the cursor pointers are read from the raw store page,
         // before the clause-5.10.2.5 trim below drops the registrations whose
         // RegistrationInfo the query does not match. clone: the boundary
         // outlives the page the loop consumes.
-        let boundary = page
-            .registrations
+        let boundary = scanned
             .first()
             .map(|registration| registration.id.clone())
-            .zip(page.registrations.last().map(|registration| registration.id.clone()));
-        let scanned = page.registrations.len();
-        let total = page.total;
+            .zip(scanned.last().map(|registration| registration.id.clone()));
         let names = NameCompaction::new(self.engine.compactor(context).processed_context().await?);
         // clone: clause 5.12 matching reads the selector in its serialisable
         // shape, and the compiled query keeps the expanded one.
@@ -104,8 +104,8 @@ impl RegistrationService {
             .map(TypeExpr::into_raw)
             .transpose()
             .map_err(RegistrationInvariant::ExpandedTypeName)?;
-        let mut matched = Vec::with_capacity(page.registrations.len());
-        for registration in page.registrations {
+        let mut matched = Vec::with_capacity(scanned.len());
+        for registration in scanned {
             if let Some(registration) = registration_matching_the_query(registration, &compiled, type_selector.as_ref())? {
                 matched.push(compacted_registration(&names, registration));
             }
@@ -114,7 +114,7 @@ impl RegistrationService {
             registrations: matched,
             total,
             boundary,
-            scanned,
+            reach,
         })
     }
 
@@ -246,7 +246,7 @@ mod tests {
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_query::{
         geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
-        page_fullness::PageFullness,
+        page_reach::PageReach,
         page_window::PageWindow,
     };
     use andromeda_ngsi_ld_request::query::csr::CsrQueryParameters;
@@ -276,14 +276,15 @@ mod tests {
 
     /// Clause 5.10.2.5 trims the registrations whose information the query
     /// does not match after the store paged them, so the cursor boundary and
-    /// the page-fullness signal are read from the raw page: a walk continues
-    /// past every registration the store scanned.
+    /// whether the collection continues are read from the raw page: a walk
+    /// continues past every registration the store scanned.
     #[tokio::test]
-    async fn the_cursor_boundary_and_fullness_come_from_the_raw_page() {
+    async fn the_cursor_boundary_and_reach_come_from_the_raw_page() {
         let store = FixedStore::new(vec![
             of_type("urn:ngsi-ld:ContextSourceRegistration:1", "https://example.org/Building"),
             of_type("urn:ngsi-ld:ContextSourceRegistration:2", "https://example.org/Vehicle"),
             of_type("urn:ngsi-ld:ContextSourceRegistration:3", "https://example.org/Building"),
+            of_type("urn:ngsi-ld:ContextSourceRegistration:4", "https://example.org/Building"),
         ]);
         let params: CsrQueryParameters = serde_urlencoded::from_str("type=https%3A%2F%2Fexample.org%2FVehicle&limit=3").expect("valid discovery");
         let window = PageWindow::offset(3, 0);
@@ -291,8 +292,7 @@ mod tests {
         let discovered = service(store).query(&params, &window, &[], &ContextSpec::none()).await.expect("discovered");
 
         pretty_assertions::assert_eq!(discovered.registrations.len(), 1, "the trim keeps the one matching registration");
-        pretty_assertions::assert_eq!(discovered.scanned, 3);
-        pretty_assertions::assert_eq!(window.fullness(discovered.scanned), PageFullness::Full);
+        pretty_assertions::assert_eq!(discovered.reach, PageReach::Continues);
         pretty_assertions::assert_eq!(
             discovered.boundary,
             Some((

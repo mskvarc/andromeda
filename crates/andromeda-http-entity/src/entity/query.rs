@@ -214,7 +214,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
             contributions,
         } = retain_matching(service, &target, merged, deferred, &context, &uri).await?;
         let split_survivors = split_entities.then(|| split_match_set(&versions));
-        let (mut versions, total_count) = page.cut(versions, |version| version.state.id().as_str(), local_total);
+        let (mut versions, reach, total_count) = page.cut(versions, |version| version.state.id().as_str(), local_total);
         let carried = ResolvedJoin::carried_by(&mut versions);
         let mut entities = compacted_page(service, &versions, opts.sys_attrs, &query, &context, &uri).await?;
 
@@ -263,7 +263,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
                 warnings,
                 total_count,
                 entity_map_uri,
-                returned: entities.len(),
+                reach,
                 boundary: cursor_boundary(&entities),
             },
             &page,

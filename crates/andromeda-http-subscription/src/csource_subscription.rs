@@ -118,11 +118,11 @@ pub async fn query(
         subscriptions,
         total,
         boundary,
+        reach,
     } = service
         .list_for_response(&state.live_target, &listing.window, &context)
         .await
         .with_subscription_instance(&uri)?;
-    let returned = subscriptions.len();
     let views: Vec<SubscriptionView<'_>> = subscriptions
         .iter()
         .map(|subscription| SubscriptionView::of(subscription, listing.options.sys_attrs))
@@ -134,7 +134,7 @@ pub async fn query(
         .with_subscription_instance(&uri)?
         .with_collection(&views);
     let rendered = RenderedResponse::resource(ready).with_subscription_instance(&uri)?;
-    listing.respond(rendered, total, boundary, returned, &uri, accept.media_type())
+    listing.respond(rendered, total, boundary, reach, &uri, accept.media_type())
 }
 
 /// PATCH /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Update a context source subscription.

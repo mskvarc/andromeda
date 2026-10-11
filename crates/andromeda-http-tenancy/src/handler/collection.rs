@@ -70,12 +70,13 @@ pub async fn query(
 
     let listing = state
         .administration()
-        .list_tenants(&start, window.limit)
+        .list_tenants(&start, window.with_lookahead().limit)
         .await
         .map_err(|error| classify(&TenancyHttpError::from(error)).with_instance(uri.clone()))?;
+    let (views, reach) = window.settle(listing.views);
 
-    let mut tenants: Vec<Tenant> = Vec::with_capacity(listing.views.len());
-    for view in &listing.views {
+    let mut tenants: Vec<Tenant> = Vec::with_capacity(views.len());
+    for view in &views {
         tenants.push(
             build_tenant(view, options, state.usage())
                 .await
@@ -83,8 +84,7 @@ pub async fn query(
         );
     }
 
-    let boundary = collection_boundary(&listing.views, &uri)?;
-    let returned = listing.views.len();
+    let boundary = collection_boundary(&views, &uri)?;
     let count = usize::try_from(listing.total).unwrap_or(usize::MAX);
 
     let mut response = Json(tenants).into_response();
@@ -96,7 +96,7 @@ pub async fn query(
         &window,
         PageOutcome {
             total: Some(listing.total),
-            returned,
+            reach,
             boundary,
         },
         ResponseMediaType::Json,

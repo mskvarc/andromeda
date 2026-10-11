@@ -37,7 +37,7 @@ pub mod geo;
 pub mod identifier_axis;
 pub mod non_posix_construct;
 pub mod ordering;
-pub mod page_fullness;
+pub mod page_reach;
 pub mod page_window;
 pub mod pattern;
 pub mod portable_pattern;

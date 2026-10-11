@@ -50,7 +50,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
         Box::pin(async move {
             let kind = query.kind.map(stored_kind);
             let (statement, read_order) =
-                listing_page_query(query.detail_level, kind, query.embedded, query.window).map_err(|error| persistence_error(error))?;
+                listing_page_query(query.detail_level, kind, query.embedded, &query.window.with_lookahead()).map_err(|error| persistence_error(error))?;
             let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
             match query.detail_level {
                 ContextDetailLevel::Full => {
@@ -59,6 +59,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
                         .await
                         .map_err(|error| persistence_error(error))?;
                     read_order.present(&mut rows);
+                    let (rows, reach) = query.window.settle(rows);
                     let boundary = page_boundary(&rows, |row| row.local_id.as_str()).map_err(|error| persistence_error(error))?;
                     let metadata = rows
                         .into_iter()
@@ -68,6 +69,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
                     Ok(ContextPage {
                         contexts: ListedContexts::Detailed(metadata),
                         boundary,
+                        reach,
                     })
                 }
                 ContextDetailLevel::Summary => {
@@ -76,6 +78,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
                         .await
                         .map_err(|error| persistence_error(error))?;
                     read_order.present(&mut rows);
+                    let (rows, reach) = query.window.settle(rows);
                     let boundary = page_boundary(&rows, |row| row.local_id.as_str()).map_err(|error| persistence_error(error))?;
                     let identifiers = rows
                         .into_iter()
@@ -85,6 +88,7 @@ impl ContextRegistryStore for JsonLdContextRepository {
                     Ok(ContextPage {
                         contexts: ListedContexts::Summary(identifiers),
                         boundary,
+                        reach,
                     })
                 }
             }

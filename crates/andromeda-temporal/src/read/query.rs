@@ -70,10 +70,15 @@ impl TemporalService {
 
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
             self.ensure_requested_attributes_aggregable(target, &compiled).await?;
-            let id_outcome = self.reader.query_entity_ids(target, &compiled, window, count).await?;
+            // Clause 5.5.9.1: the identifier page is read one entity past the
+            // window, so whether the collection continues is known before any
+            // history is read, and only the page's own entities are read.
+            let read_window = window.with_lookahead();
+            let id_outcome = self.reader.query_entity_ids(target, &compiled, &read_window, count).await?;
             let (entity_ids, total_count) = id_outcome
-                .complete(window, count)
+                .complete(&read_window, count)
                 .map_err(|error| TemporalError::from(TemporalInvariant::IncompleteOutcome(error)))?;
+            let (entity_ids, reach) = window.settle(entity_ids);
             let entity_ids: Vec<Identifier> = entity_ids.into_iter().filter(|entity_id| contributed_reading.renders(entity_id)).collect();
 
             // One batch read of the temporal catalogue, which owns the entity types
@@ -160,6 +165,7 @@ impl TemporalService {
             Ok(TemporalQueryResult {
                 entities,
                 total_count,
+                reach,
                 any_truncated,
                 range,
                 warnings,

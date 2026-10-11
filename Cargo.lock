@@ -929,6 +929,7 @@ dependencies = [
  "andromeda-jsonld",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-render",
  "andromeda-ngsi-ld-request",
  "andromeda-tenancy",

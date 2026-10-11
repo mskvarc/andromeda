@@ -16,7 +16,7 @@ use andromeda_http_response::{
     rendered_response::RenderedResponse,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_reach::PageReach, page_window::PageWindow};
 use andromeda_ngsi_ld_request::{
     options::ListOptions,
     pagination::{
@@ -82,7 +82,7 @@ impl ListingRequest {
         rendered: RenderedResponse,
         total: i64,
         boundary: Option<(Identifier, Identifier)>,
-        returned: usize,
+        reach: PageReach,
         instance: &Uri,
         media_type: ResponseMediaType,
     ) -> Result<Response, ProblemResponse> {
@@ -105,7 +105,7 @@ impl ListingRequest {
             &self.window,
             PageOutcome {
                 total: Some(total),
-                returned,
+                reach,
                 boundary,
             },
             media_type,

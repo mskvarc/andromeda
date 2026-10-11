@@ -4,6 +4,7 @@ use crate::entity::{IntoResponse, NgsiLdCollectionResponse, Response, StatusCode
 use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_warning::NgsiLdWarning};
 use andromeda_http_response::rendered_response::RenderedResponse;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_query::page_reach::PageReach;
 use axum::http::Uri as HttpUri;
 
 /// The metadata a query's response carries beside its rendered collection.
@@ -17,9 +18,9 @@ pub(crate) struct QueryCollectionMetadata {
     pub(crate) total_count: Option<i64>,
     /// The Entity Map the query ran under (clause 5.5.14).
     pub(crate) entity_map_uri: Option<Identifier>,
-    /// How many matching entities the page carried, which decides whether a
-    /// following page exists (clause 6.3.10).
-    pub(crate) returned: usize,
+    /// Whether the collection continues past the page in the direction it was
+    /// read, which decides the clause 5.5.9.1 pointers of an uncounted page.
+    pub(crate) reach: PageReach,
     /// The first and last identifiers of the page as displayed, from which a
     /// cursor pointer is computed (clause 5.5.9.1); absent when the page is
     /// empty.
@@ -39,7 +40,7 @@ pub(crate) fn query_response(
         warnings,
         total_count,
         entity_map_uri,
-        returned,
+        reach,
         boundary,
     } = metadata;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
@@ -52,6 +53,6 @@ pub(crate) fn query_response(
         response = response.with_entity_map_uri(map_uri);
     }
     let mut response = response.into_response();
-    page.append_links(&mut response, instance, media_type, total_count, returned, boundary);
+    page.append_links(&mut response, instance, media_type, total_count, reach, boundary);
     response
 }

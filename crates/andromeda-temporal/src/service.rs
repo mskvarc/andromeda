@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::{
     geo::admission::GeoQueryAdmission,
+    page_reach::PageReach,
     projection::compiled::Projection,
     temporal::{instance_page::PageDirection, window::TimeInterval},
 };
@@ -109,6 +110,9 @@ pub struct TemporalQueryResult {
     pub entities: Vec<TemporalHistory>,
     /// Total entity count when the `count` option was requested.
     pub total_count: Option<i64>,
+    /// Whether the matching entities continue past the page in the direction
+    /// it was read (clause 5.5.9.1).
+    pub reach: PageReach,
     /// Whether the page cut the history of any entity short.
     pub any_truncated: bool,
     /// Range metadata, present when the response is a partial page.

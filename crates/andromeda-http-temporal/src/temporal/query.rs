@@ -120,21 +120,19 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     let timeproperty = params.timeproperty_or_default();
     completeness.trim(&mut merged.entities, timeproperty);
 
-    let (entities, total_count) = cut_merged_page(
+    let (entities, total_count, reach) = cut_merged_page(
         merged.entities,
         MergedPageCut {
             window: local.merged,
             count: page.count(),
             local_total,
+            local_reach: local_result.reach,
         },
         &params,
     );
     // Clause 6.3.10: the `Content-Range` describes the history the page's own
     // entities carry, read before a flat join appends the linked ones.
     let range = completeness.range(&entities, timeproperty);
-    // Clause 6.3.10 pages the matching entities; a flat join appends the
-    // entities they link to, which accompany the page rather than filling it.
-    let returned = entities.len();
     // Clause 5.5.9.1: the boundary a cursor pointer walks from is the first and
     // last identifiers of the matching page, captured here before the flat join
     // appends the linked entities the page must not point past.
@@ -193,7 +191,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
             range,
             entity_map_uri,
             page,
-            returned,
+            reach,
             boundary: page_boundary,
         },
         &uri,

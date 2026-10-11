@@ -25,6 +25,7 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{compound_context_host::WrapperUse, context_cache::DownloadedContext, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
+use andromeda_ngsi_ld_query::page_reach::PageReach;
 use serde_json::{Value, json};
 use std::sync::{Arc, RwLock};
 use url::Url;
@@ -96,6 +97,7 @@ impl ContextRegistryStore for MemoryStore {
             Ok(ContextPage {
                 contexts: ListedContexts::Summary(Vec::new()),
                 boundary: None,
+                reach: PageReach::Exhausted,
             })
         })
     }

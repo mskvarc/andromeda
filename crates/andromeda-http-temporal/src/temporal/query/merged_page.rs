@@ -6,9 +6,10 @@
 use crate::temporal::TemporalQueryParameters;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_reach::PageReach, page_window::PageWindow};
 
-/// Bound the merged history and cut the requested page from it.
+/// Bound the merged history and cut the requested page from it, together
+/// with whether the merged collection continues past it.
 ///
 /// Clause 5.7.4.4: `lastN` bounds the instances of the aggregated history, so
 /// it is applied once more over the merged entities; each source only bounded
@@ -27,7 +28,7 @@ fn merged_page(
     params: &TemporalQueryParameters,
     window: &PageWindow,
     count: CountPolicy,
-) -> (Vec<TemporalHistory>, Option<usize>) {
+) -> (Vec<TemporalHistory>, Option<usize>, PageReach) {
     let mut bounded = entities;
     if let Some(last_n) = params.last_n {
         let timeproperty = params.timeproperty_or_default();
@@ -41,7 +42,8 @@ fn merged_page(
         CountPolicy::Emit => Some(bounded.len()),
         CountPolicy::Omit => None,
     };
-    (window.cut(bounded, identifier_key), total)
+    let (page, reach) = window.cut_settled(bounded, identifier_key);
+    (page, total, reach)
 }
 
 /// The identifier a merged temporal entity is ordered by; one that names none
@@ -63,18 +65,27 @@ pub(crate) struct MergedPageCut<'page> {
     /// The match count the local read reported, which stands when no page was
     /// withheld.
     pub(crate) local_total: Option<usize>,
+    /// Whether the local read continues past its page, which stands when no
+    /// page was withheld.
+    pub(crate) local_reach: PageReach,
 }
 
-/// Cut the page the client asked for from the merged collection.
+/// Cut the page the client asked for from the merged collection, with its
+/// total when asked for and whether the collection continues past it.
 pub(crate) fn cut_merged_page(
     merged_entities: Vec<TemporalHistory>,
     cut: MergedPageCut<'_>,
     params: &TemporalQueryParameters,
-) -> (Vec<TemporalHistory>, Option<usize>) {
-    let MergedPageCut { window, count, local_total } = cut;
+) -> (Vec<TemporalHistory>, Option<usize>, PageReach) {
+    let MergedPageCut {
+        window,
+        count,
+        local_total,
+        local_reach,
+    } = cut;
     match window {
         Some(window) => merged_page(merged_entities, params, window, count),
-        None => (merged_entities, local_total),
+        None => (merged_entities, local_total, local_reach),
     }
 }
 
@@ -89,7 +100,12 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
-    use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow};
+    use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
+        cursor::PageCursor,
+        page_reach::PageReach,
+        page_window::{PageStart, PageWindow},
+    };
     use serde_json::json;
 
     /// An entity whose `speed` was observed once a day for five days.
@@ -110,12 +126,13 @@ mod tests {
             ..TemporalQueryParameters::default()
         };
         let window = PageWindow::unbounded();
-        let (page, total) = cut_merged_page(
+        let (page, total, _) = cut_merged_page(
             vec![observed_daily("urn:ngsi-ld:Vehicle:2").await, observed_daily("urn:ngsi-ld:Vehicle:1").await],
             MergedPageCut {
                 window: Some(&window),
                 count: CountPolicy::Emit,
                 local_total: None,
+                local_reach: PageReach::Exhausted,
             },
             &params,
         );
@@ -136,5 +153,29 @@ mod tests {
             assert!(days.windows(2).all(|pair| pair[0] < pair[1]), "{days:?}");
             assert_eq!(days[2].to_rfc3339(), "2024-01-05T00:00:00+00:00");
         }
+    }
+
+    /// Clause 5.5.9.1: a backward page over the merged collection that holds
+    /// its first entities has no previous elements, however full it is.
+    #[tokio::test]
+    async fn a_backward_merged_page_holding_the_first_entities_is_exhausted() {
+        let window = PageWindow {
+            limit: 2,
+            start: PageStart::Cursor(Some(PageCursor::Before("urn:ngsi-ld:Vehicle:3".parse().expect("valid URI")))),
+        };
+        let merged = vec![
+            observed_daily("urn:ngsi-ld:Vehicle:2").await,
+            observed_daily("urn:ngsi-ld:Vehicle:1").await,
+            observed_daily("urn:ngsi-ld:Vehicle:3").await,
+        ];
+        let cut = MergedPageCut {
+            window: Some(&window),
+            count: CountPolicy::Omit,
+            local_total: None,
+            local_reach: PageReach::Continues,
+        };
+        let (page, _, reach) = cut_merged_page(merged, cut, &TemporalQueryParameters::default());
+        assert_eq!(page.len(), 2);
+        assert_eq!(reach, PageReach::Exhausted);
     }
 }

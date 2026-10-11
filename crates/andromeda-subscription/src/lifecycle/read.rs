@@ -69,7 +69,8 @@ where
         window: &PageWindow,
         context: &ContextSpec,
     ) -> Result<SubscriptionListing, SubscriptionError> {
-        let (subscriptions, total) = self.repo.list(target, window).await?;
+        let (read, total) = self.repo.list(target, &window.with_lookahead()).await?;
+        let (subscriptions, reach) = window.settle(read);
         // clone: the boundary owns the two identifiers the cursor pointers are
         // built from, while the subscriptions themselves are consumed by the
         // compaction below.
@@ -86,6 +87,7 @@ where
             subscriptions: presented,
             total,
             boundary,
+            reach,
         })
     }
 

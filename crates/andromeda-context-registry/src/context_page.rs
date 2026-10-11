@@ -2,6 +2,7 @@
 
 use crate::listed_contexts::ListedContexts;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_query::page_reach::PageReach;
 
 /// The Contexts one page window selected, in local-identifier order.
 #[derive(Debug)]
@@ -15,4 +16,7 @@ pub struct ContextPage {
     /// page is keyed by are carried beside the entries rather than read back
     /// from them.
     pub boundary: Option<(Identifier, Identifier)>,
+    /// Whether the collection continues past the page in the direction it was
+    /// read (clause 5.5.9.1).
+    pub reach: PageReach,
 }

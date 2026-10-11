@@ -49,6 +49,7 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_cache::DownloadedContext, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
+    use andromeda_ngsi_ld_query::page_reach::PageReach;
     use andromeda_tenancy::{
         context_source_alias::ContextSourceAliases,
         creation_policy::TenantCreationPolicy,
@@ -111,6 +112,7 @@ mod tests {
                 Ok(ContextPage {
                     contexts: ListedContexts::Summary(Vec::new()),
                     boundary: None,
+                    reach: PageReach::Exhausted,
                 })
             })
         }

@@ -126,6 +126,7 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{compound_context_host::WrapperUse, context_cache::DownloadedContext};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
+    use andromeda_ngsi_ld_query::page_reach::PageReach;
     use serde_json::{Value, json};
     use std::{
         sync::{Arc, Mutex},
@@ -169,6 +170,7 @@ mod tests {
                 Ok(ContextPage {
                     contexts: ListedContexts::Summary(Vec::new()),
                     boundary: None,
+                    reach: PageReach::Exhausted,
                 })
             })
         }

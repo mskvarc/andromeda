@@ -131,7 +131,7 @@ pub(crate) async fn query(
         registrations,
         total,
         boundary,
-        scanned,
+        reach,
     } = state
         .registrations
         .query(&params, &window, &encountered_sources, &context)
@@ -170,7 +170,7 @@ pub(crate) async fn query(
         )
     })?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_total_count(total_count).into_response();
-    // Clause 5.5.9.1: the cursor pointers and the page-fullness signal are read
+    // Clause 5.5.9.1: the cursor pointers and whether the collection continues are read
     // from the raw store page, before the clause-5.10.2.5 trim thinned it, so a
     // walk continues past every registration the store scanned.
     append_page_links(
@@ -180,7 +180,7 @@ pub(crate) async fn query(
         &window,
         PageOutcome {
             total: Some(pagination_total),
-            returned: scanned,
+            reach,
             boundary,
         },
         accept.media_type(),
