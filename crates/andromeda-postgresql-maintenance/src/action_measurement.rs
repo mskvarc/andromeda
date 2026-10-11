@@ -8,7 +8,7 @@
 //! analyze, which it resets; it reclaims nothing.
 
 use crate::{
-    candidate::{HeapTarget, IndexTarget},
+    candidate::{heap_target::HeapTarget, index_target::IndexTarget},
     catalog_counter::percent,
 };
 use andromeda_telemetry::maintenance::ActionEffect;

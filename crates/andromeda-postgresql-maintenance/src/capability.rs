@@ -75,7 +75,7 @@ fn maintain_privilege_statement(branch: Branch) -> SelectStatement {
 
 #[cfg(test)]
 mod tests {
-    use crate::{branch::Branch, candidate::HeapTarget, capability::maintain_privilege_statement};
+    use crate::{branch::Branch, candidate::heap_target::HeapTarget, capability::maintain_privilege_statement};
     use andromeda_context_space::snapshot_key::SnapshotKey;
     use sea_query::PostgresQueryBuilder;
 

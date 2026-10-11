@@ -4,7 +4,7 @@ use crate::{
     action_measurement::TupleCounts,
     artifact::RecoveryArtifact,
     branch::Branch,
-    candidate::{HeapTarget, IndexTarget},
+    candidate::{heap_target::HeapTarget, index_target::IndexTarget},
     catalog_counter::{CatalogCounter, non_negative, percent},
     error::MaintenanceError,
     policy::{DegradationSample, PolicyProfile},
@@ -316,7 +316,7 @@ impl CatalogColumn {
 mod tests {
     use crate::{
         branch::Branch,
-        candidate::{HeapTarget, IndexTarget},
+        candidate::{heap_target::HeapTarget, index_target::IndexTarget},
         inspection::{heap_samples_statement, heap_tuple_counts_statement, index_sizes_statement, invalid_indexes_statement, published_branches_statement},
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;

@@ -4,7 +4,7 @@ use crate::{
     action_measurement::ActionComparison,
     action_policy::ActionVerdict,
     branch::{Branch, BranchTarget},
-    candidate::{IndexTarget, MaintenanceTarget},
+    candidate::{MaintenanceTarget, index_target::IndexTarget},
     catalog_counter::{CatalogCounter, persisted_count},
     error::MaintenanceError,
     evidence::{
@@ -308,7 +308,7 @@ mod tests {
         action_measurement::{ActionComparison, TupleCounts},
         action_policy::ActionVerdict,
         branch::{Branch, BranchTarget},
-        candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
+        candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget},
         error::MaintenanceError,
         state::{
             TenantKey,

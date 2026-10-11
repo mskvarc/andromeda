@@ -9,7 +9,7 @@
 use crate::{
     autovacuum_trigger::{TriggerColumn, autovacuum_triggers_statement, progress_reported, statistics_column},
     branch::Branch,
-    candidate::HeapTarget,
+    candidate::heap_target::HeapTarget,
     catalog_counter::{CatalogCounter, non_negative},
     error::MaintenanceError,
 };
@@ -134,7 +134,7 @@ fn heap_statistics_of(row: &PgRow) -> Result<HeapStatistics, MaintenanceError> {
 mod tests {
     use crate::{
         branch::Branch,
-        candidate::HeapTarget,
+        candidate::heap_target::HeapTarget,
         statistics_freshness::{AnalyzeProgress, HeapStatistics, StatisticsFreshness, heap_statistics_statement},
     };
     use chrono::{DateTime, Duration, Utc};

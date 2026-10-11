@@ -12,7 +12,7 @@
 //! `reloptions`, so a table the migrations tune is judged against its own
 //! triggers, and reads them for every heap one branch holds.
 
-use crate::{branch::Branch, candidate::HeapTarget};
+use crate::{branch::Branch, candidate::heap_target::HeapTarget};
 use andromeda_postgresql_seaquery::{
     cast::{cast, cast_compound},
     introspection::{current_database, current_setting, current_setting_missing_ok},
@@ -139,7 +139,7 @@ fn table_parameter(name: &'static str) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::{autovacuum_trigger::autovacuum_triggers_statement, branch::Branch, candidate::HeapTarget};
+    use crate::{autovacuum_trigger::autovacuum_triggers_statement, branch::Branch, candidate::heap_target::HeapTarget};
     use andromeda_context_space::snapshot_key::SnapshotKey;
     use sea_query::PostgresQueryBuilder;
 

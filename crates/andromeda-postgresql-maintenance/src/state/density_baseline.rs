@@ -2,7 +2,10 @@
 
 use crate::{
     branch::Branch,
-    candidate::{DensityColumn, IndexTarget, MaintenanceTarget},
+    candidate::{
+        MaintenanceTarget,
+        index_target::{DensityColumn, IndexTarget},
+    },
     catalog_counter::{CatalogCounter, persisted_count},
     error::MaintenanceError,
     evidence::target_code::{stored_target, target_of},
@@ -113,7 +116,7 @@ fn density_baseline_upsert(
 mod tests {
     use crate::{
         branch::Branch,
-        candidate::IndexTarget,
+        candidate::index_target::IndexTarget,
         error::MaintenanceError,
         gin_density::Density,
         state::{RegisteredTenant, TenantKey, density_baseline::density_baseline_upsert},

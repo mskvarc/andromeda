@@ -5,7 +5,13 @@
 //! estimate, highest first, then the indexes without one. The estimate only
 //! orders: no index is dropped for a low estimate.
 
-use crate::{btree_estimate::BtreeEstimate, candidate::IndexTarget, inspection::IndexSize, policy::PolicyProfile, state::target_record::IndexProbeState};
+use crate::{
+    btree_estimate::BtreeEstimate,
+    candidate::index_target::IndexTarget,
+    inspection::IndexSize,
+    policy::PolicyProfile,
+    state::target_record::IndexProbeState,
+};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::cmp::Reverse;
 
@@ -69,7 +75,7 @@ mod tests {
     use crate::{
         branch::Branch,
         btree_estimate::BtreeEstimate,
-        candidate::IndexTarget,
+        candidate::index_target::IndexTarget,
         controller::probe_selection::probe_order,
         inspection::IndexSize,
         policy::PolicyProfile,

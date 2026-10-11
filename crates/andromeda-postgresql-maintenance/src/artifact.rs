@@ -1,6 +1,6 @@
 //! Validation of PostgreSQL concurrent-reindex recovery artifacts.
 
-use crate::{branch::Branch, candidate::IndexTarget};
+use crate::{branch::Branch, candidate::index_target::IndexTarget};
 use andromeda_postgresql_seaquery::maintenance::{MaintenanceStatement, drop_index_concurrently};
 use sea_query::Alias;
 

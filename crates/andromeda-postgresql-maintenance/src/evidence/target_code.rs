@@ -1,6 +1,6 @@
 //! The number a maintenance target is stored as.
 
-use crate::candidate::{HeapTarget, IndexTarget, MaintenanceTarget};
+use crate::candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget};
 use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 
 /// The registry member the platform database stores for a target.
@@ -36,6 +36,10 @@ pub(crate) const fn stored_target(target: MaintenanceTarget) -> MaintenanceTarge
         MaintenanceTarget::Statistics(HeapTarget::TemporalAppendIntents) => MaintenanceTargetCode::TemporalAppendIntentsStatistics,
         MaintenanceTarget::Statistics(HeapTarget::SnapshotNotificationOutbox) => MaintenanceTargetCode::SnapshotNotificationOutboxStatistics,
         MaintenanceTarget::Statistics(HeapTarget::EntitySearch) => MaintenanceTargetCode::EntitySearchStatistics,
+        MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesClaim) => MaintenanceTargetCode::IdxNotificationDeliveriesClaim,
+        MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesEvent) => MaintenanceTargetCode::IdxNotificationDeliveriesEvent,
+        MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesSubscription) => MaintenanceTargetCode::IdxNotificationDeliveriesSubscription,
+        MaintenanceTarget::Index(IndexTarget::PkNotificationDeliveries) => MaintenanceTargetCode::PkNotificationDeliveries,
     }
 }
 
@@ -72,13 +76,17 @@ pub(crate) const fn target_of(code: MaintenanceTargetCode) -> MaintenanceTarget 
         MaintenanceTargetCode::TemporalAppendIntentsStatistics => MaintenanceTarget::Statistics(HeapTarget::TemporalAppendIntents),
         MaintenanceTargetCode::SnapshotNotificationOutboxStatistics => MaintenanceTarget::Statistics(HeapTarget::SnapshotNotificationOutbox),
         MaintenanceTargetCode::EntitySearchStatistics => MaintenanceTarget::Statistics(HeapTarget::EntitySearch),
+        MaintenanceTargetCode::IdxNotificationDeliveriesClaim => MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesClaim),
+        MaintenanceTargetCode::IdxNotificationDeliveriesEvent => MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesEvent),
+        MaintenanceTargetCode::IdxNotificationDeliveriesSubscription => MaintenanceTarget::Index(IndexTarget::IdxNotificationDeliveriesSubscription),
+        MaintenanceTargetCode::PkNotificationDeliveries => MaintenanceTarget::Index(IndexTarget::PkNotificationDeliveries),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
+        candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget},
         evidence::target_code::{stored_target, target_of},
     };
     use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;

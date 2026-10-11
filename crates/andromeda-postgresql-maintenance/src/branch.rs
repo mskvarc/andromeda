@@ -7,7 +7,10 @@
 //! never a maintenance branch.
 
 use crate::{
-    candidate::{HeapTarget, MaintenanceTarget, RelationPresence},
+    candidate::{
+        MaintenanceTarget,
+        heap_target::{HeapTarget, RelationPresence},
+    },
     error::MaintenanceError,
 };
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
@@ -113,7 +116,7 @@ impl BranchTarget {
 mod tests {
     use crate::{
         branch::{Branch, BranchTarget},
-        candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
+        candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget},
         error::MaintenanceError,
     };
     use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};

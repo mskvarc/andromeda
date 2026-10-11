@@ -16,7 +16,7 @@
 
 use crate::{
     branch::Branch,
-    candidate::{DensityColumn, IndexTarget},
+    candidate::index_target::{DensityColumn, IndexTarget},
     catalog_counter::{CatalogCounter, non_negative, percent},
     error::MaintenanceError,
     inspection::IndexSize,
@@ -169,7 +169,7 @@ mod tests {
         action_measurement::ActionComparison,
         action_policy::{ActionVerdict, action_verdict},
         branch::Branch,
-        candidate::{IndexTarget, MaintenanceTarget},
+        candidate::{MaintenanceTarget, index_target::IndexTarget},
         gin_density::{Density, DensityReading, gin_coverage_statement},
         policy::PolicyProfile,
     };

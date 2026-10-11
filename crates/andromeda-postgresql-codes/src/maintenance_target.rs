@@ -73,6 +73,14 @@ compact_code_registry! {
             SnapshotNotificationOutboxStatistics = 29, "snapshot_notification_outbox_statistics";
             /// The entity search projection's planner statistics.
             EntitySearchStatistics = 30, "entity_search_statistics";
+            /// The notification deliveries' claim index.
+            IdxNotificationDeliveriesClaim = 31, "idx_notification_deliveries_claim";
+            /// The notification deliveries' event index.
+            IdxNotificationDeliveriesEvent = 32, "idx_notification_deliveries_event";
+            /// The notification deliveries' subscription index.
+            IdxNotificationDeliveriesSubscription = 33, "idx_notification_deliveries_subscription";
+            /// The notification deliveries' primary key index.
+            PkNotificationDeliveries = 34, "pk_notification_deliveries";
         }
     }
 }
@@ -84,7 +92,7 @@ mod tests {
 
     #[test]
     fn the_members_are_numbered_as_the_migration_documents_them() {
-        assert_eq!(MaintenanceTargetCode::ALL.len(), 30);
+        assert_eq!(MaintenanceTargetCode::ALL.len(), 34);
         assert_eq!(MaintenanceTargetCode::UqCurrentAttributesGrain.code(), 1);
         assert_eq!(MaintenanceTargetCode::IdxCaSubEqKeys.code(), 10);
         assert_eq!(MaintenanceTargetCode::SubscriptionDeliveryState.code(), 13);
@@ -95,11 +103,13 @@ mod tests {
         assert_eq!(MaintenanceTargetCode::EntitySearch.code(), 21);
         assert_eq!(MaintenanceTargetCode::CurrentAttributesStatistics.code(), 22);
         assert_eq!(MaintenanceTargetCode::EntitySearchStatistics.code(), 30);
+        assert_eq!(MaintenanceTargetCode::IdxNotificationDeliveriesClaim.code(), 31);
+        assert_eq!(MaintenanceTargetCode::PkNotificationDeliveries.code(), 34);
     }
 
     #[test]
     fn zero_and_the_number_after_the_last_member_fail_to_decode() {
         assert!(MaintenanceTargetCode::try_from(0).is_err());
-        assert!(MaintenanceTargetCode::try_from(31).is_err());
+        assert!(MaintenanceTargetCode::try_from(35).is_err());
     }
 }

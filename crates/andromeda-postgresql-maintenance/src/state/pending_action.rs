@@ -158,7 +158,7 @@ fn first_pending(pending: &[PendingAction], now: DateTime<Utc>) -> Option<Mainte
 mod tests {
     use crate::{
         branch::Branch,
-        candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
+        candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget},
         state::{
             TenantKey,
             pending_action::{PendingAction, PendingRow, due_tenants, first_pending, pending_actions_statement},

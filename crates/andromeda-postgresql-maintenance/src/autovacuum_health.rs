@@ -11,7 +11,7 @@
 use crate::{
     autovacuum_trigger::{TriggerColumn, autovacuum_triggers_statement, progress_reported, statistics_column},
     branch::Branch,
-    candidate::HeapTarget,
+    candidate::heap_target::HeapTarget,
     catalog_counter::{CatalogCounter, non_negative},
     error::MaintenanceError,
     state::{RegisteredTenant, autovacuum_saturation},
@@ -180,7 +180,7 @@ mod tests {
     use crate::{
         autovacuum_health::{AutovacuumWorkers, HeapAutovacuum, VacuumProgress, autovacuum_workers_statement, heap_autovacuum_statement, is_saturated},
         branch::Branch,
-        candidate::HeapTarget,
+        candidate::heap_target::HeapTarget,
     };
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;

@@ -9,7 +9,7 @@
 
 use crate::{
     branch::Branch,
-    candidate::IndexTarget,
+    candidate::index_target::IndexTarget,
     catalog_counter::{CatalogCounter, non_negative, percent},
     error::MaintenanceError,
 };

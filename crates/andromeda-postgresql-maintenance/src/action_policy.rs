@@ -87,7 +87,7 @@ mod tests {
     use crate::{
         action_measurement::{ActionComparison, TupleCounts},
         action_policy::{ActionEnding, ActionVerdict, action_verdict, cooldown_after},
-        candidate::{HeapTarget, MaintenanceTarget},
+        candidate::{MaintenanceTarget, heap_target::HeapTarget},
         policy::PolicyProfile,
     };
     use andromeda_postgresql_context_store::maintenance_config::MaintenanceProfile;

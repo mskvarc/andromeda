@@ -5,7 +5,7 @@ use crate::{
     action_policy::{ActionEnding, ActionVerdict, action_verdict, cooldown_after},
     artifact::RecoveryArtifact,
     branch::{Branch, BranchTarget},
-    candidate::{HeapTarget, IndexTarget, MaintenanceTarget},
+    candidate::{MaintenanceTarget, heap_target::HeapTarget, index_target::IndexTarget},
     controller::PassOutcome,
     error::MaintenanceError,
     evidence::inspection_result::InspectionResult,
@@ -307,7 +307,11 @@ const fn target_action(target: MaintenanceTarget) -> MaintenanceAction {
             | IndexTarget::IdxCaEntityGeometry
             | IndexTarget::IdxCaSubEqKeys
             | IndexTarget::IdxCaValueObject
-            | IndexTarget::IdxCaValueLongTextTrgm,
+            | IndexTarget::IdxCaValueLongTextTrgm
+            | IndexTarget::IdxNotificationDeliveriesClaim
+            | IndexTarget::IdxNotificationDeliveriesEvent
+            | IndexTarget::IdxNotificationDeliveriesSubscription
+            | IndexTarget::PkNotificationDeliveries,
         ) => MaintenanceAction::Reindex,
         MaintenanceTarget::Heap(
             HeapTarget::CurrentAttributes
