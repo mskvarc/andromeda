@@ -84,10 +84,14 @@ impl TemporalHistoryReader for StubBroker {
     async fn query_entity_ids(
         &self,
         _target: &ContextTarget,
-        _compiled: &CompiledTemporalQuery,
+        compiled: &CompiledTemporalQuery,
         _window: &PageWindow,
         _count: CountPolicy,
     ) -> Result<TemporalEntityIdOutcome, TemporalError> {
+        self.listed_selections
+            .lock()
+            .expect("the recording lock is never poisoned")
+            .push(compiled.entities.clone()); // clone: the recording outlives the compiled query
         Ok(TemporalEntityIdOutcome {
             candidates: Vec::new(),
             residual: TemporalResidual::default(),

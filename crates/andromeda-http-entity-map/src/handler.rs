@@ -9,7 +9,7 @@ use crate::{
     validation::{validate_entity_map_query, validate_temporal_entity_map_query},
 };
 use andromeda_entity_map::fingerprint::{FingerprintedRequest, fingerprint_of};
-use andromeda_federation::{entity_map::EntityMapQueryKind, request::TriggeringRequest};
+use andromeda_federation::{config::SplitEntities, entity_map::EntityMapQueryKind, request::TriggeringRequest};
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
@@ -38,8 +38,9 @@ use andromeda_ngsi_ld_request::{
     body::entity_map::UpdateEntityMapBody,
     empty::EmptyParams,
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
+    query_narrowing::ExecutionScope,
 };
-use andromeda_temporal::requested_identifiers::RequestedIdentifiers;
+use andromeda_temporal::{candidate_filters::CandidateFilters, requested_identifiers::RequestedIdentifiers};
 use axum::{
     extract::OriginalUri,
     http::{StatusCode, Uri as HttpUri},
@@ -110,6 +111,23 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+/// Whether a creation's local candidates are held to the request's value, geo
+/// and scope filters.
+///
+/// Clauses 5.14.4.4 and 5.14.5.4: under split entities a request that is not
+/// limited to the local scope maps every local Entity its selectors match,
+/// because a locally held part that fails those filters may belong to an
+/// Entity that meets them once gathered; each request that later runs under
+/// the map evaluates them over the merged result.
+fn candidate_filters(state: &EntityMapRouteServices, split_entities: Option<bool>, scope: ExecutionScope) -> CandidateFilters {
+    match (state.forwarding.split_entities(split_entities), scope) {
+        (SplitEntities::Split, ExecutionScope::Distributed) => CandidateFilters::Deferred,
+        (SplitEntities::Split, ExecutionScope::Local) | (SplitEntities::Complete, ExecutionScope::Distributed | ExecutionScope::Local) => {
+            CandidateFilters::Applied
+        }
+    }
+}
+
 /// Resolve the local membership `window` selects of an entity query (clause
 /// 5.14.4.4).
 async fn local_entity_ids(
@@ -140,14 +158,11 @@ async fn create_from_entity_query(
     // held back, so a later query reusing this map -- which fingerprints with its
     // `q`, geoquery and `scopeQ` present -- matches it.
     let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities(query)).with_entity_map_instance(rendering.uri)?;
-    // Clause 5.5.9.3: a split map fixes candidate entities, so the attribute
-    // reading filters are held back before the local membership is resolved. A
-    // locally held partial entity that fails `q` may be completed by a peer, so
-    // it must stay in the candidate set the map fixes rather than be filtered out
-    // here -- the deferred filters are evaluated once, over the merged result, by
-    // each query that later reuses the map.
-    if state.forwarding.split_entities(query.split_entities).is_split() && !query.is_local() {
-        let _deferred = query.defer_split_filters();
+    match candidate_filters(state, query.split_entities, query.execution_scope()) {
+        CandidateFilters::Deferred => {
+            let _deferred = query.defer_split_filters();
+        }
+        CandidateFilters::Applied => {}
     }
     let local_ids = local_entity_ids(state, query, window, rendering.context, rendering.uri).await?;
     create_map(
@@ -183,9 +198,16 @@ async fn create_from_temporal_query(
     // the candidates the same way they bound a temporal query.
     let local_ids = state
         .temporal
-        // Clause 5.14.5.4: the map being created fixes exactly what this
-        // request matched, identifiers included.
-        .query_ids(&state.live_target, params, window, rendering.context, RequestedIdentifiers::Narrow)
+        // Clause 5.14.5.4: the map being created fixes what this request
+        // matched, identifiers included.
+        .query_ids(
+            &state.live_target,
+            params,
+            window,
+            rendering.context,
+            RequestedIdentifiers::Narrow,
+            candidate_filters(state, params.split_entities, params.execution_scope()),
+        )
         .await
         .with_entity_map_instance(rendering.uri)?;
     create_map(

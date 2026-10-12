@@ -12,7 +12,7 @@ use andromeda_entity_map::recording::{LocalMapEntities, MapListing, PageFilterin
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::page_window::PageWindow;
-use andromeda_temporal::requested_identifiers::RequestedIdentifiers;
+use andromeda_temporal::{candidate_filters::CandidateFilters, requested_identifiers::RequestedIdentifiers};
 use axum::http::Uri;
 
 /// Where the histories a temporal map attributes to this broker come from.
@@ -73,7 +73,14 @@ impl LocalMapEntities for LocalHistoryEntities<'_> {
                 // with, so the identifier pass reads the whole result.
                 let mut identifiers = read
                     .service
-                    .query_ids(read.target, read.params, &PageWindow::unbounded(), read.context, requested)
+                    .query_ids(
+                        read.target,
+                        read.params,
+                        &PageWindow::unbounded(),
+                        read.context,
+                        requested,
+                        CandidateFilters::Applied,
+                    )
                     .await
                     .with_instance(instance)?;
                 identifiers.extend(linked.iter().cloned()); // clone: the map owns its identifiers

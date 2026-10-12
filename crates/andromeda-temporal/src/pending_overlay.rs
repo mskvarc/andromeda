@@ -31,7 +31,6 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
-    entity_selection::EntitySelection,
     page_window::PageWindow,
     split_filter::{LeafTruths, SplitFilter},
     temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, window::TimeInterval},
@@ -197,7 +196,9 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
         let mut identifiers = stored_ids;
         let mut seen: HashSet<Identifier> = identifiers.iter().cloned().collect();
         let selection = ResidualFilter::over(compiled.entities.clone());
-        let contributed_selection = ResidualFilter::over(without_split_filters(&compiled.entities));
+        let mut contributed = compiled.entities.clone(); // clone: the query keeps its filters for every entity that is not contributed
+        contributed.without_split_filters();
+        let contributed_selection = ResidualFilter::over(contributed);
         for sequenced in pending {
             // Clause 5.7.4.4: an entity a Context Source contributed to is
             // judged on its gathered parts, so its pending part is held to the
@@ -286,16 +287,6 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
     ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         Err(TemporalError::OperationNotSupported(TemporalOperationUnsupported::PendingUnionUnsupported))
     }
-}
-
-/// `selection` without the value, geo and scope filters clause 5.7.4.4
-/// applies to a split entity only once its parts are gathered.
-fn without_split_filters(selection: &EntitySelection) -> EntitySelection {
-    let mut stripped = selection.clone(); // clone: the query keeps its filters for every entity that is not contributed
-    stripped.q_expr = None;
-    stripped.geo = None;
-    stripped.scope_q = None;
-    stripped
 }
 
 /// The instant a window opens at, when it opens at one.

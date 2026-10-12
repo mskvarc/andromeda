@@ -25,7 +25,7 @@ use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::geo::near_distance_band::NearDistanceBand;
+use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, geo::near_distance_band::NearDistanceBand};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::{
@@ -62,6 +62,8 @@ pub(crate) struct StubBroker {
     /// The rows the sources answered with, as each merged aggregation was
     /// handed them.
     merged_answers: Mutex<Vec<TemporalHistoryRow>>,
+    /// The entity selections each identifier listing ran under, in order.
+    listed_selections: Mutex<Vec<EntitySelection>>,
 }
 
 /// Whether the stubbed entities have current state.
@@ -80,7 +82,14 @@ impl StubBroker {
             current_state: CurrentState::Held,
             aggregated: Vec::new(),
             merged_answers: Mutex::new(Vec::new()),
+            listed_selections: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The entity selections the identifier listings ran under, in the order
+    /// they ran.
+    pub(crate) fn listed_selections(&self) -> Vec<EntitySelection> {
+        self.listed_selections.lock().expect("the recording lock is never poisoned").clone() // clone: the recording keeps what it was handed
     }
 
     /// The same graph answering every merged aggregation with `rows`.

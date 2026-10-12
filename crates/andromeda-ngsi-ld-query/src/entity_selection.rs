@@ -174,16 +174,34 @@ impl EntitySelection {
         }
         self.considered = ConsideredEntities::Selected;
     }
+
+    /// Drop the value, geo and scope filters, leaving the selectors, the
+    /// attribute filter and the considered entities to decide alone.
+    ///
+    /// Under split entities a locally held part of an Entity may fail these
+    /// filters while the Entity gathered from every Context Source meets them,
+    /// so clause 5.7.4.4 applies them only to the gathered Entity and clause
+    /// 5.14.5.4 keeps them out of the local candidates of an `EntityMap`.
+    pub fn without_split_filters(&mut self) {
+        self.q_expr = None;
+        self.geo = None;
+        self.scope_q = None;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
+        filter::parser::parse,
+        geo::query::GeoQuery,
         identifier_axis::IdentifierAxis,
         pattern::Pattern,
+        scope::query::ScopeQuery,
     };
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use iri_rs::IriBuf;
 
     /// Clause 5.2.33: a selector naming an `id` reads as constraining by id
     /// alone, whatever `idPattern` it also carries.
@@ -244,5 +262,42 @@ mod tests {
         pretty_assertions::assert_eq!(selection.selectors[0].ids, Vec::<Identifier>::new());
         assert!(selection.selectors[0].id_pattern.is_some(), "only the identifiers are dropped");
         pretty_assertions::assert_eq!(selection.considered, ConsideredEntities::Selected);
+    }
+
+    /// Clause 5.7.4.4: the value, geo and scope filters wait for the gathered
+    /// Entity, while the selectors, the attribute filter and the considered
+    /// entities still decide the candidates.
+    #[test]
+    fn dropping_the_split_filters_leaves_the_selectors_and_the_attribute_filter() {
+        let speed: IriBuf = "https://example.com/speed".parse().expect("valid IRI");
+        let mut selection = EntitySelection::builder()
+            .selectors(vec![
+                EntitySelector::builder()
+                    .ids(vec!["urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")])
+                    .id_pattern(Some(Pattern::parse("^urn:").expect("valid pattern")))
+                    .build(),
+            ])
+            .attrs(vec![speed.clone()]) // clone: the expectation keeps the IRI the selection takes
+            .q_expr(Some(parse("speed>10").expect("q parses")))
+            .geo(Some(GeoQuery {
+                georel: GeoRel::Within,
+                geometry: serde_json::from_value::<Geometry>(serde_json::json!({
+                    "type": "Polygon",
+                    "coordinates": [[[13.0, 52.0], [14.0, 52.0], [14.0, 53.0], [13.0, 53.0], [13.0, 52.0]]]
+                }))
+                .expect("polygon parses"),
+                geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
+            }))
+            .scope_q(Some(ScopeQuery::parse("/Madrid").expect("scopeQ parses")))
+            .considered(ConsideredEntities::NoEntity)
+            .build();
+        selection.without_split_filters();
+        assert!(selection.q_expr.is_none(), "the value filter is dropped");
+        assert!(selection.geo.is_none(), "the geoquery is dropped");
+        assert!(selection.scope_q.is_none(), "the scope query is dropped");
+        pretty_assertions::assert_eq!(selection.selectors[0].ids.len(), 1);
+        assert!(selection.selectors[0].id_pattern.is_some(), "the id pattern stays");
+        pretty_assertions::assert_eq!(selection.attrs, vec![speed]);
+        pretty_assertions::assert_eq!(selection.considered, ConsideredEntities::NoEntity);
     }
 }

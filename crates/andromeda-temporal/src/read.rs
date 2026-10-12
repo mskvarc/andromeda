@@ -2,6 +2,7 @@
 
 use crate::{
     aggregation_eligibility::ensure_aggregation_eligible,
+    candidate_filters::CandidateFilters,
     error::TemporalError,
     port::history_reader::TemporalHistoryReader,
     read::{dataset_step::DatasetStep, entity_members::carries_members, rendered_entity::HistoryPresence},
@@ -150,10 +151,10 @@ impl TemporalService {
     /// without fetching temporal history.
     ///
     /// Used to build `EntityMaps` (clause 5.5.14). Runs only the lightweight
-    /// stage 1 statement (entity ID resolution). A map minted while a query
-    /// runs fixes the whole result set and is read with
-    /// [`PageWindow::unbounded`], whatever page the query itself answers with;
-    /// a map created by its own operation fixes the page its request asked for.
+    /// stage 1 statement (entity ID resolution). A map fixes the whole result
+    /// set and is read with [`PageWindow::unbounded`], whatever page the
+    /// request names. `filters` decides whether the value, geo and scope
+    /// filters hold the listed entities (clause 5.14.5.4).
     ///
     /// # Errors
     ///
@@ -170,6 +171,7 @@ impl TemporalService {
         window: &PageWindow,
         context: &ContextSpec,
         identifiers: RequestedIdentifiers,
+        filters: CandidateFilters,
     ) -> Result<Vec<Identifier>, TemporalError> {
         let timer = temporal::start(TemporalOperation::QueryIds);
         let result = async {
@@ -178,6 +180,10 @@ impl TemporalService {
             match identifiers {
                 RequestedIdentifiers::Narrow => {}
                 RequestedIdentifiers::Ignore => compiled.entities.without_identifier_narrowing(),
+            }
+            match filters {
+                CandidateFilters::Applied => {}
+                CandidateFilters::Deferred => compiled.entities.without_split_filters(),
             }
             let compiled = compiled;
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
@@ -242,5 +248,8 @@ mod query;
 /// Rendering the temporal evolution of one entity over a compiled window.
 pub(crate) mod rendered_entity;
 
+/// What a listing of the identifiers a temporal query matches holds them to.
+#[cfg(test)]
+mod candidate_listing_tests;
 #[cfg(test)]
 mod tests;

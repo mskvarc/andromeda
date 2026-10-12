@@ -14,6 +14,8 @@ mod answered_history;
 /// Typed, durable consequences for deferred temporal append.
 pub mod append_intent;
 mod attribute_instance_mutation;
+/// Whether a listing of what a temporal query matches applies its value, geo and scope filters.
+pub mod candidate_filters;
 mod compilation;
 pub mod config;
 /// Whether Core API writes add to the Temporal Evolution of an Entity.
