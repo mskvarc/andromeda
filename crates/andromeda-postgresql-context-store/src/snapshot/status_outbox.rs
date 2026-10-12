@@ -1,8 +1,8 @@
 //! Durable delivery queue for Snapshot lifecycle notifications.
 
 use crate::{
-    jsonb_text::JsonbText,
-    snapshot::{jsonb_value::optional_jsonb, mapper::row_to_snapshot, persistence_error, record::snapshot_select},
+    json_text::JsonText,
+    snapshot::{json_value::optional_json, mapper::row_to_snapshot, persistence_error, record::snapshot_select},
     store_fault::undecodable,
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
@@ -12,7 +12,7 @@ use andromeda_postgresql_schema::snapshot::{SnapshotNotificationOutbox, Snapshot
 use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, queue::claimable_at};
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
-use sea_query::{Alias, CaseStatement, Expr, ExprTrait, JoinType, Keyword, LockBehavior, LockType, Order, PostgresQueryBuilder, Query};
+use sea_query::{Alias, CaseStatement, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockBehavior, LockType, Order, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
 use serde::Deserialize;
 use serde_json::value::RawValue;
@@ -238,7 +238,18 @@ pub(crate) async fn enqueue_terminal_notification(transaction: &mut Transaction<
     }
     let snapshot_key: i64 = row.try_get("snapshot_key").map_err(|error| persistence_error(error))?;
     let payload = serde_json::to_string(&snapshot.build_notification())?;
-    let receiver_info = optional_jsonb(snapshot.receiver_info.as_deref())?;
+    let insert = outbox_insert(snapshot_key, endpoint, snapshot.receiver_info.as_deref(), payload)?;
+    let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
+    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| persistence_error(error))?;
+    Ok(())
+}
+
+/// The outbox row of one terminal notification: its receiver info and its
+/// payload are `json` columns, bound as their JSON text cast to `json`.
+fn outbox_insert(snapshot_key: i64, endpoint: &Url, receiver_info: Option<&[KeyValuePair]>, payload: String) -> Result<InsertStatement, SnapshotError> {
     let mut insert = Query::insert();
     insert
         .into_table(SnapshotNotificationOutbox::Table)
@@ -253,16 +264,11 @@ pub(crate) async fn enqueue_terminal_notification(transaction: &mut Transaction<
             Expr::val(Uuid::new_v4()),
             Expr::val(snapshot_key),
             Expr::val(endpoint.as_str()),
-            receiver_info,
-            cast(Expr::val(payload), PostgresType::Jsonb),
+            optional_json(receiver_info)?,
+            cast(Expr::val(payload), PostgresType::Json),
         ])
         .map_err(|error| persistence_error(error))?;
-    let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .execute(&mut **transaction)
-        .await
-        .map_err(|error| persistence_error(error))?;
-    Ok(())
+    Ok(insert)
 }
 
 /// Execute one generated outbox mutation and return its affected-row count.
@@ -286,10 +292,10 @@ struct NotificationIdentity {
 fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
     let raw_snapshot: String = row.try_get("snapshot_id").map_err(|error| persistence_error(error))?;
     let raw_endpoint: String = row.try_get("endpoint").map_err(|error| persistence_error(error))?;
-    let payload: JsonbText<'_> = row.try_get("payload").map_err(|error| persistence_error(error))?;
+    let payload: JsonText<'_> = row.try_get("payload").map_err(|error| persistence_error(error))?;
     let notification: Box<RawValue> = serde_json::from_slice(payload.as_bytes())?;
     let receiver_info = row
-        .try_get::<Option<JsonbText<'_>>, _>("receiver_info")
+        .try_get::<Option<JsonText<'_>>, _>("receiver_info")
         .map_err(|error| persistence_error(error))?
         .map(|text| serde_json::from_slice(text.as_bytes()))
         .transpose()?;
@@ -302,4 +308,29 @@ fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
         notification,
         attempt_count: row.try_get("attempt_count").map_err(|error| persistence_error(error))?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::snapshot::status_outbox::outbox_insert;
+    use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
+    use pretty_assertions::assert_eq;
+    use sea_query::PostgresQueryBuilder;
+    use url::Url;
+
+    #[test]
+    fn the_outbox_payload_and_receiver_info_are_bound_as_json() {
+        let endpoint = Url::parse("http://receiver.example/notify").expect("a valid URL");
+        let receiver_info = [KeyValuePair {
+            key: "fiware-service".into(),
+            value: "openiot".into(),
+        }];
+        let sql = outbox_insert(7, &endpoint, Some(&receiver_info), r#"{"id":"urn:ngsi-ld:Notification:1"}"#.to_owned())
+            .expect("the outbox insert builds")
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(sql.matches("::json").count(), 2, "{sql}");
+        assert!(sql.contains(r#"'[{"key":"fiware-service","value":"openiot"}]'::json"#), "{sql}");
+        assert!(sql.contains(r#"'{"id":"urn:ngsi-ld:Notification:1"}'::json"#), "{sql}");
+        assert!(!sql.contains("::jsonb"), "{sql}");
+    }
 }

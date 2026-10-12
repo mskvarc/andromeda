@@ -1,7 +1,7 @@
 //! Validated notification delivery records and their mapper errors.
 
 use crate::{
-    jsonb_text::JsonbText,
+    json_text::JsonText,
     notification_delivery::change_code::{change_kind_of, lifecycle_of},
 };
 use andromeda_context_commit::{
@@ -194,9 +194,9 @@ pub(crate) struct RawClaimedDeliveryRow<'r> {
     /// instance.
     change_dataset_ids: Vec<Option<String>>,
     /// Entity state after the change, as the stored document's JSON text.
-    entity_snapshot: Option<JsonbText<'r>>,
+    entity_snapshot: Option<JsonText<'r>>,
     /// Entity state before the change, as the stored document's JSON text.
-    previous_snapshot: Option<JsonbText<'r>>,
+    previous_snapshot: Option<JsonText<'r>>,
     /// Clause 4.8 `createdAt` of an entity a deletion removed.
     entity_created_at: Option<DateTime<Utc>>,
     /// Clause 4.8 `modifiedAt` of an entity a deletion removed.
@@ -266,7 +266,7 @@ impl ClaimedDelivery {
 }
 
 /// Decode one stored snapshot into the entity state it was written from.
-fn decode_snapshot(text: JsonbText<'_>) -> Result<EntityState, ClaimedDeliveryError> {
+fn decode_snapshot(text: JsonText<'_>) -> Result<EntityState, ClaimedDeliveryError> {
     EntityState::from_slice(text.as_bytes()).map_err(|source| ClaimedDeliveryError::UnreadableSnapshot { source })
 }
 
@@ -352,7 +352,7 @@ pub struct NewNotificationEvent<'a> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        jsonb_text::JsonbText,
+        json_text::JsonText,
         notification_delivery::rows::{ClaimedDelivery, ClaimedDeliveryError, RawClaimedDeliveryRow, UnreadableClaimedDelivery},
     };
     use andromeda_context_commit::write_ordinal::WriteOrdinal;
@@ -397,7 +397,7 @@ mod tests {
         );
         let encoded = state.to_vec().expect("the state encodes");
         let mut raw: RawClaimedDeliveryRow<'_> = row();
-        raw.entity_snapshot = Some(JsonbText::new(&encoded));
+        raw.entity_snapshot = Some(JsonText::new(&encoded));
         let removed_at = Utc::now();
         raw.entity_created_at = Some(removed_at);
         raw.entity_modified_at = Some(removed_at);
@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn a_snapshot_that_is_no_entity_state_is_rejected() {
         let mut raw = row();
-        raw.previous_snapshot = Some(JsonbText::new(br#"[{"@id":"urn:ngsi-ld:A"}]"#));
+        raw.previous_snapshot = Some(JsonText::new(br#"[{"@id":"urn:ngsi-ld:A"}]"#));
         assert!(matches!(
             ClaimedDelivery::from_row(raw, &ContextTarget::Live).map_err(|unreadable| *unreadable),
             Err(UnreadableClaimedDelivery {

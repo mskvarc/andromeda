@@ -3,7 +3,7 @@
 use crate::{
     csource_registration::{mode_code::mode_of, operation_code::operation_of, status_code::status_of, stored_registration_error::StoredRegistrationError},
     error::ContextStoreError,
-    jsonb_text::JsonbText,
+    json_text::JsonText,
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
@@ -44,7 +44,7 @@ fn read_json<T: DeserializeOwned>(
     column: &str,
     unreadable: fn(serde_json::Error) -> StoredRegistrationError,
 ) -> Result<Option<T>, ContextStoreError> {
-    let text: Option<JsonbText<'_>> = row.try_get(column)?;
+    let text: Option<JsonText<'_>> = row.try_get(column)?;
     Ok(text.map(|text| serde_json::from_slice(text.as_bytes()).map_err(unreadable)).transpose()?)
 }
 
@@ -96,7 +96,7 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
 
 /// Rebuild the coverage members: what context the registration claims to serve.
 fn row_to_coverage(row: &PgRow) -> Result<RegistrationCoverage, ContextStoreError> {
-    let information_text: JsonbText<'_> = row.try_get("information")?;
+    let information_text: JsonText<'_> = row.try_get("information")?;
     let information = serde_json::from_slice(information_text.as_bytes()).map_err(StoredRegistrationError::Information)?;
     let dataset_id = row
         .try_get::<Option<Vec<String>>, _>("dataset_id")?

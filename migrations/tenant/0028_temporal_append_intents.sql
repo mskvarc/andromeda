@@ -32,7 +32,7 @@ create table temporal_append_intents (
     lease_until timestamptz,
     claimed_by uuid,
     entity_id text compression lz4 collate "C" not null,
-    payload jsonb compression lz4 not null,
+    payload json compression lz4 not null,
     last_error text compression lz4,
     constraint pk_temporal_append_intents primary key (intent_key),
     constraint uq_temporal_append_intents_write_identity unique (write_id, entity_id, base_ordinal),

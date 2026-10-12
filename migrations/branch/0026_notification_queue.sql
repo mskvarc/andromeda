@@ -48,8 +48,8 @@ create table notification_events (
     change_kinds smallint[] compression lz4 not null,
     change_attribute_name_keys integer[] compression lz4 not null,
     change_dataset_ids text[] compression lz4 collate "C" not null,
-    entity_snapshot jsonb compression lz4,
-    previous_snapshot jsonb compression lz4,
+    entity_snapshot json compression lz4,
+    previous_snapshot json compression lz4,
     -- The clause 4.8 createdAt, modifiedAt and expiresAt of an Entity a
     -- deletion removed. By delivery the Entity's row is gone, so clause 5.8.6
     -- can only report them from here; a change that leaves the Entity in place

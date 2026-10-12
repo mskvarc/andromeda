@@ -1,7 +1,7 @@
 //! Direct PostgreSQL implementation of the entity side-effect queue port.
 
 use crate::{
-    jsonb_text::JsonbText,
+    json_text::JsonText,
     pending_side_effects::{
         payload::{PersistedBatchSideEffectJob, PersistedChangeEvent},
         repo::PendingSideEffectsRepository,
@@ -157,7 +157,7 @@ impl PendingSideEffectsRepository {
 
 /// Decode one claimed row into the leased job the entity policy consumes.
 fn leased_effect(id: SideEffectJobId, row: &PgRow) -> Result<LeasedSideEffect, EntityError> {
-    let payload: JsonbText<'_> = stored_column(row, "payload")?;
+    let payload: JsonText<'_> = stored_column(row, "payload")?;
     let job = decode_job(payload)?;
     let write_id = WriteId::from_uuid(stored_column(row, "write_id")?);
     let recorded_at: DateTime<Utc> = stored_column(row, "recorded_at")?;
@@ -337,7 +337,7 @@ fn purge_dead_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
 }
 
 /// Decode one persisted queue payload into the semantic side-effect job.
-fn decode_job(payload: JsonbText<'_>) -> Result<BatchSideEffectJob, EntityError> {
+fn decode_job(payload: JsonText<'_>) -> Result<BatchSideEffectJob, EntityError> {
     let persisted = PersistedBatchSideEffectJob::decode(payload.as_bytes()).map_err(|error| EntityError::from(undecodable(&error)))?;
     Ok(persisted_to_domain(persisted))
 }

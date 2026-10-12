@@ -34,8 +34,9 @@ pub mod error;
 pub mod forwarded_subscription_routes;
 /// What the database pool reports to `/health`.
 pub mod health;
-/// The JSON text of a `jsonb` column, borrowed straight from the row.
-pub mod jsonb_text;
+/// The JSON text of a `json` or `jsonb` column, borrowed straight from the
+/// row, and the text a value is bound as to reach a `json` column.
+pub mod json_text;
 /// Persistence layer for JSON-LD context documents.
 pub mod jsonld_context;
 /// PostgreSQL maintenance configuration owned beside the database connection settings.

@@ -18,7 +18,12 @@
 //! bare `$n` markers by [`external_placeholder`] and bound by the store through
 //! `sqlx` in marker order. No repository spells the statement text; only the one
 //! crate sanctioned to name a dialect token spells the marker.
+//!
+//! A statement that binds every value outside sea-query this way casts a marker
+//! whose bound text the server converts, such as JSON text stored as `json`, with
+//! [`external_placeholder_as`].
 
+use crate::{cast::cast, pg_type::PostgresType};
 use sea_query::{Expr, SimpleExpr};
 
 /// A bare positional parameter marker `$index`, bound by the caller outside
@@ -34,9 +39,19 @@ pub fn external_placeholder(index: usize) -> SimpleExpr {
     Expr::cust(format!("${index}"))
 }
 
+/// A bare positional parameter marker cast to `ty`, rendered `$index::ty`: the
+/// caller binds the value's text and the server converts it.
+#[must_use]
+pub fn external_placeholder_as(index: usize, ty: PostgresType) -> SimpleExpr {
+    cast(external_placeholder(index), ty)
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::placeholder::external_placeholder;
+    use crate::{
+        pg_type::PostgresType,
+        placeholder::{external_placeholder, external_placeholder_as},
+    };
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 
@@ -55,5 +70,10 @@ mod tests {
     fn the_index_is_the_marker_number() {
         assert!(render(external_placeholder(1)).contains("$1"));
         assert!(render(external_placeholder(14)).contains("$14"));
+    }
+
+    #[test]
+    fn a_cast_placeholder_renders_its_marker_and_the_type_it_converts_to() {
+        assert_eq!(render(external_placeholder_as(4, PostgresType::Json)), "SELECT $4::json");
     }
 }

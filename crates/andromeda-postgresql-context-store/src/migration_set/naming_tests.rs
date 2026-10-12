@@ -5,6 +5,7 @@
 //! violation fails: the schema carries no deviation from these rules.
 
 use crate::migration_set::declared_schema::{ConstraintKind, DeclaredColumn, DeclaredConstraint, DeclaredIndex, DeclaredSchema, DeclaredTrigger, IndexKind};
+use pretty_assertions::assert_eq;
 use std::collections::BTreeSet;
 
 /// A convention an object name or declaration breaks.
@@ -67,6 +68,28 @@ const CATALOG_ASSIGNED_IDENTIFIERS: &[(&str, &str)] = &[
     ("unit_codes", "id"),
     ("attribute_history", "unit_code_id"),
     ("current_attributes", "unit_code_id"),
+];
+
+/// The `jsonb` columns and composite type fields, each one SQL navigates
+/// inside (`table` names the composite type for a field). Every other JSON
+/// document is stored as `json`, which keeps the text it was written as.
+const NAVIGATED_JSONB: &[(&str, &str)] = &[
+    ("attribute_history", "metadata"),
+    ("attribute_history", "value_geometry_members"),
+    ("attribute_history", "value_object"),
+    ("context_source_registrations", "additional_properties"),
+    ("context_source_registrations", "context_source_info"),
+    ("context_source_registrations", "entity_id_pattern_forms"),
+    ("context_source_registrations", "information"),
+    ("context_source_registrations", "management"),
+    ("context_source_registrations", "management_interval"),
+    ("context_source_registrations", "observation_interval"),
+    ("current_attributes", "proof_seals"),
+    ("current_attributes", "value_geometry_members"),
+    ("current_attributes", "value_object"),
+    ("sub_attribute", "proof_seals"),
+    ("sub_attribute", "value_geometry_members"),
+    ("sub_attribute", "value_object"),
 ];
 
 /// One broken convention.
@@ -290,6 +313,23 @@ fn the_schema_reader_finds_every_kind_of_declared_object() {
 fn no_migration_breaks_a_naming_or_storage_convention() {
     let violations = every_violation();
     assert!(violations.is_empty(), "these break docs/database-schema-conventions.md: {violations:#?}");
+}
+
+#[test]
+fn no_column_sql_never_navigates_is_jsonb() {
+    let schema = DeclaredSchema::of_every_migration();
+    let jsonb: BTreeSet<(&str, &str)> = schema
+        .columns
+        .iter()
+        .chain(&schema.composite_fields)
+        .filter(|column| column.type_word().trim_end_matches("[]") == "JSONB")
+        .map(|column| (column.table.as_str(), column.name.as_str()))
+        .collect();
+    let navigated: BTreeSet<(&str, &str)> = NAVIGATED_JSONB.iter().copied().collect();
+    assert_eq!(
+        jsonb, navigated,
+        "a document column SQL never reads inside is json, see docs/database-schema-conventions.md"
+    );
 }
 
 #[test]

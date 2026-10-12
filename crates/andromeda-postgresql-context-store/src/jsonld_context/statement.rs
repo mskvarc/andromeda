@@ -24,10 +24,11 @@ use sea_query::{
     error::Error as SeaQueryError,
 };
 
-/// A stored `@context` document bound as the `jsonb` its column holds, from
-/// the text it was admitted as.
-pub(crate) fn jsonb(payload: &JsonLiteral) -> SimpleExpr {
-    cast(Expr::val(payload.text()), PostgresType::Jsonb)
+/// A stored `@context` document bound as the `json` its column holds: the
+/// text it was admitted as, cast in the statement so the server keeps it
+/// verbatim instead of parsing it into a tree.
+pub(crate) fn json(payload: &JsonLiteral) -> SimpleExpr {
+    cast(Expr::val(payload.text()), PostgresType::Json)
 }
 
 /// Match a row by either of its identities: local id or source URL.
@@ -138,7 +139,7 @@ pub fn cached_upsert(local_id: &str, url: &str, document_url: &str, payload: &Js
             url.into(),
             document_url.into(),
             cached_kind(),
-            jsonb(payload),
+            json(payload),
             Expr::current_timestamp(),
             Expr::current_timestamp(),
             0_i64.into(),
@@ -233,7 +234,7 @@ pub fn replace_download_update(local_id: &str, document_url: &str, payload: &Jso
     let granted_lifetime = Expr::col(JsonldContexts::ExpiresAt).sub(Expr::col(JsonldContexts::CreatedAt));
     Query::update()
         .table(JsonldContexts::Table)
-        .value(JsonldContexts::Payload, jsonb(payload))
+        .value(JsonldContexts::Payload, json(payload))
         .value(JsonldContexts::DocumentUrl, document_url)
         .value(JsonldContexts::CreatedAt, Expr::current_timestamp())
         .value(JsonldContexts::LastUsage, Expr::current_timestamp())
@@ -274,7 +275,7 @@ pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind: JsonldCont
             local_id.into(),
             Expr::val(serving_url),
             kind.code().into(),
-            jsonb(payload),
+            json(payload),
             Expr::current_timestamp(),
             Expr::current_timestamp(),
             0_i64.into(),
@@ -297,6 +298,28 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
     use sea_query::{PostgresQueryBuilder, error::Error as SeaQueryError};
+
+    #[test]
+    fn a_context_document_is_bound_as_text_cast_to_json() -> Result<(), SeaQueryError> {
+        let document = JsonLiteral::admit(r#"{"@context": {}}"#).expect("admissible");
+        let statements = [
+            cached_upsert(
+                "urn:ngsi-ld:JsonLdContext:1",
+                "https://example.com/c.jsonld",
+                "https://example.com/c.jsonld",
+                &document,
+                60.0,
+            )?
+            .to_string(PostgresQueryBuilder),
+            replace_download_update("urn:ngsi-ld:JsonLdContext:1", "https://example.com/c.jsonld", &document).to_string(PostgresQueryBuilder),
+            hosted_insert("urn:ngsi-ld:JsonLdContext:1", None, JsonldContextKindCode::Hosted, &document)?.to_string(PostgresQueryBuilder),
+        ];
+        for sql in statements {
+            assert!(sql.contains(r#"'{"@context":{}}'::json"#), "{sql}");
+            assert!(!sql.contains("::jsonb"), "{sql}");
+        }
+        Ok(())
+    }
 
     #[test]
     fn a_payload_lookup_matches_either_identity() {

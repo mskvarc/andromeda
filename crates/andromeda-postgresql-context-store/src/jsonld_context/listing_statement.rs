@@ -6,7 +6,7 @@
 
 use crate::jsonld_context::{
     kind_code::stored_kind,
-    statement::{identity_matches, jsonb},
+    statement::{identity_matches, json},
 };
 use andromeda_context_registry::detail_level::ContextDetailLevel;
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
@@ -87,7 +87,7 @@ fn embedded_projection(detail_level: ContextDetailLevel, embedded: &ContextMetad
                     embedded
                         .extra_info
                         .as_ref()
-                        .map_or_else(|| cast(Keyword::Null.into(), PostgresType::Jsonb), jsonb),
+                        .map_or_else(|| cast(Keyword::Null.into(), PostgresType::Json), json),
                     JsonldContexts::ExtraInfo,
                 );
         }

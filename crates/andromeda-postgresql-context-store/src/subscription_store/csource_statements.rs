@@ -15,6 +15,7 @@
 
 use crate::{
     context_source_change_clock::{advance_clause, advanced_revision},
+    json_text::optional_json_text,
     subscription_store::{
         conformance_text::stored_conformance,
         failure::persistence_error,
@@ -30,75 +31,89 @@ use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_ngsi_ld_query::filter::serialize::serialize_written_members;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
-use andromeda_postgresql_seaquery::{clock::now, placeholder::external_placeholder};
+use andromeda_postgresql_seaquery::{
+    clock::now,
+    pg_type::PostgresType,
+    placeholder::{external_placeholder, external_placeholder_as},
+};
 use andromeda_subscription::{error::SubscriptionError, store::SubscriptionFields};
 use iri_rs::IriBuf;
 use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query};
-use sqlx::{postgres::PgArguments, query::Query as SqlxQuery, types::Json};
+use sqlx::{postgres::PgArguments, query::Query as SqlxQuery};
 
 /// Bind a context-source-subscription create command in statement order.
+///
+/// # Errors
+///
+/// Returns the persistence failure of a document that cannot be written as
+/// JSON.
 pub fn bind_csource_create<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
     id: &'q Identifier,
     fields: &'q SubscriptionFields<'q>,
     interned: &'q InternedAttributeLists,
     status: SubscriptionStatus,
-) -> SqlxQuery<'q, sqlx::Postgres, PgArguments> {
-    query
+) -> Result<SqlxQuery<'q, sqlx::Postgres, PgArguments>, SubscriptionError> {
+    Ok(query
         .bind(id.as_str())
         .bind(fields.subscription_name)
         .bind(fields.description)
-        .bind(fields.entities.map(Json))
+        .bind(optional_json_text(fields.entities).map_err(|error| persistence_error(error))?)
         .bind(interned.watched_attributes.as_deref())
         .bind(stored_trigger_list(fields.notification_trigger))
         .bind(fields.time_interval)
         .bind(fields.q.map(ToString::to_string))
-        .bind(fields.geo_q.map(Json))
+        .bind(optional_json_text(fields.geo_q).map_err(|error| persistence_error(error))?)
         .bind(fields.scope_q.map(ToString::to_string))
         .bind(fields.csf.map(ToString::to_string))
         .bind(interned.expand_values.as_deref())
         .bind(interned.json_keys.as_deref())
-        .bind(fields.notification.map(Json))
+        .bind(optional_json_text(fields.notification).map_err(|error| persistence_error(error))?)
         .bind(fields.expires_at)
         .bind(fields.throttling)
         .bind(stored_status(status).code())
-        .bind(fields.temporal_q.map(Json))
+        .bind(optional_json_text(fields.temporal_q).map_err(|error| persistence_error(error))?)
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(IriBuf::as_str))
         .bind(stored_conformance(fields.ngsild_conformance))
-        .bind(fields.q.map(serialize_written_members))
+        .bind(fields.q.map(serialize_written_members)))
 }
 
 /// Bind a context-source-subscription update command in statement order.
+///
+/// # Errors
+///
+/// Returns the persistence failure of a document that cannot be written as
+/// JSON.
 pub fn bind_csource_update<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
     id: &'q Identifier,
     fields: &'q SubscriptionFields<'q>,
     interned: &'q InternedAttributeLists,
     status: SubscriptionStatus,
-) -> SqlxQuery<'q, sqlx::Postgres, PgArguments> {
-    query
+) -> Result<SqlxQuery<'q, sqlx::Postgres, PgArguments>, SubscriptionError> {
+    Ok(query
         .bind(id.as_str())
         .bind(fields.subscription_name)
         .bind(fields.description)
-        .bind(fields.entities.map(Json))
+        .bind(optional_json_text(fields.entities).map_err(|error| persistence_error(error))?)
         .bind(interned.watched_attributes.as_deref())
         .bind(stored_trigger_list(fields.notification_trigger))
         .bind(fields.time_interval)
         .bind(fields.q.map(ToString::to_string))
-        .bind(fields.geo_q.map(Json))
+        .bind(optional_json_text(fields.geo_q).map_err(|error| persistence_error(error))?)
         .bind(fields.scope_q.map(ToString::to_string))
         .bind(fields.csf.map(ToString::to_string))
         .bind(interned.expand_values.as_deref())
         .bind(interned.json_keys.as_deref())
-        .bind(fields.notification.map(Json))
+        .bind(optional_json_text(fields.notification).map_err(|error| persistence_error(error))?)
         .bind(fields.expires_at)
         .bind(fields.throttling)
         .bind(stored_status(status).code())
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(IriBuf::as_str))
         .bind(stored_conformance(fields.ngsild_conformance))
-        .bind(fields.q.map(serialize_written_members))
+        .bind(fields.q.map(serialize_written_members)))
 }
 
 /// The context-source-subscription insert, bound by [`bind_csource_create`].
@@ -139,21 +154,21 @@ pub fn csource_create_sql(target: &ContextTarget) -> Result<String, Subscription
             Expr::val(StoredKind::Csource.code().code()),
             external_placeholder(2),
             external_placeholder(3),
-            external_placeholder(4),
+            external_placeholder_as(4, PostgresType::Json),
             external_placeholder(5),
             external_placeholder(6),
             external_placeholder(7),
             external_placeholder(8),
-            external_placeholder(9),
+            external_placeholder_as(9, PostgresType::Json),
             external_placeholder(10),
             external_placeholder(11),
             external_placeholder(12),
             external_placeholder(13),
-            external_placeholder(14),
+            external_placeholder_as(14, PostgresType::Json),
             external_placeholder(15),
             external_placeholder(16),
             external_placeholder(17),
-            external_placeholder(18),
+            external_placeholder_as(18, PostgresType::Json),
             external_placeholder(19),
             external_placeholder(20),
             external_placeholder(21),
@@ -175,17 +190,17 @@ pub fn csource_update_sql(target: &ContextTarget) -> String {
         .values([
             (Subscriptions::SubscriptionName, external_placeholder(2)),
             (Subscriptions::Description, external_placeholder(3)),
-            (Subscriptions::Entities, external_placeholder(4)),
+            (Subscriptions::Entities, external_placeholder_as(4, PostgresType::Json)),
             (Subscriptions::WatchedAttributes, external_placeholder(5)),
             (Subscriptions::NotificationTrigger, external_placeholder(6)),
             (Subscriptions::TimeInterval, external_placeholder(7)),
             (Subscriptions::Q, external_placeholder(8)),
-            (Subscriptions::GeoQ, external_placeholder(9)),
+            (Subscriptions::GeoQ, external_placeholder_as(9, PostgresType::Json)),
             (Subscriptions::ScopeQ, external_placeholder(10)),
             (Subscriptions::Csf, external_placeholder(11)),
             (Subscriptions::ExpandValues, external_placeholder(12)),
             (Subscriptions::JsonKeys, external_placeholder(13)),
-            (Subscriptions::Notification, external_placeholder(14)),
+            (Subscriptions::Notification, external_placeholder_as(14, PostgresType::Json)),
             (Subscriptions::ExpiresAt, external_placeholder(15)),
             (Subscriptions::Throttling, external_placeholder(16)),
             (Subscriptions::Status, external_placeholder(17)),
@@ -206,6 +221,7 @@ pub fn csource_update_sql(target: &ContextTarget) -> String {
 mod tests {
     use crate::subscription_store::csource_statements::{csource_create_sql, csource_update_sql};
     use andromeda_context_space::context_target::ContextTarget;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn the_create_carries_its_kind_code_and_omits_the_dataset_and_local_only_columns() {
@@ -255,6 +271,21 @@ mod tests {
             assert!(sql.contains(r#""context_source_revision""#), "{sql}");
             assert!(sql.contains(r#"(SELECT "revision" FROM "advanced_clock")"#), "{sql}");
         }
+    }
+
+    #[test]
+    fn every_csource_subscription_document_is_bound_as_json() {
+        let create = csource_create_sql(&ContextTarget::Live).expect("builds");
+        let update = csource_update_sql(&ContextTarget::Live);
+        for marker in ["$4::json", "$9::json", "$14::json", "$18::json"] {
+            assert!(create.contains(marker), "{marker}: {create}");
+        }
+        for marker in ["$4::json", "$9::json", "$14::json"] {
+            assert!(update.contains(marker), "{marker}: {update}");
+        }
+        assert_eq!(create.matches("::json").count(), 4, "{create}");
+        assert_eq!(update.matches("::json").count(), 3, "{update}");
+        assert!(!create.contains("::jsonb") && !update.contains("::jsonb"), "{create} {update}");
     }
 
     #[test]

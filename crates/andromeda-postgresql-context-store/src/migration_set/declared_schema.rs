@@ -57,7 +57,7 @@ impl DeclaredColumn {
     /// through TOAST.
     pub(crate) fn is_variable_length(&self) -> bool {
         let type_word = self.type_word();
-        type_word.ends_with("[]") || ["TEXT", "JSONB", "NUMERIC", "BYTEA", "GEOMETRY", "GEOGRAPHY", "LTREE"].contains(&type_word.as_str())
+        type_word.ends_with("[]") || ["TEXT", "JSON", "JSONB", "NUMERIC", "BYTEA", "GEOMETRY", "GEOGRAPHY", "LTREE"].contains(&type_word.as_str())
     }
 
     /// Whether the column is an identity the database generates.
@@ -144,14 +144,18 @@ pub(crate) struct DeclaredTrigger {
     pub(crate) definition: String,
 }
 
-/// Every table, column, constraint, index, statistics object, function and
-/// trigger the embedded migrations declare.
+/// Every table, column, composite type field, constraint, index, statistics
+/// object, function and trigger the embedded migrations declare.
 #[derive(Debug, Default)]
 pub(crate) struct DeclaredSchema {
     /// Every table, in declaration order.
     pub(crate) tables: Vec<String>,
     /// Every column, in declaration order.
     pub(crate) columns: Vec<DeclaredColumn>,
+    /// Every field of a composite type, in declaration order, each named with
+    /// its type in place of a table. A field declares no storage of its own:
+    /// the column of the composite type stores it.
+    pub(crate) composite_fields: Vec<DeclaredColumn>,
     /// Every named constraint.
     pub(crate) constraints: Vec<DeclaredConstraint>,
     /// Every index and statistics object.
@@ -191,6 +195,28 @@ impl DeclaredSchema {
             self.read_function(rest);
         } else if let Some(rest) = strip_prefix_ci(statement, "CREATE TRIGGER ") {
             self.read_trigger(rest);
+        } else if let Some(rest) = strip_prefix_ci(statement, "CREATE TYPE ") {
+            self.read_composite_type(rest);
+        }
+    }
+
+    /// Reads `<type> AS ( <fields> )`.
+    fn read_composite_type(&mut self, rest: &str) {
+        let Some((head, body)) = rest.split_once('(') else {
+            return;
+        };
+        let Some(type_name) = head.split_whitespace().next() else {
+            return;
+        };
+        let body = &body[..closing_parenthesis(body)];
+        for field in top_level_items(body) {
+            if let Some((name, definition)) = field.split_once(char::is_whitespace) {
+                self.composite_fields.push(DeclaredColumn {
+                    table: type_name.to_owned(),
+                    name: name.to_owned(),
+                    definition: definition.trim().to_owned(),
+                });
+            }
         }
     }
 
@@ -333,8 +359,31 @@ impl DeclaredSchema {
 
 #[cfg(test)]
 mod tests {
-    use crate::migration_set::declared_schema::DeclaredSchema;
+    use crate::migration_set::declared_schema::{DeclaredColumn, DeclaredSchema};
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn a_composite_type_is_read_field_by_field_under_its_name() {
+        let mut schema = DeclaredSchema::default();
+        schema.read_statement("create type pair as (\n    left_value integer,\n    right_value jsonb\n)");
+        let fields: Vec<(&str, &str, &str)> = schema
+            .composite_fields
+            .iter()
+            .map(|field| (field.table.as_str(), field.name.as_str(), field.definition.as_str()))
+            .collect();
+        assert_eq!(fields, [("pair", "left_value", "integer"), ("pair", "right_value", "jsonb")]);
+        assert!(schema.columns.is_empty(), "a composite field is no table column");
+    }
+
+    #[test]
+    fn json_is_a_variable_length_type() {
+        let column = DeclaredColumn {
+            table: "jsonld_contexts".to_owned(),
+            name: "payload".to_owned(),
+            definition: "json compression lz4 not null".to_owned(),
+        };
+        assert!(column.is_variable_length());
+    }
 
     #[test]
     fn a_trigger_is_read_with_the_table_it_fires_on() {

@@ -35,7 +35,7 @@ create table pending_side_effects (
     claimed_by uuid,
     exhausted_at timestamptz,
     last_error text compression lz4,
-    payload jsonb compression lz4 not null,
+    payload json compression lz4 not null,
     constraint pk_pending_side_effects primary key (id),
     constraint chk_pse_base_ordinal_non_negative check (base_ordinal >= 0),
     constraint chk_pse_attempt_count_non_negative check (attempt_count >= 0),

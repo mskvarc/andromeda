@@ -2,7 +2,7 @@
 
 use crate::{
     error::ContextStoreError,
-    jsonb_text::JsonbText,
+    json_text::JsonText,
     snapshot::{status_code::status_of, stored_snapshot_error::StoredSnapshotError},
 };
 use andromeda_json_literal::JsonLiteral;
@@ -36,7 +36,7 @@ pub fn deserialize_json_column<T: DeserializeOwned>(
     column: impl Iden + Copy,
     unreadable: fn(serde_json::Error) -> StoredSnapshotError,
 ) -> Result<Option<T>, ContextStoreError> {
-    let text: Option<JsonbText<'_>> = row.try_get(column.unquoted())?;
+    let text: Option<JsonText<'_>> = row.try_get(column.unquoted())?;
     Ok(text.map(|text| serde_json::from_slice(text.as_bytes()).map_err(unreadable)).transpose()?)
 }
 
@@ -48,7 +48,7 @@ pub fn deserialize_json_column<T: DeserializeOwned>(
 /// [`ContextStoreError::StoredSnapshot`] when its JSON is not an admissible
 /// literal.
 pub fn row_query_context(row: &PgRow) -> Result<JsonLiteral, ContextStoreError> {
-    let text: JsonbText<'_> = row.try_get(Snapshots::QueryContext.unquoted())?;
+    let text: JsonText<'_> = row.try_get(Snapshots::QueryContext.unquoted())?;
     Ok(serde_json::from_slice(text.as_bytes()).map_err(StoredSnapshotError::QueryContext)?)
 }
 

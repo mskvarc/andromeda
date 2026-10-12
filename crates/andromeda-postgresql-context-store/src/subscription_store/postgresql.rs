@@ -206,7 +206,7 @@ macro_rules! impl_subscription_store {
                 let state_sql = state_insert_sql(target)?;
                 let mut transaction = self.pool.begin().await.map_err(|error| persistence_error(error))?;
                 let interned = intern_attribute_lists(self.attribute_names.as_ref(), &mut transaction, fields).await?;
-                let query = ($create_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, &interned, status);
+                let query = ($create_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, &interned, status)?;
                 let created = query.fetch_one(&mut *transaction).await.map_err(|error| create_error(error, id))?;
                 let subscription_key: i64 = created.try_get("subscription_key").map_err(|error| persistence_error(error))?;
                 sqlx::query(sqlx::AssertSqlSafe(state_sql.as_str()))
@@ -229,7 +229,7 @@ macro_rules! impl_subscription_store {
                 let sql = $update(target);
                 let mut transaction = self.pool.begin().await.map_err(|error| persistence_error(error))?;
                 let interned = intern_attribute_lists(self.attribute_names.as_ref(), &mut transaction, fields).await?;
-                let query = ($update_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, &interned, status);
+                let query = ($update_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, &interned, status)?;
                 let result = query.execute(&mut *transaction).await.map_err(|error| persistence_error(error))?;
                 transaction.commit().await.map_err(|error| persistence_error(error))?;
                 Ok(result.rows_affected())

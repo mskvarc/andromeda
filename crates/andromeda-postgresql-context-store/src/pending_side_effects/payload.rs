@@ -1,5 +1,5 @@
 //! Persisted (wire) form of a batch side-effect job stored in the
-//! `pending_side_effects.payload` JSONB column.
+//! `pending_side_effects.payload` JSON column.
 //!
 //! Every entity state a job carries is written by the entity state codec as
 //! its expanded document, and read back by the same codec straight from the
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
 
-/// Failure to decode a durable pending-side-effect JSONB payload.
+/// Failure to decode a durable pending-side-effect JSON payload.
 #[derive(Debug, Error)]
 pub enum PendingSideEffectPayloadError {
     /// Stored JSON does not match the fully validated persistence shape.
@@ -200,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_side_effect_jsonb_round_trips_every_lifecycle_transition_origin_and_uri_form() {
+    fn pending_side_effect_payload_round_trips_every_lifecycle_transition_origin_and_uri_form() {
         let expected = persisted_job();
         let decoded = PersistedBatchSideEffectJob::decode(&stored(&expected)).expect("payload decodes");
 
@@ -222,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_side_effect_jsonb_rejects_each_invalid_domain_member_without_defaulting() {
+    fn pending_side_effect_payload_rejects_each_invalid_domain_member_without_defaulting() {
         let invalid_values = [
             (vec!["temporal_entities", "0", "id"], json!("not-a-uri")),
             (vec!["temporal_entities", "0", "expanded"], json!([{"@id": "urn:ngsi-ld:Building:1"}])),

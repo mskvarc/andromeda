@@ -68,10 +68,10 @@ create table subscriptions (
     -- The endpoint's clause 5.2.15 `cooldown` and `timeout` stay inside this
     -- document: they are read once per delivery from the subscription already
     -- in memory, and never queried across rows.
-    notification jsonb compression lz4 not null,
+    notification json compression lz4 not null,
     subscription_name text compression lz4,
     description text compression lz4,
-    entities jsonb compression lz4,
+    entities json compression lz4,
     -- `attribute_names` keys, in the order the subscriber wrote them. NULL
     -- means every attribute.
     watched_attributes integer[] compression lz4,
@@ -86,7 +86,7 @@ create table subscriptions (
     -- target language and a raw JSON key in that spelling, which the expanded
     -- `q` no longer carries. NULL exactly when `q` is.
     q_written_members text compression lz4,
-    geo_q jsonb compression lz4,
+    geo_q json compression lz4,
     scope_q text compression lz4,
     csf text compression lz4,
     -- `attribute_names` keys of clause 5.2.12 `expandValues` and `jsonKeys`,
@@ -98,7 +98,7 @@ create table subscriptions (
     json_keys integer[] compression lz4,
     dataset_id text[] compression lz4,
     -- Used by csource subscriptions only.
-    temporal_q jsonb compression lz4,
+    temporal_q json compression lz4,
     lang text compression lz4,
     -- The `@context` the subscription was created under, which notifications
     -- are compacted with.

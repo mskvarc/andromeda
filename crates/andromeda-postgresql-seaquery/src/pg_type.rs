@@ -45,9 +45,13 @@ pub enum PostgresType {
     /// `bytea`, the wire type EWKB geometry binds as.
     #[iden = "bytea"]
     Bytea,
-    /// `jsonb`.
+    /// `jsonb`, the parsed form a column SQL navigates inside is stored as.
     #[iden = "jsonb"]
     Jsonb,
+    /// `json`, the verbatim text form a document column SQL never reads inside
+    /// is stored as: the server validates the text and keeps it as written.
+    #[iden = "json"]
+    Json,
     /// `interval`, the duration type an aggregation period binds as.
     #[iden = "interval"]
     Interval,
@@ -93,6 +97,9 @@ pub enum PostgresType {
     /// `jsonb[]`.
     #[iden = "jsonb[]"]
     JsonbArray,
+    /// `json[]`.
+    #[iden = "json[]"]
+    JsonArray,
     /// `timestamptz[]`.
     #[iden = "timestamptz[]"]
     TimestamptzArray,
@@ -107,9 +114,9 @@ pub enum PostgresType {
 
 #[cfg(test)]
 mod tests {
-    use crate::pg_type::PostgresType;
+    use crate::{cast::cast, pg_type::PostgresType};
     use pretty_assertions::assert_eq;
-    use sea_query::Iden;
+    use sea_query::{Expr, Iden, PostgresQueryBuilder, Query};
 
     #[test]
     fn scalar_type_names_render_bare() {
@@ -135,5 +142,15 @@ mod tests {
         assert_eq!(PostgresType::ByteaArray.to_string(), "bytea[]");
         assert_eq!(PostgresType::JsonbArray.to_string(), "jsonb[]");
         assert_eq!(PostgresType::TimestamptzArray.to_string(), "timestamptz[]");
+    }
+
+    #[test]
+    fn json_and_json_arrays_render_their_postgresql_names() {
+        let scalar = Query::select().expr(cast(Expr::val("{}"), PostgresType::Json)).to_string(PostgresQueryBuilder);
+        let array = Query::select()
+            .expr(cast(Expr::val("{}"), PostgresType::JsonArray))
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(scalar, "SELECT '{}'::json");
+        assert_eq!(array, "SELECT '{}'::json[]");
     }
 }

@@ -16,7 +16,7 @@
 //! alone, and a row a concurrent registration update rewrote first is not
 //! rewritten again: the update names the revision the row was read at.
 
-use crate::{csource_registration::entity_id_pattern_forms::stored_pattern_forms, error::ContextStoreError, jsonb_text::JsonbText};
+use crate::{csource_registration::entity_id_pattern_forms::stored_pattern_forms, error::ContextStoreError, json_text::JsonText};
 use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
 use andromeda_ngsi_ld_query::portable_pattern::{PortablePattern, RenderingRevision};
 use andromeda_postgresql_schema::csr::Csr;
@@ -65,7 +65,7 @@ pub async fn refresh_stale_pattern_forms(pool: &PgPool) -> Result<u64, ContextSt
     for row in &stale {
         let id: String = row.try_get(Csr::Id.to_string().as_str())?;
         let read_at: i16 = row.try_get(Csr::EntityIdPatternFormsRevision.to_string().as_str())?;
-        let information: JsonbText<'_> = row.try_get(Csr::Information.to_string().as_str())?;
+        let information: JsonText<'_> = row.try_get(Csr::Information.to_string().as_str())?;
         let information: Vec<RegistrationInfo> = serde_json::from_slice(information.as_bytes()).map_err(ContextStoreError::StoredRegistrationInformation)?;
         let stored = stored_pattern_forms(&information);
         rewritten += sqlx::query(sqlx::AssertSqlSafe(rewrite.as_str()))

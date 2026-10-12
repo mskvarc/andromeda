@@ -29,7 +29,7 @@ pub enum Subscriptions {
     SubscriptionName,
     /// The `description` member
     Description,
-    /// The watched `EntityInfo` selectors, as JSONB
+    /// The watched `EntityInfo` selectors, as JSON
     Entities,
     /// The `attribute_names` keys of the `watchedAttributes` IRIs
     WatchedAttributes,
@@ -41,7 +41,7 @@ pub enum Subscriptions {
     Q,
     /// The `q` query filter with its trailing members as the subscriber wrote them
     QWrittenMembers,
-    /// The `geoQ` geo-query filter, as JSONB
+    /// The `geoQ` geo-query filter, as JSON
     GeoQ,
     /// The `scopeQ` scope filter
     ScopeQ,
@@ -53,7 +53,7 @@ pub enum Subscriptions {
     JsonKeys,
     /// The `datasetId` selectors an entity subscription narrows to
     DatasetId,
-    /// The `notification` parameters, as JSONB
+    /// The `notification` parameters, as JSON
     Notification,
     /// The `expiresAt` instant
     ExpiresAt,
@@ -61,7 +61,7 @@ pub enum Subscriptions {
     Throttling,
     /// The subscription status code (`SubscriptionStatusCode`)
     Status,
-    /// The `temporalQ` temporal-query filter, as JSONB
+    /// The `temporalQ` temporal-query filter, as JSON
     TemporalQ,
     /// The `lang` language filter
     Lang,

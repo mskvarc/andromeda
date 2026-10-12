@@ -499,7 +499,7 @@ async fn sustained_side_effect_claims_stay_heap_only() {
 
     sqlx::query(
         "INSERT INTO pending_side_effects (id, write_id, recorded_at, base_ordinal, payload) \
-         VALUES (gen_random_uuid(), gen_random_uuid(), NOW(), 0, '{\"temporal_entities\": [], \"change_events\": []}'::jsonb)",
+         VALUES (gen_random_uuid(), gen_random_uuid(), NOW(), 0, '{\"temporal_entities\": [], \"change_events\": []}'::json)",
     )
     .execute(pool)
     .await
@@ -541,7 +541,7 @@ async fn sustained_delivery_state_churn_stays_heap_only() {
     let pool = scope.database_pool();
 
     let subscription_key: i64 =
-        sqlx::query_scalar("INSERT INTO subscriptions (id, kind, status, notification) VALUES ($1, $2, $3, '{}'::jsonb) RETURNING subscription_key")
+        sqlx::query_scalar("INSERT INTO subscriptions (id, kind, status, notification) VALUES ($1, $2, $3, '{}'::json) RETURNING subscription_key")
             .bind(scope.id("urn:ngsi-ld:Subscription:delivery-state-churn"))
             .bind(SubscriptionKindCode::Entity.code())
             .bind(SubscriptionStatusCode::Active.code())

@@ -6,7 +6,7 @@
 
 use crate::{
     error::ContextStoreError,
-    jsonb_text::JsonbText,
+    json_text::JsonText,
     subscription_store::{
         params::DatasetIdPresence,
         rows::SubscriptionRow,
@@ -60,7 +60,7 @@ pub fn stored_subscription_uri(raw: &str) -> Result<Identifier, ContextStoreErro
 ///
 /// Returns the `unreadable` failure of the column when the text is not a `T`.
 pub(super) fn decoded_column<T: DeserializeOwned>(
-    text: JsonbText<'_>,
+    text: JsonText<'_>,
     unreadable: fn(serde_json::Error) -> StoredSubscriptionError,
 ) -> Result<Option<T>, StoredSubscriptionError> {
     serde_json::from_slice(text.as_bytes()).map_err(unreadable)
@@ -81,7 +81,7 @@ fn stored_json<T: DeserializeOwned>(
     column: Subscriptions,
     unreadable: fn(serde_json::Error) -> StoredSubscriptionError,
 ) -> Result<Option<T>, ContextStoreError> {
-    let text: Option<JsonbText<'_>> = row.try_get(column.unquoted())?;
+    let text: Option<JsonText<'_>> = row.try_get(column.unquoted())?;
     Ok(text.map(|text| decoded_column(text, unreadable)).transpose()?.flatten())
 }
 
@@ -282,7 +282,7 @@ fn row_to_subscription(row: SubscriptionRow) -> Subscription {
     let mut notification: NotificationParams = row.notification;
 
     // Clause 5.2.14.2 makes these output only: whatever a client stored in the
-    // notification JSONB is replaced by the counters the delivery state holds.
+    // notification document is replaced by the counters the delivery state holds.
     // Table 5.2.14.2-1 restricts both counters to "Greater than 0" at
     // cardinality 0..1, so one that has not moved is an absent member rather
     // than a zero the client has to interpret.
@@ -355,7 +355,7 @@ fn notification_status_from_timestamps(last_success: Option<DateTime<Utc>>, last
 #[cfg(test)]
 mod tests {
     use crate::{
-        jsonb_text::JsonbText,
+        json_text::JsonText,
         subscription_store::{mapper::decoded_column, stored_subscription_error::StoredSubscriptionError},
     };
     use andromeda_ngsi_ld_model::query::temporal_query::TemporalQuery;
@@ -380,7 +380,7 @@ mod tests {
             "{stored}"
         );
 
-        let read = decoded_column::<GeoQueryInput>(JsonbText::new(&written), StoredSubscriptionError::GeoQ).expect("the column decodes");
+        let read = decoded_column::<GeoQueryInput>(JsonText::new(&written), StoredSubscriptionError::GeoQ).expect("the column decodes");
 
         pretty_assertions::assert_eq!(read, Some(geo_q()));
     }
@@ -389,13 +389,13 @@ mod tests {
     /// `geoQ` or no `temporalQ` names itself in the failure.
     #[test]
     fn a_null_column_is_absent_and_a_malformed_one_names_its_member() {
-        let absent = decoded_column::<GeoQueryInput>(JsonbText::new(b"null"), StoredSubscriptionError::GeoQ).expect("null decodes");
+        let absent = decoded_column::<GeoQueryInput>(JsonText::new(b"null"), StoredSubscriptionError::GeoQ).expect("null decodes");
         assert!(absent.is_none());
 
-        let refused = decoded_column::<GeoQueryInput>(JsonbText::new(br#"{"georel": "near;maxDistance==2000"}"#), StoredSubscriptionError::GeoQ);
+        let refused = decoded_column::<GeoQueryInput>(JsonText::new(br#"{"georel": "near;maxDistance==2000"}"#), StoredSubscriptionError::GeoQ);
         assert!(matches!(refused, Err(StoredSubscriptionError::GeoQ(_))), "{refused:?}");
 
-        let refused = decoded_column::<TemporalQuery>(JsonbText::new(br#"{"timerel": "after"}"#), StoredSubscriptionError::TemporalQ);
+        let refused = decoded_column::<TemporalQuery>(JsonText::new(br#"{"timerel": "after"}"#), StoredSubscriptionError::TemporalQ);
         assert!(matches!(refused, Err(StoredSubscriptionError::TemporalQ(_))), "{refused:?}");
     }
 }

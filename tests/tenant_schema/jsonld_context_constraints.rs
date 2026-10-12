@@ -34,7 +34,7 @@ struct ContextRow<'a> {
 /// return what the database made of it.
 async fn insert_context(pool: &PgPool, row: ContextRow<'_>) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await.expect("transaction");
-    let outcome = sqlx::query("INSERT INTO jsonld_contexts (kind, id, url, document_url, payload) VALUES ($1, $2, $3, $4, '{\"@context\": {}}'::jsonb)")
+    let outcome = sqlx::query("INSERT INTO jsonld_contexts (kind, id, url, document_url, payload) VALUES ($1, $2, $3, $4, '{\"@context\": {}}'::json)")
         .bind(row.kind.code())
         .bind(row.id)
         .bind(row.url)

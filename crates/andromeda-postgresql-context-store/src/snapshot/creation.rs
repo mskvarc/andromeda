@@ -3,20 +3,27 @@
 
 use crate::{
     error::violates_unique_constraint,
+    json_text::optional_json_text,
     snapshot::{branch_schema::create_branch_schema, branch_version::current_version, persistence_error, status_code::stored_status},
     store_fault::undecodable,
 };
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
-use andromeda_postgresql_seaquery::placeholder::external_placeholder;
+use andromeda_postgresql_seaquery::{
+    pg_type::PostgresType,
+    placeholder::{external_placeholder, external_placeholder_as},
+};
 use andromeda_snapshot::{error::SnapshotError, store::InsertSnapshotParams};
 use sea_query::{PostgresQueryBuilder, Query};
-use sqlx::{PgPool, types::Json};
+use sqlx::PgPool;
 use url::Url;
 
 /// The immutable control columns a create binds, in placeholder order; the
 /// surrogate key is issued by the database.
+///
+/// The four documents are `json` columns bound as their JSON text, so their
+/// markers cast that text to `json` and the server keeps it as written.
 const fn control_columns() -> [Snapshots; 11] {
     [
         Snapshots::Id,
@@ -40,7 +47,19 @@ fn control_insert_sql() -> Result<String, SnapshotError> {
     insert
         .into_table(Snapshots::Table)
         .columns(control_columns())
-        .values((1..=11).map(external_placeholder))
+        .values([
+            external_placeholder(1),
+            external_placeholder_as(2, PostgresType::Json),
+            external_placeholder_as(3, PostgresType::Json),
+            external_placeholder_as(4, PostgresType::Json),
+            external_placeholder(5),
+            external_placeholder(6),
+            external_placeholder(7),
+            external_placeholder_as(8, PostgresType::Json),
+            external_placeholder(9),
+            external_placeholder(10),
+            external_placeholder(11),
+        ])
         .map_err(|error| persistence_error(error))?
         .returning_col(Snapshots::SnapshotKey);
     Ok(insert.to_string(PostgresQueryBuilder))
@@ -48,6 +67,7 @@ fn control_insert_sql() -> Result<String, SnapshotError> {
 
 /// The preparation-record insert; the lease triple starts null, and the branch
 /// version is the binary's own, since the branch schemas are created by it.
+/// The two details documents are `json` columns bound as their JSON text.
 fn preparation_insert_sql() -> Result<String, SnapshotError> {
     let mut insert = Query::insert();
     insert
@@ -61,7 +81,15 @@ fn preparation_insert_sql() -> Result<String, SnapshotError> {
             SnapshotPreparation::TemporalQueriesDetails,
             SnapshotPreparation::BranchSchemaVersion,
         ])
-        .values((1..=7).map(external_placeholder))
+        .values([
+            external_placeholder(1),
+            external_placeholder(2),
+            external_placeholder(3),
+            external_placeholder(4),
+            external_placeholder_as(5, PostgresType::Json),
+            external_placeholder_as(6, PostgresType::Json),
+            external_placeholder(7),
+        ])
         .map_err(|error| persistence_error(error))?;
     Ok(insert.to_string(PostgresQueryBuilder))
 }
@@ -75,13 +103,13 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
     let control_sql = control_insert_sql()?;
     let snapshot_key_raw: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(control_sql.as_str()))
         .bind(params.id.as_str())
-        .bind(params.snapshot_queries.map(Json))
-        .bind(params.snapshot_temporal_queries.map(Json))
-        .bind(Json(&params.query_context))
+        .bind(optional_json_text(params.snapshot_queries).map_err(|error| persistence_error(error))?)
+        .bind(optional_json_text(params.snapshot_temporal_queries).map_err(|error| persistence_error(error))?)
+        .bind(serde_json::to_string(&params.query_context).map_err(|error| persistence_error(error))?)
         .bind(params.snapshot_lifetime.map(ToString::to_string))
         .bind(params.snapshot_priority)
         .bind(params.endpoint.map(Url::as_str))
-        .bind(params.receiver_info.map(Json))
+        .bind(optional_json_text(params.receiver_info).map_err(|error| persistence_error(error))?)
         .bind(params.clone_source_id.map(Identifier::as_str))
         .bind(params.created_at)
         .bind(params.expires_at)
@@ -95,8 +123,8 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
         .bind(stored_status(params.status).code())
         .bind(params.modified_at)
         .bind(params.last_used_at)
-        .bind(params.queries_details.map(Json))
-        .bind(params.temporal_queries_details.map(Json))
+        .bind(optional_json_text(params.queries_details).map_err(|error| persistence_error(error))?)
+        .bind(optional_json_text(params.temporal_queries_details).map_err(|error| persistence_error(error))?)
         .bind(branch_version.get())
         .execute(&mut *tx)
         .await
@@ -125,6 +153,7 @@ mod tests {
         migration_set::tenant::tenant_migrator,
         snapshot::creation::{UQ_SNAPSHOTS_ID, control_insert_sql, preparation_insert_sql},
     };
+    use pretty_assertions::assert_eq;
 
     /// Every constraint is named by the migrations, so the duplicate-identity
     /// refusal matches the declared name rather than one PostgreSQL generated.
@@ -156,6 +185,20 @@ mod tests {
         assert!(sql.contains("snapshot_preparation"), "{sql}");
         assert!(sql.contains("\"branch_schema_version\""), "{sql}");
         assert!(sql.contains("$7"), "{sql}");
-        assert!(!sql.contains("::"), "no enum cast remains: {sql}");
+        assert!(
+            sql.contains("$5::json") && sql.contains("$6::json"),
+            "the details documents are bound as json: {sql}"
+        );
+        assert_eq!(sql.matches("::").count(), 2, "no enum cast remains: {sql}");
+    }
+
+    #[test]
+    fn the_control_insert_casts_every_document_to_json() {
+        let sql = control_insert_sql().expect("the control insert builds");
+        for marker in ["$2::json", "$3::json", "$4::json", "$8::json"] {
+            assert!(sql.contains(marker), "{marker}: {sql}");
+        }
+        assert_eq!(sql.matches("::json").count(), 4, "{sql}");
+        assert!(!sql.contains("::jsonb"), "{sql}");
     }
 }

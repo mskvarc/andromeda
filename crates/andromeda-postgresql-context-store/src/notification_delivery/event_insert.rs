@@ -180,7 +180,8 @@ fn insert_events_statement(
 /// Bind one optional entity snapshot as its stored document or SQL `NULL`.
 ///
 /// The state is encoded once by the entity state codec and the text is cast
-/// to `jsonb` by the server, so no JSON tree is built on the way.
+/// to `json`, which the column keeps as written, so no JSON tree is built on
+/// the way.
 ///
 /// # Errors
 ///
@@ -188,7 +189,7 @@ fn insert_events_statement(
 /// encoded, which the codec never does in practice.
 fn snapshot_value(snapshot: Option<&EntityState>) -> Result<SimpleExpr, ContextStoreError> {
     let text = snapshot.map(serde_json::to_string).transpose().map_err(ContextStoreError::PayloadEncoding)?;
-    Ok(cast(Expr::val(text), PostgresType::Jsonb))
+    Ok(cast(Expr::val(text), PostgresType::Json))
 }
 
 /// The `UNNEST(…) AS p(event_key, subscription_key)` source the delivery
@@ -440,7 +441,8 @@ mod tests {
             .expect("a representable event")
             .to_string(PostgresQueryBuilder);
         let written = String::from_utf8(removed.to_vec().expect("the state encodes")).expect("the encoding is UTF-8");
-        assert_eq!(sql.matches(format!("'{written}'::jsonb").as_str()).count(), 2, "{sql}");
+        assert_eq!(sql.matches(format!("'{written}'::json").as_str()).count(), 2, "{sql}");
+        assert!(!sql.contains("::jsonb"), "{sql}");
     }
 
     /// A deletion's removed entity can no longer be read back at delivery, so
@@ -480,6 +482,6 @@ mod tests {
         let sql = insert_events_statement(&target(), Utc::now(), Uuid::nil(), &[event])
             .expect("a representable event")
             .to_string(PostgresQueryBuilder);
-        assert!(sql.contains("NULL::jsonb, NULL, NULL, NULL)"), "{sql}");
+        assert!(sql.contains("NULL::json, NULL, NULL, NULL)"), "{sql}");
     }
 }

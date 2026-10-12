@@ -16,7 +16,7 @@ use crate::intent_store::lease_statements::{acknowledge_statement, claim_stateme
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
-use andromeda_postgresql_context_store::jsonb_text::JsonbText;
+use andromeda_postgresql_context_store::json_text::JsonText;
 use andromeda_postgresql_pool::persistence_classification::classify;
 use andromeda_telemetry::statement::{StatementName, observe_statement};
 use andromeda_temporal::{
@@ -59,7 +59,7 @@ impl PostgresTemporalIntentStore {
     fn decode(row: &PgRow) -> Result<KeyedTemporalAppendIntent, TemporalError> {
         let raw_key: i64 = row.try_get("intent_key").map_err(|error| persistence(&error))?;
         let key = TemporalIntentKey::new(raw_key).map_err(|error| TemporalError::from(PersistenceFailure::Undecodable.record(&error)))?;
-        let payload: JsonbText<'_> = row.try_get("payload").map_err(|error| persistence(&error))?;
+        let payload: JsonText<'_> = row.try_get("payload").map_err(|error| persistence(&error))?;
         let intent = serde_json::from_slice(payload.as_bytes()).map_err(|error| TemporalError::from(PersistenceFailure::Undecodable.record(&error)))?;
         Ok(KeyedTemporalAppendIntent { key, intent })
     }

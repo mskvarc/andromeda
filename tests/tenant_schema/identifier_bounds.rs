@@ -57,7 +57,7 @@ const BOUNDED_COLUMNS: &[BoundedColumn] = &[
     BoundedColumn {
         column: "jsonld_contexts.id",
         constraint: "chk_jsonld_contexts_id_length",
-        insert: "INSERT INTO jsonld_contexts (kind, id, payload) VALUES (2, $1, '{}'::jsonb)",
+        insert: "INSERT INTO jsonld_contexts (kind, id, payload) VALUES (2, $1, '{}'::json)",
     },
     BoundedColumn {
         column: "entity_maps.id",
@@ -67,7 +67,7 @@ const BOUNDED_COLUMNS: &[BoundedColumn] = &[
     BoundedColumn {
         column: "snapshots.id",
         constraint: "chk_snapshots_id_length",
-        insert: "INSERT INTO snapshots (expires_at, id, query_context) VALUES (now() + interval '1 hour', $1, '{}'::jsonb)",
+        insert: "INSERT INTO snapshots (expires_at, id, query_context) VALUES (now() + interval '1 hour', $1, '{}'::json)",
     },
 ];
 

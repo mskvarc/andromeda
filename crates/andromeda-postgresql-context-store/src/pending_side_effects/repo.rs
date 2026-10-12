@@ -39,7 +39,8 @@ use uuid::Uuid;
 /// notification consequences under them rather than under a freshly minted
 /// identity.
 ///
-/// The payload is the job's JSON text, cast to `jsonb` by the server.
+/// The payload is the job's JSON text, cast to `json`, which the column keeps
+/// as written.
 fn enqueue_statement(id: Uuid, write_id: Uuid, recorded_at: DateTime<Utc>, base_ordinal: i32, payload: String) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
@@ -56,7 +57,7 @@ fn enqueue_statement(id: Uuid, write_id: Uuid, recorded_at: DateTime<Utc>, base_
             Expr::val(write_id),
             recorded_at.into(),
             base_ordinal.into(),
-            cast(Expr::val(payload), PostgresType::Jsonb),
+            cast(Expr::val(payload), PostgresType::Json),
         ])?
         .on_conflict(OnConflict::column(PendingSideEffects::WriteId).do_nothing().to_owned());
     Ok(statement.clone())
@@ -187,12 +188,13 @@ mod tests {
         );
     }
 
-    /// The job is bound as its JSON text and cast to `jsonb` by the server, so
-    /// no JSON tree is built for it on the way to the column.
+    /// The job is bound as its JSON text and cast to `json`, so no JSON tree
+    /// is built for it on the way to the column.
     #[test]
-    fn the_job_is_bound_as_text_cast_to_jsonb() {
+    fn the_job_is_bound_as_text_cast_to_json() {
         let sql = rendered();
-        assert!(sql.contains("'{}'::jsonb"), "{sql}");
+        assert!(sql.contains("'{}'::json"), "{sql}");
+        assert!(!sql.contains("::jsonb"), "{sql}");
     }
 
     #[test]

@@ -20,8 +20,9 @@ use uuid::Uuid;
 /// enqueue's `UNNEST` set-write projects, in the order the parallel arrays are
 /// bound and the insert's columns are named.
 ///
-/// The payloads are bound as the intents' JSON text and cast to `jsonb` by the
-/// projection, so no JSON tree is built for them on the way to the column.
+/// The payloads are bound as the intents' JSON text and cast to `json` by the
+/// projection, which the column keeps as written, so no JSON tree is built for
+/// them on the way.
 pub(super) fn intent_unnest_columns() -> [UnnestColumn; 4] {
     [
         UnnestColumn::new(Alias::new("write_id"), PostgresType::UuidArray),
@@ -58,7 +59,7 @@ pub(super) fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<
         .expr(Expr::col((input.clone(), Alias::new("write_id"))))
         .expr(Expr::col((input.clone(), Alias::new("entity_id"))))
         .expr(Expr::col((input.clone(), Alias::new("base_ordinal"))))
-        .expr(cast(Expr::col((input.clone(), Alias::new("payload"))), PostgresType::Jsonb))
+        .expr(cast(Expr::col((input.clone(), Alias::new("payload"))), PostgresType::Json))
         .from_function(call, input)
         .to_owned();
     let mut statement = Query::insert();
@@ -147,15 +148,22 @@ mod tests {
     }
 
     /// The parallel-array set-write projects a `AS input(...)` column-list
-    /// alias with no ordinality, and each array is cast to its element type;
-    /// the payloads travel as JSON text and become `jsonb` in the projection.
+    /// alias with no ordinality, and each array is cast to its element type.
     #[test]
     fn the_enqueue_projects_the_four_parallel_arrays_as_named_columns() {
         let sql = enqueue_sql();
         assert!(sql.contains("AS input(write_id, entity_id, base_ordinal, payload)"), "{sql}");
         assert!(sql.contains("::uuid[]") && sql.contains("::text[]"), "{sql}");
-        assert!(sql.contains(r#""input"."payload"::jsonb"#), "{sql}");
         assert!(!sql.contains("WITH ORDINALITY"), "{sql}");
+    }
+
+    /// The payloads travel as JSON text and become `json` in the projection, so
+    /// no JSON tree is built for them on the way to the column.
+    #[test]
+    fn the_intent_is_bound_as_text_cast_to_json() {
+        let sql = enqueue_sql();
+        assert!(sql.contains(r#""input"."payload"::json"#), "{sql}");
+        assert!(!sql.contains("::jsonb"), "{sql}");
     }
 
     /// A batch commit whose side effects are deferred keys on `base_ordinal` as
