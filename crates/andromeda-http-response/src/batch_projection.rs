@@ -5,7 +5,7 @@ use crate::classified_report::ClassifiedReport;
 use andromeda_federation::{outcome::ForwardedWriteOutcome, remote_answer::describe_remote_answer};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
 use andromeda_ngsi_ld_problem_details::{
-    batch_operation::{BatchEntityError, BatchOperationResult},
+    batch_operation::{BatchEntityError, BatchErrorKind, BatchOperationResult, BatchProblemDetail},
     error_type::NgsiLdErrorType,
     problem_detail::ProblemClassification,
 };
@@ -28,22 +28,32 @@ pub fn batch_operation_result<E>(success: Vec<Identifier>, errors: Vec<(Identifi
 /// The clause 5.2.17 error a forwarded write contributes for `entity_id`, or
 /// `None` when the context source completed it.
 ///
+/// The error is the [`forwarded_write_problem`], and names the registration
+/// it came from (Table 5.2.17-1 `registrationId`).
+#[must_use]
+pub fn forwarded_write_error(entity_id: Uri, registration_id: &Identifier, outcome: &ForwardedWriteOutcome) -> Option<BatchEntityError> {
+    let error = forwarded_write_problem(registration_id, outcome)?;
+    Some(BatchEntityError {
+        entity_id,
+        registration_id: Some(registration_id.clone()), // clone: the error owns the identifier of the registration it names
+        error,
+    })
+}
+
+/// The problem detail a forwarded write failed with, or `None` when the
+/// context source completed it.
+///
 /// A problem detail the source answered with is carried through as it came
 /// (RFC 7807 permits any type); any other failure is classified from what
 /// happened, with the clause 6.3.17 statuses for the ones that produced no
-/// response. Every error names the registration it came from (Table
-/// 5.2.17-1 `registrationId`).
+/// response.
 #[must_use]
-pub fn forwarded_write_error(entity_id: Uri, registration_id: &Identifier, outcome: &ForwardedWriteOutcome) -> Option<BatchEntityError> {
-    let error = match outcome {
+pub fn forwarded_write_problem(registration_id: &Identifier, outcome: &ForwardedWriteOutcome) -> Option<BatchProblemDetail> {
+    let (classification, detail) = match outcome {
         ForwardedWriteOutcome::Completed { .. } => return None,
         ForwardedWriteOutcome::RemoteHttpFailure { status, body } => match body.problem() {
-            Some(problem) => BatchEntityError {
-                entity_id,
-                registration_id: None,
-                error: problem,
-            },
-            None => BatchEntityError::from_classification(entity_id, classification_for_remote_status(*status), &describe_remote_answer(*status, None)),
+            Some(problem) => return Some(problem),
+            None => (classification_for_remote_status(*status), describe_remote_answer(*status, None)),
         },
         ForwardedWriteOutcome::Transport(failure) => {
             let classification = if failure.is_timeout() {
@@ -51,25 +61,25 @@ pub fn forwarded_write_error(entity_id: Uri, registration_id: &Identifier, outco
             } else {
                 ProblemClassification::BadGateway
             };
-            BatchEntityError::from_classification(entity_id, classification, &failure.to_string())
+            (classification, failure.to_string())
         }
-        ForwardedWriteOutcome::LoopDetected => BatchEntityError::from_classification(
-            entity_id,
+        ForwardedWriteOutcome::LoopDetected => (
             ProblemClassification::LoopDetected,
-            &format!("registration {registration_id} loops back into the request's Via chain"),
+            format!("registration {registration_id} loops back into the request's Via chain"),
         ),
-        ForwardedWriteOutcome::NotAdvertised => BatchEntityError::new(
-            entity_id,
-            NgsiLdErrorType::Conflict,
-            &format!("registration {registration_id} covers the data but does not advertise the requested operation"),
+        ForwardedWriteOutcome::NotAdvertised => (
+            ProblemClassification::Category(NgsiLdErrorType::Conflict),
+            format!("registration {registration_id} covers the data but does not advertise the requested operation"),
         ),
-        ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => BatchEntityError::new(
-            entity_id,
-            NgsiLdErrorType::OperationNotSupported,
-            &format!("registration {registration_id} reported the entity exists and advertises no operation to update it"),
+        ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => (
+            ProblemClassification::Category(NgsiLdErrorType::OperationNotSupported),
+            format!("registration {registration_id} reported the entity exists and advertises no operation to update it"),
         ),
     };
-    Some(error.with_registration_id(registration_id.clone())) // clone: the error owns the identifier of the registration it names
+    Some(BatchProblemDetail {
+        error_type: BatchErrorKind::Known(classification),
+        detail,
+    })
 }
 
 /// The classification of a source's error status when its body carried no

@@ -48,7 +48,7 @@ fn incoming_via_without_the_local_alias_is_not_a_loop() {
     assert!(!loop_detected(Some(&via), &local_alias));
 }
 
-fn write_result(mode: ForwardingMode, proxied_attrs: Vec<AttributeName>) -> ForwardedWriteResult {
+fn write_result(mode: ForwardingMode, attributes: Vec<AttributeName>) -> ForwardedWriteResult {
     ForwardedWriteResult {
         registration_id: entity_uri("urn:ngsi-ld:ContextSourceRegistration:test"),
         mode,
@@ -56,7 +56,7 @@ fn write_result(mode: ForwardingMode, proxied_attrs: Vec<AttributeName>) -> Forw
             status: 204,
             body: AnswerBody::Absent,
         },
-        proxied_attrs,
+        attributes,
     }
 }
 
@@ -206,10 +206,10 @@ fn collect_proxied_attrs_empty_results() {
 }
 
 #[test]
-fn collect_proxied_attrs_gathers_attrs() {
+fn collect_proxied_attrs_gathers_the_attributes_of_exclusive_and_redirect_registrations() {
     let results = vec![
         write_result(ForwardingMode::Exclusive, vec![attribute_name("speed"), attribute_name("fuel")]),
-        write_result(ForwardingMode::Inclusive, vec![attribute_name("temperature")]),
+        write_result(ForwardingMode::Redirect, vec![attribute_name("temperature")]),
     ];
     let attrs = collect_proxied_attrs(&results);
     pretty_assertions::assert_eq!(attrs.len(), 3);
@@ -218,9 +218,11 @@ fn collect_proxied_attrs_gathers_attrs() {
     }
 }
 
+/// Clause 4.3.6.3: an inclusive registration supplements local data, so the
+/// attributes it covers stay in local processing.
 #[test]
-fn collect_proxied_attrs_results_with_no_proxied_attrs() {
-    let results = vec![write_result(ForwardingMode::Inclusive, Vec::new())];
+fn collect_proxied_attrs_leaves_out_the_attributes_an_inclusive_registration_covers() {
+    let results = vec![write_result(ForwardingMode::Inclusive, vec![attribute_name("temperature")])];
     let attrs = collect_proxied_attrs(&results);
     assert_eq!(attrs, [] as [AttributeName; 0]);
 }

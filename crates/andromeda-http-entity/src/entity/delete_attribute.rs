@@ -25,7 +25,7 @@ use crate::{
         ValidatedQuery,
         collect_proxied_attrs,
         local_entity_outcome,
-        provision_response,
+        update_result::{LocalAttributeWrite, attribute_write_response},
     },
     forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
 };
@@ -33,6 +33,7 @@ use andromeda_entity::write_target::WriteTarget;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::context_target;
 use axum::http::{HeaderMap, Method};
+use std::slice;
 
 pub(crate) async fn delete_attr(
     context_target::ExistingTargetedTenantState {
@@ -115,5 +116,11 @@ pub(crate) async fn delete_attr(
     } else {
         LocalOutcome::NothingRemained
     };
-    provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
+    let name = service.expand_attribute_name(&attr_id, &context).await.with_entity_instance(&uri)?;
+    let local = LocalAttributeWrite {
+        outcome: &local,
+        requested: slice::from_ref(&name),
+        unwritten: Vec::new(),
+    };
+    attribute_write_response(local, &forwarded, &uri)
 }

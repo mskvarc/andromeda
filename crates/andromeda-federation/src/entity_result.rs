@@ -129,5 +129,5 @@ pub fn collect_proxied_attrs(results: &[ForwardedWriteResult]) -> Vec<AttributeN
     // A proxied registration owns its attributes whether or not the forward
     // succeeded (clause 4.3.6.3), so a failed or refused forward still keeps
     // them out of local processing.
-    results.iter().flat_map(|result| result.proxied_attrs.iter()).cloned().collect()
+    results.iter().flat_map(ForwardedWriteResult::proxied_attrs).cloned().collect()
 }

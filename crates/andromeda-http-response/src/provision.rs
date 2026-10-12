@@ -41,7 +41,17 @@ impl LocalOutcome {
     }
 }
 
-/// Answer a distributed write from its forwarded results and its local part.
+/// How a distributed write that did not fail as a whole turned out.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProvisionVerdict {
+    /// Every part succeeded: the operation's own success response.
+    Succeeded,
+    /// Some parts succeeded and some failed: 207 Multi-Status.
+    PartlySucceeded,
+}
+
+/// Decide how a distributed write turned out from its forwarded results and
+/// its local part.
 ///
 /// For an operation that went entirely to one proxied registration, a failure
 /// is the clause 6.3.17 status of that failure; for one whose local part
@@ -51,6 +61,42 @@ impl LocalOutcome {
 ///
 /// The complete operation failed: the single proxied source's clause 6.3.17
 /// error, or the local part's classified error.
+pub fn provision_verdict(forwarded: &[ForwardedWriteResult], local: &LocalOutcome, instance: &HttpUri) -> Result<ProvisionVerdict, ProblemResponse> {
+    let remote_failed = forwarded.iter().any(ForwardedWriteResult::is_failure);
+    let remote_succeeded = forwarded.iter().any(|result| !result.is_failure());
+    match local {
+        LocalOutcome::NothingRemained => {
+            if !remote_failed {
+                return Ok(ProvisionVerdict::Succeeded);
+            }
+            if let Some(error) = single_source_failure(forwarded) {
+                return Err(classify_forwarding_error(&error).with_instance(instance.clone()));
+            }
+            Ok(ProvisionVerdict::PartlySucceeded)
+        }
+        LocalOutcome::Processed(Ok(())) => {
+            if remote_failed {
+                Ok(ProvisionVerdict::PartlySucceeded)
+            } else {
+                Ok(ProvisionVerdict::Succeeded)
+            }
+        }
+        LocalOutcome::Processed(Err(report)) => {
+            if !remote_succeeded {
+                return Err(report.clone().with_instance(instance.clone())); // clone: the report is owned by the outcome the caller still holds
+            }
+            Ok(ProvisionVerdict::PartlySucceeded)
+        }
+    }
+}
+
+/// Answer a distributed write from its forwarded results and its local part:
+/// `success` when every part succeeded, and otherwise a 207 carrying the
+/// clause 5.2.16 `BatchOperationResult`.
+///
+/// # Errors
+///
+/// As [`provision_verdict`].
 pub fn provision_response(
     entity_id: &Identifier,
     forwarded: &[ForwardedWriteResult],
@@ -58,32 +104,10 @@ pub fn provision_response(
     success: Response,
     instance: &HttpUri,
 ) -> Result<Response, ProblemResponse> {
-    let remote_failed = forwarded.iter().any(ForwardedWriteResult::is_failure);
-    let remote_succeeded = forwarded.iter().any(|result| !result.is_failure());
-    match local {
-        LocalOutcome::NothingRemained => {
-            if !remote_failed {
-                return Ok(success);
-            }
-            if let Some(error) = single_source_failure(forwarded) {
-                return Err(classify_forwarding_error(&error).with_instance(instance.clone()));
-            }
-            Ok(multi_status(multi_status_result(entity_id, local, forwarded)))
-        }
-        LocalOutcome::Processed(Ok(())) => {
-            if remote_failed {
-                Ok(multi_status(multi_status_result(entity_id, local, forwarded)))
-            } else {
-                Ok(success)
-            }
-        }
-        LocalOutcome::Processed(Err(report)) => {
-            if !remote_succeeded {
-                return Err(report.clone().with_instance(instance.clone())); // clone: the report is owned by the outcome the caller still holds
-            }
-            Ok(multi_status(multi_status_result(entity_id, local, forwarded)))
-        }
-    }
+    Ok(match provision_verdict(forwarded, local, instance)? {
+        ProvisionVerdict::Succeeded => success,
+        ProvisionVerdict::PartlySucceeded => multi_status(multi_status_result(entity_id, local, forwarded)),
+    })
 }
 
 /// A 207 Multi-Status response carrying a clause 5.2.16 body.
@@ -165,7 +189,7 @@ mod tests {
                     body: AnswerBody::Absent,
                 }
             },
-            proxied_attrs: Vec::new(),
+            attributes: Vec::new(),
         }
     }
 

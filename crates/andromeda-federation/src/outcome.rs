@@ -243,9 +243,11 @@ pub struct ForwardedWriteResult {
     pub mode: ForwardingMode,
     /// Typed outbound result.
     pub outcome: ForwardedWriteOutcome,
-    /// The attributes a proxied (exclusive or redirect) registration takes out
-    /// of local processing (clause 4.3.6.3); empty for an inclusive one.
-    pub proxied_attrs: Vec<AttributeName>,
+    /// The attributes of the write the registration covers (clause 4.3.6.1),
+    /// by their expanded names: what it was sent, or would have been sent had
+    /// it advertised the operation. Empty for a registration the write reached
+    /// for its entity alone (a loop or a purge).
+    pub attributes: Vec<AttributeName>,
 }
 
 /// Result classification for one forwarded write.
@@ -283,6 +285,17 @@ pub enum ForwardedWriteOutcome {
 }
 
 impl ForwardedWriteResult {
+    /// The attributes the registration takes out of local processing: all it
+    /// covers when it is proxied (exclusive or redirect, clause 4.3.6.3), none
+    /// when it is inclusive.
+    #[must_use]
+    pub fn proxied_attrs(&self) -> &[AttributeName] {
+        match self.mode {
+            ForwardingMode::Exclusive | ForwardingMode::Redirect => &self.attributes,
+            ForwardingMode::Inclusive | ForwardingMode::Auxiliary => &[],
+        }
+    }
+
     /// HTTP status represented by this result, using the clause 6.3.17 codes
     /// for the failures that produced no response.
     #[must_use]
@@ -335,10 +348,12 @@ pub struct ForwardedDiscoveryResult {
 #[cfg(test)]
 mod tests {
     use crate::{
-        outcome::{ForwardGetOutcome, ForwardedResponse, TransportFailure},
+        outcome::{ForwardGetOutcome, ForwardedResponse, ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
         source_continuation::SourceContinuation,
     };
     use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
     use std::{sync::Arc, time::Duration};
 
     /// Only an HTTP error status is a status a source answered with. The
@@ -368,5 +383,25 @@ mod tests {
             None
         );
         pretty_assertions::assert_eq!(ForwardGetOutcome::LoopDetected.error_status(), None);
+    }
+
+    /// Clause 4.3.6.3: only an exclusive or redirect registration takes the
+    /// attributes it covers out of local processing.
+    #[test]
+    fn only_a_proxied_registration_takes_its_attributes_out_of_local_processing() {
+        let speed = || "https://example.org/speed".parse::<AttributeName>().expect("an attribute name");
+        for (mode, proxied) in [
+            (ForwardingMode::Exclusive, vec![speed()]),
+            (ForwardingMode::Redirect, vec![speed()]),
+            (ForwardingMode::Inclusive, Vec::new()),
+        ] {
+            let result = ForwardedWriteResult {
+                registration_id: "urn:ngsi-ld:ContextSourceRegistration:1".parse().expect("valid URI"),
+                mode,
+                outcome: ForwardedWriteOutcome::NotAdvertised,
+                attributes: vec![speed()],
+            };
+            pretty_assertions::assert_eq!(result.proxied_attrs(), proxied.as_slice(), "{mode:?}");
+        }
     }
 }

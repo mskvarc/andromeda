@@ -21,7 +21,7 @@ use crate::{
         ValidatedQuery,
         collect_proxied_attrs,
         local_entity_outcome,
-        provision_response,
+        update_result::{LocalAttributeWrite, attribute_write_response},
     },
     forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
     written_payload_admission::admit_written_attribute,
@@ -35,6 +35,7 @@ use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_model::attribute::{merge_member::MergeMember, written_attribute::WrittenAttribute};
 use axum::http::Method;
+use std::slice;
 
 pub(crate) async fn partial_update_attr(
     context_target::ExistingTargetedTenantState {
@@ -104,10 +105,16 @@ pub(crate) async fn partial_update_attr(
 
     // Clause 5.6.4.4: an attribute a proxied registration covers is updated at
     // the source, never here; an inclusive one is updated in both places.
+    let name = admitted.expanded_name().clone(); // clone: the answer names the attribute the local update consumes
     let local = if collect_proxied_attrs(&forwarded).is_empty() {
         local_entity_outcome(service.partial_update_attr(&target, entity, admitted).await, &forwarded)
     } else {
         LocalOutcome::NothingRemained
     };
-    provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
+    let local = LocalAttributeWrite {
+        outcome: &local,
+        requested: slice::from_ref(&name),
+        unwritten: Vec::new(),
+    };
+    attribute_write_response(local, &forwarded, &uri)
 }

@@ -111,7 +111,7 @@ mod tests {
                 status: 204,
                 body: AnswerBody::Absent,
             },
-            proxied_attrs: Vec::new(),
+            attributes: Vec::new(),
         }
     }
 

@@ -2,6 +2,7 @@
 
 use crate::{
     entity::{
+        AttributeName,
         EntityPatch,
         EntityResultExt,
         EntityTenantState,
@@ -9,27 +10,24 @@ use crate::{
         ForwardingOperation,
         Identifier,
         IncomingVia,
-        IntoResponse,
         JsonLd,
         LocalOutcome,
         OriginalUri,
         ProblemResponse,
         ProvisionResource,
         Response,
-        StatusCode,
         TypedPath,
         UpdateAttributesParams,
         ValidatedQuery,
         collect_proxied_attrs,
         local_entity_outcome,
-        provision_response,
-        update_result::{NotUpdatedReason, update_result_response},
+        update_result::{LocalAttributeWrite, NotUpdatedReason, attribute_write_response},
     },
     forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
     written_payload_admission::admit_written_entity,
 };
 use andromeda_entity::{write_kind::UpdateAttributes, write_target::WriteTarget};
-use andromeda_federation::{forwarded_content::ForwardedContent, outcome::ForwardedWriteResult, request::TriggeringRequest};
+use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_request::fragment_entity_id::admit_fragment_entity_id;
@@ -95,51 +93,36 @@ pub(crate) async fn update_attrs(
 
     if forwarded.is_empty() {
         let (requested, not_updated) = service.update_attrs(&target, entity, admitted).await.with_entity_instance(&uri)?;
-        if not_updated.is_empty() {
-            return Ok(StatusCode::NO_CONTENT.into_response());
-        }
-        return Ok(update_result_response(
-            &requested,
-            &not_updated,
-            NotUpdatedReason::AttributeNotFound,
-            Vec::new(),
-        ));
+        let local = LocalAttributeWrite {
+            outcome: &LocalOutcome::Processed(Ok(())),
+            requested: &requested,
+            unwritten: NotUpdatedReason::AttributeNotFound.of(&not_updated),
+        };
+        return attribute_write_response(local, &forwarded, &uri);
     }
 
     // Clause 5.6.2.4: the attributes proxied registrations cover leave the
     // fragment; whatever remains is updated here. A fragment no registration
     // read was taken over by none of them.
-    let local_update = if sent_to_registrations {
-        match admitted.local_remainder(&collect_proxied_attrs(&forwarded)) {
-            Some(remainder) => Some(service.update_attrs(&target, entity, remainder).await),
-            None => None,
-        }
+    let remainder = if sent_to_registrations {
+        admitted.local_remainder(&collect_proxied_attrs(&forwarded))
     } else {
-        Some(service.update_attrs(&target, entity, admitted).await)
+        Some(admitted)
     };
-
-    // Clause 5.6.2.5: the status says "whether all the new Attributes were
-    // updated or only some of them". An attribute the entity did not carry
-    // makes it "only some" without anything having failed, and that distinction
-    // does not survive the flattening below -- `LocalOutcome` keeps only success
-    // or failure -- so it is answered here first, with the list of attributes
-    // actually updated.
-    let (local_requested, local_not_updated) = match &local_update {
-        Some(Ok((requested, not_updated))) => (requested.as_slice(), not_updated.as_slice()),
-        Some(Err(_)) | None => (&[][..], &[][..]),
+    let (local, requested, not_updated) = match remainder {
+        None => (LocalOutcome::NothingRemained, Vec::new(), Vec::new()),
+        Some(remainder) => {
+            let attempted = remainder.document().attributes().keys().cloned().collect::<Vec<AttributeName>>(); // clone: a failed update is answered with the attributes it consumed
+            match service.update_attrs(&target, entity, remainder).await {
+                Ok((requested, not_updated)) => (LocalOutcome::Processed(Ok(())), requested, not_updated),
+                Err(error) => (local_entity_outcome(Err::<(), _>(error), &forwarded), attempted, Vec::new()),
+            }
+        }
     };
-    if !local_not_updated.is_empty() && !forwarded.iter().any(ForwardedWriteResult::is_failure) {
-        return Ok(update_result_response(
-            local_requested,
-            local_not_updated,
-            NotUpdatedReason::AttributeNotFound,
-            Vec::new(),
-        ));
-    }
-
-    let local = match local_update {
-        None => LocalOutcome::NothingRemained,
-        Some(result) => local_entity_outcome(result, &forwarded),
+    let local = LocalAttributeWrite {
+        outcome: &local,
+        requested: &requested,
+        unwritten: NotUpdatedReason::AttributeNotFound.of(&not_updated),
     };
-    provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
+    attribute_write_response(local, &forwarded, &uri)
 }

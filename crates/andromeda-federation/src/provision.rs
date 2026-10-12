@@ -97,13 +97,13 @@ impl FederationService {
             // Clauses 5.6.1.4 and following: a proxied registration that
             // does not support the operation still owns its attributes, so
             // the write fails for them instead of landing here.
-            let proxied_attrs = matching_attributes(&csr, &entity_types, Some(request.entity_id), expanded_attribute.as_ref(), &requested);
+            let attributes = matching_attributes(&csr, &entity_types, Some(request.entity_id), expanded_attribute.as_ref(), &requested);
             let mode = proxied_mode(&csr);
             settled.push(ForwardedWriteResult {
                 registration_id: csr.id,
                 mode,
                 outcome: ForwardedWriteOutcome::NotAdvertised,
-                proxied_attrs,
+                attributes,
             });
         }
 
@@ -141,17 +141,13 @@ impl FederationService {
         };
         let url = self.write_url(&csr, request, presence, resolver).await;
 
-        let proxied_attrs = if is_proxied(&csr) {
-            matching_attributes(
-                &csr,
-                coverage.entity_types,
-                Some(request.entity_id),
-                coverage.expanded_attribute,
-                coverage.requested,
-            )
-        } else {
-            Vec::new()
-        };
+        let attributes = matching_attributes(
+            &csr,
+            coverage.entity_types,
+            Some(request.entity_id),
+            coverage.expanded_attribute,
+            coverage.requested,
+        );
 
         let planned = match content {
             None => None,
@@ -183,7 +179,7 @@ impl FederationService {
             url,
             method: request.method.clone(), // clone: each planned write owns the method it sends
             body: planned.map(|content| PlannedBody { content, element }),
-            proxied_attrs,
+            attributes,
             context: request.context,
             triggering: request.triggering,
             // A single-entity provision runs under no Entity Map.
@@ -273,8 +269,9 @@ mod tests {
         forwarded_content::ForwardedContent,
         operation::{ForwardingOperation, ProvisionResource},
         outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
-        provision::spelled_suffix,
+        provision::{WriteCoverage, spelled_suffix},
         request::{ForwardProvisionRequest, TriggeringRequest},
+        term_resolver::TermResolver,
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::context_spec::ContextSpec;
@@ -282,6 +279,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use indexmap::IndexMap;
+    use iri_rs::IriBuf;
     use serde_json::json;
 
     const SPEED: &str = "https://example.org/speed";
@@ -381,6 +379,55 @@ mod tests {
             panic!("exactly the one registration answers: {}", results.len());
         };
         assert!(matches!(result.outcome, ForwardedWriteOutcome::NotAdvertised), "{:?}", result.outcome);
-        pretty_assertions::assert_eq!(result.proxied_attrs, vec![SPEED.parse::<AttributeName>().expect("an attribute name")]);
+        pretty_assertions::assert_eq!(result.proxied_attrs(), [SPEED.parse::<AttributeName>().expect("an attribute name")]);
+    }
+
+    /// Clause 4.3.6.1: an inclusive registration is sent the attributes it
+    /// covers, and the planned write names them for the operation's answer.
+    #[tokio::test]
+    async fn an_inclusive_registration_is_planned_with_the_attributes_it_covers() {
+        let service = offline_service(Vec::new());
+        let registration: ContextSourceRegistration = serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:csr:inclusive",
+            "type": "ContextSourceRegistration",
+            "endpoint": "https://peer.example.org",
+            "information": [{"entities": [{"id": ENTITY_ID, "type": "https://example.org/Vehicle"}]}],
+            "operations": ["createEntity"],
+            "status": "ok",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        }))
+        .expect("valid registration");
+        let entity_id: Identifier = ENTITY_ID.parse().expect("valid identifier");
+        let context = ContextSpec::none();
+        let request = ForwardProvisionRequest {
+            resource: ProvisionResource::Entities,
+            entity_id: &entity_id,
+            entity_type_selector: None,
+            attribute_name: None,
+            method: reqwest::Method::POST,
+            context: &context,
+            operation: ForwardingOperation::CreateEntity,
+            path_suffix: None,
+            query_string: None,
+            triggering: TriggeringRequest { via: None, headers: None },
+        };
+        let document = vehicle_document();
+        let written = ForwardedContent::Entity(&document);
+        let requested = written.written_attributes();
+        let entity_types = [IriBuf::new("https://example.org/Vehicle".to_owned()).expect("valid IRI")];
+        let coverage = WriteCoverage {
+            entity_types: &entity_types,
+            expanded_attribute: None,
+            requested: &requested,
+        };
+        let resolver = TermResolver::new(&service.engine, &context);
+
+        let planned = service
+            .plan_write(registration, &request, Some(written), coverage, &resolver)
+            .await
+            .expect("the registration covers the content");
+
+        pretty_assertions::assert_eq!(planned.attributes, [SPEED.parse::<AttributeName>().expect("an attribute name")]);
     }
 }

@@ -166,7 +166,7 @@ impl FederationService {
                         registration_id: csr.id,
                         mode,
                         outcome: ForwardedWriteOutcome::LoopDetected,
-                        proxied_attrs: Vec::new(),
+                        attributes: Vec::new(),
                     });
                 }
                 continue;

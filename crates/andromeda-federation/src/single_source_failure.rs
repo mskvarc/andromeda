@@ -86,7 +86,7 @@ mod tests {
             registration_id: "urn:ngsi-ld:csr:1".parse().expect("valid URI"),
             mode,
             outcome,
-            proxied_attrs: Vec::new(),
+            attributes: Vec::new(),
         }
     }
 

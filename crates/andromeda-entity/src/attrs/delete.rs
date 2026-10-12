@@ -19,6 +19,20 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use std::sync::Arc;
 
 impl EntityService {
+    /// The expanded name of the attribute `attr_name` names under `context`,
+    /// which is the attribute a deletion removes.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::JsonLd`] when `attr_name` cannot be expanded
+    /// against `context`, and [`EntityError::Validation`] when its expansion
+    /// is not an attribute name.
+    pub async fn expand_attribute_name(&self, attr_name: &AttributeName, context: &ContextSpec) -> Result<AttributeName, EntityError> {
+        let prepared_context = self.engine.prepare_term_context(context);
+        let attr_iri = self.engine.expand_term(attr_name.as_str(), &prepared_context).await?;
+        attribute_name_of(attr_iri.as_str())
+    }
+
     /// Delete one attribute, or one of its instances, from an entity
     /// (clause 5.6.5).
     ///
@@ -45,9 +59,7 @@ impl EntityService {
         context: &ContextSpec,
     ) -> Result<(), EntityError> {
         let id = entity.id;
-        let prepared_context = self.engine.prepare_term_context(context);
-        let attr_iri = self.engine.expand_term(attr_name.as_str(), &prepared_context).await?;
-        let attribute = attribute_name_of(attr_iri.as_str())?;
+        let attribute = self.expand_attribute_name(attr_name, context).await?;
 
         // Resolve target dataset ids for tombstones before mutating the entity
         // state. The catalogue outlives the attributes it describes, so this

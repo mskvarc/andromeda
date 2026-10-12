@@ -175,7 +175,7 @@ impl FederationService {
                     url,
                     method: reqwest::Method::DELETE,
                     body: None,
-                    proxied_attrs: Vec::new(),
+                    attributes: Vec::new(),
                     context: request.context,
                     triggering: request.triggering,
                     linked_map,
@@ -187,7 +187,7 @@ impl FederationService {
                         registration_id: csr.id,
                         mode,
                         outcome: ForwardedWriteOutcome::NotAdvertised,
-                        proxied_attrs: Vec::new(),
+                        attributes: Vec::new(),
                     },
                     reported_ids: ids,
                 });

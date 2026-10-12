@@ -10,7 +10,6 @@ use crate::{
         ForwardProvisionRequest,
         ForwardingOperation,
         Identifier,
-        IntoResponse,
         JsonLd,
         LocalOutcome,
         NgsiLdRequestEnvelope,
@@ -19,27 +18,19 @@ use crate::{
         ProvisionResource,
         RequestOverwritePolicy,
         Response,
-        StatusCode,
         TypedPath,
         ValidatedQuery,
         collect_proxied_attrs,
         local_entity_outcome,
-        provision_response,
-        update_result::{NotUpdatedReason, update_result_response},
+        update_result::{LocalAttributeWrite, NotUpdatedReason, attribute_write_response},
     },
     forwarded_write_query::{forwarded_type_parameter, forwarded_write_query},
     written_payload_admission::admit_written_entity,
 };
 use andromeda_entity::{write_kind::AppendAttributes, write_target::WriteTarget};
-use andromeda_federation::{
-    answer_body::AnswerBody,
-    forwarded_content::ForwardedContent,
-    outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
-    request::TriggeringRequest,
-};
+use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
 use andromeda_http_extraction::context_target;
 use andromeda_jsonld::user_context_admission::admit_user_context;
-use andromeda_ngsi_ld_model::update_result::NotUpdatedDetails;
 use andromeda_ngsi_ld_request::fragment_entity_id::admit_fragment_entity_id;
 use axum::http::Method;
 
@@ -109,123 +100,36 @@ pub(crate) async fn append_attrs(
 
     if forwarded.is_empty() {
         let (all_attrs, not_appended) = service.append_attrs(&target, entity, admitted, overwrite).await.with_entity_instance(&uri)?;
-
-        return Ok(append_outcome_response(&all_attrs, &not_appended, Vec::new(), ForwardedCompleteness::Complete));
+        let local = LocalAttributeWrite {
+            outcome: &LocalOutcome::Processed(Ok(())),
+            requested: &all_attrs,
+            unwritten: NotUpdatedReason::AlreadyExists.of(&not_appended),
+        };
+        return attribute_write_response(local, &forwarded, &uri);
     }
 
     // Clause 5.6.3.4: the attributes proxied registrations cover leave the
     // fragment; whatever remains is appended here. A fragment no registration
     // read was taken over by none of them.
-    let local_append = if sent_to_registrations {
-        match admitted.local_remainder(&collect_proxied_attrs(&forwarded)) {
-            Some(remainder) => Some(service.append_attrs(&target, entity, remainder, overwrite).await),
-            None => None,
+    let remainder = if sent_to_registrations {
+        admitted.local_remainder(&collect_proxied_attrs(&forwarded))
+    } else {
+        Some(admitted)
+    };
+    let (local, requested, not_appended) = match remainder {
+        None => (LocalOutcome::NothingRemained, Vec::new(), Vec::new()),
+        Some(remainder) => {
+            let attempted = remainder.document().attributes().keys().cloned().collect::<Vec<AttributeName>>(); // clone: a failed append is answered with the attributes it consumed
+            match service.append_attrs(&target, entity, remainder, overwrite).await {
+                Ok((requested, not_appended)) => (LocalOutcome::Processed(Ok(())), requested, not_appended),
+                Err(error) => (local_entity_outcome(Err::<(), _>(error), &forwarded), attempted, Vec::new()),
+            }
         }
-    } else {
-        Some(service.append_attrs(&target, entity, admitted, overwrite).await)
     };
-    // Clause 5.6.3.5: the status says "whether all the new Attributes were
-    // appended or only some of them", and Table 6.6.3.1-2 reserves 204 for
-    // "all the Attributes were appended successfully". Two things make it "only
-    // some" without anything having failed: an attribute the local part refused
-    // under `noOverwrite`, and a context source that answered 207 for the part
-    // forwarded to it. Neither survives the flattening below -- `LocalOutcome`
-    // keeps only success or failure, and a 207 is a success to
-    // `ForwardedWriteResult::is_failure` -- so both are answered here first.
-    let (local_appended, local_not_appended) = match &local_append {
-        Some(Ok((all_attrs, not_appended))) => (all_attrs.as_slice(), not_appended.as_slice()),
-        Some(Err(_)) | None => (&[][..], &[][..]),
+    let local = LocalAttributeWrite {
+        outcome: &local,
+        requested: &requested,
+        unwritten: NotUpdatedReason::AlreadyExists.of(&not_appended),
     };
-    let forwarded_completeness = forwarded_completeness(&forwarded);
-    let partly_appended = !local_not_appended.is_empty() || forwarded_completeness == ForwardedCompleteness::Partial;
-    if partly_appended && !forwarded.iter().any(ForwardedWriteResult::is_failure) {
-        let remote_not_appended = forwarded_not_appended(&forwarded);
-        return Ok(append_outcome_response(
-            local_appended,
-            local_not_appended,
-            remote_not_appended,
-            forwarded_completeness,
-        ));
-    }
-    let local = match local_append {
-        None => LocalOutcome::NothingRemained,
-        Some(result) => local_entity_outcome(result, &forwarded),
-    };
-    provision_response(&id, &forwarded, &local, StatusCode::NO_CONTENT.into_response(), &uri)
-}
-
-/// The clause 5.6.3.5 answer to an append: 204 when every attribute landed,
-/// and otherwise the clause 5.2.18 `UpdateResult` naming what did and did not.
-///
-/// Table 6.6.3.1-2 pairs the two: 204 "All the Attributes were appended
-/// successfully", 207 "Only the Attributes included in the response payload
-/// body were successfully appended".
-fn append_outcome_response(
-    requested: &[AttributeName],
-    not_appended: &[AttributeName],
-    remote_not_appended: Vec<NotUpdatedDetails>,
-    forwarded: ForwardedCompleteness,
-) -> Response {
-    if not_appended.is_empty() && forwarded == ForwardedCompleteness::Complete {
-        return StatusCode::NO_CONTENT.into_response();
-    }
-    update_result_response(requested, not_appended, NotUpdatedReason::AlreadyExists, remote_not_appended)
-}
-
-/// Whether the forwarded parts of an append each landed in full.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ForwardedCompleteness {
-    /// Every contacted source appended everything it was sent.
-    Complete,
-    /// At least one source answered that it appended only part of it.
-    Partial,
-}
-
-/// Read the sources' own verdict on whether they appended everything.
-///
-/// Table 6.6.3.1-2 makes 207 exactly the statement "only the Attributes
-/// included in the response payload body were successfully appended", so the
-/// status decides this even when a source omits the `UpdateResult` body the
-/// table pairs with it. What must not happen either way is relaying that as
-/// 204, which asserts the opposite.
-fn forwarded_completeness(forwarded: &[ForwardedWriteResult]) -> ForwardedCompleteness {
-    let partial = forwarded.iter().any(|result| match &result.outcome {
-        ForwardedWriteOutcome::Completed { status, .. } => *status == StatusCode::MULTI_STATUS.as_u16(),
-        ForwardedWriteOutcome::RemoteHttpFailure { .. }
-        | ForwardedWriteOutcome::Transport(_)
-        | ForwardedWriteOutcome::LoopDetected
-        | ForwardedWriteOutcome::NotAdvertised
-        | ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => false,
-    });
-    if partial {
-        ForwardedCompleteness::Partial
-    } else {
-        ForwardedCompleteness::Complete
-    }
-}
-
-/// The `notUpdated` entries the forwarded context sources reported.
-///
-/// Table 6.6.3.1-2 gives a context source's own 207 the same clause 5.2.18
-/// `UpdateResult` body this operation answers with, so a source that appended
-/// only part of what it was sent names the part it refused. Those entries
-/// belong in this broker's answer: relaying a source's "only some" as 204 would
-/// assert the opposite of what the source said.
-fn forwarded_not_appended(forwarded: &[ForwardedWriteResult]) -> Vec<NotUpdatedDetails> {
-    forwarded
-        .iter()
-        .filter_map(|result| match &result.outcome {
-            ForwardedWriteOutcome::Completed {
-                body: AnswerBody::UpdateResult(update),
-                ..
-            } => Some(update),
-            ForwardedWriteOutcome::Completed { .. }
-            | ForwardedWriteOutcome::RemoteHttpFailure { .. }
-            | ForwardedWriteOutcome::Transport(_)
-            | ForwardedWriteOutcome::LoopDetected
-            | ForwardedWriteOutcome::NotAdvertised
-            | ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => None,
-        })
-        .flat_map(|update| update.not_updated.iter().cloned()) // clone: the answer owns the entries the forwarded results still hold
-        .collect()
+    attribute_write_response(local, &forwarded, &uri)
 }

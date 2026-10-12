@@ -37,8 +37,9 @@ pub(crate) struct PlannedWrite<'a> {
     pub(crate) method: reqwest::Method,
     /// The body narrowed to what the registration covers.
     pub(crate) body: Option<PlannedBody<'a>>,
-    /// The attributes an exclusive registration claims from the payload.
-    pub(crate) proxied_attrs: Vec<AttributeName>,
+    /// The attributes of the write the registration covers, by their expanded
+    /// names.
+    pub(crate) attributes: Vec<AttributeName>,
     /// The context of the triggering request.
     pub(crate) context: &'a ContextSpec,
     /// The triggering request.
@@ -153,7 +154,7 @@ impl FederationService {
             url,
             method,
             body,
-            proxied_attrs,
+            attributes,
             context,
             triggering,
             linked_map,
@@ -184,7 +185,7 @@ impl FederationService {
             registration_id: registration.id,
             mode,
             outcome,
-            proxied_attrs,
+            attributes,
         }
     }
 
