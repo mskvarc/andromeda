@@ -33,17 +33,17 @@ const PK_CONTEXT_SOURCE_REGISTRATIONS: &str = "pk_context_source_registrations";
 
 /// PostgreSQL-backed registration persistence adapter.
 ///
-/// Holds two representations of the same facts: the registration payload, which
-/// every response body is rendered from, and the `registration_information`
-/// routing projection derived from its `information`, which discovery
-/// preselects against. Every mutation below rewrites the projection in the same
-/// transaction as the payload, so no reader observes one without the other.
+/// Holds each registration as its `context_source_registrations` row and its
+/// `registration_information` rows, the one store of its `information`, which
+/// every response body is assembled from and every matching read filters on.
+/// Every mutation below rewrites the rows in the same transaction as the
+/// registration row, so no reader observes one without the other.
 #[derive(Debug)]
 pub struct PostgresRegistrationStore {
     /// Tenant-scoped PostgreSQL connection pool.
     pub(super) pool: PgPool,
-    /// The tenant's attribute-name dictionary, which the routing projection
-    /// interns registered property and relationship names through.
+    /// The tenant's attribute-name dictionary, which the information rows
+    /// intern registered property and relationship names through.
     pub(super) attribute_names: Arc<dyn NameLookup<AttributeName>>,
 }
 

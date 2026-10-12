@@ -3,8 +3,8 @@
 //! 5.12) and when a request is forwarded to the registrations covering an
 //! Entity (clause 5.10.2).
 //!
-//! The store reads a registered pattern out of the stored `information` inside
-//! the statement that decides, so the registration persists each pattern's
+//! The store reads a registered pattern out of the registration's information
+//! rows inside the statement that decides, so each row persists its pattern's
 //! restatement beside it and the statement evaluates that. The identifiers here
 //! are ASCII and the patterns fold through a scoped group: PostgreSQL refuses a
 //! flag group anywhere but at the start of a pattern, so a statement that
@@ -67,13 +67,17 @@ fn identifier_criteria(identifier: &str) -> String {
     format!("id={}", urlencoding::encode(identifier))
 }
 
-/// The restatements the registration persisted, as stored.
+/// The restatements the registration's information rows persisted, keyed by
+/// the pattern as written.
 async fn stored_forms(scope: &TestEnvironment, registration: &str) -> Option<Value> {
-    sqlx::query_scalar::<_, Option<Value>>("SELECT entity_id_pattern_forms FROM context_source_registrations WHERE id = $1")
-        .bind(registration)
-        .fetch_one(scope.database_pool())
-        .await
-        .expect("the registration row exists")
+    sqlx::query_scalar::<_, Option<Value>>(
+        "SELECT jsonb_object_agg(entity_id_pattern, entity_id_pattern_form) FROM registration_information \
+         WHERE registration_id = $1 AND entity_id_pattern IS NOT NULL",
+    )
+    .bind(registration)
+    .fetch_one(scope.database_pool())
+    .await
+    .expect("the registration row exists")
 }
 
 /// The stored restatements of a registration declaring `pattern` alone.
@@ -82,7 +86,7 @@ fn stored_member(pattern: &str) -> Value {
     Value::Object(Map::from_iter([(pattern.to_owned(), Value::String(parsed.portable().as_str().to_owned()))]))
 }
 
-/// The registration stores, keyed by the pattern as written, the restatement
+/// The registration stores, beside the pattern as written, the restatement
 /// the store evaluates; the representation clients read keeps the text.
 #[tokio::test]
 async fn unicode_pattern_registration_stores_each_pattern_beside_its_restatement() {
@@ -241,13 +245,16 @@ async fn unicode_pattern_registration_a_restatement_an_older_rendering_stored_is
     .await;
     let covered = identifier_criteria(&scope.id("HIVE:1"));
 
-    let outdated = Value::Object(Map::from_iter([(pattern.clone(), Value::String("^never$".to_owned()))])); // clone: the outdated form is keyed by the registered text.
-    sqlx::query("UPDATE context_source_registrations SET entity_id_pattern_forms = $2, entity_id_pattern_forms_revision = 0 WHERE id = $1")
+    sqlx::query("UPDATE registration_information SET entity_id_pattern_form = '^never$' WHERE registration_id = $1")
         .bind(&registration)
-        .bind(&outdated)
         .execute(scope.database_pool())
         .await
-        .expect("the row is set back to an older rendering");
+        .expect("the rows are set back to an older rendering");
+    sqlx::query("UPDATE context_source_registrations SET entity_id_pattern_forms_revision = 0 WHERE id = $1")
+        .bind(&registration)
+        .execute(scope.database_pool())
+        .await
+        .expect("the registration is set back to an older revision");
     assert!(
         !discovered(&scope, &entity_type, &covered).await.contains(&registration),
         "discovery evaluates the stored restatement, not the registered text"

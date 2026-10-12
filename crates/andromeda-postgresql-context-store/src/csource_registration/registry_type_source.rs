@@ -1,11 +1,11 @@
 //! The Context Registry's view of possibly available types and attributes
-//! (clause 5.7.11), read off the routing projection.
+//! (clause 5.7.11), read off the registration information rows.
 //!
-//! `registration_information` already flattens every registration's
-//! `information` into one row per entity selector, with the type names and the
-//! interned attribute-name keys beside each other, so the union clause 5.7.11
-//! lets a discovery take from the registry is one scan of the projection joined
-//! to the attribute-name dictionary.
+//! `registration_information` holds every registration's `information` as one
+//! row per `EntityInfo`, with the type names and the interned attribute-name
+//! keys of its item beside each other, so the union clause 5.7.11 lets a
+//! discovery take from the registry is one scan of the rows joined to the
+//! attribute-name dictionary.
 
 use crate::{
     csource_registration::registration_store::PostgresRegistrationStore,
@@ -16,6 +16,10 @@ use andromeda_entity::{
     port::registry_types::{RegisteredAttribute, RegisteredType, RegistryTypeSource},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_postgresql_context_query::csr::{
+    information_row::{ri, ri_col},
+    preselect::{ANY_TYPE, entity_types_or_wildcard},
+};
 use andromeda_postgresql_schema::{
     csr::{Csr, RegistrationInformation},
     name_dictionary::AttributeNames,
@@ -25,42 +29,38 @@ use async_trait::async_trait;
 use sea_query::{Alias, Cond, Expr as SeaExpr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement, extension::postgres::PgExpr};
 use sea_query_sqlx::SqlxBinder;
 
-/// The type-axis sentinel the projection stores where a row admits every type;
-/// it names no type and is not reported.
-const ANY_TYPE: &str = "*";
-
-/// One projection row joined to the dictionary: the row's type names and one
-/// attribute name it declares, or none when it declares no attribute.
+/// One information row joined to the dictionary: the row's type names and one
+/// attribute name its item declares, or none when it declares no attribute.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisteredPair {
-    /// The row's `entity_types`, sentinel included.
+    /// The row's `entity_types`, or the wildcard sentinel for an item without
+    /// `entities`.
     pub entity_types: Vec<String>,
     /// One declared attribute name, or `None` for a row declaring none.
     pub attribute_name: Option<String>,
 }
 
-/// `SELECT ri.entity_types, an.name FROM registration_information ri JOIN
-/// context_source_registrations c ON c.id = ri.registration_id LEFT JOIN
-/// attribute_names an ON an.attribute_name_key = ANY(ri.property_name_keys ||
-/// ri.relationship_name_keys)
+/// `SELECT coalesce(ri.entity_types, '{*}'), an.name FROM
+/// registration_information ri JOIN context_source_registrations c ON c.id =
+/// ri.registration_id LEFT JOIN attribute_names an ON an.attribute_name_key =
+/// ANY(ri.property_name_keys || ri.relationship_name_keys)
 /// WHERE c.expires_at IS NULL OR c.expires_at > NOW()`.
 ///
-/// The `{0}` attribute sentinel and the `{}` empty axis match no dictionary
-/// key, so a row declaring no name joins to `NULL` and still reports its types.
+/// Array concatenation reads a `NULL` axis as empty, and two `NULL` axes give
+/// a `NULL` array no key equals, so a row declaring no name joins to `NULL`
+/// and still reports its types.
 fn registered_pairs_sql() -> SelectStatement {
-    let ri = Alias::new("ri");
     let an = Alias::new("an");
-    let declared_keys = SeaExpr::col((ri.clone(), RegistrationInformation::PropertyNameKeys))
-        .concatenate(SeaExpr::col((ri.clone(), RegistrationInformation::RelationshipNameKeys)));
+    let declared_keys = ri_col(RegistrationInformation::PropertyNameKeys).concatenate(ri_col(RegistrationInformation::RelationshipNameKeys));
     let mut select = Query::select();
     select
-        .column((ri.clone(), RegistrationInformation::EntityTypes))
+        .expr(entity_types_or_wildcard())
         .column((an.clone(), AttributeNames::Name))
-        .from_as(RegistrationInformation::Table, ri.clone())
+        .from_as(RegistrationInformation::Table, ri())
         .join(
             JoinType::Join,
             Csr::Table,
-            SeaExpr::col((Csr::Table, Csr::Id)).equals((ri, RegistrationInformation::RegistrationId)),
+            SeaExpr::col((Csr::Table, Csr::Id)).equals((ri(), RegistrationInformation::RegistrationId)),
         )
         .join_as(
             JoinType::LeftJoin,
@@ -85,7 +85,7 @@ fn persistence_error(error: impl StoreFault) -> EntityError {
     EntityError::from(persistence_failure(&error))
 }
 
-/// Read a stored type name; the projection wrote it, so a malformed one is an
+/// Read a stored type name; the registration write stored it, so a malformed one is an
 /// internal fault.
 fn stored_type_name(raw: &str) -> Result<EntityTypeName, EntityError> {
     raw.parse().map_err(|error| EntityError::from(undecodable(&error)))
@@ -105,7 +105,7 @@ fn stored_attribute_name(raw: &str) -> Result<AttributeName, EntityError> {
 ///
 /// Returns [`EntityError::internal`] when a stored entity type or attribute name
 /// does not parse back into its lexicon type, which can only happen if the
-/// projection wrote a value the dictionary never minted.
+/// rows hold a value the dictionary never minted.
 pub fn registered_types_of(pairs: &[RegisteredPair]) -> Result<Vec<RegisteredType>, EntityError> {
     let mut types: Vec<RegisteredType> = Vec::new();
     for pair in pairs {
@@ -139,7 +139,7 @@ pub fn registered_types_of(pairs: &[RegisteredPair]) -> Result<Vec<RegisteredTyp
 ///
 /// Returns [`EntityError::internal`] when a stored attribute name or entity type
 /// does not parse back into its lexicon type, which can only happen if the
-/// projection wrote a value the dictionary never minted.
+/// rows hold a value the dictionary never minted.
 pub fn registered_attributes_of(pairs: &[RegisteredPair]) -> Result<Vec<RegisteredAttribute>, EntityError> {
     let mut attributes: Vec<RegisteredAttribute> = Vec::new();
     for pair in pairs {
@@ -168,7 +168,7 @@ pub fn registered_attributes_of(pairs: &[RegisteredPair]) -> Result<Vec<Register
 
 impl PostgresRegistrationStore {
     /// Every (entity types, attribute name) pair the live registrations
-    /// declare, as the projection tables hold them.
+    /// declare, as their information rows hold them.
     async fn registered_pairs(&self) -> Result<Vec<RegisteredPair>, EntityError> {
         let (sql, values) = registered_pairs_sql().build_sqlx(PostgresQueryBuilder);
         let rows: Vec<(Vec<String>, Option<String>)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -210,11 +210,12 @@ mod tests {
     const THRUST: &str = "https://example.com/thrust";
 
     #[test]
-    fn the_statement_joins_the_projection_to_the_dictionary_and_skips_expired_registrations() {
+    fn the_statement_joins_the_rows_to_the_dictionary_and_skips_expired_registrations() {
         let rendered = registered_pairs_sql().to_string(PostgresQueryBuilder);
         // `PgExpr::contains` shadows `str::contains` on a `String`; the slice resolves the inherent method.
         let sql: &str = &rendered;
         assert!(sql.contains("FROM \"registration_information\" AS \"ri\""), "{sql}");
+        assert!(sql.contains("SELECT COALESCE(\"ri\".\"entity_types\", '{*}'), \"an\".\"name\""), "{sql}");
         assert!(
             sql.contains("LEFT JOIN \"attribute_names\" AS \"an\" ON \"an\".\"attribute_name_key\" = ANY(\"ri\".\"property_name_keys\" || \"ri\".\"relationship_name_keys\")"),
             "{sql}"

@@ -21,12 +21,6 @@ pub enum Csr {
     RegistrationName,
     /// Free-text description.
     Description,
-    /// The `information` document the discovery statements still walk; the
-    /// relation holds it as `registration_information` rows.
-    Information,
-    /// The pattern restatements the discovery statements still read; the
-    /// relation holds each as `registration_information.entity_id_pattern_form`.
-    EntityIdPatternForms,
     /// The rendering revision that produced the registration's
     /// `registration_information.entity_id_pattern_form` values; `NULL` when it
     /// declares no `idPattern`.
@@ -35,12 +29,6 @@ pub enum Csr {
     DatasetId,
     /// Owning tenant.
     Tenant,
-    /// The interval the discovery statements still read as one document; the
-    /// relation holds it as `observation_interval_start` and `_end`.
-    ObservationInterval,
-    /// The interval the discovery statements still read as one document; the
-    /// relation holds it as `management_interval_start` and `_end`.
-    ManagementInterval,
     /// `observationInterval.startAt`; `NULL` when the member is absent.
     ObservationIntervalStart,
     /// `observationInterval.endAt`; `NULL` when absent or open.

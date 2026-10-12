@@ -50,7 +50,7 @@ use andromeda_registration::{
 };
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use sea_query::{Expr as SeaExpr, ExprTrait, PostgresQueryBuilder, Query};
+use sea_query::{Expr as SeaExpr, ExprTrait, LockType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::types::Json;
 
@@ -60,15 +60,28 @@ fn stored_properties(properties: &IndexMap<AttributeName, JsonLiteral>) -> Optio
     (!properties.is_empty()).then_some(Json(properties))
 }
 
+/// The registrations the expiry sweep deletes, locked as they are read.
+///
+/// A concurrent deletion or update of one of them either committed before the
+/// lock, so the row is not returned or is read as it left it, or waits behind
+/// it with its information rows still as they were committed. Without the lock
+/// a deletion committing between this read and the information read (it
+/// removes the information rows first) leaves a registration without the rows
+/// it is assembled from.
+fn swept_select(cutoff: DateTime<Utc>) -> SelectStatement {
+    let mut select = expired_select(cutoff);
+    select.lock_with_tables(LockType::Update, [Csr::Table]);
+    select
+}
+
 /// Delete every registration due at or before `cutoff`, returning the deleted rows and the revision the sweep drew; their information rows go in the same transaction.
 pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: DateTime<Utc>) -> Result<ExpiredDeletion, RegistrationError> {
     let mut transaction = store.pool.begin().await.map_err(|error| persistence_error(error))?;
     // The rows to return are read before either deletion, information rows
-    // included; the two deletions
-    // then remove exactly the same set, agreeing without depending on the
-    // foreign key's referential action. All three run in one transaction, so
-    // no reader observes a partial removal.
-    let (select_sql, select_values) = expired_select(cutoff).build_sqlx(PostgresQueryBuilder);
+    // included; the two deletions then remove exactly the same set, agreeing
+    // without depending on the foreign key's referential action. All three run
+    // in one transaction, so no reader observes a partial removal.
+    let (select_sql, select_values) = swept_select(cutoff).build_sqlx(PostgresQueryBuilder);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(select_sql.as_str()), select_values)
         .fetch_all(&mut *transaction)
         .await
@@ -296,10 +309,21 @@ pub(super) async fn delete(store: &PostgresRegistrationStore, id: &Identifier) -
 
 #[cfg(test)]
 mod tests {
-    use crate::csource_registration::registration_write::stored_properties;
+    use crate::csource_registration::registration_write::{stored_properties, swept_select};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use chrono::DateTime;
     use indexmap::IndexMap;
+    use sea_query::PostgresQueryBuilder;
+
+    /// The registration rows are locked, not the delivery state they are
+    /// joined to: `FOR UPDATE` cannot lock the nullable side of an outer join.
+    #[test]
+    fn the_sweep_locks_the_registration_rows_it_reads() {
+        let cutoff = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").expect("valid instant").to_utc();
+        let sql = swept_select(cutoff).to_string(PostgresQueryBuilder);
+        assert!(sql.ends_with("FOR UPDATE OF \"context_source_registrations\""), "{sql}");
+    }
 
     /// A registration without Context Source Properties stores `NULL`, not an
     /// empty object, which the `q` pushdown reads as having none.

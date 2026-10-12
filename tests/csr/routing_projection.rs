@@ -1,18 +1,16 @@
-//! CSR routing projection: `registration_information` mirrors every selector
-//! the registration documents declare.
+//! CSR information rows: `registration_information` holds every selector a
+//! registration declares.
 //!
-//! `context_source_registrations.information` (clause 5.2.9) stays the
-//! authority for every response body; `registration_information` is the same
-//! selectors flattened into the shape discovery (clause 5.9) and the forwarding
-//! coverage decision (clause 5.10.2) actually filter on. The projection is
-//! derived in Rust and rewritten inside the same transaction as every
-//! registration mutation, so these tests check both halves: that the rows carry
-//! each dimension the documents declare, and that a query on each dimension
-//! still returns exactly the registrations the documents admit. An axis a row
-//! does not constrain carries a sentinel rather than `NULL` (`{'*'}`, `''`,
-//! `{0}`). Table 5.2.10-1 -- "At least one element of `RegistrationInfo` shall be
-//! present" -- means no document can leave every axis unconstrained at once, so
-//! the sentinels are reached one axis pair at a time.
+//! The rows are the one store of a registration's `information` (clause
+//! 5.2.9): every response body is assembled from them, and discovery (clause
+//! 5.10) and the forwarding coverage decision (clause 5.10.2) filter on them.
+//! They are rewritten inside the same transaction as every registration
+//! mutation, so these tests check both halves: that the rows carry each axis
+//! the registration declares, and that a query on each axis returns exactly
+//! the registrations the registration admits. An axis a row does not constrain
+//! is `NULL`. Table 5.2.10-1 ("At least one element of `RegistrationInfo`
+//! shall be present") means no item leaves every axis unconstrained at once,
+//! so the absent axes are reached one pair at a time.
 
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
@@ -24,27 +22,25 @@ use sqlx::{PgPool, Row};
 /// The suite name every environment in this file is allocated under.
 const SUITE: &str = "csr";
 
-/// The routing rows one registration projects, ordered so two runs compare.
-async fn routing_rows(pool: &PgPool, registration_id: &str) -> Vec<Value> {
+/// The information rows of one registration, ordered so two runs compare.
+async fn information_rows(pool: &PgPool, registration_id: &str) -> Vec<Value> {
     sqlx::query(
         "SELECT entity_types, entity_id, entity_id_pattern, property_name_keys, relationship_name_keys \
          FROM registration_information WHERE registration_id = $1 \
-         ORDER BY entity_types, entity_id, entity_id_pattern",
+         ORDER BY item_ordinal, selector_ordinal",
     )
     .bind(registration_id)
     .fetch_all(pool)
     .await
-    .expect("the routing projection must be readable")
+    .expect("the information rows must be readable")
     .into_iter()
     .map(|row| {
         json!({
-            "entity_types": row.get::<Vec<String>, _>("entity_types"),
-            "entity_id": row.get::<String, _>("entity_id"),
+            "entity_types": row.get::<Option<Vec<String>>, _>("entity_types"),
+            "entity_id": row.get::<Option<String>, _>("entity_id"),
             "entity_id_pattern": row.get::<Option<String>, _>("entity_id_pattern"),
-            "property_name_keys": row.get::<Vec<i32>, _>("property_name_keys").len(),
-            "relationship_name_keys": row.get::<Vec<i32>, _>("relationship_name_keys").len(),
-            "property_wildcard": row.get::<Vec<i32>, _>("property_name_keys") == vec![0],
-            "relationship_wildcard": row.get::<Vec<i32>, _>("relationship_name_keys") == vec![0],
+            "property_name_keys": row.get::<Option<Vec<i32>>, _>("property_name_keys").map(|keys| keys.len()),
+            "relationship_name_keys": row.get::<Option<Vec<i32>>, _>("relationship_name_keys").map(|keys| keys.len()),
         })
     })
     .collect()
@@ -86,7 +82,7 @@ fn selective_registration(id: &str, entity_id: &str) -> Value {
 }
 
 #[tokio::test]
-async fn a_registration_projects_every_dimension_its_information_declares() {
+async fn a_registration_stores_every_axis_its_information_declares() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let client = scope.client();
     let registration_id = scope.id("ContextSourceRegistration:routing-dimensions");
@@ -98,8 +94,8 @@ async fn a_registration_projects_every_dimension_its_information_declares() {
         .expect("create registration request failed");
     assert_eq!(created.status, StatusCode::CREATED, "create registration: {:?}", created.body);
 
-    let rows = routing_rows(scope.database_pool(), &registration_id).await;
-    assert_eq!(rows.len(), 1, "one information item with one entity selector projects one row: {rows:?}");
+    let rows = information_rows(scope.database_pool(), &registration_id).await;
+    assert_eq!(rows.len(), 1, "one information item with one entity selector is one row: {rows:?}");
     let row = &rows[0];
     assert_eq!(
         row["entity_types"],
@@ -110,7 +106,6 @@ async fn a_registration_projects_every_dimension_its_information_declares() {
     assert_eq!(row["entity_id_pattern"], Value::Null, "the item declared no pattern: {row}");
     assert_eq!(row["property_name_keys"], json!(1), "the declared property name is interned: {row}");
     assert_eq!(row["relationship_name_keys"], json!(1), "the declared relationship name is interned: {row}");
-    assert_eq!(row["property_wildcard"], json!(false), "a declared name is not the sentinel: {row}");
     // Operations stay on the registration: the group token of Table 4.20-2 is
     // a member in its own right rather than being expanded into the operations
     // it stands for.
@@ -128,7 +123,7 @@ async fn a_registration_projects_every_dimension_its_information_declares() {
 }
 
 #[tokio::test]
-async fn one_row_is_projected_per_information_item_and_entity_selector() {
+async fn one_row_is_stored_per_information_item_and_entity_selector() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let client = scope.client();
     let registration_id = scope.id("ContextSourceRegistration:routing-pairs");
@@ -146,11 +141,11 @@ async fn one_row_is_projected_per_information_item_and_entity_selector() {
     let created = client.create_registration(&registration).await.expect("create registration request failed");
     assert_eq!(created.status, StatusCode::CREATED, "create registration: {:?}", created.body);
 
-    let rows = routing_rows(scope.database_pool(), &registration_id).await;
+    let rows = information_rows(scope.database_pool(), &registration_id).await;
     assert_eq!(rows.len(), 3, "two selectors plus one selector is three pairs: {rows:?}");
     assert!(
         rows.iter().any(|row| row["entity_id_pattern"] == json!("urn:ngsi-ld:Device:.*")),
-        "the pattern selector projects its pattern as written: {rows:?}"
+        "the pattern selector keeps its pattern as written: {rows:?}"
     );
 
     let deleted = client.delete_registration(&registration_id).await.expect("delete registration request failed");
@@ -161,16 +156,15 @@ async fn one_row_is_projected_per_information_item_and_entity_selector() {
 
 /// The axes are independent, so an item declaring only attribute names leaves
 /// both entity axes unconstrained and an item declaring only entities leaves
-/// both attribute axes unconstrained. Each projects one row carrying that pair
-/// of sentinels, and each has to stay a candidate on the dimensions it does not
-/// bound.
+/// both attribute axes unconstrained. Each is one row with that pair absent,
+/// and each has to stay a candidate on the axes it does not bound.
 ///
 /// An item bounding no axis at all is not a document a broker accepts: Table
 /// 5.2.10-1 requires that "At least one element of `RegistrationInfo` shall be
 /// present", and clause 5.9.2.4 makes a registration that does not meet the
 /// clause 5.2.9 restrictions a `BadRequestData`.
 #[tokio::test]
-async fn an_item_leaving_an_axis_unconstrained_projects_its_sentinel_and_stays_a_candidate() {
+async fn an_item_leaving_an_axis_unconstrained_stores_it_absent_and_stays_a_candidate() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let client = scope.client();
     let entity_open_id = scope.id("ContextSourceRegistration:routing-open-entities");
@@ -186,14 +180,13 @@ async fn an_item_leaving_an_axis_unconstrained_projects_its_sentinel_and_stays_a
     let created = client.create_registration(&entity_open).await.expect("create registration request failed");
     assert_eq!(created.status, StatusCode::CREATED, "create registration: {:?}", created.body);
 
-    let rows = routing_rows(scope.database_pool(), &entity_open_id).await;
-    assert_eq!(rows.len(), 1, "an item declaring no entity selector projects one row: {rows:?}");
+    let rows = information_rows(scope.database_pool(), &entity_open_id).await;
+    assert_eq!(rows.len(), 1, "an item declaring no entity selector is one row: {rows:?}");
     let row = &rows[0];
-    assert_eq!(row["entity_types"], json!(["*"]), "the type axis carries the wildcard sentinel: {row}");
-    assert_eq!(row["entity_id"], json!(""), "the identifier axis carries the empty sentinel: {row}");
+    assert_eq!(row["entity_types"], Value::Null, "the type axis is absent: {row}");
+    assert_eq!(row["entity_id"], Value::Null, "the identifier axis is absent: {row}");
     assert_eq!(row["entity_id_pattern"], Value::Null, "{row}");
     assert_eq!(row["property_name_keys"], json!(1), "the declared property name is interned: {row}");
-    assert_eq!(row["property_wildcard"], json!(false), "a declared name is not the sentinel: {row}");
 
     let attribute_open = json!({
         "id": attribute_open_id,
@@ -205,20 +198,15 @@ async fn an_item_leaving_an_axis_unconstrained_projects_its_sentinel_and_stays_a
     let created = client.create_registration(&attribute_open).await.expect("create registration request failed");
     assert_eq!(created.status, StatusCode::CREATED, "create registration: {:?}", created.body);
 
-    let rows = routing_rows(scope.database_pool(), &attribute_open_id).await;
-    assert_eq!(rows.len(), 1, "an item declaring no attribute name projects one row: {rows:?}");
+    let rows = information_rows(scope.database_pool(), &attribute_open_id).await;
+    assert_eq!(rows.len(), 1, "an item declaring no attribute name is one row: {rows:?}");
     let row = &rows[0];
-    assert_eq!(row["entity_id"], json!(""), "the item declared no identifier: {row}");
-    assert_eq!(row["property_wildcard"], json!(true), "the property axis carries the key sentinel: {row}");
-    assert_eq!(
-        row["relationship_wildcard"],
-        json!(true),
-        "the relationship axis carries the key sentinel: {row}"
-    );
+    assert_eq!(row["entity_id"], Value::Null, "the item declared no identifier: {row}");
+    assert_eq!(row["property_name_keys"], Value::Null, "the property axis is absent: {row}");
+    assert_eq!(row["relationship_name_keys"], Value::Null, "the relationship axis is absent: {row}");
 
-    // Every dimension a row wildcards has to keep admitting it: the preselect
-    // may only discard registrations no unnesting could have matched, and a
-    // wildcarded axis matches everything a query narrows it to.
+    // An axis a row leaves absent matches everything a query narrows it to
+    // (clause 5.12).
     let pattern_query = format!("type=Device&idPattern={}", urlencoding::encode("urn:ngsi-ld:.*"));
     for query in ["type=Device", pattern_query.as_str()] {
         assert!(
@@ -269,8 +257,8 @@ async fn a_query_on_each_dimension_returns_exactly_the_registrations_the_documen
     assert!(by_type.contains(&selective_id), "the type dimension must admit the declaring registration");
     assert!(!by_type.contains(&other_id), "a registration declaring another type is not a candidate");
 
-    // The pattern axis is compared as text rather than evaluated: discovery asks
-    // which registrations advertise a pattern, not which patterns match.
+    // Clause 5.12 fifth bullet: a queried pattern admits a registered pattern
+    // without evaluating either, so only the type decides here.
     let by_pattern = discovered(&scope, &format!("type=Device&idPattern={}", urlencoding::encode("urn:ngsi-ld:Device:.*"))).await;
     assert!(
         !by_pattern.contains(&other_id),
@@ -302,7 +290,7 @@ async fn a_query_on_each_dimension_returns_exactly_the_registrations_the_documen
 }
 
 #[tokio::test]
-async fn updating_and_deleting_a_registration_moves_its_payload_and_its_routing_rows_together() {
+async fn updating_and_deleting_a_registration_moves_its_information_rows_with_it() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let client = scope.client();
     let registration_id = scope.id("ContextSourceRegistration:routing-mutation");
@@ -321,18 +309,18 @@ async fn updating_and_deleting_a_registration_moves_its_payload_and_its_routing_
         .expect("update registration request failed");
     assert_eq!(updated.status, StatusCode::NO_CONTENT, "update registration: {:?}", updated.body);
 
-    let rows = routing_rows(scope.database_pool(), &registration_id).await;
-    assert_eq!(rows.len(), 1, "the rewritten projection is a set, not an accumulation: {rows:?}");
+    let rows = information_rows(scope.database_pool(), &registration_id).await;
+    assert_eq!(rows.len(), 1, "the rewritten rows replace the old ones: {rows:?}");
     assert_eq!(
         rows[0]["entity_types"],
         json!(["https://uri.etsi.org/ngsi-ld/default-context/Vehicle"]),
-        "the rows follow the payload they were derived from: {rows:?}"
+        "the rows follow the information written: {rows:?}"
     );
-    assert_eq!(rows[0]["entity_id"], json!(""), "the replaced item declares no identifier: {rows:?}");
+    assert_eq!(rows[0]["entity_id"], Value::Null, "the replaced item declares no identifier: {rows:?}");
     assert_eq!(
         rows[0]["relationship_name_keys"],
-        json!(0),
-        "a name declared on one axis leaves the other empty, not wildcarded: {rows:?}"
+        Value::Null,
+        "a name declared on one axis leaves the other absent: {rows:?}"
     );
 
     let retrieved = client
@@ -343,13 +331,16 @@ async fn updating_and_deleting_a_registration_moves_its_payload_and_its_routing_
     let body = retrieved.json_value().expect("a registration answers with JSON");
     assert_eq!(
         body["information"][0]["entities"][0]["type"], "Vehicle",
-        "the document is the authority for the response: {body}"
+        "the response is assembled from the rows: {body}"
     );
 
     let deleted = client.delete_registration(&registration_id).await.expect("delete registration request failed");
     assert_eq!(deleted.status, StatusCode::NO_CONTENT, "delete registration: {:?}", deleted.body);
-    let after_delete = routing_rows(scope.database_pool(), &registration_id).await;
-    assert!(after_delete.is_empty(), "deleting the registration removes its routing rows: {after_delete:?}");
+    let after_delete = information_rows(scope.database_pool(), &registration_id).await;
+    assert!(
+        after_delete.is_empty(),
+        "deleting the registration removes its information rows: {after_delete:?}"
+    );
 
     scope.finish().await.expect("cleanup failed");
 }

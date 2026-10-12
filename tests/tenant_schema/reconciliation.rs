@@ -76,13 +76,13 @@ const INVARIANTS: &[Invariant] = &[
         count: "SELECT COUNT(*) FROM current_attributes ca WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.attribute_name_key =ca.attribute_name_key)",
     },
     Invariant {
-        description: "routing projection rows naming a dictionary key that does not exist (the wildcard sentinel 0 names none)",
+        description: "registration information rows naming a dictionary key that does not exist",
         count: "SELECT COUNT(*) FROM registration_information ri \
                 CROSS JOIN LATERAL unnest(ri.property_name_keys || ri.relationship_name_keys) AS declared(key) \
-                WHERE declared.key <> 0 AND NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.attribute_name_key =declared.key)",
+                WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.attribute_name_key =declared.key)",
     },
     Invariant {
-        description: "registrations without a routing row (an unconstrained registration has its wildcard row)",
+        description: "registrations without an information row (an information is never empty)",
         count: "SELECT COUNT(*) FROM context_source_registrations csr WHERE NOT EXISTS (SELECT 1 FROM registration_information ri WHERE ri.registration_id = csr.id)",
     },
     Invariant {
@@ -161,7 +161,7 @@ fn reconciled_entity(id: &str) -> Value {
     })
 }
 
-/// A registration whose selectors project routing rows naming dictionary keys.
+/// A registration whose information rows name dictionary keys.
 fn reconciled_registration(id: &str) -> Value {
     json!({
         "id": id,

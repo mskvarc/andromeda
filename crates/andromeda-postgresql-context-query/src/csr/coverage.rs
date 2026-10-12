@@ -2,80 +2,75 @@
 //!
 //! The forwarding decision asks the inverse of discovery: not "which
 //! registrations did a client ask for" but "which registrations declared they
-//! hold a given entity". A registration's `information[].entities[]` may
-//! constrain the identifier by `id` or `idPattern` and the kind by `type`, and
-//! an entry that constrains an axis not at all covers every value of it — so a
-//! registration with no `entities`, or an empty list, covers everything.
+//! hold a given entity". An `EntityInfo` constrains the identifier by `id` or
+//! `idPattern` and the kind by `type`, an entry that constrains an axis not at
+//! all covers every value of it, and an item without `entities` covers every
+//! entity. The attribute names an item declares hold for each of its entries.
 //!
-//! The `type` predicate is shared with the clause-5.9 discovery query, which
-//! asks the same "does any entry declare this type" question, so the two cannot
-//! drift on what a type registration means.
-//!
-//! Each predicate is a conjunction of two tests that decide the same question at
-//! different costs. The indexed preselect over the routing projection runs
-//! first over one row per information item per entity selector and discards
-//! registrations no unnesting could have matched; the
-//! `information` unnesting that follows stays the authority on what the
-//! registration actually covers. Because the preselect is a superset of the
-//! unnesting (see [`crate::csr::projection`]), conjoining it leaves the result
-//! set unchanged and only spares the unnesting the rows it would have rejected.
+//! One `registration_information` row is one `EntityInfo` with its item's
+//! names, so the axes asked about are decided together on one row. The result
+//! is a superset the caller decides with the typed registration, which matches
+//! per item and per `EntityInfo` as well.
 
 use crate::csr::{
-    entity_specification::entity_type_admits,
-    projection::{entity_id_candidate, entity_type_candidate},
-    unnesting::{ent, entities_of_item, information_covers, lacks_key, registered_pattern_form},
+    information_row::{ri_col, some_information_row},
+    preselect::{attribute_name_candidate, entity_id_candidate, entity_type_candidate},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_postgresql_seaquery::{jsonb::jsonb_exists, literal::text_literal, operator::regex_match, pg_operator::PgBinaryOperator};
+use andromeda_postgresql_schema::csr::RegistrationInformation;
+use andromeda_postgresql_seaquery::operator::regex_match;
 use iri_rs::IriBuf;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 use std::slice;
 
-/// Whether a registration's `information[].entities[]` covers `entity_type`.
-///
-/// A registration whose `information` entry declares no `entities`, or an empty
-/// list, places no type constraint and covers every type; otherwise at least
-/// one entry must declare the type, alone or among several (Table 5.2.8-1).
-/// The type is the expanded entity-type IRI the query was compiled against.
-///
-/// The projection preselect narrows the candidates the unnesting has to read;
-/// the unnesting decides coverage.
-#[must_use]
-pub fn entity_type_coverage(entity_type: &IriBuf) -> SimpleExpr {
-    let mut entities_match = entities_of_item();
-    entities_match.and_where(entity_type_admits(entity_type));
-    entity_type_candidate(slice::from_ref(entity_type)).and(information_covers(entities_match))
+/// What an entity a forwarded request concerns asks of a registration's
+/// `information`.
+#[derive(Debug, Clone, Copy)]
+pub struct Coverage<'request> {
+    /// The expanded entity type, if the request resolves one.
+    pub entity_type: Option<&'request IriBuf>,
+    /// The entity identifier, if the request names one.
+    pub entity_id: Option<&'request Identifier>,
+    /// The expanded attribute names; empty when none are asked about.
+    pub attributes: &'request [IriBuf],
 }
 
-/// Whether a registration's `information[].entities[]` covers `entity_id`.
+impl Coverage<'_> {
+    /// Whether some `registration_information` row of the registration covers
+    /// every axis asked about, or `None` when nothing is asked.
+    #[must_use]
+    pub fn predicate(&self) -> Option<SimpleExpr> {
+        let axes = [
+            self.entity_type.map(|entity_type| entity_type_candidate(slice::from_ref(entity_type))),
+            self.entity_id.map(identifier_covered),
+            (!self.attributes.is_empty()).then(|| attribute_name_candidate(self.attributes)),
+        ];
+        let row = axes.into_iter().flatten().fold(Condition::all(), Condition::add);
+        (!row.is_empty()).then(|| some_information_row(row))
+    }
+}
+
+/// Whether the row covers `entity_id`: it constrains the identifier by neither
+/// `id` nor `idPattern`, its `id` equals the entity's, or its `idPattern`
+/// matches it.
 ///
-/// Clause 5.10.2: an `EntityInfo` entry covers a concrete id when it constrains
-/// the identifier axis by neither `id` nor `idPattern` (a type-only entry covers
-/// any id), when its `id` equals the entity's, or when its `idPattern` regular
-/// expression matches it. An `idPattern`-only entry therefore covers only the
-/// ids its pattern admits, not every id — the trap a bare `NOT jsonb_exists(ent,
-/// 'id')` disjunct falls into, since an entry that carries an `idPattern` but no
-/// `id` would otherwise match every entity. The pattern is evaluated as its
-/// stored restatement ([`registered_pattern_form`]), so `(?i)` folds as the
-/// in-memory engine folds it.
-///
-/// The projection preselect that runs first admits every pattern row without
-/// looking at the pattern, so the regular expression is evaluated exactly once,
-/// here, where the coverage decision is made.
-#[must_use]
-pub fn entity_id_coverage(entity_id: &Identifier) -> SimpleExpr {
-    let mut entities_match = entities_of_item();
-    entities_match.cond_where(
-        Condition::any()
-            .add(Condition::all().add(lacks_key(ent(), "id")).add(lacks_key(ent(), "idPattern")))
-            .add(SeaExpr::expr(ent().json_get_text(text_literal("id"))).eq(entity_id.as_str()))
-            .add(
-                Condition::all()
-                    .add(jsonb_exists(ent(), text_literal("idPattern")))
-                    .add(regex_match(SeaExpr::val(entity_id.as_str()), registered_pattern_form())),
-            ),
-    );
-    entity_id_candidate(slice::from_ref(entity_id)).and(information_covers(entities_match))
+/// A pattern-only row covers only the identifiers its pattern admits, so a row
+/// without an `id` is not on its own a cover. The pattern is evaluated as its
+/// stored restatement, so `(?i)` folds as the in-memory engine folds it, and
+/// only on rows the indexed identifier test admits.
+fn identifier_covered(entity_id: &Identifier) -> SimpleExpr {
+    let covered = Condition::any()
+        .add(
+            Condition::all()
+                .add(ri_col(RegistrationInformation::EntityId).is_null())
+                .add(ri_col(RegistrationInformation::EntityIdPatternForm).is_null()),
+        )
+        .add(ri_col(RegistrationInformation::EntityId).eq(entity_id.as_str()))
+        .add(regex_match(
+            SeaExpr::val(entity_id.as_str()),
+            ri_col(RegistrationInformation::EntityIdPatternForm),
+        ));
+    entity_id_candidate(slice::from_ref(entity_id)).and(SimpleExpr::from(covered))
 }
 
 #[cfg(test)]
@@ -91,60 +86,84 @@ mod tests {
         value.parse().expect("valid URI")
     }
 
-    fn render(predicate: SimpleExpr) -> String {
+    fn render(coverage: &Coverage<'_>) -> String {
         Query::select()
             .expr(SeaExpr::cust("1"))
             .from(sea_query::Alias::new("context_source_registrations"))
-            .and_where(predicate)
+            .and_where(coverage.predicate().expect("something is asked"))
             .to_string(PostgresQueryBuilder)
     }
 
     #[test]
-    fn type_coverage_matches_a_type_only_registration_and_a_declared_type() {
-        // A registration with no `entities` (the first two disjuncts) covers any
-        // type, and one that declares entities covers a type it names.
-        let sql = render(entity_type_coverage(&iri("https://example.com/Vehicle")));
-        assert!(sql.contains("jsonb_exists("), "the no-entities disjunct tests key presence: {sql}");
-        assert!(sql.contains("'entities'"), "{sql}");
+    fn type_coverage_admits_a_row_without_entities_and_a_row_declaring_the_type() {
+        let vehicle = iri("https://example.com/Vehicle");
+        let sql = render(&Coverage {
+            entity_type: Some(&vehicle),
+            entity_id: None,
+            attributes: &[],
+        });
         assert!(
-            sql.contains("jsonb_exists(\"ent\".\"value\" -> ('type'), 'https://example.com/Vehicle')"),
+            sql.contains("COALESCE(\"ri\".\"entity_types\", '{*}') && ARRAY ['https://example.com/Vehicle','*']"),
             "{sql}"
         );
     }
 
     #[test]
-    fn id_coverage_admits_exact_id_type_only_and_idpattern_but_not_a_bare_pattern_wildcard() {
-        // Clause 5.10.2: a type-only entry covers any id, an `id` covers itself,
-        // an `idPattern` covers only the ids it matches. The regex disjunct is
-        // what stops an idPattern-only entry from covering every id.
-        let sql = render(entity_id_coverage(&uri("urn:ngsi-ld:Vehicle:1")));
-        assert!(sql.contains("'id'"), "{sql}");
-        assert!(sql.contains("'idPattern'"), "{sql}");
-        assert!(sql.contains("'urn:ngsi-ld:Vehicle:1'"), "the exact-id disjunct binds the identifier: {sql}");
-        assert!(sql.contains(" ~ "), "the idPattern regex disjunct must be present: {sql}");
+    fn id_coverage_admits_an_exact_id_an_unconstrained_row_and_a_matching_pattern_only() {
+        let id = uri("urn:ngsi-ld:Vehicle:1");
+        let sql = render(&Coverage {
+            entity_type: None,
+            entity_id: Some(&id),
+            attributes: &[],
+        });
+        assert!(
+            sql.contains("\"ri\".\"entity_id\" IS NULL AND \"ri\".\"entity_id_pattern_form\" IS NULL"),
+            "{sql}"
+        );
+        assert!(sql.contains("\"ri\".\"entity_id\" = 'urn:ngsi-ld:Vehicle:1'"), "{sql}");
+        assert!(sql.contains("COALESCE(\"ri\".\"entity_id\", '') IN ('urn:ngsi-ld:Vehicle:1', '')"), "{sql}");
     }
 
-    /// The registered pattern is evaluated as its stored restatement, looked up
-    /// by the entry's own `idPattern` text, never as the text itself.
+    /// The registered pattern is evaluated as its stored restatement, never as
+    /// the text the client wrote.
     #[test]
     fn id_coverage_evaluates_the_stored_restatement_of_the_registered_pattern() {
-        let sql = render(entity_id_coverage(&uri("urn:ngsi-ld:Vehicle:1")));
-        assert!(
-            sql.contains(r#"'urn:ngsi-ld:Vehicle:1' ~ ("context_source_registrations"."entity_id_pattern_forms" ->> ("ent"."value" ->> ('idPattern')))"#),
-            "{sql}"
-        );
+        let id = uri("urn:ngsi-ld:Vehicle:1");
+        let sql = render(&Coverage {
+            entity_type: None,
+            entity_id: Some(&id),
+            attributes: &[],
+        });
+        assert!(sql.contains("'urn:ngsi-ld:Vehicle:1' ~ \"ri\".\"entity_id_pattern_form\""), "{sql}");
+        assert!(!sql.contains("\"entity_id_pattern\" ~"), "{sql}");
+    }
+
+    /// Clause 5.12: the type, the identifier and the attributes are decided
+    /// against the same `EntityInfo` and its item.
+    #[test]
+    fn every_axis_asked_is_decided_on_one_information_row() {
+        let vehicle = iri("https://example.com/Vehicle");
+        let id = uri("urn:ngsi-ld:Vehicle:1");
+        let attributes = [iri("https://example.com/speed")];
+        let sql = render(&Coverage {
+            entity_type: Some(&vehicle),
+            entity_id: Some(&id),
+            attributes: &attributes,
+        });
+        pretty_assertions::assert_eq!(sql.matches("FROM \"registration_information\"").count(), 1, "{sql}");
+        assert!(sql.contains("\"entity_types\""), "{sql}");
+        assert!(sql.contains("\"entity_id_pattern_form\""), "{sql}");
+        assert!(sql.contains("\"property_name_keys\""), "{sql}");
+        assert!(!sql.contains("jsonb"), "{sql}");
     }
 
     #[test]
-    fn both_coverage_predicates_preselect_against_the_routing_projection() {
-        // The projection semi-join narrows the candidates; the `information`
-        // unnesting that follows it still decides coverage.
-        for sql in [
-            render(entity_type_coverage(&iri("https://example.com/Vehicle"))),
-            render(entity_id_coverage(&uri("urn:ngsi-ld:Vehicle:1"))),
-        ] {
-            assert!(sql.contains("\"registration_information\""), "{sql}");
-            assert!(sql.contains("jsonb_array_elements(\"information\")"), "{sql}");
-        }
+    fn nothing_asked_is_no_predicate() {
+        let coverage = Coverage {
+            entity_type: None,
+            entity_id: None,
+            attributes: &[],
+        };
+        assert!(coverage.predicate().is_none());
     }
 }

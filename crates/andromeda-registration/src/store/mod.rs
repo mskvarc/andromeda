@@ -4,33 +4,32 @@
 //! 5.10.4 defines a registration update as a merge against the stored
 //! registration, and that merge is policy. The store applies a decided row.
 //!
-//! # Routing projection
+//! # Information a backend can preselect against
 //!
-//! Registration `information` (clause 5.2.9) is a nested structure: each entry
-//! carries entity selectors, property names and relationship names. Stored as a
-//! single document it cannot be preselected against, so implementations are
-//! required to maintain a flattened routing projection — one row per selective
-//! capability — alongside the registration payload. The obligation is stated on
-//! every mutating method of [`RegistrationStore`] and is part of the port
-//! contract, not an implementation detail: a backend that persists the payload
-//! without refreshing the projection is incorrect even though every read of a
-//! single registration would still return the right document.
+//! Registration `information` (clause 5.2.9) is a nested structure: each item
+//! carries entity selectors, property names and relationship names. Held as a
+//! single document it cannot be preselected against, so implementations store
+//! it in a form the matching reads answer from directly, and every mutating
+//! method of [`RegistrationStore`] writes, replaces or removes that form with
+//! the rest of the registration. This is part of the port contract, not an
+//! implementation detail.
 //!
 //! Two invariants define the contract.
 //!
-//! Atomicity: the projection is rewritten in the same transaction that writes,
-//! replaces or removes the payload. No intermediate state in which the payload
-//! and the projection disagree may ever be observable by a concurrent reader,
-//! and a failed mutation leaves both untouched.
+//! Atomicity: a registration's `information` is written, replaced or removed
+//! in the same transaction as the rest of the registration. No intermediate
+//! state in which the two disagree may ever be observable by a concurrent
+//! reader, and a failed mutation leaves both untouched.
 //!
-//! Superset preselection: the projection exists only to narrow candidates for
-//! [`RegistrationStore::find_matching`]. The typed residual evaluation over the
-//! returned registrations remains the oracle deciding final membership, so a
-//! projection-driven preselect may return registrations that do not ultimately
-//! match — that costs residual CPU — but must never omit one that does. A
-//! false negative silently drops a context source from distributed operations.
+//! Superset preselection: [`RegistrationStore::find_matching`] and
+//! [`RegistrationStore::find_overlapping`] narrow candidates. The typed
+//! residual evaluation over the returned registrations remains the oracle
+//! deciding final membership, so a preselect may return registrations that do
+//! not ultimately match (that costs residual CPU) but must never omit one that
+//! does. A false negative silently drops a context source from distributed
+//! operations.
 //!
-//! # Where the projection is derived
+//! # Where the stored form is derived
 //!
 //! The port supplies no separate selector-summary type, and deliberately so.
 //! JSON-LD expansion of `information` happens in the service layer before any
@@ -39,11 +38,11 @@
 //! [`RegistrationInfo`](andromeda_ngsi_ld_model::registration::info::RegistrationInfo)
 //! values carried by [`CreateCsrParams`](crate::store::CreateCsrParams) and
 //! [`ResolvedCsrUpdate`](crate::resolved_update::ResolvedCsrUpdate). Those
-//! values are the complete and authoritative input to the projection; deriving
-//! a second domain-side summary type would duplicate them and would force the
-//! domain to know how a particular backend interns names or encodes operations.
-//! Implementations therefore derive projection rows store-side from the typed
-//! `information` they are handed, and own the encoding of that derivation.
+//! values are the complete and authoritative input; deriving a second
+//! domain-side summary type would duplicate them and would force the domain to
+//! know how a particular backend interns names or encodes operations.
+//! Implementations therefore derive their stored form store-side from the
+//! typed `information` they are handed, and own its encoding.
 
 pub mod create_params;
 pub mod expired_deletion;
@@ -85,10 +84,9 @@ use iri_rs::IriBuf;
 pub trait RegistrationStore: Send + Sync + 'static {
     /// Delete registrations due at or before an explicit cutoff and return their pre-deletion values.
     ///
-    /// Removes the routing projection rows of every deleted registration in the
-    /// same transaction as the deletion: an expired registration that lingers in
-    /// the projection keeps being preselected for distributed operations. The
-    /// sweep draws one change revision for every deletion it commits.
+    /// Removes the stored `information` of every deleted registration in the
+    /// same transaction as the deletion. The sweep draws one change revision
+    /// for every deletion it commits.
     fn delete_expired<'life0, 'async_trait>(&'life0 self, cutoff: DateTime<Utc>) -> BoxFuture<'async_trait, Result<ExpiredDeletion, RegistrationError>>
     where
         'life0: 'async_trait,
@@ -114,9 +112,9 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// Persist a new registration, returning it as written, read in the same
     /// transaction, with the change revision the write drew.
     ///
-    /// Writes the routing projection derived from `params.information` in the
-    /// same transaction as the payload, so the registration never becomes
-    /// visible without the rows that make it discoverable.
+    /// Writes `params.information` in the same transaction as the rest of the
+    /// registration, so the registration never becomes visible without what
+    /// makes it discoverable.
     fn create<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         id: &'life1 Identifier,
@@ -156,10 +154,10 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// as written, read in the same transaction, with the change revision the
     /// write drew.
     ///
-    /// Rebuilds the routing projection from `values.information` in the same
-    /// transaction as the payload replacement. Because `values` is a resolved
-    /// value set rather than a fragment, the projection is replaced wholesale
-    /// rather than patched: rows for capabilities the update dropped must not
+    /// Replaces the stored `information` with `values.information` in the same
+    /// transaction as the rest of the registration. Because `values` is a
+    /// resolved value set rather than a fragment, the `information` is replaced
+    /// wholesale rather than patched: capabilities the update dropped must not
     /// survive it.
     fn update<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
@@ -196,7 +194,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// no attribute at all (clauses 4.3.6.3, 5.9.2.4, 5.9.3.4).
     ///
     /// Like [`RegistrationStore::find_matching`] this is a preselect over the
-    /// routing projection and returns a superset: the typed overlap evaluation
+    /// stored `information` and returns a superset: the typed overlap evaluation
     /// in registration policy decides whether a returned registration actually
     /// collides. A `None` identifier places no entity constraint.
     fn find_overlapping<'life0, 'life1, 'life2, 'async_trait>(
@@ -226,8 +224,8 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// Delete a registration by identifier, returning the change revision the
     /// deletion drew.
     ///
-    /// Removes that registration's routing projection rows in the same
-    /// transaction as the payload.
+    /// Removes that registration's stored `information` in the same
+    /// transaction as the rest of the registration.
     fn delete<'life0, 'life1, 'async_trait>(
         &'life0 self,
         id: &'life1 Identifier,

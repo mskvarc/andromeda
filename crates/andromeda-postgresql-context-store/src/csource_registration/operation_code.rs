@@ -1,5 +1,4 @@
-//! The number a registration's `operations` column, and the routing projection
-//! replicated from it, store an operation as.
+//! The number a registration's `operations` column stores an operation as.
 //!
 //! The domain vocabulary of clause 4.20 and the migration-owned registry that
 //! numbers it are member-for-member identical, and the translation between them
@@ -17,8 +16,7 @@
 use andromeda_ngsi_ld_model::registration::operation::CsrOperation;
 use andromeda_postgresql_codes::csr_operation::CsrOperationCode;
 
-/// The registry member a registration and its routing projection persist for
-/// an operation.
+/// The registry member a registration persists for an operation.
 #[must_use]
 pub const fn stored_operation(operation: CsrOperation) -> CsrOperationCode {
     match operation {

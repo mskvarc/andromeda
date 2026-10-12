@@ -1,14 +1,13 @@
 //! Registration routing plans: discovery stays sublinear in the number of
 //! registrations.
 //!
-//! The routing projection stores an axis a row does not constrain as a
-//! sentinel rather than as `NULL`, and a registration constraining nothing as
-//! one wildcard row, so that each discovery dimension is a single overlap or
-//! membership test the projection's own index answers. This is what makes
-//! discovery sublinear in the number of registrations: the semi-join is driven
-//! from the projection's index to the few registrations declaring the requested
-//! value (or declaring everything), instead of probing the projection once per
-//! registration to test for the absence of rows.
+//! `registration_information` stores an absent axis as `NULL`, and its
+//! indexes spell it as a sentinel (`coalesce(entity_types, '{*}')` on the type
+//! axis), so each discovery axis is a single overlap or membership test over
+//! the indexed expression. This is what makes discovery sublinear in the
+//! number of registrations: the semi-join is driven from the index to the few
+//! registrations declaring the requested value (or declaring everything),
+//! instead of probing the rows once per registration.
 
 use crate::seeded_corpus::{SEED_PREFIX, explain};
 use andromeda_postgresql_codes::csr_mode::CsrModeCode;
@@ -27,26 +26,24 @@ const COMMON_TYPE: &str = "https://example.test/Common";
 const RARE_TYPE: &str = "https://example.test/Rare";
 
 /// Seed `COMMON_REGISTRATIONS` type-only registrations declaring the common
-/// type, one declaring the rare type, and one constraining nothing, each with
-/// the routing rows the broker would derive.
+/// type, one declaring the rare type, and one whose only item names an
+/// attribute and no entities, each with the information rows the broker would
+/// write.
 async fn seed_registrations(pool: &PgPool, prefix: &str) {
     sqlx::query(
-        "INSERT INTO context_source_registrations (id, information, endpoint, mode) \
-         SELECT $1 || ':ContextSourceRegistration:common-' || n, \
-                jsonb_build_array(jsonb_build_object('entities', jsonb_build_array(jsonb_build_object('type', $2::text)))), \
-                'http://localhost:9/csource', $4 \
-         FROM generate_series(1, $3) AS n",
+        "INSERT INTO context_source_registrations (id, endpoint, mode, is_management_declared) \
+         SELECT $1 || ':ContextSourceRegistration:common-' || n, 'http://localhost:9/csource', $3, false \
+         FROM generate_series(1, $2) AS n",
     )
     .bind(prefix)
-    .bind(COMMON_TYPE)
     .bind(COMMON_REGISTRATIONS)
     .bind(CsrModeCode::Inclusive.code())
     .execute(pool)
     .await
     .expect("the common registrations must be seeded");
     sqlx::query(
-        "INSERT INTO registration_information (registration_id, entity_types, entity_id, property_name_keys, relationship_name_keys) \
-         SELECT $1 || ':ContextSourceRegistration:common-' || n, ARRAY[$2::text], '', ARRAY[]::integer[], ARRAY[]::integer[] \
+        "INSERT INTO registration_information (registration_id, item_ordinal, selector_ordinal, entity_types, entity_type_shape) \
+         SELECT $1 || ':ContextSourceRegistration:common-' || n, 0, 0, ARRAY[$2::text], 1 \
          FROM generate_series(1, $3) AS n",
     )
     .bind(prefix)
@@ -54,12 +51,12 @@ async fn seed_registrations(pool: &PgPool, prefix: &str) {
     .bind(COMMON_REGISTRATIONS)
     .execute(pool)
     .await
-    .expect("the common routing rows must be seeded");
+    .expect("the common information rows must be seeded");
 
-    for (label, entity_types) in [("rare", vec![RARE_TYPE]), ("wildcard", vec!["*"])] {
+    for (label, entity_types, property_name_keys) in [("rare", Some(vec![RARE_TYPE]), None), ("wildcard", None, Some(vec![1]))] {
         sqlx::query(
-            "INSERT INTO context_source_registrations (id, information, endpoint, mode) \
-             VALUES ($1 || ':ContextSourceRegistration:' || $2, '[]'::jsonb, 'http://localhost:9/csource', $3)",
+            "INSERT INTO context_source_registrations (id, endpoint, mode, is_management_declared) \
+             VALUES ($1 || ':ContextSourceRegistration:' || $2, 'http://localhost:9/csource', $3, false)",
         )
         .bind(prefix)
         .bind(label)
@@ -68,15 +65,16 @@ async fn seed_registrations(pool: &PgPool, prefix: &str) {
         .await
         .expect("the registration must be seeded");
         sqlx::query(
-            "INSERT INTO registration_information (registration_id, entity_types, entity_id, property_name_keys, relationship_name_keys) \
-             VALUES ($1 || ':ContextSourceRegistration:' || $2, $3::text[], '', ARRAY[0], ARRAY[0])",
+            "INSERT INTO registration_information (registration_id, item_ordinal, selector_ordinal, entity_types, entity_type_shape, property_name_keys) \
+             VALUES ($1 || ':ContextSourceRegistration:' || $2, 0, 0, $3::text[], CASE WHEN $3::text[] IS NULL THEN NULL ELSE 1 END, $4::integer[])",
         )
         .bind(prefix)
         .bind(label)
         .bind(&entity_types)
+        .bind(&property_name_keys)
         .execute(pool)
         .await
-        .expect("the routing row must be seeded");
+        .expect("the information row must be seeded");
     }
 
     sqlx::query("ANALYZE context_source_registrations, registration_information")
@@ -86,17 +84,18 @@ async fn seed_registrations(pool: &PgPool, prefix: &str) {
 }
 
 /// The discovery preselect for one type as the broker renders it: one overlap
-/// naming the requested type beside the wildcard sentinel.
+/// of the indexed expression with the requested type beside the wildcard
+/// sentinel.
 fn type_preselect(entity_type: &str) -> String {
     format!(
         "SELECT csr.id FROM context_source_registrations AS csr \
          WHERE EXISTS (SELECT 1 FROM registration_information AS ri \
-                       WHERE ri.registration_id = csr.id AND ri.entity_types && ARRAY['{entity_type}', '*'])"
+                       WHERE ri.registration_id = csr.id AND coalesce(ri.entity_types, '{{*}}') && ARRAY['{entity_type}', '*'])"
     )
 }
 
 #[tokio::test]
-async fn a_selective_type_preselect_is_driven_from_the_projection_index_not_a_registration_scan() {
+async fn a_selective_type_preselect_is_driven_from_the_type_index_not_a_registration_scan() {
     let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
     let pool = scope.database_pool();
     seed_registrations(pool, SEED_PREFIX).await;
@@ -104,11 +103,11 @@ async fn a_selective_type_preselect_is_driven_from_the_projection_index_not_a_re
     let plan = explain(pool, &type_preselect(RARE_TYPE)).await;
     assert!(
         plan.contains("Bitmap Index Scan on idx_registration_information_entity_types"),
-        "the type overlap must be answered by the projection's GIN index: {plan}"
+        "the type overlap must be answered by the expression's GIN index: {plan}"
     );
     assert!(
         !plan.contains("Seq Scan on registration_information"),
-        "the projection must not be scanned once per registration: {plan}"
+        "the information rows must not be scanned once per registration: {plan}"
     );
 
     let prefix = SEED_PREFIX;

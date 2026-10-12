@@ -264,7 +264,7 @@ pub(super) async fn initialize_storage(
         deletion_outline: Arc::clone(&entity_repository) as Arc<dyn DeletionOutlineReader>, // clone: every focused port shares one repository and pool.
         entity_types: entity_repository as Arc<dyn EntityTypeReader>,
     };
-    // clone: the routing projection interns registered attribute names through the tenant's one dictionary.
+    // clone: the registration information rows intern registered attribute names through the tenant's one dictionary.
     let registration_repository = Arc::new(PostgresRegistrationStore::new(&pool, Arc::clone(&attribute_names)));
     // clone: the registration store and the clause 5.7.11 registry view share one repository and pool.
     let registry_type_source = Arc::clone(&registration_repository) as Arc<dyn RegistryTypeSource>;

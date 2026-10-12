@@ -12,9 +12,9 @@ use thiserror::Error;
 /// one member to be present, so a wire document violating either is rejected at
 /// deserialisation rather than stored as a block that covers nothing.
 ///
-/// An `idPattern` is also held to the identifier bound: the routing projection
-/// keys a B-tree index on it, which refuses an entry that long, and clause
-/// 5.2.8 sets no length of its own.
+/// An `idPattern` is also held to the identifier bound: the store keys a
+/// B-tree index on it, which refuses an entry that long, and clause 5.2.8 sets
+/// no length of its own.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", try_from = "RegistrationInfoWire")]
 pub struct RegistrationInfo {

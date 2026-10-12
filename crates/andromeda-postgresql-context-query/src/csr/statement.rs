@@ -1,24 +1,17 @@
 //! SQL generation for Context Source Registration discovery (clause 5.10.2).
 
 use crate::csr::{
-    attribute_specification::attribute_names_declared,
     dataset_rule::dataset_rule,
     encountered_sources::not_encountered,
     entity_specification::EntitySpecification,
     expiry_predicate::not_expired,
     filter::csr_expr_to_condition,
-    projection::{attribute_name_candidate, entity_id_candidate, entity_type_candidate},
+    information_row::some_information_row,
+    preselect::attribute_name_candidate,
     registration_select::registration_select,
     temporal_partition::temporal_partition,
-    unnesting::{entity_axis_covers, information_item_matches},
 };
-use andromeda_ngsi_ld_query::{
-    csr::compiled::CompiledCsrQuery,
-    geo::query::GeoQuery,
-    page_window::PageWindow,
-    read_order::ReadOrder,
-    type_selection::grammar::TypeExpr,
-};
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, geo::query::GeoQuery, page_window::PageWindow, read_order::ReadOrder};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBSERVATION_SPACE, OPERATION_SPACE};
 use andromeda_postgresql_query::{
     dictionary::resolved_names::ResolvedNames,
@@ -95,31 +88,19 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
     let mut condition = Condition::all().add(not_expired());
 
     // Clause 5.12: the entity specification and the attribute names must match
-    // the same `RegistrationInfo`. The projection preselects narrow the
-    // candidates per dimension; the `information` unnesting decides.
+    // the same `RegistrationInfo`, and the type and identifier the same
+    // `EntityInfo`: one `registration_information` row decides every axis.
     let entities = EntitySpecification {
         entity_type: query.entity_type.as_ref(),
         ids: &query.ids,
         id_pattern: query.id_pattern.as_ref(),
     };
-    if let Some(selection) = query.entity_type.as_ref().filter(|selection| !matches!(selection, TypeExpr::Wildcard)) {
-        condition = condition.add(entity_type_candidate(&selection.named_types()));
-    }
-    if !query.ids.is_empty() {
-        condition = condition.add(entity_id_candidate(&query.ids));
-    }
-    if !query.attrs.is_empty() {
-        condition = condition.add(attribute_name_candidate(&query.attrs));
-    }
-    if entities.constrains() || !query.attrs.is_empty() {
-        let mut item = Condition::all();
-        if entities.constrains() {
-            item = item.add(entity_axis_covers(entities.matching_entities()));
-        }
-        if !query.attrs.is_empty() {
-            item = item.add(attribute_names_declared(&query.attrs));
-        }
-        condition = condition.add(information_item_matches(item));
+    let axes = [
+        entities.row_matches(),
+        (!query.attrs.is_empty()).then(|| Condition::all().add(attribute_name_candidate(&query.attrs))),
+    ];
+    if let Some(row) = axes.into_iter().flatten().reduce(Condition::add) {
+        condition = condition.add(some_information_row(row));
     }
 
     // Clause 4.9: the context source filter reads the registration's own
@@ -192,6 +173,7 @@ mod tests {
         pattern::Pattern,
         scope::query::ScopeQuery,
         temporal::window::TimeInterval,
+        type_selection::grammar::TypeExpr,
     };
     use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
@@ -360,7 +342,9 @@ mod tests {
         q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
         let built = build(&q);
         assert!(
-            built.sql.contains("jsonb_exists(\"ent\".\"value\" -> ('type'), 'https://example.com/Vehicle')"),
+            built
+                .sql
+                .contains("COALESCE(\"ri\".\"entity_types\", '{*}') && ARRAY ['https://example.com/Vehicle','*']"),
             "{}",
             built.sql
         );
@@ -373,12 +357,12 @@ mod tests {
         let mut q = empty_query();
         q.ids = ids(&["urn:a", "urn:b"]);
         let built = build(&q);
-        assert!(built.sql.contains("\"ri\".\"entity_id\" IN ('urn:a', 'urn:b', '')"), "{}", built.sql);
         assert!(
-            built.sql.contains("(\"ent\".\"value\" ->> ('id')) = ANY(ARRAY ['urn:a','urn:b'])"),
+            built.sql.contains("COALESCE(\"ri\".\"entity_id\", '') IN ('urn:a', 'urn:b', '')"),
             "{}",
             built.sql
         );
+        assert!(built.sql.contains("\"ri\".\"entity_id\" = ANY(ARRAY ['urn:a','urn:b'])"), "{}", built.sql);
         assert!(!built.sql.contains("\"id\" = ANY("), "the registration id is not an entity id: {}", built.sql);
     }
 
@@ -387,13 +371,16 @@ mod tests {
         let mut q = empty_query();
         q.id_pattern = Some(Pattern::parse("urn:ngsi-ld:.*").unwrap());
         let built = build(&q);
-        assert!(built.sql.contains("(\"ent\".\"value\" ->> ('id')) ~ 'urn:ngsi-ld:.*'"), "{}", built.sql);
-        assert!(built.sql.contains("'idPattern'"), "{}", built.sql);
-        assert!(!built.sql.contains("\"ri\".\"entity_id_pattern\" = "), "{}", built.sql);
+        assert!(
+            built.sql.contains("\"ri\".\"entity_id\" IS NULL OR (\"ri\".\"entity_id\" ~ 'urn:ngsi-ld:.*')"),
+            "{}",
+            built.sql
+        );
+        assert!(!built.sql.contains("\"entity_id_pattern\" ="), "{}", built.sql);
     }
 
     /// Clause 5.12: an `EntityInfo` with neither `id` nor `idPattern` matches
-    /// every identifier; the first disjunct of the identifier axis admits it.
+    /// every identifier, and so does a row of an item without `entities`.
     #[test]
     fn an_entity_info_without_identifier_constraint_is_admitted_for_any_queried_id() {
         let mut q = empty_query();
@@ -402,7 +389,7 @@ mod tests {
         assert!(
             built
                 .sql
-                .contains("(NOT jsonb_exists(\"ent\".\"value\", 'id')) AND (NOT jsonb_exists(\"ent\".\"value\", 'idPattern'))"),
+                .contains("\"ri\".\"entity_id\" IS NULL AND (\"ri\".\"entity_id_pattern_form\" IS NULL OR"),
             "{}",
             built.sql
         );
@@ -413,8 +400,8 @@ mod tests {
         let mut q = empty_query();
         q.attrs = vec![iri("https://example.com/speed"), iri("https://example.com/temp")];
         let built = build(&q);
-        assert!(built.sql.contains("propertyNames"));
-        assert!(built.sql.contains("relationshipNames"));
+        assert!(built.sql.contains("\"property_name_keys\""), "{}", built.sql);
+        assert!(built.sql.contains("\"relationship_name_keys\""), "{}", built.sql);
     }
 
     /// Clause 5.12: an information item naming no property and no relationship
@@ -427,47 +414,99 @@ mod tests {
         assert!(
             built
                 .sql
-                .contains("(NOT jsonb_exists(\"info\".\"value\", 'propertyNames')) AND (NOT jsonb_exists(\"info\".\"value\", 'relationshipNames'))"),
+                .contains("CASE WHEN (\"ri\".\"property_name_keys\" IS NULL AND \"ri\".\"relationship_name_keys\" IS NULL) THEN '{0}'"),
             "{}",
             built.sql
         );
     }
 
     /// Clause 5.12: the entity axis and the attribute axis must hold for the
-    /// same `RegistrationInfo`, so both are conjoined inside one unnesting.
+    /// same `RegistrationInfo`, and the type and the identifier for the same
+    /// `EntityInfo`; one row carries both, so one `EXISTS` decides them.
     #[test]
-    fn entity_and_attribute_axes_are_decided_on_the_same_information_item() {
+    fn entity_and_attribute_axes_are_decided_on_the_same_information_row() {
         let mut q = empty_query();
         q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
+        q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
         q.attrs = vec![iri("https://example.com/speed")];
         let built = build(&q);
-        assert_eq!(built.sql.matches("jsonb_array_elements(\"information\")").count(), 1, "{}", built.sql);
+        assert_eq!(built.sql.matches("FROM \"registration_information\"").count(), 1, "{}", built.sql);
+        let row_scan = &built.sql[built.sql.find("FROM \"registration_information\"").expect("one row scan")..];
+        let where_clause = &row_scan[row_scan.find(" WHERE ").expect("the scan has a WHERE")..];
+        for predicate in [
+            "\"ri\".\"registration_id\" = \"context_source_registrations\".\"id\"",
+            "\"ri\".\"entity_types\"",
+            "\"ri\".\"entity_id\" = ANY(",
+            "\"ri\".\"property_name_keys\"",
+            "\"ri\".\"relationship_name_keys\"",
+        ] {
+            assert!(where_clause.contains(predicate), "{predicate}: {}", built.sql);
+        }
     }
 
     #[test]
-    fn the_selective_filters_preselect_against_the_routing_projection() {
-        // Type, identifiers and attribute names each gain an indexed semi-join
-        // over the projection; the `information` unnesting they are conjoined
-        // with still decides membership, so the preselect only has to be a
-        // superset of it.
+    fn no_registration_statement_walks_json() {
+        let mut q = empty_query();
+        q.entity_type = Some(TypeExpr::And(vec![
+            TypeExpr::Type(iri("https://example.com/Vehicle")),
+            TypeExpr::Type(iri("https://example.com/Boat")),
+        ]));
+        q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
+        q.attrs = vec![iri("https://example.com/speed")];
+        q.geo = Some(geo_query("https://uri.etsi.org/ngsi-ld/location"));
+        q.scope_q = Some(ScopeQuery::parse("/Madrid/#").unwrap());
+        q.dataset_id = vec![DatasetSelector::Default];
+        q.temporal = Some(
+            CompiledCsrTemporalFilter::builder()
+                .interval(TimeInterval::Before(dt("2024-01-01T00:00:00Z")))
+                .timeproperty(None)
+                .build(),
+        );
+        let mut pattern_query = empty_query();
+        pattern_query.id_pattern = Some(Pattern::parse("urn:ngsi-ld:.*").unwrap());
+        for built in [build(&q), build(&pattern_query)] {
+            for statement in [&built.sql, &built.count_sql] {
+                for json_walk in [
+                    "jsonb_array_elements",
+                    "->",
+                    "jsonb_exists",
+                    "\"information\"",
+                    "\"observation_interval\"",
+                    "\"management_interval\"",
+                ] {
+                    assert!(!statement.contains(json_walk), "{json_walk}: {statement}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_selective_axis_carries_its_indexed_test() {
         let mut q = empty_query();
         q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
         q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
         q.attrs = vec![iri("https://example.com/speed")];
         let built = build(&q);
         assert!(
-            built.sql.contains("\"ri\".\"entity_types\" && ARRAY ['https://example.com/Vehicle','*']"),
+            built
+                .sql
+                .contains("COALESCE(\"ri\".\"entity_types\", '{*}') && ARRAY ['https://example.com/Vehicle','*']"),
             "{}",
             built.sql
         );
-        assert!(built.sql.contains("\"ri\".\"entity_id\" IN ('urn:ngsi-ld:Vehicle:1', '')"), "{}", built.sql);
-        assert!(built.sql.contains("\"ri\".\"property_name_keys\" && array_append("), "{}", built.sql);
+        assert!(
+            built
+                .sql
+                .contains("COALESCE(\"ri\".\"entity_id\", '') IN ('urn:ngsi-ld:Vehicle:1', '') OR \"ri\".\"entity_id_pattern\" IS NOT NULL"),
+            "{}",
+            built.sql
+        );
+        assert!(built.sql.contains("END) && array_append("), "{}", built.sql);
         assert!(!built.sql.contains("NOT EXISTS"), "{}", built.sql);
-        assert!(built.sql.contains("jsonb_array_elements(\"information\")"), "{}", built.sql);
     }
 
     #[test]
-    fn a_query_without_selective_filters_reads_no_projection() {
+    fn a_query_without_selective_filters_reads_no_information_rows() {
         // Nothing to narrow: an unfiltered discovery must not pay for a
         // semi-join that would admit every registration anyway.
         let built = build(&empty_query());
@@ -518,7 +557,9 @@ mod tests {
     fn no_temporal_query_admits_only_latest_information_registrations() {
         let built = build(&empty_query());
         assert!(
-            built.sql.contains("\"observation_interval\" IS NULL AND \"management_interval\" IS NULL"),
+            built
+                .sql
+                .contains("\"observation_interval_start\" IS NULL AND \"management_interval_start\" IS NULL"),
             "{}",
             built.sql
         );
@@ -534,9 +575,9 @@ mod tests {
                 .build(),
         );
         let built = build(&q);
-        assert!(built.sql.contains("\"observation_interval\" IS NOT NULL"), "{}", built.sql);
-        assert!(built.sql.contains("startAt"));
-        assert!(!built.sql.contains("management_interval\" IS NULL"), "{}", built.sql);
+        assert!(built.sql.contains("\"observation_interval_start\" IS NOT NULL"), "{}", built.sql);
+        assert!(built.sql.contains("\"observation_interval_start\" <="), "{}", built.sql);
+        assert!(!built.sql.contains("management_interval_start\" IS NULL"), "{}", built.sql);
     }
 
     #[test]
@@ -549,8 +590,8 @@ mod tests {
                 .build(),
         );
         let built = build(&q);
-        assert!(built.sql.contains("\"management_interval\" IS NOT NULL"), "{}", built.sql);
-        assert!(built.sql.contains("endAt"));
+        assert!(built.sql.contains("\"management_interval_start\" IS NOT NULL"), "{}", built.sql);
+        assert!(built.sql.contains("\"management_interval_end\" >="), "{}", built.sql);
     }
 
     #[test]
@@ -566,8 +607,8 @@ mod tests {
                 .build(),
         );
         let built = build(&q);
-        assert!(built.sql.contains("startAt"));
-        assert!(built.sql.contains("endAt"));
+        assert!(built.sql.contains("\"observation_interval_start\" <="), "{}", built.sql);
+        assert!(built.sql.contains("\"observation_interval_end\" >="), "{}", built.sql);
     }
 
     /// Clause 4.9: `csf` reads the registration's Context Source Properties.

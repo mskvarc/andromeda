@@ -4,19 +4,36 @@
 //! information (an `observationInterval` or `managementInterval`), never both
 //! (Table 5.2.9-1). A discovery without a temporal query considers only the
 //! former; one with a temporal query considers only registrations whose
-//! relevant interval is present and meets the window.
+//! relevant interval is present and meets the window. An interval is present
+//! exactly when its start is: Table 5.2.11-1 makes `startAt` mandatory.
 
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrTemporalFilter, temporal::window::TimeInterval};
 use andromeda_postgresql_schema::csr::Csr;
-use andromeda_postgresql_seaquery::{
-    cast::{cast, cast_compound},
-    literal::text_literal,
-    pg_operator::PgBinaryOperator,
-    pg_type::PostgresType,
-};
+use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
 use chrono::{DateTime, Utc};
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
+
+/// One stored interval: the columns of its `startAt` and its `endAt`.
+#[derive(Clone, Copy)]
+struct IntervalColumns {
+    /// `startAt`; `NULL` when the registration declares no such interval.
+    start: Csr,
+    /// `endAt`; `NULL` when the interval is open or absent.
+    end: Csr,
+}
+
+/// `observationInterval`.
+const OBSERVATION: IntervalColumns = IntervalColumns {
+    start: Csr::ObservationIntervalStart,
+    end: Csr::ObservationIntervalEnd,
+};
+
+/// `managementInterval`.
+const MANAGEMENT: IntervalColumns = IntervalColumns {
+    start: Csr::ManagementIntervalStart,
+    end: Csr::ManagementIntervalEnd,
+};
 
 /// The registrations a discovery considers on the time axis.
 ///
@@ -32,12 +49,12 @@ use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 pub(crate) fn temporal_partition(temporal: Option<&CompiledCsrTemporalFilter>) -> Condition {
     let Some(temporal) = temporal else {
         return Condition::all()
-            .add(SeaExpr::col(Csr::ObservationInterval).is_null())
-            .add(SeaExpr::col(Csr::ManagementInterval).is_null());
+            .add(SeaExpr::col(OBSERVATION.start).is_null())
+            .add(SeaExpr::col(MANAGEMENT.start).is_null());
     };
-    let interval_col = match temporal.timeproperty.unwrap_or(TimeProp::Observed) {
-        TimeProp::Created | TimeProp::Modified | TimeProp::Deleted => Csr::ManagementInterval,
-        TimeProp::Observed => Csr::ObservationInterval,
+    let interval = match temporal.timeproperty.unwrap_or(TimeProp::Observed) {
+        TimeProp::Created | TimeProp::Modified | TimeProp::Deleted => MANAGEMENT,
+        TimeProp::Observed => OBSERVATION,
     };
     // An unbounded window narrows nothing beyond the interval's presence.
     // Discovery cannot build one: a temporal filter needs both `timerel` and
@@ -49,47 +66,33 @@ pub(crate) fn temporal_partition(temporal: Option<&CompiledCsrTemporalFilter>) -
         TimeInterval::Between { from, to } => (Some(from), Some(to)),
     };
     Condition::all()
-        .add(SeaExpr::col(interval_col).is_not_null())
-        .add(overlaps_window(interval_col, from, to))
+        .add(SeaExpr::col(interval.start).is_not_null())
+        .add(overlaps_window(interval, from, to))
 }
 
-/// `startAt <= to AND (endAt IS NULL OR from <= endAt)`, each half dropped
-/// when the period is unbounded on that side: the period the query describes
-/// and the interval the registration declares share at least one instant.
-fn overlaps_window(interval_col: Csr, from: Option<DateTime<Utc>>, to: Option<DateTime<Utc>>) -> Condition {
+/// `start <= to AND (end IS NULL OR from <= end)`, each half dropped when the
+/// period is unbounded on that side: the period the query describes and the
+/// interval the registration declares share at least one instant. An interval
+/// without an end is open-ended (Table 5.2.11-1), so only a closed one is
+/// tested at its end.
+fn overlaps_window(interval: IntervalColumns, from: Option<DateTime<Utc>>, to: Option<DateTime<Utc>>) -> Condition {
     let mut overlap = Condition::all();
     if let Some(to) = to {
-        overlap = overlap.add(SeaExpr::expr(interval_bound(interval_col, "startAt")).lte(interval_instant(to)));
+        overlap = overlap.add(SeaExpr::col(interval.start).lte(window_instant(to)));
     }
     if let Some(from) = from {
-        overlap = overlap.add(open_or(
-            interval_col,
-            SeaExpr::expr(interval_bound(interval_col, "endAt")).gte(interval_instant(from)),
-        ));
+        overlap = overlap.add(
+            Condition::any()
+                .add(SeaExpr::col(interval.end).is_null())
+                .add(SeaExpr::col(interval.end).gte(window_instant(from))),
+        );
     }
     overlap
 }
 
-/// `endAt IS NULL OR <bounded>`: an interval without an end is open-ended
-/// (Table 5.2.11-1), so only a closed one is tested at its end.
-fn open_or(interval_col: Csr, bounded: SimpleExpr) -> Condition {
-    Condition::any()
-        .add(SeaExpr::expr(interval_bound(interval_col, "endAt")).is_null())
-        .add(bounded)
-}
-
-/// One bound of a registration's stored interval, lifted to `timestamptz`:
-/// `("interval_col"->>'member')::timestamptz`.
-fn interval_bound(interval_col: Csr, member: &str) -> SimpleExpr {
-    cast_compound(
-        SimpleExpr::from(SeaExpr::col(interval_col)).json_get_text(text_literal(member)),
-        PostgresType::Timestamptz,
-    )
-}
-
 /// A window instant bound as RFC 3339 text and cast in the statement, so it
-/// compares as `timestamptz` against a lifted interval bound.
-fn interval_instant(instant: DateTime<Utc>) -> SimpleExpr {
+/// compares as `timestamptz` against an interval column.
+fn window_instant(instant: DateTime<Utc>) -> SimpleExpr {
     cast(SeaExpr::val(instant.to_rfc3339()), PostgresType::Timestamptz)
 }
 
@@ -119,7 +122,10 @@ mod tests {
     #[test]
     fn no_temporal_query_admits_only_registrations_without_any_interval() {
         let sql = render(None);
-        assert!(sql.contains("\"observation_interval\" IS NULL AND \"management_interval\" IS NULL"), "{sql}");
+        assert!(
+            sql.contains("\"observation_interval_start\" IS NULL AND \"management_interval_start\" IS NULL"),
+            "{sql}"
+        );
     }
 
     /// Clause 5.10.2.4: with a temporal query the relevant interval must be
@@ -127,15 +133,15 @@ mod tests {
     #[test]
     fn a_temporal_query_requires_the_relevant_interval_to_be_present() {
         let sql = render(Some(&filter(TimeInterval::After(dt("2020-06-01T00:00:00Z")), None)));
-        assert!(sql.contains("\"observation_interval\" IS NOT NULL"), "{sql}");
-        assert!(!sql.contains("\"observation_interval\" IS NULL OR"), "{sql}");
+        assert!(sql.contains("\"observation_interval_start\" IS NOT NULL"), "{sql}");
+        assert!(!sql.contains("\"observation_interval_start\" IS NULL"), "{sql}");
     }
 
     /// Clause 5.2.9: `observedAt` reads `observationInterval`; `createdAt`,
     /// `modifiedAt` and `deletedAt` read `managementInterval`.
     #[test]
     fn the_timeproperty_selects_the_interval() {
-        for (timeproperty, column) in [
+        for (timeproperty, interval) in [
             (None, "observation_interval"),
             (Some(TimeProp::Observed), "observation_interval"),
             (Some(TimeProp::Created), "management_interval"),
@@ -143,7 +149,8 @@ mod tests {
             (Some(TimeProp::Deleted), "management_interval"),
         ] {
             let sql = render(Some(&filter(TimeInterval::After(dt("2020-06-01T00:00:00Z")), timeproperty)));
-            assert!(sql.contains(&format!("\"{column}\" IS NOT NULL")), "{timeproperty:?}: {sql}");
+            assert!(sql.contains(&format!("\"{interval}_start\" IS NOT NULL")), "{timeproperty:?}: {sql}");
+            assert!(sql.contains(&format!("\"{interval}_end\" IS NULL OR")), "{timeproperty:?}: {sql}");
         }
     }
 
@@ -154,10 +161,10 @@ mod tests {
     fn before_tests_only_the_interval_start() {
         let sql = render(Some(&filter(TimeInterval::Before(dt("2020-06-01T00:00:00Z")), None)));
         assert!(
-            sql.contains("->> ('startAt'))::timestamptz) <= ('2020-06-01T00:00:00+00:00'::timestamptz)"),
+            sql.contains("\"observation_interval_start\" <= ('2020-06-01T00:00:00+00:00'::timestamptz)"),
             "{sql}"
         );
-        assert!(!sql.contains("->> ('endAt'))::timestamptz) >="), "{sql}");
+        assert!(!sql.contains("\"observation_interval_end\""), "{sql}");
     }
 
     /// Clause 5.10.2.4: `after` describes everything from its instant onwards,
@@ -167,12 +174,10 @@ mod tests {
     fn after_tests_only_the_interval_end_and_admits_an_open_one() {
         let sql = render(Some(&filter(TimeInterval::After(dt("2020-06-01T00:00:00Z")), None)));
         assert!(
-            sql.contains(
-                "->> ('endAt'))::timestamptz) IS NULL OR ((\"observation_interval\" ->> ('endAt'))::timestamptz) >= ('2020-06-01T00:00:00+00:00'::timestamptz)"
-            ),
+            sql.contains("\"observation_interval_end\" IS NULL OR \"observation_interval_end\" >= ('2020-06-01T00:00:00+00:00'::timestamptz)"),
             "{sql}"
         );
-        assert!(!sql.contains("->> ('startAt'))::timestamptz) <="), "{sql}");
+        assert!(!sql.contains("\"observation_interval_start\" <="), "{sql}");
     }
 
     /// Clause 5.10.2.4: `between` matches when the two intervals overlap.
@@ -186,11 +191,11 @@ mod tests {
             None,
         )));
         assert!(
-            sql.contains("->> ('startAt'))::timestamptz) <= ('2020-09-01T00:00:00+00:00'::timestamptz)"),
+            sql.contains("\"observation_interval_start\" <= ('2020-09-01T00:00:00+00:00'::timestamptz)"),
             "{sql}"
         );
         assert!(
-            sql.contains("->> ('endAt'))::timestamptz) >= ('2020-06-01T00:00:00+00:00'::timestamptz)"),
+            sql.contains("\"observation_interval_end\" >= ('2020-06-01T00:00:00+00:00'::timestamptz)"),
             "{sql}"
         );
     }

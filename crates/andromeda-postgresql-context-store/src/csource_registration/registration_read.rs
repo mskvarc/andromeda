@@ -4,6 +4,10 @@
 //! `registration_information` rows in one more statement, and assembles each
 //! registration's `information` from those rows with the names behind their
 //! keys looked up once per read.
+//!
+//! The two statements run in one REPEATABLE READ transaction. Under READ
+//! COMMITTED a registration deleted between them (its information rows go
+//! first) would be returned without the rows it cannot be assembled without.
 
 use crate::{
     csource_registration::{
@@ -19,21 +23,21 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Ident
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, page_window::PageWindow};
 use andromeda_postgresql_context_query::csr::{
-    coverage::{entity_id_coverage, entity_type_coverage},
+    coverage::Coverage,
     expiry_predicate::not_expired,
-    projection::attribute_name_candidate,
     registration_select::registration_select,
     statement as csr_sql,
 };
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_schema::csr::Csr;
+use andromeda_postgresql_seaquery::transaction::repeatable_read;
 use andromeda_registration::{error::RegistrationError, store::page::RegistrationPage};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use sea_query::{Expr as SeaExpr, ExprTrait, Iden, Order, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{PgConnection, PgExecutor, Row, postgres::PgRow};
+use sqlx::{PgConnection, PgExecutor, Postgres, Row, Transaction, postgres::PgRow};
 use std::{collections::HashMap, hash::BuildHasher};
 
 /// The registrations `rows` hold, each with the `information` its
@@ -86,6 +90,35 @@ pub(super) async fn registrations_of<'connection>(
     assemble(rows, &ids, &information, &names).map_err(|error| persistence_error(error))
 }
 
+/// A transaction whose statements all read one snapshot of the tenant.
+async fn begin_snapshot(store: &PostgresRegistrationStore) -> Result<Transaction<'_, Postgres>, RegistrationError> {
+    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error(error))?;
+    sqlx::query(repeatable_read())
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| persistence_error(error))?;
+    Ok(transaction)
+}
+
+/// The rows `select` finds, on `connection`.
+async fn fetch_rows(connection: &mut PgConnection, select: &SelectStatement) -> Result<Vec<PgRow>, RegistrationError> {
+    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .fetch_all(connection)
+        .await
+        .map_err(|error| persistence_error(error))
+}
+
+/// The registrations `select` finds, each with its `information`, read in one
+/// snapshot.
+async fn read_registrations(store: &PostgresRegistrationStore, select: &SelectStatement) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+    let mut transaction = begin_snapshot(store).await?;
+    let rows = fetch_rows(&mut transaction, select).await?;
+    let registrations = registrations_of(&mut *transaction, store.attribute_names.as_ref(), &rows).await?;
+    transaction.commit().await.map_err(|error| persistence_error(error))?;
+    Ok(registrations)
+}
+
 /// Every registration due at or before `cutoff`, in identifier order, with the
 /// shared projection: what the expiry sweep reads and then deletes.
 pub(super) fn expired_select(cutoff: DateTime<Utc>) -> SelectStatement {
@@ -99,12 +132,7 @@ pub(super) fn expired_select(cutoff: DateTime<Utc>) -> SelectStatement {
 
 /// The registrations due at or before `cutoff`, read without deleting them.
 pub(super) async fn find_expired(store: &PostgresRegistrationStore, cutoff: DateTime<Utc>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
-    let (sql, values) = expired_select(cutoff).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_all(&store.pool)
-        .await
-        .map_err(|error| persistence_error(error))?;
-    registrations_of(&store.pool, store.attribute_names.as_ref(), &rows).await
+    read_registrations(store, &expired_select(cutoff)).await
 }
 
 /// Whether a registration with `id` exists.
@@ -130,14 +158,7 @@ pub(super) async fn get(store: &PostgresRegistrationStore, id: &Identifier) -> R
     // the expiry sweep removes its row.
     select.cond_where(not_expired());
     select.and_where(SeaExpr::col(Csr::Id).eq(id.as_str()));
-    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-    let rows: Vec<PgRow> = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_optional(&store.pool)
-        .await
-        .map_err(|error| persistence_error(error))?
-        .into_iter()
-        .collect();
-    Ok(registrations_of(&store.pool, store.attribute_names.as_ref(), &rows).await?.pop())
+    Ok(read_registrations(store, &select).await?.pop())
 }
 
 /// The registration `id` as the transaction on `connection` holds it: what a
@@ -175,17 +196,16 @@ pub(super) async fn query_compiled(
     window: &PageWindow,
 ) -> Result<RegistrationPage, RegistrationError> {
     let built = csr_sql::build_csr_query(compiled, window).map_err(|error| persistence_error(error))?;
+    // The total counts the snapshot the page is read from.
+    let mut transaction = begin_snapshot(store).await?;
     let (count_sql, count_values) = built.count.build_sqlx(PostgresQueryBuilder);
     let (total,): (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
-        .fetch_one(&store.pool)
+        .fetch_one(&mut *transaction)
         .await
         .map_err(|error| persistence_error(error))?;
-    let (sql, values) = built.select.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_all(&store.pool)
-        .await
-        .map_err(|error| persistence_error(error))?;
-    let mut csrs = registrations_of(&store.pool, store.attribute_names.as_ref(), &rows).await?;
+    let rows = fetch_rows(&mut transaction, &built.select).await?;
+    let mut csrs = registrations_of(&mut *transaction, store.attribute_names.as_ref(), &rows).await?;
+    transaction.commit().await.map_err(|error| persistence_error(error))?;
     // Clause 5.5.9.1: a backward or from-end keyset page was read descending so
     // a single `id` index scan could serve it; it is reversed here to the
     // ascending order the client sees on every page.
@@ -205,19 +225,16 @@ pub(super) async fn find_matching(
 ) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
     let mut select = registration_select();
     select.cond_where(not_expired());
-    if let Some(entity_type) = entity_type {
-        select.and_where(entity_type_coverage(entity_type));
-    }
-    if let Some(entity_id) = entity_id {
-        select.and_where(entity_id_coverage(entity_id));
+    let coverage = Coverage {
+        entity_type,
+        entity_id,
+        attributes: &[],
+    };
+    if let Some(covered) = coverage.predicate() {
+        select.and_where(covered);
     }
     select.order_by(Csr::CreatedAt, Order::Asc);
-    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_all(&store.pool)
-        .await
-        .map_err(|error| persistence_error(error))?;
-    registrations_of(&store.pool, store.attribute_names.as_ref(), &rows).await
+    read_registrations(store, &select).await
 }
 
 /// The unexpired proxied registrations that may collide with an `(entity, attributes)` footprint (clauses 4.3.6.3, 5.9.2.4), a superset decided by the caller.
@@ -229,23 +246,19 @@ pub(super) async fn find_overlapping(
     let mut select = registration_select();
     select.cond_where(not_expired());
     select.and_where(proxied_mode());
-    if let Some(entity_id) = entity_id {
-        select.and_where(entity_id_coverage(entity_id));
-    }
-    // The attribute preselect admits a row declaring one of the names and a
-    // row declaring none at all (the `{0}` sentinel), which is exactly the
-    // clause 4.3.6.3 overlap: a whole-entity registration covers every
+    // A row declaring one of the attributes, or none at all, covers them: the
+    // clause 4.3.6.3 overlap, where a whole-entity registration covers every
     // attribute. The typed residual in registration policy decides.
-    if !attributes.is_empty() {
-        select.and_where(attribute_name_candidate(attributes));
+    let coverage = Coverage {
+        entity_type: None,
+        entity_id,
+        attributes,
+    };
+    if let Some(covered) = coverage.predicate() {
+        select.and_where(covered);
     }
     select.order_by(Csr::CreatedAt, Order::Asc);
-    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_all(&store.pool)
-        .await
-        .map_err(|error| persistence_error(error))?;
-    registrations_of(&store.pool, store.attribute_names.as_ref(), &rows).await
+    read_registrations(store, &select).await
 }
 
 /// One keyset page of unexpired registrations, ordered by identifier.
@@ -260,10 +273,5 @@ pub(super) async fn find_all_active(
         select.and_where(SeaExpr::col(Csr::Id).gt(after_id.as_str()));
     }
     select.order_by(Csr::Id, Order::Asc).limit(u64::from(limit));
-    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_all(&store.pool)
-        .await
-        .map_err(|error| persistence_error(error))?;
-    registrations_of(&store.pool, store.attribute_names.as_ref(), &rows).await
+    read_registrations(store, &select).await
 }
